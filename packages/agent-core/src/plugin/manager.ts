@@ -261,8 +261,12 @@ export class PluginManager {
     const out: PluginCommandDef[] = [];
     for (const record of this.records.values()) {
       if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
-      for (const commandPath of record.manifest.commands ?? []) {
-        const def = await loadPluginCommand({ commandPath, pluginId: record.id });
+      for (const entry of record.manifest.commands ?? []) {
+        const def = await loadPluginCommand({
+          commandPath: entry.path,
+          pluginId: record.id,
+          fallbackName: entry.name,
+        });
         if (def !== undefined) out.push(def);
       }
     }

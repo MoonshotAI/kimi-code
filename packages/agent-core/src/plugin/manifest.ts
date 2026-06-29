@@ -9,6 +9,7 @@ import {
 } from '../config/schema';
 import {
   PLUGIN_NAME_REGEX,
+  type PluginCommandEntry,
   type PluginDiagnostic,
   type PluginInterface,
   type PluginManifest,
@@ -317,7 +318,7 @@ async function readCommands(
   pluginRoot: string,
   raw: unknown,
   diagnostics: PluginDiagnostic[],
-): Promise<readonly string[] | undefined> {
+): Promise<readonly PluginCommandEntry[] | undefined> {
   if (raw === undefined) return undefined;
   const entries: string[] = [];
   if (typeof raw === 'string') {
@@ -329,7 +330,7 @@ async function readCommands(
     return undefined;
   }
 
-  const files: string[] = [];
+  const files: PluginCommandEntry[] = [];
   for (const entry of entries) {
     const resolved = await resolvePluginPathField({
       pluginRoot,
@@ -339,9 +340,9 @@ async function readCommands(
     });
     if (resolved === undefined) continue;
     if (await isDir(resolved)) {
-      files.push(...(await listMarkdownFiles(resolved)));
+      files.push(...(await listMarkdownFilesRecursive(resolved)));
     } else if ((await isFile(resolved)) && resolved.endsWith('.md')) {
-      files.push(resolved);
+      files.push({ path: resolved, name: commandNameFromFile(resolved, path.dirname(resolved)) });
     } else {
       diagnostics.push({
         severity: 'warn',
@@ -349,20 +350,39 @@ async function readCommands(
       });
     }
   }
-  return files.length === 0 ? undefined : files;
+  return files.length === 0 ? undefined : files.toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
-async function listMarkdownFiles(dir: string): Promise<readonly string[]> {
+async function listMarkdownFilesRecursive(root: string): Promise<readonly PluginCommandEntry[]> {
+  const out: PluginCommandEntry[] = [];
+  await walkMarkdown(root, root, out);
+  return out;
+}
+
+async function walkMarkdown(
+  root: string,
+  dir: string,
+  out: PluginCommandEntry[],
+): Promise<void> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch {
-    return [];
+    return;
   }
-  return entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-    .map((entry) => path.join(dir, entry.name))
-    .toSorted();
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkMarkdown(root, full, out);
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      out.push({ path: full, name: commandNameFromFile(full, root) });
+    }
+  }
+}
+
+function commandNameFromFile(file: string, root: string): string {
+  const relative = path.relative(root, file).replace(/\.md$/i, '');
+  return relative.split(path.sep).join('/');
 }
 
 async function normalizePluginMcpServer(input: {

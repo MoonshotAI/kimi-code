@@ -58,7 +58,9 @@ async function makePlugin(
     manifest['commands'] = ['./commands'];
     await mkdir(path.join(root, 'commands'), { recursive: true });
     for (const [file, body] of Object.entries(options.commands)) {
-      await writeFile(path.join(root, 'commands', file), body, 'utf8');
+      const filePath = path.join(root, 'commands', file);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, body, 'utf8');
     }
   }
   await writeFile(
@@ -931,6 +933,21 @@ describe('PluginManager', () => {
       ]),
     );
     expect(commands.find((c) => c.name === 'deploy')?.body).toBe('Deploy with $ARGUMENTS');
+  });
+
+  it('enabledCommands() preserves the relative-path namespace for nested commands', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      commands: {
+        'deploy.md': '---\ndescription: Deploy\n---\nbody',
+        'frontend/component.md': '---\ndescription: Component\n---\nbody',
+      },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    const commands = await manager.enabledCommands();
+    expect(commands.map((c) => c.name).toSorted()).toEqual(['deploy', 'frontend/component']);
   });
 
   it('enabledCommands() excludes disabled plugins', async () => {

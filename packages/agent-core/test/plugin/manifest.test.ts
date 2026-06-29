@@ -431,8 +431,27 @@ describe('parseManifest', () => {
     const result = await parseManifest(root);
     expect(result.diagnostics).toEqual([]);
     expect(result.manifest?.commands).toEqual([
-      path.join(root, 'commands/deploy.md'),
-      path.join(root, 'commands/env.md'),
+      { path: path.join(root, 'commands/deploy.md'), name: 'deploy' },
+      { path: path.join(root, 'commands/env.md'), name: 'env' },
+    ]);
+  });
+
+  it('recurses into nested command directories and preserves the namespace', async () => {
+    const root = await makePlugin(
+      {
+        'kimi.plugin.json': JSON.stringify({ name: 'demo', commands: ['./commands'] }),
+        'commands/deploy.md': '---\ndescription: Deploy\n---\nbody',
+        'commands/frontend/component.md': '---\ndescription: Component\n---\nbody',
+        'commands/frontend/deep/nested.md': '---\ndescription: Nested\n---\nbody',
+      },
+      { dirs: ['commands', 'commands/frontend', 'commands/frontend/deep'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest?.commands).toEqual([
+      { path: path.join(root, 'commands/deploy.md'), name: 'deploy' },
+      { path: path.join(root, 'commands/frontend/component.md'), name: 'frontend/component' },
+      { path: path.join(root, 'commands/frontend/deep/nested.md'), name: 'frontend/deep/nested' },
     ]);
   });
 
@@ -442,7 +461,9 @@ describe('parseManifest', () => {
       'deploy.md': '---\ndescription: Deploy\n---\nbody',
     });
     const result = await parseManifest(root);
-    expect(result.manifest?.commands).toEqual([path.join(root, 'deploy.md')]);
+    expect(result.manifest?.commands).toEqual([
+      { path: path.join(root, 'deploy.md'), name: 'deploy' },
+    ]);
   });
 
   it('warns when commands is not a string or string[]', async () => {

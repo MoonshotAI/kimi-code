@@ -8,13 +8,14 @@ export function parseCommandText(input: {
   readonly text: string;
   readonly commandPath: string;
   readonly pluginId: string;
+  readonly fallbackName?: string;
 }): PluginCommandDef {
   const { text, commandPath, pluginId } = input;
   const parsed = parseFrontmatter(text);
   const frontmatter = isRecord(parsed.data) ? parsed.data : {};
 
-  const fallbackName = path.basename(commandPath).replace(/\.md$/i, '');
-  const name = nonEmptyString(frontmatter['name']) ?? fallbackName;
+  const baseName = input.fallbackName ?? path.basename(commandPath).replace(/\.md$/i, '');
+  const name = nonEmptyString(frontmatter['name']) ?? baseName;
 
   const body = parsed.body.trim();
   const description = nonEmptyString(frontmatter['description']) ?? descriptionFromBody(body);
@@ -31,10 +32,16 @@ export function parseCommandText(input: {
 export async function loadPluginCommand(input: {
   readonly commandPath: string;
   readonly pluginId: string;
+  readonly fallbackName?: string;
 }): Promise<PluginCommandDef | undefined> {
   try {
     const text = await readFile(input.commandPath, 'utf8');
-    return parseCommandText({ text, commandPath: input.commandPath, pluginId: input.pluginId });
+    return parseCommandText({
+      text,
+      commandPath: input.commandPath,
+      pluginId: input.pluginId,
+      fallbackName: input.fallbackName,
+    });
   } catch {
     return undefined;
   }
