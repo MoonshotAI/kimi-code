@@ -35,6 +35,7 @@ import { BannerProvider } from './banner/banner-provider';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
   BUILTIN_SLASH_COMMANDS,
+  buildPluginSlashCommands,
   buildSkillSlashCommands,
   isExperimentalFlagEnabled,
   setExperimentalFeatures,
@@ -244,6 +245,8 @@ export class KimiTUI {
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
+  private pluginCommands: readonly KimiSlashCommand[] = [];
+  readonly pluginCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
   private fdPath: string | null = detectFdPath();
   private fdDownloadStarted = false;
@@ -364,7 +367,7 @@ export class KimiTUI {
     const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
       isExperimentalFlagEnabled(command.experimentalFlag),
     );
-    return [...builtins, ...this.skillCommands];
+    return [...builtins, ...this.skillCommands, ...this.pluginCommands];
   }
 
   private setupAutocomplete(): void {
@@ -422,6 +425,29 @@ export class KimiTUI {
     this.skillCommandMap.clear();
     for (const [commandName, skillName] of skillCommands.commandMap) {
       this.skillCommandMap.set(commandName, skillName);
+    }
+    this.setupAutocomplete();
+  }
+
+  async refreshPluginCommands(session?: Session): Promise<void> {
+    if (session === undefined) {
+      this.pluginCommands = [];
+      this.pluginCommandMap.clear();
+      this.setupAutocomplete();
+      return;
+    }
+
+    let defs;
+    try {
+      defs = await session.listPluginCommands();
+    } catch {
+      return;
+    }
+    const pluginSlashCommands = buildPluginSlashCommands(defs);
+    this.pluginCommands = pluginSlashCommands.commands;
+    this.pluginCommandMap.clear();
+    for (const [commandName, body] of pluginSlashCommands.commandMap) {
+      this.pluginCommandMap.set(commandName, body);
     }
     this.setupAutocomplete();
   }
@@ -612,6 +638,7 @@ export class KimiTUI {
       this.updateTerminalTitle();
     }
     void this.refreshSkillCommands(this.session);
+    void this.refreshPluginCommands(this.session);
   }
 
   private async showSessionWarnings(session: Session): Promise<void> {
@@ -1549,6 +1576,7 @@ export class KimiTUI {
     this.updateTerminalTitle();
     try {
       await this.refreshSkillCommands(this.session);
+      await this.refreshPluginCommands(this.session);
     } catch {
       /* keep the switched session usable even if dynamic skills fail */
     }
@@ -1586,6 +1614,7 @@ export class KimiTUI {
     this.updateTerminalTitle();
     try {
       await this.refreshSkillCommands(session);
+      await this.refreshPluginCommands(session);
     } catch {
       /* keep the reloaded session usable even if dynamic skills fail */
     }
@@ -1627,6 +1656,7 @@ export class KimiTUI {
     }
     try {
       await this.refreshSkillCommands(this.session);
+      await this.refreshPluginCommands(this.session);
     } catch {
       /* keep the new session usable even if dynamic skills fail */
     }

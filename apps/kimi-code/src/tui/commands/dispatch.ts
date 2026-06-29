@@ -40,6 +40,7 @@ import { handleAddDirCommand } from './add-dir';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
+import { expandCommandArguments } from './plugin-commands';
 import type { BuiltinSlashCommandName } from './registry';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import { resolveSlashCommandInput, slashBusyMessage } from './resolve';
@@ -139,6 +140,7 @@ export interface SlashCommandHost {
   sendNormalUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   readonly skillCommandMap: Map<string, string>;
+  readonly pluginCommandMap: Map<string, string>;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -164,6 +166,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
   const intent = resolveSlashCommandInput({
     input,
     skillCommandMap: host.skillCommandMap,
+    pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
   });
@@ -193,6 +196,15 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
         skill_name: intent.skillName,
       });
       host.sendSkillActivation(session, intent.skillName, intent.args);
+      return;
+    }
+    case 'plugin-command': {
+      if (host.state.appState.model.trim().length === 0) {
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      host.track('input_command', { command: intent.commandName });
+      host.sendNormalUserInput(expandCommandArguments(intent.body, intent.args));
       return;
     }
     case 'message':
