@@ -136,6 +136,24 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('refreshes the system prompt after compaction completes', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+
+    const refreshSpy = vi.spyOn(ctx.agent, 'refreshSystemPrompt');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('projects the compacted prefix before sending the summary request', async () => {
     const ctx = testAgent({ compactionStrategy: alwaysCompactOnce });
     ctx.configure({

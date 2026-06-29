@@ -284,6 +284,11 @@ export class FullCompaction {
       const result = await this.compactionRound(signal, data);
       if (!result) return;
       this.markCompleted();
+      try {
+        await this.agent.refreshSystemPrompt();
+      } catch (error) {
+        this.agent.log.error('failed to refresh system prompt after compaction', { error });
+      }
       this.agent.emitEvent({ type: 'compaction.completed', result });
       await this.agent.injection.injectGoal();
       this.triggerPostCompactHook(data, result);

@@ -11,7 +11,11 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
-import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
+import {
+  prepareSystemPromptContext,
+  type PreparedSystemPromptContext,
+  type ResolvedAgentProfile,
+} from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -127,6 +131,8 @@ export class Agent {
   readonly replayBuilder: ReplayBuilder;
 
   private additionalDirs: readonly string[];
+  private activeProfile?: ResolvedAgentProfile;
+  private brandHome?: string;
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
@@ -248,7 +254,13 @@ export class Agent {
     });
   }
 
-  useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
+  useProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+    brandHome?: string,
+  ): void {
+    this.activeProfile = profile;
+    this.brandHome = brandHome;
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
@@ -259,6 +271,20 @@ export class Agent {
     });
     this.config.update({ profileName: profile.name, systemPrompt });
     this.tools.setActiveTools(profile.tools);
+  }
+
+  /**
+   * Re-render the system prompt with freshly gathered runtime context (cwd
+   * listing, AGENTS.md, additional-dirs info, skill list). Called after
+   * compaction so the post-compaction turns do not keep a snapshot captured
+   * at session bootstrap. Invalidates the prompt-cache prefix by design.
+   */
+  async refreshSystemPrompt(): Promise<void> {
+    if (this.activeProfile === undefined) return;
+    const context = await prepareSystemPromptContext(this.kaos, this.brandHome, {
+      additionalDirs: this.additionalDirs,
+    });
+    this.useProfile(this.activeProfile, context, this.brandHome);
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {

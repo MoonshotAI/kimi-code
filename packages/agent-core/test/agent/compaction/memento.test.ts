@@ -96,6 +96,21 @@ describe('selectRecentUserMessages', () => {
     expect(cjk.startsWith(messageText(selected[0]!))).toBe(true);
   });
 
+  it('does not split surrogate pairs while truncating emoji text', () => {
+    const emoji = '😀'.repeat(2_000);
+    const messages = [textMessage('user', emoji), textMessage('user', 'recent')];
+    const budget = estimateTokensForMessage(messages[1]!) + 333;
+
+    const selected = selectRecentUserMessages(messages, budget);
+    const truncated = messageText(selected[0]!);
+
+    expect(selected).toHaveLength(2);
+    expect(messageText(selected[1]!)).toBe('recent');
+    expect(estimateTokens(truncated)).toBeLessThanOrEqual(333);
+    expect([...truncated].every((char) => char === '😀')).toBe(true);
+    expect(truncated.length % 2).toBe(0);
+  });
+
   it('returns nothing when the budget is zero', () => {
     expect(selectRecentUserMessages([textMessage('user', 'hi')], 0)).toEqual([]);
   });
