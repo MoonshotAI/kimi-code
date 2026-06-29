@@ -2335,6 +2335,7 @@ export function useKimiWebClient() {
     addProvider: modelProvider.addProvider,
     deleteProvider: modelProvider.deleteProvider,
     refreshProvider: modelProvider.refreshProvider,
+    refreshAllProviders: modelProvider.refreshAllProviders,
 
     // Auth state
     authReady,

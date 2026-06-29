@@ -36,6 +36,7 @@ import {
 } from '#/services/gateway';
 import { createServerServiceCollection } from '#/services/serviceCollection';
 import { ISnapshotService, loadSnapshotConfig } from '#/services/snapshot';
+import { IModelCatalogRefreshScheduler } from '#/services/modelCatalog/modelCatalogRefreshScheduler';
 import {
   createAuthTokenService,
   IAuthTokenService,
@@ -410,6 +411,17 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       a.get(IOAuthService);
 
       a.get(IModelCatalogService);
+
+      // Start the background provider-model refresh scheduler (reads config to
+      // decide interval / refresh-on-start). Must run after IModelCatalogService
+      // and ICoreProcessService are constructed. Fire-and-forget: the initial
+      // refresh is async and must not block boot.
+      const catalogScheduler = a.get(IModelCatalogRefreshScheduler);
+      catalogScheduler
+        .start()
+        .catch((err) =>
+          log.error({ err }, 'failed to start provider-model refresh scheduler'),
+        );
 
       const promptService = a.get(IPromptService);
       const terminalService = a.get(ITerminalService);
