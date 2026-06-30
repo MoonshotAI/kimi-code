@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { join } from 'node:path';
 
 import { KIMI_CODE_HOME } from '../config';
-import { logExists, readLog } from '../lib/log-reader';
+import { discoverLogFiles, readLogs } from '../lib/log-reader';
 import { readSessionDetail } from '../lib/session-store';
 
 const SESSION_LOG_REL = ['logs', 'kimi-code.log'] as const;
@@ -26,12 +26,16 @@ export function logsRoute(home: string = KIMI_CODE_HOME): Hono {
     const globalLog = detail.imported
       ? join(detail.sessionDir, ...GLOBAL_LOG_REL)
       : join(home, ...HOME_GLOBAL_LOG_REL);
+    // Either log may have rotated (kimi-code.log.1, .2, …); discover the active
+    // file plus its archives so a bundle with only rotated logs still surfaces.
+    const sessionFiles = await discoverLogFiles(sessionLog);
+    const globalFiles = await discoverLogFiles(globalLog);
     const available = {
-      session: await logExists(sessionLog),
-      global: await logExists(globalLog),
+      session: sessionFiles.length > 0,
+      global: globalFiles.length > 0,
     };
-    const target = which === 'global' ? globalLog : sessionLog;
-    const result = await readLog(target);
+    const targetFiles = which === 'global' ? globalFiles : sessionFiles;
+    const result = await readLogs(targetFiles);
     return c.json({
       sessionId: id,
       which,

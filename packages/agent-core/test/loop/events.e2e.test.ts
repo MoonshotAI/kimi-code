@@ -189,6 +189,25 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
     expect(sink.byType('tool.result')[0]?.progress).toBeUndefined();
   });
 
+  it('keeps the progress summary on a thrown tool failure', async () => {
+    // A long-running tool that reports progress and then throws — the error
+    // tool.result must still carry the progress evidence, like the success path.
+    const tool = new ProgressTool([
+      { kind: 'progress', percent: 40 },
+      { kind: 'status', text: 'still going' },
+    ], 'boom');
+    const { sink } = await runTurn({
+      tools: [tool],
+      responses: [
+        makeToolUseResponse([makeToolCall('progress', {}, 'tc-f')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    const tr = sink.byType('tool.result')[0];
+    expect(tr?.result.isError).toBe(true);
+    expect(tr?.progress).toEqual({ updateCount: 2, maxPercent: 40 });
+  });
+
   it('accepts a custom emitter function', async () => {
     class StrictCollector {
       readonly events: LoopEvent[] = [];

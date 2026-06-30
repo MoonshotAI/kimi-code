@@ -49,4 +49,30 @@ describe('logs route (local sessions)', () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as LogsBody).available.global).toBe(false);
   });
+
+  it('discovers a rotated session log when the active file has rotated away', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    await mkdir(join(sessionDir, 'logs'), { recursive: true });
+    // Only an archive exists — no active kimi-code.log.
+    await writeFile(join(sessionDir, 'logs', 'kimi-code.log.1'), '2026-06-01T00:00:00.000Z INFO  rotated only  r=1\n');
+
+    const res = await logsRoute(home).request('/session_fixture/logs');
+    const b = (await res.json()) as LogsBody;
+    expect(b.available.session).toBe(true);
+    expect(b.lines[0]!.message).toBe('rotated only');
+  });
+
+  it('concatenates rotated + active session logs oldest-first', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    await mkdir(join(sessionDir, 'logs'), { recursive: true });
+    await writeFile(join(sessionDir, 'logs', 'kimi-code.log.2'), '2026-06-01T00:00:00.000Z INFO  oldest\n');
+    await writeFile(join(sessionDir, 'logs', 'kimi-code.log.1'), '2026-06-01T00:00:01.000Z INFO  middle\n');
+    await writeFile(join(sessionDir, 'logs', 'kimi-code.log'), '2026-06-01T00:00:02.000Z INFO  newest\n');
+
+    const res = await logsRoute(home).request('/session_fixture/logs');
+    const b = (await res.json()) as LogsBody;
+    expect(b.lines.map((l) => l.message)).toEqual(['oldest', 'middle', 'newest']);
+  });
 });

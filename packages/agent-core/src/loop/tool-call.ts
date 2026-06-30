@@ -511,7 +511,10 @@ async function runRunnableToolCall(
     const output = aborted
       ? abortedToolOutput(toolName, signal)
       : `Tool "${toolName}" failed: ${errorMessage(error)}`;
-    return makeErrorToolResult(call, effectiveArgs, output);
+    // Carry any sparse progress the tool reported before it threw — a failing
+    // long-running tool is exactly where that evidence is most useful, and the
+    // success/malformed-return paths already preserve it.
+    return makeErrorToolResult(call, effectiveArgs, output, progressSummary(progress));
   }
 
   return makeToolResult(call, effectiveArgs, toolResult, progressSummary(progress));
@@ -723,8 +726,9 @@ function makeErrorToolResult(
   call: PreflightedToolCall,
   args: unknown,
   output: string,
+  progress?: LoopToolProgressSummary | undefined,
 ): PendingToolResult {
-  return makeToolResult(call, args, { output, isError: true });
+  return makeToolResult(call, args, { output, isError: true }, progress);
 }
 
 /**
