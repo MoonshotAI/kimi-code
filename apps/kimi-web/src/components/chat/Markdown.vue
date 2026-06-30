@@ -17,6 +17,8 @@ import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
+import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
@@ -53,15 +55,12 @@ enableMermaid();
 // absent, everything runs on the main thread.
 // ---------------------------------------------------------------------------
 
-import KatexWorkerFactory from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
-import MermaidWorkerFactory from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
-
 // Tear down any previous worker (e.g. from HMR) before setting a new one.
 clearKaTeXWorker();
 clearMermaidWorker();
 
-setKaTeXWorker(new KatexWorkerFactory());
-setMermaidWorker(new MermaidWorkerFactory());
+setKaTeXWorker(new katexWorkerModule.default());
+setMermaidWorker(new mermaidWorkerModule.default());
 
 // Only `$$…$$` display math is rendered; single `$` inline math is disabled so
 // prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`) stay literal
