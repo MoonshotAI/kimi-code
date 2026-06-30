@@ -1,5 +1,5 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
-import { estimateTokensForContentParts, estimateTokensForMessage } from '../../utils/tokens';
+import { estimateTokensForMessage } from '../../utils/tokens';
 import type { PromptOrigin } from '../context/types';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
@@ -118,22 +118,19 @@ function truncateTextToTokens(text: string, maxTokens: number): string {
 }
 
 function truncateUserMessage<T extends MessageLike>(message: T, maxTokens: number): T {
-  // Keep non-text parts (image/audio/video): the estimator now counts them as
-  // significant context, and the summary may still reference the screenshot or
-  // file the user attached. Spend the remaining budget on truncated text. Real
-  // user input never carries tool calls, so clearing them is safe. The cast back
-  // to `T` is unavoidable here: TypeScript cannot prove that a spread-then-
-  // override shape still equals the generic `T`.
-  const nonTextParts = message.content.filter((part) => part.type !== 'text');
-  const textBudget = Math.max(0, maxTokens - estimateTokensForContentParts(nonTextParts));
-  const text = truncateTextToTokens(extractText(message.content), textBudget);
-  const content: ContentPart[] = [...nonTextParts];
-  if (text.length > 0) {
-    content.push({ type: 'text', text });
-  }
+  const text = truncateTextToTokens(extractText(message.content), maxTokens);
+  // Truncating to text only drops any image/audio/video the oldest kept message
+  // carried. This mirrors how codex and Claude Code handle media at compaction
+  // (codex does no media-aware truncation; Claude Code strips media outright) —
+  // media cannot be partially truncated, and keeping it whole would overshoot
+  // the budget. Recent messages that fit the budget are kept verbatim (media
+  // included); only this boundary message loses its attachments. Spread the
+  // original to preserve every field (notably `origin`); clearing tool calls is
+  // safe (real user input never carries them). The cast back to `T` is
+  // unavoidable: TypeScript cannot prove the spread-then-override still equals T.
   return {
     ...message,
-    content,
+    content: [{ type: 'text', text }],
     toolCalls: [],
   } as unknown as T;
 }
