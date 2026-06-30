@@ -141,16 +141,20 @@ function buildGoalReminder(goal: GoalSnapshot): string {
     'Goal mode is iterative. Keep the self-audit brief each turn. Do not explore unrelated ' +
       'interpretations once the goal can be decided. If the objective is simple, already answered, ' +
       'impossible, unsafe, or contradictory, do not run another goal turn. Explain briefly if useful, ' +
-      'then call UpdateGoal with `complete` or `blocked` in the same turn. Otherwise, self-audit ' +
-      'against the objective and any completion criteria above, then do one coherent slice of work ' +
-      'toward the objective. Use multiple turns when the task naturally has multiple phases. Call ' +
-      'UpdateGoal with `complete` only when all required work is done, any stated validation has ' +
-      'passed, and there is no useful next action. Do not mark complete after only producing a plan, ' +
-      'summary, first pass, or partial result. If an external condition or required user input ' +
-      'prevents progress, or the objective cannot be completed as stated, call UpdateGoal with ' +
-      '`blocked`. Otherwise keep working — after your turn ends you will be prompted to continue. ' +
-      "Call UpdateGoal as soon as the goal is genuinely done or cannot proceed; don't keep going " +
-      'once there is nothing left to do.',
+      'then call UpdateGoal with `complete` or `blocked` in the same turn. Otherwise, choose one ' +
+      'bounded, useful slice of work toward the objective. Do not try to finish a broad goal in one ' +
+      'turn unless the whole goal is genuinely small. Most goal turns should not call UpdateGoal: ' +
+      'after completing a useful slice, if material work remains, end the turn normally without ' +
+      'calling UpdateGoal so the runtime can continue the goal in the next turn. Call UpdateGoal ' +
+      'with `complete` only when all required work is done, any stated validation has passed, and ' +
+      'there is no useful next action. Do not mark complete after only producing a plan, summary, ' +
+      'first pass, or partial result. Before calling `complete`, check that every required part of ' +
+      'the objective is done, completion criteria are satisfied, requested or expected validation ' +
+      'passed or has been reported as impossible, and no known material task remains. Call ' +
+      'UpdateGoal with `blocked` only for a genuine impasse: an external condition, required user ' +
+      'input, missing credentials or permissions, a persistent technical failure, or an impossible, ' +
+      'unsafe, or contradictory objective. Do not use `blocked` because the work is large, hard, ' +
+      'slow, uncertain, partial, still needs validation, or needs more goal turns.',
   );
   return lines.join('\n');
 }

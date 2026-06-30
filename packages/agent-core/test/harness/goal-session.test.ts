@@ -151,6 +151,8 @@ describe('goal session end-to-end', () => {
     const continuationHistory = JSON.stringify(scripted.calls[1]?.history ?? []);
     expect(continuationHistory).toContain('Keep the self-audit brief');
     expect(continuationHistory).toContain('do not run another goal turn');
+    expect(continuationHistory).toContain('end the turn normally without calling UpdateGoal');
+    expect(continuationHistory).toContain('only for a genuine impasse');
 
     // Terminal UpdateGoal asks the model for one final user-facing summary.
     expect(scripted.calls).toHaveLength(3);

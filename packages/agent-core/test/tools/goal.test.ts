@@ -283,11 +283,20 @@ describe('SetGoalBudgetTool', () => {
 describe('UpdateGoalTool', () => {
   it('guards against premature blocked status', () => {
     const description = new UpdateGoalTool(fakeAgent()).description.toLowerCase();
-    // Reference spec wording (without the 3-turn machinery kimi lacks).
+    // Reserve blocked for genuine impasses, not ordinary unfinished work.
+    expect(description).toContain('genuine impasse');
     expect(description).toContain('hard, slow');
+    expect(description).toContain('needs more goal turns');
     // UpdateGoal also injects the completion/blocked outcome prompt, so it does
     // more than "only record the status".
     expect(description).not.toContain('only records the status');
+  });
+
+  it('discourages calling UpdateGoal after a non-terminal work slice', () => {
+    const description = new UpdateGoalTool(fakeAgent()).description;
+    expect(description).toContain('Most active goal turns should not call this tool');
+    expect(description).toContain('end the turn normally without calling UpdateGoal');
+    expect(description).toContain('every required part of the objective is done');
   });
 
   // Terminal paths append follow-up reminders, so the agent needs a context

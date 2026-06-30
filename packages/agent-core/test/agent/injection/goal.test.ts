@@ -162,8 +162,18 @@ describe('GoalInjector content', () => {
     await store.createGoal({ objective: 'fix the bugs' });
     const text = (await injectOnce(store))!;
     expect(text).toContain('Goal mode is iterative');
-    expect(text).toContain('one coherent slice of work');
+    expect(text).toContain('one bounded, useful slice of work');
+    expect(text).toContain('end the turn normally without calling UpdateGoal');
     expect(text).toContain('Do not mark complete after only producing a plan');
+  });
+
+  it('reserves blocked for genuine impasses rather than ordinary unfinished work', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'finish the migration' });
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('only for a genuine impasse');
+    expect(text).toContain('missing credentials or permissions');
+    expect(text).toContain('needs more goal turns');
   });
 
   it('tells the model to decide simple or impossible goals in the same turn', async () => {
