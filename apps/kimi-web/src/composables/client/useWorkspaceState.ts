@@ -659,17 +659,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /** Add a workspace by folder path, registering it with the daemon. */
-  async function addWorkspaceByPath(root: string): Promise<void> {
+  /**
+   * Add a workspace by folder path, registering it with the daemon. Returns true
+   * when the workspace was registered and selected; false when the daemon
+   * rejected the path (the error is surfaced to the user) so callers can keep
+   * any pending submission instead of dropping it.
+   */
+  async function addWorkspaceByPath(root: string): Promise<boolean> {
     const trimmed = root.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
     const api = getKimiWebApi();
     try {
       const ws = await api.addWorkspace({ root: trimmed });
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
+      return true;
     } catch (err) {
       pushOperationFailure('addWorkspace', err);
+      return false;
     }
   }
 

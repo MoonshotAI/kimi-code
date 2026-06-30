@@ -234,8 +234,9 @@ describe('useWorkspaceState — addWorkspaceByPath', () => {
     const deps = createDeps();
     const workspace = useWorkspaceState(state, deps);
 
-    await workspace.addWorkspaceByPath('  /abs/path  ');
+    const ok = await workspace.addWorkspaceByPath('  /abs/path  ');
 
+    expect(ok).toBe(true);
     expect(apiMock.addWorkspace).toHaveBeenCalledWith({ root: '/abs/path' });
     expect(state.workspaces).toContainEqual(registered);
     expect(state.activeWorkspaceId).toBe('wd_abc');
@@ -249,8 +250,9 @@ describe('useWorkspaceState — addWorkspaceByPath', () => {
     const deps = createDeps();
     const workspace = useWorkspaceState(state, deps);
 
-    await workspace.addWorkspaceByPath('/abs/missing');
+    const ok = await workspace.addWorkspaceByPath('/abs/missing');
 
+    expect(ok).toBe(false);
     expect(deps.pushOperationFailure).toHaveBeenCalledWith('addWorkspace', err);
     expect(state.workspaces).toEqual([]);
     expect(state.activeWorkspaceId).toBeNull();
