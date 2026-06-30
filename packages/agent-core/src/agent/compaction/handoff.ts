@@ -120,14 +120,13 @@ function truncateTextToTokens(text: string, maxTokens: number): string {
 function truncateUserMessage<T extends MessageLike>(message: T, maxTokens: number): T {
   const text = truncateTextToTokens(extractText(message.content), maxTokens);
   // Truncating to text only drops any image/audio/video the oldest kept message
-  // carried. This mirrors how codex and Claude Code handle media at compaction
-  // (codex does no media-aware truncation; Claude Code strips media outright) —
-  // media cannot be partially truncated, and keeping it whole would overshoot
-  // the budget. Recent messages that fit the budget are kept verbatim (media
-  // included); only this boundary message loses its attachments. Spread the
-  // original to preserve every field (notably `origin`); clearing tool calls is
-  // safe (real user input never carries them). The cast back to `T` is
-  // unavoidable: TypeScript cannot prove the spread-then-override still equals T.
+  // carried: media cannot be partially truncated, and keeping it whole would
+  // overshoot the budget, so the boundary message loses its attachments. Recent
+  // messages that fit the budget are kept verbatim (media included); only this
+  // boundary message is affected. Spread the original to preserve every field
+  // (notably `origin`); clearing tool calls is safe (real user input never
+  // carries them). The cast back to `T` is unavoidable: TypeScript cannot prove
+  // the spread-then-override still equals T.
   return {
     ...message,
     content: [{ type: 'text', text }],
