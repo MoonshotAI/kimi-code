@@ -283,9 +283,15 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         } else {
           // Legacy record whose compactedCount covered the whole live history (no
           // tail, matching live restore's `compactedCount < length` guard): fall
-          // back to the new kept-user + summary derivation.
+          // back to the new kept-user + summary derivation. Derive only from
+          // entries at or after `clearFloor` — the live ContextMemory rebuilds
+          // `_history` from the post-`/clear` messages only, so counting pre-clear
+          // prompts here would overstate foldedLength and make MessageService skip
+          // unflushed live tail messages for old sessions compacted after a clear.
           const keptUserMessages = selectRecentUserMessages(
-            collectCompactableUserMessages(transcript.map((entry) => entry.message)),
+            collectCompactableUserMessages(
+              transcript.slice(clearFloor).map((entry) => entry.message),
+            ),
             COMPACT_USER_MESSAGE_MAX_TOKENS,
           );
           foldedLength = keptUserMessages.length + 1;

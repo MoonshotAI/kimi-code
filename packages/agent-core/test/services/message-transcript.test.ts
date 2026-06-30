@@ -245,6 +245,23 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(4);
   });
 
+  it('ignores pre-clear prompts when re-deriving a legacy fold length', () => {
+    // Legacy record (no keptUserMessageCount) compacting after a /clear with no
+    // tail re-derives the kept-user count, but only from post-clear messages —
+    // the live context dropped u1/u2 at the clear. Counting them would overstate
+    // foldedLength and make MessageService skip the unflushed live tail.
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      { type: 'context.clear' } as AgentRecord,
+      appendMessage(userMessage('u3')),
+      compaction('SUM', 1),
+    ]);
+    // Post-clear live history = [u3] (1); restore keeps [u3, SUM] = 2.
+    // (Re-deriving over the full transcript would wrongly give 4.)
+    expect(foldedLength).toBe(2);
+  });
+
   it('undo removes through the last real user prompt and skips injections', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),
