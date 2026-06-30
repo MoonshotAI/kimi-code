@@ -55,7 +55,6 @@ export class LedgerTuiEngine {
 	// ---- resize viewport defer (Phase B Task 4) ----
 	#resizeViewportActive = false;
 	#resizeViewportSettleTimer: ReturnType<typeof setTimeout> | undefined;
-	#resizeViewportPaintCount = 0;
 	static readonly #RESIZE_SETTLE_MS = 120;
 
 	// ---- composed + prepared caches (OMP: 1087-1125) ----
@@ -107,10 +106,6 @@ export class LedgerTuiEngine {
 
 	get fullRedraws(): number {
 		return this.#fullRedrawCount;
-	}
-
-	get resizeViewportPaintCount(): number {
-		return this.#resizeViewportPaintCount;
 	}
 
 	// ---- cursor control (OMP: 3647-3671, 3120-3130) ----
@@ -736,7 +731,6 @@ export class LedgerTuiEngine {
 		}
 		buffer += this.#paintEndSequence;
 		this.terminal.write(buffer);
-		this.#resizeViewportPaintCount += 1;
 	}
 
 	public stop(): void {
@@ -761,7 +755,6 @@ export class LedgerTuiEngine {
 			this.#resizeViewportActive = false;
 			this.terminal.write(ALT_SCREEN_EXIT);
 		}
-		this.#resizeViewportPaintCount = 0;
 		this.#committedRows = 0;
 		this.#committedPrefix = [];
 		this.#committedPrefixAuditRows = 0;
