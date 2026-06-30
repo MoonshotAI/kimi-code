@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
     })),
     initializeCliTelemetry: vi.fn(),
     handleUpgrade: vi.fn(),
+    scheduleHeadlessForceExit: vi.fn(),
     log: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -127,6 +128,10 @@ vi.mock('../../src/cli/run-prompt', () => ({
   runPrompt: mocks.runPrompt,
 }));
 
+vi.mock('../../src/cli/headless-exit', () => ({
+  scheduleHeadlessForceExit: mocks.scheduleHeadlessForceExit,
+}));
+
 class ExitCalled extends Error {
   constructor(readonly code: number) {
     super(`exit(${code})`);
@@ -145,6 +150,20 @@ function defaultOpts(): CLIOptions {
     prompt: undefined,
     skillsDirs: [],
   };
+}
+
+async function waitForAssertion(assertion: () => void): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  throw lastError;
 }
 
 async function runHandleMainCommand(opts: CLIOptions): Promise<number | null> {
@@ -233,6 +252,52 @@ describe('main entry command handling', () => {
     });
     expect(runPrompt).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
     expect(runShell).not.toHaveBeenCalled();
+  });
+
+  it('does not force-exit from the reusable handler in print mode', async () => {
+    const opts: CLIOptions = { ...defaultOpts(), prompt: 'explain the repo' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runPrompt.mockResolvedValue(void 0);
+
+    const outcome = await handleMainCommand(opts, '0.0.1-alpha.2');
+
+    // Process disposition belongs to the entrypoint, never to this reusable,
+    // unit-tested handler: arming a process.exit here would kill the test runner
+    // or any embedding host. The handler only reports what ran.
+    expect(mocks.scheduleHeadlessForceExit).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ headlessCompleted: true });
+  });
+
+  it('reports no headless completion for interactive (shell) mode', async () => {
+    const opts = defaultOpts();
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runShell.mockResolvedValue(void 0);
+
+    const outcome = await handleMainCommand(opts, '0.0.1-alpha.2');
+
+    expect(outcome).toEqual({ headlessCompleted: false });
+    expect(mocks.scheduleHeadlessForceExit).not.toHaveBeenCalled();
+  });
+
+  it('arms the force-exit fallback at the entrypoint after a completed headless run', async () => {
+    const opts: CLIOptions = { ...defaultOpts(), prompt: 'explain the repo' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runPrompt.mockResolvedValue(void 0);
+
+    main();
+    const programArgs = mocks.createProgram.mock.calls[0] as unknown as unknown[];
+    const mainAction = programArgs[1] as (opts: CLIOptions) => void;
+    mainAction(opts);
+
+    await waitForAssertion(() => {
+      expect(mocks.scheduleHeadlessForceExit).toHaveBeenCalledTimes(1);
+    });
+    // The exit code is resolved lazily so a goal turn that sets process.exitCode wins.
+    const forceExitArgs = mocks.scheduleHeadlessForceExit.mock.calls[0] as unknown as unknown[];
+    expect(typeof forceExitArgs[1]).toBe('function');
   });
 
   it('keeps shell mode update preflight interactive by default', async () => {

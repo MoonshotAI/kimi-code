@@ -39,7 +39,22 @@ import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
-export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
+/**
+ * Outcome of a CLI command run, reported back to the process entrypoint.
+ *
+ * `handleMainCommand` is a reusable, unit-tested handler — it must not terminate
+ * the process itself. It reports here whether a headless (`kimi -p`) run
+ * completed so the entrypoint (the only place that owns the process) can arm the
+ * force-exit fallback.
+ */
+export interface MainCommandOutcome {
+  readonly headlessCompleted: boolean;
+}
+
+export async function handleMainCommand(
+  opts: CLIOptions,
+  version: string,
+): Promise<MainCommandOutcome> {
   let validated: ReturnType<typeof validateOptions>;
   try {
     validated = validateOptions(opts);
@@ -61,15 +76,11 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
 
   if (validated.uiMode === 'print') {
     await runPrompt(validated.options, version);
-    // Print mode never calls process.exit(); it relies on the event loop
-    // draining. Arm an unref'd fallback so a stray ref'd handle left over from
-    // the run can't wedge a completed `kimi -p` until an external timeout. A
-    // healthy run drains and exits before this fires.
-    scheduleHeadlessForceExit(process, () => Number(process.exitCode) || 0);
-    return;
+    return { headlessCompleted: true };
   }
 
   await runShell(validated.options, version);
+  return { headlessCompleted: false };
 }
 
 /** `kimi migrate`: launch the migration screen only, then exit. */
@@ -145,17 +156,28 @@ export function main(): void {
   const program = createProgram(
     version,
     (opts) => {
-      void handleMainCommand(opts, version).catch(async (error: unknown) => {
-        const operation = opts.prompt !== undefined ? 'run prompt' : 'start shell';
-        await logStartupFailure(operation, error);
-        process.stderr.write(
-          formatStartupError(error, {
-            operation,
-          }),
-        );
-        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
-        process.exit(1);
-      });
+      void handleMainCommand(opts, version)
+        .then((outcome) => {
+          // Only the process entrypoint disposes of the process. Print mode
+          // relies on the event loop draining to exit; arm an unref'd fallback
+          // so a stray ref'd handle left over from the run can't wedge a
+          // completed `kimi -p` until an external timeout. A healthy run drains
+          // and exits before it fires.
+          if (outcome.headlessCompleted) {
+            scheduleHeadlessForceExit(process, () => Number(process.exitCode) || 0);
+          }
+        })
+        .catch(async (error: unknown) => {
+          const operation = opts.prompt !== undefined ? 'run prompt' : 'start shell';
+          await logStartupFailure(operation, error);
+          process.stderr.write(
+            formatStartupError(error, {
+              operation,
+            }),
+          );
+          process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+          process.exit(1);
+        });
     },
     () => {
       void handleMigrateCommand(version).catch(async (error: unknown) => {
