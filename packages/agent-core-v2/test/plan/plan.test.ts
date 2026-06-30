@@ -1,13 +1,23 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
+import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { join } from 'pathe';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
-import { createCommandKaos, testAgent } from './harness';
-import { IDynamicInjector, IPlanModeService } from '../../../src/services/agent';
+import { IContextInjector } from '#/contextInjector';
+import { IContextMemory } from '#/contextMemory';
+import { IPlanService, type PlanData } from '#/plan';
+import { IPermissionRulesService } from '#/permissionRules';
+import { IProfileService } from '#/profile';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import {
+  createCommandKaos,
+  createTestAgent,
+  kaosServices,
+  type TestAgentContext,
+} from '../harness';
 
 function createPlanKaos(overrides: Parameters<typeof createFakeKaos>[0] = {}) {
   return createFakeKaos({
@@ -37,51 +47,115 @@ function createPlanFileKaos(
   };
 }
 
-describe('manual plan entry', () => {
-  it('keeps permission gating out of the PlanMode state object', () => {
-    const ctx = testAgent();
+type InjectableDynamicInjector = {
+  inject(): Promise<void>;
+};
 
-    expect('beforeToolCall' in ctx.get(IPlanModeService)).toBe(false);
+describe('Plan service', () => {
+  let activeKaos: Kaos;
+  let context: IContextMemory;
+  let ctx: TestAgentContext;
+  let injector: InjectableDynamicInjector;
+  let permissionRules: IPermissionRulesService;
+  let plan: IPlanService;
+  let profile: IProfileService;
+  let tempDirs: string[];
+
+  beforeEach(() => {
+    activeKaos = createPlanKaos();
+    tempDirs = [];
+    ctx = createTestAgent(kaosServices(delegatingKaos()));
+    context = ctx.get(IContextMemory);
+    injector = ctx.get(IContextInjector) as unknown as InjectableDynamicInjector;
+    permissionRules = ctx.get(IPermissionRulesService);
+    plan = ctx.get(IPlanService);
+    profile = ctx.get(IProfileService);
   });
 
-  it('enters plan mode without starting a model turn and prepares the plan directory', async () => {
-    const mkdir = vi.fn().mockResolvedValue(undefined);
-    const writeText = vi.fn().mockResolvedValue(0);
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-entry-'));
+  afterEach(async () => {
     try {
-      const ctx = testAgent({
-        kaos: createPlanKaos({ mkdir, writeText }),
-      });
-      ctx.profile.update({ cwd });
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+      await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+    }
+  });
+
+  function delegatingKaos(): Kaos {
+    return new Proxy(createPlanKaos(), {
+      get(_target, prop, receiver) {
+        const value = Reflect.get(activeKaos, prop, receiver);
+        return typeof value === 'function' ? value.bind(activeKaos) : value;
+      },
+    }) as Kaos;
+  }
+
+  function useKaos(kaos: Kaos): void {
+    activeKaos = kaos;
+  }
+
+  function useTools(tools: readonly string[]): void {
+    profile.update({ activeToolNames: [...tools] });
+    ctx.newEvents();
+  }
+
+  async function makeTempDir(prefix: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  async function planStatus(): Promise<PlanData> {
+    return plan.status();
+  }
+
+  async function expectActivePlan(): Promise<NonNullable<PlanData>> {
+    const status = await planStatus();
+    if (status === null) throw new Error('expected active plan');
+    return status;
+  }
+
+  async function expectActivePlanPath(): Promise<string> {
+    return (await expectActivePlan()).path;
+  }
+
+  async function expectPlanActive(active: boolean): Promise<void> {
+    expect((await planStatus()) !== null).toBe(active);
+  }
+
+  describe('manual plan entry', () => {
+    it('keeps permission gating out of the PlanMode state object', () => {
+      expect('beforeToolCall' in plan).toBe(false);
+    });
+
+    it('enters plan mode without starting a model turn and prepares the plan directory', async () => {
+      const mkdir = vi.fn().mockResolvedValue(undefined);
+      const writeText = vi.fn().mockResolvedValue(0);
+      const cwd = await makeTempDir('kimi-plan-entry-');
+      useKaos(createPlanKaos({ mkdir, writeText }));
+      profile.update({ cwd });
 
       await ctx.rpc.enterPlan({});
       await delay(10);
 
-      expect(ctx.get(IPlanModeService).isActive).toBe(true);
-      expect(ctx.get(IPlanModeService).planFilePath?.startsWith(`${join(cwd, 'plan')}/`)).toBe(true);
-      expect(ctx.get(IPlanModeService).planFilePath?.endsWith('.md')).toBe(true);
+      const status = await expectActivePlan();
+      expect(status.path.startsWith(`${join(cwd, 'plan')}/`)).toBe(true);
+      expect(status.path.endsWith('.md')).toBe(true);
       expect(mkdir).toHaveBeenCalledWith(join(cwd, 'plan'), { parents: true, existOk: true });
       expect(writeText).not.toHaveBeenCalled();
       expect(ctx.allEvents.some((event) => event.event === 'turn.started')).toBe(false);
       expect(ctx.llmCalls).toHaveLength(0);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it('derives the no-homedir plan path from cwd on enter and restore', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-path-'));
-    try {
-      const ctx = testAgent({
-        kaos: createPlanKaos({
-          writeText: vi.fn(async (_path: string, content: string) => content.length),
-        }),
-      });
-      ctx.profile.update({ cwd });
-      await ctx.get(IPlanModeService).enter('stable-plan');
+    it('derives the no-homedir plan path from cwd on enter and restore', async () => {
+      const cwd = await makeTempDir('kimi-plan-path-');
+      useKaos(createPlanKaos({
+        writeText: vi.fn(async (_path: string, content: string) => content.length),
+      }));
+      profile.update({ cwd });
+      await plan.enter('stable-plan');
 
-      const livePath = ctx.get(IPlanModeService).planFilePath;
-      if (livePath === null) throw new Error('expected active plan path');
+      const livePath = await expectActivePlanPath();
       expect(livePath).toBe(join(cwd, 'plan', 'stable-plan.md'));
 
       const enterRecord = ctx.allEvents.find(
@@ -92,94 +166,76 @@ describe('manual plan entry', () => {
         time: expect.any(Number),
       });
 
-      const resumed = testAgent({ kaos: createFakeKaos() });
-      resumed.profile.update({ cwd });
-      await resumed.dispatch({
+      plan.exit();
+      await ctx.dispatch({
         type: 'plan_mode.enter',
         id: 'stable-plan',
       });
 
-      expect(resumed.get(IPlanModeService).planFilePath).toBe(livePath);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+      expect(await expectActivePlanPath()).toBe(livePath);
+    });
 
-  it('enters plan mode through the EnterPlanMode tool and reminds the next step', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-tool-entry-'));
-    try {
+    it('enters plan mode through the EnterPlanMode tool and reminds the next step', async () => {
+      const cwd = await makeTempDir('kimi-plan-tool-entry-');
       const { kaos } = createPlanFileKaos();
+      useKaos(kaos);
+      useTools(['EnterPlanMode']);
+      profile.update({ cwd });
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+
       const enterPlanModeCall: ToolCall = {
         type: 'function',
         id: 'call_enter_plan',
         name: 'EnterPlanMode',
         arguments: '{}',
       };
-      const ctx = testAgent({ kaos });
-      ctx.configure({ tools: ['EnterPlanMode'] });
-      ctx.profile.update({ cwd });
-      await ctx.rpc.setPermission({ mode: 'yolo' });
-
       ctx.mockNextResponse({ type: 'text', text: 'I will enter plan mode.' }, enterPlanModeCall);
       ctx.mockNextResponse({ type: 'text', text: 'Plan mode is active now.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Plan first' }] });
 
       await ctx.untilTurnEnd();
       await delay(10);
-      expect(ctx.get(IPlanModeService).isActive).toBe(true);
+      await expectPlanActive(true);
       expect(ctx.llmCalls).toHaveLength(2);
       expect(toolResultText(ctx.llmCalls[1]!.history)).toContain('Plan mode is now active');
-      await ctx.expectResumeMatches();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+    });
   });
-});
 
-describe('plan clear', () => {
-  it('empties the current plan file without leaving plan mode', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-clear-'));
-    try {
+  describe('plan clear', () => {
+    it('empties the current plan file without leaving plan mode', async () => {
+      const cwd = await makeTempDir('kimi-plan-clear-');
       const { files, writeText, kaos } = createPlanFileKaos();
-      const ctx = testAgent({ kaos });
-      ctx.profile.update({ cwd });
-      await ctx.get(IPlanModeService).enter('test-plan', false);
+      useKaos(kaos);
+      profile.update({ cwd });
+      await plan.enter('test-plan', false);
 
-      const planPath = ctx.get(IPlanModeService).planFilePath;
-      if (planPath === null) throw new Error('expected active plan path');
+      const planPath = await expectActivePlanPath();
       files.set(planPath, '# Plan\n\n- Step 1');
 
       await ctx.rpc.clearPlan({});
 
       expect(writeText).toHaveBeenCalledWith(planPath, '');
       expect(files.get(planPath)).toBe('');
-      expect(ctx.get(IPlanModeService).isActive).toBe(true);
-      expect(ctx.get(IPlanModeService).planFilePath).toBe(planPath);
+      expect(await expectActivePlanPath()).toBe(planPath);
       await expect(ctx.rpc.getPlan({})).resolves.toMatchObject({
         id: 'test-plan',
         content: '',
         path: planPath,
       });
-      await ctx.expectResumeMatches();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+    });
   });
-});
 
-describe('plan exit tool', () => {
-  it('reads the current plan file and exits plan mode directly in auto mode', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-exit-'));
-    try {
+  describe('plan exit tool', () => {
+    it('reads the current plan file and exits plan mode directly in auto mode', async () => {
+      const cwd = await makeTempDir('kimi-plan-exit-');
       const { files, kaos } = createPlanFileKaos();
-      const ctx = testAgent({ kaos });
-      ctx.configure({ tools: ['ExitPlanMode'] });
-      ctx.profile.update({ cwd });
+      useKaos(kaos);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'auto' });
-      await ctx.get(IPlanModeService).enter('test-plan', false);
+      await plan.enter('test-plan', false);
 
-      const planPath = ctx.get(IPlanModeService).planFilePath;
-      if (planPath === null) throw new Error('expected active plan path');
+      const planPath = await expectActivePlanPath();
       files.set(planPath, '# Plan\n\n- Inspect\n- Change\n- Verify');
 
       const exitPlanModeCall: ToolCall = {
@@ -196,28 +252,22 @@ describe('plan exit tool', () => {
       expect(
         ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
       ).toBe(false);
-      expect(ctx.get(IPlanModeService).isActive).toBe(false);
+      await expectPlanActive(false);
       const llmInput = ctx.llmCalls[1]!;
       expect(toolResultText(llmInput.history)).toContain('Plan mode deactivated');
       expect(toolResultText(llmInput.history)).toContain('# Plan');
-      await ctx.expectResumeMatches();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it('stops the turn and stays in plan mode when the user rejects the plan', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-reject-exit-'));
-    try {
+    it('stops the turn and stays in plan mode when the user rejects the plan', async () => {
+      const cwd = await makeTempDir('kimi-plan-reject-exit-');
       const { files, kaos } = createPlanFileKaos();
-      const ctx = testAgent({ kaos });
-      ctx.configure({ tools: ['ExitPlanMode'] });
-      ctx.profile.update({ cwd });
+      useKaos(kaos);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'manual' });
-      await ctx.get(IPlanModeService).enter('reject-plan', false);
+      await plan.enter('reject-plan', false);
 
-      const planPath = ctx.get(IPlanModeService).planFilePath;
-      if (planPath === null) throw new Error('expected active plan path');
+      const planPath = await expectActivePlanPath();
       files.set(planPath, '# Plan\n\n- Inspect\n- Change\n- Verify');
 
       const exitPlanModeCall: ToolCall = {
@@ -234,30 +284,24 @@ describe('plan exit tool', () => {
       approval.respond({ decision: 'rejected', selectedLabel: 'Reject' });
 
       await ctx.untilTurnEnd();
-      expect(ctx.get(IPlanModeService).isActive).toBe(true);
+      await expectPlanActive(true);
       expect(ctx.llmCalls).toHaveLength(1);
-      expect(toolResultText(ctx.context.getHistory())).toContain('Plan rejected by user');
-      await ctx.expectResumeMatches();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  it('does not execute later tool calls in the same batch after plan rejection', async () => {
-    const execWithEnv = vi.fn(() => {
-      throw new Error('Bash should not execute after plan rejection');
+      expect(toolResultText(context.get())).toContain('Plan rejected by user');
     });
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-reject-skip-tool-'));
-    try {
-      const { files, kaos } = createPlanFileKaos(undefined, { execWithEnv });
-      const ctx = testAgent({ kaos });
-      ctx.configure({ tools: ['ExitPlanMode', 'Bash'] });
-      ctx.profile.update({ cwd });
-      await ctx.rpc.setPermission({ mode: 'yolo' });
-      await ctx.get(IPlanModeService).enter('reject-and-exit-plan', false);
 
-      const planPath = ctx.get(IPlanModeService).planFilePath;
-      if (planPath === null) throw new Error('expected active plan path');
+    it('does not execute later tool calls in the same batch after plan rejection', async () => {
+      const execWithEnv = vi.fn(() => {
+        throw new Error('Bash should not execute after plan rejection');
+      });
+      const cwd = await makeTempDir('kimi-plan-reject-skip-tool-');
+      const { files, kaos } = createPlanFileKaos(undefined, { execWithEnv });
+      useKaos(kaos);
+      useTools(['ExitPlanMode', 'Bash']);
+      profile.update({ cwd });
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+      await plan.enter('reject-and-exit-plan', false);
+
+      const planPath = await expectActivePlanPath();
       files.set(planPath, '# Plan\n\n- Inspect\n- Change\n- Verify');
 
       const exitPlanModeCall: ToolCall = {
@@ -283,31 +327,25 @@ describe('plan exit tool', () => {
       approval.respond({ decision: 'rejected', selectedLabel: 'Reject' });
 
       await ctx.untilTurnEnd();
-      expect(ctx.get(IPlanModeService).isActive).toBe(true);
+      await expectPlanActive(true);
       expect(execWithEnv).not.toHaveBeenCalled();
       expect(ctx.llmCalls).toHaveLength(1);
-      expect(toolResultText(ctx.context.getHistory())).toContain('Plan rejected by user');
-      expect(toolResultText(ctx.context.getHistory())).toContain(
+      expect(toolResultText(context.get())).toContain('Plan rejected by user');
+      expect(toolResultText(context.get())).toContain(
         'Tool skipped because a previous tool call stopped the turn.',
       );
-      await ctx.expectResumeMatches();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it('refuses to exit when the current plan file is empty', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-empty-exit-'));
-    try {
+    it('refuses to exit when the current plan file is empty', async () => {
+      const cwd = await makeTempDir('kimi-plan-empty-exit-');
       const { files, kaos } = createPlanFileKaos();
-      const ctx = testAgent({ kaos });
-      ctx.configure({ tools: ['ExitPlanMode'] });
-      ctx.profile.update({ cwd });
+      useKaos(kaos);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'yolo' });
-      await ctx.get(IPlanModeService).enter('empty-plan', false);
+      await plan.enter('empty-plan', false);
 
-      const planPath = ctx.get(IPlanModeService).planFilePath;
-      if (planPath === null) throw new Error('expected active plan path');
+      const planPath = await expectActivePlanPath();
       files.set(planPath, '');
 
       const exitPlanModeCall: ToolCall = {
@@ -324,28 +362,22 @@ describe('plan exit tool', () => {
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show an empty plan' }] });
 
       await ctx.untilTurnEnd();
-      expect(ctx.get(IPlanModeService).isActive).toBe(true);
+      await expectPlanActive(true);
       expect(toolResultText(ctx.llmCalls[1]!.history)).toContain('No plan file found');
-      await ctx.expectResumeMatches();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+    });
   });
-});
 
-describe('plan exit tool options', () => {
-  it('keeps options for approval when an option omits the optional description', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-options-exit-'));
-    try {
+  describe('plan exit tool options', () => {
+    it('keeps options for approval when an option omits the optional description', async () => {
+      const cwd = await makeTempDir('kimi-plan-options-exit-');
       const { files, kaos } = createPlanFileKaos();
-      const ctx = testAgent({ kaos });
-      ctx.configure({ tools: ['ExitPlanMode'] });
-      ctx.profile.update({ cwd });
+      useKaos(kaos);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'manual' });
-      await ctx.get(IPlanModeService).enter('options-plan', false);
+      await plan.enter('options-plan', false);
 
-      const planPath = ctx.get(IPlanModeService).planFilePath;
-      if (planPath === null) throw new Error('expected active plan path');
+      const planPath = await expectActivePlanPath();
       files.set(planPath, '# Plan\n\n- Inspect\n- Change\n- Verify');
 
       const exitPlanModeCall: ToolCall = {
@@ -377,33 +409,26 @@ describe('plan exit tool options', () => {
 
       approval.respond({ decision: 'approved', selectedLabel: 'Approach A' });
       await ctx.untilTurnEnd();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+    });
   });
-});
 
-describe('plan allows safe tool flow', () => {
-  it.each(['Write', 'Edit'] as const)(
-    'runs %s on the active plan file without approval in manual mode',
-    async (toolName) => {
-      const files = new Map<string, string>();
-      const readText = vi.fn(async (path: string) => files.get(path) ?? '');
-      const writeText = vi.fn(async (path: string, content: string) => {
-        files.set(path, content);
-        return content.length;
-      });
-      const ctx = testAgent({
-        kaos: createPlanKaos({ readText, writeText }),
-      });
-      const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-write-tool-'));
-      try {
-        ctx.configure({ tools: [toolName] });
-        ctx.profile.update({ cwd });
-        await ctx.get(IPlanModeService).enter('test-plan', false);
+  describe('plan allows safe tool flow', () => {
+    it.each(['Write', 'Edit'] as const)(
+      'runs %s on the active plan file without approval in manual mode',
+      async (toolName) => {
+        const files = new Map<string, string>();
+        const readText = vi.fn(async (path: string) => files.get(path) ?? '');
+        const writeText = vi.fn(async (path: string, content: string) => {
+          files.set(path, content);
+          return content.length;
+        });
+        useKaos(createPlanKaos({ readText, writeText }));
+        const cwd = await makeTempDir('kimi-plan-write-tool-');
+        useTools([toolName]);
+        profile.update({ cwd });
+        await plan.enter('test-plan', false);
 
-        const planPath = ctx.get(IPlanModeService).planFilePath;
-        if (planPath === null) throw new Error('expected active plan path');
+        const planPath = await expectActivePlanPath();
         files.set(planPath, '# Plan\n\n- Draft');
 
         const expectedContent =
@@ -430,27 +455,20 @@ describe('plan allows safe tool flow', () => {
         expect(
           ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
         ).toBe(false);
-        await ctx.expectResumeMatches();
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
-    },
-  );
+      },
+    );
 
-  it('keeps explicit deny rules above active plan file writes', async () => {
-    const files = new Map<string, string>();
-    const writeText = vi.fn(async (path: string, content: string) => {
-      files.set(path, content);
-      return content.length;
-    });
-    const ctx = testAgent({
-      kaos: createPlanKaos({ writeText }),
-    });
-    const cwd = await mkdtemp(join(tmpdir(), 'kimi-plan-deny-write-'));
-    try {
-      ctx.configure({ tools: ['Write'] });
-      ctx.profile.update({ cwd });
-      ctx.permissionRules.addRules([
+    it('keeps explicit deny rules above active plan file writes', async () => {
+      const files = new Map<string, string>();
+      const writeText = vi.fn(async (path: string, content: string) => {
+        files.set(path, content);
+        return content.length;
+      });
+      useKaos(createPlanKaos({ writeText }));
+      const cwd = await makeTempDir('kimi-plan-deny-write-');
+      useTools(['Write']);
+      profile.update({ cwd });
+      permissionRules.addRules([
         {
           decision: 'deny',
           scope: 'user',
@@ -458,10 +476,9 @@ describe('plan allows safe tool flow', () => {
           reason: 'blocked by test',
         },
       ]);
-      await ctx.get(IPlanModeService).enter('test-plan', false);
+      await plan.enter('test-plan', false);
 
-      const planPath = ctx.get(IPlanModeService).planFilePath;
-      if (planPath === null) throw new Error('expected active plan path');
+      const planPath = await expectActivePlanPath();
       const content = '# Plan\n\n- Inspect\n- Verify';
       const writePlanCall: ToolCall = {
         type: 'function',
@@ -478,34 +495,31 @@ describe('plan allows safe tool flow', () => {
 
       expect(files.get(planPath)).toBeUndefined();
       expect(writeText).not.toHaveBeenCalled();
-      expect(toolResultText(ctx.context.getHistory())).toContain(
+      expect(toolResultText(context.get())).toContain(
         'Tool "Write" was denied by permission rule. Reason: blocked by test',
       );
       expect(
         ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
       ).toBe(false);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it('allows read-only Bash to continue through permission and execution', async () => {
-    const bashCall: ToolCall = {
-      type: 'function',
-      id: 'call_bash',
-      name: 'Bash',
-      arguments: '{"command":"printf plan-safe","timeout":60}',
-    };
-    const ctx = testAgent({ kaos: createCommandKaos('plan-safe') });
-    ctx.configure({ tools: ['Bash'] });
-    await ctx.rpc.setPermission({ mode: 'yolo' });
-    await ctx.get(IPlanModeService).enter('test-plan', false);
+    it('allows read-only Bash to continue through permission and execution', async () => {
+      const bashCall: ToolCall = {
+        type: 'function',
+        id: 'call_bash',
+        name: 'Bash',
+        arguments: '{"command":"printf plan-safe","timeout":60}',
+      };
+      useKaos(createCommandKaos('plan-safe'));
+      useTools(['Bash']);
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+      await plan.enter('test-plan', false);
 
-    ctx.mockNextResponse({ type: 'text', text: 'I will inspect safely.' }, bashCall);
-    ctx.mockNextResponse({ type: 'text', text: 'The safe command printed plan-safe.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Inspect without mutating files' }] });
+      ctx.mockNextResponse({ type: 'text', text: 'I will inspect safely.' }, bashCall);
+      ctx.mockNextResponse({ type: 'text', text: 'The safe command printed plan-safe.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Inspect without mutating files' }] });
 
-    expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode     { "mode": "yolo", "time": "<time>" }
       [emit] agent.status.updated    { "permission": "yolo" }
       [wire] plan_mode.enter         { "id": "test-plan", "time": "<time>" }
@@ -539,34 +553,33 @@ describe('plan allows safe tool flow', () => {
       [emit] turn.ended              { "turnId": 0, "reason": "completed" }
     `);
 
-    expect(ctx.llmCalls).toHaveLength(2);
-    expect(toolResultText(ctx.context.getHistory())).toContain('plan-safe');
-    expect(ctx.get(IPlanModeService).isActive).toBe(true);
-    expect(
-      ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
-    ).toBe(false);
-    await ctx.expectResumeMatches();
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(toolResultText(context.get())).toContain('plan-safe');
+      await expectPlanActive(true);
+      expect(
+        ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
+      ).toBe(false);
+    });
   });
-});
 
-describe('plan mode Bash ordinary permission behavior', () => {
-  it('allows Bash through ordinary yolo permission behavior', async () => {
-    const bashCall: ToolCall = {
-      type: 'function',
-      id: 'call_bash',
-      name: 'Bash',
-      arguments: '{"command":"rm forbidden.txt","timeout":60}',
-    };
-    const ctx = testAgent({ kaos: createCommandKaos('removed') });
-    ctx.configure({ tools: ['Bash'] });
-    await ctx.rpc.setPermission({ mode: 'yolo' });
-    await ctx.get(IPlanModeService).enter('test-plan', false);
+  describe('plan mode Bash ordinary permission behavior', () => {
+    it('allows Bash through ordinary yolo permission behavior', async () => {
+      const bashCall: ToolCall = {
+        type: 'function',
+        id: 'call_bash',
+        name: 'Bash',
+        arguments: '{"command":"rm forbidden.txt","timeout":60}',
+      };
+      useKaos(createCommandKaos('removed'));
+      useTools(['Bash']);
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+      await plan.enter('test-plan', false);
 
-    ctx.mockNextResponse({ type: 'text', text: 'I will mutate a file.' }, bashCall);
-    ctx.mockNextResponse({ type: 'text', text: 'The command completed.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Remove forbidden.txt' }] });
+      ctx.mockNextResponse({ type: 'text', text: 'I will mutate a file.' }, bashCall);
+      ctx.mockNextResponse({ type: 'text', text: 'The command completed.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Remove forbidden.txt' }] });
 
-    expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.set_mode     { "mode": "yolo", "time": "<time>" }
       [emit] agent.status.updated    { "permission": "yolo" }
       [wire] plan_mode.enter         { "id": "test-plan", "time": "<time>" }
@@ -599,93 +612,81 @@ describe('plan mode Bash ordinary permission behavior', () => {
       [emit] turn.step.completed     { "turnId": 0, "step": 2, "stepId": "<uuid-2>", "usage": { "inputOther": 553, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [emit] turn.ended              { "turnId": 0, "reason": "completed" }
     `);
-    expect(toolResultText(ctx.context.getHistory())).toContain('removed');
-    await ctx.expectResumeMatches();
-  });
-});
-
-describe('plan mode injection cadence', () => {
-  it('dedupes immediate repeats and emits sparse reminders after assistant turns', async () => {
-    const ctx = testAgent();
-    ctx.configure();
-    await ctx.get(IPlanModeService).enter('test-plan', false);
-
-    await injectDynamic(ctx);
-    const afterFull = ctx.context.getHistory().length;
-    expect(lastUserText(ctx.context.getHistory())).toContain('Plan mode is active');
-    expect(lastUserText(ctx.context.getHistory())).toContain('Plan file:');
-
-    await injectDynamic(ctx);
-    expect(ctx.context.getHistory()).toHaveLength(afterFull);
-
-    ctx.appendAssistantTurn(1, 'assistant one');
-    ctx.appendAssistantTurn(2, 'assistant two');
-    await injectDynamic(ctx);
-
-    expect(lastUserText(ctx.context.getHistory())).toContain('Plan mode still active');
-    expect(lastUserText(ctx.context.getHistory())).toContain('Plan file:');
-    await ctx.expectResumeMatches();
+      expect(toolResultText(context.get())).toContain('removed');
+    });
   });
 
-  it('emits a reentry reminder when restored plan mode already has plan content', async () => {
-    const ctx = testAgent({
-      kaos: createFakeKaos({
+  describe('plan mode injection cadence', () => {
+    it('dedupes immediate repeats and emits sparse reminders after assistant turns', async () => {
+      await plan.enter('test-plan', false);
+
+      await injectDynamic();
+      const afterFull = context.get().length;
+      expect(lastUserText(context.get())).toContain('Plan mode is active');
+      expect(lastUserText(context.get())).toContain('Plan file:');
+
+      await injectDynamic();
+      expect(context.get()).toHaveLength(afterFull);
+
+      ctx.appendAssistantTurn(1, 'assistant one');
+      ctx.appendAssistantTurn(2, 'assistant two');
+      await injectDynamic();
+
+      expect(lastUserText(context.get())).toContain('Plan mode still active');
+      expect(lastUserText(context.get())).toContain('Plan file:');
+    });
+
+    it('emits a reentry reminder when restored plan mode already has plan content', async () => {
+      useKaos(createPlanKaos({
         readText: vi.fn(async () => '# Existing Plan\n\n- Keep this context'),
-      }),
+      }));
+      await ctx.dispatch({
+        type: 'plan_mode.enter',
+        id: 'restored-plan',
+      });
+
+      await injectDynamic();
+
+      expect(lastUserText(context.get())).toContain('Re-entering Plan Mode');
+      expect(lastUserText(context.get())).toContain('Read the existing plan file');
     });
-    ctx.configure();
-    await ctx.dispatch({
-      type: 'plan_mode.enter',
-      id: 'restored-plan',
+
+    it('emits one exit reminder after leaving plan mode', async () => {
+      await plan.enter('test-plan', false);
+      await injectDynamic();
+
+      plan.exit();
+      await injectDynamic();
+      const afterExit = context.get().length;
+      expect(lastUserText(context.get())).toContain('Plan mode is no longer active');
+
+      await injectDynamic();
+      expect(context.get()).toHaveLength(afterExit);
     });
 
-    await injectDynamic(ctx);
+    it('keeps the preserved injection index aligned after undo removes earlier messages', async () => {
+      await plan.enter('test-plan', false);
 
-    expect(lastUserText(ctx.context.getHistory())).toContain('Re-entering Plan Mode');
-    expect(lastUserText(ctx.context.getHistory())).toContain('Read the existing plan file');
-    await ctx.expectResumeMatches();
+      ctx.appendUserMessage([{ type: 'text', text: 'draft the plan' }]);
+      await injectDynamic();
+      ctx.appendAssistantTurn(1, 'Plan drafted.');
+
+      ctx.undoHistory(1);
+      ctx.appendUserMessage([{ type: 'text', text: 'new plan request' }]);
+      await injectDynamic();
+
+      expect(lastUserText(context.get())).toContain('Plan mode is active');
+    });
   });
 
-  it('emits one exit reminder after leaving plan mode', async () => {
-    const ctx = testAgent();
-    ctx.configure();
-    await ctx.get(IPlanModeService).enter('test-plan', false);
-    await injectDynamic(ctx);
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
-    ctx.get(IPlanModeService).exit();
-    await injectDynamic(ctx);
-    const afterExit = ctx.context.getHistory().length;
-    expect(lastUserText(ctx.context.getHistory())).toContain('Plan mode is no longer active');
-
-    await injectDynamic(ctx);
-    expect(ctx.context.getHistory()).toHaveLength(afterExit);
-    await ctx.expectResumeMatches();
-  });
-
-  it('keeps the preserved injection index aligned after undo removes earlier messages', async () => {
-    const ctx = testAgent();
-    ctx.configure();
-    await ctx.get(IPlanModeService).enter('test-plan', false);
-
-    ctx.appendUserMessage([{ type: 'text', text: 'draft the plan' }]);
-    await injectDynamic(ctx);
-    ctx.appendAssistantTurn(1, 'Plan drafted.');
-
-    ctx.undoHistory(1);
-    ctx.appendUserMessage([{ type: 'text', text: 'new plan request' }]);
-    await injectDynamic(ctx);
-
-    expect(lastUserText(ctx.context.getHistory())).toContain('Plan mode is active');
-  });
+  async function injectDynamic(): Promise<void> {
+    await injector.inject();
+  }
 });
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function injectDynamic(ctx: ReturnType<typeof testAgent>): Promise<void> {
-  await (ctx.get(IDynamicInjector) as unknown as { inject(): Promise<void> }).inject();
-}
 
 function lastUserText(history: readonly { role: string; content: readonly unknown[] }[]): string {
   const message = history.findLast((item) => item.role === 'user');

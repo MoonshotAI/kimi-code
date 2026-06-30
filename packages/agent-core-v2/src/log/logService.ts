@@ -21,30 +21,52 @@ import {
   levelEnabled,
 } from './log';
 
-function extractError(payload: LogPayload): LogEntryError | undefined {
-  if (payload instanceof Error) {
-    return { message: payload.message, stack: payload.stack };
-  }
-  if (
-    typeof payload === 'object' &&
-    payload !== null &&
-    'error' in payload &&
-    (payload as { error: unknown }).error instanceof Error
-  ) {
-    const err = (payload as { error: Error }).error;
-    return { message: err.message, stack: err.stack };
-  }
-  return undefined;
+interface ExtractedPayload {
+  readonly ctx?: LogContext;
+  readonly error?: LogEntryError;
 }
 
-function extractContext(payload: LogPayload): LogContext | undefined {
-  if (typeof payload === 'object' && payload !== null && !(payload instanceof Error)) {
-    return { ...(payload as LogContext) };
+function errorEntry(error: Error): LogEntryError {
+  return { message: error.message, stack: error.stack };
+}
+
+function stringifyPayload(payload: Exclude<LogPayload, undefined>): string {
+  if (typeof payload === 'string') return payload;
+  try {
+    const json = JSON.stringify(payload);
+    return json === undefined ? String(payload) : json;
+  } catch {
+    return String(payload);
   }
-  if (payload !== undefined && !(payload instanceof Error)) {
-    return { reason: typeof payload === 'string' ? payload : JSON.stringify(payload) };
+}
+
+function extractPayload(payload: LogPayload): ExtractedPayload | undefined {
+  if (payload === undefined) return {};
+  if (payload instanceof Error) return { error: errorEntry(payload) };
+  if (typeof payload === 'object' && payload !== null) {
+    let entries: [string, unknown][];
+    try {
+      entries = Object.entries(payload as Record<string, unknown>);
+    } catch {
+      return undefined;
+    }
+
+    let error: LogEntryError | undefined;
+    const ctx: LogContext = {};
+    for (const [key, value] of entries) {
+      if (key === 'error' && value instanceof Error) {
+        error = errorEntry(value);
+        continue;
+      }
+      ctx[key] = value;
+    }
+    return {
+      ...(Object.keys(ctx).length > 0 ? { ctx } : {}),
+      ...(error !== undefined ? { error } : {}),
+    };
   }
-  return undefined;
+
+  return { ctx: { reason: stringifyPayload(payload) } };
 }
 
 export class MemoryLogWriterService implements ILogWriterService {
@@ -79,28 +101,19 @@ export class ConsoleLogWriterService implements ILogWriterService {
   }
 }
 
-export class LogService implements ILogService {
-  declare readonly _serviceBrand: undefined;
-  private _level: LogLevel;
+export interface LogLevelState {
+  level: LogLevel;
+}
 
+export class BoundLogger implements ILogger {
   constructor(
-    @ILogWriterService protected readonly writer: ILogWriterService,
+    protected readonly writer: ILogWriterService,
+    private readonly levelState: LogLevelState,
     private readonly bound: LogContext = {},
-    level: LogLevel = 'info',
-  ) {
-    this._level = level;
-  }
+  ) {}
 
-  get level(): LogLevel {
-    return this._level;
-  }
-
-  setLevel(level: LogLevel): void {
-    this._level = level;
-  }
-
-  flush(): Promise<void> {
-    return this.writer.flush?.() ?? Promise.resolve();
+  child(ctx: LogContext): ILogger {
+    return new BoundLogger(this.writer, this.levelState, { ...this.bound, ...ctx });
   }
 
   error(message: string, payload?: LogPayload): void {
@@ -116,18 +129,16 @@ export class LogService implements ILogService {
     this.emit('debug', message, payload);
   }
 
-  child(ctx: LogContext): ILogger {
-    return new LogService(this.writer, { ...this.bound, ...ctx }, this._level);
-  }
-
   private emit(
     level: Exclude<LogLevel, 'off'>,
     message: string,
     payload?: LogPayload,
   ): void {
-    if (!levelEnabled(level, this._level)) return;
-    const payloadCtx = extractContext(payload);
-    const error = extractError(payload);
+    if (!levelEnabled(level, this.levelState.level)) return;
+    const extracted = extractPayload(payload);
+    if (extracted === undefined) return;
+    const payloadCtx = extracted.ctx;
+    const error = extracted.error;
     const ctx =
       payloadCtx !== undefined || Object.keys(this.bound).length > 0
         ? { ...payloadCtx, ...this.bound }
@@ -140,6 +151,29 @@ export class LogService implements ILogService {
       ...(error !== undefined ? { error } : {}),
     };
     this.writer.write(entry);
+  }
+}
+
+export class LogService extends BoundLogger implements ILogService {
+  declare readonly _serviceBrand: undefined;
+  private readonly rootLevel: LogLevelState;
+
+  constructor(@ILogWriterService writer: ILogWriterService) {
+    const rootLevel: LogLevelState = { level: 'info' };
+    super(writer, rootLevel);
+    this.rootLevel = rootLevel;
+  }
+
+  get level(): LogLevel {
+    return this.rootLevel.level;
+  }
+
+  setLevel(level: LogLevel): void {
+    this.rootLevel.level = level;
+  }
+
+  flush(): Promise<void> {
+    return this.writer.flush?.() ?? Promise.resolve();
   }
 }
 

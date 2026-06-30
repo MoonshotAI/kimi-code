@@ -49,6 +49,7 @@ package "Session scope (per session)" #EAFAF1 {
   rectangle "<b>agent-lifecycle</b>\n<size:9><i>Session</i></size>\n  IAgentLifecycleService" as agent_lifecycle #D5F5E3
   rectangle "<b>interaction</b>\n<size:9><i>Session</i></size>\n  IInteractionService" as interaction #D5F5E3
   rectangle "<b>workspaceContext</b>\n<size:9><i>Session</i></size>\n  IWorkspaceContext" as workspaceContext #D5F5E3
+  rectangle "<b>sessionLog</b>\n<size:9><i>Session</i></size>\n  ISessionLogService\n  ILogWriterService" as sessionLog #D5F5E3
   rectangle "<b>kaos</b>\n<size:9><i>Session</i></size>\n  IKaos (seed)" as kaos #D5F5E3
   rectangle "<b>agentFs</b>\n<size:9><i>Session</i></size>\n  IAgentFileSystem\n  IFsService" as agentFs #D5F5E3
   rectangle "<b>approval</b>\n<size:9><i>Session</i></size>\n  IApprovalService" as approval #D5F5E3
@@ -126,6 +127,8 @@ modelCatalog --> provider #34495E
 modelCatalog --> model #34495E
 modelCatalog --> config #34495E
 modelCatalog --> auth #34495E
+workspaceContext --> kaos #34495E
+sessionLog --> session_context #34495E
 agentFs --> workspaceContext #34495E
 agentFs --> kaos #34495E
 agentFs --> process #34495E
@@ -148,6 +151,7 @@ session_metadata --> log #34495E
 session_activity --> agent_lifecycle #34495E
 session_activity --> interaction #34495E
 wireRecord --> blobStore #34495E
+wireRecord --> bootstrap #34495E
 wireRecord --> storage #34495E
 blobStore --> storage #34495E
 filestore --> storage #34495E

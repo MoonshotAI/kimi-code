@@ -14,9 +14,10 @@ import { dirname } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { ISessionContext } from '#/session-context';
 
 import { formatEntry, type FormatOptions } from './formatter';
-import { ILogWriterService, type LogEntry, ISessionLogOptions } from './log';
+import { ILogWriterService, type LogEntry } from './log';
 import { ILogOptions, resolveSessionLogPath } from './logConfig';
 
 export const PENDING_MAX = 1000;
@@ -282,7 +283,7 @@ export class SessionFileLogWriterService extends Disposable implements ILogWrite
 
   constructor(
     @ILogOptions options: ILogOptions,
-    @ISessionLogOptions session: ISessionLogOptions,
+    @ISessionContext session: ISessionContext,
   ) {
     super();
     this.inner = new FileLogWriterService({

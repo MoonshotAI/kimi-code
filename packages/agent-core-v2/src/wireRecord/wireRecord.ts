@@ -3,7 +3,6 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import { createDecorator } from "#/_base/di/instantiation";
 import type { IDisposable } from "#/_base/di/lifecycle";
 
-import type { IBlobStoreService } from '#/blobStore';
 import type { Hooks } from '#/hooks';
 import type { WireRecord, WireRecordMap } from '#/wireRecord';
 import type { WireMigrationRecord } from './migration';
@@ -34,15 +33,6 @@ export interface WireRecordRestoreOptions {
 
 export interface WireRecordRestoreResult {
   readonly warning?: string;
-}
-
-export interface WireRecordServiceOptions {
-  readonly homedir?: string;
-  readonly blobStore?: IBlobStoreService;
-  readonly onPersistenceError?: (
-    error: unknown,
-    record?: PersistedWireRecord,
-  ) => void;
 }
 
 export interface WireRecordBlobTarget<TRecord = WireRecord> {

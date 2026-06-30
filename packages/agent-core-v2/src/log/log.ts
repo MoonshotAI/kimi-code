@@ -9,7 +9,6 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { ScopeSeed } from '#/_base/di/scope';
 
 export type LogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug';
 
@@ -79,20 +78,3 @@ export interface ISessionLogService extends ILogger {
 
 export const ISessionLogService: ServiceIdentifier<ISessionLogService> =
   createDecorator<ISessionLogService>('sessionLogService');
-
-export interface ISessionLogOptions {
-  readonly sessionId: string;
-  readonly sessionDir: string;
-}
-
-export const ISessionLogOptions: ServiceIdentifier<ISessionLogOptions> =
-  createDecorator<ISessionLogOptions>('sessionLogOptions');
-
-export function sessionLogSeed(sessionId: string, sessionDir: string): ScopeSeed {
-  return [
-    [
-      ISessionLogOptions as ServiceIdentifier<unknown>,
-      { sessionId, sessionDir } satisfies ISessionLogOptions,
-    ],
-  ];
-}

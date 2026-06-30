@@ -1,18 +1,11 @@
 import type { Environment } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig, ToolCall } from '@moonshot-ai/kosong';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { InstantiationService, ServiceCollection } from '../../../src/di';
-import type { ResolvedAgentProfile } from '../../../src/profile';
-import {
-  AGENT_WIRE_PROTOCOL_VERSION,
-  IProfileService,
-  IWireRecord,
-  createAgentRuntime,
-  type AgentRuntimeOptions,
-} from '../../../src/services/agent';
-import { testAgent } from './harness';
-import { DEFAULT_TEST_SYSTEM_PROMPT } from './harness/snapshots';
+import { IProfileService, type ResolvedAgentProfile } from '#/profile';
+import { AGENT_WIRE_PROTOCOL_VERSION } from '#/wireRecord';
+import { createTestAgent, type TestAgentContext } from '../harness';
+import { DEFAULT_TEST_SYSTEM_PROMPT } from '../harness/snapshots';
 
 const TEST_OS_ENV: Environment = {
   osKind: 'Linux',
@@ -23,8 +16,23 @@ const TEST_OS_ENV: Environment = {
 };
 
 describe('Agent config', () => {
+  let ctx: TestAgentContext;
+  let profile: IProfileService;
+
+  beforeEach(() => {
+    ctx = createTestAgent();
+    profile = ctx.get(IProfileService);
+  });
+
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it('exposes provider, system prompt, thinking level, and model capability updates', async () => {
-    const ctx = testAgent();
     const initialProvider: ProviderConfig = {
       type: 'openai',
       apiKey: 'sk-initial',
@@ -39,10 +47,7 @@ describe('Agent config', () => {
       tool_use: true,
       max_context_tokens: 128000,
     };
-    ctx.configure({
-      provider: initialProvider,
-      modelCapabilities: initialCapability,
-    });
+    ctx.configureRuntimeModel(initialProvider, initialCapability);
 
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       provider: initialProvider,
@@ -66,7 +71,7 @@ describe('Agent config', () => {
       max_context_tokens: 262144,
     };
     ctx.configureRuntimeModel(nextProvider, nextCapability);
-    ctx.profile.update({
+    profile.update({
       systemPrompt: 'Changed profile prompt.',
       thinkingLevel: 'high',
     });
@@ -77,19 +82,16 @@ describe('Agent config', () => {
       thinkingLevel: 'high',
       modelCapabilities: nextCapability,
     });
-    await ctx.expectResumeMatches();
   });
 
   it('useProfile emits the rendered system prompt and active tools', async () => {
-    const ctx = testAgent();
-    ctx.configure();
-    const profile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = {
       name: 'test-profile',
       systemPrompt: () => 'Profile system prompt.',
       tools: ['Read'],
     };
 
-    ctx.profile.useProfile(profile, {
+    profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
       cwd: process.cwd(),
     });
@@ -99,20 +101,17 @@ describe('Agent config', () => {
       [emit] agent.status.updated     { "model": "mock-model", "maxContextTokens": 1000000 }
       [wire] tools.set_active_tools   { "names": [ "Read" ], "time": "<time>" }
     `);
-    await ctx.expectResumeMatches();
   });
 
   it('useProfile passes additionalDirsInfo to profile system prompts', async () => {
-    const ctx = testAgent();
-    ctx.configure();
-    const profile: ResolvedAgentProfile = {
+    const resolvedProfile: ResolvedAgentProfile = {
       name: 'context-profile',
       systemPrompt: (context) =>
-        `Prompt with additional dirs: ${context.additionalDirsInfo ?? 'none'}`,
+        `Prompt with additional dirs: ${context['additionalDirsInfo'] ?? 'none'}`,
       tools: ['Read'],
     };
 
-    ctx.profile.useProfile(profile, {
+    profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
       cwd: process.cwd(),
       cwdListing: 'cwd listing',
@@ -120,63 +119,53 @@ describe('Agent config', () => {
       additionalDirsInfo: '### /extra\nextra-file.txt',
     });
 
-    expect(ctx.profile.data().systemPrompt).toBe(
+    expect(profile.data().systemPrompt).toBe(
       'Prompt with additional dirs: ### /extra\nextra-file.txt',
     );
 
-    ctx.profile.useProfile(profile, {
+    profile.useProfile(resolvedProfile, {
       osEnv: TEST_OS_ENV,
       cwd: process.cwd(),
     });
 
-    expect(ctx.profile.data().systemPrompt).toBe('Prompt with additional dirs: none');
+    expect(profile.data().systemPrompt).toBe('Prompt with additional dirs: none');
   });
 
   it('restores config and active tools through activated handlers', async () => {
-    const { runtime, root } = createBareRuntime({ cwd: '/initial-cwd' });
-    try {
-      await runtime.get(IWireRecord).restore([
-        {
-          type: 'metadata',
-          protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-          created_at: 1,
-        },
-        {
-          type: 'config.update',
-          cwd: '/restored-cwd',
-          modelAlias: 'restored-model',
-          profileName: 'restored-profile',
-          systemPrompt: 'Restored prompt.',
-        },
-        {
-          type: 'tools.set_active_tools',
-          names: ['Read'],
-        },
-      ]);
-
-      expect(runtime.get(IProfileService).data()).toMatchObject({
+    await ctx.restore([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'config.update',
         cwd: '/restored-cwd',
         modelAlias: 'restored-model',
         profileName: 'restored-profile',
         systemPrompt: 'Restored prompt.',
-        activeToolNames: ['Read'],
-      });
-    } finally {
-      await runtime.close();
-      root.dispose();
-    }
+      },
+      {
+        type: 'tools.set_active_tools',
+        names: ['Read'],
+      },
+    ]);
+
+    expect(profile.data()).toMatchObject({
+      cwd: '/restored-cwd',
+      modelAlias: 'restored-model',
+      profileName: 'restored-profile',
+      systemPrompt: 'Restored prompt.',
+      activeToolNames: ['Read'],
+    });
   });
 
   it('config.update with cwd initializes builtin tools', async () => {
-    const ctx = testAgent();
-    ctx.configure();
-
     const tools = await ctx.rpc.getTools({});
 
     expect(toolNames(tools)).toEqual(
       expect.arrayContaining(['Read', 'Write', 'Edit', 'Grep', 'Glob']),
     );
-    await ctx.expectResumeMatches();
   });
 
   it('keeps turn-start config for later steps and applies updates to the next turn', async () => {
@@ -186,8 +175,7 @@ describe('Agent config', () => {
       name: 'Lookup',
       arguments: '{"query":"original"}',
     };
-    const ctx = testAgent();
-    ctx.configure({ tools: ['Lookup'] });
+    profile.update({ activeToolNames: ['Lookup'] });
     await ctx.rpc.registerTool({
       name: 'Lookup',
       description: 'Look up a short test value.',
@@ -230,7 +218,7 @@ describe('Agent config', () => {
       apiKey: 'test-key',
       model: 'changed-model',
     });
-    ctx.profile.update({ systemPrompt: 'Changed system prompt.' });
+    profile.update({ systemPrompt: 'Changed system prompt.' });
     await ctx.rpc.setActiveTools({ names: [] });
 
     const toolCallEvents = ctx.untilToolCall({
@@ -285,19 +273,8 @@ describe('Agent config', () => {
         assistant: text "Still using the original turn config."
         user: text "Start a fresh turn"
     `);
-    await ctx.expectResumeMatches();
   });
 });
-
-function createBareRuntime(options: AgentRuntimeOptions = {}) {
-  const root = new InstantiationService(new ServiceCollection());
-  const runtime = createAgentRuntime(root, {
-    background: false,
-    cron: false,
-    ...options,
-  });
-  return { runtime, root };
-}
 
 function toolNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];

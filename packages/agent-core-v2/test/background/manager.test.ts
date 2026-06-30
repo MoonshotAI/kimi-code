@@ -21,8 +21,8 @@ import type { SessionSubagentHost, SubagentHandle } from '#/subagentHost';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import {
   configServices,
+  createTestAgent,
   homeDirServices,
-  testAgent,
   type TestAgentContext,
   type TestAgentServiceOverride,
 } from '../harness';
@@ -56,7 +56,7 @@ function createBackgroundManager(options: {
       background: { maxRunningTasks },
     })));
   }
-  const ctx = testAgent(...overrides);
+  const ctx = createTestAgent(...overrides);
   return {
     ctx,
     manager: ctx.get(IBackgroundService) as BackgroundServiceTestManager,

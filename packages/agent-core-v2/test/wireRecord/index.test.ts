@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
+  IContextMemory,
   IContextSizeService,
   IFullCompaction,
   IReplayBuilderService,
@@ -10,13 +11,40 @@ import {
   type PersistedWireRecord,
 } from '#/index';
 import type { ReplayRangeOptions } from '#/replayBuilder';
-import { InMemoryWireRecordPersistence, testAgent } from '../harness';
+import {
+  InMemoryWireRecordPersistence,
+  createTestAgent,
+  replayServices,
+  wireRecordPersistenceServices,
+  type TestAgentContext,
+} from '../harness';
 
 describe('AgentRecords persistence metadata', () => {
-  it('writes metadata before the first persisted record', async () => {
-    const persistence = new InMemoryWireRecordPersistence();
-    const records = testAgent({ persistence }).wireRecord;
+  let context: IContextMemory;
+  let contextSize: IContextSizeService;
+  let ctx: TestAgentContext;
+  let persistence: RecordingInMemoryWireRecordPersistence;
+  let records: IWireRecord;
+  let replay: IReplayBuilderService;
 
+  beforeEach(() => {
+    persistence = new RecordingInMemoryWireRecordPersistence();
+    ctx = createTestAgent(wireRecordPersistenceServices(persistence));
+    context = ctx.get(IContextMemory);
+    contextSize = ctx.get(IContextSizeService);
+    records = ctx.get(IWireRecord);
+    replay = ctx.get(IReplayBuilderService);
+  });
+
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('writes metadata before the first persisted record', async () => {
     records.append({
       type: 'turn.launch',
       turnId: 0,
@@ -35,9 +63,6 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('does not write metadata when replaying an empty stream', async () => {
-    const persistence = new InMemoryWireRecordPersistence();
-    const records = testAgent({ persistence }).wireRecord;
-
     await records.restore();
     records.append({
       type: 'turn.launch',
@@ -53,14 +78,13 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('rejects replaying a non-empty stream without metadata', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       {
         type: 'turn.launch',
         turnId: 0,
         origin: { kind: 'user' },
       },
-    ]);
-    const records = testAgent({ persistence }).wireRecord;
+    );
 
     await expect(records.restore()).rejects.toThrow(
       'WireRecord restore expected metadata as the first record',
@@ -68,7 +92,7 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('does not duplicate metadata after replaying existing records', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       {
         type: 'metadata',
         protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
@@ -79,8 +103,7 @@ describe('AgentRecords persistence metadata', () => {
         turnId: 0,
         origin: { kind: 'user' },
       },
-    ]);
-    const records = testAgent({ persistence }).wireRecord;
+    );
 
     await records.restore();
     records.append({
@@ -99,7 +122,7 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('does not rewrite records that already use the current wire version', async () => {
-    const persistence = new RecordingInMemoryWireRecordPersistence([
+    persistence.records.push(
       {
         type: 'metadata',
         protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
@@ -110,8 +133,7 @@ describe('AgentRecords persistence metadata', () => {
         turnId: 0,
         origin: { kind: 'user' },
       },
-    ]);
-    const records = testAgent({ persistence }).wireRecord;
+    );
 
     await records.restore();
 
@@ -119,7 +141,7 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('rewrites migrated records to the current wire version after replay', async () => {
-    const persistence = new RecordingInMemoryWireRecordPersistence([
+    persistence.records.push(
       {
         type: 'metadata',
         protocol_version: '1.0',
@@ -142,8 +164,7 @@ describe('AgentRecords persistence metadata', () => {
           ],
         },
       } as unknown as PersistedWireRecord,
-    ]);
-    const records = testAgent({ persistence }).wireRecord;
+    );
 
     await records.restore();
 
@@ -168,14 +189,13 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('warns but continues when replaying records from a newer wire version', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       {
         type: 'metadata',
         protocol_version: '9.9',
         created_at: 1,
       },
-    ]);
-    const records = testAgent({ persistence }).wireRecord;
+    );
 
     const result = await records.restore();
     expect(result.warning).toContain('9.9');
@@ -183,20 +203,19 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('rejects replaying records without a registered migration path', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       {
         type: 'metadata',
         protocol_version: '0.9',
         created_at: 1,
       },
-    ]);
-    const records = testAgent({ persistence }).wireRecord;
+    );
 
     await expect(records.restore()).rejects.toThrow('Missing wire migration for version 0.9');
   });
 
   it('restores goal.* records during replay', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
         type: 'goal.create',
@@ -208,12 +227,11 @@ describe('AgentRecords persistence metadata', () => {
       { type: 'goal.update', tokensUsed: 5, wallClockMs: 0 },
       { type: 'goal.update', turnsUsed: 1 },
       { type: 'goal.update', status: 'blocked', reason: 'needs credentials', actor: 'model' },
-    ]);
-    const ctx = testAgent({ persistence });
+    );
 
     await expect(ctx.runtime.restore()).resolves.toEqual({});
-    expect(ctx.context.getHistory()).toHaveLength(0);
-    expect(ctx.get(IReplayBuilderService).buildResult()).toEqual([
+    expect(context.get()).toHaveLength(0);
+    expect(replay.buildResult()).toEqual([
       expect.objectContaining({
         type: 'goal_updated',
         snapshot: expect.objectContaining({ goalId: 'g1', status: 'active' }),
@@ -237,7 +255,7 @@ describe('AgentRecords persistence metadata', () => {
   });
 
   it('restores forked records as fork boundaries that clear copied goals', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
         type: 'goal.create',
@@ -245,8 +263,7 @@ describe('AgentRecords persistence metadata', () => {
         objective: 'source work',
       },
       { type: 'forked', time: 2 },
-    ]);
-    const ctx = testAgent({ persistence });
+    );
 
     await expect(ctx.runtime.restore()).resolves.toEqual({});
     expect(persistence.records.map((record) => record.type)).toEqual([
@@ -254,13 +271,13 @@ describe('AgentRecords persistence metadata', () => {
       'goal.create',
       'forked',
     ]);
-    const reminder = ctx.context.getHistory().at(-1);
+    const reminder = context.get().at(-1);
     expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
     expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
   it('keeps goals created after the forked boundary', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
         type: 'goal.create',
@@ -273,70 +290,63 @@ describe('AgentRecords persistence metadata', () => {
         goalId: 'fork-goal',
         objective: 'fork work',
       },
-    ]);
-    const ctx = testAgent({ persistence });
+    );
 
     await expect(ctx.runtime.restore()).resolves.toEqual({});
-    expect(ctx.context.getHistory().at(-1)?.origin).toEqual({
+    expect(context.get().at(-1)?.origin).toEqual({
       kind: 'system_trigger',
       name: 'goal_fork_cleared',
     });
   });
 
   it('does not add a fork-cleared reminder when a forked record has no copied goal', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
+    persistence.records.push(
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       { type: 'forked', time: 2 },
-    ]);
-    const ctx = testAgent({ persistence });
+    );
 
     await expect(ctx.runtime.restore()).resolves.toEqual({});
-    expect(ctx.context.getHistory()).toHaveLength(0);
+    expect(context.get()).toHaveLength(0);
   });
 
   it('preconstructs context size restore handlers during runtime activation', async () => {
-    const ctx = testAgent();
-    try {
-      await ctx.runtime.get(IWireRecord).restore([
-        { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
-        {
-          type: 'context.splice',
-          start: 0,
-          deleteCount: 0,
-          messages: [
-            {
-              role: 'user',
-              content: [{ type: 'text', text: 'restored prompt' }],
-              toolCalls: [],
-            },
-          ],
-        },
-        {
-          type: 'context_size.measured',
-          length: 1,
-          tokens: 42,
-        },
-        {
-          type: 'usage.record',
-          model: 'restored-model',
-          usageScope: 'turn',
-          usage: {
-            inputOther: 40,
-            output: 2,
-            inputCacheRead: 0,
-            inputCacheCreation: 0,
+    await records.restore([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'context.splice',
+        start: 0,
+        deleteCount: 0,
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'restored prompt' }],
+            toolCalls: [],
           },
+        ],
+      },
+      {
+        type: 'context_size.measured',
+        length: 1,
+        tokens: 42,
+      },
+      {
+        type: 'usage.record',
+        model: 'restored-model',
+        usageScope: 'turn',
+        usage: {
+          inputOther: 40,
+          output: 2,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
         },
-      ]);
+      },
+    ]);
 
-      expect(ctx.context.getHistory()).toHaveLength(1);
-      expect(ctx.runtime.get(IContextSizeService).getStatus()).toEqual({
-        contextTokens: 42,
-        contextTokensWithPending: 42,
-      });
-    } finally {
-      await ctx.close();
-    }
+    expect(context.get()).toHaveLength(1);
+    expect(contextSize.getStatus()).toEqual({
+      contextTokens: 42,
+      contextTokensWithPending: 42,
+    });
   });
 });
 
@@ -597,14 +607,24 @@ async function buildReplayFromPersistence(
   persistence: InMemoryWireRecordPersistence,
   range?: ReplayRangeOptions,
 ) {
-  const ctx = testAgent({
-    persistence,
-    replay: range === undefined ? undefined : { range },
-  });
-  const isCompacting = ctx.get(IFullCompaction).isCompacting;
-  if (isCompacting) throw new Error('Unexpected active compaction before restore');
-  await ctx.runtime.restore(undefined, { rewriteMigratedRecords: false });
-  return ctx.get(IReplayBuilderService).buildResult();
+  const ctx = createTestAgent(
+    wireRecordPersistenceServices(persistence),
+    replayServices(range === undefined ? {} : { range }),
+  );
+  const fullCompaction = ctx.get(IFullCompaction);
+  const replay = ctx.get(IReplayBuilderService);
+  try {
+    const isCompacting = fullCompaction.isCompacting;
+    if (isCompacting) throw new Error('Unexpected active compaction before restore');
+    await ctx.runtime.restore(undefined, { rewriteMigratedRecords: false });
+    return replay.buildResult();
+  } finally {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  }
 }
 
 function userMessage(text: string): ContextMessage {

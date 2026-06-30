@@ -21,9 +21,12 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { IBootstrapService } from '#/bootstrap';
-import { ILogService } from '#/log';
-import { IAtomicTomlDocumentStore, type IAtomicDocumentStore } from '#/storage';
+import { IBootstrapService } from '#/bootstrap/bootstrapContract';
+import { ILogService } from '#/log/log';
+import {
+  IAtomicTomlDocumentStore,
+  type IAtomicDocumentStore,
+} from '#/storage/atomicDocumentStore';
 
 import {
   type AnyEnvBindings,

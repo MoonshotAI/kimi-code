@@ -13,9 +13,9 @@
  */
 
 import { parseBooleanEnv } from '#/_base/utils';
-import type { ConfigEffectiveOverlay } from '#/config';
+import type { ConfigEffectiveOverlay } from '#/config/config';
 import { ErrorCodes, KimiError } from '#/errors';
-import { ENV_MODEL_PROVIDER_KEY } from '#/provider';
+import { ENV_MODEL_PROVIDER_KEY } from '#/provider/provider';
 
 /** Reserved key for the env-driven synthetic model alias. */
 export const ENV_MODEL_ALIAS_KEY = '__kimi_env_model__';
@@ -45,11 +45,14 @@ function parsePositiveInt(raw: string, varName: string): number {
   return Number(raw);
 }
 
-function parseFloatEnv(raw: string | undefined): number | undefined {
+function parseFloatEnv(raw: string | undefined, varName: string): number | undefined {
   const value = trimmed(raw);
   if (value === undefined) return undefined;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    fail(`${varName} must be a number, got "${raw}".`);
+  }
+  return parsed;
 }
 
 function parseCompletionTokens(raw: string | undefined): number | undefined {
@@ -133,8 +136,11 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     if (reasoningKey !== undefined) alias['reasoningKey'] = reasoningKey;
     if (adaptiveThinking !== undefined) alias['adaptiveThinking'] = adaptiveThinking;
 
-    const temperature = parseFloatEnv(getEnv('KIMI_MODEL_TEMPERATURE'));
-    const topP = parseFloatEnv(getEnv('KIMI_MODEL_TOP_P'));
+    const temperature = parseFloatEnv(
+      getEnv('KIMI_MODEL_TEMPERATURE'),
+      'KIMI_MODEL_TEMPERATURE',
+    );
+    const topP = parseFloatEnv(getEnv('KIMI_MODEL_TOP_P'), 'KIMI_MODEL_TOP_P');
     const thinkingKeep = trimmed(getEnv('KIMI_MODEL_THINKING_KEEP'));
     const maxCompletionTokens =
       parseCompletionTokens(getEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS')) ??

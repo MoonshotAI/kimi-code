@@ -3,24 +3,20 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IBootstrapService } from '#/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/config';
+import { IBootstrapService } from '#/bootstrap/bootstrapContract';
+import { IConfigRegistry, IConfigService } from '#/config/config';
 import { ConfigRegistry, ConfigService } from '#/config/configService';
 import {
   EXPERIMENTAL_SECTION,
-  type FlagDefinitionInput,
-  IFlagRegistry,
   IFlagService,
-} from '#/flag';
+} from '#/flag/flag';
+import { IFlagRegistry, type FlagDefinitionInput } from '#/flag/flagRegistry';
 import { FlagRegistryService } from '#/flag/flagRegistryService';
 import { FlagService, MASTER_ENV } from '#/flag/flagService';
-import { ILogService } from '#/log';
-import {
-  InMemoryStorageService,
-  IStorageService,
-  IAtomicTomlDocumentStore,
-  TomlAtomicDocumentStore,
-} from '#/storage';
+import { ILogService } from '#/log/log';
+import { IAtomicTomlDocumentStore, TomlAtomicDocumentStore } from '#/storage/atomicDocumentStore';
+import { InMemoryStorageService } from '#/storage/inMemoryStorageService';
+import { IStorageService } from '#/storage/storageService';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../log/stubs';
@@ -180,8 +176,24 @@ describe('FlagService', () => {
     expect(flags.enabled('micro_compaction')).toBe(false);
   });
 
+  it('reads only the env name declared in the registry', () => {
+    const { flags } = makeFlags({ KIMI_CODE_EXPERIMENTAL_UNKNOWN: 'false' });
+    expect(flags.enabled('micro_compaction')).toBe(true);
+  });
+
   it('ignores garbage env values', () => {
     const { flags } = makeFlags({ KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION: 'maybe' });
     expect(flags.enabled('micro_compaction')).toBe(true);
+  });
+
+  it('ignores obsolete config ids outside the registry', async () => {
+    const { config, flags } = makeFlags();
+    await config.set(EXPERIMENTAL_SECTION, {
+      obsolete_flag: false,
+      micro_compaction: false,
+    });
+
+    expect(flags.snapshot()).toEqual({ micro_compaction: false });
+    expect(flags.explain('obsolete_flag')).toBeUndefined();
   });
 });

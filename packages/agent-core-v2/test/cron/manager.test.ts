@@ -12,11 +12,12 @@ import {
   CRON_MISSED,
 } from '#/cron/tools/telemetry-events';
 import type { CronTask } from '#/cron/tools/types';
+import { ICronService } from '#/cron';
 import { IPromptService } from '#/prompt';
 import type { ContextMessage, PromptOrigin } from '#/contextMemory';
 import { ITelemetryService } from '#/telemetry';
 import { ITurnService, type Turn } from '#/turn';
-import { testAgent, type TestAgentContext } from '../harness';
+import { createTestAgent, cronServices, type TestAgentContext } from '../harness';
 import type { TelemetryRecord } from '../telemetry/stubs';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -52,7 +53,7 @@ function createClocks(initial = WALL_ANCHOR) {
 }
 
 function createSteerSpy(
-  ctx: TestAgentContext,
+  prompt: IPromptService,
   ...args: [
     returnValue?: Turn | undefined,
   ]
@@ -64,16 +65,16 @@ function createSteerSpy(
     result: Promise.resolve({ reason: 'completed' as const }),
   } : args[0];
   const calls: Array<{ content: readonly ContentPart[]; origin: PromptOrigin }> = [];
-  vi.spyOn(ctx.get(IPromptService), 'steer').mockImplementation((message: ContextMessage) => {
+  vi.spyOn(prompt, 'steer').mockImplementation((message: ContextMessage) => {
     calls.push({ content: message.content, origin: message.origin as PromptOrigin });
     return returnValue;
   });
   return calls;
 }
 
-function captureTelemetry(ctx: TestAgentContext): TelemetryRecord[] {
+function captureTelemetry(telemetry: ITelemetryService): TelemetryRecord[] {
   const records: TelemetryRecord[] = [];
-  vi.spyOn(ctx.get(ITelemetryService), 'track').mockImplementation(
+  vi.spyOn(telemetry, 'track').mockImplementation(
     (event, properties) => {
       records.push({ event, properties });
     },
@@ -82,6 +83,12 @@ function captureTelemetry(ctx: TestAgentContext): TelemetryRecord[] {
 }
 
 describe('CronManager', () => {
+  let cron: ICronService;
+  let ctx: TestAgentContext;
+  let prompt: IPromptService;
+  let telemetry: ITelemetryService;
+  let turn: ITurnService;
+
   beforeEach(() => {
     // Pin jitter off so fire-count assertions are deterministic. Each
     // test that actually exercises fires resets the env via stubEnv,
@@ -90,55 +97,74 @@ describe('CronManager', () => {
     vi.stubEnv('KIMI_CRON_NO_JITTER', '1');
   });
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      try {
+        await ctx.dispose();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }
   });
 
   describe('construction', () => {
+    beforeEach(() => {
+      ctx = createTestAgent(cronServices({ autoStart: false, pollIntervalMs: null }));
+      cron = ctx.get(ICronService);
+    });
+
     it('does not throw with default clocks and supports start/stop', async () => {
-      const ctx = testAgent({ cron: { autoStart: false, pollIntervalMs: null } });
       // Disable the auto-tick timer so the test doesn't have to wait
       // for setInterval / clean it up; we just want start() and stop()
       // to be wired and idempotent.
-      expect(() => ctx.cron.start()).not.toThrow();
-      expect(() => ctx.cron.start()).not.toThrow(); // idempotent
-      await expect(ctx.cron.stop()).resolves.toBeUndefined();
-      await expect(ctx.cron.stop()).resolves.toBeUndefined();
+      expect(() => cron.start()).not.toThrow();
+      expect(() => cron.start()).not.toThrow(); // idempotent
+      await expect(cron.stop()).resolves.toBeUndefined();
+      await expect(cron.stop()).resolves.toBeUndefined();
     });
 
     it('exposes the session store as an empty list on construction', () => {
-      const ctx = testAgent({ cron: { autoStart: false, pollIntervalMs: null } });
-      expect(ctx.cron.store.list()).toEqual([]);
-      expect(ctx.cron.getNextFireTime()).toBeNull();
+      expect(cron.store.list()).toEqual([]);
+      expect(cron.getNextFireTime()).toBeNull();
     });
 
     it('getNextFireForTask delegates to the scheduler', () => {
-      const ctx = testAgent({ cron: { autoStart: false, pollIntervalMs: null } });
-      const spy = vi.spyOn(ctx.cron, 'getNextFireForTask').mockReturnValue(123);
-      expect(ctx.cron.getNextFireForTask('deadbeef')).toBe(123);
+      const spy = vi.spyOn(cron, 'getNextFireForTask').mockReturnValue(123);
+      expect(cron.getNextFireForTask('deadbeef')).toBe(123);
       expect(spy).toHaveBeenCalledWith('deadbeef');
     });
   });
 
   describe('handleFire — recurring', () => {
-    it('steers with cron_job origin and emits cron_fired telemetry', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      const steerCalls = createSteerSpy(ctx, {
+    let harness: ReturnType<typeof createClocks>;
+    let steerCalls: ReturnType<typeof createSteerSpy>;
+    let telemetryRecords: TelemetryRecord[];
+
+    beforeEach(() => {
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
+      prompt = ctx.get(IPromptService);
+      telemetry = ctx.get(ITelemetryService);
+      telemetryRecords = captureTelemetry(telemetry);
+      steerCalls = createSteerSpy(prompt, {
         id: 7,
         abortController: new AbortController(),
         ready: Promise.resolve(),
         result: Promise.resolve({ reason: 'completed' as const }),
       });
+    });
 
-      ctx.cron.addTask({ cron: '*/5 * * * *', prompt: 'check the deploy' });
+    it('steers with cron_job origin and emits cron_fired telemetry', () => {
+      cron.addTask({ cron: '*/5 * * * *', prompt: 'check the deploy' });
       // `*/5 * * * *` lands every 5 minutes; bump 6 minutes so we are
       // safely past exactly one ideal fire.
       harness.advance(6 * 60_000);
-      ctx.cron.tick();
+      cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const call = steerCalls[0]!;
@@ -186,23 +212,32 @@ describe('CronManager', () => {
   });
 
   describe('handleFire — one-shot', () => {
-    it('uses recurring=false in origin and telemetry', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      const steerCalls = createSteerSpy(ctx);
+    let harness: ReturnType<typeof createClocks>;
+    let steerCalls: ReturnType<typeof createSteerSpy>;
+    let telemetryRecords: TelemetryRecord[];
 
+    beforeEach(() => {
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
+      prompt = ctx.get(IPromptService);
+      telemetry = ctx.get(ITelemetryService);
+      telemetryRecords = captureTelemetry(telemetry);
+      steerCalls = createSteerSpy(prompt);
+    });
+
+    it('uses recurring=false in origin and telemetry', () => {
       // Add a one-shot task that fires at the very next */5 mark, then
       // advance the wall clock past it.
-      const task = ctx.cron.addTask({
+      const task = cron.addTask({
         cron: '*/5 * * * *',
         prompt: 'one-shot ping',
         recurring: false,
       });
       harness.advance(6 * 60_000);
-      ctx.cron.tick();
+      cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -221,17 +256,22 @@ describe('CronManager', () => {
       expect(cronFiredTelemetry[0]!.properties).toMatchObject({ recurring: false });
 
       // One-shot was removed from the store after fire.
-      expect(ctx.cron.getTask(task.id)).toBeUndefined();
+      expect(cron.getTask(task.id)).toBeUndefined();
     });
   });
 
   describe('isStale', () => {
-    it('flags recurring tasks older than 7 days as stale', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
+    let harness: ReturnType<typeof createClocks>;
 
+    beforeEach(() => {
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
+    });
+
+    it('flags recurring tasks older than 7 days as stale', () => {
       const task: CronTask = {
         id: 'deadbeef',
         cron: '0 9 * * *',
@@ -239,14 +279,10 @@ describe('CronManager', () => {
         createdAt: harness.now() - 8 * ONE_DAY_MS,
         recurring: true,
       };
-      expect(ctx.cron.isStale(task)).toBe(true);
+      expect(cron.isStale(task)).toBe(true);
     });
 
     it('does not flag recurring tasks younger than 7 days', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
       const task: CronTask = {
         id: 'deadbeef',
         cron: '0 9 * * *',
@@ -254,14 +290,10 @@ describe('CronManager', () => {
         createdAt: harness.now() - 6 * ONE_DAY_MS,
         recurring: true,
       };
-      expect(ctx.cron.isStale(task)).toBe(false);
+      expect(cron.isStale(task)).toBe(false);
     });
 
     it('treats undefined recurring as recurring for stale purposes', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
       const task: CronTask = {
         id: 'deadbeef',
         cron: '0 9 * * *',
@@ -269,14 +301,10 @@ describe('CronManager', () => {
         createdAt: harness.now() - 8 * ONE_DAY_MS,
         // recurring intentionally omitted
       };
-      expect(ctx.cron.isStale(task)).toBe(true);
+      expect(cron.isStale(task)).toBe(true);
     });
 
     it('one-shot tasks are never stale even if old', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
       const task: CronTask = {
         id: 'deadbeef',
         cron: '0 9 * * *',
@@ -284,15 +312,23 @@ describe('CronManager', () => {
         createdAt: harness.now() - 8 * ONE_DAY_MS,
         recurring: false,
       };
-      expect(ctx.cron.isStale(task)).toBe(false);
+      expect(cron.isStale(task)).toBe(false);
+    });
+  });
+
+  describe('isStale with stale judgment disabled', () => {
+    let harness: ReturnType<typeof createClocks>;
+
+    beforeEach(() => {
+      vi.stubEnv('KIMI_CRON_NO_STALE', '1');
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
     });
 
     it('KIMI_CRON_NO_STALE=1 disables stale judgment for recurring', () => {
-      vi.stubEnv('KIMI_CRON_NO_STALE', '1');
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
       const task: CronTask = {
         id: 'deadbeef',
         cron: '0 9 * * *',
@@ -300,17 +336,23 @@ describe('CronManager', () => {
         createdAt: harness.now() - 8 * ONE_DAY_MS,
         recurring: true,
       };
-      expect(ctx.cron.isStale(task)).toBe(false);
+      expect(cron.isStale(task)).toBe(false);
     });
+  });
 
-    it('non-finite age (broken clock) is treated as not stale', () => {
-      const ctx = testAgent({
-        cron: {
+  describe('isStale with a broken clock', () => {
+    beforeEach(() => {
+      ctx = createTestAgent(
+        cronServices({
           clocks: { wallNow: () => Number.NaN, monoNowMs: () => 0 },
           autoStart: false,
           pollIntervalMs: null,
-        },
-      });
+        }),
+      );
+      cron = ctx.get(ICronService);
+    });
+
+    it('non-finite age is treated as not stale', () => {
       const task: CronTask = {
         id: 'deadbeef',
         cron: '0 9 * * *',
@@ -318,19 +360,28 @@ describe('CronManager', () => {
         createdAt: 0,
         recurring: true,
       };
-      expect(ctx.cron.isStale(task)).toBe(false);
+      expect(cron.isStale(task)).toBe(false);
     });
   });
 
   describe('stale propagation into fire origin', () => {
-    it('origin.stale === true for a recurring task older than 7 days', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      const steerCalls = createSteerSpy(ctx);
+    let harness: ReturnType<typeof createClocks>;
+    let steerCalls: ReturnType<typeof createSteerSpy>;
+    let telemetryRecords: TelemetryRecord[];
 
+    beforeEach(() => {
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
+      prompt = ctx.get(IPromptService);
+      telemetry = ctx.get(ITelemetryService);
+      telemetryRecords = captureTelemetry(telemetry);
+      steerCalls = createSteerSpy(prompt);
+    });
+
+    it('origin.stale === true for a recurring task older than 7 days', () => {
       // Add a recurring task whose createdAt is 8 days ago. Note: the
       // scheduler uses createdAt as the starting baseline for next-fire
       // computation, so a task that's been "alive" for 8 days will be
@@ -338,9 +389,9 @@ describe('CronManager', () => {
       // fine for this test — we only assert on `stale` (which is
       // computed from createdAt vs now) and `coalescedCount >= 1`.
       harness.setNow(harness.now() - 8 * ONE_DAY_MS);
-      ctx.cron.addTask({ cron: '0 9 * * *', prompt: 'morning report', recurring: true });
+      cron.addTask({ cron: '0 9 * * *', prompt: 'morning report', recurring: true });
       harness.setNow(WALL_ANCHOR);
-      ctx.cron.tick();
+      cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -362,21 +413,14 @@ describe('CronManager', () => {
       // time, then are deleted. Without this branch a session that
       // stays up past the stale threshold keeps re-injecting an old
       // cron prompt forever.
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      const steerCalls = createSteerSpy(ctx);
-
       harness.setNow(harness.now() - 8 * ONE_DAY_MS);
-      ctx.cron.addTask({ cron: '*/5 * * * *', prompt: 'stale-recurring', recurring: true });
+      cron.addTask({ cron: '*/5 * * * *', prompt: 'stale-recurring', recurring: true });
       harness.setNow(WALL_ANCHOR);
-      expect(ctx.cron.store.list()).toHaveLength(1);
+      expect(cron.store.list()).toHaveLength(1);
 
-      ctx.cron.tick();
+      cron.tick();
       expect(steerCalls.length).toBe(1);
-      expect(ctx.cron.store.list()).toHaveLength(0);
+      expect(cron.store.list()).toHaveLength(0);
 
       // A `cron_deleted` event closes the lifecycle in telemetry,
       // symmetric with manual `CronDelete` calls.
@@ -386,23 +430,31 @@ describe('CronManager', () => {
 
       // No further fires after the task is gone.
       harness.advance(6 * 60_000);
-      ctx.cron.tick();
+      cron.tick();
       expect(steerCalls.length).toBe(1);
     });
   });
 
   describe('buffered semantics', () => {
-    it('reports buffered=true on the telemetry event when steer returns null', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      createSteerSpy(ctx, undefined);
+    let harness: ReturnType<typeof createClocks>;
+    let telemetryRecords: TelemetryRecord[];
 
-      ctx.cron.addTask({ cron: '*/5 * * * *', prompt: 'while-active' });
+    beforeEach(() => {
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
+      prompt = ctx.get(IPromptService);
+      telemetry = ctx.get(ITelemetryService);
+      telemetryRecords = captureTelemetry(telemetry);
+      createSteerSpy(prompt, undefined);
+    });
+
+    it('reports buffered=true on the telemetry event when steer returns null', () => {
+      cron.addTask({ cron: '*/5 * * * *', prompt: 'while-active' });
       harness.advance(6 * 60_000);
-      ctx.cron.tick();
+      cron.tick();
 
       const cronFiredTelemetry = telemetryRecords.filter((r) => r.event === CRON_FIRED);
       expect(cronFiredTelemetry).toHaveLength(1);
@@ -411,36 +463,46 @@ describe('CronManager', () => {
   });
 
   describe('idle gating', () => {
-    it('does not fire while a turn is active', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      const steerCalls = createSteerSpy(ctx);
+    let harness: ReturnType<typeof createClocks>;
+    let hasActiveTurn: boolean;
+    let steerCalls: ReturnType<typeof createSteerSpy>;
+    let telemetryRecords: TelemetryRecord[];
 
-      let hasActiveTurn = true;
-      vi.spyOn(ctx.get(ITurnService), 'getActiveTurn').mockImplementation(() => {
+    beforeEach(() => {
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
+      prompt = ctx.get(IPromptService);
+      telemetry = ctx.get(ITelemetryService);
+      turn = ctx.get(ITurnService);
+      telemetryRecords = captureTelemetry(telemetry);
+      steerCalls = createSteerSpy(prompt);
+      hasActiveTurn = true;
+      vi.spyOn(turn, 'getActiveTurn').mockImplementation(() => {
         return hasActiveTurn
           ? {
-              id: 1,
-              abortController: new AbortController(),
-              ready: Promise.resolve(),
-              result: Promise.resolve({ reason: 'completed' as const }),
-            }
+            id: 1,
+            abortController: new AbortController(),
+            ready: Promise.resolve(),
+            result: Promise.resolve({ reason: 'completed' as const }),
+          }
           : undefined;
       });
+    });
 
-      ctx.cron.addTask({ cron: '*/5 * * * *', prompt: 'ping' });
+    it('does not fire while a turn is active', () => {
+      cron.addTask({ cron: '*/5 * * * *', prompt: 'ping' });
       harness.advance(6 * 60_000);
-      ctx.cron.tick();
+      cron.tick();
       expect(steerCalls.length).toBe(0);
       const firedBefore = telemetryRecords.filter((r) => r.event === CRON_FIRED);
       expect(firedBefore.length).toBe(0);
 
       // Flip back to idle and the next tick fires.
       hasActiveTurn = false;
-      ctx.cron.tick();
+      cron.tick();
       expect(steerCalls.length).toBe(1);
       const firedAfter = telemetryRecords.filter((r) => r.event === CRON_FIRED);
       expect(firedAfter.length).toBe(1);
@@ -448,17 +510,24 @@ describe('CronManager', () => {
   });
 
   describe('end-to-end via scheduler', () => {
-    it('fires once with coalescedCount=1 after a 6-minute gap on */5', () => {
-      const harness = createClocks();
-      const ctx = testAgent({
-        cron: { clocks: harness.clocks, autoStart: false, pollIntervalMs: null },
-      });
-      const steerCalls = createSteerSpy(ctx);
+    let harness: ReturnType<typeof createClocks>;
+    let steerCalls: ReturnType<typeof createSteerSpy>;
 
-      ctx.cron.addTask({ cron: '*/5 * * * *', prompt: 'every five' });
+    beforeEach(() => {
+      harness = createClocks();
+      ctx = createTestAgent(
+        cronServices({ clocks: harness.clocks, autoStart: false, pollIntervalMs: null }),
+      );
+      cron = ctx.get(ICronService);
+      prompt = ctx.get(IPromptService);
+      steerCalls = createSteerSpy(prompt);
+    });
+
+    it('fires once with coalescedCount=1 after a 6-minute gap on */5', () => {
+      cron.addTask({ cron: '*/5 * * * *', prompt: 'every five' });
       // Six minutes past the anchor — exactly one ideal fire in the gap.
       harness.advance(6 * 60_000);
-      ctx.cron.tick();
+      cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -468,25 +537,25 @@ describe('CronManager', () => {
   });
 
   describe('handleMissed', () => {
-    it('no-ops on an empty task list', () => {
-      const ctx = testAgent({
-        cron: { autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      const steerCalls = createSteerSpy(ctx);
+    let steerCalls: ReturnType<typeof createSteerSpy>;
+    let telemetryRecords: TelemetryRecord[];
 
-      ctx.cron.handleMissed([], () => [{ type: 'text', text: 'should not run' }]);
+    beforeEach(() => {
+      ctx = createTestAgent(cronServices({ autoStart: false, pollIntervalMs: null }));
+      cron = ctx.get(ICronService);
+      prompt = ctx.get(IPromptService);
+      telemetry = ctx.get(ITelemetryService);
+      telemetryRecords = captureTelemetry(telemetry);
+      steerCalls = createSteerSpy(prompt);
+    });
+
+    it('no-ops on an empty task list', () => {
+      cron.handleMissed([], () => [{ type: 'text', text: 'should not run' }]);
       expect(steerCalls.length).toBe(0);
       expect(telemetryRecords.length).toBe(0);
     });
 
     it('steers cron_missed origin and emits cron_missed telemetry', () => {
-      const ctx = testAgent({
-        cron: { autoStart: false, pollIntervalMs: null },
-      });
-      const telemetryRecords = captureTelemetry(ctx);
-      const steerCalls = createSteerSpy(ctx);
-
       const tasks: CronTask[] = [
         {
           id: '11111111',
@@ -506,7 +575,7 @@ describe('CronManager', () => {
       const rendered: ContentPart[] = [
         { type: 'text', text: 'You missed 2 one-shot tasks.' },
       ];
-      ctx.cron.handleMissed(tasks, () => rendered);
+      cron.handleMissed(tasks, () => rendered);
 
       expect(steerCalls.length).toBe(1);
       const call = steerCalls[0]!;

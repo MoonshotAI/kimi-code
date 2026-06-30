@@ -7,16 +7,18 @@ import {
   _clearScopedRegistryForTests,
   registerScopedService,
 } from '#/_base/di/scope';
-import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
+import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
 import {
-  ConsoleLogWriterService,
   ILogService,
   ILogWriterService,
+  levelEnabled,
+} from '#/log/log';
+import {
+  ConsoleLogWriterService,
   LogService,
   MemoryLogWriterService,
-  levelEnabled,
-} from '#/log/index';
+} from '#/log/logService';
 
 describe('LogService', () => {
   let disposables: DisposableStore;
@@ -50,6 +52,57 @@ describe('LogService', () => {
     log.error('failed', err);
     expect(sink.entries[0]?.error?.message).toBe('boom');
     expect(sink.entries[0]?.error?.stack).toContain('boom');
+  });
+
+  it('hoists a bunyan-style ctx.error payload onto entry.error', () => {
+    const log = ix.get(ILogService);
+    const err = new Error('persist failed');
+    log.error('wire persist failed', { agentHomedir: '/tmp/a', error: err });
+
+    expect(sink.entries[0]?.ctx).toEqual({ agentHomedir: '/tmp/a' });
+    expect(sink.entries[0]?.error?.message).toBe('persist failed');
+    expect(sink.entries[0]?.error?.stack).toContain('persist failed');
+  });
+
+  it('coerces primitive payloads into a reason field', () => {
+    const log = ix.get(ILogService);
+    log.warn('weird path', 'oh no');
+    log.warn('numeric path', 42);
+
+    expect(sink.entries[0]?.ctx).toEqual({ reason: 'oh no' });
+    expect(sink.entries[1]?.ctx).toEqual({ reason: '42' });
+  });
+
+  it('accepts a catch binding without manual wrapping', () => {
+    const log = ix.get(ILogService);
+    try {
+      throw new Error('caught');
+    } catch (error) {
+      log.error('caught it', error);
+    }
+
+    expect(sink.entries[0]?.error?.message).toBe('caught');
+  });
+
+  it('does not let throwing payload accessors escape into caller flow', () => {
+    const log = ix.get(ILogService);
+    const payload = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('getter boom');
+        },
+        ownKeys() {
+          return ['error'];
+        },
+        getOwnPropertyDescriptor() {
+          return { configurable: true, enumerable: true };
+        },
+      },
+    );
+
+    expect(() => log.warn('proxy payload', payload)).not.toThrow();
+    expect(sink.entries.map((e) => e.msg)).not.toContain('proxy payload');
   });
 
   it('merges object payload into ctx', () => {

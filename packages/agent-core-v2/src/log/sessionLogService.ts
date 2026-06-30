@@ -9,20 +9,26 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { ISessionContext } from '#/session-context';
 
-import { ILogWriterService, ISessionLogOptions, ISessionLogService } from './log';
+import { ILogWriterService, ISessionLogService } from './log';
 import { ILogOptions } from './logConfig';
-import { LogService } from './logService';
+import { BoundLogger, type LogLevelState } from './logService';
 
-export class SessionLogService extends LogService implements ISessionLogService {
+export class SessionLogService extends BoundLogger implements ISessionLogService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
     @ILogWriterService writer: ILogWriterService,
     @ILogOptions options: ILogOptions,
-    @ISessionLogOptions session: ISessionLogOptions,
+    @ISessionContext session: ISessionContext,
   ) {
-    super(writer, { sessionId: session.sessionId }, options.level);
+    const levelState: LogLevelState = { level: options.level };
+    super(writer, levelState, { sessionId: session.sessionId });
+  }
+
+  flush(): Promise<void> {
+    return this.writer.flush?.() ?? Promise.resolve();
   }
 
   close(): Promise<void> {

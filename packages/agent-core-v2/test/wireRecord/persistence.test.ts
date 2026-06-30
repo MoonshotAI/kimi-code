@@ -104,7 +104,7 @@ async function createWireHarness(): Promise<{
   ix.stub(IReplayBuilderService, stubReplayBuilder());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IBlobStoreService, new SyncDescriptor(BlobStoreService));
-  ix.set(IWireRecord, new SyncDescriptor(WireRecordService, [{ homedir: dir }]));
+  ix.set(IWireRecord, new SyncDescriptor(WireRecordService));
   ix.set(IContextMemory, new SyncDescriptor(ContextMemoryService));
   ix.get(IContextMemory);
 

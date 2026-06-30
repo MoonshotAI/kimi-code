@@ -2,358 +2,438 @@ import { Readable, type Writable } from 'node:stream';
 
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { IContextMemory } from '#/contextMemory';
 import { HookEngine } from '#/externalHooks/engine';
+import { IProfileService } from '#/profile';
 import type { SessionSubagentHost } from '#/subagentHost';
+import { IToolRegistry } from '#/toolRegistry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
-import { testAgent, createCommandKaos } from '../harness';
+import {
+  createCommandKaos,
+  createTestAgent,
+  externalHookServices,
+  kaosServices,
+  subagentHostServices,
+  type TestAgentContext,
+} from '../harness';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
 
 describe('Agent tools', () => {
-  it('blocks tools through PreToolUse before permission and emits PostToolUseFailure', async () => {
-    const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute'));
-    const triggered: Array<[string, string, number]> = [];
-    const hookEngine = new HookEngine(
-      [
-        {
-          event: 'PreToolUse',
-          matcher: 'Bash',
-          command: "echo 'blocked by PreToolUse' >&2; exit 2",
-        },
-        {
-          event: 'PostToolUseFailure',
-          matcher: 'Bash',
-          command: 'exit 0',
-        },
-      ],
-      {
-        onTriggered: (event, target, count) => {
-          triggered.push([event, target, count]);
-        },
-      },
-    );
-    const ctx = testAgent({
-      kaos: createFakeKaos({ execWithEnv }),
-      hookEngine,
-    });
-    ctx.configure({ tools: ['Bash'] });
+  let context: IContextMemory;
+  let ctx: TestAgentContext;
+  let profile: IProfileService;
+  let tools: IToolRegistry;
 
-    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
-    ctx.mockNextResponse({ type: 'text', text: 'The hook blocked Bash.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Try Bash' }] });
-
-    await ctx.untilTurnEnd();
-
-    expect(execWithEnv).not.toHaveBeenCalled();
-    expect(triggered).toEqual([
-      ['PreToolUse', 'Bash', 1],
-      ['PostToolUseFailure', 'Bash', 1],
-    ]);
-    expect(JSON.stringify(ctx.context.getHistory())).toContain('blocked by PreToolUse');
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
   });
 
-  it('runs PreToolUse before successful tools and emits PostToolUse with output', async () => {
-    const resolved: Array<[string, string, string]> = [];
-    const hookEngine = new HookEngine(
-      [
-        {
-          event: 'PreToolUse',
-          matcher: 'Bash',
-          command: hookPayloadAssertCommand({
+  describe('PreToolUse blocking', () => {
+    let execWithEnv: ReturnType<typeof vi.fn>;
+    let triggered: Array<[string, string, number]>;
+
+    beforeEach(() => {
+      execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute'));
+      triggered = [];
+      const hookEngine = new HookEngine(
+        [
+          {
             event: 'PreToolUse',
-            toolName: 'Bash',
-            toolCallId: 'call_bash',
-            toolInputCommand: 'printf hook-output',
-          }),
-        },
-        {
-          event: 'PostToolUse',
-          matcher: 'Bash',
-          command: hookPayloadAssertCommand({
-            event: 'PostToolUse',
-            toolName: 'Bash',
-            toolCallId: 'call_bash',
-            toolInputCommand: 'printf hook-output',
-            toolOutput: 'hook-output',
-          }),
-        },
-      ],
-      {
-        onResolved: (event, target, action) => {
-          resolved.push([event, target, action]);
-        },
-      },
-    );
-    const ctx = testAgent({
-      kaos: createCommandKaos('hook-output'),
-      hookEngine,
-    });
-    ctx.configure({ tools: ['Bash'] });
-    await ctx.rpc.setPermission({ mode: 'auto' });
-
-    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
-    ctx.mockNextResponse({ type: 'text', text: 'Bash returned hook-output.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
-
-    await ctx.untilTurnEnd();
-
-    await vi.waitFor(() => {
-      expect(resolved).toEqual([
-        ['PreToolUse', 'Bash', 'allow'],
-        ['PostToolUse', 'Bash', 'allow'],
-      ]);
-    });
-  });
-
-  it('emits PostToolUseFailure with payload when a builtin tool execution fails', async () => {
-    const resolved: Array<[string, string, string]> = [];
-    const hookEngine = new HookEngine(
-      [
-        {
-          event: 'PostToolUseFailure',
-          matcher: 'Bash',
-          command: hookPayloadAssertCommand({
+            matcher: 'Bash',
+            command: "echo 'blocked by PreToolUse' >&2; exit 2",
+          },
+          {
             event: 'PostToolUseFailure',
-            toolName: 'Bash',
-            toolCallId: 'call_bash',
-            toolInputCommand: 'printf hook-output',
-            errorMessageIncludes: 'hook-output\nCommand failed with exit code: 2.',
-          }),
-        },
-      ],
-      {
-        onResolved: (event, target, action) => {
-          resolved.push([event, target, action]);
-        },
-      },
-    );
-    const ctx = testAgent({
-      kaos: createFailingCommandKaos('hook-output'),
-      hookEngine,
-    });
-    ctx.configure({ tools: ['Bash'] });
-    await ctx.rpc.setPermission({ mode: 'auto' });
-
-    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
-    ctx.mockNextResponse({ type: 'text', text: 'Bash failed.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
-
-    await ctx.untilTurnEnd();
-
-    await vi.waitFor(() => {
-      expect(resolved).toEqual([['PostToolUseFailure', 'Bash', 'allow']]);
-    });
-  });
-
-  it('uses builtin descriptions on tool call start events', async () => {
-    const ctx = testAgent({
-      kaos: createCommandKaos('ok'),
-    });
-    ctx.configure({ tools: ['Bash'] });
-    await ctx.rpc.setPermission({ mode: 'yolo' });
-
-    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
-    ctx.mockNextResponse({ type: 'text', text: 'Bash returned ok.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
-    await ctx.untilTurnEnd();
-
-    const started = ctx.allEvents.find(
-      (event) => event.type === '[rpc]' && event.event === 'tool.call.started',
-    );
-    expect(started?.args).toMatchObject({
-      description: 'Running: printf hook-output',
-    });
-  });
-
-  it('continues after a foreground Agent tool returns a max_tokens failure', async () => {
-    const completion = Promise.reject(
-      new Error('Subagent turn failed before completing its final summary: reason=max_tokens.'),
-    );
-    void completion.catch(() => undefined);
-    const subagentHost = {
-      spawn: vi.fn().mockResolvedValue({
-        agentId: 'agent-child',
-        profileName: 'coder',
-        resumed: false,
-        completion,
-      }),
-      resume: vi.fn(),
-    } as unknown as SessionSubagentHost;
-    const ctx = testAgent({ subagentHost });
-    ctx.configure({ tools: ['Agent'] });
-
-    ctx.mockNextResponse({ type: 'text', text: 'I will ask a subagent.' }, agentCall());
-    ctx.mockNextResponse({
-      type: 'text',
-      text: 'The subagent failed with reason=max_tokens, so I will continue in the parent turn.',
-    });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Delegate and recover' }] });
-    await ctx.untilTurnEnd();
-
-    expect(subagentHost.spawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        profileName: 'coder',
-        parentToolCallId: 'call_agent',
-        prompt: 'Investigate deeply',
-        description: 'Investigate deeply',
-        runInBackground: false,
-      }),
-    );
-    expect(ctx.llmCalls).toHaveLength(2);
-    expect(ctx.allEvents).toContainEqual(
-      expect.objectContaining({
-        type: '[rpc]',
-        event: 'tool.result',
-        args: expect.objectContaining({
-          toolCallId: 'call_agent',
-          isError: true,
-          output: expect.stringContaining('reason=max_tokens'),
-        }),
-      }),
-    );
-    expect(JSON.stringify(ctx.llmCalls[1]?.history)).toContain('reason=max_tokens');
-  });
-
-  it('passes text from content-part error outputs to PostToolUseFailure hooks', async () => {
-    const lookupCall: ToolCall = {
-      type: 'function',
-      id: 'call_lookup',
-      name: 'Lookup',
-      arguments: '{"query":"moon"}',
-    };
-    const resolved: Array<[string, string, string]> = [];
-    const hookEngine = new HookEngine(
-      [
+            matcher: 'Bash',
+            command: 'exit 0',
+          },
+        ],
         {
-          event: 'PostToolUseFailure',
-          matcher: 'Lookup',
-          command: hookErrorMessageAssertCommand('rich failure text'),
+          onTriggered: (event, target, count) => {
+            triggered.push([event, target, count]);
+          },
         },
-      ],
-      {
-        onResolved: (event, target, action) => {
-          resolved.push([event, target, action]);
-        },
-      },
-    );
-    const ctx = testAgent({ hookEngine });
-    ctx.configure();
-    await ctx.rpc.setPermission({ mode: 'auto' });
-    await ctx.rpc.registerTool({
-      name: 'Lookup',
-      description: 'Look up a short test value.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string' },
-        },
-        required: ['query'],
-        additionalProperties: false,
-      },
+      );
+      ctx = createTestAgent(
+        kaosServices(createFakeKaos({ execWithEnv })),
+        externalHookServices(hookEngine),
+      );
+      context = ctx.get(IContextMemory);
+      profile = ctx.get(IProfileService);
+      profile.update({ activeToolNames: ['Bash'] });
     });
 
-    ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
-    await ctx.untilToolCall({
-      isError: true,
-      output: [{ type: 'text', text: 'rich failure text' }],
-    });
+    it('blocks tools before permission and emits PostToolUseFailure', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+      ctx.mockNextResponse({ type: 'text', text: 'The hook blocked Bash.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Try Bash' }] });
 
-    ctx.mockNextResponse({ type: 'text', text: 'The lookup failed.' });
-    await ctx.untilTurnEnd();
+      await ctx.untilTurnEnd();
 
-    await vi.waitFor(() => {
-      expect(resolved).toEqual([['PostToolUseFailure', 'Lookup', 'allow']]);
+      expect(execWithEnv).not.toHaveBeenCalled();
+      expect(triggered).toEqual([
+        ['PreToolUse', 'Bash', 1],
+        ['PostToolUseFailure', 'Bash', 1],
+      ]);
+      expect(JSON.stringify(context.get())).toContain('blocked by PreToolUse');
     });
   });
 
-  it('uses the active builtin tool set as the LLM visible tools', async () => {
-    const ctx = testAgent();
-    ctx.configure({ tools: ['Write', 'Bash'] });
+  describe('successful Bash hook flow', () => {
+    let resolved: Array<[string, string, string]>;
 
-    ctx.mockNextResponse({ type: 'text', text: 'ready' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Which tools are active?' }] });
+    beforeEach(async () => {
+      resolved = [];
+      const hookEngine = new HookEngine(
+        [
+          {
+            event: 'PreToolUse',
+            matcher: 'Bash',
+            command: hookPayloadAssertCommand({
+              event: 'PreToolUse',
+              toolName: 'Bash',
+              toolCallId: 'call_bash',
+              toolInputCommand: 'printf hook-output',
+            }),
+          },
+          {
+            event: 'PostToolUse',
+            matcher: 'Bash',
+            command: hookPayloadAssertCommand({
+              event: 'PostToolUse',
+              toolName: 'Bash',
+              toolCallId: 'call_bash',
+              toolInputCommand: 'printf hook-output',
+              toolOutput: 'hook-output',
+            }),
+          },
+        ],
+        {
+          onResolved: (event, target, action) => {
+            resolved.push([event, target, action]);
+          },
+        },
+      );
+      ctx = createTestAgent(
+        kaosServices(createCommandKaos('hook-output')),
+        externalHookServices(hookEngine),
+      );
+      profile = ctx.get(IProfileService);
+      profile.update({ activeToolNames: ['Bash'] });
+      await ctx.rpc.setPermission({ mode: 'auto' });
+    });
 
-    await ctx.untilTurnEnd();
-    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+    it('runs PreToolUse before successful tools and emits PostToolUse with output', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+      ctx.mockNextResponse({ type: 'text', text: 'Bash returned hook-output.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
+
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        expect(resolved).toEqual([
+          ['PreToolUse', 'Bash', 'allow'],
+          ['PostToolUse', 'Bash', 'allow'],
+        ]);
+      });
+    });
+  });
+
+  describe('failed Bash hook flow', () => {
+    let resolved: Array<[string, string, string]>;
+
+    beforeEach(async () => {
+      resolved = [];
+      const hookEngine = new HookEngine(
+        [
+          {
+            event: 'PostToolUseFailure',
+            matcher: 'Bash',
+            command: hookPayloadAssertCommand({
+              event: 'PostToolUseFailure',
+              toolName: 'Bash',
+              toolCallId: 'call_bash',
+              toolInputCommand: 'printf hook-output',
+              errorMessageIncludes: 'hook-output\nCommand failed with exit code: 2.',
+            }),
+          },
+        ],
+        {
+          onResolved: (event, target, action) => {
+            resolved.push([event, target, action]);
+          },
+        },
+      );
+      ctx = createTestAgent(
+        kaosServices(createFailingCommandKaos('hook-output')),
+        externalHookServices(hookEngine),
+      );
+      profile = ctx.get(IProfileService);
+      profile.update({ activeToolNames: ['Bash'] });
+      await ctx.rpc.setPermission({ mode: 'auto' });
+    });
+
+    it('emits PostToolUseFailure with payload when a builtin tool execution fails', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+      ctx.mockNextResponse({ type: 'text', text: 'Bash failed.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
+
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        expect(resolved).toEqual([['PostToolUseFailure', 'Bash', 'allow']]);
+      });
+    });
+  });
+
+  describe('Bash tool call start event', () => {
+    beforeEach(async () => {
+      ctx = createTestAgent(kaosServices(createCommandKaos('ok')));
+      profile = ctx.get(IProfileService);
+      profile.update({ activeToolNames: ['Bash'] });
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+    });
+
+    it('uses builtin descriptions on tool call start events', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+      ctx.mockNextResponse({ type: 'text', text: 'Bash returned ok.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run Bash' }] });
+      await ctx.untilTurnEnd();
+
+      const started = ctx.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'tool.call.started',
+      );
+      expect(started?.args).toMatchObject({
+        description: 'Running: printf hook-output',
+      });
+    });
+  });
+
+  describe('foreground Agent tool recovery', () => {
+    let subagentHost: SessionSubagentHost;
+
+    beforeEach(() => {
+      const completion = Promise.reject(
+        new Error('Subagent turn failed before completing its final summary: reason=max_tokens.'),
+      );
+      void completion.catch(() => undefined);
+      subagentHost = {
+        spawn: vi.fn().mockResolvedValue({
+          agentId: 'agent-child',
+          profileName: 'coder',
+          resumed: false,
+          completion,
+        }),
+        resume: vi.fn(),
+      } as unknown as SessionSubagentHost;
+      ctx = createTestAgent(subagentHostServices(subagentHost));
+      profile = ctx.get(IProfileService);
+      profile.update({ activeToolNames: ['Agent'] });
+    });
+
+    it('continues after a foreground Agent tool returns a max_tokens failure', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will ask a subagent.' }, agentCall());
+      ctx.mockNextResponse({
+        type: 'text',
+        text: 'The subagent failed with reason=max_tokens, so I will continue in the parent turn.',
+      });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Delegate and recover' }] });
+      await ctx.untilTurnEnd();
+
+      expect(subagentHost.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profileName: 'coder',
+          parentToolCallId: 'call_agent',
+          prompt: 'Investigate deeply',
+          description: 'Investigate deeply',
+          runInBackground: false,
+        }),
+      );
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(ctx.allEvents).toContainEqual(
+        expect.objectContaining({
+          type: '[rpc]',
+          event: 'tool.result',
+          args: expect.objectContaining({
+            toolCallId: 'call_agent',
+            isError: true,
+            output: expect.stringContaining('reason=max_tokens'),
+          }),
+        }),
+      );
+      expect(JSON.stringify(ctx.llmCalls[1]?.history)).toContain('reason=max_tokens');
+    });
+  });
+
+  describe('registered user tool failure hooks', () => {
+    let resolved: Array<[string, string, string]>;
+
+    beforeEach(async () => {
+      const lookupCall: ToolCall = {
+        type: 'function',
+        id: 'call_lookup',
+        name: 'Lookup',
+        arguments: '{"query":"moon"}',
+      };
+      resolved = [];
+      const hookEngine = new HookEngine(
+        [
+          {
+            event: 'PostToolUseFailure',
+            matcher: 'Lookup',
+            command: hookErrorMessageAssertCommand('rich failure text'),
+          },
+        ],
+        {
+          onResolved: (event, target, action) => {
+            resolved.push([event, target, action]);
+          },
+        },
+      );
+      ctx = createTestAgent(externalHookServices(hookEngine));
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+    });
+
+    it('passes text from content-part error outputs to PostToolUseFailure hooks', async () => {
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      await ctx.untilToolCall({
+        isError: true,
+        output: [{ type: 'text', text: 'rich failure text' }],
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'The lookup failed.' });
+      await ctx.untilTurnEnd();
+
+      await vi.waitFor(() => {
+        expect(resolved).toEqual([['PostToolUseFailure', 'Lookup', 'allow']]);
+      });
+    });
+  });
+
+  describe('active builtin tool set', () => {
+    beforeEach(() => {
+      ctx = createTestAgent();
+      profile = ctx.get(IProfileService);
+      profile.update({ activeToolNames: ['Write', 'Bash'] });
+    });
+
+    it('uses the active builtin tool set as the LLM visible tools', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'ready' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Which tools are active?' }] });
+
+      await ctx.untilTurnEnd();
+      expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
       tools: Bash, Write
       messages:
         user: text "Which tools are active?"
     `);
+    });
   });
 
-  it('disables Bash background mode unless task management tools are active', async () => {
-    const ctx = testAgent();
-    ctx.configure({ tools: ['Bash'] });
-
-    const bashOnly = ctx.toolsData().find((tool) => tool.name === 'Bash');
-    const bashTool = ctx.tools.resolve('Bash');
-    expect(bashOnly).toBeDefined();
-    expect(bashTool).toBeDefined();
-    expect(bashOnly!.description).toContain('Background execution is disabled for this agent.');
-    expect(bashOnly!.description).not.toContain('the command will be started as a background task');
-    await expect(
-      executeTool(bashTool!, {
-        turnId: '0',
-        toolCallId: 'call_bash',
-        args: { command: 'sleep 10', run_in_background: true, description: 'watch' },
-        signal,
-      }),
-    ).resolves.toMatchObject({
-      isError: true,
-      output:
-        'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
+  describe('Bash background mode', () => {
+    beforeEach(() => {
+      ctx = createTestAgent();
+      profile = ctx.get(IProfileService);
+      tools = ctx.get(IToolRegistry);
+      profile.update({ activeToolNames: ['Bash'] });
     });
 
-    await ctx.rpc.setActiveTools({ names: ['Bash', 'TaskList', 'TaskOutput', 'TaskStop'] });
+    it('disables Bash background mode unless task management tools are active', async () => {
+      const bashOnly = ctx.toolsData().find((tool) => tool.name === 'Bash');
+      const bashTool = tools.resolve('Bash');
+      expect(bashOnly).toBeDefined();
+      expect(bashTool).toBeDefined();
+      expect(bashOnly!.description).toContain('Background execution is disabled for this agent.');
+      expect(bashOnly!.description).not.toContain('the command will be started as a background task');
+      await expect(
+        executeTool(bashTool!, {
+          turnId: '0',
+          toolCallId: 'call_bash',
+          args: { command: 'sleep 10', run_in_background: true, description: 'watch' },
+          signal,
+        }),
+      ).resolves.toMatchObject({
+        isError: true,
+        output:
+          'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
+      });
 
-    const managedBash = ctx.toolsData().find((tool) => tool.name === 'Bash');
-    expect(managedBash).toBeDefined();
-    expect(managedBash!.description).toContain('run_in_background=true');
+      await ctx.rpc.setActiveTools({ names: ['Bash', 'TaskList', 'TaskOutput', 'TaskStop'] });
+
+      const managedBash = ctx.toolsData().find((tool) => tool.name === 'Bash');
+      expect(managedBash).toBeDefined();
+      expect(managedBash!.description).toContain('run_in_background=true');
+    });
   });
 
-  it('exposes AgentSwarm by default', () => {
-    const ctx = testAgent();
-    ctx.configure({ tools: ['AgentSwarm'] });
+  describe('AgentSwarm visibility', () => {
+    beforeEach(() => {
+      ctx = createTestAgent();
+      profile = ctx.get(IProfileService);
+      profile.update({ activeToolNames: ['AgentSwarm'] });
+    });
 
-    expect(ctx.toolsData().some((tool) => tool.name === 'AgentSwarm')).toBe(true);
+    it('exposes AgentSwarm by default', () => {
+      expect(ctx.toolsData().some((tool) => tool.name === 'AgentSwarm')).toBe(true);
+    });
   });
 
-  it('routes registered user tools through tool.call request/response', async () => {
+  describe('registered user tools', () => {
     const lookupCall: ToolCall = {
       type: 'function',
       id: 'call_lookup',
       name: 'Lookup',
       arguments: '{"query":"moon"}',
     };
-    const ctx = testAgent();
-    ctx.configure();
-    await ctx.rpc.setPermission({ mode: 'auto' });
-    await ctx.rpc.registerTool({
-      name: 'Lookup',
-      description: 'Look up a short test value.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string' },
+
+    beforeEach(async () => {
+      ctx = createTestAgent();
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+          additionalProperties: false,
         },
-        required: ['query'],
-        additionalProperties: false,
-      },
+      });
     });
 
-    ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
-    expect(
-      await ctx.untilToolCall({
-        content: 'moon-result',
-        output: 'moon-result',
-      }),
-    ).toMatchInlineSnapshot(`
+    it('routes registered user tools through tool.call request/response', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      expect(
+        await ctx.untilToolCall({
+          content: 'moon-result',
+          output: 'moon-result',
+        }),
+      ).toMatchInlineSnapshot(`
       [wire] permission.set_mode        { "mode": "auto", "time": "<time>" }
       [emit] agent.status.updated       { "permission": "auto" }
       [wire] tools.register_user_tool   { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "time": "<time>" }
@@ -373,7 +453,7 @@ describe('Agent tools', () => {
       [emit] tool.call.started          { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "args": { "query": "moon" } }
       [emit] toolCall                   { "turnId": 0, "toolCallId": "call_lookup", "args": { "query": "moon" } }
     `);
-    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
       tools: Agent, AskUserQuestion, Bash, CronCreate, CronDelete, CronList, Edit, FetchURL, GetGoal, Glob, Grep, Lookup, MultiEdit, Read, SetGoalBudget, SetTodoList, Skill, TaskList, TaskOutput, TodoList, UpdateGoal, WebSearch, Write
       messages:
@@ -381,8 +461,8 @@ describe('Agent tools', () => {
         user: text <auto-mode-enter-reminder>
     `);
 
-    ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
-    expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      ctx.mockNextResponse({ type: 'text', text: 'The lookup result is moon-result.' });
+      expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] context.splice          { "start": 3, "deleteCount": 0, "messages": [ { "role": "tool", "content": [ { "type": "text", "text": "moon-result" } ], "toolCalls": [], "toolCallId": "call_lookup" } ], "time": "<time>" }
       [emit] tool.result             { "turnId": 0, "toolCallId": "call_lookup", "output": "moon-result" }
       [emit] turn.step.completed     { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
@@ -396,19 +476,17 @@ describe('Agent tools', () => {
       [emit] turn.step.completed     { "turnId": 0, "step": 2, "stepId": "<uuid-2>", "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [emit] turn.ended              { "turnId": 0, "reason": "completed" }
     `);
-    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       messages:
         <last>
         assistant: text "I will look it up."  calls call_lookup:Lookup { "query": "moon" }
         tool[call_lookup]: text "moon-result"
     `);
-    await ctx.expectResumeMatches();
+      await ctx.rpc.unregisterTool({ name: 'Lookup' });
+      ctx.mockNextResponse({ type: 'text', text: 'No lookup tool is available.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Can you still use Lookup?' }] });
 
-    await ctx.rpc.unregisterTool({ name: 'Lookup' });
-    ctx.mockNextResponse({ type: 'text', text: 'No lookup tool is available.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Can you still use Lookup?' }] });
-
-    expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] tools.unregister_user_tool   { "name": "Lookup", "time": "<time>" }
       [wire] context.splice               { "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "toolCalls": [] } ], "time": "<time>" }
       [wire] turn.launch                  { "turnId": 1, "origin": { "kind": "user" }, "time": "<time>" }
@@ -423,13 +501,14 @@ describe('Agent tools', () => {
       [emit] turn.step.completed          { "turnId": 1, "step": 1, "stepId": "<uuid-3>", "usage": { "inputOther": 128, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [emit] turn.ended                   { "turnId": 1, "reason": "completed" }
     `);
-    expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       tools: Agent, AskUserQuestion, Bash, CronCreate, CronDelete, CronList, Edit, FetchURL, GetGoal, Glob, Grep, MultiEdit, Read, SetGoalBudget, SetTodoList, Skill, TaskList, TaskOutput, TodoList, UpdateGoal, WebSearch, Write
       messages:
         <last>
         assistant: text "The lookup result is moon-result."
         user: text "Can you still use Lookup?"
     `);
+    });
   });
 });
 
@@ -469,10 +548,10 @@ function agentCall(): ToolCall {
     id: 'call_agent',
     name: 'Agent',
     arguments: JSON.stringify({
-        prompt: 'Investigate deeply',
-        description: 'Investigate deeply',
-        subagent_type: 'coder',
-      }),
+      prompt: 'Investigate deeply',
+      description: 'Investigate deeply',
+      subagent_type: 'coder',
+    }),
   };
 }
 

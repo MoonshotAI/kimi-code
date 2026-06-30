@@ -21,6 +21,8 @@ function readable(data: string | Buffer): Readable {
   return Readable.from([typeof data === 'string' ? Buffer.from(data) : data]);
 }
 
+const textEncoder = new TextEncoder();
+
 async function readAll(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {
@@ -135,5 +137,36 @@ describe('FileStoreService', () => {
     const { meta: got, stream } = await reloaded.get(meta.id);
     expect(got.id).toBe(meta.id);
     expect((await readAll(stream)).toString()).toBe('durable');
+  });
+
+  it('skips invalid persisted index entries when loading the index', async () => {
+    await backend.write('files', 'f_valid', Buffer.from('ok'));
+    await backend.write('files', 'f_invalid', Buffer.from('bad'));
+    await backend.write(
+      'filestore',
+      'index.json',
+      textEncoder.encode(
+        JSON.stringify({
+          version: 1,
+          files: [
+            {
+              id: 'f_valid',
+              name: 'valid.txt',
+              media_type: 'text/plain',
+              size: 2,
+              created_at: new Date(0).toISOString(),
+            },
+            { id: 'f_invalid' },
+          ],
+        }),
+      ),
+    );
+
+    const { meta, stream } = await store().get('f_valid');
+    expect(meta.name).toBe('valid.txt');
+    expect((await readAll(stream)).toString()).toBe('ok');
+    await expect(store().get('f_invalid')).rejects.toMatchObject({
+      code: FileErrors.codes.FILE_NOT_FOUND,
+    });
   });
 });

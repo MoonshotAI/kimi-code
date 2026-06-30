@@ -29,6 +29,18 @@ class CapturingAppender implements ITelemetryAppender {
   }
 }
 
+function telemetryWithAppenders(...appenders: ITelemetryAppender[]): TelemetryService {
+  const svc = new TelemetryService();
+  const [first, ...rest] = appenders;
+  if (first !== undefined) {
+    svc.setAppender(first);
+  }
+  for (const appender of rest) {
+    svc.addAppender(appender);
+  }
+  return svc;
+}
+
 describe('TelemetryService (unit)', () => {
   it('noop by default — does not throw', () => {
     const svc = new TelemetryService();
@@ -37,8 +49,9 @@ describe('TelemetryService (unit)', () => {
 
   it('merges bound context into tracked properties', () => {
     const appender = new CapturingAppender();
-    const svc = new TelemetryService({ sessionId: 's1' });
+    const svc = new TelemetryService();
     svc.setAppender(appender);
+    svc.setContext({ sessionId: 's1' });
     svc.track('turn.start', { agentId: 'main' });
     expect(appender.events[0]).toEqual({
       event: 'turn.start',
@@ -48,8 +61,9 @@ describe('TelemetryService (unit)', () => {
 
   it('withContext merges context and shares the appender', () => {
     const appender = new CapturingAppender();
-    const root = new TelemetryService({ sessionId: 's1' });
+    const root = new TelemetryService();
     root.setAppender(appender);
+    root.setContext({ sessionId: 's1' });
     const child = root.withContext({ agentId: 'main', turnId: 't1' });
     child.track('tool.call', { name: 'bash' });
     expect(appender.events[0]?.properties).toEqual({
@@ -62,8 +76,9 @@ describe('TelemetryService (unit)', () => {
 
   it('per-call properties override bound context on key collision', () => {
     const appender = new CapturingAppender();
-    const svc = new TelemetryService({ sessionId: 's1' });
+    const svc = new TelemetryService();
     svc.setAppender(appender);
+    svc.setContext({ sessionId: 's1' });
     svc.track('evt', { sessionId: 'override' });
     expect(appender.events[0]?.properties?.['sessionId']).toBe('override');
   });
@@ -71,7 +86,7 @@ describe('TelemetryService (unit)', () => {
   it('fans out to every appender passed via appenders', () => {
     const a = new CapturingAppender();
     const b = new CapturingAppender();
-    const svc = new TelemetryService({ appenders: [a, b] });
+    const svc = telemetryWithAppenders(a, b);
     svc.track('evt', { x: 1 });
     expect(a.events).toEqual([{ event: 'evt', properties: { x: 1 } }]);
     expect(b.events).toEqual([{ event: 'evt', properties: { x: 1 } }]);
@@ -80,7 +95,7 @@ describe('TelemetryService (unit)', () => {
   it('addAppender registers an appender and its disposable removes it', () => {
     const a = new CapturingAppender();
     const b = new CapturingAppender();
-    const svc = new TelemetryService({ appender: a });
+    const svc = telemetryWithAppenders(a);
     const disposable = svc.addAppender(b);
     svc.track('first');
     expect(a.events).toHaveLength(1);
@@ -94,7 +109,7 @@ describe('TelemetryService (unit)', () => {
   it('removeAppender stops delivery to that appender', () => {
     const a = new CapturingAppender();
     const b = new CapturingAppender();
-    const svc = new TelemetryService({ appenders: [a, b] });
+    const svc = telemetryWithAppenders(a, b);
     svc.removeAppender(a);
     svc.track('evt');
     expect(a.events).toHaveLength(0);
@@ -103,7 +118,7 @@ describe('TelemetryService (unit)', () => {
 
   it('setEnabled(false) drops track; setEnabled(true) resumes', () => {
     const appender = new CapturingAppender();
-    const svc = new TelemetryService({ appender });
+    const svc = telemetryWithAppenders(appender);
     svc.setEnabled(false);
     svc.track('dropped');
     expect(appender.events).toHaveLength(0);
@@ -114,7 +129,7 @@ describe('TelemetryService (unit)', () => {
 
   it('withContext child inherits enabled state at creation', () => {
     const appender = new CapturingAppender();
-    const root = new TelemetryService({ appender });
+    const root = telemetryWithAppenders(appender);
     root.setEnabled(false);
     const child = root.withContext({ turnId: 't1' });
     child.track('dropped');
@@ -124,7 +139,7 @@ describe('TelemetryService (unit)', () => {
   it('flush fans out to every appender', async () => {
     const a = new CapturingAppender();
     const b = new CapturingAppender();
-    const svc = new TelemetryService({ appenders: [a, b] });
+    const svc = telemetryWithAppenders(a, b);
     await svc.flush();
     expect(a.flushCalls).toBe(1);
     expect(b.flushCalls).toBe(1);
@@ -133,7 +148,7 @@ describe('TelemetryService (unit)', () => {
   it('shutdown fans out to every appender', async () => {
     const a = new CapturingAppender();
     const b = new CapturingAppender();
-    const svc = new TelemetryService({ appenders: [a, b] });
+    const svc = telemetryWithAppenders(a, b);
     await svc.shutdown();
     expect(a.shutdownCalls).toBe(1);
     expect(b.shutdownCalls).toBe(1);
@@ -141,7 +156,7 @@ describe('TelemetryService (unit)', () => {
 
   it('flush is a no-op for appenders without flush', async () => {
     const minimal: ITelemetryAppender = { track() {} };
-    const svc = new TelemetryService({ appender: minimal });
+    const svc = telemetryWithAppenders(minimal);
     await expect(svc.flush()).resolves.toBeUndefined();
     await expect(svc.shutdown()).resolves.toBeUndefined();
   });
@@ -158,7 +173,7 @@ describe('TelemetryService (error isolation)', () => {
       },
     };
     const good = new CapturingAppender();
-    const svc = new TelemetryService({ appenders: [bad, good] });
+    const svc = telemetryWithAppenders(bad, good);
     expect(() => svc.track('evt')).not.toThrow();
     expect(good.events).toEqual([{ event: 'evt', properties: {} }]);
   });
@@ -171,7 +186,7 @@ describe('TelemetryService (error isolation)', () => {
       },
     };
     const good = new CapturingAppender();
-    const svc = new TelemetryService({ appenders: [bad, good] });
+    const svc = telemetryWithAppenders(bad, good);
     await expect(svc.flush()).resolves.toBeUndefined();
     expect(good.flushCalls).toBe(1);
   });
@@ -184,7 +199,7 @@ describe('TelemetryService (error isolation)', () => {
       },
     };
     const good = new CapturingAppender();
-    const svc = new TelemetryService({ appenders: [bad, good] });
+    const svc = telemetryWithAppenders(bad, good);
     await expect(svc.shutdown()).resolves.toBeUndefined();
     expect(good.shutdownCalls).toBe(1);
   });

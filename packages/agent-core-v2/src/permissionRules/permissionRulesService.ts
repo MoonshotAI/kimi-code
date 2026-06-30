@@ -13,7 +13,6 @@ import {
   IPermissionRulesService,
   type PermissionApprovalResultRecord,
   type PermissionRule,
-  type PermissionRulesServiceOptions,
 } from './permissionRules';
 import {
   PERMISSION_SECTION,
@@ -35,9 +34,8 @@ declare module '#/wireRecord' {
 export class PermissionRulesService extends Disposable implements IPermissionRulesService {
   declare readonly _serviceBrand: undefined;
 
-  private localRules: PermissionRule[];
+  private readonly localRules: PermissionRule[] = [];
   private readonly localSessionApprovalRulePatterns = new Set<string>();
-  private readonly parent: IPermissionRulesService | undefined;
 
   readonly hooks = {
     onChanged: new OrderedHookSlot<{ rules: readonly PermissionRule[] }>(),
@@ -45,7 +43,6 @@ export class PermissionRulesService extends Disposable implements IPermissionRul
   };
 
   constructor(
-    options: PermissionRulesServiceOptions = {},
     @IWireRecord private readonly wireRecord: IWireRecord,
     @IReplayBuilderService private readonly replayBuilder: IReplayBuilderService,
     @IConfigRegistry configRegistry: IConfigRegistry,
@@ -55,8 +52,6 @@ export class PermissionRulesService extends Disposable implements IPermissionRul
       fromToml: permissionFromToml,
       toToml: permissionToToml,
     });
-    this.localRules = [...(options.initialRules ?? [])];
-    this.parent = options.parent;
     this._register(
       wireRecord.register('permission.rules.add', (record) => {
         this.applyAddRules(record.rules);
@@ -71,14 +66,11 @@ export class PermissionRulesService extends Disposable implements IPermissionRul
   }
 
   get rules(): readonly PermissionRule[] {
-    return [...this.localRules, ...(this.parent?.rules ?? [])];
+    return [...this.localRules];
   }
 
   get sessionApprovalRulePatterns(): readonly string[] {
-    return [
-      ...this.localSessionApprovalRulePatterns,
-      ...(this.parent?.sessionApprovalRulePatterns ?? []),
-    ];
+    return [...this.localSessionApprovalRulePatterns];
   }
 
   addRules(rules: readonly PermissionRule[]): void {

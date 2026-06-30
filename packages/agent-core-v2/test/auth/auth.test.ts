@@ -82,7 +82,7 @@ describe('OAuthService', () => {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
           set: providerSet as unknown as IProviderService['set'],
-          onDidChange: (() => ({ dispose: () => {} })) as IProviderService['onDidChange'],
+          onDidChange: (() => ({ dispose: () => { } })) as IProviderService['onDidChange'],
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) => configBacking()[domain]) as IConfigService['get'],
@@ -95,8 +95,8 @@ describe('OAuthService', () => {
           set: configSet as unknown as IConfigService['set'],
           replace: configReplace as unknown as IConfigService['replace'],
           reload: vi.fn().mockResolvedValue(undefined) as unknown as IConfigService['reload'],
-          onDidChange: (() => ({ dispose: () => {} })) as IConfigService['onDidChange'],
-          onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+          onDidChange: (() => ({ dispose: () => { } })) as IConfigService['onDidChange'],
+          onDidSectionChange: (() => ({ dispose: () => { } })) as IConfigService['onDidSectionChange'],
         });
         reg.definePartialInstance(ILogService, {
           info: vi.fn(),
@@ -105,6 +105,7 @@ describe('OAuthService', () => {
           error: vi.fn(),
         });
         reg.defineInstance(IOAuthToolkit, toolkit as unknown as IOAuthToolkit);
+        reg.define(IOAuthService, OAuthService);
       },
     });
   });
@@ -114,7 +115,7 @@ describe('OAuthService', () => {
   });
 
   function createService(): IOAuthService {
-    return ix.createInstance(OAuthService);
+    return ix.get(IOAuthService);
   }
 
   function configBacking(): Record<string, unknown> {
@@ -211,7 +212,7 @@ describe('OAuthService', () => {
     toolkit.login.mockImplementation(async (_provider, options) => {
       capturedSignal = options.signal;
       options.onDeviceCode(deviceAuth);
-      return new Promise(() => {});
+      return new Promise(() => { });
     });
     const svc = createService();
     await svc.startLogin(OAUTH_PROVIDER);
@@ -225,7 +226,7 @@ describe('OAuthService', () => {
   it('logout delegates to the toolkit and clears any pending flow', async () => {
     toolkit.login.mockImplementation(async (_provider, options) => {
       options.onDeviceCode(deviceAuth);
-      return new Promise(() => {});
+      return new Promise(() => { });
     });
     const svc = createService();
     await svc.startLogin(OAUTH_PROVIDER);
@@ -343,13 +344,14 @@ describe('AuthSummaryService', () => {
           debug: vi.fn(),
           error: vi.fn(),
         });
+        reg.define(IAuthSummaryService, AuthSummaryService);
       },
     });
   });
   afterEach(() => disposables.dispose());
 
   function createSummary(): IAuthSummaryService {
-    return ix.createInstance(AuthSummaryService);
+    return ix.get(IAuthSummaryService);
   }
 
   it('summarize reports status only for providers configured with oauth', async () => {

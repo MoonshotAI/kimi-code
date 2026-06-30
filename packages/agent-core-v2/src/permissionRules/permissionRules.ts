@@ -20,11 +20,6 @@ export interface PermissionApprovalRecordedContext {
   readonly record: PermissionApprovalResultRecord;
 }
 
-export interface PermissionRulesServiceOptions {
-  readonly initialRules?: readonly PermissionRule[];
-  readonly parent?: IPermissionRulesService;
-}
-
 export type PermissionRuleDecision = 'allow' | 'deny' | 'ask';
 
 /**

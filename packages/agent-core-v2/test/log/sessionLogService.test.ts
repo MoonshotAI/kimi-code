@@ -16,11 +16,11 @@ import {
   ISessionLogService,
   resolveLoggingConfig,
   resolveSessionLogPath,
-  sessionLogSeed,
 } from '#/log/index';
-import { SessionFileLogWriterService } from '#/log/logWriter';
 import { logSeed } from '#/log/logConfig';
+import { SessionFileLogWriterService } from '#/log/logWriter';
 import { SessionLogService } from '#/log/sessionLogService';
+import { sessionContextSeed } from '#/session-context';
 
 let homeDir: string;
 let sessionDir: string;
@@ -57,6 +57,16 @@ function buildHost() {
   return createScopedTestHost(logSeed(cfg));
 }
 
+function testSessionSeed() {
+  return sessionContextSeed({
+    _serviceBrand: undefined,
+    sessionId: 's1',
+    workspaceId: 'test-workspace',
+    sessionDir,
+    metaScope: 'sessions/test-workspace/s1/session-meta',
+  });
+}
+
 async function readSessionLog(): Promise<string> {
   try {
     return await readFile(resolveSessionLogPath(sessionDir), 'utf-8');
@@ -68,7 +78,7 @@ async function readSessionLog(): Promise<string> {
 describe('SessionLogService', () => {
   it('writes entries to the per-session log file', async () => {
     const host = buildHost();
-    const session = host.child(LifecycleScope.Session, 's1', sessionLogSeed('s1', sessionDir));
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
     const log = session.accessor.get(ISessionLogService);
     log.info('session event', { requestId: 'r1' });
     await log.flush();
@@ -80,7 +90,7 @@ describe('SessionLogService', () => {
 
   it('omits sessionId from per-session lines', async () => {
     const host = buildHost();
-    const session = host.child(LifecycleScope.Session, 's1', sessionLogSeed('s1', sessionDir));
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
     const log = session.accessor.get(ISessionLogService);
     log.info('evt');
     await log.flush();
@@ -91,7 +101,7 @@ describe('SessionLogService', () => {
 
   it('child logger accumulates context and writes to the same file', async () => {
     const host = buildHost();
-    const session = host.child(LifecycleScope.Session, 's1', sessionLogSeed('s1', sessionDir));
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
     const log = session.accessor.get(ISessionLogService);
     log.child({ agentId: 'main' }).warn('child event');
     await log.flush();
@@ -103,7 +113,7 @@ describe('SessionLogService', () => {
 
   it('close flushes and a subsequent write is dropped', async () => {
     const host = buildHost();
-    const session = host.child(LifecycleScope.Session, 's1', sessionLogSeed('s1', sessionDir));
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
     const log = session.accessor.get(ISessionLogService);
     log.info('before-close');
     await log.close();
@@ -116,7 +126,7 @@ describe('SessionLogService', () => {
 
   it('dispose flushes pending entries synchronously', () => {
     const host = buildHost();
-    const session = host.child(LifecycleScope.Session, 's1', sessionLogSeed('s1', sessionDir));
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
     const log = session.accessor.get(ISessionLogService);
     log.info('on-dispose');
     host.dispose();

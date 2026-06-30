@@ -10,6 +10,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { IKaos } from '#/kaos';
 
 import { IWorkspaceContext, type PathAccessOperation } from './workspaceContext';
 
@@ -18,8 +19,8 @@ export class WorkspaceContextService implements IWorkspaceContext {
   private _workDir: string;
   private _additionalDirs: string[] = [];
 
-  constructor(workDir: string = process.cwd()) {
-    this._workDir = resolve(workDir);
+  constructor(@IKaos kaos: IKaos) {
+    this._workDir = resolve(kaos.getcwd());
   }
 
   get workDir(): string {

@@ -7,6 +7,8 @@ import {
   toDisposable,
 } from "#/_base/di";
 import { IBlobStoreService } from '#/blobStore';
+import { IBootstrapService } from '#/bootstrap';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IAppendLogStore } from '#/storage';
 import { OrderedHookSlot } from '../hooks';
 import type { WireRecord, WireRecordMap } from '../wireRecord';
@@ -27,7 +29,6 @@ import {
   type WireRecordRestoredContext,
   type WireRecordRestoreOptions,
   type WireRecordRestoreResult,
-  type WireRecordServiceOptions,
 } from './wireRecord';
 
 type Resumer<T extends keyof WireRecordMap> = (data: WireRecord<T>) => void | Promise<void>;
@@ -42,7 +43,6 @@ export class WireRecordService extends Disposable implements IWireRecord {
     BlobSelector<keyof WireRecordMap>[]
   >();
   private readonly persistKey: string | undefined;
-  private readonly blobStore: IBlobStoreService | undefined;
   private persistentAppendQueue: Promise<void> = Promise.resolve();
   private _restoring: { time?: number } | null = null;
   private _postRestoring = false;
@@ -53,13 +53,12 @@ export class WireRecordService extends Disposable implements IWireRecord {
   };
 
   constructor(
-    private readonly options: WireRecordServiceOptions = {},
-    @IBlobStoreService injectedBlobStore?: IBlobStoreService,
+    @IBootstrapService bootstrap: IBootstrapService,
+    @IBlobStoreService private readonly blobStore?: IBlobStoreService,
     @IAppendLogStore private readonly log?: IAppendLogStore,
   ) {
     super();
-    this.blobStore = options.blobStore ?? injectedBlobStore;
-    this.persistKey = options.homedir === undefined ? undefined : hashKey(options.homedir);
+    this.persistKey = hashKey(bootstrap.homeDir);
     if (this.log !== undefined && this.persistKey !== undefined) {
       this._register(this.log.acquire('wire', this.persistKey));
     }
@@ -264,9 +263,9 @@ export class WireRecordService extends Disposable implements IWireRecord {
 
   private reportPersistenceError(
     error: unknown,
-    record?: PersistedWireRecord,
+    _record?: PersistedWireRecord,
   ): void {
-    this.options.onPersistenceError?.(error, record);
+    onUnexpectedError(error);
   }
 
   private registerBlobSelector<T extends keyof WireRecordMap>(

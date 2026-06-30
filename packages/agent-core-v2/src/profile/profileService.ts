@@ -71,7 +71,6 @@ export class ProfileService implements IProfileService {
   private activeToolNames: readonly string[] | undefined;
 
   constructor(
-    options: ProfileServiceOptions = {},
     @IWireRecord private readonly wireRecord: IWireRecord,
     @IEventSink private readonly events: IEventSink,
     @IReplayBuilderService private readonly replayBuilder: IReplayBuilderService,
@@ -87,7 +86,7 @@ export class ProfileService implements IProfileService {
     configRegistry.registerSection(DEFAULT_THINKING_SECTION, { parse: (v) => v as boolean }, {
       env: defaultThinkingEnvBindings,
     });
-    this.configure(options);
+    this.configure({});
     wireRecord.register('config.update', (record) => {
       const { type: _type, time: _time, ...changed } = record;
       this.apply(changed);

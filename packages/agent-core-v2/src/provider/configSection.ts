@@ -11,7 +11,7 @@
  * domain never imports this domain's types.
  */
 
-import { type ConfigStripEnv, envBindings } from '#/config';
+import { type ConfigStripEnv, envBindings } from '#/config/config';
 import {
   camelToSnake,
   cloneRecord,

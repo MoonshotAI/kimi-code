@@ -24,10 +24,10 @@ import { IPromptService } from '#/prompt';
 import type { SessionSubagentHost, SubagentHandle } from '#/subagentHost';
 import {
   configServices,
+  createTestAgent,
   externalHookServices,
   homeDirServices,
   telemetryServices,
-  testAgent,
   type TestAgentContext,
   type TestAgentServiceOverride,
 } from '../harness';
@@ -197,8 +197,7 @@ function createBackgroundManager(options: {
   if (hookEngine !== undefined) {
     overrides.push(externalHookServices(hookEngine));
   }
-  const ctx = testAgent(...overrides);
-  ctx.configure();
+  const ctx = createTestAgent(...overrides);
 
   const emittedEvents: Array<{ type: string; info?: unknown }> = [];
   const events = ctx.get(IEventSink);

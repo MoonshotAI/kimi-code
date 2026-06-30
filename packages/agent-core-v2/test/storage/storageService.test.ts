@@ -136,3 +136,34 @@ storageServiceSuite('FileStorageService', async () => {
     cleanup: () => rm(dir, { recursive: true, force: true }),
   };
 });
+
+describe('FileStorageService path safety', () => {
+  let dir: string;
+  let service: FileStorageService;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'storage-service-path-test-'));
+    service = new FileStorageService(dir);
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('rejects scope and key values that escape the base directory', async () => {
+    await expect(service.write('../outside', 'k', enc.encode('x'))).rejects.toThrow(
+      /escapes base directory/,
+    );
+    await expect(service.read('s', '../other')).rejects.toThrow(/escapes base directory/);
+    await expect(service.read('s', '../../outside')).rejects.toThrow(/escapes base directory/);
+    await expect(service.append('/tmp/outside', 'k', enc.encode('x'))).rejects.toThrow(
+      /escapes base directory/,
+    );
+    await expect(service.delete('s', '/tmp/outside')).rejects.toThrow(/escapes base directory/);
+  });
+
+  it('still allows nested scopes and keys under the base directory', async () => {
+    await service.write('agents/main', 'records/wire.jsonl', enc.encode('ok'));
+    expect(dec.decode(await service.read('agents/main', 'records/wire.jsonl'))).toBe('ok');
+  });
+});

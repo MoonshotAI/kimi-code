@@ -18,27 +18,14 @@ import {
   nullTelemetryAppender,
   type TelemetryContextPatch,
   type TelemetryProperties,
-  type TelemetryServiceOptions,
 } from './telemetry';
 
 export class TelemetryService implements ITelemetryService {
   declare readonly _serviceBrand: undefined;
 
-  private appenders: ITelemetryAppender[];
-  private context: TelemetryProperties;
+  private appenders: ITelemetryAppender[] = [nullTelemetryAppender];
+  private context: TelemetryProperties = {};
   private enabled = true;
-
-  constructor(options: TelemetryServiceOptions = {}) {
-    this.appenders = resolveAppenders(options);
-    this.context = {
-      ...options.context,
-      ...definedContext({
-        sessionId: options.sessionId,
-        agentId: options.agentId,
-        turnId: options.turnId,
-      }),
-    };
-  }
 
   track(event: string, properties?: TelemetryProperties): void {
     if (!this.enabled) {
@@ -55,10 +42,9 @@ export class TelemetryService implements ITelemetryService {
   }
 
   withContext(patch: TelemetryContextPatch): ITelemetryService {
-    const child = new TelemetryService({
-      appenders: this.appenders.map((appender) => appender.withContext?.(patch) ?? appender),
-      context: { ...this.context, ...patch },
-    });
+    const child = new TelemetryService();
+    child.appenders = this.appenders.map((appender) => appender.withContext?.(patch) ?? appender);
+    child.context = { ...this.context, ...patch };
     child.enabled = this.enabled;
     return child;
   }
@@ -111,20 +97,3 @@ registerScopedService(
   InstantiationType.Delayed,
   'telemetry',
 );
-
-function resolveAppenders(options: TelemetryServiceOptions): ITelemetryAppender[] {
-  if (options.appenders !== undefined) {
-    return options.appenders.length > 0 ? [...options.appenders] : [nullTelemetryAppender];
-  }
-  return [options.appender ?? nullTelemetryAppender];
-}
-
-function definedContext(input: TelemetryProperties): TelemetryProperties {
-  const out: Record<string, Exclude<TelemetryProperties[string], undefined>> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined) {
-      out[key] = value;
-    }
-  }
-  return out;
-}

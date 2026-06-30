@@ -4,7 +4,7 @@ import { Readable, type Writable } from 'node:stream';
 import { createControlledPromise } from '@antfu/utils';
 import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
 import type { ContentPart, ModelCapability, ProviderConfig, generate as kosongGenerate } from '@moonshot-ai/kosong';
-import { expect, onTestFinished, vi } from 'vitest';
+import { expect, vi } from 'vitest';
 
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
@@ -505,17 +505,11 @@ export function createCommandKaos(stdout: string): Kaos {
 }
 
 export function testAgent(...overrides: readonly TestAgentServiceOverride[]): AgentTestContext {
-  return new AgentTestContext(overrides, {
-    autoCloseOnTestFinished: true,
-    autoConfigure: false,
-  });
+  return createTestAgent(...overrides);
 }
 
 export function createTestAgent(...overrides: readonly TestAgentServiceOverride[]): AgentTestContext {
-  return new AgentTestContext(overrides, {
-    autoCloseOnTestFinished: false,
-    autoConfigure: true,
-  });
+  return new AgentTestContext(overrides);
 }
 
 function flattenServiceOverrides(
@@ -657,11 +651,6 @@ class ConfigBackedModelProvider extends ModelProvider {
   }
 }
 
-interface AgentTestContextLifecycle {
-  readonly autoCloseOnTestFinished: boolean;
-  readonly autoConfigure: boolean;
-}
-
 class RecordingWireRecordService extends WireRecordService {
   constructor(
     options: WireRecordServiceOptions,
@@ -702,13 +691,7 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
-  constructor(
-    overrides: readonly TestAgentServiceOverride[] = [],
-    lifecycle: AgentTestContextLifecycle = {
-      autoCloseOnTestFinished: true,
-      autoConfigure: false,
-    },
-  ) {
+  constructor(overrides: readonly TestAgentServiceOverride[] = []) {
     this.serviceOverrides = flattenServiceOverrides(overrides);
     this.emitter.on('error', () => {});
     this.kimiConfig = emptyConfig();
@@ -831,15 +814,7 @@ export class AgentTestContext {
     const rpcMethods = this.get(IAgentRPCService);
     this.rpc = this.createPromiseAgentApi(rpcMethods);
 
-    if (lifecycle.autoConfigure) {
-      this.configure();
-    }
-
-    if (lifecycle.autoCloseOnTestFinished) {
-      onTestFinished(async () => {
-        await this.close();
-      });
-    }
+    this.configure();
   }
 
   get<T>(id: ServiceIdentifier<T>): T {
@@ -870,10 +845,6 @@ export class AgentTestContext {
     void permissionRules.rules;
     cron.list();
     void plan.status();
-  }
-
-  service<T>(id: ServiceIdentifier<T>): T {
-    return this.get(id);
   }
 
   configure({
@@ -1177,7 +1148,7 @@ export class AgentTestContext {
   async expectResumeMatches(): Promise<void> {
     await this.drainWirePersistence();
     const profile = this.get(IProfileService);
-    const resumed = testAgent(
+    const resumed = createTestAgent(
       ...this.serviceOverrides,
       kaosServices(createResumeNoSideEffectKaos(profile.data().cwd)),
       configServices(() => this.kimiConfig),
@@ -1187,10 +1158,14 @@ export class AgentTestContext {
       )),
     );
 
-    await resumed.runtime.restore();
+    try {
+      await resumed.runtime.restore();
 
-    // oxlint-disable-next-line jest/no-standalone-expect
-    expect(resumeStateSnapshot(resumed)).toEqual(resumeStateSnapshot(this));
+      // oxlint-disable-next-line jest/no-standalone-expect
+      expect(resumeStateSnapshot(resumed)).toEqual(resumeStateSnapshot(this));
+    } finally {
+      await resumed.dispose();
+    }
   }
 
   private async drainWirePersistence(): Promise<void> {

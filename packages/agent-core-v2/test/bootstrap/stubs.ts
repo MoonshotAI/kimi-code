@@ -7,7 +7,7 @@
  */
 
 import type { ServiceRegistration } from '#/_base/di/test';
-import { IBootstrapService } from '#/bootstrap/bootstrap';
+import { IBootstrapService } from '#/bootstrap/bootstrapContract';
 
 /**
  * An `IBootstrapService` rooted at the given home dir with the given env bag.

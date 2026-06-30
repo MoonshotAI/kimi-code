@@ -2,7 +2,7 @@ import {
   applyWireMigrations,
   type WireMigration,
   type WireMigrationRecord,
-} from '#/index';
+} from '#/wireRecord/migration';
 import { eventSnapshot } from '../../harness/snapshots';
 
 export function runMigration(

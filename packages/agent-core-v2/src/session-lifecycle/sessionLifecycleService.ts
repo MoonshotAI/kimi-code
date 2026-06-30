@@ -22,8 +22,6 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/bootstrap';
 import { NotImplementedError } from '#/errors';
 import { IKaos, IKaosFactory } from '#/kaos';
-import { sessionLogSeed } from '#/log';
-import { IWorkspaceContext, WorkspaceContextService } from '#/workspaceContext';
 import { ISessionService } from '#/session';
 import { type ISessionContext, sessionContextSeed } from '#/session-context';
 import { ISessionMetadata } from '#/session-metadata';
@@ -57,10 +55,6 @@ export class SessionLifecycleService implements ISessionLifecycleService {
       metaScope,
     };
     const kaos = await this.kaosFactory.createLocal(opts.workDir);
-    // Keep `IWorkspaceContext` aligned with the session work dir. Without this
-    // seed it would default to `process.cwd()`, so workspace-relative services
-    // (fs, git, terminal, skills) would resolve paths against the wrong root.
-    const workspace = new WorkspaceContextService(opts.workDir);
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
@@ -68,9 +62,7 @@ export class SessionLifecycleService implements ISessionLifecycleService {
       {
         extra: [
           ...sessionContextSeed(ctx),
-          ...sessionLogSeed(opts.sessionId, sessionDir),
           [IKaos, kaos] as const,
-          [IWorkspaceContext, workspace] as const,
         ],
       },
     );
