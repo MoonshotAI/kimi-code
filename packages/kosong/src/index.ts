@@ -68,6 +68,7 @@ export {
   ChatProviderError,
   isContextOverflowStatusError,
   isProviderRateLimitError,
+  isRecoverableRequestStructureError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
 } from './errors';

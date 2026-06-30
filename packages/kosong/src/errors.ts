@@ -163,6 +163,31 @@ export function isToolExchangeAdjacencyError(error: unknown): boolean {
   return TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
+// The broader family of structural request rejections a strict provider returns
+// when the message array itself is malformed — tool_use/tool_result pairing,
+// empty or whitespace-only text blocks, a non-user first message, or
+// non-alternating roles. All are deterministic 4xx validation failures (no
+// generation happened) on a history that is re-sent every turn, so the only
+// recovery is to resend a re-projected, strictly wire-compliant request rather
+// than leave the session permanently stuck. Context-overflow 400s are excluded —
+// they are handled by compaction, not by re-projection.
+const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
+  /text content blocks must be non-empty/,
+  /text content blocks must contain non-whitespace/,
+  /first message must use the .*user.* role/,
+  /roles must alternate/,
+  /multiple .*(?:user|assistant).* roles in a row/,
+] as const;
+
+export function isRecoverableRequestStructureError(error: unknown): boolean {
+  if (isToolExchangeAdjacencyError(error)) return true;
+  if (!(error instanceof APIStatusError)) return false;
+  if (error instanceof APIContextOverflowError) return false;
+  if (error.statusCode !== 400 && error.statusCode !== 422) return false;
+  const lowerMessage = error.message.toLowerCase();
+  return STRUCTURAL_REQUEST_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
 export function isProviderRateLimitError(error: unknown): boolean {
   if (error instanceof APIProviderRateLimitError) return true;
 

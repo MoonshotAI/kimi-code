@@ -7,6 +7,7 @@ import {
   APITimeoutError,
   ChatProviderError,
   isProviderRateLimitError,
+  isRecoverableRequestStructureError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
@@ -255,6 +256,54 @@ describe('isToolExchangeAdjacencyError', () => {
     );
     expect(isToolExchangeAdjacencyError(new Error(ANTHROPIC_MISSING_RESULT))).toBe(false);
     expect(isToolExchangeAdjacencyError('boom')).toBe(false);
+  });
+});
+
+describe('isRecoverableRequestStructureError', () => {
+  it('matches the whole tool_use/tool_result adjacency family', () => {
+    expect(
+      isRecoverableRequestStructureError(
+        new APIStatusError(400, '`tool_use` ids were found without `tool_result` blocks'),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches empty / whitespace-only text content rejections', () => {
+    expect(
+      isRecoverableRequestStructureError(
+        new APIStatusError(400, 'messages: text content blocks must be non-empty'),
+      ),
+    ).toBe(true);
+    expect(
+      isRecoverableRequestStructureError(
+        new APIStatusError(400, 'text content blocks must contain non-whitespace text'),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches first-message-must-be-user and role-alternation rejections', () => {
+    expect(
+      isRecoverableRequestStructureError(
+        new APIStatusError(400, 'messages: first message must use the "user" role'),
+      ),
+    ).toBe(true);
+    expect(
+      isRecoverableRequestStructureError(
+        new APIStatusError(
+          400,
+          'messages: roles must alternate between "user" and "assistant", but found multiple "user" roles in a row',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match context overflow, auth, or non-status errors', () => {
+    expect(
+      isRecoverableRequestStructureError(new APIContextOverflowError(400, 'context length exceeded')),
+    ).toBe(false);
+    expect(isRecoverableRequestStructureError(new APIStatusError(401, 'unauthorized'))).toBe(false);
+    expect(isRecoverableRequestStructureError(new APIStatusError(400, 'Bad request'))).toBe(false);
+    expect(isRecoverableRequestStructureError(new Error('roles must alternate'))).toBe(false);
   });
 });
 
