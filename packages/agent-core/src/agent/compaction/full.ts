@@ -385,6 +385,7 @@ export class FullCompaction {
       let historyForModel = originalHistory;
       let droppedCount = 0;
       let overflowShrinkCount = 0;
+      let emptyOrTruncatedShrinkCount = 0;
       while (true) {
         const messages = [
           ...this.agent.context.project(historyForModel, { synthesizeMissing: true }),
@@ -432,6 +433,15 @@ export class FullCompaction {
             error instanceof CompactionTruncatedError ||
             error instanceof APIEmptyResponseError;
           if (shouldShrinkAfterEmptyOrTruncated && historyForModel.length > 1) {
+            // Each empty/truncated summary drops the oldest message and retries,
+            // but without its own bound this would issue ~one request per message
+            // (resetting retryCount sidesteps the transient-error budget). Cap the
+            // shrink attempts by the same retry budget so a model that keeps
+            // returning empty cannot fan out into a request per history entry.
+            emptyOrTruncatedShrinkCount += 1;
+            if (emptyOrTruncatedShrinkCount > MAX_COMPACTION_RETRY_ATTEMPTS) {
+              throw error;
+            }
             const before = historyForModel.length;
             historyForModel = dropOldestMessageAndLeadingToolResults(historyForModel);
             droppedCount += before - historyForModel.length;
@@ -456,10 +466,21 @@ export class FullCompaction {
       const newHistory = this.agent.context.history;
       for (let i = 0; i < originalHistory.length; i++) {
         if (newHistory[i] !== originalHistory[i]) {
-          // History changed during compaction, likely due to undo
+          // The compacted prefix changed under us (e.g. undo). Bail.
           this.cancel();
           return undefined;
         }
+      }
+      // The prefix is intact, but the tail grew while the summarizer was in
+      // flight (a live step racing a manual/SDK compaction). An appended user
+      // message is safe — the all-user rebuild picks recent user input back up
+      // from the grown history — but an appended assistant/tool turn would be
+      // neither summarized (the summary only covers originalHistory) nor kept,
+      // so it would silently vanish. Cancel and let a later clean-boundary
+      // compaction handle it.
+      if (newHistory.slice(originalHistory.length).some((message) => message.role !== 'user')) {
+        this.cancel();
+        return undefined;
       }
 
       const rawSummary = this.postProcessSummary(summary ?? '');

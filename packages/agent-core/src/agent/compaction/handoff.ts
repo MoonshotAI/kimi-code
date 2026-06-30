@@ -1,5 +1,5 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
-import { estimateTokensForMessage } from '../../utils/tokens';
+import { estimateTokensForContentParts, estimateTokensForMessage } from '../../utils/tokens';
 import type { PromptOrigin } from '../context/types';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
@@ -117,15 +117,22 @@ function truncateTextToTokens(text: string, maxTokens: number): string {
 }
 
 function truncateUserMessage<T extends MessageLike>(message: T, maxTokens: number): T {
-  const text = truncateTextToTokens(extractText(message.content), maxTokens);
-  // Spread the original message to preserve every field (notably `origin`),
-  // then replace the content with the truncated text and drop any tool calls.
-  // Real user input never carries tool calls, so clearing them is safe. The
-  // cast back to `T` is unavoidable here: TypeScript cannot prove that a
-  // spread-then-override shape still equals the generic `T`.
+  // Keep non-text parts (image/audio/video): the estimator now counts them as
+  // significant context, and the summary may still reference the screenshot or
+  // file the user attached. Spend the remaining budget on truncated text. Real
+  // user input never carries tool calls, so clearing them is safe. The cast back
+  // to `T` is unavoidable here: TypeScript cannot prove that a spread-then-
+  // override shape still equals the generic `T`.
+  const nonTextParts = message.content.filter((part) => part.type !== 'text');
+  const textBudget = Math.max(0, maxTokens - estimateTokensForContentParts(nonTextParts));
+  const text = truncateTextToTokens(extractText(message.content), textBudget);
+  const content: ContentPart[] = [...nonTextParts];
+  if (text.length > 0) {
+    content.push({ type: 'text', text });
+  }
   return {
     ...message,
-    content: [{ type: 'text', text }],
+    content,
     toolCalls: [],
   } as unknown as T;
 }

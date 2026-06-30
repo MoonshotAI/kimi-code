@@ -113,10 +113,11 @@ describe('compaction — guard tests', () => {
 
 describe('compaction — probe tests (high-risk scenarios)', () => {
   // PROBE #1 / CMP-02 — messages appended while the summarizer request is in
-  // flight (manual/background compaction racing a live step). The summarizer
-  // only saw the pre-compaction snapshot, and the all-user rebuild drops any
-  // assistant/tool appended during the await, with no guard tripped.
-  it.fails('preserves an assistant turn appended while the summarizer call is in flight', async () => {
+  // flight (a live step racing a manual/SDK compaction). The summary only covers
+  // the pre-compaction snapshot, and the all-user rebuild would drop the appended
+  // assistant/tool tail — so compaction detects the changed history and cancels,
+  // leaving the appended turn intact for a later clean-boundary compaction.
+  it('preserves an assistant turn appended while the summarizer call is in flight', async () => {
     let ctx!: TestAgentContext;
     const appendDuringGenerate: GenerateFn = async () => {
       // Simulate the turn loop completing a step while compaction awaits.
@@ -148,20 +149,19 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
     ctx.appendExchange(1, 'user one', 'assistant one', 40);
 
     await ctx.rpc.beginCompaction({});
-    await ctx.once('compaction.completed');
+    await ctx.once('compaction.cancelled');
 
     expect(historyTexts(ctx).join('\n')).toContain('RACE-ASSISTANT-OUTPUT');
   });
 
   // PROBE #2 — empty/truncated summarizer responses drop one oldest message and
-  // reset retryCount, so MAX_COMPACTION_RETRY_ATTEMPTS does not bound the number
-  // of provider calls: a model that always returns empty makes ~one call per
-  // message in the history before failing.
-  it.fails('bounds summarizer calls by the retry limit when the model keeps returning empty', async () => {
+  // retry. A dedicated shrink counter, bounded by MAX_COMPACTION_RETRY_ATTEMPTS,
+  // keeps a model that always returns empty from issuing ~one call per message.
+  it('bounds summarizer calls by the retry limit when the model keeps returning empty', async () => {
     let calls = 0;
-    // Empty 7 times, then a valid summary. Pre-fix, each empty drops one oldest
-    // message and resets retryCount, so all 7 are tolerated and compaction
-    // completes on the 8th call; a retry-bounded impl would give up by ~call 6.
+    // Empty 7 times, then a valid summary. The bounded shrink counter gives up by
+    // ~call 6, so compaction errors out before ever reaching the 8th (valid)
+    // response; an unbounded impl would tolerate all 7 and complete on the 8th.
     const flakyEmpty: GenerateFn = async () => {
       calls += 1;
       return calls <= 7 ? textResult('') : textResult('Compacted summary.');
@@ -307,10 +307,11 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
     expect(suffixToolText).toContain('TOOL-OUTPUT-CONTENT');
   });
 
-  // PROBE #7 / CMP-07 — when the oldest kept user message overflows the budget
-  // it is truncated to text only, silently discarding any image/audio/video it
-  // carried.
-  it.fails('keeps media on the oldest kept user message instead of dropping it on truncation', () => {
+  // PROBE #7 / CMP-07 — when the oldest kept user message overflows the budget it
+  // is truncated. Truncation now keeps the non-text attachment (image/audio/
+  // video) and only trims the text, so vision-heavy sessions don't lose the
+  // screenshot/file the summary may still refer to.
+  it('keeps media on the oldest kept user message instead of dropping it on truncation', () => {
     const ctx = testAgent();
     ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
     // Oldest user message: an image + long text that will overflow the budget.
