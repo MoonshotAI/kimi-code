@@ -32,6 +32,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import { isAbortError } from '../../../loop/errors';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import { noopTelemetryClient, type TelemetryClient } from '../../../telemetry';
 import { isWithinDirectory, resolvePathAccessPath } from '../../policies/path-access';
 import type { PathClass } from '../../policies/path-access';
 import { isSensitiveFile } from '../../policies/sensitive';
@@ -104,10 +105,13 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   readonly name = 'Glob' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GlobInputSchema);
+  private readonly telemetry: TelemetryClient;
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
+    telemetry: TelemetryClient = noopTelemetryClient,
   ) {
+    this.telemetry = telemetry;
     this.description =
       this.kaos.pathClass() === 'win32'
         ? GLOB_DESCRIPTION + WINDOWS_PATH_HINT
@@ -176,10 +180,17 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     try {
       const resolution = await ensureRgPath({ signal });
       rgPath = resolution.path;
+      if (resolution.source !== 'system-path') {
+        this.telemetry.track('glob_tool_rg_fallback', {
+          source: resolution.source,
+          outcome: 'resolved',
+        });
+      }
     } catch (error) {
       if (isAbortError(error)) {
         return { isError: true, output: 'Glob aborted' };
       }
+      this.telemetry.track('glob_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 
