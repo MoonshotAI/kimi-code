@@ -33,22 +33,38 @@ import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry
 import { createKimiCodeHostIdentity } from './version';
 
 /**
- * Await `promise` but give up after `timeoutMs`, resolving either way.
+ * Await `promise`, but stop waiting after `timeoutMs`.
+ *
+ * The timeout only bounds how long we WAIT — it does not change the outcome:
+ *  - if `promise` settles first, its result is propagated (a rejection throws),
+ *    so a cleanup step that actually fails in time still surfaces;
+ *  - if the timeout wins, we resolve (give up waiting) and swallow the abandoned
+ *    promise's eventual late rejection so it can't surface as an unhandled
+ *    rejection.
  *
  * Used to bound shutdown so a wedged cleanup step can't keep a completed
- * headless run alive. The timer is unref'd so it never keeps the loop alive on
- * its own, and the promise is guarded so a late rejection after we stop waiting
- * does not surface as an unhandled rejection.
+ * headless run alive, without silently swallowing a cleanup that fails fast. The
+ * timer is unref'd so it never keeps the loop alive on its own.
  */
 async function raceWithTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
-  const guarded = promise.catch(() => {});
+  let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, timeoutMs);
+  // Attach the catch eagerly (synchronously) so `promise` is always consumed and
+  // a late rejection can never become an unhandled rejection. Before the timeout
+  // wins, the handler rethrows so a real cleanup failure still propagates.
+  const guarded = promise.catch((error: unknown) => {
+    if (timedOut) return;
+    throw error;
+  });
+  const timedOutSignal = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve();
+    }, timeoutMs);
     timer.unref?.();
   });
   try {
-    await Promise.race([guarded, timeout]);
+    await Promise.race([guarded, timedOutSignal]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
