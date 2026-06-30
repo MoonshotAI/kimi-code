@@ -44,6 +44,14 @@ export interface LLMStreamTiming {
    * provider does not report the client/server boundary.
    */
   readonly serverFirstTokenMs?: number;
+  /**
+   * Split of `streamDurationMs` (the decode window): time spent awaiting parts
+   * from the provider (`serverDecodeMs`, server + network) vs. time spent
+   * processing parts in-process (`clientConsumeMs`, host callbacks / merge).
+   * `undefined` when the provider stream did not report decode accounting.
+   */
+  readonly serverDecodeMs?: number;
+  readonly clientConsumeMs?: number;
 }
 
 export interface LLMChatParams {

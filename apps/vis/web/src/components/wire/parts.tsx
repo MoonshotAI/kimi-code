@@ -377,6 +377,16 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 <span className="text-fg-1">{event.llmStreamDurationMs} ms</span>
               </FieldRow>
             ) : null}
+            {event.llmServerDecodeMs !== undefined ? (
+              <FieldRow label="streamDuration/server">
+                <span className="text-fg-1">{event.llmServerDecodeMs} ms</span>
+              </FieldRow>
+            ) : null}
+            {event.llmClientConsumeMs !== undefined ? (
+              <FieldRow label="streamDuration/client">
+                <span className="text-fg-1">{event.llmClientConsumeMs} ms</span>
+              </FieldRow>
+            ) : null}
           </div>
           {usage !== undefined ? (
             <div>

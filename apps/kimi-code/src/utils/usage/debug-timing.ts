@@ -17,6 +17,13 @@ export interface StepTimingInput {
    */
   readonly llmRequestBuildMs?: number;
   readonly llmServerFirstTokenMs?: number;
+  /**
+   * Split of `llmStreamDurationMs` (the decode window) into server time spent
+   * awaiting parts (`llmServerDecodeMs`) and client time spent processing parts
+   * (`llmClientConsumeMs`). Both present together or not at all.
+   */
+  readonly llmServerDecodeMs?: number;
+  readonly llmClientConsumeMs?: number;
   readonly usage?: DebugTokenUsage;
 }
 
@@ -38,7 +45,9 @@ export function formatStepDebugTiming(input: StepTimingInput): string | undefine
   if (outputTokens !== undefined && outputTokens > 0) {
     if (streamMs >= MIN_STREAM_MS_FOR_TPS) {
       const tps = (outputTokens / (streamMs / 1000)).toFixed(1);
-      parts.push(`TPS: ${tps} tok/s (${outputTokens} tokens in ${formatDuration(streamMs)})`);
+      parts.push(
+        `TPS: ${tps} tok/s (${outputTokens} tokens in ${formatDuration(streamMs)}${formatDecodeSplit(input)})`,
+      );
     } else {
       parts.push(
         `${outputTokens} tokens in ${formatDuration(streamMs)} (stream too short for TPS)`,
@@ -81,6 +90,16 @@ function formatTtft(input: StepTimingInput): string {
   const server = input.llmServerFirstTokenMs;
   if (build === undefined || server === undefined) return total;
   return `${total} (api ${formatDuration(server)} + client ${formatDuration(build)})`;
+}
+
+// Render the decode-window split as a trailing clause, e.g.
+// `; server 4.6s + client 0.4s`. A large client share means the host's per-part
+// processing is throttling decode. Empty when the provider did not report it.
+function formatDecodeSplit(input: StepTimingInput): string {
+  const server = input.llmServerDecodeMs;
+  const client = input.llmClientConsumeMs;
+  if (server === undefined || client === undefined) return '';
+  return `; server ${formatDuration(server)} + client ${formatDuration(client)}`;
 }
 
 function formatDuration(ms: number): string {

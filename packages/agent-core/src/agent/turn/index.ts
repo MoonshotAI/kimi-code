@@ -999,6 +999,8 @@ function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined 
         llmStreamDurationMs: event.llmStreamDurationMs,
         llmRequestBuildMs: event.llmRequestBuildMs,
         llmServerFirstTokenMs: event.llmServerFirstTokenMs,
+        llmServerDecodeMs: event.llmServerDecodeMs,
+        llmClientConsumeMs: event.llmClientConsumeMs,
         providerFinishReason: event.providerFinishReason,
         rawFinishReason: event.rawFinishReason,
       };

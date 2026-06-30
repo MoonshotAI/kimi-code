@@ -151,6 +151,8 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     llmStreamDurationMs: response.streamTiming?.streamDurationMs,
     llmRequestBuildMs: response.streamTiming?.requestBuildMs,
     llmServerFirstTokenMs: response.streamTiming?.serverFirstTokenMs,
+    llmServerDecodeMs: response.streamTiming?.serverDecodeMs,
+    llmClientConsumeMs: response.streamTiming?.clientConsumeMs,
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
 
@@ -183,7 +185,9 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
 /**
  * Emit a per-step completion log with the LLM response timing. TTFT is split
  * into the client-side request-build portion and the network + API-server
- * portion so slow turns can be attributed without parsing the wire log.
+ * portion, and the decode window is split into server (awaiting parts) vs.
+ * client (processing parts) time, so slow turns can be attributed without
+ * parsing the wire log.
  */
 function logStepTiming(
   log: Logger | undefined,
@@ -202,6 +206,8 @@ function logStepTiming(
       ? { serverFirstTokenMs: timing.serverFirstTokenMs }
       : {}),
     streamDurationMs: timing.streamDurationMs,
+    ...(timing.serverDecodeMs !== undefined ? { serverDecodeMs: timing.serverDecodeMs } : {}),
+    ...(timing.clientConsumeMs !== undefined ? { clientConsumeMs: timing.clientConsumeMs } : {}),
     outputTokens: response.usage.output,
   });
 }

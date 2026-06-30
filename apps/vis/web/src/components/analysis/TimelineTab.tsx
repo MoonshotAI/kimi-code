@@ -304,6 +304,14 @@ function StepRow({ step, turnDurationMs }: { step: StepNode; turnDurationMs?: nu
               : ''}
           </span>
         ) : null}
+        {step.llmServerDecodeMs !== undefined && step.llmClientConsumeMs !== undefined ? (
+          <span
+            className="text-fg-3 tabular"
+            title="decode window split (server awaiting parts + client processing parts)"
+          >
+            decode {step.llmServerDecodeMs}+{step.llmClientConsumeMs}ms
+          </span>
+        ) : null}
         {step.contextTokens !== undefined ? (
           <span className="text-fg-3 tabular" title="context-window fill after step">ctx {formatTokens(step.contextTokens)}</span>
         ) : null}

@@ -25,6 +25,7 @@ import {
   type GenerateCallbacks,
   type Message,
   type ModelCapability,
+  type StreamDecodeStats,
   type StreamedMessagePart,
 } from '@moonshot-ai/kosong';
 
@@ -90,14 +91,16 @@ export class KosongLLM implements LLM {
     let requestSentAt: number | undefined;
     let firstChunkAt: number | undefined;
     let streamEndedAt: number | undefined;
+    let decodeStats: StreamDecodeStats | undefined;
     const markRequestStart = (): void => {
       requestStartedAt = Date.now();
     };
     const markRequestSent = (): void => {
       requestSentAt ??= Date.now();
     };
-    const markStreamEnd = (): void => {
+    const markStreamEnd = (stats?: StreamDecodeStats): void => {
       streamEndedAt = Date.now();
+      decodeStats = stats;
     };
     const markStreamOutput = (): void => {
       firstChunkAt ??= Date.now();
@@ -152,7 +155,7 @@ export class KosongLLM implements LLM {
       streamTiming:
         firstChunkAt === undefined
           ? undefined
-          : buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt),
+          : buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt, decodeStats),
     };
 
     return response;
@@ -168,6 +171,7 @@ function buildStreamTiming(
   requestSentAt: number | undefined,
   firstChunkAt: number,
   streamEndedAt: number | undefined,
+  decodeStats: StreamDecodeStats | undefined,
 ): LLMStreamTiming {
   const outputEndedAt = streamEndedAt ?? Date.now();
   const firstTokenLatencyMs = Math.max(0, firstChunkAt - requestStartedAt);
@@ -184,6 +188,12 @@ function buildStreamTiming(
     const sentAt = Math.min(Math.max(requestSentAt, requestStartedAt), firstChunkAt);
     timing.requestBuildMs = sentAt - requestStartedAt;
     timing.serverFirstTokenMs = firstChunkAt - sentAt;
+  }
+  // Split the decode window into server (awaiting parts) vs. client (processing
+  // parts) time, as accounted by the stream loop.
+  if (decodeStats !== undefined) {
+    timing.serverDecodeMs = Math.max(0, decodeStats.serverDecodeMs);
+    timing.clientConsumeMs = Math.max(0, decodeStats.clientConsumeMs);
   }
   return timing;
 }

@@ -57,6 +57,9 @@ export interface StepNode {
   /** TTFT split: client-side request-build vs. network + API-server time. */
   llmRequestBuildMs?: number;
   llmServerFirstTokenMs?: number;
+  /** Decode split: server time awaiting parts vs. client time processing them. */
+  llmServerDecodeMs?: number;
+  llmClientConsumeMs?: number;
   content: ContentSummary;
   toolCalls: ToolCallNode[];
 }
@@ -322,6 +325,8 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             step.llmStreamDurationMs = ev.llmStreamDurationMs;
             step.llmRequestBuildMs = ev.llmRequestBuildMs;
             step.llmServerFirstTokenMs = ev.llmServerFirstTokenMs;
+            step.llmServerDecodeMs = ev.llmServerDecodeMs;
+            step.llmClientConsumeMs = ev.llmClientConsumeMs;
             if (step.beginTime !== undefined && t !== undefined) step.durationMs = t - step.beginTime;
             // Steps don't carry a generic 'error' finish reason (errors are
             // thrown, not recorded). 'filtered' means the provider blocked the

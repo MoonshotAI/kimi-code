@@ -112,6 +112,29 @@ describe('formatStepDebugTiming', () => {
     expect(result).toBe('[Debug] TTFT: 800ms');
   });
 
+  it('appends the decode wait/consume split to the TPS clause', () => {
+    const result = formatStepDebugTiming({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+      llmServerDecodeMs: 4600,
+      llmClientConsumeMs: 400,
+      usage: { output: 200 },
+    });
+    expect(result).toBe(
+      '[Debug] TTFT: 800ms | TPS: 40.0 tok/s (200 tokens in 5.0s; server 4.6s + client 400ms)',
+    );
+  });
+
+  it('omits the decode split when only one component is present', () => {
+    const result = formatStepDebugTiming({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+      llmServerDecodeMs: 4600,
+      usage: { output: 200 },
+    });
+    expect(result).toBe('[Debug] TTFT: 800ms | TPS: 40.0 tok/s (200 tokens in 5.0s)');
+  });
+
   it('formats durations at or above 1s as seconds', () => {
     const result = formatStepDebugTiming({
       llmFirstTokenLatencyMs: 1500,

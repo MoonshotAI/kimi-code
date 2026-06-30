@@ -319,6 +319,8 @@ function isVolatileDurationKey(key: string): boolean {
     key === 'llmStreamDurationMs' ||
     key === 'llmRequestBuildMs' ||
     key === 'llmServerFirstTokenMs' ||
+    key === 'llmServerDecodeMs' ||
+    key === 'llmClientConsumeMs' ||
     key === 'durationMs'
   );
 }
