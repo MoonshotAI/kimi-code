@@ -389,6 +389,8 @@ export class SessionReplayRenderer {
       streamingUI.onStreamingTextUpdate(text);
       streamingUI.onStreamingTextEnd();
       streamingUI.clearAssistantDraft();
+    } else if (thinking.length > 0) {
+      streamingUI.compactPendingThinking();
     }
   }
 

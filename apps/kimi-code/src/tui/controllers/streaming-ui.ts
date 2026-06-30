@@ -316,6 +316,7 @@ export class StreamingUIController {
       existingComponent.updateToolCall(toolCall);
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
+      this.compactPendingThinking();
       if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
         this.onToolCallStart(toolCall);
       }
@@ -559,7 +560,7 @@ export class StreamingUIController {
     // After finalizeLiveTextBuffers, onThinkingEnd may have set
     // _pendingThinkingCompact. Compact now so the thinking block
     // reaches its final compact form before the turn ends.
-    this.compactThinkingIfPending();
+    this.compactPendingThinking();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
@@ -596,7 +597,7 @@ export class StreamingUIController {
    * Also called as a fallback in `finalizeTurn()` for the edge case where
    * no assistant text follows the thinking block.
    */
-  private compactThinkingIfPending(): void {
+  compactPendingThinking(): void {
     if (!this._pendingThinkingCompact) return;
     this._pendingThinkingCompact = false;
     // Walk in reverse to find the most recent stable-mode ThinkingComponent,
@@ -616,7 +617,7 @@ export class StreamingUIController {
   onStreamingTextStart(): void {
     // Compact thinking before adding assistant content so both changes
     // land in the same render cycle (fixes #981 viewport jump).
-    this.compactThinkingIfPending();
+    this.compactPendingThinking();
 
     const { state } = this.host;
     this._pendingAgentGroup = null;
@@ -804,6 +805,7 @@ export class StreamingUIController {
 
     if (this._thinkingDraft.length > 0 || this._streamingBlock !== null) {
       this.finalizeLiveTextBuffers('tool');
+      this.compactPendingThinking();
     }
 
     const existingComponent = this._pendingToolComponents.get(id);
