@@ -158,6 +158,9 @@ export function applyOpenPlatformConfig(
     readonly models: readonly ManagedKimiCodeModelInfo[];
     readonly selectedModel: ManagedKimiCodeModelInfo;
     readonly thinking: boolean;
+    /** Concrete thinking effort to persist (e.g. 'low'/'high'/'max'). Omit
+     * for boolean models, where thinking is simply enabled with no effort. */
+    readonly effort?: string;
     readonly apiKey: string;
   },
 ): ApplyOpenPlatformResult {
@@ -199,7 +202,11 @@ export function applyOpenPlatformConfig(
 
   config.models = existingModels;
   config.defaultModel = modelKey;
-  config.thinking = { ...config.thinking, enabled: options.thinking };
+  config.thinking = {
+    ...config.thinking,
+    enabled: options.thinking,
+    ...(options.effort !== undefined ? { effort: options.effort } : {}),
+  };
 
   return { defaultModel: modelKey, defaultThinking: options.thinking };
 }

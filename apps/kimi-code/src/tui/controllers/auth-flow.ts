@@ -7,6 +7,7 @@ import {
   type RefreshProviderScope,
   type RefreshResult,
 } from '../utils/refresh-providers';
+import { thinkingEffortFromConfig } from '../utils/thinking-config';
 import type { SessionEventHandler } from './session-event-handler';
 import type { AppState, KimiTUIOptions } from '../types';
 import type { TUIState } from '../tui-state';
@@ -121,7 +122,7 @@ export class AuthFlowController {
       return;
     }
 
-    await this.activateModelAfterLogin(defaultModel, config.thinking?.enabled === false ? 'off' : undefined);
+    await this.activateModelAfterLogin(defaultModel, thinkingEffortFromConfig(config.thinking));
     const appStatePatch: Partial<AppState> = {
       availableModels,
       availableProviders,

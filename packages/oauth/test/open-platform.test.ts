@@ -358,6 +358,56 @@ describe('applyOpenPlatformConfig', () => {
     expect(alias?.['maxOutputSize']).toBe(8192);
     expect(alias?.['supportEfforts']).toEqual(['low', 'high']);
   });
+
+  it('writes a concrete effort into config.thinking when provided', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const platform = getOpenPlatformById('moonshot-cn')!;
+    const models = [
+      {
+        id: 'kimi-k2-0712-preview',
+        contextLength: 256000,
+        supportsReasoning: true,
+        supportsImageIn: false,
+        supportsVideoIn: false,
+      },
+    ];
+
+    applyOpenPlatformConfig(config, {
+      platform,
+      models,
+      selectedModel: models[0]!,
+      thinking: true,
+      effort: 'high',
+      apiKey: 'sk-test',
+    });
+
+    expect(config.thinking).toEqual({ enabled: true, effort: 'high' });
+  });
+
+  it('omits effort for a boolean on (no concrete effort)', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const platform = getOpenPlatformById('moonshot-cn')!;
+    const models = [
+      {
+        id: 'kimi-k2-0712-preview',
+        contextLength: 256000,
+        supportsReasoning: true,
+        supportsImageIn: false,
+        supportsVideoIn: false,
+      },
+    ];
+
+    applyOpenPlatformConfig(config, {
+      platform,
+      models,
+      selectedModel: models[0]!,
+      thinking: true,
+      apiKey: 'sk-test',
+    });
+
+    expect(config.thinking).toEqual({ enabled: true });
+    expect(config.thinking?.effort).toBeUndefined();
+  });
 });
 
 describe('removeOpenPlatformConfig', () => {

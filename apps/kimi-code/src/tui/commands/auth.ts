@@ -159,6 +159,10 @@ async function handleOpenPlatformLogin(
     models,
     selectedModel: selection.model,
     thinking: selection.thinking !== 'off',
+    effort:
+      selection.thinking !== 'off' && selection.thinking !== 'on'
+        ? selection.thinking
+        : undefined,
     apiKey,
   });
 

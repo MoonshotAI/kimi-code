@@ -20,3 +20,17 @@ export function thinkingEffortToConfig(effort: ThinkingEffort): {
   if (effort === 'on') return { enabled: true };
   return { enabled: true, effort };
 }
+
+/**
+ * Inverse of {@link thinkingEffortToConfig}: derive the runtime thinking effort
+ * to activate a model with from the persisted `[thinking]` config. Returns
+ * `'off'` when thinking is disabled, the configured concrete effort when set,
+ * and `undefined` when thinking is enabled without a concrete effort so the
+ * model's own default applies.
+ */
+export function thinkingEffortFromConfig(
+  config: { enabled?: boolean; effort?: string } | undefined,
+): ThinkingEffort | undefined {
+  if (config?.enabled === false) return 'off';
+  return config?.effort;
+}
