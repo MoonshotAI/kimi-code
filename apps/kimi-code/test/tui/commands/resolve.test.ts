@@ -319,6 +319,16 @@ describe('slash command busy helpers', () => {
     });
   });
 
+  it('resolves a nested plugin command whose name contains a slash', () => {
+    const pluginCommandMap = new Map([['my-plugin:frontend/component', 'body']]);
+    expect(resolve('/my-plugin:frontend/component spin', { pluginCommandMap })).toEqual({
+      kind: 'plugin-command',
+      commandName: 'frontend/component',
+      pluginId: 'my-plugin',
+      args: 'spin',
+    });
+  });
+
   it('blocks a plugin command while streaming', () => {
     const pluginCommandMap = new Map([['my-plugin:deploy', 'Deploy']]);
     expect(resolve('/my-plugin:deploy', { pluginCommandMap, isStreaming: true })).toEqual({
