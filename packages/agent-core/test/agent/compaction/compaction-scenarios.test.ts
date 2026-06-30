@@ -154,6 +154,33 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
     expect(historyTexts(ctx).join('\n')).toContain('RACE-ASSISTANT-OUTPUT');
   });
 
+  // PROBE #1b — a user-ROLE message that compaction would drop (background-task
+  // notification, hook/cron reminder, shell output) appended mid-summary. It is
+  // neither summarized (added after the snapshot) nor kept (applyCompaction keeps
+  // only real user input), so it would silently vanish; the race guard must cancel
+  // on any tail compaction would drop, not just non-user roles.
+  it('cancels compaction when a droppable user-role tail is appended mid-summary', async () => {
+    let ctx!: TestAgentContext;
+    const appendDuringGenerate: GenerateFn = async () => {
+      ctx.agent.context.appendUserMessage([{ type: 'text', text: 'BG-NOTIFY-OUTPUT' }], {
+        kind: 'background_task',
+        taskId: 't',
+        status: 'completed',
+        notificationId: 'n',
+      });
+      return textResult('Compacted summary.');
+    };
+    ctx = testAgent({ generate: appendDuringGenerate });
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendExchange(1, 'user one', 'assistant one', 40);
+
+    await ctx.rpc.beginCompaction({});
+    await Promise.race([ctx.once('compaction.completed'), ctx.once('compaction.cancelled')]);
+
+    // Cancelled, so the notification survives in history rather than being dropped.
+    expect(historyTexts(ctx).join('\n')).toContain('BG-NOTIFY-OUTPUT');
+  });
+
   // PROBE #2 — empty/truncated summarizer responses drop one oldest message and
   // retry. A dedicated shrink counter, bounded by MAX_COMPACTION_RETRY_ATTEMPTS,
   // keeps a model that always returns empty from issuing ~one call per message.

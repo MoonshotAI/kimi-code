@@ -45,7 +45,7 @@ import {
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
-import { buildCompactionSummaryText } from './handoff';
+import { buildCompactionSummaryText, isRealUserInput } from './handoff';
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
@@ -472,13 +472,14 @@ export class FullCompaction {
         }
       }
       // The prefix is intact, but the tail grew while the summarizer was in
-      // flight (a live step racing a manual/SDK compaction). An appended user
-      // message is safe — the all-user rebuild picks recent user input back up
-      // from the grown history — but an appended assistant/tool turn would be
-      // neither summarized (the summary only covers originalHistory) nor kept,
-      // so it would silently vanish. Cancel and let a later clean-boundary
-      // compaction handle it.
-      if (newHistory.slice(originalHistory.length).some((message) => message.role !== 'user')) {
+      // flight (a live step racing a manual/SDK compaction). A real user message
+      // is safe — the all-user rebuild picks recent user input back up from the
+      // grown history — but anything compaction would drop (an assistant/tool
+      // turn, or a user-role message like a background-task notification, hook/
+      // cron reminder, or shell output) was neither summarized (the summary only
+      // covers originalHistory) nor kept, so it would silently vanish. Cancel and
+      // let a later clean-boundary compaction handle it.
+      if (newHistory.slice(originalHistory.length).some((message) => !isRealUserInput(message))) {
         this.cancel();
         return undefined;
       }
