@@ -5,6 +5,7 @@
   "license": "MIT",
   "description": "Kimi Code desktop client — an Electron shell around the Kimi web UI.",
   "author": "Moonshot AI",
+  "homepage": "https://github.com/MoonshotAI/kimi-code",
   "type": "module",
   "main": "out/main.cjs",
   "scripts": {

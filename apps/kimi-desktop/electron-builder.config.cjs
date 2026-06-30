@@ -63,5 +63,6 @@ module.exports = {
     category: 'Development',
     target: ['AppImage', 'deb'],
     artifactName: 'KCD-Internal-${version}-${arch}.${ext}',
+    maintainer: 'Moonshot AI',
   },
 };
