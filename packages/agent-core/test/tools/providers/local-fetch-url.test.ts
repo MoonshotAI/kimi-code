@@ -55,4 +55,16 @@ describe('LocalFetchURLProvider content kind', () => {
     expect(result.kind).toBe('extracted');
     expect(result.content).toContain('quick brown fox');
   });
+  it('forwards the caller abort signal to the underlying fetch', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(htmlResponse('plain body', 'text/plain'));
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+    await provider.fetch('https://example.com/file.txt', { signal: controller.signal });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://example.com/file.txt',
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
 });

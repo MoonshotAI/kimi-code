@@ -149,7 +149,7 @@ describe('FetchURLTool', () => {
     expect(toolContentString(result)).toContain('timeout');
   });
 
-  it('passes the tool call id to the fetcher', async () => {
+  it('passes the tool call id and abort signal to the fetcher', async () => {
     const fetcher = fakeFetcher('content');
     const tool = new FetchURLTool(fetcher);
     await executeTool(tool, {
@@ -160,6 +160,7 @@ describe('FetchURLTool', () => {
     });
     expect(fetcher.fetch).toHaveBeenCalledWith('https://example.com', {
       toolCallId: 'c4',
+      signal,
     });
   });
 
@@ -299,5 +300,23 @@ describe('MoonshotFetchURLProvider', () => {
     expect(getAccessToken).toHaveBeenCalledWith();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(localFallback.fetch).toHaveBeenCalledWith('https://example.com/page', {});
+  });
+  it('propagates an abort instead of falling back to the local fetcher', async () => {
+    const controller = new AbortController();
+    const localFallback = fakeFetcher('fallback content');
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+    });
+    const provider = new MoonshotFetchURLProvider({
+      apiKey: 'test-key',
+      baseUrl: 'https://fetch.example/v1',
+      localFallback,
+      fetchImpl,
+    });
+    await expect(
+      provider.fetch('https://example.com/page', { signal: controller.signal }),
+    ).rejects.toThrow(/abort/i);
+    expect(localFallback.fetch).not.toHaveBeenCalled();
   });
 });

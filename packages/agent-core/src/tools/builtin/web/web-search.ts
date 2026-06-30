@@ -29,7 +29,7 @@ export interface WebSearchResult {
 export interface WebSearchProvider {
   search(
     query: string,
-    options?: { limit?: number; includeContent?: boolean; toolCallId?: string },
+    options?: { limit?: number; includeContent?: boolean; toolCallId?: string; signal?: AbortSignal },
   ): Promise<WebSearchResult[]>;
 }
 
@@ -82,11 +82,18 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
     args: WebSearchInput,
     {
     toolCallId,
+    signal,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const opts: { limit?: number; includeContent?: boolean; toolCallId?: string } = {
+      const opts: {
+        limit?: number;
+        includeContent?: boolean;
+        toolCallId?: string;
+        signal?: AbortSignal;
+      } = {
         toolCallId,
+        signal,
       };
       if (args.limit !== undefined) opts.limit = args.limit;
       if (args.include_content !== undefined) opts.includeContent = args.include_content;
