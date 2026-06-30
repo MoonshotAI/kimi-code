@@ -377,6 +377,7 @@ describe('Agent resume', () => {
         type: 'compaction',
         result: {
           summary: 'Compacted implementation notes.',
+          contextSummary: 'Compacted implementation notes.',
           compactedCount: 1,
           tokensBefore: 120,
           tokensAfter: 24,

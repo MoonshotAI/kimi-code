@@ -3,7 +3,7 @@ import type { ContentPart, Message, Tool } from '@moonshot-ai/kosong';
 /**
  * Structural subset of kosong's {@link Message} that token estimation reads.
  * Accepting the subset (instead of the full `Message`) lets callers with
- * message-shaped objects — such as the compaction helpers in `memento.ts`,
+ * message-shaped objects — such as the compaction helpers in `handoff.ts`,
  * which carry only `role`/`content`/`origin` — estimate tokens without an
  * unsafe cast, while full `Message` values still satisfy it.
  */

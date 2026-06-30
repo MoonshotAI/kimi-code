@@ -1,66 +1,40 @@
-You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+You are about to run out of context. Write a first-person handoff note to
+yourself so you can seamlessly continue this task after the earlier
+conversation is cleared.
 
 --- This message is a direct task, not part of the above conversation ---
 
-You are now given a task to compact this conversation context according to the priorities and output requirements below.
+Write the note as your own continuing train of thought — first person, present
+tense, the way you would reason through the next move. Do not write a
+third-party report about someone else's work, and do not impose rigid section
+headings; let the shape follow the task.
 
-The goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.
+Make the note self-sufficient: the next turn will see only your most recent user
+messages and this note — every assistant message, tool call, and tool result
+above will be gone. In your own words, preserve what you genuinely need to
+continue:
 
-Compression priorities, in order:
+- The latest user request, quoted verbatim, and what it is actually asking for.
+- The instructions and constraints currently in force (user preferences,
+  project rules, environment and tooling limits) — condensed to what still
+  matters.
+- What has actually been done, at high fidelity: keep the exact commands that
+  were run, the exact file paths touched, and whether each succeeded or failed.
+  Keep only the final working version of any code; drop intermediate attempts
+  and already-resolved errors.
+- The precise next action — including the exact next command or tool call you
+  intend to make — and any required format for the final answer.
 
-1. Current Task State: what is being worked on right now
-2. Errors & Solutions: unresolved or recurring errors and their resolutions
-3. Code Evolution: final working versions only; remove intermediate attempts
-4. System Context: project structure, dependencies, environment setup
-5. Design Decisions: architectural choices and their rationale
-6. TODO Items: unfinished tasks and known issues
+Be honest about uncertainty. If an earlier step claimed something was done but
+was never verified (tests "passing", a fix "working", a file "created"), say so
+plainly and treat it as unverified rather than fact — re-check before relying
+on it.
 
-Required output structure:
+Be concise. Include the critical data, identifiers, and references needed to
+continue, and omit anything that does not change the next move.
 
-## Current Focus
-
-[What we're working on now]
-
-## Environment
-
-- [Key setup/config points]
-- ...
-
-## Completed Tasks
-
-- [Task]: [Brief outcome]
-- ...
-
-## Active Issues
-
-- [Issue]: [Status/Next steps]
-- ...
-
-## Code State
-
-### [Critical file name]
-
-[Brief description of the file's purpose and current state]
-
-```
-[The latest version of critical code snippets in this file, <20 lines]
-```
-
-### [Critical file name]
-
-- [Useful classes/methods/functions]: [Brief description/usage]
-- ...
-
-Omit non-critical code, intermediate attempts, and resolved errors.
-
-## Important Context
-
-- [Any crucial information not covered above]
-- ...
-
-Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
-
-Respond with text only. Do not call any tools — you already have everything you need in the conversation history.
+Respond with text only. Do not call any tools — you already have everything you
+need in the conversation history.
 
 {% if customInstruction %}
 Optional user instruction:

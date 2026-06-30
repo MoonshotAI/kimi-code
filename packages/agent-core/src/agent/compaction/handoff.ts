@@ -4,7 +4,7 @@ import type { PromptOrigin } from '../context/types';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
 /**
- * "Memento" compaction helpers.
+ * Compaction handoff helpers.
  *
  * Compaction rewrites the model context as: the most recent user messages
  * (verbatim, within a token budget) followed by a single user-role summary
@@ -17,7 +17,7 @@ export const COMPACTION_SUMMARY_PREFIX = summaryPrefixTemplate.trimEnd();
 export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 
 /**
- * Structural subset of kosong's `Message` that the memento helpers inspect.
+ * Structural subset of kosong's `Message` that the handoff helpers inspect.
  * Both `ContextMessage` (the live context) and the wire-transcript reducer's
  * mutable message satisfy this shape, so one set of helpers serves both
  * layers without introducing a shared nominal type. `origin` is what tells
@@ -33,8 +33,8 @@ export type CompactionUserDisposition = 'keep' | 'drop';
 
 /**
  * Single source of truth for whether a user-role message survives compaction as
- * genuine user input. Codex-style semantics: only real user prompts and
- * user-slash skill activations are kept verbatim. Everything else user-role is
+ * genuine user input. Only real user prompts and user-slash skill
+ * activations are kept verbatim. Everything else user-role is
  * either rebuilt by injectors after compaction or intentionally ephemeral, so
  * it is dropped from the live context even when transcript/replay retains it
  * for UI rendering. New `PromptOrigin` kinds must update this switch.

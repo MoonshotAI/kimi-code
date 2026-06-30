@@ -45,7 +45,7 @@ import {
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
-import { buildCompactionSummaryText } from './memento';
+import { buildCompactionSummaryText } from './handoff';
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
