@@ -1,3 +1,5 @@
+import { formatTaskList } from '#/tools/background/task-list';
+
 import type { Agent } from '..';
 import { GoalInjector } from './goal';
 import type { DynamicInjector } from './injector';
@@ -5,6 +7,9 @@ import { PermissionModeInjector } from './permission-mode';
 import { PluginSessionStartInjector } from './plugin-session-start';
 import { PlanModeInjector } from './plan-mode';
 import { TodoListReminderInjector } from './todo-list';
+
+const ACTIVE_BACKGROUND_TASK_GUIDANCE =
+  'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before. Do not start duplicates. Use TaskOutput to fetch a task’s result, TaskList to list them, and TaskStop to cancel one.';
 
 export class InjectionManager {
   private readonly injectors: DynamicInjector[];
@@ -42,7 +47,26 @@ export class InjectionManager {
 
   async injectAfterCompaction(): Promise<void> {
     await this.injectGoal();
+    this.injectActiveBackgroundTasks();
     await this.inject();
+  }
+
+  /**
+   * Post-compaction only: re-surface still-running background tasks. Folding the
+   * live context to [recent user prompts, summary] drops the messages that
+   * started them and their status updates, so without this the model can forget
+   * a task is running and spawn a duplicate. Appended as an `injection`-origin
+   * reminder, so the next compaction drops and rebuilds it — kept fresh, never
+   * stacked. Runs only on the live path: restore replays the persisted reminder
+   * and `FullCompaction.begin` short-circuits before compaction there.
+   */
+  private injectActiveBackgroundTasks(): void {
+    const tasks = this.agent.background.list(true);
+    if (tasks.length === 0) return;
+    this.agent.context.appendSystemReminder(
+      `${ACTIVE_BACKGROUND_TASK_GUIDANCE}\n\n${formatTaskList(tasks, true)}`,
+      { kind: 'injection', variant: 'background_task_status' },
+    );
   }
 
   onContextClear(): void {
