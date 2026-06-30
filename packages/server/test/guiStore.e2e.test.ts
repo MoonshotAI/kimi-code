@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -188,5 +188,36 @@ describe('gui store routes', () => {
       payload: { key: '', value: 'x' },
     });
     expect(envelopeOf(res.json()).code).toBe(40001);
+  });
+
+  it('treats Object.prototype keys as ordinary keys', async () => {
+    const r = await bootDaemon();
+    const api = appOf(r);
+
+    // On an empty store, prototype keys must not resolve to inherited members.
+    expect(
+      envelopeOf<{ value: string | null }>((await getItem(api, 'toString')).json()).data?.value,
+    ).toBeNull();
+    expect(
+      envelopeOf<{ value: string | null }>((await getItem(api, 'constructor')).json()).data?.value,
+    ).toBeNull();
+
+    // They can be set and read back like any other key, including __proto__.
+    await setItem(api, 'hasOwnProperty', 'x');
+    await setItem(api, '__proto__', 'y');
+    expect(
+      envelopeOf<{ value: string | null }>((await getItem(api, 'hasOwnProperty')).json()).data
+        ?.value,
+    ).toBe('x');
+    expect(
+      envelopeOf<{ value: string | null }>((await getItem(api, '__proto__')).json()).data?.value,
+    ).toBe('y');
+  });
+
+  it('writes gui.toml with 0600 permissions', async () => {
+    const r = await bootDaemon();
+    await setItem(appOf(r), 'theme', 'modern');
+    const mode = statSync(join(bridgeHome, 'gui.toml')).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 });
