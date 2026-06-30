@@ -392,7 +392,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
     return {
       model: data.model && data.model.length > 0 ? data.model : null,
-      thinkingLevel: data.thinking_level,
+      thinkingEffort: data.thinking_level,
       permission: data.permission,
       planMode: data.plan_mode === true,
       swarmMode: data.swarm_mode === true,
@@ -973,8 +973,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   /**
    * Register a workspace by folder path.
-   * PRESUMED — POST /api/v1/workspaces { root, name? }. On error this throws so
-   * the composable can fall back to a locally-derived workspace from the path.
+   * PRESUMED — POST /api/v1/workspaces { root, name? }. Throws on error (e.g.
+   * path not found) so the caller can surface it to the user.
    */
   async addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace> {
     const body: Record<string, unknown> = { root: input.root };

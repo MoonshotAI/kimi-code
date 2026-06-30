@@ -104,7 +104,7 @@ describe('analyzeWire', () => {
   it('collects config.update changes', () => {
     line = 0;
     const a = analyzeWire([
-      e({ type: 'config.update', modelAlias: 'opus', thinkingLevel: 'high', systemPrompt: 'x'.repeat(120) }, 0),
+      e({ type: 'config.update', modelAlias: 'opus', thinkingEffort: 'high', systemPrompt: 'x'.repeat(120) }, 0),
       e({ type: 'config.update', modelAlias: 'sonnet' }, 10),
     ]);
     expect(a.configChanges).toHaveLength(2);

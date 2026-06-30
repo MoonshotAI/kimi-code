@@ -13,6 +13,7 @@ import {
   fetchCatalog,
   inferWireType,
   type Catalog,
+  type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
@@ -27,6 +28,7 @@ import {
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { thinkingEffortToConfig } from '../utils/thinking-config';
 import {
   promptApiKey,
   promptCatalogProviderSelection,
@@ -233,7 +235,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     models: mergedModels,
     currentValue: host.state.appState.model,
     selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
-    currentThinking: host.state.appState.thinking,
+    currentThinkingEffort: host.state.appState.thinkingEffort,
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
@@ -251,15 +253,15 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
 async function setDefaultModel(
   host: SlashCommandHost,
   alias: string,
-  thinking: boolean,
+  effort: ThinkingEffort,
 ): Promise<void> {
   await host.harness.setConfig({
     defaultModel: alias,
-    defaultThinking: thinking,
+    thinking: thinkingEffortToConfig(effort),
   });
   await host.authFlow.refreshConfigAfterLogin();
   host.track('model_switch', { model: alias });
-  host.showStatus(`Default model set to ${alias} with thinking ${thinking ? 'on' : 'off'}.`);
+  host.showStatus(`Default model set to ${alias} with thinking ${effort}.`);
 }
 
 async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise<boolean> {
@@ -323,7 +325,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     models: stateModels,
     currentValue: host.state.appState.model,
     selectedValue: firstNewAlias,
-    currentThinking: host.state.appState.thinking,
+    currentThinkingEffort: host.state.appState.thinkingEffort,
     initialTabId: firstNewProvider,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();

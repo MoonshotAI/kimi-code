@@ -57,7 +57,6 @@ function toConfigResponse(config: KimiConfig): ConfigResponse {
     thinking: config.thinking,
     plan_mode: config.planMode,
     yolo: config.yolo,
-    default_thinking: config.defaultThinking,
     default_permission_mode: config.defaultPermissionMode,
     default_plan_mode: config.defaultPlanMode,
     permission: config.permission,

@@ -61,7 +61,7 @@ describe('Session.init', () => {
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     mainAgent.tools.setActiveTools([]);
     events.length = 0;
@@ -185,7 +185,7 @@ describe('Session.init', () => {
       const { agent } = await session.createAgent({ type: 'main' }, { profile: testProfile() });
       agent.config.update({
         modelAlias: 'mock-model',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       });
       agent.tools.initializeBuiltinTools();
       agent.tools.setActiveTools(['Read']);
@@ -286,7 +286,7 @@ describe('AgentAPI.startBtw', () => {
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     mainAgent.tools.setActiveTools(['Read']);
     registerLookupNoteTool(mainAgent);
@@ -405,7 +405,7 @@ describe('AgentAPI.startBtw', () => {
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     mainAgent.tools.setActiveTools(['Read']);
     registerLookupNoteTool(mainAgent);
@@ -508,7 +508,7 @@ describe('AgentAPI.startBtw', () => {
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     events.length = 0;
 

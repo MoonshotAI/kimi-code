@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { KimiConfig } from '../../src/config';
+import type { KimiConfig, ModelAlias } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
-import { resolveThinkingLevel } from '../../src/agent/config/thinking';
+import { resolveThinkingEffort } from '../../src/agent/config/thinking';
 
 // Thin wrapper that adapts the legacy `resolveRuntimeProvider(input)` shape to
 // the current ProviderManager API. Kept local so the existing test bodies do
@@ -784,91 +784,64 @@ describe('ProviderManager OAuth auth', () => {
   });
 });
 
-describe('resolveThinkingLevel', () => {
-  it('normalizes requested thinking into a concrete effort', () => {
-    expect(
-      resolveThinkingLevel('on', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('medium');
-    expect(
-      resolveThinkingLevel('off', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('low', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('low');
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('   ', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
+describe('resolveThinkingEffort', () => {
+  const booleanModel: ModelAlias = {
+    provider: 'p',
+    model: 'm',
+    maxContextSize: 1,
+    capabilities: ['thinking'],
+  };
+  const effortModel: ModelAlias = {
+    provider: 'p',
+    model: 'm',
+    maxContextSize: 1,
+    capabilities: ['thinking'],
+    supportEfforts: ['low', 'medium', 'high'],
+  };
+  const alwaysThinkingModel: ModelAlias = {
+    provider: 'p',
+    model: 'm',
+    maxContextSize: 1,
+    capabilities: ['thinking', 'always_thinking'],
+  };
 
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('medium');
-    expect(
-      resolveThinkingLevel('   ', {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('medium');
+  it('returns the requested effort verbatim when one is provided', () => {
+    expect(resolveThinkingEffort('on', { effort: 'medium' }, booleanModel)).toBe('on');
+    expect(resolveThinkingEffort('off', { effort: 'medium' }, booleanModel)).toBe('off');
+    expect(resolveThinkingEffort('low', { effort: 'medium' }, booleanModel)).toBe('low');
+    // No normalization: empty / whitespace strings are returned as-is.
+    expect(resolveThinkingEffort('', { enabled: false, effort: 'medium' }, booleanModel)).toBe('');
+    expect(resolveThinkingEffort('   ', { enabled: false, effort: 'medium' }, booleanModel)).toBe(
+      '   ',
+    );
+  });
 
+  it('treats config.enabled=false as off when no effort is requested', () => {
     expect(
-      resolveThinkingLevel('on', {
-        defaultThinking: true,
-        thinking: { mode: 'auto' },
-      }),
-    ).toBe('high');
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: true,
-        thinking: { mode: 'auto' },
-      }),
-    ).toBe('high');
-
-    expect(
-      resolveThinkingLevel(undefined, {
-        thinking: { mode: 'off' },
-      }),
+      resolveThinkingEffort(undefined, { enabled: false, effort: 'medium' }, booleanModel),
     ).toBe('off');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
+  });
 
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'off' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('   ', {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'off' },
-      }),
-    ).toBe('off');
+  it('uses config.effort as the default effort when enabled', () => {
+    expect(resolveThinkingEffort(undefined, { effort: 'medium' }, booleanModel)).toBe('medium');
+    expect(resolveThinkingEffort(undefined, { enabled: true, effort: 'medium' }, booleanModel)).toBe(
+      'medium',
+    );
+  });
 
-    expect(resolveThinkingLevel(undefined, {})).toBe('high');
+  it('falls back to the model default effort when no effort is set', () => {
+    // boolean thinking model -> 'on'
+    expect(resolveThinkingEffort(undefined, {}, booleanModel)).toBe('on');
+    // effort-capable model -> middle supportEfforts entry
+    expect(resolveThinkingEffort(undefined, {}, effortModel)).toBe('medium');
+    // no / non-thinking model -> 'off'
+    expect(resolveThinkingEffort(undefined, {}, undefined)).toBe('off');
+  });
+
+  it('forces always-thinking models back on even when off is requested', () => {
+    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
   });
 });
 

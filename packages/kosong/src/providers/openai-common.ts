@@ -177,7 +177,10 @@ export function thinkingEffortToReasoningEffort(effort: ThinkingEffort): string 
     case 'max':
       return 'xhigh';
     default:
-      throw new Error(`Unknown thinking effort: ${String(effort)}`);
+      // 'on' (boolean models) or any model-declared effort OpenAI does not
+      // recognize: send no reasoning_effort and let the model use its own
+      // default, rather than throwing on a value the model itself advertised.
+      return undefined;
   }
 }
 

@@ -105,7 +105,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     summary: { title: 'Session title' },
     getStatus: vi.fn(async () => ({
       model: 'k2',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       permission: 'manual',
       planMode: false,
       contextTokens: 10,
@@ -165,7 +165,7 @@ function createResumeState(overrides: { permissionMode?: string; planMode?: bool
         config: {
           cwd: '/tmp/proj-a',
           modelCapabilities: { max_context_tokens: 100 },
-          thinkingLevel: 'off',
+          thinkingEffort: 'off',
           systemPrompt: '',
         },
         context: { history: [], tokenCount: 10 },
@@ -241,7 +241,7 @@ describe('KimiTUI startup', () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'yolo',
         planMode: true,
         contextTokens: 25,
@@ -297,7 +297,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-latest',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission,
         planMode: false,
         contextTokens: 10,
@@ -325,7 +325,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-latest',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission,
         planMode: false,
         contextTokens: 10,
@@ -353,7 +353,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-latest',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode,
         contextTokens: 10,
@@ -380,7 +380,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-latest',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: true,
         contextTokens: 10,
@@ -407,7 +407,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-latest',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: false,
         contextTokens: 10,
@@ -432,7 +432,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-latest',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: false,
         contextTokens: 10,
@@ -498,7 +498,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-target',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission,
         planMode: false,
         contextTokens: 10,
@@ -592,7 +592,7 @@ describe('KimiTUI startup', () => {
       }),
       getStatus: vi.fn(async () => ({
         model,
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: false,
         contextTokens: 10,
@@ -631,7 +631,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-picked',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission,
         planMode: false,
         contextTokens: 10,
@@ -671,7 +671,7 @@ describe('KimiTUI startup', () => {
       id: 'ses-picked',
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: true,
         contextTokens: 10,
@@ -1129,7 +1129,7 @@ describe('KimiTUI startup', () => {
     expect(driver.state.appState).toMatchObject({
       sessionId: '',
       model: '',
-      thinking: false,
+      thinkingEffort: 'off',
       contextTokens: 0,
       maxContextTokens: 0,
       contextUsage: 0,
@@ -1141,7 +1141,7 @@ describe('KimiTUI startup', () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'yolo',
         planMode: true,
         contextTokens: 10,
@@ -1156,7 +1156,7 @@ describe('KimiTUI startup', () => {
     const harness = makeHarness(session, {
       getConfig: vi.fn(async () => ({
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
         models: {
           k2: { model: 'moonshot-v1', maxContextSize: 100 },
         },
@@ -1201,7 +1201,7 @@ describe('KimiTUI startup', () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'auto',
         planMode: false,
         contextTokens: 10,
@@ -1216,7 +1216,7 @@ describe('KimiTUI startup', () => {
     const harness = makeHarness(session, {
       getConfig: vi.fn(async () => ({
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
         models: {
           k2: { model: 'moonshot-v1', maxContextSize: 100 },
         },
@@ -1241,12 +1241,12 @@ describe('KimiTUI startup', () => {
     });
   });
 
-  it('syncs configured thinking after OAuth login refreshes an active session', async () => {
+  it('does not override active session thinking when configured thinking is enabled after OAuth login', async () => {
     const session = makeSession();
     const harness = makeHarness(session, {
       getConfig: vi.fn(async () => ({
         defaultModel: 'k2',
-        defaultThinking: true,
+        thinking: { enabled: true },
         models: {
           k2: { model: 'moonshot-v1', maxContextSize: 100 },
         },
@@ -1255,16 +1255,18 @@ describe('KimiTUI startup', () => {
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).resolves.toBe(false);
-    expect(driver.state.appState.thinking).toBe(false);
+    expect(driver.state.appState.thinkingEffort).toBe('off');
 
     vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
     await handleLoginCommand(driver as any);
 
     expect(session.setModel).toHaveBeenCalledWith('k2');
-    expect(session.setThinking).toHaveBeenCalledWith('on');
+    // `thinking.enabled === true` means "leave the session's current thinking
+    // level alone" — only an explicit `enabled === false` forces `'off'`.
+    expect(session.setThinking).not.toHaveBeenCalled();
     expect(driver.state.appState).toMatchObject({
       model: 'k2',
-      thinking: true,
+      thinkingEffort: 'off',
       maxContextTokens: 100,
     });
     expect(harness.track).toHaveBeenCalledWith('login', {

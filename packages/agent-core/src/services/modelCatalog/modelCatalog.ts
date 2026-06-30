@@ -64,6 +64,8 @@ export function toProtocolModel(
     display_name: alias.displayName ?? alias.model,
     max_context_size: alias.maxContextSize,
     capabilities: alias.capabilities,
+    support_efforts: alias.supportEfforts,
+    default_effort: alias.defaultEffort,
   };
 }
 
