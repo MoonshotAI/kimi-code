@@ -266,4 +266,65 @@ export class LedgerTuiEngine {
 		if (w >= width) return terminalLine;
 		return SEGMENT_RESET + ERASE_TO_END_OF_LINE + terminalLine;
 	}
+
+	// OMP: 2831-2851
+	#auditCommittedPrefix(rawFrame: readonly string[], permanentEnd: number): void {
+		const prefix = this.#committedPrefix;
+		if (prefix.length === 0) return;
+		const resyncTo = findCommittedPrefixResync(
+			rawFrame,
+			prefix,
+			prefix.length,
+			this.#committedPrefixAuditRows,
+			this.#committedPrefixDurableRows,
+			permanentEnd,
+		);
+		if (resyncTo < 0) return;
+		this.#committedRows = resyncTo;
+		this.#committedPrefixAuditRows = Math.min(this.#committedPrefixAuditRows, resyncTo);
+		this.#committedPrefixDurableRows = Math.min(this.#committedPrefixDurableRows, resyncTo);
+		prefix.length = resyncTo;
+		if (process.env["PI_DEBUG_REDRAW"] === "1") {
+			process.stderr.write(`[pi-tui] commit resync at row ${resyncTo}; recommitting\n`);
+		}
+	}
+
+	// OMP: 2866-2891
+	#updateCommittedAuditRows(
+		resliced: boolean,
+		preCommittedRows: number,
+		preAuditRows: number,
+		preDurableRows: number,
+		byteStableBoundary: number,
+		durableBoundary: number,
+		hardAudited: boolean,
+	): void {
+		const committed = this.#committedRows;
+		const auditRows =
+			resliced || preAuditRows >= preCommittedRows
+				? Math.min(committed, byteStableBoundary)
+				: Math.min(preAuditRows, committed);
+		const durableRows =
+			resliced || preDurableRows >= preCommittedRows || hardAudited
+				? Math.min(committed, durableBoundary)
+				: Math.min(preDurableRows, committed);
+		this.#committedPrefixAuditRows = auditRows;
+		this.#committedPrefixDurableRows = Math.max(auditRows, durableRows);
+	}
+
+	// OMP: 3105-3118 — 只记录"屏幕上有什么"，不推进 ledger
+	#commit(
+		lines: readonly string[],
+		window: string[],
+		width: number,
+		height: number,
+		hardwareCursor: HardwareCursorUpdate,
+	): void {
+		this.#previousFrameLength = lines.length;
+		this.#previousWindow = window;
+		this.#forceViewportRepaintOnNextRender = false;
+		this.#previousWidth = width;
+		this.#previousHeight = height;
+		this.#recordHardwareCursorUpdate(hardwareCursor);
+	}
 }
