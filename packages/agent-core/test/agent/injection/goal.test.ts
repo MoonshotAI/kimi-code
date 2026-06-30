@@ -117,6 +117,18 @@ describe('GoalInjector content', () => {
     expect(text).toContain('turns 0/5');
   });
 
+  it('formats wall-clock budgets of an hour or more with an hours unit', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.setBudgetLimits(
+      { budgetLimits: { wallClockBudgetMs: 2 * 60 * 60 * 1000 } },
+      'model',
+    );
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('2h00m');
+    expect(text).not.toContain('120m00s');
+  });
+
   it('uses the within-budget band below 75 percent', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
