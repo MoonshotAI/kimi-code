@@ -109,8 +109,6 @@ Complete variable list:
 | `KIMI_MODEL_DISPLAY_NAME` | No | Name shown in `/model` | Falls back to `KIMI_MODEL_NAME` |
 | `KIMI_MODEL_MAX_OUTPUT_SIZE` | No | Per-request output cap (`anthropic` only) | Model default |
 | `KIMI_MODEL_REASONING_KEY` | No | Reasoning field name override (`openai` only) | Auto-detected |
-| `KIMI_MODEL_DEFAULT_THINKING` | No | Default Thinking toggle for new sessions | Follows global default |
-| `KIMI_MODEL_THINKING_MODE` | No | Thinking trigger policy: `auto`/`on`/`off` | — |
 | `KIMI_MODEL_THINKING_EFFORT` | No | Thinking effort level: `low`/`medium`/`high`/`xhigh`/`max` | — |
 | `KIMI_MODEL_ADAPTIVE_THINKING` | No | Force adaptive thinking on or off (`anthropic` only) | Inferred from model name |
 

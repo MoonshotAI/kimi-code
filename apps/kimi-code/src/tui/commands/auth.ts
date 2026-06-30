@@ -159,7 +159,11 @@ async function handleOpenPlatformLogin(
     platform,
     models,
     selectedModel: selection.model,
-    thinking: selection.thinking,
+    thinking: selection.thinking !== 'off',
+    effort:
+      selection.thinking !== 'off' && selection.thinking !== 'on'
+        ? selection.thinking
+        : undefined,
     apiKey,
   });
 
@@ -167,7 +171,7 @@ async function handleOpenPlatformLogin(
     providers: config.providers,
     models: config.models,
     defaultModel: config.defaultModel,
-    defaultThinking: config.defaultThinking,
+    thinking: config.thinking,
   });
 
   await host.authFlow.refreshConfigAfterLogin();

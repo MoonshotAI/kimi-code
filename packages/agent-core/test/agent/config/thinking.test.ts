@@ -1,69 +1,112 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveThinkingEffort } from '../../../src/agent/config/thinking';
+import type { ModelAlias } from '../../../src/config';
+import { defaultThinkingEffortFor, resolveThinkingEffort } from '../../../src/agent/config/thinking';
+
+function model(overrides: Partial<ModelAlias> = {}): ModelAlias {
+  return {
+    provider: 'p',
+    model: 'm',
+    maxContextSize: 1,
+    ...overrides,
+  };
+}
+
+const booleanModel = model({ capabilities: ['thinking'] });
+const effortModel = model({
+  capabilities: ['thinking'],
+  supportEfforts: ['low', 'medium', 'high'],
+});
+const effortModelWithDefault = model({
+  capabilities: ['thinking'],
+  supportEfforts: ['low', 'high'],
+  defaultEffort: 'max',
+});
+const alwaysThinkingModel = model({ capabilities: ['thinking', 'always_thinking'] });
+const alwaysThinkingEffortModel = model({
+  capabilities: ['thinking', 'always_thinking'],
+  supportEfforts: ['low', 'high', 'max'],
+  defaultEffort: 'high',
+});
+const nonThinkingModel = model({ capabilities: ['tool_use'] });
+
+describe('defaultThinkingEffortFor', () => {
+  it('returns off for models that do not support thinking (or an unknown model)', () => {
+    expect(defaultThinkingEffortFor(undefined)).toBe('off');
+    expect(defaultThinkingEffortFor(nonThinkingModel)).toBe('off');
+    expect(defaultThinkingEffortFor(model())).toBe('off');
+  });
+
+  it('returns the declared defaultEffort for effort-capable models', () => {
+    expect(defaultThinkingEffortFor(effortModelWithDefault)).toBe('max');
+  });
+
+  it('falls back to the middle supportEfforts entry when defaultEffort is absent', () => {
+    // odd length -> exact middle
+    expect(defaultThinkingEffortFor(effortModel)).toBe('medium');
+    // even length -> upper-middle index
+    expect(defaultThinkingEffortFor(model({ capabilities: ['thinking'], supportEfforts: ['low', 'high'] }))).toBe(
+      'high',
+    );
+    expect(defaultThinkingEffortFor(model({ capabilities: ['thinking'], supportEfforts: ['low'] }))).toBe(
+      'low',
+    );
+  });
+
+  it('returns on for boolean thinking models (thinking support without supportEfforts)', () => {
+    expect(defaultThinkingEffortFor(booleanModel)).toBe('on');
+    expect(defaultThinkingEffortFor(model({ capabilities: ['always_thinking'] }))).toBe('on');
+    expect(defaultThinkingEffortFor(model({ adaptiveThinking: true }))).toBe('on');
+  });
+});
 
 describe('resolveThinkingEffort', () => {
-  describe('without explicit request', () => {
-    it('defaults to high when no config is provided', () => {
-      expect(resolveThinkingEffort(undefined, undefined)).toBe('high');
-    });
-
-    it('returns off when config mode is off', () => {
-      expect(resolveThinkingEffort(undefined, { mode: 'off' })).toBe('off');
-    });
-
-    it('returns high when config mode is on without explicit effort', () => {
-      expect(resolveThinkingEffort(undefined, { mode: 'on' })).toBe('high');
-    });
-
-    it('returns explicit effort when both mode=on and effort are set', () => {
-      expect(resolveThinkingEffort(undefined, { mode: 'on', effort: 'medium' })).toBe('medium');
-    });
-
-    it('uses effort even when mode is omitted', () => {
-      expect(resolveThinkingEffort(undefined, { effort: 'low' })).toBe('low');
-    });
-
-    it('returns off when mode is off even if effort is set', () => {
-      expect(resolveThinkingEffort(undefined, { mode: 'off', effort: 'high' })).toBe('off');
-    });
+  it('returns the requested effort verbatim when one is provided', () => {
+    expect(resolveThinkingEffort('low', undefined, effortModel)).toBe('low');
+    expect(resolveThinkingEffort('on', { enabled: false }, booleanModel)).toBe('on');
+    expect(resolveThinkingEffort('off', undefined, booleanModel)).toBe('off');
   });
 
-  describe('with explicit request', () => {
-    it('returns off when request is "off" regardless of config', () => {
-      expect(resolveThinkingEffort('off', { mode: 'on', effort: 'medium' })).toBe('off');
-    });
-
-    it('returns config effort when request is "on" and config has effort', () => {
-      expect(resolveThinkingEffort('on', { effort: 'medium' })).toBe('medium');
-    });
-
-    it('returns high when request is "on" and config has no effort', () => {
-      expect(resolveThinkingEffort('on', undefined)).toBe('high');
-    });
-
-    it('returns explicit effort level when request is a level name', () => {
-      expect(resolveThinkingEffort('xhigh', undefined)).toBe('xhigh');
-    });
-
-    it('falls back to config effort when request is unknown', () => {
-      expect(resolveThinkingEffort('bogus', { effort: 'low' })).toBe('low');
-    });
-
-    it('falls back to default high when request is unknown and no config', () => {
-      expect(resolveThinkingEffort('bogus', undefined)).toBe('high');
-    });
-
-    it('normalizes case and whitespace', () => {
-      expect(resolveThinkingEffort('  Medium ', undefined)).toBe('medium');
-      expect(resolveThinkingEffort('OFF', { mode: 'on' })).toBe('off');
-    });
+  it('returns off when config.enabled is false and no effort is requested', () => {
+    expect(resolveThinkingEffort(undefined, { enabled: false }, effortModel)).toBe('off');
+    expect(resolveThinkingEffort(undefined, { enabled: false, effort: 'high' }, effortModel)).toBe(
+      'off',
+    );
   });
 
-  describe('default behavior', () => {
-    it('uses high as the concrete effort for the default-on state', () => {
-      expect(resolveThinkingEffort(undefined, undefined)).toBe('high');
-      expect(resolveThinkingEffort('on', undefined)).toBe('high');
-    });
+  it('uses config.effort as the default effort', () => {
+    expect(resolveThinkingEffort(undefined, { effort: 'high' }, effortModel)).toBe('high');
+    expect(resolveThinkingEffort(undefined, { enabled: true, effort: 'low' }, effortModel)).toBe(
+      'low',
+    );
+  });
+
+  it('falls back to defaultThinkingEffortFor(model) when no effort is configured', () => {
+    expect(resolveThinkingEffort(undefined, undefined, effortModel)).toBe('medium');
+    expect(resolveThinkingEffort(undefined, {}, booleanModel)).toBe('on');
+    expect(resolveThinkingEffort(undefined, undefined, undefined)).toBe('off');
+  });
+
+  it('forces always-thinking models back on when the resolved effort is off', () => {
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+  });
+
+  it('honors a configured effort when clamping always-thinking models back on', () => {
+    // enabled=false resolves to 'off', then always_thinking clamps back on;
+    // an explicitly configured effort is preserved instead of falling back to
+    // the model default.
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: 'max' }, alwaysThinkingEffortModel),
+    ).toBe('max');
+    // without an explicit effort, fall back to the model's default effort.
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel)).toBe(
+      'high',
+    );
+  });
+
+  it('does not force on for models that are not always-thinking', () => {
+    expect(resolveThinkingEffort('off', undefined, booleanModel)).toBe('off');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
   });
 });

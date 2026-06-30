@@ -223,7 +223,7 @@ export class SessionSubagentHost {
 
     child.config.update({
       modelAlias: parent.config.modelAlias,
-      thinkingLevel: parent.config.thinkingLevel,
+      thinkingEffort: parent.config.thinkingEffort,
       systemPrompt: parent.config.systemPrompt,
     });
     child.tools.copyLoopToolsFrom(parent.tools);
@@ -366,7 +366,7 @@ export class SessionSubagentHost {
     child.config.update({
       cwd: parent.config.cwd,
       modelAlias: parent.config.modelAlias,
-      thinkingLevel: parent.config.thinkingLevel,
+      thinkingEffort: parent.config.thinkingEffort,
     });
 
     const context = await prepareSystemPromptContext(

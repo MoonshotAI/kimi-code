@@ -33,6 +33,9 @@ base_url = "https://api.example/v1"
 provider = "managed:kimi-code"
 model = "kimi-for-coding"
 max_context_size = 1000000
+capabilities = ["thinking"]
+support_efforts = ["low", "medium", "high"]
+default_effort = "high"
 `;
 
 describe('HarnessAPI session model aliases', () => {
@@ -383,7 +386,7 @@ max_context_size = 1000000
     const resumeRecords: TelemetryContextRecord[] = [];
     const resumeRpc = await createTestRpc({ telemetry: recordingContextTelemetry(resumeRecords) });
     await resumeRpc.resumeSession({ sessionId: created.id });
-    await resumeRpc.setThinking({ sessionId: created.id, agentId: 'main', level: 'off' });
+    await resumeRpc.setThinking({ sessionId: created.id, agentId: 'main', effort: 'off' });
 
     expect(resumeRecords).toContainEqual({
       event: 'thinking_toggle',

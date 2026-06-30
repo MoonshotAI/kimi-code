@@ -94,7 +94,7 @@ export interface AppSession {
 export interface AppSessionRuntimeStatus {
   /** Current model alias, or null if the daemon couldn't resolve it. */
   model: string | null;
-  thinkingLevel: string;
+  thinkingEffort: string;
   permission: string;
   planMode: boolean;
   swarmMode: boolean;

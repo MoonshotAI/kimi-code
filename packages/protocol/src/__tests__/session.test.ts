@@ -211,12 +211,12 @@ describe('sessionUpdateSchema', () => {
     });
   });
 
-  it('rejects an unknown thinking level in agent_config', () => {
+  it('accepts any non-empty thinking effort in agent_config', () => {
     expect(
       sessionUpdateSchema.safeParse({
         agent_config: { thinking: 'mega' as unknown },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('rejects an unknown permission_mode in agent_config', () => {

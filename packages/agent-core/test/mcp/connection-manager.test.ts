@@ -871,7 +871,7 @@ describe('Session MCP startup', () => {
         cwd: tmp,
         modelAlias: 'mock-model',
         systemPrompt: 'test system prompt',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       });
       // This bare agent gets no profile, so grant MCP access explicitly.
       agent.tools.setActiveTools(['mcp__*']);

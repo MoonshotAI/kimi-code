@@ -513,7 +513,7 @@ describe('Agent resume', () => {
         cwd: process.cwd(),
         modelAlias: MOCK_PROVIDER.model,
         systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       },
       {
         type: 'context.append_message',
@@ -1274,7 +1274,7 @@ function resumeHistory(): AgentRecord[] {
       cwd: process.cwd(),
       modelAlias: MOCK_PROVIDER.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     },
     {
       type: 'tools.set_active_tools',
@@ -1394,7 +1394,7 @@ function resumeDeferredSystemReminderHistory(): AgentRecord[] {
       cwd: process.cwd(),
       modelAlias: MOCK_PROVIDER.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     },
     {
       type: 'context.append_message',
@@ -1502,7 +1502,7 @@ function resumeConfigRecord(): AgentRecord {
     cwd: process.cwd(),
     modelAlias: MOCK_PROVIDER.model,
     systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-    thinkingLevel: 'off',
+    thinkingEffort: 'off',
   };
 }
 

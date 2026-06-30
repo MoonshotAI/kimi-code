@@ -32,6 +32,7 @@ import type {
   SessionUsage,
   SkillSummary,
   PluginCommandDef,
+  ThinkingEffort,
   Unsubscribe,
 } from '#/types';
 
@@ -194,14 +195,14 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
-  async setThinking(level: string): Promise<void> {
+  async setThinking(effort: ThinkingEffort): Promise<void> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
-      level,
-      'Session thinking level cannot be empty',
+      effort,
+      'Session thinking effort cannot be empty',
       ErrorCodes.SESSION_THINKING_EMPTY,
     );
-    await this.rpc.setThinking({ sessionId: this.id, level: normalized });
+    await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {
