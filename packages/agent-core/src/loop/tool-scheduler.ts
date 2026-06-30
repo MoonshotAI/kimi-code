@@ -22,7 +22,6 @@ export interface ToolCallTask<Result> {
     readonly result: Promise<Result>;
     readonly holdAccessUntil?: Promise<unknown> | undefined;
   }>;
-  readonly cancel?: (() => Result) | undefined;
 }
 
 interface ScheduledToolCallTask<Result> extends ToolCallTask<Result> {
@@ -50,18 +49,6 @@ export class ToolScheduler<Result> {
     }
 
     return result;
-  }
-
-  cancelQueued(): void {
-    const queuedTasks = this.queuedTasks;
-    this.queuedTasks = [];
-    for (const task of queuedTasks) {
-      if (task.cancel !== undefined) {
-        task.result.resolve(task.cancel());
-      } else {
-        task.result.reject(new Error('Queued tool task was cancelled.'));
-      }
-    }
   }
 
   private isBlocked(

@@ -44,7 +44,6 @@ import type {
 const GRACE_TIMEOUT_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
-const STOPPED_TURN_SKIP_OUTPUT = 'Tool skipped because a previous tool call stopped the turn.';
 
 const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
 
@@ -153,10 +152,7 @@ export async function runToolCallBatch(
     // paired `tool.result`; the caller checks abort before writing `step.end`.
     for (const pendingResult of pendingResults) {
       const result = await finalizePendingToolResult(batchStep, await pendingResult);
-      if (result.stopTurn === true) {
-        stopTurn = true;
-        scheduler.cancelQueued();
-      }
+      if (result.stopTurn === true) stopTurn = true;
       await step.dispatchEvent({
         type: 'tool.result',
         parentUuid: result.toolCall.id,
@@ -344,7 +340,6 @@ async function prepareToolCall(
           holdAccessUntil: result.then((pendingResult) => pendingResult.holdAccessUntil),
         };
       },
-      cancel: () => makeErrorToolResult(call, effectiveArgs, STOPPED_TURN_SKIP_OUTPUT),
     },
     stopBatchAfterThis: execution.stopBatchAfterThis,
   };
@@ -354,8 +349,9 @@ async function prepareSkippedToolCall(
   step: ToolCallBatchContext,
   call: PreflightedToolCall,
 ): Promise<ToolCallTask<PendingToolResult>> {
+  const output = 'Tool skipped because a previous tool call stopped the turn.';
   await dispatchToolCall(step, call, call.args);
-  return makeResolvedToolCallTask(makeErrorToolResult(call, call.args, STOPPED_TURN_SKIP_OUTPUT));
+  return makeResolvedToolCallTask(makeErrorToolResult(call, call.args, output));
 }
 
 function makeResolvedToolCallTask(result: PendingToolResult): ToolCallTask<PendingToolResult> {
