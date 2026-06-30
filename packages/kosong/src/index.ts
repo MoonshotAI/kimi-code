@@ -69,6 +69,7 @@ export {
   isContextOverflowStatusError,
   isProviderRateLimitError,
   isRetryableGenerateError,
+  isToolExchangeAdjacencyError,
 } from './errors';
 
 /**

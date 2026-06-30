@@ -8,6 +8,7 @@ import {
   ChatProviderError,
   isProviderRateLimitError,
   isRetryableGenerateError,
+  isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
 } from '#/errors';
 import { describe, expect, it } from 'vitest';
@@ -206,6 +207,54 @@ describe('normalizeAPIStatusError', () => {
     const error = normalizeAPIStatusError(statusCode, message);
     expect(error).toBeInstanceOf(APIStatusError);
     expect(error).not.toBeInstanceOf(APIContextOverflowError);
+  });
+});
+
+describe('isToolExchangeAdjacencyError', () => {
+  // The exact Anthropic message observed in the field when a tool_use was not
+  // immediately followed by its tool_result.
+  const ANTHROPIC_MISSING_RESULT =
+    'messages.142: `tool_use` ids were found without `tool_result` blocks immediately after: ' +
+    'toolu_01MWFhDRqdbB4nzCJNuWYiun. Each `tool_use` block must have a corresponding ' +
+    '`tool_result` block in the next message.';
+
+  it('matches the missing-tool_result 400', () => {
+    expect(isToolExchangeAdjacencyError(new APIStatusError(400, ANTHROPIC_MISSING_RESULT))).toBe(
+      true,
+    );
+  });
+
+  it('matches the reverse unexpected-tool_result 400', () => {
+    expect(
+      isToolExchangeAdjacencyError(
+        new APIStatusError(
+          400,
+          'messages.5: `tool_result` block(s) provided when previous message does not ' +
+            'contain any `tool_use` blocks',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isToolExchangeAdjacencyError(new APIStatusError(400, 'unexpected `tool_result` block')),
+    ).toBe(true);
+  });
+
+  it('also matches a 422 with the same shape', () => {
+    expect(isToolExchangeAdjacencyError(new APIStatusError(422, ANTHROPIC_MISSING_RESULT))).toBe(
+      true,
+    );
+  });
+
+  it('does not match a context-overflow 400 or unrelated errors', () => {
+    expect(
+      isToolExchangeAdjacencyError(new APIContextOverflowError(400, 'context length exceeded')),
+    ).toBe(false);
+    expect(isToolExchangeAdjacencyError(new APIStatusError(400, 'Bad request'))).toBe(false);
+    expect(isToolExchangeAdjacencyError(new APIStatusError(500, ANTHROPIC_MISSING_RESULT))).toBe(
+      false,
+    );
+    expect(isToolExchangeAdjacencyError(new Error(ANTHROPIC_MISSING_RESULT))).toBe(false);
+    expect(isToolExchangeAdjacencyError('boom')).toBe(false);
   });
 });
 
