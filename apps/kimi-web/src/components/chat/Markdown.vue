@@ -212,7 +212,7 @@ function processFileLinks(): void {
     const parent = text.parentElement;
     if (
       parent &&
-      !parent.closest('a, pre, .md-file-link') &&
+      !parent.closest('a, pre, .md-file-link, svg') &&
       text.data.trim().length > 0
     ) {
       textNodes.push(text);
@@ -271,6 +271,9 @@ function processMarkdownLinks(): void {
   const links = mdRef.value.querySelectorAll<HTMLAnchorElement>('a[href]');
   for (const link of links) {
     if (link.dataset.mdLinkHandled === 'true') continue;
+    // Skip links inside Mermaid SVGs — their hrefs are diagram semantics, not
+    // workspace file paths.
+    if (link.closest('svg')) continue;
     const href = link.getAttribute('href') ?? '';
     if (!isLocalLink(href)) continue;
     link.dataset.mdLinkHandled = 'true';
