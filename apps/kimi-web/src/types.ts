@@ -229,6 +229,9 @@ export interface ChatTurn {
   /** Skill activation metadata: when a user turn was triggered by a slash
       command (/skill), this holds the skill name and args for display. */
   skillActivation?: { name: string; args?: string };
+  /** Plugin command metadata: when a user turn was triggered by a plugin slash
+      command (/plugin:command), this holds the command identity and args. */
+  pluginCommand?: { pluginId: string; commandName: string; args?: string };
 }
 
 /**

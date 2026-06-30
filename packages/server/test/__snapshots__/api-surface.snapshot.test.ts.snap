@@ -63,6 +63,14 @@ exports[`API surface snapshot > matches the documented v1 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/gui/store/getItem",
+    ],
+    [
+      "GET",
+      "/api/v1/gui/store/length",
+    ],
+    [
+      "GET",
       "/api/v1/healthz",
     ],
     [
@@ -188,6 +196,18 @@ exports[`API surface snapshot > matches the documented v1 route table and meta e
     [
       "POST",
       "/api/v1/files",
+    ],
+    [
+      "POST",
+      "/api/v1/gui/store/clear",
+    ],
+    [
+      "POST",
+      "/api/v1/gui/store/removeItem",
+    ],
+    [
+      "POST",
+      "/api/v1/gui/store/setItem",
     ],
     [
       "POST",

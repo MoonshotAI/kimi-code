@@ -1102,6 +1102,7 @@ export class AnthropicChatProvider implements ChatProvider {
     }
     const finalRequestOptions = Object.keys(requestOptions).length > 0 ? requestOptions : undefined;
     const client = this._createClient(options?.auth);
+    options?.onRequestSent?.();
 
     if (this._stream) {
       // Use the raw Messages stream instead of the SDK MessageStream helper.
