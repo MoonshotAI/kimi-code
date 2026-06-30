@@ -74,6 +74,29 @@ describe('CustomEditor autocomplete Escape handling', () => {
   });
 });
 
+describe('CustomEditor onNonEscapeInput', () => {
+  it('fires for a printable key and not for a lone Escape', () => {
+    const editor = makeEditor();
+    const onNonEscapeInput = vi.fn();
+    editor.onNonEscapeInput = onNonEscapeInput;
+
+    editor.handleInput('a');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
+
+    editor.handleInput('\u001B');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
+  });
+
+  it('fires for control keys so they break a pending double-Esc', () => {
+    const editor = makeEditor();
+    const onNonEscapeInput = vi.fn();
+    editor.onNonEscapeInput = onNonEscapeInput;
+
+    editor.handleInput('\u0003');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
+  });
+});
+
 describe('CustomEditor slash argument completion refresh', () => {
   it('reopens /add-dir directory completions after tab completion and entering slash', async () => {
     const editor = makeEditor();

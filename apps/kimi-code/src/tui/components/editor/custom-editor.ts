@@ -117,6 +117,11 @@ function getNewlineInput(data: string): string | undefined {
 
 export class CustomEditor extends Editor {
   public onEscape?: () => void;
+  /**
+   * Fired for every input that is not a lone Escape. Used to disarm a pending
+   * double-Esc so only two consecutive Escape presses trigger the shortcut.
+   */
+  public onNonEscapeInput?: () => void;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
@@ -294,6 +299,12 @@ export class CustomEditor extends Editor {
     const normalized = normalizeCapsLockedCtrl(data);
     if (isKeyRelease(normalized)) {
       return;
+    }
+
+    // Any input other than a lone Escape breaks a pending double-Esc sequence,
+    // so the shortcut only fires for two consecutive Escape presses.
+    if (!matchesKey(normalized, Key.escape)) {
+      this.onNonEscapeInput?.();
     }
 
     // When a paste marker was just expanded, discard the trailing bracketed

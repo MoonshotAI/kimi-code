@@ -63,8 +63,11 @@ export class EditorKeyboardController {
 
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
-      if (this.pendingUndoEsc) this.clearPendingUndoEsc();
       host.updateEditorBorderHighlight(text);
+    };
+
+    editor.onNonEscapeInput = () => {
+      this.clearPendingUndoEsc();
     };
 
     editor.onCtrlC = () => {

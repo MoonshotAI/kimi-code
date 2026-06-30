@@ -52,6 +52,12 @@ function pressEscape(editor: Harness['editor']): void {
   (handler as () => void)();
 }
 
+function pressNonEscape(editor: Harness['editor']): void {
+  const handler = editor['onNonEscapeInput'];
+  if (handler === undefined) throw new Error('onNonEscapeInput handler not installed');
+  (handler as () => void)();
+}
+
 describe('EditorKeyboardController double-Esc undo', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -84,6 +90,16 @@ describe('EditorKeyboardController double-Esc undo', () => {
 
     pressEscape(editor);
     vi.advanceTimersByTime(DOUBLE_ESC_WINDOW_MS + 1);
+    pressEscape(editor);
+
+    expect(openUndoSelector).not.toHaveBeenCalled();
+  });
+
+  it('does not trigger when another key is pressed between the two Esc presses', () => {
+    const { editor, openUndoSelector } = createHarness();
+
+    pressEscape(editor);
+    pressNonEscape(editor);
     pressEscape(editor);
 
     expect(openUndoSelector).not.toHaveBeenCalled();
