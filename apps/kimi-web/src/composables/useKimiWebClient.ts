@@ -676,6 +676,11 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     rawState.defaultModel = event.config.defaultModel ?? null;
   }
 
+  if (event.type === 'modelCatalogChanged') {
+    void modelProvider.loadModels();
+    void modelProvider.loadProviders();
+  }
+
   if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.swarmMode !== undefined) {
     rawState.swarmMode = event.swarmMode;
   }
@@ -2335,6 +2340,7 @@ export function useKimiWebClient() {
     addProvider: modelProvider.addProvider,
     deleteProvider: modelProvider.deleteProvider,
     refreshProvider: modelProvider.refreshProvider,
+    refreshAllProviders: modelProvider.refreshAllProviders,
 
     // Auth state
     authReady,

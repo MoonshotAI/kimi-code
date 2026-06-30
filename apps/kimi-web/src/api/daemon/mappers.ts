@@ -678,6 +678,21 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         config: toAppConfig(w.payload.config),
       };
 
+    case 'event.model_catalog.changed':
+      return {
+        type: 'modelCatalogChanged',
+        changed: w.payload.changed.map(
+          (item: { provider_id: string; provider_name: string; added: number; removed: number }) => ({
+            providerId: item.provider_id,
+            providerName: item.provider_name,
+            added: item.added,
+            removed: item.removed,
+          }),
+        ),
+        unchanged: w.payload.unchanged,
+        failed: w.payload.failed,
+      };
+
     default: {
       // Truly unknown event — record warning
       return { type: 'unknown', raw: wire };

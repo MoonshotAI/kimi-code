@@ -159,3 +159,12 @@ export type {
   KimiOAuthTokenRef,
   KimiOAuthToolkitOptions,
 } from './toolkit';
+
+export { refreshProviderModels } from './refreshProviderModels';
+export type {
+  ProviderChange,
+  RefreshProviderHost,
+  RefreshProviderOptions,
+  RefreshProviderScope,
+  RefreshResult,
+} from './refreshProviderModels';

@@ -481,8 +481,8 @@ export class ToolManager {
         new b.ReadTool(kaos, workspace),
         new b.WriteTool(kaos, workspace),
         new b.EditTool(kaos, workspace),
-        new b.GrepTool(kaos, workspace),
-        new b.GlobTool(kaos, workspace),
+        new b.GrepTool(kaos, workspace, this.agent.telemetry),
+        new b.GlobTool(kaos, workspace, this.agent.telemetry),
         new b.BashTool(kaos, cwd, background, {
           allowBackground,
         }),

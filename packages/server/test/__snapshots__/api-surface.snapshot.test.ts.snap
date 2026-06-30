@@ -207,7 +207,11 @@ exports[`API surface snapshot > matches the documented v1 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/providers{refresh_oauth}",
+      "/api/v1/providers{action}",
+    ],
+    [
+      "POST",
+      "/api/v1/providers/{tail}",
     ],
     [
       "POST",

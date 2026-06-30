@@ -419,6 +419,12 @@ export type AppEvent =
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
   | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
+  | {
+      type: 'modelCatalogChanged';
+      changed: { providerId: string; providerName: string; added: number; removed: number }[];
+      unchanged: string[];
+      failed: { provider: string; reason: string }[];
+    }
   | { type: 'unknown'; raw: unknown };
 
 // ---------------------------------------------------------------------------
@@ -669,7 +675,8 @@ export interface KimiWebApi {
   listProviders(): Promise<AppProvider[]>;
   addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
   deleteProvider(id: string): Promise<{ deleted: true }>;
-  refreshProvider(id: string): Promise<AppProvider>;
+  refreshProvider(id: string): Promise<ProviderRefreshResult>;
+  refreshAllProviders(): Promise<ProviderRefreshResult>;
   refreshOAuthProviderModels(): Promise<ProviderRefreshResult>;
 
   // File upload / download
