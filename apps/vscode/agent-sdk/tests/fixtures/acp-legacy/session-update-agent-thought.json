@@ -1,0 +1,14 @@
+{
+  "name": "agent thought chunk falls back to reasoning field",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-agent-thought",
+    "update": {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": { "type": "reasoning", "reasoning": "Think" }
+    }
+  },
+  "expectedEvents": [
+    { "type": "ContentPart", "payload": { "type": "think", "think": "Think" } }
+  ]
+}

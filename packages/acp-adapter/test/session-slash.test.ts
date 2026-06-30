@@ -21,6 +21,10 @@ import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
 class CollectingClient implements Client {
   readonly updates: SessionNotification[] = [];
+  readonly extNotifications: Array<{ method: string; params: Record<string, unknown> }> = [];
+  async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    this.extNotifications.push({ method, params });
+  }
   async requestPermission(_p: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     throw new Error('requestPermission should not be called');
   }
@@ -255,11 +259,10 @@ describe('AcpSession slash routing', () => {
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     await waitForAvailableCommands(collecting);
 
-    // Unknown slash (`/clear` is a TUI builtin not advertised by ACP):
-    // the adapter must NOT forward it to the model. It produces a local
-    // "unknown command" reply and returns `end_turn` without invoking
-    // Session.prompt.
-    await client.prompt({ sessionId, prompt: [textBlock('/clear')] });
+    // Unknown slash commands must NOT be forwarded to the model. The adapter
+    // produces a local "unknown command" reply and returns end_turn without
+    // invoking Session.prompt.
+    await client.prompt({ sessionId, prompt: [textBlock('/definitely-unknown')] });
     // Plain text: trivially passes through.
     await client.prompt({ sessionId, prompt: [textBlock('hello world')] });
 
@@ -370,5 +373,243 @@ describe('AcpSession slash routing', () => {
     expect(text).toContain('Session status:');
     expect(text).toContain('Model: mock-model');
     expect(text).toContain('Context: 1,234 / 200,000 (0.6%)');
+  });
+
+  it('routes built-in `/clear` to Session.clearContext and emits a reset event', async () => {
+    const sessionId = 'sess-slash-clear';
+    let clearCalls = 0;
+    let promptCalls = 0;
+    const session = {
+      id: sessionId,
+      prompt: async () => {
+        promptCalls += 1;
+      },
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      clearContext: async () => {
+        clearCalls += 1;
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+    await client.prompt({ sessionId, prompt: [textBlock('/clear')] });
+
+    expect(clearCalls).toBe(1);
+    expect(promptCalls).toBe(0);
+    expect(collecting.extNotifications).toContainEqual({
+      method: 'kimi/conversation_reset',
+      params: { sessionId },
+    });
+  });
+
+  it('routes built-in `/yolo` to mode toggling', async () => {
+    const sessionId = 'sess-slash-yolo';
+    const permissionCalls: string[] = [];
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      setPlanMode: async () => undefined,
+      setPermission: async (mode: string) => {
+        permissionCalls.push(mode);
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+    await client.prompt({ sessionId, prompt: [textBlock('/yolo')] });
+
+    expect(permissionCalls).toEqual(['yolo']);
+  });
+
+  it('routes built-in `/plan` and `/auto` to mode toggling', async () => {
+    const sessionId = 'sess-slash-modes';
+    const planCalls: boolean[] = [];
+    const permissionCalls: string[] = [];
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      setPlanMode: async (enabled: boolean) => {
+        planCalls.push(enabled);
+      },
+      setPermission: async (mode: string) => {
+        permissionCalls.push(mode);
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/plan')] });
+    await client.prompt({ sessionId, prompt: [textBlock('/auto')] });
+
+    // `/plan` → setPlanMode(true) + setPermission('manual')
+    // `/auto` → setPlanMode(false) + setPermission('auto')
+    expect(planCalls).toEqual([true, false]);
+    expect(permissionCalls).toEqual(['manual', 'auto']);
+  });
+
+  it('routes built-in `/undo` to Session.undoHistory', async () => {
+    const sessionId = 'sess-slash-undo';
+    let undoCalls = 0;
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      undoHistory: async (_count?: number) => {
+        undoCalls += 1;
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+    await client.prompt({ sessionId, prompt: [textBlock('/undo')] });
+
+    expect(undoCalls).toBe(1);
+  });
+
+  it('routes built-in `/model <name>` to setModel and `/model` reports current', async () => {
+    const sessionId = 'sess-slash-model';
+    const modelCalls: string[] = [];
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      setModel: async (model: string) => {
+        modelCalls.push(model);
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/model kimi-v2')] });
+
+    expect(modelCalls).toEqual(['kimi-v2']);
+  });
+
+  it('routes built-in `/swarm on` and `/swarm off` to setSwarmMode', async () => {
+    const sessionId = 'sess-slash-swarm';
+    const swarmCalls: Array<{ enabled: boolean; trigger: string }> = [];
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      setSwarmMode: async (enabled: boolean, trigger: string) => {
+        swarmCalls.push({ enabled, trigger });
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/swarm on')] });
+    await client.prompt({ sessionId, prompt: [textBlock('/swarm off')] });
+
+    expect(swarmCalls).toEqual([
+      { enabled: true, trigger: 'manual' },
+      { enabled: false, trigger: 'manual' },
+    ]);
+  });
+
+  it('routes built-in `/goal status` and `/goal pause` to goal lifecycle', async () => {
+    const sessionId = 'sess-slash-goal';
+    let pauseCalls = 0;
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      getGoal: async () => ({
+        goal: { objective: 'Ship feature X', status: 'active' },
+      }),
+      pauseGoal: async () => {
+        pauseCalls += 1;
+        return { objective: 'Ship feature X', status: 'paused' };
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/goal status')] });
+    await client.prompt({ sessionId, prompt: [textBlock('/goal pause')] });
+
+    expect(pauseCalls).toBe(1);
+    const reply = collecting.updates.find((n) => {
+      const text = (n.update as { content?: { text?: string } }).content?.text ?? '';
+      return text.includes('Goal: Ship feature X');
+    });
+    expect(reply).toBeDefined();
   });
 });

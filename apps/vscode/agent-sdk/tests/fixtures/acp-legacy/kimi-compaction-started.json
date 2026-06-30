@@ -1,0 +1,19 @@
+{
+  "name": "kimi/compaction started -> CompactionBegin",
+  "method": "kimi/compaction",
+  "params": {
+    "sessionId": "sess-1",
+    "phase": "started",
+    "trigger": "manual",
+    "instruction": "Keep important facts"
+  },
+  "expectedEvents": [
+    {
+      "type": "CompactionBegin",
+      "payload": {
+        "trigger": "manual",
+        "instruction": "Keep important facts"
+      }
+    }
+  ]
+}

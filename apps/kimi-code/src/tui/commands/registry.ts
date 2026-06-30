@@ -3,6 +3,11 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'pathe';
 
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
+import {
+  getSlashCommandsForSurface,
+  type SlashCommandDescriptor,
+  type SlashCommandName,
+} from '@moonshot-ai/acp-adapter';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
@@ -132,155 +137,21 @@ function formatDirectoryCompletionValue(argumentPrefix: string, parentInput: str
   return `${join(parentInput, entryName)}/`;
 }
 
-export const BUILTIN_SLASH_COMMANDS = [
-  {
-    name: 'yolo',
-    aliases: ['yes'],
-    description: 'Toggle auto-approve mode',
-    priority: 100,
-    availability: 'always',
-  },
-  {
-    name: 'auto',
-    aliases: [],
-    description: 'Toggle auto permission mode',
-    priority: 100,
-    availability: 'always',
-  },
-  {
-    name: 'permission',
-    aliases: [],
-    description: 'Select permission mode',
-    priority: 100,
-    availability: 'always',
-  },
-  {
-    name: 'settings',
-    aliases: ['config'],
-    description: 'Open TUI settings',
-    priority: 100,
-    availability: 'always',
-  },
-  {
-    name: 'plan',
-    aliases: [],
-    description: 'Toggle plan mode',
-    priority: 100,
+type TuiSlashCommandExtension = Pick<KimiSlashCommand, 'availability' | 'completeArgs' | 'experimentalFlag'>;
+
+const TUI_SLASH_COMMAND_EXTENSIONS: Partial<Record<SlashCommandName, TuiSlashCommandExtension>> = {
+  plan: {
     availability: (args) => (args.trim().toLowerCase() === 'clear' ? 'idle-only' : 'always'),
   },
-  {
-    name: 'swarm',
-    aliases: [],
-    description: 'Toggle swarm mode or run one task in swarm mode',
-    priority: 100,
-    argumentHint: '[on|off] | <task>',
+  swarm: {
     completeArgs: swarmArgumentCompletions,
     availability: 'idle-only',
   },
-  {
-    name: 'model',
-    aliases: [],
-    description: 'Switch LLM model',
-    priority: 100,
-    availability: 'always',
-  },
-  {
-    name: 'provider',
-    aliases: ['providers'],
-    description: 'Manage AI providers (add / delete / refresh)',
-    priority: 95,
-    availability: 'always',
-  },
-  {
-    name: 'btw',
-    aliases: [],
-    description: 'Ask a forked side agent a question',
-    priority: 90,
-    availability: 'always',
-  },
-  {
-    name: 'help',
-    aliases: ['h', '?'],
-    description: 'Show available commands and shortcuts',
-    priority: 80,
-    availability: 'always',
-  },
-  {
-    name: 'new',
-    aliases: ['clear'],
-    description: 'Start a fresh session in the current workspace',
-    priority: 80,
-  },
-  {
-    name: 'sessions',
-    aliases: ['resume'],
-    description: 'Browse and resume sessions',
-    priority: 80,
-  },
-  {
-    name: 'tasks',
-    aliases: ['task'],
-    description: 'Browse background tasks',
-    priority: 80,
-    availability: 'always',
-  },
-  {
-    name: 'mcp',
-    aliases: [],
-    description: 'Show MCP server status',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'plugins',
-    aliases: [],
-    description: 'Manage plugins',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'add-dir',
-    aliases: [],
-    description: 'Add or list an additional workspace directory',
-    priority: 60,
-    availability: 'idle-only',
-    argumentHint: '[list] | <path>',
-    completeArgs: addDirArgumentCompletions,
-  },
-  {
-    name: 'experiments',
-    aliases: ['experimental'],
-    description: 'Manage experimental features',
-    priority: 60,
-    availability: 'idle-only',
-  },
-  {
-    name: 'reload',
-    aliases: [],
-    description: 'Reload session and apply config.toml settings plus tui.toml UI preferences',
-    priority: 60,
-    availability: 'idle-only',
-  },
-  {
-    name: 'reload-tui',
-    aliases: [],
-    description: 'Reload only tui.toml UI preferences',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'compact',
-    aliases: [],
-    description: 'Compact the conversation context',
-    priority: 80,
-    argumentHint: '<instruction>',
-  },
-  {
-    name: 'goal',
-    aliases: [],
-    description: 'Start or manage an autonomous goal',
-    priority: 80,
-    argumentHint: '[status|pause|resume|cancel|replace|next] | <objective>',
+  goal: {
+    // No argumentHint: the menu description stays as short as every other
+    // command's. The subcommands (status/pause/resume/cancel/replace) surface in
+    // the argument autocomplete list once the user types `/goal ` (see
+    // completeArgs), so they don't need to be spelled out inline.
     completeArgs: goalArgumentCompletions,
     // status / pause / cancel are always available; creation, replacement, and
     // resume start (or restart) a turn and so are idle-only.
@@ -292,112 +163,28 @@ export const BUILTIN_SLASH_COMMANDS = [
         : 'idle-only';
     },
   },
-  {
-    name: 'init',
-    aliases: [],
-    description: 'Analyze the codebase and generate AGENTS.md',
+  'add-dir': {
+    completeArgs: addDirArgumentCompletions,
   },
-  {
-    name: 'fork',
-    aliases: [],
-    description: 'Fork the current session',
-    priority: 80,
-  },
-  {
-    name: 'title',
-    aliases: ['rename'],
-    description: 'Set or show session title',
-    priority: 60,
-    argumentHint: '<title>',
-    availability: 'always',
-  },
-  {
-    name: 'usage',
-    aliases: [],
-    description: 'Show session tokens + context window + plan quotas',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'status',
-    aliases: [],
-    description: 'Show current session and runtime status',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'feedback',
-    aliases: [],
-    description: 'Send feedback to make Kimi Code better',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'undo',
-    aliases: [],
-    description: 'Withdraw the last prompt from the transcript',
-    priority: 80,
-    availability: 'idle-only',
-  },
-  {
-    name: 'editor',
-    aliases: [],
-    description: 'Set the external editor for Ctrl-G',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'theme',
-    aliases: [],
-    description: 'Set the terminal UI theme',
-    priority: 60,
-    availability: 'always',
-  },
-  {
-    name: 'logout',
-    aliases: ['disconnect'],
-    description: 'Log out of a configured provider',
-    priority: 40,
-  },
-  {
-    name: 'login',
-    aliases: [],
-    description: 'Select a platform and authenticate',
-    priority: 40,
-  },
-  {
-    name: 'export-md',
-    aliases: ['export'],
-    description: 'Export current session as a Markdown file',
-    priority: 40,
-  },
-  {
-    name: 'export-debug-zip',
-    aliases: [],
-    description: 'Export current session as a debug ZIP archive',
-    priority: 40,
-  },
-  {
-    name: 'web',
-    aliases: [],
-    description: 'Open the current session in the Web UI and exit the terminal',
-    priority: 40,
-    availability: 'always',
-  },
-  {
-    name: 'exit',
-    aliases: ['quit', 'q'],
-    description: 'Exit the application',
-    priority: 20,
-  },
-  {
-    name: 'version',
-    aliases: [],
-    description: 'Show version information',
-    priority: 20,
-    availability: 'always',
-  },
-] as const satisfies readonly KimiSlashCommand[];
+};
+
+function toKimiSlashCommand(command: SlashCommandDescriptor): KimiSlashCommand<SlashCommandName> {
+  const extension = TUI_SLASH_COMMAND_EXTENSIONS[command.name as SlashCommandName];
+  return {
+    name: command.name as SlashCommandName,
+    aliases: command.aliases ?? [],
+    description: command.description,
+    priority: command.priority,
+    argumentHint: command.argumentHint,
+    availability: extension?.availability ?? command.availability,
+    ...(extension?.completeArgs ? { completeArgs: extension.completeArgs } : {}),
+    ...(extension?.experimentalFlag ? { experimentalFlag: extension.experimentalFlag } : {}),
+  };
+}
+
+export const BUILTIN_SLASH_COMMANDS: readonly KimiSlashCommand<SlashCommandName>[] = getSlashCommandsForSurface('tui').map((command) =>
+  toKimiSlashCommand(command),
+);
 
 export type BuiltinSlashCommand = (typeof BUILTIN_SLASH_COMMANDS)[number];
 export type BuiltinSlashCommandName = BuiltinSlashCommand['name'];

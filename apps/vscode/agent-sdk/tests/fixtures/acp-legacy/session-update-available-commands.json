@@ -1,0 +1,19 @@
+{
+  "name": "available commands update filters invalid command entries",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-commands",
+    "update": {
+      "sessionUpdate": "available_commands_update",
+      "availableCommands": [{ "name": "/clear", "description": "Clear" }, { "description": "bad" }]
+    }
+  },
+  "expectedEvents": [
+    {
+      "type": "AvailableCommandsUpdate",
+      "payload": {
+        "availableCommands": [{ "name": "clear", "description": "Clear" }]
+      }
+    }
+  ]
+}

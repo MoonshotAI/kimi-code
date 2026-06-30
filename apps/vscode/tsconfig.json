@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "module": "Node16",
+    "target": "ES2022",
+    "lib": ["es2024", "dom"],
+    "types": ["node"],
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": "..",
+    "strict": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "shared/*": ["./shared/*"]
+    }
+  },
+  "include": ["src/**/*", "shared/**/*"],
+  "exclude": ["out", "dist", "node_modules", "webview-ui"]
+}

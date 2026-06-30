@@ -10,12 +10,14 @@ import {
 } from '@agentclientprotocol/sdk';
 import {
   ErrorCodes,
+  isKimiError,
   log,
   type ApprovalRequest,
   type ApprovalResponse,
   type BackgroundTaskInfo,
   type ContextMessage,
   type Event,
+  type GoalSnapshot,
   type KimiErrorPayload,
   type KimiHarness,
   type McpServerInfo,
@@ -44,6 +46,7 @@ import {
   assistantDeltaToSessionUpdate,
   configOptionUpdateNotification,
   planFromDisplayBlock,
+  statusUpdatedToUsageUpdate,
   stringifyArgs,
   thinkingDeltaToSessionUpdate,
   toolCallDeltaToSessionUpdate,
@@ -55,6 +58,16 @@ import {
   turnEndReasonToStopReason,
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
+import {
+  KIMI_EXT_COMPACTION,
+  KIMI_EXT_STEP_INTERRUPTED,
+  KIMI_EXT_SUBAGENT_EVENT,
+  type KimiNestedDisplayEvent,
+  type KimiNestedStatusUpdate,
+  type KimiNestedToolCall,
+  type KimiNestedToolResult,
+  type KimiTokenUsage,
+} from './protocol/kimi-extensions';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
 import { detectSlashIntent } from './slash';
 
@@ -226,11 +239,31 @@ export class AcpSession {
     if (typeof this.session.setQuestionHandler === 'function') {
       this.session.setQuestionHandler(async (req) => this.handleQuestion(req));
     }
+    if (typeof this.session.onEvent === 'function') {
+      this.session.onEvent((event) => {
+        this.emitSessionUsageUpdate(event);
+      });
+    }
   }
 
   /** ACP-level session identifier — matches the underlying SDK session id. */
   get id(): string {
     return this.session.id;
+  }
+
+  private emitSessionUsageUpdate(event: Event): void {
+    if (event.type !== 'agent.status.updated') return;
+    if (event.agentId !== undefined && event.agentId !== MAIN_AGENT_ID) return;
+
+    const notification = statusUpdatedToUsageUpdate(this.id, event);
+    if (!notification) return;
+
+    void this.conn.sessionUpdate(notification).catch((err) => {
+      log.warn('acp: failed to push usage_update', {
+        sessionId: this.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   /**
@@ -762,6 +795,14 @@ export class AcpSession {
         case 'compact':
           await this.runCompactCommand(args);
           break;
+        case 'new':
+        case 'clear':
+          await this.runNewCommand();
+          break;
+        case 'yolo':
+        case 'yes':
+          await this.runYoloCommand();
+          break;
         case 'status':
           await this.emitLocalCommandMessage(formatStatusReport(await this.session.getStatus()));
           break;
@@ -774,11 +815,30 @@ export class AcpSession {
           await this.emitLocalCommandMessage(formatMcpReport(await this.session.listMcpServers()));
           break;
         case 'tasks':
+        case 'task':
           await this.emitLocalCommandMessage(
             formatTasksReport(await this.session.listBackgroundTasks()),
           );
           break;
+        case 'plan':
+          await this.runToggleModeCommand('plan', 'Plan mode');
+          break;
+        case 'auto':
+          await this.runToggleModeCommand('auto', 'Auto permission mode');
+          break;
+        case 'model':
+          await this.runModelCommand(args);
+          break;
+        case 'undo':
+          await this.runUndoCommand();
+          break;
+        case 'swarm':
+          return await this.runSwarmCommand(args);
+        case 'goal':
+          return await this.runGoalCommand(args);
         case 'help':
+        case 'h':
+        case '?':
           await this.emitLocalCommandMessage(formatHelpReport(this.availableCommands));
           break;
       }
@@ -786,6 +846,102 @@ export class AcpSession {
       await this.emitLocalCommandMessage(`/${name} failed: ${errorMessage(error)}`);
     }
     return { stopReason: 'end_turn' };
+  }
+
+  private async runToggleModeCommand(mode: 'plan' | 'auto', label: string): Promise<void> {
+    const enable = this.currentModeId !== mode;
+    await this.setMode(enable ? mode : 'default');
+    await this.emitLocalCommandMessage(enable ? `${label} enabled.` : `${label} disabled.`);
+  }
+
+  private async runModelCommand(args: string): Promise<void> {
+    const arg = args.trim();
+    if (arg.length === 0) {
+      await this.emitLocalCommandMessage(`Current model: ${this.currentModelId}`);
+      return;
+    }
+    await this.setModel(arg as ModelId);
+    await this.emitLocalCommandMessage(`Switched model to ${this.currentModelId}.`);
+  }
+
+  private async runUndoCommand(): Promise<void> {
+    await this.session.undoHistory(1);
+    await this.emitLocalCommandMessage('Withdrew the last prompt from the transcript.');
+  }
+
+  private async runSwarmCommand(args: string): Promise<PromptResponse> {
+    const arg = args.trim();
+    const lower = arg.toLowerCase();
+    if (lower === 'on' || lower === 'off' || arg.length === 0) {
+      let enable: boolean;
+      if (lower === 'on') {
+        enable = true;
+      } else if (lower === 'off') {
+        enable = false;
+      } else {
+        const status = await this.session.getStatus();
+        enable = status.swarmMode !== true;
+      }
+      await this.session.setSwarmMode(enable, 'manual');
+      await this.emitLocalCommandMessage(enable ? 'Swarm mode enabled.' : 'Swarm mode disabled.');
+      return { stopReason: 'end_turn' };
+    }
+
+    // Mirror the TUI: turn swarm mode on, then start a normal turn with the
+    // task as the prompt so the agent pursues it in swarm mode.
+    await this.session.setSwarmMode(true, 'task');
+    return this.runTurnBody(this.id, this.conn, () =>
+      this.session.prompt([{ type: 'text', text: arg }]),
+    );
+  }
+
+  private async runGoalCommand(args: string): Promise<PromptResponse> {
+    const parsed = parseGoalCommandArgs(args);
+    switch (parsed.kind) {
+      case 'status': {
+        const { goal } = await this.session.getGoal();
+        await this.emitLocalCommandMessage(formatGoalStatus(goal));
+        return { stopReason: 'end_turn' };
+      }
+      case 'pause': {
+        const snapshot = await this.session.pauseGoal();
+        await this.emitLocalCommandMessage(`Goal paused: ${snapshot.objective}`);
+        return { stopReason: 'end_turn' };
+      }
+      case 'resume': {
+        const snapshot = await this.session.resumeGoal();
+        await this.emitLocalCommandMessage(`Goal resumed: ${snapshot.objective}`);
+        return { stopReason: 'end_turn' };
+      }
+      case 'cancel': {
+        const snapshot = await this.session.cancelGoal();
+        await this.emitLocalCommandMessage(`Goal cancelled: ${snapshot.objective}`);
+        return { stopReason: 'end_turn' };
+      }
+      case 'create': {
+        try {
+          await this.session.createGoal({ objective: parsed.objective, replace: parsed.replace });
+        } catch (error) {
+          if (isKimiError(error) && error.code === ErrorCodes.GOAL_ALREADY_EXISTS) {
+            await this.emitLocalCommandMessage(
+              'A goal is already active. Use `/goal replace <objective>` to replace it, or `/goal status` to inspect it.',
+            );
+            return { stopReason: 'end_turn' };
+          }
+          throw error;
+        }
+        await this.emitLocalCommandMessage(`Goal set: ${parsed.objective}`);
+        // Kick off the first turn pursuing the goal, mirroring the TUI which
+        // sends the objective as user input right after creating the goal.
+        return this.runTurnBody(this.id, this.conn, () =>
+          this.session.prompt([{ type: 'text', text: parsed.objective }]),
+        );
+      }
+      case 'hint': {
+        await this.emitLocalCommandMessage(parsed.message);
+        return { stopReason: 'end_turn' };
+      }
+    }
   }
 
   private async runUnknownSlashCommand(name: string): Promise<PromptResponse> {
@@ -803,6 +959,36 @@ export class AcpSession {
         content: { type: 'text', text },
       },
     });
+  }
+
+  private async emitConversationReset(): Promise<void> {
+    await this.conn.extNotification('kimi/conversation_reset', { sessionId: this.id });
+  }
+
+  private emitKimiExtensionNotification(method: string, params: Record<string, unknown>): void {
+    void this.conn.extNotification(method, params).catch((err) => {
+      log.warn('acp: failed to push Kimi extension notification', {
+        sessionId: this.id,
+        method,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  private async runNewCommand(): Promise<void> {
+    if (typeof this.session.clearContext !== 'function') {
+      await this.emitLocalCommandMessage('Starting a new conversation is not supported by this SDK session.');
+      return;
+    }
+    await this.session.clearContext();
+    await this.emitConversationReset();
+    await this.emitLocalCommandMessage('Started a new conversation.');
+  }
+
+  private async runYoloCommand(): Promise<void> {
+    const nextMode = this.currentModeId === 'yolo' ? 'default' : 'yolo';
+    await this.setMode(nextMode);
+    await this.emitLocalCommandMessage(nextMode === 'yolo' ? 'YOLO mode enabled.' : 'YOLO mode disabled.');
   }
 
   private async runCompactCommand(args: string): Promise<void> {
@@ -826,6 +1012,12 @@ export class AcpSession {
         if (event.agentId !== undefined && event.agentId !== MAIN_AGENT_ID) return;
         if (event.type === 'compaction.started') {
           started = true;
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId: this.id,
+            phase: 'started',
+            trigger: event.trigger,
+            ...(event.instruction === undefined ? {} : { instruction: event.instruction }),
+          });
           void this.emitLocalCommandMessage(
             instruction === undefined
               ? 'Compacting conversation context…'
@@ -834,14 +1026,27 @@ export class AcpSession {
           return;
         }
         if (event.type === 'compaction.completed') {
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId: this.id,
+            phase: 'completed',
+            result: event.result,
+          });
           settle(() => resolve({ kind: 'completed', result: event.result }));
           return;
         }
         if (event.type === 'compaction.cancelled') {
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId: this.id,
+            phase: 'cancelled',
+          });
           settle(() => resolve({ kind: 'cancelled' }));
           return;
         }
         if (event.type === 'compaction.blocked') {
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId: this.id,
+            phase: 'blocked',
+          });
           void this.emitLocalCommandMessage('Compaction is blocked by the current turn; retry when the turn is idle.');
           return;
         }
@@ -919,6 +1124,176 @@ export class AcpSession {
       // each turn produces a distinct wire-level tool call that needs
       // its own CREATE.
       const startedToolCalls = new Set<string>();
+
+      type SubagentParent = {
+        parentToolCallId: string;
+        parentToolCallUuid?: string;
+        parentAgentId?: string;
+        subagentName?: string;
+        description?: string;
+        swarmIndex?: number;
+        runInBackground?: boolean;
+      };
+
+      const subagentParents = new Map<string, SubagentParent>();
+      const startedSubagentToolCalls = new Set<string>();
+      const wireToolCallId = (toolCallId: string, turnId = this.currentTurnId): string =>
+        turnId === undefined ? toolCallId : acpToolCallId(turnId, toolCallId);
+      const kimiTokenUsage = (
+        usage: Extract<Event, { type: 'subagent.completed' }>['usage'],
+      ): KimiTokenUsage | undefined => {
+        if (!usage) return undefined;
+        return {
+          inputOther: usage.inputOther,
+          output: usage.output,
+          inputCacheRead: usage.inputCacheRead,
+          inputCacheCreation: usage.inputCacheCreation,
+        };
+      };
+      const nestedStatusUpdate = (
+        event: Extract<Event, { type: 'agent.status.updated' }>,
+      ): KimiNestedDisplayEvent | null => {
+        const currentTurn = event.usage?.currentTurn;
+        const tokenUsage = currentTurn
+          ? {
+              input_other: currentTurn.inputOther,
+              output: currentTurn.output,
+              input_cache_read: currentTurn.inputCacheRead,
+              input_cache_creation: currentTurn.inputCacheCreation,
+            }
+          : undefined;
+        const payload: KimiNestedStatusUpdate = {
+          context_usage: event.contextUsage ?? null,
+          context_tokens: event.contextTokens ?? null,
+          max_context_tokens: event.maxContextTokens ?? null,
+          token_usage: tokenUsage ?? null,
+          message_id: null,
+        };
+        return payload.context_usage === null &&
+          payload.context_tokens === null &&
+          payload.max_context_tokens === null &&
+          payload.token_usage === null
+          ? null
+          : { type: 'StatusUpdate', payload };
+      };
+      const emitSubagentEvent = (
+        subagentId: string,
+        phase: 'spawned' | 'started' | 'suspended' | 'completed' | 'failed' | 'child_event',
+        fields: Record<string, unknown> = {},
+      ): void => {
+        const parent = subagentParents.get(subagentId);
+        if (!parent) return;
+        this.emitKimiExtensionNotification(KIMI_EXT_SUBAGENT_EVENT, {
+          sessionId,
+          parentToolCallId: parent.parentToolCallId,
+          parentToolCallUuid: parent.parentToolCallUuid,
+          parentAgentId: parent.parentAgentId,
+          subagentId,
+          subagentName: parent.subagentName,
+          description: parent.description,
+          swarmIndex: parent.swarmIndex,
+          runInBackground: parent.runInBackground,
+          phase,
+          ...fields,
+        });
+      };
+      const emitSubagentNestedEvent = (subagentId: string, nestedEvent: KimiNestedDisplayEvent): void => {
+        emitSubagentEvent(subagentId, 'child_event', { event: nestedEvent });
+      };
+      const nestedToolCall = (
+        event: Extract<Event, { type: 'tool.call.started' }>,
+        args = stringifyArgs(event.args),
+      ): KimiNestedToolCall => ({
+        type: 'function',
+        id: acpToolCallId(event.turnId, event.toolCallId),
+        function: {
+          name: event.name,
+          arguments: args || null,
+        },
+      });
+      const emitSubagentToolCall = (event: Extract<Event, { type: 'tool.call.started' }>): void => {
+        startedSubagentToolCalls.add(`${event.agentId}:${event.turnId}:${event.toolCallId}`);
+        emitSubagentNestedEvent(event.agentId, {
+          type: 'ToolCall',
+          payload: nestedToolCall(event),
+        });
+      };
+      const emitSubagentChildEvent = (event: Event): boolean => {
+        if (isFromMainAgent(event)) return false;
+        const subagentId = event.agentId;
+        if (!subagentParents.has(subagentId)) return false;
+
+        switch (event.type) {
+          case 'assistant.delta':
+            if (event.delta) {
+              emitSubagentNestedEvent(subagentId, {
+                type: 'ContentPart',
+                payload: { type: 'text', text: event.delta },
+              });
+            }
+            return true;
+          case 'thinking.delta':
+            if (event.delta.trim()) {
+              emitSubagentNestedEvent(subagentId, {
+                type: 'ContentPart',
+                payload: { type: 'think', think: event.delta },
+              });
+            }
+            return true;
+          case 'tool.call.started':
+            emitSubagentToolCall(event);
+            return true;
+          case 'tool.call.delta': {
+            const key = `${subagentId}:${event.turnId}:${event.toolCallId}`;
+            if (!startedSubagentToolCalls.has(key)) {
+              startedSubagentToolCalls.add(key);
+              emitSubagentNestedEvent(subagentId, {
+                type: 'ToolCall',
+                payload: {
+                  type: 'function',
+                  id: acpToolCallId(event.turnId, event.toolCallId),
+                  function: {
+                    name: event.name ?? 'tool',
+                    arguments: event.argumentsPart ?? null,
+                  },
+                },
+              });
+              return true;
+            }
+            if (event.argumentsPart) {
+              emitSubagentNestedEvent(subagentId, {
+                type: 'ToolCallPart',
+                payload: {
+                  tool_call_id: acpToolCallId(event.turnId, event.toolCallId),
+                  arguments_part: event.argumentsPart,
+                },
+              });
+            }
+            return true;
+          }
+          case 'tool.result': {
+            const payload: KimiNestedToolResult = {
+              tool_call_id: acpToolCallId(event.turnId, event.toolCallId),
+              return_value: {
+                is_error: event.isError === true,
+                output: event.output,
+                message: '',
+                ...(event.synthetic === undefined ? {} : { extras: { synthetic: event.synthetic } }),
+              },
+            };
+            emitSubagentNestedEvent(subagentId, { type: 'ToolResult', payload });
+            return true;
+          }
+          case 'agent.status.updated': {
+            const nestedEvent = nestedStatusUpdate(event);
+            if (nestedEvent) emitSubagentNestedEvent(subagentId, nestedEvent);
+            return true;
+          }
+          default:
+            return false;
+        }
+      };
+
       const initialActiveTurnId = this.currentTurnId;
       let hasReceivedOwnTurnStarted = false;
       const unsub = this.session.onEvent((event) => {
@@ -944,6 +1319,84 @@ export class AcpSession {
           isFromMainAgent(event)
         ) {
           this.currentTurnId = event.turnId;
+        }
+        if (event.type === 'turn.step.interrupted' && isFromMainAgent(event)) {
+          this.emitKimiExtensionNotification(KIMI_EXT_STEP_INTERRUPTED, {
+            sessionId,
+            turnId: event.turnId,
+            step: event.step,
+            stepId: event.stepId,
+            reason: event.reason,
+            message: event.message,
+          });
+          return;
+        }
+        if (event.type === 'compaction.started' && isFromMainAgent(event)) {
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId,
+            phase: 'started',
+            trigger: event.trigger,
+            instruction: event.instruction,
+          });
+          return;
+        }
+        if (event.type === 'compaction.completed' && isFromMainAgent(event)) {
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId,
+            phase: 'completed',
+            result: event.result,
+          });
+          return;
+        }
+        if (event.type === 'compaction.cancelled' && isFromMainAgent(event)) {
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId,
+            phase: 'cancelled',
+          });
+          return;
+        }
+        if (event.type === 'compaction.blocked' && isFromMainAgent(event)) {
+          this.emitKimiExtensionNotification(KIMI_EXT_COMPACTION, {
+            sessionId,
+            phase: 'blocked',
+          });
+          return;
+        }
+        if (event.type === 'subagent.spawned' && isFromMainAgent(event)) {
+          subagentParents.set(event.subagentId, {
+            parentToolCallId: wireToolCallId(event.parentToolCallId),
+            parentToolCallUuid: event.parentToolCallUuid,
+            parentAgentId: event.parentAgentId,
+            subagentName: event.subagentName,
+            description: event.description,
+            swarmIndex: event.swarmIndex,
+            runInBackground: event.runInBackground,
+          });
+          emitSubagentEvent(event.subagentId, 'spawned');
+          return;
+        }
+        if (event.type === 'subagent.started' && isFromMainAgent(event)) {
+          emitSubagentEvent(event.subagentId, 'started');
+          return;
+        }
+        if (event.type === 'subagent.suspended' && isFromMainAgent(event)) {
+          emitSubagentEvent(event.subagentId, 'suspended', { reason: event.reason });
+          return;
+        }
+        if (event.type === 'subagent.completed' && isFromMainAgent(event)) {
+          emitSubagentEvent(event.subagentId, 'completed', {
+            resultSummary: event.resultSummary,
+            usage: kimiTokenUsage(event.usage),
+            contextTokens: event.contextTokens,
+          });
+          return;
+        }
+        if (event.type === 'subagent.failed' && isFromMainAgent(event)) {
+          emitSubagentEvent(event.subagentId, 'failed', { error: event.error });
+          return;
+        }
+        if (emitSubagentChildEvent(event)) {
+          return;
         }
         if (event.type === 'error') {
           if (settled) return;
@@ -1382,6 +1835,69 @@ function formatHelpReport(commands: readonly AvailableCommand[]): string {
       return `- /${command.name}${hint} — ${command.description}`;
     }),
   ].join('\n');
+}
+
+const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
+const GOAL_CONTROL_SUBCOMMANDS = new Set(['pause', 'resume', 'cancel']);
+
+type ParsedGoalArgs =
+  | { readonly kind: 'status' }
+  | { readonly kind: 'pause' }
+  | { readonly kind: 'resume' }
+  | { readonly kind: 'cancel' }
+  | { readonly kind: 'create'; readonly objective: string; readonly replace: boolean }
+  | { readonly kind: 'hint'; readonly message: string };
+
+/**
+ * Parse the `/goal` argument string. Mirrors the deterministic grammar of the
+ * TUI (`apps/kimi-code/src/tui/commands/goal.ts`) — kept in sync by hand to
+ * avoid an app→package import inversion. Reserved subcommands are only honored
+ * as the first token; use `/goal -- <objective>` to start a goal whose text
+ * begins with a reserved word. `next <objective>` is treated as `create`
+ * because the upcoming-goal queue is a TUI-local concept.
+ */
+function parseGoalCommandArgs(rawArgs: string): ParsedGoalArgs {
+  const args = rawArgs.trim();
+  if (args.length === 0 || args === 'status') return { kind: 'status' };
+
+  const tokens = args.split(/\s+/);
+  const first = tokens[0];
+  if (first !== undefined && GOAL_CONTROL_SUBCOMMANDS.has(first) && tokens.length === 1) {
+    return { kind: first as 'pause' | 'resume' | 'cancel' };
+  }
+
+  let index = 0;
+  let replace = false;
+  if (tokens[index] === 'replace') {
+    replace = true;
+    index += 1;
+  }
+  if (tokens[index] === 'next') {
+    index += 1;
+  }
+  if (tokens[index] === '--') {
+    index += 1;
+  }
+
+  const objective = tokens.slice(index).join(' ').trim();
+  if (objective.length === 0) {
+    return {
+      kind: 'hint',
+      message: 'Provide a goal objective, e.g. `/goal Ship feature X`.',
+    };
+  }
+  if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
+    return {
+      kind: 'hint',
+      message: `Goal objective is too long (max ${MAX_GOAL_OBJECTIVE_LENGTH} characters). Reference long details by file path.`,
+    };
+  }
+  return { kind: 'create', objective, replace };
+}
+
+function formatGoalStatus(goal: GoalSnapshot | null): string {
+  if (goal === null) return 'No active goal.';
+  return [`Goal: ${goal.objective}`, `Status: ${goal.status}`].join('\n');
 }
 
 function formatStatusReport(status: SessionStatus): string {

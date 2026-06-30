@@ -1,0 +1,13 @@
+{
+  "name": "unknown future session update is ignored for compatibility",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-unknown",
+    "update": {
+      "sessionUpdate": "future_update",
+      "content": { "type": "text", "text": "ignored" }
+    }
+  },
+  "expectedEvents": [],
+  "expectedUnknownSessionUpdate": "future_update"
+}

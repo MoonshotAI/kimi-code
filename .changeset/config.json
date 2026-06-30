@@ -11,7 +11,12 @@
     "@moonshot-ai/vis",
     "@moonshot-ai/vis-server",
     "@moonshot-ai/vis-web",
-    "kimi-migration-legacy"
+    "kimi-migration-legacy",
+    "@moonshot-ai/acp-adapter",
+    "kimi-code",
+    "@moonshot-ai/kimi-code-vscode-agent-sdk",
+    "@moonshot-ai/kimi-code-vscode-webview",
+    "@moonshot-ai/kimi-code-vscode-display-model"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

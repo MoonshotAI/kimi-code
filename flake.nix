@@ -63,6 +63,7 @@
       # -------------------------------------------------------------------
       workspacePaths = [
         ./packages/acp-adapter
+        ./apps/vscode/agent-display-model
         ./packages/agent-core
         ./packages/server
         ./packages/server-e2e
@@ -76,6 +77,9 @@
         ./packages/telemetry
         ./apps/kimi-code
         ./apps/kimi-web
+        ./apps/vscode
+        ./apps/vscode/agent-sdk
+        ./apps/vscode/webview-ui
         ./apps/vis
         ./apps/vis/server
         ./apps/vis/web
@@ -84,6 +88,7 @@
 
       workspaceNames = [
         "@moonshot-ai/acp-adapter"
+        "@moonshot-ai/kimi-code-vscode-display-model"
         "@moonshot-ai/agent-core"
         "@moonshot-ai/server"
         "@moonshot-ai/server-e2e"
@@ -96,6 +101,9 @@
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
         "@moonshot-ai/kimi-web"
+        "kimi-code"
+        "@moonshot-ai/kimi-code-vscode-agent-sdk"
+        "@moonshot-ai/kimi-code-vscode-webview"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"
@@ -150,7 +158,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-w/mEQrb5gNn4S5jZ95vO9uy4u/JB3wFbUfIZDcWqTXU=";
+              hash = "sha256-nrYIEsdVgiefpA9fMql6x6kbaye8BMDTO/HkDkUb38w=";
             };
 
             nativeBuildInputs = [

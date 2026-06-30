@@ -18,6 +18,10 @@ await runAcpServer(harness);
 
 See `docs/zh/reference/kimi-acp.md` for the full capability matrix (which `Agent` methods are wired, which extensions are stubbed, image / MCP support) and `docs/zh/guides/ides.md` for Zed and JetBrains setup.
 
+## Pure protocol surface
+
+`@moonshot-ai/acp-adapter/protocol` is a small, side-effect-free surface for ACP wire/protocol types and pure constants such as `CURRENT_VERSION`, built-in slash commands, terminal-auth helpers, and the hide-output marker. It intentionally does not export `AcpServer`, `AcpSession`, Kaos bridges, or other runtime code. VS Code and other extension runtimes should use this subpath for safe ACP wire type reuse instead of importing the root entrypoint.
+
 ## License
 
 MIT
