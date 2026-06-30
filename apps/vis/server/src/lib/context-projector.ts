@@ -171,12 +171,16 @@ export function projectContext(
           // Absolute context-window fill, mirroring agent-core
           // ContextMemory._tokenCount: the latest step.end usage REPLACES the
           // snapshot (it is not cumulative — see Task P1.7 note on byScope).
+          // A zero-usage step.end (e.g. a content-filtered response) is the one
+          // exception agent-core makes — it keeps the prior count instead of
+          // resetting to 0 — so guard against a false drop here too.
           if ('usage' in ev && ev.usage !== undefined) {
-            contextTokens =
+            const fill =
               ev.usage.inputCacheRead +
               ev.usage.inputCacheCreation +
               ev.usage.inputOther +
               ev.usage.output;
+            if (fill > 0) contextTokens = fill;
           }
           openSteps.delete(ev.uuid);
         } else if (ev.type === 'tool.result') {

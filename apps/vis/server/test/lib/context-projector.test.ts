@@ -127,6 +127,19 @@ describe('context-projector', () => {
     ]);
   });
 
+  it('does not reset contextTokens on a zero-usage step.end', () => {
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's1', turnId: 'T', step: 0 } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's1', turnId: 'T', step: 0, usage: { inputOther: 100, output: 20, inputCacheRead: 80, inputCacheCreation: 0 } } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 's2', turnId: 'T', step: 1 } }, raw: {} },
+      // content-filtered response: usage all zero — must NOT reset the fill to 0.
+      { lineNo: 4, data: { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 's2', turnId: 'T', step: 1, finishReason: 'filtered', usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } } }, raw: {} },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const proj = projectContext(entries as any);
+    expect(proj.contextTokens).toBe(200); // step1 fill 200, kept across the zero step
+  });
+
   // ---- Fix G: tool.result content must match what the model saw ---------------
   // agent-core's `ContextMemory.appendLoopEvent` (`tool.result` case) stores
   // `createToolMessage(toolCallId, toolResultOutputForModel(event.result))`, NOT

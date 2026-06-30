@@ -227,13 +227,25 @@ importers:
       hono:
         specifier: ^4.7.7
         version: 4.12.14
+      yauzl:
+        specifier: ^3.3.0
+        version: 3.3.0
     devDependencies:
+      '@types/yauzl':
+        specifier: ^2.10.3
+        version: 2.10.3
+      '@types/yazl':
+        specifier: ^2.4.6
+        version: 2.4.6
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
       vitest:
         specifier: 4.1.4
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+      yazl:
+        specifier: ^3.3.1
+        version: 3.3.1
 
   apps/vis/web:
     dependencies:
@@ -277,6 +289,9 @@ importers:
       vite-plugin-singlefile:
         specifier: ^2.3.3
         version: 2.3.3(rollup@4.60.2)(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+      vitest:
+        specifier: 4.1.4
+        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   docs:
     dependencies:
