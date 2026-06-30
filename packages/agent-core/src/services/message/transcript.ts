@@ -3,8 +3,10 @@
  * agent from its `wire.jsonl` record log.
  *
  * Why: `ContextMemory.applyCompaction` rewrites the in-memory history as
- * `[compaction_summary, ...tail]`, so `getContext().history` only reflects the
- * model's CURRENT context. The wire log, however, keeps every record. The TUI
+ * `[...keptUserMessages, compaction_summary]` (the most recent real user
+ * prompts, verbatim within a token budget, followed by a single user-role
+ * summary), so `getContext().history` only reflects the model's CURRENT
+ * context. The wire log, however, keeps every record. The TUI
  * shows the full transcript on resume because `ReplayBuilder` captures every
  * `pushHistory` during record replay and is never folded by compaction. This
  * module reproduces that exact view for daemon REST consumers (web), without
@@ -19,8 +21,11 @@
  *                                     open assistant message; tool.result appends a
  *                                     tool message with the same `<system>` status
  *                                     wrapping as `toolResultOutputForModel`
- *   - `context.apply_compaction`    → keep the prefix, insert the summary message
- *                                     at the fold point (origin `compaction_summary`)
+ *   - `context.apply_compaction`    → keep the full history, append the
+ *                                     user-role summary marker (origin
+ *                                     `compaction_summary`), and recover
+ *                                     `foldedLength` from the recorded
+ *                                     `keptUserMessageCount`
  *   - `context.undo`                → remove tail messages exactly like
  *                                     `ContextMemory.undo` (skip injections, stop at
  *                                     compaction summaries / `context.clear` floors)
@@ -45,6 +50,12 @@ import path from 'node:path';
 import type { AgentRecord } from '../../agent/records';
 import type { ContextMessage } from '../../agent/context';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
+import {
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  collectCompactableUserMessages,
+  isRealUserInput,
+  selectRecentUserMessages,
+} from '../../agent/compaction';
 
 type ContentPart = ContextMessage['content'][number];
 
@@ -212,7 +223,7 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
-      if (isRealUserPrompt(message)) {
+      if (isRealUserInput(message)) {
         removedUserCount++;
         if (removedUserCount >= count) break;
       }
@@ -238,22 +249,58 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         applyLoopEvent(record.event, record.time);
         break;
       case 'context.apply_compaction': {
-        // ContextMemory drops history[0..compactedCount] and prepends the
-        // summary; we keep the prefix and insert the summary at the fold
-        // point so the transcript shows both.
-        const tailLength = Math.max(0, foldedLength - record.compactedCount);
-        transcript.splice(Math.max(0, transcript.length - tailLength), 0, {
+        // Mirrors ContextMemory.applyCompaction: the live context becomes the
+        // most recent user messages followed by a user-role summary. The
+        // transcript keeps the full history and appends the summary marker;
+        // foldedLength tracks the post-compaction live context length.
+        transcript.push({
           message: {
-            role: 'assistant',
+            role: 'user',
             content: [{ type: 'text', text: record.summary }],
             toolCalls: [],
             origin: { kind: 'compaction_summary' },
           },
           time: record.time,
         });
-        foldedLength = tailLength + 1;
-        openSteps.clear();
-        flushDeferredIfToolExchangeClosed();
+        // Prefer the kept-user count recorded by the live
+        // ContextMemory.applyCompaction. Re-deriving it from the full
+        // transcript would diverge from the live context: the transcript still
+        // holds the untruncated originals of messages the live context may
+        // have truncated, and (after a clear) messages the live context no
+        // longer has. Only fall back to re-deriving for legacy wire records
+        // that predate the field.
+        if (record.keptUserMessageCount !== undefined) {
+          foldedLength = record.keptUserMessageCount + 1;
+        } else if (record.compactedCount < foldedLength) {
+          // Legacy record (predates keptUserMessageCount) that kept
+          // history.slice(compactedCount) verbatim. Mirror ContextMemory's
+          // legacy restore ([summary, ...tail]): `foldedLength` here still holds
+          // the pre-compaction live length, so the post-compaction length is the
+          // summary plus the tail kept after compactedCount. Re-deriving the
+          // kept-user count instead would diverge from the live context (and
+          // make MessageService mis-handle the messages endpoint for old sessions).
+          foldedLength = 1 + (foldedLength - record.compactedCount);
+        } else {
+          // Legacy record whose compactedCount covered the whole live history (no
+          // tail, matching live restore's `compactedCount < length` guard): fall
+          // back to the new kept-user + summary derivation. Derive only from
+          // entries at or after `clearFloor` — the live ContextMemory rebuilds
+          // `_history` from the post-`/clear` messages only, so counting pre-clear
+          // prompts here would overstate foldedLength and make MessageService skip
+          // unflushed live tail messages for old sessions compacted after a clear.
+          const keptUserMessages = selectRecentUserMessages(
+            collectCompactableUserMessages(
+              transcript.slice(clearFloor).map((entry) => entry.message),
+            ),
+            COMPACT_USER_MESSAGE_MAX_TOKENS,
+          );
+          foldedLength = keptUserMessages.length + 1;
+        }
+        // Drop any open tool exchange and deferred messages exactly like
+        // ContextMemory.applyCompaction: late tool results become orphans and
+        // deferred injections are not rebuilt, so pending ids must not strand
+        // later appends in `deferred`.
+        resetOpenState();
         break;
       }
       case 'context.undo':
@@ -270,20 +317,6 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
   }
 
   return { entries: transcript as TranscriptEntry[], foldedLength };
-}
-
-/** Mirrors agent-core's `isRealUserPrompt` (context undo accounting). */
-function isRealUserPrompt(message: MutableMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash';
-  }
-  if (origin.kind === 'plugin_command') {
-    return origin.trigger === 'user-slash';
-  }
-  return false;
 }
 
 /** Mirrors agent-core's `toolResultOutputForModel` + `createToolMessage`. */

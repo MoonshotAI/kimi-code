@@ -52,7 +52,7 @@ max_running_tasks = 4
 keep_alive_on_exit = false
 
 [experimental]
-micro_compaction = true
+micro_compaction = false
 
 [[permission.rules]]
 decision = "allow"
@@ -181,11 +181,11 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `experimental`
 
-`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `true`; set it to `false` only when you need to disable automatic trimming of older large tool results.
+`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `false`; set it to `true` to enable automatic trimming of older large tool results.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `micro_compaction` | `boolean` | `true` | Trim older large tool results from context while preserving recent conversation |
+| `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
 
 ## `services`
 

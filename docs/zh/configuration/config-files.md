@@ -52,7 +52,7 @@ max_running_tasks = 4
 keep_alive_on_exit = false
 
 [experimental]
-micro_compaction = true
+micro_compaction = false
 
 [[permission.rules]]
 decision = "allow"
@@ -181,11 +181,11 @@ max_context_size = 1047576
 
 ## `experimental`
 
-`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `true`；只有在需要关闭自动清理较旧的大型工具结果时，才需要把它设为 `false`。
+`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `false`；如需自动清理较旧的大型工具结果，把它设为 `true`。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `micro_compaction` | `boolean` | `true` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+| `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
 
 ## `services`
 

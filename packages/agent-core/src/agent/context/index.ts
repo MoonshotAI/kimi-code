@@ -3,10 +3,17 @@ import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
-import { estimateTokensForMessages } from '../../utils/tokens';
+import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
 import { escapeXml } from '../../utils/xml-escape';
-import type { CompactionResult } from '../compaction';
-import { project, trimTrailingOpenToolExchange } from './projector';
+import {
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  collectCompactableUserMessages,
+  isRealUserInput,
+  selectRecentUserMessages,
+  type CompactionInput,
+  type CompactionResult,
+} from '../compaction';
+import { project, type ProjectOptions, trimTrailingOpenToolExchange } from './projector';
 import {
   USER_PROMPT_ORIGIN,
   type AgentContextData,
@@ -172,7 +179,7 @@ export class ContextMemory {
         this._tokenCount -= estimateTokensForMessages([message]);
       }
 
-      if (isRealUserPrompt(message)) {
+      if (isRealUserInput(message)) {
         removedUserCount++;
         if (removedUserCount >= count) break;
       }
@@ -205,7 +212,36 @@ export class ContextMemory {
     }
   }
 
-  applyCompaction(result: CompactionResult): void {
+  applyCompaction(input: CompactionInput): CompactionResult {
+    // Single derivation point for the post-compaction shape: the most recent
+    // real user messages (verbatim, within the token budget) followed by a
+    // user-role summary. `tokensAfter` and `keptUserMessageCount` are derived
+    // here from the actual `_history` so the live context, the wire record,
+    // and the transcript reducer all agree — re-deriving them elsewhere (e.g.
+    // from the full transcript, which still holds the untruncated originals of
+    // messages the live context truncated) would diverge.
+    const keptUserMessages = selectRecentUserMessages(
+      collectCompactableUserMessages(this._history),
+      COMPACT_USER_MESSAGE_MAX_TOKENS,
+    );
+    // Live compaction omits these so they are derived from the actual
+    // `_history`; restore passes the persisted record so its historical values
+    // are preserved verbatim. Older wire records did not have `contextSummary`,
+    // so their `summary` remains the model-context text during restore.
+    const contextSummary = input.contextSummary ?? input.summary;
+    const tokensAfter =
+      input.tokensAfter ??
+      estimateTokens(contextSummary) + estimateTokensForMessages(keptUserMessages);
+    const keptUserMessageCount = input.keptUserMessageCount ?? keptUserMessages.length;
+    const result: CompactionResult = {
+      summary: input.summary,
+      contextSummary,
+      compactedCount: input.compactedCount,
+      tokensBefore: input.tokensBefore,
+      tokensAfter,
+      keptUserMessageCount,
+      droppedCount: input.droppedCount,
+    };
     this.agent.records.logRecord({
       type: 'context.apply_compaction',
       ...result,
@@ -213,27 +249,48 @@ export class ContextMemory {
     this.agent.replayBuilder.patchLast('compaction', {
       result: {
         summary: result.summary,
+        contextSummary: result.contextSummary,
         compactedCount: result.compactedCount,
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
+        keptUserMessageCount: result.keptUserMessageCount,
+        droppedCount: result.droppedCount,
       },
     });
-    this._history = [
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: result.summary }],
-        toolCalls: [],
-        origin: { kind: 'compaction_summary' },
-      },
-      ...this._history.slice(result.compactedCount),
-    ];
+    const summaryMessage: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: contextSummary }],
+      toolCalls: [],
+      origin: { kind: 'compaction_summary' },
+    };
+    // Wire backward-compat: a pre-rework `context.apply_compaction` record (which
+    // has no `keptUserMessageCount`) used `[summary, ...history.slice(compactedCount)]`
+    // semantics and kept a verbatim recent tail. Reproduce that exact shape on
+    // restore so resuming a session compacted by an older version does not
+    // silently drop the recent assistant/tool tail beyond `compactedCount`. Gated
+    // on `records.restoring`, so the live/forward path — which always sets
+    // `contextSummary` and `keptUserMessageCount` — is unaffected. The projector's
+    // tool-adjacency repair keeps the restored tail well-formed for strict
+    // providers; compaction only runs at a clean step boundary, so the tail has no
+    // open tool exchange to track.
+    const isLegacyRestore =
+      this.agent.records.restoring !== null &&
+      input.keptUserMessageCount === undefined &&
+      input.compactedCount < this._history.length;
+    this._history = isLegacyRestore
+      ? [summaryMessage, ...this._history.slice(input.compactedCount)]
+      : [...keptUserMessages, summaryMessage];
     this.openSteps.clear();
-    this.flushDeferredMessagesIfToolExchangeClosed();
+    this.pendingToolResultIds.clear();
+    // Drop deferred messages (mostly injections/system reminders) instead of
+    // flushing them: initial context is rebuilt every turn.
+    this.deferredMessages = [];
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
-    this.agent.injection.onContextCompacted(result.compactedCount);
+    this.agent.injection.onContextCompacted();
     this.agent.emitStatusUpdated();
+    return result;
   }
 
   data(): AgentContextData {
@@ -256,8 +313,8 @@ export class ContextMemory {
     return this._history;
   }
 
-  project(messages: readonly ContextMessage[]): Message[] {
-    return project(this.agent.microCompaction.compact(messages));
+  project(messages: readonly ContextMessage[], options?: ProjectOptions): Message[] {
+    return project(this.agent.microCompaction.compact(messages), options);
   }
 
   get messages(): Message[] {
@@ -459,19 +516,6 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
 
 function isEmptyOutputText(output: string): boolean {
   return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
-}
-
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash';
-  }
-  if (origin.kind === 'plugin_command') {
-    return origin.trigger === 'user-slash';
-  }
-  return false;
 }
 
 function formatUndoUnavailableMessage(

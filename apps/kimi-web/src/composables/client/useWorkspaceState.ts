@@ -21,7 +21,12 @@ import type {
   KimiEventConnection,
   QuestionResponse,
 } from '../../api/types';
-import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
+import {
+  loadWorkspaceNameOverrides,
+  safeRemove,
+  saveWorkspaceNameOverrides,
+  STORAGE_KEYS,
+} from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
@@ -39,6 +44,7 @@ import type { UseTaskPoller } from './useTaskPoller';
 
 const MESSAGES_PAGE_SIZE = 50;
 const PROMPT_NOT_FOUND_CODE = 40402;
+const WORKSPACE_NOT_FOUND_CODE = 40410;
 
 type SyncSessionResult = 'ok' | 'not-found' | 'failed';
 
@@ -495,12 +501,23 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         api.listWorkspaces().catch(() => [] as AppWorkspace[]),
         api.getFsHome().catch(() => ({ home: '', recentRoots: [] })),
       ]);
-      rawState.workspaces = list;
+      rawState.workspaces = applyWorkspaceNameOverrides(list);
       rawState.fsHome = home.home || null;
       rawState.recentRoots = home.recentRoots;
     } catch {
       // Defensive — derived workspaces still work off the loaded sessions.
     }
+  }
+
+  /** Overlay locally-persisted name overrides (see renameWorkspace fallback)
+   *  onto a freshly loaded workspace list, keyed by root. */
+  function applyWorkspaceNameOverrides(workspaces: AppWorkspace[]): AppWorkspace[] {
+    const overrides = loadWorkspaceNameOverrides();
+    if (Object.keys(overrides).length === 0) return workspaces;
+    return workspaces.map((w) => {
+      const override = overrides[w.root];
+      return override !== undefined ? { ...w, name: override } : w;
+    });
   }
 
   /** Set the active workspace and persist it. */
@@ -530,20 +547,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /** Upsert a workspace: preserve existing order when updating; prepend only
    *  for truly new workspaces. */
   function upsertWorkspacePreserveOrder(workspace: AppWorkspace): void {
+    // A locally-renamed derived workspace may carry a saved name override; apply
+    // it so a daemon upsert (e.g. registering the root on first chat) doesn't
+    // clobber the name with the default basename.
+    const override = loadWorkspaceNameOverrides()[workspace.root];
+    const ws = override !== undefined ? { ...workspace, name: override } : workspace;
     // Re-adding a path the user previously removed should bring it back.
-    if (rawState.hiddenWorkspaceRoots.includes(workspace.root)) {
-      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter((r) => r !== workspace.root);
+    if (rawState.hiddenWorkspaceRoots.includes(ws.root)) {
+      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter((r) => r !== ws.root);
       saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
     }
     const index = rawState.workspaces.findIndex(
-      (w) => w.id === workspace.id || w.root === workspace.root,
+      (w) => w.id === ws.id || w.root === ws.root,
     );
     if (index === -1) {
-      rawState.workspaces = [workspace, ...rawState.workspaces];
+      rawState.workspaces = [ws, ...rawState.workspaces];
       return;
     }
     const next = [...rawState.workspaces];
-    next[index] = workspace;
+    next[index] = ws;
     rawState.workspaces = next;
   }
 
@@ -1325,11 +1347,41 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /** Rename a workspace — local-only until the daemon ships a workspace update API. */
-  function renameWorkspace(id: string, name: string): void {
-    rawState.workspaces = rawState.workspaces.map((w) =>
-      w.id === id ? { ...w, name } : w,
-    );
+  /** Rename a workspace — persists via the daemon update API, then applies
+   *  locally. Derived workspaces (a cwd with sessions that was never explicitly
+   *  registered) can't be renamed by the daemon yet: PATCH rejects them with
+   *  404. In that case the name is persisted in localStorage (keyed by root)
+   *  and overlaid onto the loaded list, so the rename still survives a refresh. */
+  async function renameWorkspace(id: string, name: string): Promise<void> {
+    const root = rawState.workspaces.find((w) => w.id === id)?.root;
+    const applyLocal = (): void => {
+      rawState.workspaces = rawState.workspaces.map((w) =>
+        w.id === id ? { ...w, name } : w,
+      );
+    };
+    try {
+      await getKimiWebApi().updateWorkspace(id, { name });
+      // Server accepted the rename — drop any local override for this root.
+      if (root !== undefined) {
+        const overrides = loadWorkspaceNameOverrides();
+        if (root in overrides) {
+          delete overrides[root];
+          saveWorkspaceNameOverrides(overrides);
+        }
+      }
+      applyLocal();
+    } catch (err) {
+      if (
+        root !== undefined &&
+        isDaemonApiError(err) &&
+        err.code === WORKSPACE_NOT_FOUND_CODE
+      ) {
+        saveWorkspaceNameOverrides({ ...loadWorkspaceNameOverrides(), [root]: name });
+        applyLocal();
+        return;
+      }
+      pushOperationFailure('renameWorkspace', err);
+    }
   }
 
   /** Delete a workspace — calls API, removes locally */

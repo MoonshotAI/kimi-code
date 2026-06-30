@@ -992,6 +992,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   /**
+   * Rename a workspace (display name only).
+   * PATCH /api/v1/workspaces/:id { name }. On error this throws.
+   */
+  async updateWorkspace(id: string, input: { name: string }): Promise<AppWorkspace> {
+    const data = await this.http.patch<WireWorkspace>(
+      `/workspaces/${encodeURIComponent(id)}`,
+      { name: input.name },
+    );
+    return toAppWorkspace(data);
+  }
+
+  /**
    * Browse directories under `path` (defaults to $HOME on the daemon).
    * PRESUMED — GET /api/v1/fs:browse?path=. On error returns an empty path so
    * the picker can distinguish "browse failed" from "directory has no children".

@@ -1,8 +1,10 @@
 import { computed, ref } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSession } from '../src/api/types';
+import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
+import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 
@@ -10,6 +12,7 @@ const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
   abortSession: vi.fn(),
   addWorkspace: vi.fn(),
+  updateWorkspace: vi.fn(),
 }));
 
 vi.mock('../src/api', () => ({
@@ -126,6 +129,41 @@ function createDeps(): UseWorkspaceStateDeps {
   } as unknown as UseWorkspaceStateDeps;
 }
 
+function createMemoryStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    get length() {
+      return data.size;
+    },
+    clear() {
+      data.clear();
+    },
+    getItem(key: string) {
+      return data.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(data.keys()).at(index) ?? null;
+    },
+    removeItem(key: string) {
+      data.delete(key);
+    },
+    setItem(key: string, value: string) {
+      data.set(key, String(value));
+    },
+  };
+}
+
+function installStorage(storage: Storage): void {
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: storage,
+  });
+}
+
+function workspace(id: string, root: string, name: string) {
+  return { id, root, name, isGitRepo: false, sessionCount: 0 };
+}
+
 describe('useWorkspaceState — abortCurrentPrompt', () => {
   beforeEach(() => {
     apiMock.abortPrompt.mockReset();
@@ -213,6 +251,77 @@ describe('mergeWorkspaces', () => {
     });
 
     expect(result.map((w) => w.root)).not.toContain('/agent/A');
+  });
+});
+
+describe('useWorkspaceState — renameWorkspace', () => {
+  beforeEach(() => {
+    apiMock.updateWorkspace.mockReset();
+    installStorage(createMemoryStorage());
+  });
+
+  afterEach(() => {
+    installStorage(createMemoryStorage());
+  });
+
+  it('renames via the daemon and applies the name locally', async () => {
+    apiMock.updateWorkspace.mockResolvedValue({});
+    const state = createState();
+    state.workspaces = [workspace('wd_1', '/abs/path', 'Old')];
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.renameWorkspace('wd_1', 'New');
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith('wd_1', { name: 'New' });
+    expect(state.workspaces[0]?.name).toBe('New');
+    expect(loadWorkspaceNameOverrides()).toEqual({});
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a local override when the daemon reports not found', async () => {
+    apiMock.updateWorkspace.mockRejectedValue(
+      new DaemonApiError({ code: 40410, msg: 'workspace not found', requestId: 'r' }),
+    );
+    const state = createState();
+    state.workspaces = [workspace('wd_1', '/abs/path', 'Old')];
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.renameWorkspace('wd_1', 'New');
+
+    expect(state.workspaces[0]?.name).toBe('New');
+    expect(loadWorkspaceNameOverrides()).toEqual({ '/abs/path': 'New' });
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('surfaces daemon errors other than not-found', async () => {
+    apiMock.updateWorkspace.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
+    );
+    const state = createState();
+    state.workspaces = [workspace('wd_1', '/abs/path', 'Old')];
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.renameWorkspace('wd_1', 'New');
+
+    expect(state.workspaces[0]?.name).toBe('Old');
+    expect(loadWorkspaceNameOverrides()).toEqual({});
+    expect(deps.pushOperationFailure).toHaveBeenCalled();
+  });
+
+  it('keeps a saved name override when a workspace is upserted (derived → registered)', () => {
+    // Simulates: user renamed a derived workspace, then the daemon registers
+    // the root (e.g. on first chat) and returns the default basename.
+    saveWorkspaceNameOverrides({ '/abs/path': 'Renamed' });
+    const state = createState();
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    ws.upsertWorkspacePreserveOrder(workspace('wd_1', '/abs/path', 'path'));
+
+    expect(state.workspaces[0]?.name).toBe('Renamed');
   });
 });
 
