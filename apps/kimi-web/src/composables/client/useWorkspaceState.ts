@@ -1337,11 +1337,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /** Rename a workspace — local-only until the daemon ships a workspace update API. */
-  function renameWorkspace(id: string, name: string): void {
-    rawState.workspaces = rawState.workspaces.map((w) =>
-      w.id === id ? { ...w, name } : w,
-    );
+  /** Rename a workspace — persists via the daemon update API, then applies locally. */
+  async function renameWorkspace(id: string, name: string): Promise<void> {
+    try {
+      await getKimiWebApi().updateWorkspace(id, { name });
+      rawState.workspaces = rawState.workspaces.map((w) =>
+        w.id === id ? { ...w, name } : w,
+      );
+    } catch (err) {
+      pushOperationFailure('renameWorkspace', err);
+    }
   }
 
   /** Delete a workspace — calls API, removes locally */
