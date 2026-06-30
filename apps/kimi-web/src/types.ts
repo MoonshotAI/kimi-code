@@ -38,6 +38,10 @@ export interface Session {
   updatedAt?: string;
   /** Text of the most recent user prompt, used by sidebar search. */
   lastPrompt?: string;
+  /** Workspace id this session belongs to (resolved from cwd / daemon). */
+  workspaceId?: string;
+  /** Workspace display name, joined from workspacesView. */
+  workspaceName?: string;
 }
 
 export interface Workspace {
@@ -117,6 +121,9 @@ export interface AgentMember {
   prompt?: string;
   summary?: string;
   outputLines?: string[];
+  /** The subagent's concatenated live output (assistant deltas) — grows in the
+   *  detail panel like a thinking block. */
+  text?: string;
   suspendedReason?: string;
   swarmIndex?: number;
 }
@@ -195,13 +202,15 @@ export interface ToolDiffTarget {
 
 /** One ordered piece of an assistant turn: a thinking segment, a text segment
  * OR a tool card. Built in call order so every piece renders inline where it
- * happened (a turn can think → act → think again — nothing is hoisted). */
+ * happened (a turn can think → act → think again — nothing is hoisted).
+ *
+ * Subagents render as the spawning `Agent` tool card here; their live progress
+ * streams in the right-side detail panel, sourced from the task rather than a
+ * dedicated block. */
 export type TurnBlock =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; thinking: string }
-  | { kind: 'tool'; tool: ToolCall }
-  | { kind: 'agent'; member: AgentMember }
-  | { kind: 'agentGroup'; members: AgentMember[] };
+  | { kind: 'tool'; tool: ToolCall };
 
 export interface ChatTurn {
   id: string;
@@ -253,6 +262,9 @@ export interface TaskItem {
   timing: string;
   meta?: string;
   output?: string[];
+  /** Background subagents only — the dock lists these; foreground subagents
+   *  render inline as the `Agent` tool card instead. */
+  runInBackground?: boolean;
 }
 
 export interface ConversationStatus {

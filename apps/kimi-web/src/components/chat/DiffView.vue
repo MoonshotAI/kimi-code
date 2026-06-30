@@ -7,6 +7,11 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DiffViewLine } from '../../types';
 import DiffLines from './DiffLines.vue';
+import Button from '../ui/Button.vue';
+import PanelHeader from '../ui/PanelHeader.vue';
+import SegmentedControl from '../ui/SegmentedControl.vue';
+import Icon from '../ui/Icon.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
 
@@ -115,8 +120,8 @@ function onClose(): void {
 type ViewMode = 'list' | 'tree';
 const viewMode = ref<ViewMode>('list');
 
-function setViewMode(mode: ViewMode): void {
-  viewMode.value = mode;
+function setViewMode(mode: string): void {
+  viewMode.value = mode as ViewMode;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,11 +199,6 @@ function toggleFolder(node: TreeNode): void {
   collapsedPaths.value = next;
 }
 
-const folderIcon = (expanded: boolean) =>
-  expanded
-    ? 'M1.5 3.5h3l1.5 2h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z'
-    : 'M1.5 3.5h3l1.5 2h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z';
-
 function treePadding(depth: number): string {
   return `${16 + depth * 16}px`;
 }
@@ -208,26 +208,24 @@ function treePadding(depth: number): string {
   <div class="changes-pane">
     <!-- ===================== LINE-BY-LINE DIFF VIEW ===================== -->
     <template v-if="renderDetail">
-      <div class="dv-panel-head">
-        <span class="dv-title">{{ t('diff.title') }}</span>
-        <span class="dv-path" :title="selectedDiffPath ?? ''">{{ truncateLeft(selectedDiffPath ?? '', 50) }}</span>
-        <button
-          v-if="closable"
-          type="button"
-          class="dv-close"
-          :title="t('diff.close')"
-          :aria-label="t('diff.close')"
-          @click="onClose"
-        >
-          <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-        </button>
-      </div>
+      <PanelHeader
+        :title="t('diff.title')"
+        :closable="closable"
+        :close-label="t('diff.close')"
+        @close="onClose"
+      >
+        <Tooltip :text="selectedDiffPath ?? ''">
+          <span class="dv-path">{{ truncateLeft(selectedDiffPath ?? '', 50) }}</span>
+        </Tooltip>
+      </PanelHeader>
 
       <div class="diff-head">
-        <button v-if="!hideBack" class="back-btn" type="button" @click="onBack" :title="t('diff.back')">
-          <span aria-hidden="true">&#8592;</span>
-          <span class="back-label">{{ t('diff.back') }}</span>
-        </button>
+        <Tooltip :text="t('diff.back')">
+          <Button v-if="!hideBack" variant="ghost" size="sm" @click="onBack">
+            <span aria-hidden="true">&#8592;</span>
+            <span class="back-label">{{ t('diff.back') }}</span>
+          </Button>
+        </Tooltip>
       </div>
 
       <div v-if="loading" class="empty-state">{{ t('diff.loading') }}</div>
@@ -242,40 +240,23 @@ function treePadding(depth: number): string {
     <!-- ======================== CHANGED-FILE LIST ======================= -->
     <template v-else>
       <!-- Panel header: title, view toggle, close -->
-      <div class="dv-panel-head">
-        <span class="dv-title">{{ t('diff.title') }}</span>
+      <PanelHeader
+        :title="t('diff.title')"
+        :closable="closable"
+        :close-label="t('diff.close')"
+        @close="onClose"
+      >
         <span class="dv-change-count">{{ t('diff.changeCount', { count: changes.length }) }}</span>
-        <div class="dv-toggle" role="group" :aria-label="t('diff.list') + ' / ' + t('diff.tree')">
-          <button
-            type="button"
-            class="dv-toggle-btn"
-            :class="{ active: viewMode === 'list' }"
-            :aria-pressed="viewMode === 'list'"
-            @click="setViewMode('list')"
-          >
-            {{ t('diff.list') }}
-          </button>
-          <button
-            type="button"
-            class="dv-toggle-btn"
-            :class="{ active: viewMode === 'tree' }"
-            :aria-pressed="viewMode === 'tree'"
-            @click="setViewMode('tree')"
-          >
-            {{ t('diff.tree') }}
-          </button>
-        </div>
-        <button
-          v-if="closable"
-          type="button"
-          class="dv-close"
-          :title="t('diff.close')"
-          :aria-label="t('diff.close')"
-          @click="onClose"
-        >
-          <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-        </button>
-      </div>
+        <SegmentedControl
+          :model-value="viewMode"
+          size="sm"
+          :options="[
+            { value: 'list', label: t('diff.list') },
+            { value: 'tree', label: t('diff.tree') },
+          ]"
+          @update:model-value="setViewMode"
+        />
+      </PanelHeader>
 
       <!-- Git branch / status sub-header -->
       <div class="ch-head">
@@ -283,8 +264,12 @@ function treePadding(depth: number): string {
           <span class="br-label">{{ t('diff.branch') }}</span>
           <span class="br-name">{{ gitInfo!.branch }}</span>
           <span v-if="gitInfo!.ahead > 0 || gitInfo!.behind > 0" class="sync-info">
-            <span v-if="gitInfo!.ahead > 0" class="ahead" :title="t('diff.aheadTitle')">&#8593;{{ gitInfo!.ahead }}</span>
-            <span v-if="gitInfo!.behind > 0" class="behind" :title="t('diff.behindTitle')">&#8595;{{ gitInfo!.behind }}</span>
+            <Tooltip :text="t('diff.aheadTitle')">
+              <span v-if="gitInfo!.ahead > 0" class="ahead">&#8593;{{ gitInfo!.ahead }}</span>
+            </Tooltip>
+            <Tooltip :text="t('diff.behindTitle')">
+              <span v-if="gitInfo!.behind > 0" class="behind">&#8595;{{ gitInfo!.behind }}</span>
+            </Tooltip>
           </span>
         </template>
         <template v-else>
@@ -294,17 +279,20 @@ function treePadding(depth: number): string {
 
       <!-- File list (flat) -->
       <div v-if="hasChanges && viewMode === 'list'" class="ch-list">
-        <button
+        <Tooltip
           v-for="entry in changes"
           :key="entry.path"
-          type="button"
-          class="ch-row"
-          :title="entry.path"
-          @click="onOpen(entry.path)"
+          :text="entry.path"
         >
-          <span class="badge" :class="badgeKind(entry.status)">{{ badgeGlyph(entry.status) }}</span>
-          <span class="fpath">{{ truncateLeft(entry.path) }}</span>
-        </button>
+          <button
+            type="button"
+            class="ch-row"
+            @click="onOpen(entry.path)"
+          >
+            <span class="badge" :class="badgeKind(entry.status)">{{ badgeGlyph(entry.status) }}</span>
+            <span class="fpath">{{ truncateLeft(entry.path) }}</span>
+          </button>
+        </Tooltip>
       </div>
 
       <!-- File tree -->
@@ -322,22 +310,20 @@ function treePadding(depth: number): string {
               :style="{ paddingLeft: treePadding(depth) }"
               @click="toggleFolder(node)"
             >
-              <svg class="tree-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
-                <path :d="folderIcon(isExpanded(node.path))" />
-              </svg>
+              <Icon class="tree-icon" name="folder-solid" size="sm" />
               <span class="tree-name">{{ node.name }}</span>
             </button>
-            <button
-              v-else
-              type="button"
-              class="tree-row tree-file"
-              :style="{ paddingLeft: treePadding(depth) }"
-              :title="node.path"
-              @click="onOpen(node.path)"
-            >
-              <span class="badge" :class="badgeKind(node.status!)">{{ badgeGlyph(node.status!) }}</span>
-              <span class="tree-name">{{ node.name }}</span>
-            </button>
+            <Tooltip v-else :text="node.path">
+              <button
+                type="button"
+                class="tree-row tree-file"
+                :style="{ paddingLeft: treePadding(depth) }"
+                @click="onOpen(node.path)"
+              >
+                <span class="badge" :class="badgeKind(node.status!)">{{ badgeGlyph(node.status!) }}</span>
+                <span class="tree-name">{{ node.name }}</span>
+              </button>
+            </Tooltip>
           </li>
         </ul>
       </div>
@@ -364,26 +350,7 @@ function treePadding(depth: number): string {
   font-family: var(--mono);
 }
 
-/* ---- Panel header (matches other right-side panels) ---- */
-.dv-panel-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--panel-head-h, 48px);
-  padding: 0 6px 0 12px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-.dv-title {
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-}
+/* ---- Panel-header middle content (path / change count) ---- */
 .dv-path,
 .dv-change-count {
   min-width: 0;
@@ -397,52 +364,6 @@ function treePadding(depth: number): string {
 .dv-change-count {
   flex: 1;
 }
-.dv-toggle {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  overflow: hidden;
-}
-.dv-toggle-btn {
-  background: var(--panel);
-  border: none;
-  padding: 3px 8px;
-  font-family: inherit;
-  font-size: calc(var(--ui-font-size) - 2.5px);
-  color: var(--dim);
-  cursor: pointer;
-}
-.dv-toggle-btn.active {
-  background: var(--bg);
-  color: var(--ink);
-}
-.dv-toggle-btn:hover:not(.active) {
-  background: var(--panel2, #f5f6f8);
-  color: var(--ink);
-}
-.dv-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.dv-close:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.dv-close:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
 
 /* ---- Branch sub-header ---- */
 .ch-head {
@@ -452,7 +373,7 @@ function treePadding(depth: number): string {
   padding: 8px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
-  font-size: calc(var(--ui-font-size) - 2.5px);
+  font-size: var(--text-base);
   color: var(--dim);
   flex: none;
   white-space: nowrap;
@@ -465,8 +386,8 @@ function treePadding(depth: number): string {
 }
 
 .br-name {
-  color: var(--blue);
-  font-weight: 700;
+  color: var(--color-accent);
+  font-weight: 500;
   font-size: var(--ui-font-size);
 }
 
@@ -477,18 +398,18 @@ function treePadding(depth: number): string {
 }
 
 .ahead {
-  color: var(--blue);
-  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--color-accent);
+  font-size: var(--text-base);
 }
 
 .behind {
-  color: var(--warn);
-  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--color-warning);
+  font-size: var(--text-base);
 }
 
 .empty-head {
   color: var(--muted);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
 }
 
 /* ---- File list ---- */
@@ -520,7 +441,7 @@ function treePadding(depth: number): string {
 }
 
 .ch-row:focus-visible {
-  outline: 2px solid var(--blue, #1783ff);
+  outline: 2px solid var(--color-accent);
   outline-offset: -2px;
 }
 
@@ -551,15 +472,15 @@ function treePadding(depth: number): string {
   background: var(--panel2, #f5f6f8);
 }
 .tree-row:focus-visible {
-  outline: 2px solid var(--blue, #1783ff);
+  outline: 2px solid var(--color-accent);
   outline-offset: -2px;
 }
 .tree-folder {
-  color: var(--ink);
-  font-weight: 600;
+  color: var(--color-text);
+  font-weight: 500;
 }
 .tree-file {
-  color: var(--ink);
+  color: var(--color-text);
 }
 .tree-icon {
   flex: none;
@@ -579,26 +500,26 @@ function treePadding(depth: number): string {
   justify-content: center;
   width: 16px;
   height: 16px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  font-weight: 700;
+  font-weight: 500;
   flex: none;
   user-select: none;
 }
 
-.badge.modified  { background: color-mix(in srgb, var(--blue) 12%, var(--bg)); color: var(--blue); }
-.badge.added     { background: color-mix(in srgb, var(--ok) 10%, var(--bg)); color: var(--ok); }
-.badge.deleted   { background: color-mix(in srgb, var(--err) 10%, var(--bg)); color: var(--err); }
-.badge.renamed   { background: color-mix(in srgb, var(--warn) 12%, var(--bg)); color: var(--warn); }
-.badge.untracked { background: var(--soft, #f0f0f5); color: var(--muted, #9098a0); }
-.badge.conflicted{ background: color-mix(in srgb, var(--err) 10%, var(--bg)); color: var(--err); font-size: max(9px, calc(var(--ui-font-size) - 5px)); }
-.badge.ignored   { background: var(--soft, #f0f0f5); color: var(--faint, #c0c5cc); }
+.badge.modified  { background: color-mix(in srgb, var(--color-accent) 12%, var(--bg)); color: var(--color-accent); }
+.badge.added     { background: color-mix(in srgb, var(--color-success) 10%, var(--bg)); color: var(--color-success); }
+.badge.deleted   { background: color-mix(in srgb, var(--color-danger) 10%, var(--bg)); color: var(--color-danger); }
+.badge.renamed   { background: color-mix(in srgb, var(--color-warning) 12%, var(--bg)); color: var(--color-warning); }
+.badge.untracked { background: var(--color-surface-sunken); color: var(--muted, #9098a0); }
+.badge.conflicted{ background: color-mix(in srgb, var(--color-danger) 10%, var(--bg)); color: var(--color-danger); font-size: max(9px, calc(var(--ui-font-size) - 5px)); }
+.badge.ignored   { background: var(--color-surface-sunken); color: var(--faint, #c0c5cc); }
 .badge.clean     { background: transparent; color: var(--faint, #c0c5cc); }
-.badge.unknown   { background: var(--soft, #f0f0f5); color: var(--muted, #9098a0); }
+.badge.unknown   { background: var(--color-surface-sunken); color: var(--muted, #9098a0); }
 
 /* ---- File path ---- */
 .fpath {
-  color: var(--ink);
+  color: var(--color-text);
   font-size: var(--ui-font-size);
   white-space: nowrap;
   overflow: hidden;
@@ -629,31 +550,6 @@ function treePadding(depth: number): string {
   flex: none;
   white-space: nowrap;
   overflow: hidden;
-}
-
-.back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 3px 8px;
-  cursor: pointer;
-  color: var(--dim);
-  font-family: inherit;
-  font-size: calc(var(--ui-font-size) - 3px);
-  flex: none;
-}
-
-.back-btn:hover {
-  background: var(--panel2, #f5f6f8);
-  color: var(--ink);
-}
-
-.back-btn:focus-visible {
-  outline: 2px solid var(--blue, #1783ff);
-  outline-offset: 1px;
 }
 
 /* Wrapper that lets <DiffLines> fill the panel height and scroll internally.
@@ -691,13 +587,19 @@ function treePadding(depth: number): string {
 
   /* Diff-head Back → real tap target. */
   .diff-head { padding: 8px 12px; gap: 10px; }
-  .back-btn {
-    min-height: 36px;
-    padding: 6px 12px;
-    font-size: var(--ui-font-size-xs);
-    border-radius: 7px;
-  }
-  .back-btn:active { background: var(--panel2, #f5f6f8); }
-  .diff-path { font-size: calc(var(--ui-font-size) - 1.5px); }
+  .diff-path { font-size: var(--text-base); }
 }
+
+.changes-pane .empty-state { font-family: var(--sans); }
+.br-label,
+.empty-head { font-family: var(--sans); }
+.ch-row,
+.ct-row {
+  margin: 1px 6px;
+  width: calc(100% - 12px);
+  border-radius: var(--radius-md);
+}
+.changes-pane .badge,
+.changed-tree .badge { border-radius: var(--radius-sm); }
+.change-count { font-family: var(--sans); border-radius: 999px; }
 </style>

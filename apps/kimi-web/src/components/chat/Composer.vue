@@ -14,6 +14,11 @@ import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
 import { useAttachmentUpload } from '../../composables/useAttachmentUpload';
+import Spinner from '../ui/Spinner.vue';
+import IconButton from '../ui/IconButton.vue';
+import Icon from '../ui/Icon.vue';
+import ContextRing from '../ui/ContextRing.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -126,10 +131,8 @@ function collapseAndRefit(): void {
 // box has grown past it (multi-line content) — keeps the empty composer
 // uncluttered. While expanded it always shows so the user can collapse back.
 //
-// The resting height equals the textarea's computed `min-height`, which varies
-// by theme (the modern/kimi global override in style.css sets 40px; the scoped
-// default is 56px). We read it from the element instead of hard-coding so the
-// threshold matches whatever theme is active.
+// The resting height equals the textarea's computed `min-height` (set in
+// style.css). We read it from the element instead of hard-coding.
 const RESTING_HEIGHT_FALLBACK_PX = 56;
 function restingHeightPx(el: HTMLTextAreaElement): number {
   if (typeof getComputedStyle === 'undefined') return RESTING_HEIGHT_FALLBACK_PX;
@@ -505,6 +508,7 @@ function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;
   if (dropdownOpen.value) {
     permDropdownOpen.value = false;
+    closeModes();
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -522,6 +526,7 @@ function togglePermDropdown(): void {
   permDropdownOpen.value = !permDropdownOpen.value;
   if (permDropdownOpen.value) {
     dropdownOpen.value = false;
+    closeModes();
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -615,6 +620,9 @@ function toggleModes(): void {
     closeModes();
     return;
   }
+  // Keep the toolbar menus mutually exclusive so they never overlap.
+  closeDropdown();
+  closePermDropdown();
   const r = modesRef.value?.getBoundingClientRect();
   if (r) {
     modesMenuStyle.value = {
@@ -628,8 +636,8 @@ function toggleModes(): void {
 // Permission modes
 const PERM_MODES: { mode: PermissionMode; color: string; labelKey: string; descKey: string }[] = [
   { mode: 'manual', color: 'var(--dim)', labelKey: 'status.permissionManual', descKey: 'status.permissionManualDesc' },
-  { mode: 'yolo', color: 'var(--warn)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
-  { mode: 'auto', color: 'var(--err)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
+  { mode: 'yolo', color: 'var(--color-warning)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
+  { mode: 'auto', color: 'var(--color-danger)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
 ];
 
 function choosePermission(mode: PermissionMode): void {
@@ -682,38 +690,39 @@ function selectModel(modelId: string): void {
     <div v-if="attachments.length > 0" class="att-strip">
       <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
         <!-- Thumbnail (video shows its first frame; an icon overlays it) -->
-        <button type="button" class="att-preview" :title="t('composer.previewAttachment', { name: att.name })" @click="openAttachmentPreview(att)">
-          <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
-          <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
-          <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg>
-          </span>
-        </button>
+        <Tooltip :text="t('composer.previewAttachment', { name: att.name })">
+          <button type="button" class="att-preview" @click="openAttachmentPreview(att)">
+            <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
+            <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
+            <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
+              <Icon name="play" size="sm" />
+            </span>
+          </button>
+        </Tooltip>
         <!-- Name + status -->
         <span class="att-name">{{ att.name }}</span>
         <!-- Spinner while uploading -->
-        <span v-if="att.uploading" class="att-spinner" :aria-label="t('composer.uploading')">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="8" cy="8" r="6" stroke-opacity="0.25"/>
-            <path d="M8 2 A6 6 0 0 1 14 8" stroke-linecap="round">
-              <animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.8s" repeatCount="indefinite"/>
-            </path>
-          </svg>
-        </span>
+        <Spinner v-if="att.uploading" size="sm" :label="t('composer.uploading')" />
         <!-- Error indicator -->
-        <span v-else-if="att.error" class="att-err-icon" :title="t('composer.uploadFailed')">
-          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><circle cx="6" cy="6" r="5"/><line x1="6" y1="3.5" x2="6" y2="6.5"/><circle cx="6" cy="8.5" r="0.5" fill="currentColor"/></svg>
-        </span>
+        <Tooltip v-else-if="att.error" :text="t('composer.uploadFailed')">
+          <span class="att-err-icon">
+            <Icon name="info" size="sm" />
+          </span>
+        </Tooltip>
         <!-- Remove button -->
-        <button class="att-rm" :title="t('composer.removeNamed', { name: att.name })" @click="removeAttachment(att.localId)">
-          <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-        </button>
+        <Tooltip :text="t('composer.removeNamed', { name: att.name })">
+          <button class="att-rm" @click="removeAttachment(att.localId)">
+            <Icon name="close" size="sm" />
+          </button>
+        </Tooltip>
       </div>
     </div>
 
     <div v-if="previewAttachment" class="att-lightbox" @click.self="closeAttachmentPreview">
       <div class="att-lightbox-card">
-        <button type="button" class="att-lightbox-close" :title="t('model.close')" @click="closeAttachmentPreview">✕</button>
+        <Tooltip :text="t('model.close')">
+          <button type="button" class="att-lightbox-close" @click="closeAttachmentPreview">✕</button>
+        </Tooltip>
         <video
           v-if="previewAttachment.kind === 'video'"
           class="att-lightbox-media"
@@ -761,64 +770,18 @@ function selectModel(modelId: string): void {
             @compositionend="handleCompositionEnd"
             @input="handleInput"
           />
-
-          <div class="send-col">
+          <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
             <button
               v-if="expanded || isGrown"
               class="expand-btn"
               type="button"
               :aria-label="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
-              :title="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
               @click="toggleExpand"
             >
-              <svg v-if="expanded" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M4 14h6v6" />
-                <path d="M20 10h-6V4" />
-                <path d="M14 10l7-7" />
-                <path d="M3 21l7-7" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M15 3h6v6" />
-                <path d="M9 21H3v-6" />
-                <path d="M21 3l-7 7" />
-                <path d="M3 21l7-7" />
-              </svg>
+              <Icon v-if="expanded" name="collapse" size="sm" />
+              <Icon v-else name="expand" size="sm" />
             </button>
-            <button
-              class="send"
-              :class="{ aborting: running }"
-              :aria-label="sendLabel"
-              :title="running ? t('composer.interruptTitle') : sendLabel"
-              @click="running ? emit('interrupt') : handleSubmit()"
-            >
-              <svg
-                class="send-icon"
-                :class="{ hidden: running }"
-                viewBox="0 0 16 16"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M8 3l6 5.5M8 3L2 8.5M8 3v10" />
-              </svg>
-              <svg
-                class="send-icon"
-                :class="{ hidden: !running }"
-                viewBox="0 0 16 16"
-                width="14"
-                height="14"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <rect x="3" y="3" width="10" height="10" rx="1.5" />
-              </svg>
-            </button>
-          </div>
+          </Tooltip>
         </div>
       </div>
 
@@ -837,32 +800,30 @@ function selectModel(modelId: string): void {
       <div ref="toolbarRef" class="toolbar">
         <!-- Left: attach + permission + plan -->
         <div class="toolbar-left">
-          <button
-            v-if="hasUpload"
-            class="attach-btn"
-            :title="t('composer.attachImage')"
-            type="button"
-            @click="openFilePicker"
-          >
-            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-              <rect x="2" y="3" width="12" height="10" rx="1.5"/>
-              <circle cx="5" cy="6" r="1.2"/>
-              <path d="M2 10.5l3-2.5L8 11l2.5-2L14 11"/>
-            </svg>
-          </button>
+          <Tooltip :text="t('composer.attachImage')">
+            <IconButton
+              v-if="hasUpload"
+              size="md"
+              :label="t('composer.attachImage')"
+              @click="openFilePicker"
+            >
+              <Icon name="image" />
+            </IconButton>
+          </Tooltip>
 
           <!-- Permission pill — click to open dropdown -->
-          <span
-            v-if="status"
-            class="perm-pill"
-            :class="['perm-' + status.permission, { open: permDropdownOpen }]"
-            role="button"
-            tabindex="0"
-            :title="t('status.permissionTooltip')"
-            @click.stop="togglePermDropdown"
-            @keydown.enter="togglePermDropdown"
-            @keydown.space.prevent="togglePermDropdown"
-          >{{ permLabel }}</span>
+          <Tooltip :text="t('status.permissionTooltip')">
+            <span
+              v-if="status"
+              class="perm-pill"
+              :class="['perm-' + status.permission, { open: permDropdownOpen }]"
+              role="button"
+              tabindex="0"
+              @click.stop="togglePermDropdown"
+              @keydown.enter="togglePermDropdown"
+              @keydown.space.prevent="togglePermDropdown"
+            >{{ permLabel }}</span>
+          </Tooltip>
 
           <!-- Permission dropdown — anchored to the toolbar left side -->
           <div v-if="permDropdownOpen && status" class="perm-dropdown" role="menu" @click.stop>
@@ -874,7 +835,7 @@ function selectModel(modelId: string): void {
               role="menuitem"
               @click="choosePermission(opt.mode)"
             >
-              <span class="pd-check"><svg v-if="opt.mode === status.permission" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+              <span class="pd-check"><Icon v-if="opt.mode === status.permission" name="check" size="sm" /></span>
               <span class="pd-info">
                 <span class="pd-name" :style="{ color: opt.color }">{{ t(opt.labelKey) }}</span>
                 <span class="pd-desc">{{ t(opt.descKey) }}</span>
@@ -884,18 +845,19 @@ function selectModel(modelId: string): void {
 
           <!-- Modes selector (plan / goal / swarm) — replaces the plan pill. -->
           <div v-if="status" ref="modesRef" class="modes">
-            <button
-              type="button"
-              class="mode-pill"
-              :class="{ on: anyModeActive }"
-              :title="t('status.modesTooltip')"
-              @click.stop="toggleModes"
-            >
-              <span class="mode-label">{{ t('status.modesLabel') }}</span>
-              <span v-if="planOn" class="mode-tag">{{ t('status.planLabel') }}</span>
-              <span v-if="swarmOn" class="mode-tag">{{ t('status.swarmLabel') }}</span>
-              <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
-            </button>
+            <Tooltip :text="t('status.modesTooltip')">
+              <button
+                type="button"
+                class="mode-pill"
+                :class="{ on: anyModeActive, open: modesOpen }"
+                @click.stop="toggleModes"
+              >
+                <span class="mode-label">{{ t('status.modesLabel') }}</span>
+                <span v-if="planOn" class="mode-tag">{{ t('status.planLabel') }}</span>
+                <span v-if="swarmOn" class="mode-tag">{{ t('status.swarmLabel') }}</span>
+                <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
+              </button>
+            </Tooltip>
 
             <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuStyle">
               <!-- Plan — functional client toggle -->
@@ -942,47 +904,41 @@ function selectModel(modelId: string): void {
           <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
 
           <!-- Context meter — circular ring + token count -->
-          <span v-if="status && !hideContext" class="ctx-group" :title="ctxTooltip">
-            <svg class="ctx-ring" viewBox="0 0 20 20" aria-hidden="true">
-              <circle
-                class="ctx-ring-track"
-                cx="10"
-                cy="10"
-                r="7"
-                fill="none"
-                stroke-width="2.5"
-              />
-              <circle
-                class="ctx-ring-fill"
-                cx="10"
-                cy="10"
-                r="7"
-                fill="none"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                :stroke-dasharray="`${2 * Math.PI * 7}`"
-                :stroke-dashoffset="`${2 * Math.PI * 7 * (1 - pct / 100)}`"
-              />
-            </svg>
-            <span class="ctx-num">{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</span>
-          </span>
+          <Tooltip :text="ctxTooltip">
+            <span v-if="status && !hideContext" class="ctx-group">
+              <ContextRing :pct="pct" />
+              <span class="ctx-num">{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</span>
+            </span>
+          </Tooltip>
 
           <!-- Model pill — click to open quick-switch dropdown -->
-          <span
-            v-if="status"
-            class="model-pill"
-            :class="{ open: dropdownOpen }"
-            role="button"
-            tabindex="0"
-            :title="t('status.modelTooltip')"
-            @click.stop="toggleDropdown"
-            @keydown.enter="toggleDropdown"
-            @keydown.space.prevent="toggleDropdown"
-          >
-            <b>{{ status.model }}</b>
-            <span v-if="thinkingOn" class="think-suffix">{{ t('composer.thinkingSuffix') }}</span>
-            <svg class="cv" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
-          </span>
+          <Tooltip :text="t('status.modelTooltip')">
+            <span
+              v-if="status"
+              class="model-pill"
+              :class="{ open: dropdownOpen }"
+              role="button"
+              tabindex="0"
+              @click.stop="toggleDropdown"
+              @keydown.enter="toggleDropdown"
+              @keydown.space.prevent="toggleDropdown"
+            >
+              <b>{{ status.model }}</b>
+              <span v-if="thinkingOn" class="think-suffix">{{ t('composer.thinkingSuffix') }}</span>
+              <Icon class="cv" name="chevron-down" size="sm" />
+            </span>
+          </Tooltip>
+          <Tooltip :text="running ? t('composer.interruptTitle') : sendLabel">
+            <button
+              class="send"
+              :class="{ aborting: running }"
+              :aria-label="sendLabel"
+              @click="running ? emit('interrupt') : handleSubmit()"
+            >
+              <Icon class="send-icon" :class="{ hidden: running }" name="send" size="sm" />
+              <Icon class="send-icon" :class="{ hidden: !running }" name="stop" size="sm" />
+            </button>
+          </Tooltip>
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->
@@ -997,10 +953,10 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><svg v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+            <span class="md-check"><Icon v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
             <span class="md-provider">{{ m.provider }}</span>
-            <svg class="md-star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            <Icon class="md-star" name="star" size="sm" />
           </button>
 
           <div v-if="starredOtherModels.length > 0" class="md-divider" />
@@ -1015,9 +971,9 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><svg v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+            <span class="md-check"><Icon v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
-            <svg v-if="isStarred(m.id)" class="md-star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" />
           </button>
 
           <div v-if="providerModels.length > 0" class="md-divider" />
@@ -1030,7 +986,7 @@ function selectModel(modelId: string): void {
             :disabled="!thinkingToggleable"
             @click="toggleThinking()"
           >
-            <span class="md-check"><svg v-if="thinkingOn" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+            <span class="md-check"><Icon v-if="thinkingOn" name="check" size="sm" /></span>
             <span class="md-name">{{ t('status.thinkingLabel') }}</span>
             <span v-if="thinkingAvailability === 'always-on'" class="md-note">{{ t('status.planOn') }}</span>
             <span v-else-if="thinkingAvailability === 'unsupported'" class="md-note">{{ t('status.modeNotSupported') }}</span>
@@ -1056,7 +1012,7 @@ function selectModel(modelId: string): void {
 }
 
 .composer.drag-over {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 
 /* Main composer card */
@@ -1065,8 +1021,12 @@ function selectModel(modelId: string): void {
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--bg);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  box-shadow: var(--shadow-md);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer-card:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md), 0 0 0 3px var(--color-accent-soft);
 }
 
 
@@ -1085,12 +1045,12 @@ function selectModel(modelId: string): void {
   align-items: center;
   gap: 5px;
   background: var(--panel2);
-  border: 1px solid var(--bd);
+  border: 1px solid var(--color-accent-bd);
   border-radius: 4px;
   padding: 3px 6px 3px 4px;
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--text);
+  color: var(--color-text);
   max-width: 220px;
 }
 
@@ -1100,14 +1060,14 @@ function selectModel(modelId: string): void {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   padding: 0;
   cursor: zoom-in;
   flex: none;
 }
 .att-preview:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
@@ -1124,20 +1084,20 @@ function selectModel(modelId: string): void {
   height: 16px;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  color: var(--color-text-on-accent);
   pointer-events: none;
 }
 
 .att-chip.att-error {
-  border-color: var(--err);
-  color: var(--err);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .att-thumb {
   width: 28px;
   height: 28px;
   object-fit: cover;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
   background: var(--line2);
 }
@@ -1150,17 +1110,10 @@ function selectModel(modelId: string): void {
   min-width: 0;
 }
 
-.att-spinner {
-  display: flex;
-  align-items: center;
-  color: var(--blue);
-  flex-shrink: 0;
-}
-
 .att-err-icon {
   display: flex;
   align-items: center;
-  color: var(--err);
+  color: var(--color-danger);
   flex-shrink: 0;
 }
 
@@ -1177,13 +1130,13 @@ function selectModel(modelId: string): void {
 }
 
 .att-rm:hover {
-  color: var(--err);
+  color: var(--color-danger);
 }
 
 .att-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 260;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1204,12 +1157,12 @@ function selectModel(modelId: string): void {
   max-height: calc(100vh - 96px);
   border-radius: 6px;
   background: var(--bg);
-  box-shadow: 0 12px 42px rgba(0,0,0,0.22);
+  box-shadow: var(--shadow-xl);
   object-fit: contain;
 }
 .att-lightbox-name {
   max-width: 100%;
-  color: #fff;
+  color: var(--color-text-on-accent);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2px);
   overflow: hidden;
@@ -1225,7 +1178,7 @@ function selectModel(modelId: string): void {
   border: 1px solid rgba(255,255,255,0.45);
   border-radius: 50%;
   background: rgba(20,23,28,0.82);
-  color: #fff;
+  color: var(--color-text-on-accent);
   cursor: pointer;
 }
 
@@ -1237,25 +1190,17 @@ function selectModel(modelId: string): void {
 /* Wrapper that establishes a positioning context for the popup menus */
 .cin-wrap {
   position: relative;
-  padding: 10px 12px 8px;
+  padding: 14px 16px 8px;
 }
 
 /* Input row */
 .input-row {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
 
-/* Right column: expand toggle stacked above the send button */
-.send-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
+/* Expand toggle — top-right of the textarea */
 .expand-btn {
   width: 22px;
   height: 22px;
@@ -1273,11 +1218,11 @@ function selectModel(modelId: string): void {
 
 .expand-btn:hover {
   background: var(--panel2);
-  color: var(--ink);
+  color: var(--color-text);
 }
 
 .expand-btn:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
@@ -1287,8 +1232,8 @@ function selectModel(modelId: string): void {
   border: none;
   outline: none;
   resize: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
+  font-family: var(--font-ui);
+  font-size: 15px;
   background: transparent;
   min-height: 56px;
   max-height: calc(100vh / 4);
@@ -1302,7 +1247,7 @@ function selectModel(modelId: string): void {
 }
 
 .ph:not(:placeholder-shown) {
-  color: var(--ink);
+  color: var(--color-text);
 }
 
 /* Expanded editor: a tall composing area at ~70% of the viewport — clearly
@@ -1318,8 +1263,8 @@ function selectModel(modelId: string): void {
 .compact-chip {
   background: none;
   border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--warn);
+  border-radius: var(--radius-xs);
+  color: var(--color-warning);
   font-family: var(--mono);
   font-size: var(--ui-font-size);
   padding: 0 4px;
@@ -1332,24 +1277,26 @@ function selectModel(modelId: string): void {
 
 /* Send button — circular icon (morphs into the abort square while running) */
 .send {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: var(--blue);
-  color: var(--bg); /* on-accent text — readable in dark + mono-dark */
+  background: var(--color-accent);
+  color: var(--color-text-on-accent); /* white on accent — readable in light and dark */
   border: none;
+  box-shadow: var(--shadow-xs);
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  margin-left: var(--space-2);
   transition: background 0.25s ease, transform 0.12s ease;
   position: relative;
 }
 
 .send:hover {
-  background: var(--blue2);
+  background: var(--color-accent-hover);
 }
 
 .send:active {
@@ -1372,10 +1319,10 @@ function selectModel(modelId: string): void {
 }
 
 .send.aborting {
-  background: var(--err);
+  background: var(--color-danger);
 }
 .send.aborting:hover {
-  background: color-mix(in srgb, var(--err) 85%, #000);
+  background: color-mix(in srgb, var(--color-danger) 85%, var(--color-text));
 }
 
 /* Bottom toolbar */
@@ -1383,10 +1330,8 @@ function selectModel(modelId: string): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px 4px;
-  background: color-mix(in srgb, var(--panel2), black 1.5%);
+  padding: 6px 8px 8px;
   position: relative;
-  border-radius: 0 0 var(--r-md) var(--r-md);
 }
 
 .toolbar-left,
@@ -1398,34 +1343,6 @@ function selectModel(modelId: string): void {
   overflow: hidden;
 }
 
-/* Attach button (pill style, matches permission/plan) */
-.attach-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  font-size: var(--ui-font-size);
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.1s, color 0.15s;
-  font-family: var(--sans);
-  background: none;
-  border: none;
-  flex-shrink: 0;
-  line-height: 1;
-}
-.attach-icon {
-  display: block;
-  flex: none;
-}
-
-.attach-btn:hover {
-  background: var(--soft);
-}
-
 /* Permission pill */
 .perm-pill {
   display: inline-flex;
@@ -1434,26 +1351,26 @@ function selectModel(modelId: string): void {
   padding: 2px 7px;
   border-radius: 6px;
   font-size: var(--ui-font-size);
-  color: var(--text);
+  color: var(--color-text);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s, color 0.15s;
   font-family: var(--sans);
 }
 .perm-pill:hover {
-  background: var(--soft);
+  background: var(--color-surface-sunken);
 }
 .perm-pill.open {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 .perm-pill.perm-manual {
   color: var(--dim);
 }
 .perm-pill.perm-yolo {
-  color: var(--warn);
+  color: var(--color-warning);
 }
 .perm-pill.perm-auto {
-  color: var(--err);
+  color: var(--color-danger);
 }
 
 /* Context group — circular ring + num */
@@ -1463,22 +1380,6 @@ function selectModel(modelId: string): void {
   gap: 4px;
   flex-shrink: 0;
   padding: 2px 0;
-}
-
-.ctx-ring {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  transform: rotate(-90deg);
-}
-
-.ctx-ring-track {
-  stroke: var(--line);
-}
-
-.ctx-ring-fill {
-  stroke: var(--blue);
-  transition: stroke-dashoffset 0.3s ease, stroke 0.3s ease;
 }
 
 .ctx-num {
@@ -1505,15 +1406,15 @@ function selectModel(modelId: string): void {
   overflow: hidden;
 }
 .model-pill:hover {
-  background: var(--soft);
-  color: var(--blue2);
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
 }
 .model-pill.open {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 .model-pill b {
   font-weight: 500;
-  color: var(--text);
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1521,7 +1422,7 @@ function selectModel(modelId: string): void {
   max-width: 280px;
 }
 .model-pill .think-suffix {
-  color: var(--blue);
+  color: var(--color-accent);
   font-weight: 500;
   flex-shrink: 0;
 }
@@ -1531,7 +1432,7 @@ function selectModel(modelId: string): void {
 }
 .model-pill:hover .cv,
 .model-pill.open .cv {
-  color: var(--blue2);
+  color: var(--color-accent-hover);
 }
 
 /* Model dropdown — anchored to the toolbar right edge */
@@ -1539,12 +1440,12 @@ function selectModel(modelId: string): void {
   position: absolute;
   bottom: calc(100% + 4px);
   right: 10px;
-  z-index: 60;
+  z-index: var(--z-dropdown);
   min-width: 200px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 5px;
   display: flex;
   flex-direction: column;
@@ -1570,19 +1471,19 @@ function selectModel(modelId: string): void {
   cursor: pointer;
   font-family: var(--mono);
   font-size: var(--ui-font-size);
-  color: var(--text);
+  color: var(--color-text);
   padding: 5px 7px;
   border-radius: 6px;
   text-align: left;
 }
-.md-row:hover { background: var(--soft); }
+.md-row:hover { background: var(--color-surface-sunken); }
 .md-row:disabled {
   cursor: default;
   opacity: 0.58;
 }
 .md-row:disabled:hover { background: none; }
-.md-row.is-current { color: var(--ink); }
-.md-row.is-on { color: var(--blue); }
+.md-row.is-current { color: var(--color-text); background: var(--color-accent-soft); }
+.md-row.is-on { color: var(--color-accent); }
 .md-note {
   margin-left: auto;
   color: var(--muted);
@@ -1590,18 +1491,18 @@ function selectModel(modelId: string): void {
 }
 
 .md-row-more {
-  color: var(--blue);
+  color: var(--color-accent);
   font-weight: 500;
 }
 .md-row-more:hover {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 
 .md-check {
   width: 14px;
   flex: none;
-  color: var(--blue);
-  font-weight: 700;
+  color: var(--color-accent);
+  font-weight: 500;
   display: flex;
   justify-content: center;
 }
@@ -1631,13 +1532,13 @@ function selectModel(modelId: string): void {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 10px;
-  z-index: 60;
+  z-index: var(--z-dropdown);
   min-width: 220px;
   max-width: 280px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 5px;
   display: flex;
   flex-direction: column;
@@ -1656,14 +1557,14 @@ function selectModel(modelId: string): void {
   border-radius: 6px;
   text-align: left;
 }
-.pd-row:hover { background: var(--soft); }
-.pd-row.is-current { background: var(--soft); }
+.pd-row:hover { background: var(--color-surface-sunken); }
+.pd-row.is-current { background: var(--color-accent-soft); }
 
 .pd-check {
   width: 14px;
   flex: none;
-  color: var(--blue);
-  font-weight: 700;
+  color: var(--color-accent);
+  font-weight: 500;
   display: flex;
   justify-content: center;
   margin-top: 1px;
@@ -1694,7 +1595,7 @@ function selectModel(modelId: string): void {
 /* Modes selector (plan / goal / swarm) — replaces the old plan pill + badges.
    z-index lifts the whole control (incl. its upward-opening menu) above the
    composer input row, which otherwise paints over the menu. */
-.modes { position: relative; display: inline-flex; z-index: 30; }
+.modes { position: relative; display: inline-flex; z-index: var(--z-sticky); }
 .mode-pill {
   display: inline-flex;
   align-items: center;
@@ -1705,35 +1606,36 @@ function selectModel(modelId: string): void {
   border-radius: 6px;
   font-size: var(--ui-font-size);
   font-family: var(--sans);
-  color: var(--text);
+  color: var(--color-text);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s, color 0.15s;
 }
-.mode-pill:hover { background: var(--soft); }
-.mode-pill.on { background: var(--soft); color: var(--blue2); }
+.mode-pill:hover { background: var(--color-surface-sunken); }
+.mode-pill.on { background: var(--color-accent-soft); color: var(--color-accent-hover); }
+.mode-pill.open { background: var(--color-accent-soft); }
 .mode-label { flex: none; }
 .mode-tag {
   flex: none;
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--blue2);
+  color: var(--color-accent-hover);
   background: var(--bg);
-  border: 1px solid var(--bd);
+  border: 1px solid var(--color-accent-bd);
   border-radius: 999px;
   padding: 0 6px;
   line-height: 16px;
 }
-.mode-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); flex: none; }
+.mode-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); flex: none; }
 
 .modes-menu {
   position: fixed;
-  z-index: 200;
+  z-index: var(--z-dropdown);
   min-width: 220px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 4px;
 }
 .mode-row {
@@ -1752,13 +1654,13 @@ function selectModel(modelId: string): void {
 }
 .mode-row:hover:not(:disabled) { background: var(--panel2); }
 .mode-row:disabled { cursor: not-allowed; opacity: 0.45; }
-.mode-row-name { font-size: var(--ui-font-size-sm); color: var(--ink); }
+.mode-row-name { font-size: var(--ui-font-size-sm); color: var(--color-text); }
 .mode-row-not-supported {
   margin-left: auto;
   font-size: var(--ui-font-size-xs);
   color: var(--muted);
 }
-.mode-row.on .mode-row-name { color: var(--blue2); font-weight: 600; }
+.mode-row.on .mode-row-name { color: var(--color-accent-hover); font-weight: 500; }
 .mode-row-meta { font-family: var(--mono); font-size: calc(var(--ui-font-size) - 3px); color: var(--muted); }
 .mode-row:disabled .mode-row-meta { color: var(--faint); }
 .mode-switch {
@@ -1771,7 +1673,7 @@ function selectModel(modelId: string): void {
   position: relative;
   transition: background 0.15s;
 }
-.mode-switch.on { background: var(--blue); border-color: var(--blue); }
+.mode-switch.on { background: var(--color-accent); border-color: var(--color-accent); }
 .mode-knob {
   position: absolute;
   top: 1px;
@@ -1780,7 +1682,7 @@ function selectModel(modelId: string): void {
   height: 15px;
   border-radius: 50%;
   background: var(--bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-xs);
   transition: transform 0.15s;
 }
 .mode-switch.on .mode-knob { transform: translateX(15px); }
@@ -1807,7 +1709,7 @@ function selectModel(modelId: string): void {
   text-align: left;
 }
 .mode-row-main:hover { background: var(--panel2); }
-.mode-row-goal.on .mode-row-main .mode-row-name { color: var(--blue2); font-weight: 600; }
+.mode-row-goal.on .mode-row-main .mode-row-name { color: var(--color-accent-hover); font-weight: 500; }
 .mode-row-actions {
   display: flex;
   gap: 6px;
@@ -1816,10 +1718,10 @@ function selectModel(modelId: string): void {
 }
 .mode-row-action {
   padding: 3px 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--panel);
-  color: var(--ink);
+  color: var(--color-text);
   font-size: calc(var(--ui-font-size) - 3px);
   cursor: pointer;
 }
@@ -1829,10 +1731,10 @@ function selectModel(modelId: string): void {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--bg);
-  color: var(--ink);
+  color: var(--color-text);
   font-size: var(--ui-font-size-xs);
 }
 
@@ -1848,7 +1750,7 @@ function selectModel(modelId: string): void {
       var(--dock-inline-left, max(12px, env(safe-area-inset-left)));
   }
   .composer-card {
-    border-radius: 14px;
+    border-radius: var(--radius-xl);
     max-width: 100%;
   }
   .input-row {
@@ -1939,8 +1841,8 @@ function selectModel(modelId: string): void {
   }
 }
 
-/* NOTE: Modern-theme composer overrides live in src/style.css (global), NOT here.
-   Scoped `:global(html[data-theme=modern]) .cin` rules did NOT reliably win the
-   cascade against the base `.cin` (the input stayed square + mono), so they were
-   moved to the global sheet where they apply. */
+/* NOTE: Composer overrides live in src/style.css (global), NOT here. Scoped
+   `.cin` rules did NOT reliably win the cascade against the base `.cin` (the
+   input stayed square + mono), so they were moved to the global sheet where they
+   apply. */
 </style>

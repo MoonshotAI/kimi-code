@@ -12,6 +12,6 @@ export default {
   permManualSub: '每个工具都确认',
   permAutoSub: '自动批准编辑',
   permYoloSub: '全部自动批准',
-  planModeSub: 'Plan mode',
-  swarmModeSub: 'Swarm mode',
+  planModeSub: '计划模式',
+  swarmModeSub: 'Swarm 模式',
 } as const;

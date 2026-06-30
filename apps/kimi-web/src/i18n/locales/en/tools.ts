@@ -9,7 +9,7 @@ export default {
     ls: 'List',
     web_fetch: 'Fetch',
     search: 'Search',
-    todo: 'Plan',
+    todo: 'Todo',
     task: 'Task',
   },
   chip: {

@@ -15,6 +15,10 @@ import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
 import TodoCard from './TodoCard.vue';
 import QueuePane from './QueuePane.vue';
+import Button from '../ui/Button.vue';
+import Icon from '../ui/Icon.vue';
+import Pill from '../ui/Pill.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
   sessionId?: string;
@@ -72,6 +76,8 @@ const emit = defineEmits<{
   cancelTask: [taskId: string];
   'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'queue'];
   'close-dock-panel': [];
+  /** A background subagent chip was clicked — open its live detail panel. */
+  openAgent: [taskId: string];
 }>();
 
 const { t } = useI18n();
@@ -155,13 +161,15 @@ defineExpose({ loadForEdit, focus });
           >
             {{ t('tasks.dockQueue') }} · {{ queued?.length ?? 0 }}
           </span>
-          <button
-            v-if="dockPanel === 'queue' && running"
-            type="button"
-            class="dock-queue-steer"
-            :title="t('composer.steerTitle')"
-            @click="emit('steer', { text: '', attachments: [] })"
-          >{{ t('composer.steerNow') }}</button>
+          <Tooltip :text="t('composer.steerTitle')">
+            <Button
+              v-if="dockPanel === 'queue' && running"
+              class="dock-queue-steer"
+              size="sm"
+              variant="secondary"
+              @click="emit('steer', { text: '', attachments: [] })"
+            >{{ t('composer.steerNow') }}</Button>
+          </Tooltip>
         </div>
         <div class="dock-work-body">
           <TasksPane
@@ -173,11 +181,11 @@ defineExpose({ loadForEdit, focus });
             v-else-if="dockPanel === 'subagent'"
             :tasks="subagentTasks"
             @cancel="emit('cancelTask', $event)"
+            @open="emit('openAgent', $event)"
           />
           <TodoCard
             v-else-if="dockPanel === 'todos'"
             :todos="todos ?? []"
-            inline
           />
           <QueuePane
             v-else
@@ -199,67 +207,46 @@ defineExpose({ loadForEdit, focus });
       @control-goal="emit('controlGoal', $event)"
     />
     <div v-if="hasDockWork" ref="workbarRef" class="dock-workbar">
-      <button
+      <Pill
         v-if="bashTasks.length > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'bash' }"
+        :active="dockPanel === 'bash'"
         :aria-pressed="dockPanel === 'bash'"
         @click="emit('toggle-dock-panel', 'bash')"
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <circle cx="8" cy="8" r="5.5" />
-          <path d="M8 4.5V8l2.5 1.5" />
-        </svg>
+        <Icon name="clock" size="md" />
         <span>{{ t('tasks.dockBash') }}</span>
         <span class="dw-count">(<b>{{ bashTasks.length }}</b>)</span>
-      </button>
-      <button
+      </Pill>
+      <Pill
         v-if="subagentTasks.length > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'subagent' }"
+        :active="dockPanel === 'subagent'"
         :aria-pressed="dockPanel === 'subagent'"
         @click="emit('toggle-dock-panel', 'subagent')"
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />
-        </svg>
+        <Icon name="sparkles" size="md" />
         <span>{{ t('tasks.dockSubagent') }}</span>
         <span class="dw-count">(<b>{{ subagentTasks.length }}</b>)</span>
-      </button>
-      <button
+      </Pill>
+      <Pill
         v-if="(todos?.length ?? 0) > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'todos' }"
+        :active="dockPanel === 'todos'"
         :aria-pressed="dockPanel === 'todos'"
         @click="emit('toggle-dock-panel', 'todos')"
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M3 4.5l1.5 1.5L7 3.5" />
-          <path d="M8.5 5h4" />
-          <path d="M3 11l1.5 1.5L7 10" />
-          <path d="M8.5 11.5h4" />
-        </svg>
+        <Icon name="check-list" size="md" />
         <span>{{ t('tasks.dockTodos') }}</span>
         <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
-      </button>
-      <button
+      </Pill>
+      <Pill
         v-if="(queued?.length ?? 0) > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'queue' }"
+        :active="dockPanel === 'queue'"
         :aria-pressed="dockPanel === 'queue'"
         @click="emit('toggle-dock-panel', 'queue')"
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M2 4l6 4 6-4" />
-          <rect x="2" y="4" width="12" height="8" rx="1.5" />
-        </svg>
+        <Icon name="mail" size="md" />
         <span>{{ t('tasks.dockQueue') }}</span>
         <span class="dw-count">(<b>{{ queued?.length ?? 0 }}</b>)</span>
-      </button>
+      </Pill>
     </div>
 
     <QuestionCard
@@ -325,8 +312,8 @@ defineExpose({ loadForEdit, focus });
   padding-right: var(--panes-scrollbar-width, 0px);
   flex: none;
   position: relative;
-  background: var(--bg);
-  z-index: 10;
+  background: var(--color-bg);
+  z-index: var(--z-sticky);
 }
 .chat-dock.align-center { margin-left: auto; margin-right: auto; }
 .chat-dock.align-left { margin-left: 0; margin-right: auto; }
@@ -337,10 +324,9 @@ defineExpose({ loadForEdit, focus });
   left: 16px;
   right: calc(16px + var(--panes-scrollbar-width, 0px));
   bottom: 100%;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
   margin-bottom: 7px;
   max-height: min(360px, 50vh);
   display: flex;
@@ -352,37 +338,23 @@ defineExpose({ loadForEdit, focus });
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--color-line);
 }
 .dock-work-tab {
-  font-size: 12px;
+  font-size: var(--text-base);
   font-weight: 500;
-  color: var(--ink);
+  color: var(--color-text);
   padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--bg);
-  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
 }
 .dock-work-tab.static {
   background: transparent;
   border-color: transparent;
   padding-left: 2px;
 }
-.dock-queue-steer {
-  margin-left: auto;
-  background: none;
-  border: 1px solid var(--blueln);
-  border-radius: 3px;
-  padding: 2px 8px;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--blue2);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.dock-queue-steer:hover {
-  background: var(--bluebg);
-}
+.dock-queue-steer { margin-left: auto; }
 .dock-work-body {
   padding: 8px 10px;
   overflow-y: auto;
@@ -395,14 +367,6 @@ defineExpose({ loadForEdit, focus });
 }
 .dock-work-body :deep(.taskspane .tp-head) {
   display: none;
-}
-.dock-work-body :deep(.todo-card.tab-mode) {
-  border: none;
-  background: transparent;
-  padding: 0;
-}
-.dock-work-body :deep(.todo-card.tab-mode .tc-list) {
-  max-height: none;
 }
 .dock-work-body :deep(.queue-pane) {
   padding: 0;
@@ -417,33 +381,8 @@ defineExpose({ loadForEdit, focus });
   gap: 6px;
   padding: 4px var(--dock-inline-right) 2px var(--dock-inline-left);
 }
-.dock-work-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  cursor: pointer;
-}
-.dock-work-chip:hover,
-.dock-work-chip.on {
-  background: var(--hover-bg);
-  color: var(--ink);
-}
-.dock-work-chip svg {
-  flex: none;
-}
-.dock-work-chip b {
-  font-weight: 600;
-  color: var(--ink);
-}
-.dock-work-chip .dw-count {
-  margin-left: 1px;
-}
+.dock-workbar .dw-count { margin-left: 1px; }
+.dock-workbar .dw-count b { font-weight: 500; }
 
 .dock-approval {
   margin-top: 8px;

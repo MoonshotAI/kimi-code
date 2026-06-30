@@ -3,17 +3,22 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
 import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
-import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
+import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
-import SessionRow from './SessionRow.vue';
+import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import InternalBuildBanner from './InternalBuildBanner.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
+import IconButton from './ui/IconButton.vue';
+import Icon from './ui/Icon.vue';
+import Menu from './ui/Menu.vue';
+import MenuItem from './ui/MenuItem.vue';
+import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
 
@@ -30,6 +35,8 @@ const props = withDefaults(
     sessions: Session[];
     groups: WorkspaceGroupType[];
     activeId: string;
+    /** Current workspace sort mode — drives the section-header sort button. */
+    workspaceSortMode: WorkspaceSortMode;
     attentionBySession?: Record<string, number>;
     /** Per-session pending counts split by kind, for the coloured tags. */
     pendingBySession?: Record<string, { approvals: number; questions: number }>;
@@ -52,7 +59,6 @@ const emit = defineEmits<{
   create: [];
   createInWorkspace: [workspaceId: string];
   selectWorkspace: [workspaceId: string];
-  selectWorkspaces: [ids: string[]];
   addWorkspace: [];
   rename: [id: string, title: string];
   archive: [id: string];
@@ -60,6 +66,7 @@ const emit = defineEmits<{
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
+  setWorkspaceSortMode: [mode: WorkspaceSortMode];
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   openSettings: [];
@@ -67,37 +74,34 @@ const emit = defineEmits<{
 }>();
 
 // ---------------------------------------------------------------------------
-// Session search (title + last prompt, instant client-side filter)
+// Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
-const searchQuery = ref('');
+const showSearch = ref(false);
 
-const trimmedQuery = computed(() => searchQuery.value.trim());
-const isSearching = computed(() => trimmedQuery.value.length > 0);
-
-const searchResults = computed<Session[]>(() => {
-  const q = trimmedQuery.value.toLowerCase();
-  if (!q) return [];
-  return props.sessions.filter((s) => {
-    const title = (s.title ?? '').toLowerCase();
-    const last = (s.lastPrompt ?? '').toLowerCase();
-    return title.includes(q) || last.includes(q);
-  });
-});
-
-function clearSearch(): void {
-  searchQuery.value = '';
+function openSearch(): void {
+  // Sessions are loaded per-workspace (first page only); lazily drain the rest
+  // so the dialog's client-side filter covers everything.
+  emit('loadAllSessions');
+  showSearch.value = true;
 }
 
-function onSelectResult(sessionId: string): void {
-  clearSearch();
-  onSelectSession(sessionId);
+function onSearchKeydown(e: KeyboardEvent): void {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openSearch();
+  }
 }
 
-// Sessions are loaded per-workspace (first page only). The first time the user
-// searches, lazily drain the rest so the client-side filter covers everything.
-watch(isSearching, (active) => {
-  if (active) emit('loadAllSessions');
-});
+onMounted(() => window.addEventListener('keydown', onSearchKeydown));
+onBeforeUnmount(() => window.removeEventListener('keydown', onSearchKeydown));
+
+// Scroll-linked header seam: the .btn-wrap bottom border/shadow only appears
+// once the session list has actually scrolled, so an unscrolled list shows no
+// abrupt boundary.
+const sessionsScrolled = ref(false);
+function onSessionsScroll(e: Event): void {
+  sessionsScrolled.value = (e.target as HTMLElement).scrollTop > 0;
+}
 
 // ---------------------------------------------------------------------------
 // Collapse groups
@@ -115,6 +119,26 @@ function toggleCollapse(id: string): void {
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
 }
+
+function collapseAllWorkspaces(): void {
+  const next = new Set(props.groups.map((g) => g.workspace.id));
+  collapsedIds.value = next;
+  saveCollapsedWorkspaces(next);
+}
+
+function expandAllWorkspaces(): void {
+  const next = new Set<string>();
+  collapsedIds.value = next;
+  saveCollapsedWorkspaces(next);
+}
+
+// True when every workspace is collapsed — drives the single toggle button's
+// icon (expand when fully collapsed, collapse otherwise) and action.
+const allCollapsed = computed(
+  () =>
+    props.groups.length > 0 &&
+    props.groups.every((g) => collapsedIds.value.has(g.workspace.id)),
+);
 
 // ---------------------------------------------------------------------------
 // Workspace drag-to-reorder
@@ -164,30 +188,14 @@ function onGroupDrop(targetId: string): void {
   emit('reorderWorkspaces', next);
 }
 
-// ---------------------------------------------------------------------------
-// Shift-multi-select workspaces
-// ---------------------------------------------------------------------------
-const selectedIds = ref<Set<string>>(new Set());
-
 function handleGhClick(wsId: string, e: MouseEvent): void {
-  if (e.shiftKey) {
-    e.stopPropagation();
-    const next = new Set(selectedIds.value);
-    if (next.has(wsId)) next.delete(wsId);
-    else next.add(wsId);
-    selectedIds.value = next;
-    emit('selectWorkspaces', Array.from(next));
-    return;
-  }
-  // Normal click: clear multi-selection then toggle collapse
-  selectedIds.value = new Set();
-  emit('selectWorkspaces', []);
+  // Ignore clicks that land on the group's action buttons (kebab / add); those
+  // have their own handlers and must not also toggle collapse.
+  if ((e.target as Element).closest('.gh-more, .gh-add')) return;
   toggleCollapse(wsId);
 }
 
 function onSelectSession(sessionId: string): void {
-  selectedIds.value = new Set();
-  emit('selectWorkspaces', []);
   emit('select', sessionId);
 }
 
@@ -235,25 +243,15 @@ function onUpdateRenameValue(value: string): void {
 const ghMenuOpen = ref(false);
 const ghMenuTarget = ref<WorkspaceView | null>(null);
 const ghMenuStyle = ref<Record<string, string>>({});
-const ghMenuRef = ref<HTMLElement | null>(null);
+const ghMenuRef = ref<InstanceType<typeof Menu> | null>(null);
 
 function onGhMenuDocClick(e: MouseEvent): void {
-  if (ghMenuRef.value && !ghMenuRef.value.contains(e.target as Node)) {
+  if (ghMenuRef.value?.el && !ghMenuRef.value.el.contains(e.target as Node)) {
     closeGhMenu();
   }
 }
 
 function openGhMenu(ws: WorkspaceView, e: MouseEvent): void {
-  if (e.shiftKey) {
-    // shift+right-click = multi-select (same as shift+click)
-    e.stopPropagation();
-    const next = new Set(selectedIds.value);
-    if (next.has(ws.id)) next.delete(ws.id);
-    else next.add(ws.id);
-    selectedIds.value = next;
-    emit('selectWorkspaces', Array.from(next));
-    return;
-  }
   e.preventDefault();
   e.stopPropagation();
   ghMenuTarget.value = ws;
@@ -323,13 +321,14 @@ function armDeleteWs(id: string): boolean {
 
 // ---------------------------------------------------------------------------
 // Workspace inline more-menu (kebab, hover-triggered). Rendered position:fixed
-// and anchored to the ⋯ button so the scrolling session list can't clip it;
-// it doesn't follow the anchor, so scroll/resize simply close it.
+// and anchored to the ⋯ button so the scrolling session list can't clip it.
+// It stays open on scroll (so a streaming turn doesn't dismiss it) and closes
+// on outside-click or window resize.
 // ---------------------------------------------------------------------------
 const wsMenuOpenId = ref<string | null>(null);
 const wsMenuTarget = ref<WorkspaceView | null>(null);
 const wsMenuStyle = ref<Record<string, string>>({});
-const wsMenuRef = ref<HTMLElement | null>(null);
+const wsMenuRef = ref<InstanceType<typeof Menu> | null>(null);
 
 function onWsMenuDocClick(e: MouseEvent): void {
   const target = e.target as Element;
@@ -346,10 +345,9 @@ async function toggleWsMenu(ws: WorkspaceView, e: MouseEvent): Promise<void> {
   wsMenuTarget.value = ws;
   wsMenuOpenId.value = ws.id;
   document.addEventListener('mousedown', onWsMenuDocClick);
-  document.addEventListener('scroll', closeWsMenu, true);
   window.addEventListener('resize', closeWsMenu);
   await nextTick();
-  const menu = wsMenuRef.value;
+  const menu = wsMenuRef.value?.el;
   const r = btn.getBoundingClientRect();
   const gap = 4;
   const margin = 8;
@@ -372,7 +370,6 @@ function closeWsMenu(): void {
   wsMenuTarget.value = null;
   disarmDeleteWs();
   document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('scroll', closeWsMenu, true);
   window.removeEventListener('resize', closeWsMenu);
 }
 
@@ -392,11 +389,65 @@ function deleteWs(ws: WorkspaceView): void {
   closeWsMenu();
 }
 
+// ---------------------------------------------------------------------------
+// Workspace sort menu (triggered from the WORKSPACES section header). Anchored
+// to the sort button via position:fixed so the scrolling list can't clip it.
+// ---------------------------------------------------------------------------
+const sortMenuOpen = ref(false);
+const sortMenuStyle = ref<Record<string, string>>({});
+const sortMenuRef = ref<InstanceType<typeof Menu> | null>(null);
+
+function onSortMenuDocClick(e: MouseEvent): void {
+  const target = e.target as Element;
+  if (target.closest('.side-section-sort') || target.closest('.sort-menu')) return;
+  closeSortMenu();
+}
+
+async function toggleSortMenu(e: MouseEvent): Promise<void> {
+  if (sortMenuOpen.value) {
+    closeSortMenu();
+    return;
+  }
+  const btn = e.currentTarget as HTMLElement;
+  sortMenuOpen.value = true;
+  document.addEventListener('mousedown', onSortMenuDocClick);
+  window.addEventListener('resize', closeSortMenu);
+  await nextTick();
+  const menu = sortMenuRef.value?.el;
+  const r = btn.getBoundingClientRect();
+  const gap = 4;
+  const margin = 8;
+  const menuH = menu?.offsetHeight ?? 0;
+  const menuW = menu?.offsetWidth ?? 0;
+  let top = r.bottom + gap;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
+  }
+  let left = r.right - menuW;
+  if (left < margin) left = margin;
+  sortMenuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
+
+function closeSortMenu(): void {
+  sortMenuOpen.value = false;
+  document.removeEventListener('mousedown', onSortMenuDocClick);
+  window.removeEventListener('resize', closeSortMenu);
+}
+
+function chooseSortMode(mode: WorkspaceSortMode): void {
+  emit('setWorkspaceSortMode', mode);
+  closeSortMenu();
+}
+
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('scroll', closeWsMenu, true);
+  document.removeEventListener('mousedown', onSortMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
+  window.removeEventListener('resize', closeSortMenu);
   clearTimeout(deleteArmTimer);
 });
 
@@ -442,109 +493,52 @@ function blinkOnce(): void {
           <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
           <InternalBuildBanner />
         </div>
-        <button
-          type="button"
-          class="collapse-btn"
-          :title="t('sidebar.collapseSidebar')"
-          :aria-label="t('sidebar.collapseSidebar')"
-          @click.stop="emit('collapse')"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M11 6h9" />
-            <path d="M11 12h9" />
-            <path d="M11 18h9" />
-            <path d="M7 9l-3 3 3 3" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="settings-btn"
-          :title="t('settings.title')"
-          :aria-label="t('settings.title')"
-          @click.stop="emit('openSettings')"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" />
-          </svg>
-        </button>
+        <Tooltip :text="t('sidebar.collapseSidebar')">
+          <IconButton
+            size="sm"
+            :label="t('sidebar.collapseSidebar')"
+            @click.stop="emit('collapse')"
+          >
+            <Icon name="panel-collapse" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip :text="t('settings.title')">
+          <IconButton
+            size="sm"
+            :label="t('settings.title')"
+            @click.stop="emit('openSettings')"
+          >
+            <Icon name="settings" />
+          </IconButton>
+        </Tooltip>
       </div>
 
-      <!-- Session search -->
-      <div class="search">
-        <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="7" cy="7" r="5" />
-          <path d="M11 11l3 3" />
-        </svg>
-        <input
-          v-model="searchQuery"
-          class="search-input"
-          type="text"
-          :placeholder="t('sidebar.searchPlaceholder')"
-          :aria-label="t('sidebar.searchPlaceholder')"
-          @keydown.esc.stop="clearSearch"
-        />
-        <button
-          v-if="isSearching"
-          type="button"
-          class="search-clear"
-          :title="t('sidebar.searchClear')"
-          :aria-label="t('sidebar.searchClear')"
-          @click.stop="clearSearch"
-        >
-          <svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
-          </svg>
-        </button>
-      </div>
+      <!-- Session search — opens the Spotlight-style search dialog -->
+      <button class="search" type="button" @click="openSearch">
+        <Icon class="search-icon" name="search" />
+        <span class="search-input">{{ t('sidebar.searchShortcut') }}</span>
+      </button>
 
       <!-- New chat + new workspace buttons -->
-      <div class="btn-wrap">
-        <button class="btn-new-chat" @click.stop="emit('create')">
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 2.5h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8.5l-2.5 2V11.5H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z" />
-          </svg>
+      <div class="btn-wrap" :class="{ 'btn-wrap--scrolled': sessionsScrolled }">
+        <button class="btn-new-chat" type="button" @click.stop="emit('create')">
+          <Icon name="plus" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
-        <button
-          v-if="showNewWorkspaceButton"
-          type="button"
-          class="btn-new-ws"
-          :title="t('sidebar.newWorkspace')"
-          :aria-label="t('sidebar.newWorkspace')"
-          @click.stop="emit('addWorkspace')"
-        >
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-            <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-            <path d="M1 5.5h12"/>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Search results (flat, across all workspaces) -->
-      <div v-if="isSearching" class="sessions">
-        <template v-if="searchResults.length > 0">
-          <SessionRow
-            v-for="s in searchResults"
-            :key="s.id"
-            :session="s"
-            :active="s.id === activeId"
-            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-            :question-count="pendingBySession[s.id]?.questions ?? 0"
-            :unread="unreadBySession[s.id] ?? false"
-            @select="onSelectResult($event)"
-            @rename="(id, title) => emit('rename', id, title)"
-            @archive="emit('archive', $event)"
-            @fork="emit('fork', $event)"
-          />
-        </template>
-        <div v-else class="empty">
-          {{ t('sidebar.searchNoResults') }}
-        </div>
+        <Tooltip :text="t('sidebar.newWorkspace')">
+          <IconButton
+            v-if="showNewWorkspaceButton"
+            size="sm"
+            :label="t('sidebar.newWorkspace')"
+            @click.stop="emit('addWorkspace')"
+          >
+            <Icon name="folder" />
+          </IconButton>
+        </Tooltip>
       </div>
 
       <!-- Session list — grouped by workspace -->
-      <div v-else class="sessions">
+      <div class="sessions" @scroll="onSessionsScroll">
         <!-- Empty state — only when no workspace is registered at all; empty
              workspaces still render their group header (with the + button). -->
         <div v-if="groups.length === 0" class="empty">
@@ -552,6 +546,34 @@ function blinkOnce(): void {
         </div>
 
         <template v-else>
+          <div class="side-section-label">
+            <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
+            <div class="side-section-actions">
+              <Tooltip :text="t('sidebar.sortWorkspaces')">
+                <IconButton
+                  class="side-section-toggle side-section-sort"
+                  size="sm"
+                  :label="t('sidebar.sortWorkspaces')"
+                  aria-haspopup="menu"
+                  :aria-expanded="sortMenuOpen"
+                  @click.stop="toggleSortMenu($event)"
+                >
+                  <Icon :name="workspaceSortMode === 'recent' ? 'clock' : 'sort'" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip :text="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')">
+                <IconButton
+                  class="side-section-toggle"
+                  size="sm"
+                  :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
+                  @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
+                >
+                  <Icon v-if="allCollapsed" name="expand" />
+                  <Icon v-else name="collapse" />
+                </IconButton>
+              </Tooltip>
+            </div>
+          </div>
           <div
             v-for="g in groups"
             :key="g.workspace.id"
@@ -567,7 +589,6 @@ function blinkOnce(): void {
               :group="g"
               :active-workspace-id="activeWorkspaceId"
               :active-id="activeId"
-              :selected-ids="selectedIds"
               :renaming-id="renamingId"
               :rename-value="renameValue"
               :rename-input-ref="getRenameInputRef()"
@@ -597,45 +618,60 @@ function blinkOnce(): void {
     </div>
 
     <!-- Workspace right-click menu (position:fixed) -->
-    <div
+    <Menu
       v-if="ghMenuOpen"
       ref="ghMenuRef"
       class="gh-menu"
       :style="ghMenuStyle"
       @click.stop
     >
-      <button type="button" class="ghm-item" @click="copyPathFromMenu">
-        {{ t('sidebar.copyPath') }}
-      </button>
-      <button type="button" class="ghm-item" @click="startRenameFromMenu">
-        {{ t('sidebar.rename') }}
-      </button>
-      <button type="button" class="ghm-item del" @click="deleteFromMenu">
+      <MenuItem @click="copyPathFromMenu">{{ t('sidebar.copyPath') }}</MenuItem>
+      <MenuItem @click="startRenameFromMenu">{{ t('sidebar.rename') }}</MenuItem>
+      <MenuItem danger @click="deleteFromMenu">
         {{ ghMenuTarget && deleteArmedWsId === ghMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </button>
-    </div>
+      </MenuItem>
+    </Menu>
 
     <!-- Workspace kebab menu (position:fixed, anchored to the ⋯ button so the
          scrolling session list cannot clip it) -->
-    <div
+    <Menu
       v-if="wsMenuOpenId !== null && wsMenuTarget"
       ref="wsMenuRef"
       class="ws-menu"
       :style="wsMenuStyle"
       @click.stop
     >
-      <button class="ws-menu-item" @click.stop="copyWsPath(wsMenuTarget)">
-        {{ t('sidebar.copyPath') }}
-      </button>
-      <div class="ws-menu-divider" />
-      <button class="ws-menu-item" @click.stop="startRenameWs(wsMenuTarget)">
-        {{ t('sidebar.rename') }}
-      </button>
-      <div class="ws-menu-divider" />
-      <button class="ws-menu-item del" @click.stop="deleteWs(wsMenuTarget)">
+      <MenuItem @click="copyWsPath(wsMenuTarget)">{{ t('sidebar.copyPath') }}</MenuItem>
+      <MenuItem separator />
+      <MenuItem @click="startRenameWs(wsMenuTarget)">{{ t('sidebar.rename') }}</MenuItem>
+      <MenuItem separator />
+      <MenuItem danger @click="deleteWs(wsMenuTarget)">
         {{ deleteArmedWsId === wsMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </button>
-    </div>
+      </MenuItem>
+    </Menu>
+    <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
+    <Menu
+      v-if="sortMenuOpen"
+      ref="sortMenuRef"
+      class="sort-menu"
+      :style="sortMenuStyle"
+      @click.stop
+    >
+      <MenuItem :active="workspaceSortMode === 'manual'" @click="chooseSortMode('manual')">
+        {{ t('sidebar.sortManual') }}
+      </MenuItem>
+      <MenuItem :active="workspaceSortMode === 'recent'" @click="chooseSortMode('recent')">
+        {{ t('sidebar.sortRecent') }}
+      </MenuItem>
+    </Menu>
+    <!-- Session search dialog (Cmd/Ctrl+K) -->
+    <SearchSessionsDialog
+      v-if="showSearch"
+      :sessions="sessions"
+      :active-id="activeId"
+      @select="onSelectSession"
+      @close="showSearch = false"
+    />
   </aside>
 </template>
 
@@ -647,12 +683,16 @@ function blinkOnce(): void {
   flex-direction: row;
   min-width: 0;
   height: 100%;
-  /* Alignment contract, inherited by SessionRow and the theme overrides in
-     style.css: text in the workspace header, the path line and session rows
-     all starts at --sb-pad-x + --sb-gutter + --sb-gap from the sidebar edge. */
-  --sb-pad-x: 16px;  /* row horizontal padding */
-  --sb-gutter: 20px; /* leading icon slot (14px folder icon + 6px margin) */
-  --sb-gap: 6px;     /* gap between the icon slot and the text */
+  /* Alignment contract, inherited by SessionRow and the de-terminalization
+     rules in style.css: text in the workspace header, the path line and session
+     rows all starts at --sb-pad-x + --sb-gutter + --sb-gap from the sidebar edge. */
+  --sb-pad-x: var(--space-4);  /* row horizontal padding */
+  --sb-gutter: 20px;           /* leading icon slot (14px folder icon + 6px margin) */
+  --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
+  /* Sidebar reads at 16px, matching the chat content size. Override the global
+     14px UI font on this subtree so the brand / action buttons / search (which
+     derive from --ui-font-size) all scale up together. */
+  --ui-font-size: 15px;
 }
 
 /* Session column. Width is set inline from the App resize handle. */
@@ -673,7 +713,7 @@ function blinkOnce(): void {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: var(--space-3) var(--space-3) var(--space-2);
   width: 100%;
   box-sizing: border-box;
 }
@@ -706,7 +746,7 @@ function blinkOnce(): void {
    glance. `--logo` is read by the mark's `fill`; overriding it on the svg
    recolors just this instance. */
 .ch-logo.is-dev {
-  --logo: #f5b301;
+  --logo: var(--color-logo-dev);
 }
 .ch-brand {
   display: flex;
@@ -717,10 +757,10 @@ function blinkOnce(): void {
   flex: 1;
 }
 .ch-name {
-  font-size: var(--ui-font-size);
+  font-size: 15px;
   font-weight: 500;
   line-height: 22px;
-  color: var(--ink);
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -739,100 +779,72 @@ function blinkOnce(): void {
 @container sidebar-col (max-width: 250px) {
   .ch-name { display: none; }
 }
-.settings-btn,
-.collapse-btn {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: none;
-  border: none;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-}
-.settings-btn:hover,
-.collapse-btn:hover { background: var(--soft); color: var(--ink); }
-.settings-btn:focus-visible,
-.collapse-btn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
 
 /* Action buttons */
  .btn-wrap {
   display: flex;
-  gap: 8px;
-  padding: 0 12px 8px;
-}
-.btn-wrap button {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 9px 10px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  font-weight: 400;
-  line-height: 1;
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
+  gap: 8px;
+  padding: 0 var(--space-2) var(--space-2);
+  position: relative;
+  z-index: 1;
+  background: var(--panel);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
 }
-.btn-wrap button svg { flex: none; }
-.btn-wrap button:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-}
-.btn-wrap button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.btn-wrap--scrolled {
+  border-bottom-color: var(--line);
+  box-shadow: var(--shadow-sm);
 }
 .btn-new-chat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex: 1;
-  gap: 10px;
-  color: var(--dim);
+  min-width: 0;
+  min-height: 26px;
+  padding: var(--space-1) calc(var(--sb-pad-x) - var(--space-2));
+  border: none;
+  border-radius: var(--radius-md);
   background: transparent;
-  border: 1px solid var(--line);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size);
+  cursor: pointer;
+  text-align: left;
 }
-.btn-new-chat:hover {
-  background: var(--panel);
-  border-color: var(--bd);
-  color: var(--ink);
-}
-.btn-new-ws {
-  flex: none;
-  justify-content: center;
-  aspect-ratio: 1;
-  padding: 9px 10px;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--line);
-}
-.btn-new-ws:hover {
-  background: var(--panel);
-  border-color: var(--bd);
-  color: var(--dim);
+.btn-new-chat:hover { background: var(--color-surface-sunken); }
+.btn-new-chat:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.btn-new-chat svg { flex: none; width: 16px; height: 16px; }
+.btn-new-chat span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Session search */
 .search {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 12px 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  gap: 12px;
+  min-height: 26px;
+  margin: 0 var(--space-2) var(--space-2);
+  padding: var(--space-1) calc(var(--sb-pad-x) - var(--space-2));
+  border: none;
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--muted);
+  color: var(--color-text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.search:focus-within {
-  border-color: var(--bd);
-  color: var(--ink);
+.search:hover { background: var(--color-surface-sunken); }
+.search:focus-visible {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+  outline: 2px solid var(--color-accent-bd);
+  outline-offset: -2px;
 }
 .search-icon {
   flex: none;
@@ -840,40 +852,19 @@ function blinkOnce(): void {
 .search-input {
   flex: 1;
   min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 1px);
-}
-.search-input::placeholder {
   color: var(--faint);
-}
-.search-clear {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-}
-.search-clear:hover {
-  background: var(--soft);
-  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--ui-font-size);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Sessions */
 .sessions {
   flex: 1;
   overflow-y: auto;
-  padding: 0 0 8px;
+  padding: 0 var(--space-2) var(--space-2);
   min-height: 0;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
@@ -882,95 +873,76 @@ function blinkOnce(): void {
 .sessions::-webkit-scrollbar-track { background: transparent; }
 .sessions::-webkit-scrollbar-thumb {
   background: var(--line);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
-.sessions::-webkit-scrollbar-thumb:hover { background: var(--bd); }
+.sessions::-webkit-scrollbar-thumb:hover { background: var(--color-accent-bd); }
+
+/* Section label — heads the workspace list below the action buttons. Aligns
+   with the rows' leading inset (--sb-pad-x) so it reads as the list's title. */
+.side-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: var(--space-2) var(--space-3) var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  user-select: none;
+}
+.side-section-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-section-toggle {
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.side-section-label:hover .side-section-toggle,
+.side-section-label:focus-within .side-section-toggle {
+  opacity: 1;
+}
+.side-section-toggle:hover {
+  color: var(--dim);
+}
+.side-section-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+.side-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 
 /* Workspace drag-to-reorder: a line at the top (drop-before) or bottom
    (drop-after) of the group under the cursor marks where the dragged workspace
    will land. Inset shadows avoid layout shift. */
-.ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
-.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
+.ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
+.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
 
 .empty {
-  padding: 24px 12px;
+  padding: var(--space-6) var(--space-3);
   text-align: center;
   color: var(--faint);
   font-size: calc(var(--ui-font-size) - 3px);
   line-height: 1.6;
 }
 
-/* Workspace kebab dropdown menu — fixed so the scroll container can't clip it;
-   anchored to the ⋯ trigger from toggleWsMenu(). */
-.ws-menu {
+/* Workspace menus — surface + items come from Menu / MenuItem; only the
+   fixed positioning stays here (anchored to the ⋯ trigger / cursor). */
+.ws-menu,
+.gh-menu,
+.sort-menu {
   position: fixed;
   top: 0;
   left: 0;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  z-index: 200;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  overflow: hidden;
-  min-width: 88px;
-}
-.ws-menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--ink);
-  padding: 6px 12px;
-}
-.ws-menu-item:hover { background: var(--panel2); }
-
-/* Danger items (delete workspace) — red in both light and dark schemes. */
-.ws-menu-item.del,
-.ghm-item.del { color: var(--err); }
-.ws-menu-item.del:hover,
-.ghm-item.del:hover {
-  background: color-mix(in srgb, var(--err) 10%, transparent);
-}
-
-.ws-menu-divider {
-  height: 1px;
-  background: var(--line);
-  margin: 2px 0;
-}
-
-/* ---------------------------------------------------------------------------
-   Workspace right-click menu (position:fixed)
-   --------------------------------------------------------------------------- */
-.gh-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  min-width: 140px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  padding: 4px;
-  z-index: 200;
-}
-.ghm-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: var(--ui-font-size-xs);
-  color: var(--text);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-.ghm-item:hover {
-  background: var(--soft);
+  z-index: var(--z-dropdown);
 }
 
 </style>

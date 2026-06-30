@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Design System v2 · 统一卡片语言（提案）</title>
+<style>
+  /* ---- design tokens (mirrors apps/kimi-web) ---- */
+  :root {
+    --color-bg: #ffffff;
+    --color-surface: #fafbfc;
+    --color-surface-raised: #ffffff;
+    --color-surface-sunken: #f3f5f8;
+    --color-text: #14171c;
+    --color-text-soft: #3d4652;
+    --color-text-muted: #6b7280;
+    --color-text-faint: #9aa3af;
+    --color-fg-on-accent: #ffffff;
+    --color-line: #e7eaee;
+    --color-line-strong: #d4d9e0;
+    --color-accent: #1783ff;
+    --color-accent-hover: #0f6fe0;
+    --color-accent-soft: #e8f3ff;
+    --color-accent-bd: #cfe6ff;
+    --color-success: #0e7a38;
+    --color-success-soft: #e7f6ee;
+    --color-warning: #a9610a;
+    --color-warning-soft: #fbf1e0;
+    --color-warning-bd: #f0d9b8;
+    --color-danger: #c0392b;
+    --color-danger-soft: #fbeaea;
+    --color-danger-bd: #f3cccc;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-full: 999px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --text-xs: 12px;
+    --text-sm: 13px;
+    --text-base: 14px;
+    --text-md: 15px;
+    --text-lg: 16px;
+    --text-xl: 18px;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+    --shadow-xs: 0 1px 2px rgba(16,24,40,.04);
+    --shadow-sm: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-md: 0 4px 12px rgba(16,24,40,.07), 0 2px 4px rgba(16,24,40,.05);
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --duration-fast: 120ms;
+    --duration-base: 160ms;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- page chrome ---- */
+  .page { max-width: 1080px; margin: 0 auto; padding: 56px 40px 120px; }
+  .hero { padding-bottom: 32px; border-bottom: 1px solid var(--color-line); margin-bottom: 48px; }
+  .eyebrow { display: inline-block; font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--color-accent-hover); background: var(--color-accent-soft); border: 1px solid var(--color-accent-bd); border-radius: var(--radius-sm); padding: 5px 11px; margin-bottom: 18px; }
+  .hero h1 { font-size: 38px; font-weight: 600; letter-spacing: -.025em; margin: 0 0 14px; }
+  .hero .lead { font-size: var(--text-lg); color: var(--color-text-muted); max-width: 760px; margin: 0; }
+  .callout { display: flex; gap: 12px; padding: 14px 16px; border-radius: var(--radius-md); font-size: var(--text-base); line-height: 1.55; background: var(--color-accent-soft); border: 1px solid var(--color-accent-bd); color: var(--color-text-soft); margin: 24px 0 0; }
+  .callout.warn { background: var(--color-warning-soft); border-color: var(--color-warning-bd); }
+
+  section { margin-bottom: 64px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
+  .sec-num { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--color-accent-hover); }
+  .sec-title { font-size: 24px; font-weight: 600; letter-spacing: -.02em; margin: 0; }
+  .sec-desc { color: var(--color-text-muted); font-size: var(--text-md); max-width: 760px; margin: 0 0 24px; }
+  h3.sub { font-size: 15px; font-weight: 600; margin: 28px 0 12px; }
+
+  /* stage = a rendered example box */
+  .stage { border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-bg); padding: 28px; margin: 16px 0; }
+  .stage-label { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .05em; color: var(--color-text-faint); text-transform: uppercase; margin-bottom: 16px; }
+  .stage-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 760px) { .stage-row { grid-template-columns: 1fr; } }
+
+  code, .mono { font-family: var(--font-mono); background: var(--color-surface-sunken); border: 1px solid var(--color-line); border-radius: 5px; padding: 0 5px; font-size: .86em; }
+  ul.clean { list-style: none; padding: 0; margin: 12px 0; }
+  ul.clean li { position: relative; padding: 5px 0 5px 20px; color: var(--color-text-soft); border-bottom: 1px solid var(--color-line); }
+  ul.clean li:last-child { border-bottom: none; }
+  ul.clean li::before { content: ""; position: absolute; left: 4px; top: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); }
+  ul.clean li b { color: var(--color-text); }
+
+  /* ============================================================
+     THE UNIFIED CARD SHELL  (v2 proposal)
+     ============================================================ */
+  .v2-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    /* FLAT — no shadow */
+  }
+  .v2-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 11px;
+    font: var(--weight-medium) var(--text-sm) var(--font-ui);
+    color: var(--color-text);
+    cursor: pointer;
+  }
+  .v2-card-head:hover { background: var(--color-surface-sunken); }
+  .v2-card-body { padding: 11px; color: var(--color-text-soft); font-size: var(--text-sm); line-height: 1.65; }
+  .v2-card-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 11px; border-top: 1px solid var(--color-line); }
+
+  /* operation-card head: mono, compact, no band */
+  .v2-op-head { font-family: var(--font-mono); font-weight: var(--weight-medium); min-height: 30px; }
+  .v2-op-head .ic { color: var(--color-text-faint); flex: none; }
+  .v2-op-head .nm { font-weight: var(--weight-medium); flex: none; }
+  .v2-op-head .ar { color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+
+  /* attention-card head: colored band, sans title */
+  .v2-att-head { background: var(--color-accent-soft); border-bottom: 1px solid var(--color-accent-bd); }
+  .v2-att-head.warn { background: var(--color-warning-soft); border-bottom-color: var(--color-warning-bd); }
+  .v2-att-head .ic { color: var(--color-accent); flex: none; }
+  .v2-att-head.warn .ic { color: var(--color-warning); }
+  .v2-att-head .nm { color: var(--color-accent-hover); font-weight: var(--weight-semibold); }
+  .v2-att-head.warn .nm { color: var(--color-warning); }
+
+  /* status dot */
+  .v2-dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--color-text-faint); flex: none; }
+  .v2-dot.ok { background: var(--color-success); }
+  .v2-dot.err { background: var(--color-danger); }
+  .v2-dot.run { background: var(--color-accent); animation: v2pulse 1.4s var(--ease-out) infinite; }
+  @keyframes v2pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 40%, transparent); } 100% { box-shadow: 0 0 0 6px transparent; } }
+
+  .v2-meta { margin-left: auto; color: var(--color-text-faint); font-size: var(--text-xs); display: flex; align-items: center; gap: 6px; }
+  .v2-chev { color: var(--color-text-faint); transition: transform var(--duration-fast) var(--ease-out); }
+  .v2-open .v2-chev { transform: rotate(90deg); }
+
+  /* sunken detail */
+  .v2-detail { padding: 11px 13px; background: var(--color-surface-sunken); border-top: 1px solid var(--color-line); color: var(--color-text); font: var(--text-sm)/1.65 var(--font-mono); white-space: pre-wrap; word-break: break-word; }
+
+  /* grouping: group owns border+radius, rows flat + hairlines */
+  .v2-group { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: var(--radius-md); overflow: hidden; }
+  .v2-group-row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 11px; font-family: var(--font-mono); font-size: var(--text-sm); cursor: pointer; }
+  .v2-group-row:hover { background: var(--color-surface-sunken); }
+  .v2-group-row + .v2-group-row { border-top: 1px solid var(--color-line); }
+
+  /* buttons (for foot) */
+  .v2-btn { padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-line-strong); background: var(--color-surface-raised); color: var(--color-text); font: var(--weight-medium) var(--text-sm) var(--font-ui); cursor: pointer; }
+  .v2-btn:hover { background: var(--color-surface-sunken); }
+  .v2-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-fg-on-accent); }
+  .v2-btn.danger { background: var(--color-danger); border-color: var(--color-danger); color: var(--color-fg-on-accent); }
+
+  /* before/after compare */
+  .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 760px) { .cmp { grid-template-columns: 1fr; } }
+  .cmp-col .cmp-tag { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: .04em; margin-bottom: 10px; }
+  .cmp-tag.before { color: var(--color-danger); }
+  .cmp-tag.after { color: var(--color-success); }
+
+  /* OLD card (shadow + radius-lg) for comparison */
+  .old-card { background: var(--color-surface-raised); border: 1px solid var(--color-line); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; }
+  .old-card-head { padding: 11px 14px; border-bottom: 1px solid var(--color-line); font: var(--weight-semibold) var(--text-sm) var(--font-ui); }
+  .old-card-body { padding: 14px; font-size: var(--text-sm); color: var(--color-text-soft); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="hero">
+    <span class="eyebrow">Design System v2 · 提案</span>
+    <h1>统一卡片语言</h1>
+    <p class="lead">
+      把工具卡片那套「扁平、紧凑、克制」的语言立为全站标准：<b>所有卡片统一为扁平壳（无阴影）+ radius-md</b>；
+      头部按语意区分（操作卡 = 等宽紧凑、关注卡 = 彩色色带）；分组统一为「组拥有边框、行用发际线分隔」。
+    </p>
+    <div class="callout">
+      <span>📐</span>
+      <div>这是<b>路线 3</b> 的可视化提案：统一壳（消除「同一类东西两种壳」），保留必要的头部区分。所有示例都是真实渲染（非截图），可直接对照。</div>
+    </div>
+  </div>
+
+  <!-- ============ 01 统一卡片壳 ============ -->
+  <section id="shell">
+    <div class="sec-head"><span class="sec-num">01</span><h2 class="sec-title">统一卡片壳</h2></div>
+    <p class="sec-desc">全站所有卡片共用同一个壳：<b>扁平（无阴影）+ surface 底 + 1px line 描边 + radius-md (8px)</b>。不再有的卡片有阴影、有的没有。</p>
+
+    <div class="stage">
+      <div class="stage-label">统一壳 · v2-card</div>
+      <div class="v2-card" style="max-width: 420px;">
+        <div class="v2-card-head">
+          <span style="color:var(--color-text-faint)">◇</span>
+          <span>卡片标题</span>
+          <span class="v2-meta">meta</span>
+        </div>
+        <div class="v2-card-body">卡片正文。所有卡片都用这个壳：扁平、8px 圆角、1px 描边、无阴影。</div>
+        <div class="v2-card-foot">
+          <button class="v2-btn">取消</button>
+          <button class="v2-btn primary">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">规则</h3>
+    <ul class="clean">
+      <li><b>无阴影</b>：卡片不靠阴影堆层级，靠 1px 描边 + 底色。</li>
+      <li><b>radius-md (8px)</b>：所有卡片统一 8px 圆角（不再有的 8、有的 12）。</li>
+      <li><b>surface 底</b>：默认 <code>--color-surface</code>（不是 raised）。</li>
+      <li><b>头部按语意区分</b>：见 02 / 03。</li>
+    </ul>
+
+    <div class="callout warn">
+      <span>⚠</span>
+      <div>这和当前 design system v1（卡片 <code>shadow-sm</code> + <code>radius-lg</code>）不同。v2 把工具卡片的「扁平 + radius-md」立为标准。</div>
+    </div>
+  </section>
+
+  <!-- ============ 02 操作卡 ============ -->
+  <section id="operation">
+    <div class="sec-head"><span class="sec-num">02</span><h2 class="sec-title">操作卡（工具卡片）</h2></div>
+    <p class="sec-desc">工具调用、Agent 组、Todo、Swarm 这类「操作/内联」卡片：<b>等宽紧凑头 + 状态点 + 可展开的 sunken 详情</b>。</p>
+
+    <div class="stage">
+      <div class="stage-label">操作卡 · 单条</div>
+      <div class="v2-card v2-open" style="max-width: 520px;">
+        <div class="v2-card-head v2-op-head">
+          <span class="ic">⌘</span>
+          <span class="nm">bash</span>
+          <span class="ar">pnpm --filter web typecheck</span>
+          <span class="v2-meta"><span class="v2-dot ok"></span>1.2s</span>
+          <span class="v2-chev">›</span>
+        </div>
+        <div class="v2-detail">✓ typecheck passed in 1.2s
+no errors found</div>
+      </div>
+    </div>
+
+    <h3 class="sub">规则</h3>
+    <ul class="clean">
+      <li><b>头部 30px、等宽</b>：icon + 名称 + 参数（省略）+ 状态点 + 时间 + 展开箭头。</li>
+      <li><b>状态点</b>：绿 = 完成、红 = 失败、accent 脉冲 = 运行中（见 05）。</li>
+      <li><b>详情 sunken</b>：展开后是 <code>surface-sunken</code> 浅底、缩进、等宽。</li>
+      <li><b>无彩色色带</b>：操作卡的头部是透明的（hover 才变浅），不像关注卡有色带。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 03 关注卡 ============ -->
+  <section id="attention">
+    <div class="sec-head"><span class="sec-num">03</span><h2 class="sec-title">关注卡（决策卡）</h2></div>
+    <p class="sec-desc">Question / Approval 这类「需要用户关注/决策」的卡片：<b>壳仍是统一的扁平 + radius-md，但头部用彩色色带 + 非等宽标题</b>来提示「这需要你处理」。这是有意的区分。</p>
+
+    <div class="stage-row">
+      <div>
+        <div class="stage-label">关注卡 · Question（accent）</div>
+        <div class="v2-card">
+          <div class="v2-card-head v2-att-head">
+            <span class="ic">?</span>
+            <span class="nm">需要确认</span>
+            <span class="v2-meta">步骤 1/2</span>
+          </div>
+          <div class="v2-card-body">要把登录接口改成 JWT 吗？这会改动 <code>auth.ts</code> 和 <code>middleware.ts</code>。</div>
+          <div class="v2-card-foot">
+            <button class="v2-btn">取消</button>
+            <button class="v2-btn primary">确认</button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="stage-label">关注卡 · Approval（warning）</div>
+        <div class="v2-card">
+          <div class="v2-card-head v2-att-head warn">
+            <span class="ic">!</span>
+            <span class="nm">需要审批</span>
+            <span class="v2-meta">required</span>
+          </div>
+          <div class="v2-card-body">即将执行 <code>rm -rf node_modules</code>，是否允许？</div>
+          <div class="v2-card-foot">
+            <button class="v2-btn">拒绝</button>
+            <button class="v2-btn danger">允许</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">规则</h3>
+    <ul class="clean">
+      <li><b>壳统一</b>：和操作卡一样的扁平 + radius-md（不再有阴影）。</li>
+      <li><b>色带头部</b>：accent（question）/ warning（approval）软色头带 + 同色标题。</li>
+      <li><b>非等宽标题</b>：用 <code>font-ui</code> + semibold，和操作卡的等宽紧凑头形成「有意区分」。</li>
+      <li><b>意图</b>：色带 =「这需要你处理」，操作卡无头带 =「这是后台操作」。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 04 分组 ============ -->
+  <section id="grouping">
+    <div class="sec-head"><span class="sec-num">04</span><h2 class="sec-title">分组（堆叠）</h2></div>
+    <p class="sec-desc">多个相关项归组时，<b>组拥有外边框 + 圆角，组内每行扁平、只用 1px 发际线分隔</b>。这是你喜欢的「多工具调用集合」的做法，应推广到所有分组。</p>
+
+    <div class="stage">
+      <div class="stage-label">分组 · 组拥有边框、行用发际线分隔</div>
+      <div class="v2-group" style="max-width: 520px;">
+        <div class="v2-group-row" style="min-height: 32px; font-family: var(--font-ui); color: var(--color-text-muted);">
+          <span class="v2-dot run"></span>
+          <span>☰</span>
+          <span style="color:var(--color-text);font-weight:var(--weight-medium)">3 个工具调用</span>
+          <span>· 运行中</span>
+          <span style="margin-left:auto;color:var(--color-text-faint)">›</span>
+        </div>
+        <div class="v2-group-row">
+          <span style="color:var(--color-text-faint)">⌘</span>
+          <span>bash</span>
+          <span style="color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">pnpm typecheck</span>
+          <span class="v2-dot ok"></span>
+        </div>
+        <div class="v2-group-row">
+          <span style="color:var(--color-text-faint)">✎</span>
+          <span>edit</span>
+          <span style="color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">auth.ts</span>
+          <span class="v2-dot ok"></span>
+        </div>
+        <div class="v2-group-row">
+          <span style="color:var(--color-text-faint)">⌘</span>
+          <span>bash</span>
+          <span style="color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">pnpm test</span>
+          <span class="v2-dot run"></span>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">规则</h3>
+    <ul class="clean">
+      <li><b>组拥有边框 + 圆角</b>：组是一个整体（一个壳）。</li>
+      <li><b>行扁平</b>：组内每行无自己的边框/圆角/阴影。</li>
+      <li><b>发际线分隔</b>：行与行之间只用 1px <code>line</code> 分隔。</li>
+      <li><b>组头可折叠</b>：组头 hover 变浅、箭头旋转 90°。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 05 状态指示器 ============ -->
+  <section id="status">
+    <div class="sec-head"><span class="sec-num">05</span><h2 class="sec-title">状态指示器</h2></div>
+    <p class="sec-desc">状态用统一的「颜色词汇」：<b>绿 = 成功/完成、红 = 失败、accent = 进行中/激活、muted = 闲置</b>。形态可按场景变（点、图标、复选框），但颜色词汇不变。</p>
+
+    <div class="stage">
+      <div class="stage-label">状态点</div>
+      <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:8px"><span class="v2-dot ok"></span>成功 / 完成</span>
+        <span style="display:flex;align-items:center;gap:8px"><span class="v2-dot err"></span>失败</span>
+        <span style="display:flex;align-items:center;gap:8px"><span class="v2-dot run"></span>进行中</span>
+        <span style="display:flex;align-items:center;gap:8px"><span class="v2-dot"></span>闲置</span>
+      </div>
+    </div>
+
+    <ul class="clean">
+      <li><b>颜色词汇统一</b>：success=绿、danger=红、accent=蓝、muted=灰。</li>
+      <li><b>形态可按场景</b>：工具用点/图标、Todo 用复选框、Question 用步骤点——但颜色含义一致。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 06 before / after ============ -->
+  <section id="compare">
+    <div class="sec-head"><span class="sec-num">06</span><h2 class="sec-title">现有组件改造对比</h2></div>
+    <p class="sec-desc">把现有卡片套到统一语言上：左边是现状（shadow-sm + radius-lg），右边是 v2（扁平 + radius-md）。头部区分保留。</p>
+
+    <!-- QuestionCard -->
+    <h3 class="sub">QuestionCard</h3>
+    <div class="cmp">
+      <div class="cmp-col">
+        <div class="cmp-tag before">BEFORE · shadow-sm + radius-lg</div>
+        <div class="old-card">
+          <div class="old-card-head" style="background:var(--color-accent-soft);border-bottom-color:var(--color-accent-bd);color:var(--color-accent-hover)">需要确认</div>
+          <div class="old-card-body">要把登录接口改成 JWT 吗？</div>
+        </div>
+      </div>
+      <div class="cmp-col">
+        <div class="cmp-tag after">AFTER · 扁平 + radius-md</div>
+        <div class="v2-card">
+          <div class="v2-card-head v2-att-head"><span class="ic">?</span><span class="nm">需要确认</span></div>
+          <div class="v2-card-body">要把登录接口改成 JWT 吗？</div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin:10px 0 0">变化：去阴影、圆角 12→8、保留 accent 色带头（关注卡的有意区分）。</p>
+
+    <!-- TodoCard -->
+    <h3 class="sub">TodoCard</h3>
+    <div class="cmp">
+      <div class="cmp-col">
+        <div class="cmp-tag before">BEFORE · shadow-sm + radius-lg</div>
+        <div class="old-card">
+          <div class="old-card-head" style="font-family:var(--font-mono);font-size:var(--text-xs);border-bottom:none;padding-bottom:6px">待办 · 2/3</div>
+          <div class="old-card-body" style="padding-top:0">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="width:15px;height:15px;border-radius:4px;background:var(--color-success)"></span>改 JWT 签发</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="width:15px;height:15px;border-radius:4px;background:var(--color-accent)"></span>补单元测试</div>
+          </div>
+        </div>
+      </div>
+      <div class="cmp-col">
+        <div class="cmp-tag after">AFTER · 扁平 + radius-md</div>
+        <div class="v2-card">
+          <div class="v2-card-head" style="font-family:var(--font-mono);font-size:var(--text-xs)"><span>待办 · 2/3</span><span class="v2-chev" style="transform:rotate(90deg)">›</span></div>
+          <div class="v2-card-body" style="padding:0 11px 11px">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="width:15px;height:15px;border-radius:4px;background:var(--color-success)"></span>改 JWT 签发</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="width:15px;height:15px;border-radius:4px;background:var(--color-accent)"></span>补单元测试</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin:10px 0 0">变化：去阴影、圆角 12→8、头部并入卡片壳（不再是独立 padding 块）。</p>
+
+    <!-- SwarmCard -->
+    <h3 class="sub">SwarmCard</h3>
+    <div class="cmp">
+      <div class="cmp-col">
+        <div class="cmp-tag before">BEFORE · shadow-sm + radius-lg</div>
+        <div class="old-card">
+          <div class="old-card-head">Swarm · 3/5</div>
+          <div class="old-card-body">5 个子任务并行运行中…</div>
+        </div>
+      </div>
+      <div class="cmp-col">
+        <div class="cmp-tag after">AFTER · 扁平 + radius-md</div>
+        <div class="v2-card">
+          <div class="v2-card-head"><span>Swarm · 3/5</span><span class="v2-chev">›</span></div>
+          <div class="v2-card-body">5 个子任务并行运行中…</div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size:var(--text-sm);color:var(--color-text-muted);margin:10px 0 0">变化：去阴影、圆角 12→8。</p>
+
+    <div class="callout" style="margin-top:28px">
+      <span>✓</span>
+      <div><b>统一后的效果</b>：所有卡片都是「扁平 + 8px 圆角 + 1px 描边」，视觉重心更低、更统一；Question/Approval 仍用色带头部表达「需要关注」，与操作卡的等宽紧凑头形成有意区分。</div>
+    </div>
+  </section>
+
+  <!-- ============ 07 落地清单 ============ -->
+  <section id="roadmap">
+    <div class="sec-head"><span class="sec-num">07</span><h2 class="sec-title">落地清单</h2></div>
+    <p class="sec-desc">如果认可这个方向，按这个顺序改。</p>
+    <ul class="clean">
+      <li><b>1. 统一壳</b>：<code>Card.vue</code> 去 <code>shadow-sm</code>、<code>radius-lg → radius-md</code>。</li>
+      <li><b>2. 统一壳</b>：<code>TodoCard</code> / <code>SwarmCard</code> 去 <code>shadow-sm</code>、<code>radius-lg → radius-md</code>。</li>
+      <li><b>3. 保留头部区分</b>：Question/Approval 的色带头部不动（关注卡的有意区分）。</li>
+      <li><b>4. 同步 design system v1</b>：把卡片的 <code>shadow-sm</code> 去掉、<code>radius-lg</code> 改 <code>radius-md</code>，与 v2 对齐。</li>
+      <li><b>5. 分组</b>：AgentGroup 的组内从「网格分卡」考虑是否也改成「堆叠发际线」（可选，影响较大）。</li>
+    </ul>
+  </section>
+
+</div>
+</body>
+</html>

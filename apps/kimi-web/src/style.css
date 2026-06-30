@@ -1,13 +1,161 @@
-@import "tailwindcss";
+/* ---- Minimal reset (replaces Tailwind preflight) ----
+   Just enough normalization so UA defaults don't leak through; the app's own
+   token-driven styles layer on top. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  tab-size: 4;
+}
+body {
+  margin: 0;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-size: inherit;
+  font-weight: inherit;
+  margin: 0;
+}
+p,
+blockquote,
+dl,
+dd,
+figure,
+pre {
+  margin: 0;
+}
+ol,
+ul,
+menu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+b,
+strong {
+  /* Pin <b>/<strong> to our bold token instead of the UA `bolder` keyword, so
+     bold emphasis always lands on the design-system weight (and lightens with
+     it) rather than jumping a fixed heavier step above the parent. */
+  font-weight: var(--weight-medium);
+}
+small {
+  font-size: 80%;
+}
+sub,
+sup {
+  position: relative;
+  font-size: 75%;
+  line-height: 0;
+  vertical-align: baseline;
+}
+sub {
+  bottom: -0.25em;
+}
+sup {
+  top: -0.5em;
+}
+button,
+input,
+optgroup,
+select,
+textarea {
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: 100%;
+  line-height: inherit;
+  color: inherit;
+}
+button,
+select {
+  text-transform: none;
+}
+button,
+[type="button"],
+[type="reset"],
+[type="submit"] {
+  -webkit-appearance: button;
+  background: transparent;
+  background-image: none;
+}
+button,
+[role="button"] {
+  cursor: pointer;
+}
+:disabled {
+  cursor: default;
+}
+img,
+svg,
+video,
+canvas,
+audio,
+iframe,
+embed,
+object {
+  display: block;
+}
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+textarea {
+  resize: vertical;
+}
+input::placeholder,
+textarea::placeholder {
+  opacity: 1;
+}
+table {
+  border-collapse: collapse;
+  border-color: inherit;
+  text-indent: 0;
+}
+hr {
+  height: 0;
+  color: inherit;
+  border-top-width: 1px;
+}
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+legend {
+  padding: 0;
+}
+dialog {
+  padding: 0;
+}
+summary {
+  display: list-item;
+}
+[hidden] {
+  display: none;
+}
 
 :root {
-  --ink: #14171c;
-  --text: #262626;
   --dim: #595959;
   --muted: #8a8a8a;
   --faint: #b5b5b5;
-  --line: #e7eaee;
-  --line2: #eef1f4;
+  --line: #e9edf3;
+  --line2: #f1f4f8;
+  /* Soft neutral canvas the white cards/bubbles lift off, plus the soft
+     elevation shadows shared by the per-element card rules. */
+  --canvas: #f4f6fa;
+  --sh: 0 1px 3px rgba(28, 40, 66, 0.05), 0 6px 18px rgba(28, 40, 66, 0.06);
+  --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
   --panel: #fafbfc;
   --panel2: #f3f5f8;
   --bg: #ffffff;
@@ -23,27 +171,46 @@
   --bluebg: #e8f3ff;
   --blueln: #cfe6ff;
   --ok: #0e7a38;
-  --warn: #92660a;
+  /* Keep in sync with --color-warning / --color-danger in the v2 token layer
+     below (light values; dark overrides live in the data-color-scheme blocks). */
+  --warn: #a9610a;
   --star: #eab308;
-  --err: #b91c1c;
+  --err: #c0392b;
   /* Subtle hover wash for icon buttons (toast close, etc.). */
   --hover: rgba(0, 0, 0, 0.05);
-  /* Radius scale (Modern). A regular 8 / 12 / 16 progression: list items + pill
-     controls use --r-sm, the input box + cards use --r-md, dialogs use --r-lg.
-     The Terminal theme keeps its own sharper 3–4px corners. */
-  --r-xs: 6px;
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
+  /* Legacy radius aliases (kept for one version cycle, design-system §02).
+     Byte-for-byte identical to the old 6 / 8 / 12 / 16 scale, now expressed
+     against the canonical --radius-* scale below so the two cannot drift.
+     New work should reference --radius-* directly. */
+  --r-xs: var(--radius-sm);
+  --r-sm: var(--radius-md);
+  --r-md: var(--radius-lg);
+  --r-lg: var(--radius-xl);
   --ui-font-size: 14px;
   --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
   --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
   --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
   --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
-  --content-font-size: 16px;
+  --content-font-size: 15px;
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --sans: var(--mono);
+  /* Body/UI font follows the design-system canonical token (system UI font
+     first; Inter intentionally NOT in the body chain — it stays reserved for
+     --font-display headings). Mirrors --font-ui so the two can never drift. */
+  --sans: var(--font-ui);
   color-scheme: light dark;
+}
+
+/* -- icon primitive (design-system §02) -------------------------------------
+   Shared by the <Icon> component and iconSvg() v-html strings (lib/icons.ts).
+   non-scaling-stroke keeps the 1.5px stroke identical whether an icon's source
+   grid is 16, 24 or 12, so every icon renders at a uniform weight. */
+.kw-icon {
+  display: inline-block;
+  flex: none;
+  vertical-align: -0.15em;
+}
+.kw-icon > * {
+  vector-effect: non-scaling-stroke;
 }
 
 /* color-scheme drives UA-rendered parts (scrollbars, form controls, etc.).
@@ -59,8 +226,6 @@ html[data-color-scheme="system"] {
 /* Dark mode variables — applied when explicitly chosen or via system preference. */
 html[data-color-scheme="dark"] {
   color-scheme: dark;
-  --ink: #e8eaed;
-  --text: #c9cdd4;
   --dim: #9aa0a8;
   --muted: #727983;
   --faint: #525960;
@@ -81,12 +246,13 @@ html[data-color-scheme="dark"] {
   --star: #facc15;
   --err: #f85149;
   --hover: rgba(255, 255, 255, 0.07);
+  --canvas: #161b22;
+  --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+  --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"] {
-    --ink: #e8eaed;
-    --text: #c9cdd4;
     --dim: #9aa0a8;
     --muted: #727983;
     --faint: #525960;
@@ -107,12 +273,20 @@ html[data-color-scheme="dark"] {
     --star: #facc15;
     --err: #f85149;
     --hover: rgba(255, 255, 255, 0.07);
+    --canvas: #161b22;
+    --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+    --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
   }
 }
 
 /* Accent: black/white (Vercel-style) — remaps the blue tokens to grayscale.
-   Orthogonal to the terminal/modern theme (only recolours the accent). */
+   Orthogonal to the color scheme (only recolours the accent). */
 html[data-accent="mono"] {
+  --accent-primary: #171717;
+  --color-accent: #171717;
+  --color-accent-hover: #383838;
+  --color-accent-soft: #f1f1f2;
+  --color-accent-bd: #d4d4d8;
   --blue: #171717;
   --blue2: #383838;
   --soft: #f1f1f2;
@@ -127,6 +301,11 @@ html[data-accent="mono"] {
    Text/icons sitting ON the accent colour use var(--bg), so the near-white
    accent stays readable here. */
 html[data-color-scheme="dark"][data-accent="mono"] {
+  --accent-primary: #e8eaed;
+  --color-accent: #e8eaed;
+  --color-accent-hover: #c9cdd4;
+  --color-accent-soft: #21262d;
+  --color-accent-bd: #444c56;
   --blue: #e8eaed;
   --blue2: #c9cdd4;
   --soft: #21262d;
@@ -137,6 +316,11 @@ html[data-color-scheme="dark"][data-accent="mono"] {
 }
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"][data-accent="mono"] {
+    --accent-primary: #e8eaed;
+    --color-accent: #e8eaed;
+    --color-accent-hover: #c9cdd4;
+    --color-accent-soft: #21262d;
+    --color-accent-bd: #444c56;
     --blue: #e8eaed;
     --blue2: #c9cdd4;
     --soft: #21262d;
@@ -147,6 +331,228 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   }
 }
 
+
+/* ===========================================================================
+   DESIGN TOKENS v2 (redesign.html §03)
+   Additive, scheme-aware token scales that sit alongside the legacy short
+   aliases (--bg / --ink / --blue / --r-* …) defined above. The legacy aliases
+   are kept byte-for-byte so existing components render identically (zero
+   regression); new and redesigned work references the semantic `--color-*`
+   layer plus the spacing / radius / elevation / motion / type scales below.
+
+   Light values live in `:root`; dark values are overridden in the two
+   `data-color-scheme` blocks that follow. Only 4 colour "seeds" are meant to
+   be customised — everything else is derived from / paired to them.
+   =========================================================================== */
+:root {
+  /* -- 4 colour seeds (the only knobs a theme customiser should need) ------ */
+  --accent-primary: #1783ff;
+  --accent-secondary: #6b7280;
+  --surface-light: #ffffff;
+  --surface-dark: #0d1117;
+
+  /* -- semantic colour layer (light) --------------------------------------- */
+  --color-bg: #ffffff;
+  --color-surface: #fafbfc;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #f3f5f8;
+  /* Foreground text colours. `--color-text` is the default solid body / UI
+     colour (headings and emphasis share it); muted / faint step down for
+     secondary and tertiary copy; on-accent is text drawn on the accent fill. */
+  --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-muted: #6b7280;
+  --color-text-faint: #9aa3af;
+  --color-text-on-accent: #ffffff;
+  --color-line: #e7eaee;
+  --color-line-strong: #d4d9e0;
+  --color-accent: var(--accent-primary);
+  --color-accent-hover: #0f6fe0;
+  --color-accent-soft: #e8f3ff;
+  --color-accent-bd: #cfe6ff;
+  --color-success: #0e7a38;
+  --color-success-soft: #e7f6ee;
+  --color-success-bd: #bfe3cc;
+  --color-warning: #a9610a;
+  --color-warning-soft: #fbf1e0;
+  --color-warning-bd: #f0d9b8;
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbeaea;
+  --color-danger-bd: #f0cccc;
+  /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+  --color-done: #8250df;
+  --color-done-soft: #f3e8ff;
+  --color-done-bd: #e0ccff;
+  --color-info: var(--accent-primary);
+  /* Dev-only brand tint: recolors the logo mark golden-yellow so a `pnpm dev:web`
+     tab is visually distinct from production. Referenced by Sidebar's
+     `.ch-logo.is-dev` override of `--logo`. Scheme-independent on purpose. */
+  --color-logo-dev: #f5b301;
+
+  /* -- spacing (4px grid) -------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* -- radius -------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 999px;
+
+  /* -- elevation / z-index ------------------------------------------------- */
+  --z-base: 0;
+  --z-sticky: 100;
+  --z-dropdown: 200;
+  --z-tooltip: 250;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-toast: 600;
+  --z-max: 9999;
+
+  /* -- shadows (light) ----------------------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
+  --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
+
+  /* -- motion -------------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 260ms;
+
+  /* -- type families ------------------------------------------------------- */
+  /* UI/body use the platform's native UI font first (design-system §02);
+     Inter is intentionally NOT in this chain — it is reserved for
+     --font-display (optional headings / brand wordmarks) below. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans SC",
+    Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-display: "Inter Variable", "Inter", var(--font-ui);
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* -- type scale (6 levels, design-system §03) --------------------------- */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 700;
+
+  /* -- focus ring (design-system §02) -------------------------------------- */
+  --p-focus-ring: 0 0 0 3px var(--color-accent-soft);
+  --p-focus-ring-strong: 0 0 0 3px var(--color-accent-soft), 0 0 0 1px var(--color-accent);
+
+  /* -- selection (design-system §02) --------------------------------------- */
+  --p-selection: rgba(23, 131, 255, 0.18);
+
+  /* -- icon sizes (design-system §02) -------------------------------------- */
+  --p-ic-sm: 14px;
+  --p-ic-md: 16px;
+  --p-ic-lg: 20px;
+
+  /* -- layout & breakpoints (design-system §02) ---------------------------- */
+  --p-sidebar-w: 264px;
+  --p-content-max: 760px;
+  --p-content-wide: 920px;
+  --p-bp-sm: 640px;
+  --p-bp-md: 980px;
+}
+
+/* Design tokens v2 — dark values (explicit choice). */
+html[data-color-scheme="dark"] {
+  --accent-primary: #58a6ff;
+  --color-bg: #0d1117;
+  --color-surface: #161b22;
+  --color-surface-raised: #1c2128;
+  --color-surface-sunken: #0d1117;
+  --color-text: #c9cdd4;
+  --color-text-muted: #9aa0a8;
+  --color-text-faint: #6b7280;
+  --color-line: #2d333b;
+  --color-line-strong: #3d444d;
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79b8ff;
+  --color-accent-soft: rgba(88, 166, 255, 0.14);
+  --p-selection: rgba(88, 166, 255, 0.32);
+  --color-accent-bd: rgba(88, 166, 255, 0.28);
+  --color-success: #3fb950;
+  --color-success-soft: rgba(63, 185, 80, 0.14);
+  --color-success-bd: rgba(63, 185, 80, 0.28);
+  --color-warning: #d29922;
+  --color-warning-soft: rgba(210, 153, 34, 0.14);
+  --color-warning-bd: rgba(210, 153, 34, 0.28);
+  --color-danger: #f85149;
+  --color-danger-soft: rgba(248, 81, 73, 0.14);
+  --color-danger-bd: rgba(248, 81, 73, 0.28);
+  /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+  --color-done: #a371f7;
+  --color-done-soft: rgba(163, 113, 247, 0.14);
+  --color-done-bd: rgba(163, 113, 247, 0.28);
+  --color-info: #58a6ff;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+}
+
+/* Design tokens v2 — dark values (follow OS preference). */
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --accent-primary: #58a6ff;
+    --color-bg: #0d1117;
+    --color-surface: #161b22;
+    --color-surface-raised: #1c2128;
+    --color-surface-sunken: #0d1117;
+    --color-text: #c9cdd4;
+    --color-text-muted: #9aa0a8;
+    --color-text-faint: #6b7280;
+    --color-line: #2d333b;
+    --color-line-strong: #3d444d;
+    --color-accent: #58a6ff;
+    --color-accent-hover: #79b8ff;
+    --color-accent-soft: rgba(88, 166, 255, 0.14);
+  --p-selection: rgba(88, 166, 255, 0.32);
+    --color-accent-bd: rgba(88, 166, 255, 0.28);
+    --color-success: #3fb950;
+    --color-success-soft: rgba(63, 185, 80, 0.14);
+    --color-success-bd: rgba(63, 185, 80, 0.28);
+    --color-warning: #d29922;
+    --color-warning-soft: rgba(210, 153, 34, 0.14);
+    --color-warning-bd: rgba(210, 153, 34, 0.28);
+    --color-danger: #f85149;
+    --color-danger-soft: rgba(248, 81, 73, 0.14);
+    --color-danger-bd: rgba(248, 81, 73, 0.28);
+    /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+    --color-done: #a371f7;
+    --color-done-soft: rgba(163, 113, 247, 0.14);
+    --color-done-bd: rgba(163, 113, 247, 0.28);
+    --color-info: #58a6ff;
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+    --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+  }
+}
 
 html,
 body,
@@ -208,15 +614,15 @@ body {
 }
 
 body {
-  font-family: var(--mono);
-  color: var(--text);
+  font-family: var(--sans);
+  color: var(--color-text);
   background: var(--bg);
   font-size: var(--ui-font-size);
   font-weight: 400;
-  line-height: 1.55;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
+  text-rendering: auto;
   font-synthesis: none;
   text-size-adjust: 100%;
 }
@@ -256,70 +662,17 @@ body {
   to { transform: translateY(0); }
 }
 
-/* ===========================================================================
-   MODERN THEME (html[data-theme="modern"])
-   Bubbles-everywhere look with a softer palette and smooth ("丝滑")
-   micro-animations. Terminal (default, no data-theme override) is untouched.
-   The token blocks directly below are Modern-only; the structural
-   de-terminalization rules further down are shared with the Kimi theme via
-   :is(html[data-theme="modern"], html[data-theme="kimi"]) — identical
-   specificity to the original single-theme selectors, so Modern renders
-   exactly as before. Kimi's own token blocks + deltas live in the KIMI THEME
-   section near the end of this sheet.
-   =========================================================================== */
-html[data-theme="modern"] {
-  /* Softer hairlines + a soft neutral canvas the white cards/bubbles lift off.
-     Shadow tokens are shared by the per-element card rules below. */
-  --line: #e9edf3;
-  --line2: #f1f4f8;
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    "Helvetica Neue", Arial, sans-serif;
-  --canvas: #f4f6fa;
-  --sh: 0 1px 3px rgba(28, 40, 66, 0.05), 0 6px 18px rgba(28, 40, 66, 0.06);
-  --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
-}
-
-/* Modern × dark: the light hairlines/canvas above would override the dark
-   variables (later in source) — remap them, and lean on darker shadows. */
-html[data-color-scheme="dark"][data-theme="modern"] {
-  --line: #2d333b;
-  --line2: #22272e;
-  --canvas: #161b22;
-  --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
-  --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-@media (prefers-color-scheme: dark) {
-  html[data-color-scheme="system"][data-theme="modern"] {
-    --line: #2d333b;
-    --line2: #22272e;
-    --canvas: #161b22;
-    --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
-    --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
-  }
-}
-
 /* ---------------------------------------------------------------------------
    Overlay stability: every floating surface (dialog backdrops, the onboarding
    overlay, bottom sheets, the settings popover) is position:fixed and MUST
    resolve against the viewport. If anything ever leaves a transform/filter/
    perspective on <html> or <body> — e.g. a residual animation, or a dark-mode
-   browser extension that wraps the page when it treats Modern as "dark" — that
+   browser extension that wraps the page when it treats the app as "dark" — that
    element becomes the containing block for fixed descendants and every overlay
    drifts. `!important` author declarations beat both animations and the page's
-   own styles, so forbid those properties on the root in Modern. Harmless: the
-   root never needs a transform of its own.
+   own styles, so forbid those properties on the root. Harmless: the root never
+   needs a transform of its own.
    --------------------------------------------------------------------------- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]),
-:is(html[data-theme="modern"], html[data-theme="kimi"]) body,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) #app,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .app {
-  transform: none !important;
-  filter: none !important;
-  perspective: none !important;
-  will-change: auto !important;
-}
-
 /* Belt-and-suspenders for the same problem (works even if a transform can't be
    reset because an extension set it inline-!important): every full-screen
    overlay is position:fixed with `inset: 0`, which sizes against the fixed
@@ -335,401 +688,52 @@ html[data-color-scheme="dark"][data-theme="modern"] {
   min-height: 100dvh !important;
 }
 
-/* De-terminalize: content text (messages, titles, descriptions, buttons) uses a
-   real UI sans. Paths, code, tab labels, timestamps and badges keep --mono
-   because they set it per-element — so chrome stays crisp and code-like, content
-   reads soft. This single switch is what makes Modern feel unlike the terminal. */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) body {
-  font-family: var(--sans);
-  line-height: 1.6;
-}
-
-/* Smooth theme switching + general interaction fluidity. Scoped to common
-   surfaces so we never animate layout-affecting properties (no layout shift). */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) button,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .cin,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) textarea,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) input {
-  transition: background-color 0.18s ease, border-color 0.18s ease,
-    color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
-}
-
+/* Content text (messages, titles, descriptions, buttons) uses a real UI sans.
+   Paths, code, tab labels, timestamps and badges keep --mono because they set it
+   per-element — so chrome stays crisp and code-like while content reads soft. */
+/* Interaction fluidity: scoped to common surfaces so we never animate
+   layout-affecting properties (no layout shift). */
 /* ---- Soft canvas: the conversation pane is a faint neutral so white tool
    cards and the user bubble lift off it with a gentle shadow. Side panels stay
    as-is; only the reading surface softens. ---- */
 /* Chat surface is white (the user prefers a white reading area over the soft
    canvas). Bubbles/tool cards still read fine via their own borders + shadows. */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .con { background: var(--bg); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .chat { background: transparent; }
-
 /* Session rows → rounded, inset pills with a soft active state (cards, not a
    full-bleed tint bar). Keeps the mono timestamp/badges. Scoped under
    .sessions because .se is also a (different) class in MobileTopBar. */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se {
-  margin: 1px 6px;
-  border-radius: var(--r-sm);
-  /* Trim the row padding by the inset margin so the title still starts at the
-     same x as the workspace name (whose header has no inset). */
-  padding: 7px calc(var(--sb-pad-x, 12px) - 6px);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se:hover { background: var(--panel2); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se.on {
-  background: var(--soft);
-  box-shadow: inset 0 0 0 1px var(--bd);
-}
-
 /* Tab bar → clean white strip with a single hairline.
    Sidebar header (.ch) keeps the sidebar body color so the right border
    extends seamlessly from top to bottom. */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tabs {
-  background: var(--bg);
-}
-
-/* Chat prose → UI sans (THIS is what makes the conversation read like a chat
-   app instead of a terminal). Markdown.vue renders message text inside
-   .md/.markdown-renderer with --mono; override to --sans here. Code blocks,
-   inline code and file paths keep --mono via their own per-element rules, so
-   only the prose changes. Global (not scoped) so it reliably wins the cascade. */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .md,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .md .markdown-renderer {
-  font-family: var(--sans);
-}
-
-/* Composer input also types in sans under Modern (matches the chat prose). */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ph {
-  font-family: var(--sans);
-}
-
-/* ---- Modern composer (global, NOT in Composer.vue) ---------------------------
-   These MUST live here: scoped `:global(html[data-theme=modern])` rules in
-   Composer.vue did not win the cascade against the base rules, so they are moved
-   to the global sheet where they apply reliably. The chat surface is white, so
-   the composer card reads as a rounded card via a soft shadow + hairline border. */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .composer-card {
-  border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--bg);
-  box-shadow: var(--shc);
-}
-
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ph {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 4px 0;
-  min-height: 40px;
-  box-sizing: border-box;
-  font-size: var(--ui-font-size);
-  line-height: 1.5;
-}
-
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .send {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  padding: 0;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 1px 2px rgba(20, 23, 28, 0.1);
-  align-self: flex-end;
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .send:hover { background: var(--blue2); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .send.aborting {
-  background: var(--err);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .send.aborting:hover {
-  background: color-mix(in srgb, var(--err) 85%, #000);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .toolbar {
-  background: color-mix(in srgb, var(--panel), black 1.5%);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .attach-btn {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border-radius: var(--r-sm);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .attach-btn:hover {
-  background: var(--soft);
-  color: var(--blue);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .model-pill {
-  font-family: var(--sans);
-  border-radius: var(--r-sm);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .toggle-pill {
-  font-family: var(--sans);
-  border-radius: var(--r-sm);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .toggle-pill.on {
-  background: var(--soft);
-  color: var(--blue);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .model-dropdown,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .perm-dropdown {
-  border-radius: var(--r-md);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .pd-name {
-  font-family: var(--sans);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .pd-desc {
-  font-family: var(--sans);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .queue-item,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .att-chip {
-  border-radius: var(--r-sm);
-}
-
+/* Chat prose → UI sans (what makes the conversation read like a chat app).
+   Markdown.vue renders message text inside .md/.markdown-renderer with --mono;
+   override to --sans here. Code blocks, inline code and file paths keep --mono
+   via their own per-element rules, so only the prose changes. Global (not
+   scoped) so it reliably wins the cascade. */
+/* Composer input also types in sans (matches the chat prose). */
+/* ---- Composer (global, NOT in Composer.vue) ----------------------------------
+   These MUST live here: scoped rules in Composer.vue did not win the cascade
+   against the base rules, so they are moved to the global sheet where they apply
+   reliably. The chat surface is white, so the composer card reads as a rounded
+   card via a soft shadow + hairline border. */
 /* ---- Chat bubbles (moved out of ChatPane.vue) ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .chat {
-  gap: 0;
-  padding: 22px 20px 26px;
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .u-bub {
-  background: var(--bluebg);
-  border-color: var(--blueln);
-  border-radius: 18px 18px 6px 18px;
-  padding: 11px 15px;
-  box-shadow: var(--shc);
-  animation: kimi-bubble-in 0.24s ease-out both;
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .a-msg {
-  max-width: 100%;
-  width: 100%;
-  animation: kimi-bubble-in 0.24s ease-out both;
-}
-
 /* ---- Tool cards (moved out of ToolCall.vue) ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box {
-  --tool-card-radius: var(--r-md);
-  --tool-head-radius: var(--r-md);
-  background: var(--bg);
-  border-radius: var(--tool-card-radius);
-  box-shadow: var(--shc);
-  animation: kimi-card-in 0.18s ease-out both;
-  transition: box-shadow 0.12s ease, transform 0.12s ease, border-color 0.12s ease;
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 3px 8px rgba(20, 23, 28, 0.06);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tool-stack {
-  border-radius: var(--r-md);
-  box-shadow: var(--shc);
-  animation: kimi-card-in 0.18s ease-out both;
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tool-stack .box {
-  animation: none;
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box .bh { border-radius: var(--tool-head-radius); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box.open .bh { border-radius: var(--tool-head-radius) var(--tool-head-radius) 0 0; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box .ok,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box .er {
-  display: inline-block;
-  animation: kimi-check-in 0.15s ease-out both;
-}
 /* ===========================================================================
-   MODERN DE-TERMINALIZATION
-   Component-scoped styles ship the terminal look (sharp 0–4px corners, --mono
-   on UI copy, 2px blue "terminal stripe" dialog tops, hardcoded colors). The
-   rules below restyle those remnants under Modern with the shared tokens
-   (--r-* radius scale, --sans for UI copy, --sh/--shc shadows). Code, paths,
-   commands, timestamps and badges deliberately keep --mono. Grouped by
-   surface; Terminal (default theme) is untouched.
+   DE-TERMINALIZATION
+   Some component-scoped styles still ship a sharp, terminal-flavored look
+   (0–4px corners, --mono on UI copy, 2px blue "terminal stripe" dialog tops,
+   hardcoded colors). The rules below restyle those remnants with the shared
+   tokens (--r-* radius scale, --sans for UI copy, --sh/--shc shadows). Code,
+   paths, commands, timestamps and badges deliberately keep --mono. Grouped by
+   surface.
    =========================================================================== */
 
 /* ---- App shell ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .app { border-top: none; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .auth-banner-inner { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .auth-banner-btn { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .coming-soon { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .gload-text { font-family: var(--sans); }
-
 /* ---- Sidebar: buttons, rename inputs, kebab menu, settings popover ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .btn-new-chat,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .btn-new-ws { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .theme-opt { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .gh-rename { border-radius: var(--r-xs); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .gh.sel { border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .gh-add { color: var(--faint); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .gh-add:hover { color: var(--dim); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .am-item.danger { color: var(--err); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se .menu { border-radius: var(--r-sm); box-shadow: var(--sh); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se .menu-item { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se .rename-input { border-radius: var(--r-xs); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se .kebab { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se .btn-confirm,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sessions .se .btn-cancel { border-radius: var(--r-xs); font-family: var(--sans); }
-
 /* ---- Chat content: code blocks, inline code, thinking, tool chips ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .md .code-block-container { border-radius: var(--r-sm); box-shadow: var(--shc); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .md .diff-wrap { border-radius: var(--r-sm); box-shadow: var(--shc); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .md :not(pre) > code,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .md .inline-code { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .mthink .h,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .mthink .c { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box .chip { border-radius: var(--r-xs); font-family: var(--mono); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box.err { border-color: color-mix(in srgb, var(--err) 25%, var(--bg)); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box.err .bh { background: color-mix(in srgb, var(--err) 4%, var(--bg)); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .box.err .bh:hover { background: color-mix(in srgb, var(--err) 7%, var(--bg)); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .newmsg-pill { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .seg-btn { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .files-back { font-family: var(--sans); }
-
 /* ---- Approval & question cards (match the rounded .box tool cards) ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .appr { border-radius: var(--r-md); box-shadow: var(--shc); overflow: hidden; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .appr .ah { border-radius: var(--r-md) var(--r-md) 0 0; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .kbtn { font-family: var(--sans); transition: background-color 0.18s ease, color 0.18s ease; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .feedback-ta { font-family: var(--sans); border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .shell-cmd,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .shell-danger { border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .aw,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .abadge,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .chip-label { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .qcard { border-radius: var(--r-md); box-shadow: var(--shc); overflow: hidden; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .qcard .qh { border-radius: var(--r-md) var(--r-md) 0 0; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .qopt { border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .qbtn { font-family: var(--sans); border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .other-input { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .qnav { font-family: var(--sans); border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .qheader-chip { border-radius: var(--r-xs); }
-
 /* ---- Composer: permission pill, model menu, queue strip ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .perm-pill { font-family: var(--sans); border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .md-row { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .queue-item,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .queue-text { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .compact-chip { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .att-thumb { border-radius: 5px; }
-
 /* ---- Floating menus + status line ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .slash-menu { border-radius: var(--r-md); box-shadow: var(--sh); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .slash-desc { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .mention-menu { border-radius: var(--r-md); box-shadow: var(--sh); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .mention-state { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .statusline .popover {
-  border-radius: var(--r-md);
-  border-top: 1px solid var(--line);
-  box-shadow: var(--sh);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .statusline .pop-row { font-family: var(--sans); border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .interrupt-btn { border-radius: var(--r-xs); font-family: var(--sans); }
-
-/* ---- Dialog shell (ModelPicker / Login / NewSession / Sessions /
-        AddWorkspace / ProviderManager / StatusPanel share these classes).
-        UI copy goes sans; per-element mono below keeps code-like content
-        (paths, model ids, device codes) terminal-crisp. ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .dialog {
-  font-family: var(--sans);
-  border-top: 1px solid var(--line);
-  box-shadow: 0 8px 30px rgba(20, 23, 28, 0.16);
-}
-@media (min-width: 641px) {
-  /* Desktop only: ≤640px keeps the bottom-sheet 16px top corners. */
-  :is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .dialog { border-radius: var(--r-lg); }
-  :is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .footer-hint { border-radius: 0 0 var(--r-lg) var(--r-lg); }
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .act-btn { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .search-input { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .finput { border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .recent-item { border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .folder-row {
-  margin: 1px 6px;
-  width: calc(100% - 12px);
-  border-radius: var(--r-sm);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .session-row { margin: 1px 6px; border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .session-row.is-active { box-shadow: inset 0 0 0 1px var(--bd); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .up-btn,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .crumb { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .paste-input { border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .paste-add { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .model-row { font-family: var(--mono); } /* model ids */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .caps { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .dc-code-wrap { border-radius: var(--r-md); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .dc-uri-btn { border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .dc-copy-btn { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .dc-countdown { font-family: var(--mono); } /* mm:ss timer */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .add-btn-oauth,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .add-btn { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .prov-key-state { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .backdrop .bar { background: var(--line); }
-
-/* ---- Files / diff / tasks panes ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .back-btn { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .changes-pane .empty-state { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .br-label,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .empty-head { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .change-count { font-family: var(--sans); border-radius: 999px; }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ch-row,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ct-row {
-  margin: 1px 6px;
-  width: calc(100% - 12px);
-  border-radius: var(--r-sm);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .changes-pane .badge,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .changed-tree .badge { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ft-row { margin: 1px 6px; border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ft-row.selected { box-shadow: inset 0 0 0 1px var(--bd); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ft-badge { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ft-loading,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ft-empty { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .fp-copy { font-family: var(--sans); border-radius: var(--r-sm); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .fp-empty,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .fp-loading { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .fp-binary-card { border-radius: var(--r-md); box-shadow: var(--shc); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .fp-binary-label { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .fp-image { border-radius: var(--r-sm); box-shadow: var(--shc); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tp-out { border-radius: var(--r-sm); font-family: var(--mono); } /* command output */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tp-stop { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tp-kind { border-radius: var(--r-xs); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tabs.mobile .tb { font-family: var(--sans); }
-
-/* ---- Warning toasts: route the error reds through the token system ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .toast.err { border-color: color-mix(in srgb, var(--err) 35%, transparent); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .toast.err .dot { background: var(--err); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .toast.err .msg { color: var(--err); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .toast .x { border-radius: var(--r-xs); }
-
-/* ---- Todo card (rounded + shadow under Modern) ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .todo-card {
-  border-radius: var(--r-sm);
-  box-shadow: var(--shc);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tc-head { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .tc-title { font-weight: 600; }
-
-/* ---- Context ring (softer track under Modern) ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ctx-ring-track {
-  stroke: var(--faint);
-}
-
-/* ---- Misc chrome ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .lang-switch { border-radius: var(--r-sm); font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .ob-seg-btn { font-family: var(--sans); }
-
-/* ---- Mobile surfaces (bottom sheets, top bar, switcher) ---- */
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .sheet-panel { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .topbar .tb-path { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .newrow { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .kmenu { border-radius: var(--r-md); box-shadow: var(--sh); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .kitem { font-family: var(--sans); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .mlist .srow {
-  margin: 1px 8px;
-  border-radius: var(--r-sm);
-  border-bottom: none;
-  /* Trim both paddings by the 8px inset margin so session titles stay on the
-     sheet's --m-indent alignment line (under the workspace name). */
-  padding: 12px calc(var(--m-pad, 16px) - 8px) 12px calc(var(--m-indent, 39px) - 8px);
-}
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .mlist .srow.cur { box-shadow: inset 0 0 0 1px var(--bd); }
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .srow,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .srow-sub,
-:is(html[data-theme="modern"], html[data-theme="kimi"]) .srow-val { font-family: var(--sans); }
-
-/* ---- Modern keyframes (shared by component-scoped rules) ---- */
+/* ---- Entrance / micro keyframes (shared by component-scoped rules) ---- */
 @keyframes kimi-bubble-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -744,277 +748,14 @@ html[data-color-scheme="dark"][data-theme="modern"] {
   to { opacity: 1; transform: scale(1); }
 }
 
-/* ---- Reduced-motion: disable ALL Modern entrance/micro animations ---- */
+/* ---- Reduced-motion: disable ALL entrance/micro animations ---- */
 @media (prefers-reduced-motion: reduce) {
-  :is(html[data-theme="modern"], html[data-theme="kimi"]) * {
+  * {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
     transition-duration: 0.001ms !important;
   }
 }
-
-/* ===========================================================================
-   KIMI THEME (html[data-theme="kimi"])
-   The official Kimi design language ("Quiet Utility") — values from
-   kimi-design-skill tokens.json v0.2.0. It shares the de-terminalization
-   rules above with Modern (the :is(...) selectors); everything below is the
-   delta: the full token palette (interaction accent = kimiDark — black in
-   light, white in dark; kimiBlue stays reserved for brand/data-viz), flat
-   cards (no hover lift; shadows only on the composer + floating menus), gray
-   user bubbles, and the PingFang / Geist Mono type ramp.
-   These token blocks intentionally sit AFTER the html[data-accent] rules:
-   equal specificity + later source order means the kimi palette wins over any
-   persisted accent choice (the accent picker is hidden while kimi is active).
-   =========================================================================== */
-html[data-theme="kimi"] {
-  /* labels (color.labels.*) — Kimi has no separate body tone; hierarchy
-     comes from size/weight, so --ink == --text by design. */
-  --ink: rgba(0, 0, 0, 0.9);
-  --text: rgba(0, 0, 0, 0.9);
-  --dim: rgba(0, 0, 0, 0.6);
-  --muted: rgba(0, 0, 0, 0.45);
-  --faint: rgba(0, 0, 0, 0.3);
-  /* surfaces + separators */
-  --line: rgba(0, 0, 0, 0.13);   /* color.separator.s1 */
-  --line2: rgba(0, 0, 0, 0.05);  /* color.fills.f2 (no subtler separator token) */
-  --panel: #f9fbfc;              /* color.background.groundPc */
-  --panel2: #f5f5f5;             /* color.background.secondary */
-  --bg: #ffffff;                 /* color.background.primary */
-  --canvas: #f9fbfc;
-  /* interaction accent = color.brand.kimiDark (NOT kimiBlue) */
-  --blue: rgba(0, 0, 0, 0.9);
-  --blue2: rgba(37, 37, 37, 1);
-  --soft: rgba(0, 0, 0, 0.05);   /* color.fills.f2: selected = fill, not a blue tint */
-  --bd: transparent;             /* no ring on selected rows (surface over stroke) */
-  --logo: rgba(0, 0, 0, 0.9);    /* logo-system.md: the mark uses labels.primary */
-  --link: #0f6fe0;
-  --link-hover: #075fc2;
-  /* user bubble = color.others.bubbleGrayPc — gray, never blue; border
-     matches the fill so the bubble reads borderless without layout shift */
-  --bluebg: #f5f5f5;
-  --blueln: #f5f5f5;
-  /* status (color.status.*) */
-  --ok: #16c456;
-  --warn: #ff9500;
-  --star: #facc15;
-  --err: #ff3849;
-  --hover: rgba(0, 0, 0, 0.03);  /* color.fills.f1 */
-  /* radius scale snaps to radius.xxs/sm/lg/xl = 4/8/12/16 */
-  --r-xs: 4px;
-  /* flat by default; --sh (floating menus only) = effect.shadow.small */
-  --sh: 0 4px 16.4px 0 rgba(0, 0, 0, 0.1);
-  --shc: none;
-  /* type: PingFang for UI, Geist Mono for code (JetBrains Mono is the
-     bundled fallback; no font files are added for this theme) */
-  --sans: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "Microsoft YaHei", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
-  --mono: "Geist Mono", "JetBrains Mono Variable", "JetBrains Mono",
-    ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-}
-
-/* Kimi × dark (same three-block pattern as Modern: explicit choice here,
-   system preference via the media query below). */
-html[data-color-scheme="dark"][data-theme="kimi"] {
-  --ink: rgba(255, 255, 255, 0.84);
-  --text: rgba(255, 255, 255, 0.84);
-  --dim: rgba(255, 255, 255, 0.56);
-  --muted: rgba(255, 255, 255, 0.42);
-  --faint: rgba(255, 255, 255, 0.26);
-  --line: rgba(255, 255, 255, 0.12);
-  --line2: rgba(255, 255, 255, 0.1);
-  --panel: #161717;
-  --panel2: #1f1f1f;
-  --bg: #121212;
-  --canvas: #161717;
-  --blue: rgba(255, 255, 255, 0.84);
-  --blue2: rgba(255, 255, 255, 0.848);
-  --soft: rgba(255, 255, 255, 0.1);
-  --bd: transparent;
-  --logo: rgba(255, 255, 255, 0.84);
-  --link: #58a6ff;
-  --link-hover: #79b8ff;
-  --bluebg: #292929;
-  --blueln: #292929;
-  --ok: #16c456;
-  --warn: #ff9f0a;
-  --star: #facc15;
-  --err: #ff4756;
-  --hover: rgba(255, 255, 255, 0.05);
-}
-@media (prefers-color-scheme: dark) {
-  html[data-color-scheme="system"][data-theme="kimi"] {
-    --ink: rgba(255, 255, 255, 0.84);
-    --text: rgba(255, 255, 255, 0.84);
-    --dim: rgba(255, 255, 255, 0.56);
-    --muted: rgba(255, 255, 255, 0.42);
-    --faint: rgba(255, 255, 255, 0.26);
-    --line: rgba(255, 255, 255, 0.12);
-    --line2: rgba(255, 255, 255, 0.1);
-    --panel: #161717;
-    --panel2: #1f1f1f;
-    --bg: #121212;
-    --canvas: #161717;
-    --blue: rgba(255, 255, 255, 0.84);
-    --blue2: rgba(255, 255, 255, 0.848);
-    --soft: rgba(255, 255, 255, 0.1);
-    --bd: transparent;
-    --logo: rgba(255, 255, 255, 0.84);
-    --link: #58a6ff;
-    --link-hover: #79b8ff;
-    --bluebg: #292929;
-    --blueln: #292929;
-    --ok: #16c456;
-    --warn: #ff9f0a;
-    --star: #facc15;
-    --err: #ff4756;
-    --hover: rgba(255, 255, 255, 0.05);
-  }
-}
-
-/* ---- Kimi deltas over the shared Modern structure ------------------------ */
-
-/* Composer: the one card that keeps a shadow (effect.shadow.inputDefault),
-   with the chat-input radius documented in web-best-practices §8. */
-html[data-theme="kimi"] .composer-card {
-  border-radius: 20px;
-  box-shadow: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
-}
-
-/* Cards stay flat: no hover lift, no shadow (Quiet Utility / card.md). */
-html[data-theme="kimi"] .box:hover {
-  transform: none;
-  box-shadow: none;
-}
-
-/* Dialogs: the mask isolates — no drop shadow, no border (modal.md).
-   The desktop scope keeps the mobile bottom sheet's top hairline, which the
-   sheet needs to stay visible against a near-black page in dark mode. */
-html[data-theme="kimi"] .backdrop .dialog {
-  box-shadow: none;
-}
-@media (min-width: 641px) {
-  html[data-theme="kimi"] .backdrop .dialog {
-    border-top: none;
-  }
-}
-
-/* The send button is kimiDark fill only — no decorative shadow (§5). */
-html[data-theme="kimi"] .send {
-  box-shadow: none;
-}
-
-/* Tool-result checkmarks appear on every tool call — per the animation
-   frequency rule (100+×/day → no animation), and the shared overshoot
-   keyframe is a bounce, which animation.md forbids. */
-html[data-theme="kimi"] .box .ok,
-html[data-theme="kimi"] .box .er {
-  animation: none;
-}
-
-/* User bubble corners on the token scale (radius.xl / radius.xxs). */
-html[data-theme="kimi"] .u-bub {
-  border-radius: 16px 16px 4px 16px;
-}
-
-/* Toasts (toast.md): constant dark surface (color.mask.toastPc), white text,
-   no border/shadow — the type cue lives in the dot, not the text color. */
-html[data-theme="kimi"] .toast {
-  background: #2b2b2b;
-  border: none;
-  border-radius: 12px;
-  box-shadow: none;
-}
-html[data-theme="kimi"] .toast .msg,
-html[data-theme="kimi"] .toast.err .msg {
-  color: #ffffff;
-}
-html[data-theme="kimi"] .toast .dot {
-  background: rgba(255, 255, 255, 0.56);
-}
-/* Explicit so the type cue never depends on the shared rule's specificity. */
-html[data-theme="kimi"] .toast.err .dot {
-  background: var(--err);
-}
-html[data-theme="kimi"] .toast .x {
-  color: rgba(255, 255, 255, 0.56);
-}
-html[data-theme="kimi"] .toast .x:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-}
-html[data-color-scheme="dark"][data-theme="kimi"] .toast {
-  background: #404040; /* color.mask.toastPc dark */
-}
-
-/* Elevated dark surfaces step up to color.background.tertiary (#292929):
-   floating menus and dialogs separate from the #121212 page by surface
-   contrast, not shadow (principles §11). */
-html[data-color-scheme="dark"][data-theme="kimi"] .slash-menu,
-html[data-color-scheme="dark"][data-theme="kimi"] .mention-menu,
-html[data-color-scheme="dark"][data-theme="kimi"] .model-dropdown,
-html[data-color-scheme="dark"][data-theme="kimi"] .perm-dropdown,
-html[data-color-scheme="dark"][data-theme="kimi"] .kmenu,
-html[data-color-scheme="dark"][data-theme="kimi"] .acct-menu,
-html[data-color-scheme="dark"][data-theme="kimi"] .sessions .se .menu,
-html[data-color-scheme="dark"][data-theme="kimi"] .statusline .popover,
-html[data-color-scheme="dark"][data-theme="kimi"] .backdrop .dialog {
-  background: #292929;
-}
-@media (prefers-color-scheme: dark) {
-  html[data-color-scheme="system"][data-theme="kimi"] .toast {
-    background: #404040;
-  }
-  html[data-color-scheme="system"][data-theme="kimi"] .slash-menu,
-  html[data-color-scheme="system"][data-theme="kimi"] .mention-menu,
-  html[data-color-scheme="system"][data-theme="kimi"] .model-dropdown,
-  html[data-color-scheme="system"][data-theme="kimi"] .perm-dropdown,
-  html[data-color-scheme="system"][data-theme="kimi"] .kmenu,
-  html[data-color-scheme="system"][data-theme="kimi"] .acct-menu,
-  html[data-color-scheme="system"][data-theme="kimi"] .sessions .se .menu,
-  html[data-color-scheme="system"][data-theme="kimi"] .statusline .popover,
-  html[data-color-scheme="system"][data-theme="kimi"] .backdrop .dialog {
-    background: #292929;
-  }
-}
-
-/* Focus: kimiDark ring (principles §9) — outline, so layout never shifts.
-   Text fields are excluded: :focus-visible matches them on mouse focus too,
-   which would draw a ring around the raw textarea inside the composer card;
-   the caret is their focus cue. */
-html[data-theme="kimi"] :focus-visible:not(input):not(textarea):not(select):not([contenteditable="true"]) {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-/* Text selection: color.others.textSelected (a sanctioned kimiBlue use). */
-html[data-theme="kimi"] ::selection {
-  background: rgba(23, 131, 255, 0.2);
-}
-html[data-color-scheme="dark"][data-theme="kimi"] ::selection {
-  background: rgba(26, 136, 255, 0.2);
-}
-@media (prefers-color-scheme: dark) {
-  html[data-color-scheme="system"][data-theme="kimi"] ::selection {
-    background: rgba(26, 136, 255, 0.2);
-  }
-}
-
-/* Links are a sanctioned Kimi-blue use in chat prose. The theme's interaction
-   accent is kimiDark (black/white), so the shared .md link rule otherwise makes
-   URLs look like normal text under the native theme. */
-html[data-theme="kimi"] .md a,
-html[data-theme="kimi"] .md .md-file-link {
-  color: var(--link);
-  text-decoration-line: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-}
-html[data-theme="kimi"] .md a:hover,
-html[data-theme="kimi"] .md .md-file-link:hover {
-  color: var(--link-hover);
-  text-decoration-thickness: 2px;
-}
-
 /* ---- Kimi Code logo (sidebar header): lively eyes — glance left/right + the
    occasional blink. The two bars are mask cutouts, so animating them moves /
    squishes the transparent holes (adapts to whatever's behind the logo). The

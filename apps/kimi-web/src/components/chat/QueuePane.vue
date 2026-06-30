@@ -2,11 +2,13 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import type { QueuedPromptView } from '../../types';
+import Icon from '../ui/Icon.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
   queued: QueuedPromptView[];
   running?: boolean;
-  /** Render as plain dock content (no header/card borders) like TasksPane/TodoCard in tab mode. */
+  /** Render as plain dock content (no header / card borders), like TasksPane and TodoCard. */
   inline?: boolean;
 }>();
 
@@ -29,13 +31,14 @@ function editQueued(index: number, msg: QueuedPromptView): void {
     <div v-if="!inline" class="queue-head">
       <span class="queue-label">{{ t('composer.queueLabel') }} · {{ queued.length }}</span>
       <!-- Steer the whole queue into the running turn right now (TUI ctrl+s) -->
-      <button
-        v-if="running"
-        class="queue-steer"
-        type="button"
-        :title="t('composer.steerTitle')"
-        @click="emit('steer')"
-      >{{ t('composer.steerNow') }}</button>
+      <Tooltip :text="t('composer.steerTitle')">
+        <button
+          v-if="running"
+          class="queue-steer"
+          type="button"
+          @click="emit('steer')"
+        >{{ t('composer.steerNow') }}</button>
+      </Tooltip>
     </div>
     <div class="queue-list">
       <div
@@ -43,19 +46,22 @@ function editQueued(index: number, msg: QueuedPromptView): void {
         :key="i"
         class="queue-item"
       >
-        <button
-          class="queue-text"
-          type="button"
-          :disabled="msg.attachmentCount > 0"
-          :title="msg.attachmentCount > 0 ? t('composer.queuedHasImage', { n: msg.attachmentCount }) : t('composer.editQueued')"
-          @click="editQueued(i, msg)"
-        >
-          <svg v-if="msg.attachmentCount > 0" class="queue-img" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="M2.5 12l3.5-3.5 2.5 2.5 3-3 2 2"/></svg>
-          <span class="queue-text-inner" :class="{ placeholder: !msg.text }">{{ msg.text || t('composer.queuedImageOnly', { n: msg.attachmentCount }) }}</span>
-        </button>
-        <button class="queue-rm" :title="t('composer.remove')" @click="emit('unqueue', i)">
-          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-        </button>
+        <Tooltip :text="msg.attachmentCount > 0 ? t('composer.queuedHasImage', { n: msg.attachmentCount }) : t('composer.editQueued')">
+          <button
+            class="queue-text"
+            type="button"
+            :disabled="msg.attachmentCount > 0"
+            @click="editQueued(i, msg)"
+          >
+            <Icon v-if="msg.attachmentCount > 0" class="queue-img" name="image" size="sm" />
+            <span class="queue-text-inner" :class="{ placeholder: !msg.text }">{{ msg.text || t('composer.queuedImageOnly', { n: msg.attachmentCount }) }}</span>
+          </button>
+        </Tooltip>
+        <Tooltip :text="t('composer.remove')">
+          <button class="queue-rm" @click="emit('unqueue', i)">
+            <Icon name="close" size="sm" />
+          </button>
+        </Tooltip>
       </div>
     </div>
   </div>
@@ -68,7 +74,7 @@ function editQueued(index: number, msg: QueuedPromptView): void {
   gap: 6px;
 }
 
-/* Tab mode: plain dock content, matching TasksPane/TodoCard inline styling. */
+/* Tab mode: plain dock content, matching TasksPane and TodoCard. */
 .queue-pane.tab-mode {
   gap: 2px;
 }
@@ -85,10 +91,10 @@ function editQueued(index: number, msg: QueuedPromptView): void {
   border: none;
   border-radius: 0;
   padding: 4px 0;
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  font-size: var(--text-base);
 }
 .queue-pane.tab-mode .queue-text:hover:not(:disabled) {
-  color: var(--blue);
+  color: var(--color-accent);
 }
 .queue-pane.tab-mode .queue-rm {
   opacity: 0;
@@ -122,7 +128,7 @@ function editQueued(index: number, msg: QueuedPromptView): void {
   border-radius: 8px;
   padding: 6px 8px;
   font-size: var(--ui-font-size);
-  color: var(--text);
+  color: var(--color-text);
   min-width: 0;
 }
 
@@ -130,17 +136,17 @@ function editQueued(index: number, msg: QueuedPromptView): void {
 .queue-steer {
   margin-left: auto;
   background: none;
-  border: 1px solid var(--blueln);
-  border-radius: 3px;
+  border: 1px solid var(--color-accent-bd);
+  border-radius: var(--radius-xs);
   padding: 2px 8px;
   font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--blue2);
+  font-size: var(--text-base);
+  color: var(--color-accent-hover);
   cursor: pointer;
   white-space: nowrap;
 }
 .queue-steer:hover {
-  background: var(--bluebg);
+  background: var(--color-accent-soft);
 }
 
 .queue-text {
@@ -155,12 +161,12 @@ function editQueued(index: number, msg: QueuedPromptView): void {
   padding: 0;
   margin: 0;
   font-size: var(--ui-font-size);
-  color: var(--text);
+  color: var(--color-text);
   cursor: pointer;
   text-align: left;
 }
 .queue-text:hover:not(:disabled) {
-  color: var(--blue);
+  color: var(--color-accent);
 }
 .queue-text:disabled {
   cursor: default;
@@ -186,6 +192,9 @@ function editQueued(index: number, msg: QueuedPromptView): void {
 }
 
 .queue-rm:hover {
-  color: var(--err);
+  color: var(--color-danger);
 }
+
+.queue-item,
+.queue-text { font-family: var(--sans); }
 </style>

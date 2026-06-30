@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
-import tailwindcss from '@tailwindcss/vite';
 import { readFileSync } from 'node:fs';
 
 const webPort = Number(process.env.WEB_PORT) || 5175;
@@ -12,7 +11,7 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 };
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [vue()],
   // Expose the dev proxy's upstream server target to the client so the UI can
   // show which server it is connected to (the browser otherwise only sees its
   // own same-origin URL). Unused by the same-origin production build.

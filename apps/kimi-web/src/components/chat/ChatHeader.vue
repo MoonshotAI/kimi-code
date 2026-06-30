@@ -7,6 +7,11 @@ import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { isMacosDesktop } from '../../lib/desktopFlag';
+import Menu from '../ui/Menu.vue';
+import MenuItem from '../ui/MenuItem.vue';
+import IconButton from '../ui/IconButton.vue';
+import Icon from '../ui/Icon.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
 
@@ -49,13 +54,13 @@ const hasLineStats = computed(() => adds.value > 0 || dels.value > 0);
 // More-menu (kebab dropdown)
 // ---------------------------------------------------------------------------
 const menuOpen = ref(false);
-const kebabRef = ref<HTMLButtonElement | null>(null);
-const menuRef = ref<HTMLElement | null>(null);
+const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
+const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const menuStyle = ref<Record<string, string>>({});
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
-  if (menuRef.value?.contains(target) || kebabRef.value?.contains(target)) return;
+  if (menuRef.value?.el?.contains(target) || kebabRef.value?.el?.contains(target)) return;
   closeMenu();
 }
 
@@ -71,11 +76,10 @@ async function toggleMenu(e: Event): Promise<void> {
   }
   menuOpen.value = true;
   document.addEventListener('mousedown', onDocClick);
-  document.addEventListener('scroll', onScrollOrResize, true);
   window.addEventListener('resize', onScrollOrResize);
   await nextTick();
-  const btn = kebabRef.value;
-  const menu = menuRef.value;
+  const btn = kebabRef.value?.el;
+  const menu = menuRef.value?.el;
   if (!btn || !menu) return;
   const r = btn.getBoundingClientRect();
   const gap = 4;
@@ -100,13 +104,11 @@ function closeMenu(): void {
   menuOpen.value = false;
   disarmDelete();
   document.removeEventListener('mousedown', onDocClick);
-  document.removeEventListener('scroll', onScrollOrResize, true);
   window.removeEventListener('resize', onScrollOrResize);
 }
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocClick);
-  document.removeEventListener('scroll', onScrollOrResize, true);
   window.removeEventListener('resize', onScrollOrResize);
 });
 
@@ -219,106 +221,101 @@ function startArchive(): void {
         @blur="commitRename"
         @click.stop
       />
-      <span v-else-if="sessionTitle" class="ch-ses" :title="sessionTitle">{{ sessionTitle }}</span>
+      <Tooltip v-else-if="sessionTitle" :text="sessionTitle">
+        <span class="ch-ses">{{ sessionTitle }}</span>
+      </Tooltip>
     </div>
 
     <!-- More menu trigger: copy-all + session actions -->
-    <button
-      ref="kebabRef"
-      type="button"
-      class="ch-act ch-act-more"
-      :class="{ open: menuOpen }"
-      :title="t('header.options')"
-      :aria-label="t('header.options')"
-      :aria-expanded="menuOpen"
-      aria-haspopup="menu"
-      @click.stop="toggleMenu($event)"
-    >
-      <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
-        <circle cx="3" cy="8" r="1.3" />
-        <circle cx="8" cy="8" r="1.3" />
-        <circle cx="13" cy="8" r="1.3" />
-      </svg>
-    </button>
+    <Tooltip :text="t('header.options')">
+      <IconButton
+        ref="kebabRef"
+        class="ch-act-more"
+        :class="{ open: menuOpen }"
+        :label="t('header.options')"
+        :aria-expanded="menuOpen"
+        aria-haspopup="menu"
+        @click.stop="toggleMenu($event)"
+      >
+        <Icon name="dots-horizontal" size="md" />
+      </IconButton>
+    </Tooltip>
 
     <!-- Fixed more menu -->
-    <div
+    <Menu
       v-if="menuOpen"
       ref="menuRef"
       class="ch-menu"
       :style="menuStyle"
       @click.stop
     >
-      <button type="button" class="chm-item" @click.stop="onCopyAll">
+      <MenuItem @click="onCopyAll">
         {{ copied ? t('header.copied') : t('header.copyAll') }}
-      </button>
-      <button type="button" class="chm-item" @click.stop="onCopyFinalSummary">
+      </MenuItem>
+      <MenuItem @click="onCopyFinalSummary">
         {{ t('header.copyFinalSummary') }}
-      </button>
+      </MenuItem>
       <template v-if="sessionId">
-        <div class="chm-divider" />
-        <button type="button" class="chm-item" @click.stop="copySessionId">
-          <span>{{ copiedId ? t('header.copied') : t('header.copySessionId') }}</span>
-        </button>
-        <button type="button" class="chm-item" @click.stop="startRename">
+        <MenuItem separator />
+        <MenuItem @click="copySessionId">
+          {{ copiedId ? t('header.copied') : t('header.copySessionId') }}
+        </MenuItem>
+        <MenuItem @click="startRename">
           {{ t('header.renameSession') }}
-        </button>
-        <button type="button" class="chm-item" @click.stop="forkSession">
+        </MenuItem>
+        <MenuItem @click="forkSession">
           {{ t('header.forkSession') }}
-        </button>
-        <button type="button" class="chm-item del" @click.stop="startArchive">
+        </MenuItem>
+        <MenuItem danger @click="startArchive">
           {{ deleteArmed ? t('header.confirmArchive') : t('header.archiveSession') }}
-        </button>
+        </MenuItem>
       </template>
-    </div>
+    </Menu>
 
     <div class="ch-spacer" />
 
     <!-- Git branch + status — plain text with semantic colors. Renders for any
          git repo, even a detached HEAD (empty branch → "detached" label), so the
          diff counter below is never hidden just because there's no branch name. -->
-    <button
-      v-if="isGitRepo"
-      type="button"
-      class="ch-git"
-      :title="t('header.gitTooltip')"
-      @click="emit('openChanges')"
-    >
-      <span
-        class="ch-branch"
-        :class="{ 'ch-detached': !branch }"
-        :title="branch || t('header.detached')"
+    <Tooltip :text="t('header.gitTooltip')">
+      <button
+        v-if="isGitRepo"
+        type="button"
+        class="ch-git"
+        @click="emit('openChanges')"
       >
-        {{ branch || t('header.detached') }}
-      </span>
-      <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
-        <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
-        <span v-if="behind > 0" class="ch-behind">↓{{ behind }}</span>
-      </span>
-      <span v-if="hasLineStats" class="ch-pill ch-diff-pill">
-        <span v-if="adds > 0" class="ch-add">+{{ adds }}</span>
-        <span v-if="dels > 0" class="ch-del">-{{ dels }}</span>
-      </span>
-    </button>
+        <Tooltip :text="branch || t('header.detached')">
+          <span
+            class="ch-branch"
+            :class="{ 'ch-detached': !branch }"
+          >
+            {{ branch || t('header.detached') }}
+          </span>
+        </Tooltip>
+        <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
+          <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
+          <span v-if="behind > 0" class="ch-behind">↓{{ behind }}</span>
+        </span>
+        <span v-if="hasLineStats" class="ch-pill ch-diff-pill">
+          <span v-if="adds > 0" class="ch-add">+{{ adds }}</span>
+          <span v-if="dels > 0" class="ch-del">-{{ dels }}</span>
+        </span>
+      </button>
+    </Tooltip>
 
     <!-- GitHub PR status -->
-    <button
-      v-if="pr"
-      type="button"
-      class="ch-pill ch-pr"
-      :class="`pr-${pr.state}`"
-      :title="t('header.openPr')"
-      @click="pr && emit('openPr', pr.url)"
-    >
-      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="5" cy="6" r="3" />
-        <path d="M5 9v12" />
-        <circle cx="19" cy="18" r="3" />
-        <path d="m15 9-3-3 3-3" />
-        <path d="M12 6h5a2 2 0 0 1 2 2v7" />
-      </svg>
-      <span>PR #{{ pr.number }} · {{ pr.state }}</span>
-    </button>
+    <Tooltip :text="t('header.openPr')">
+      <button
+        v-if="pr"
+        type="button"
+        class="ch-pill ch-pr"
+        :class="`pr-${pr.state}`"
+        @click="pr && emit('openPr', pr.url)"
+      >
+        <Icon name="git-pull-request" size="sm" />
+        <span>PR #{{ pr.number }} · {{ pr.state }}</span>
+      </button>
+    </Tooltip>
 
   </header>
 </template>
@@ -331,9 +328,9 @@ function startArchive(): void {
   gap: 14px;
   height: 48px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-  font-family: var(--sans);
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-bg);
+  font-family: var(--font-ui);
   min-width: 0;
 }
 /* macOS desktop: the window has a hidden title bar, so the conversation header
@@ -346,12 +343,12 @@ function startArchive(): void {
   -webkit-app-region: no-drag;
 }
 .ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
-.ch-ws { color: var(--muted); font-size: var(--ui-font-size-sm); flex: none; }
-.ch-sep { color: var(--faint); flex: none; }
+.ch-ws { color: var(--color-text); font-size: 15px; font-weight: 500; flex: none; }
+.ch-sep { color: var(--color-text-faint); flex: none; }
 .ch-ses {
-  color: var(--ink);
-  font-size: var(--ui-font-size-sm);
-  font-weight: 600;
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -359,16 +356,16 @@ function startArchive(): void {
 .ch-rename {
   flex: 1;
   min-width: 0;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
-  font-weight: 600;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--blue);
-  border-radius: 3px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-xs);
   padding: 2px 5px;
   outline: none;
 }
+
 .ch-git {
   display: flex;
   align-items: center;
@@ -384,7 +381,7 @@ function startArchive(): void {
   min-width: 0;
   cursor: pointer;
 }
-.ch-git:hover .ch-branch { color: var(--ink); }
+.ch-git:hover .ch-branch { color: var(--color-text); }
 .ch-branch {
   color: var(--dim);
   min-width: 0;
@@ -405,98 +402,52 @@ function startArchive(): void {
   font-size: calc(var(--ui-font-size) - 3px);
 }
 .ch-sync-pill { border-color: var(--line); }
-.ch-diff-pill { border-color: color-mix(in srgb, var(--ok) 20%, var(--line)); }
-.ch-ahead { color: var(--warn); flex: none; }
-.ch-behind { color: var(--blue2); flex: none; }
-.ch-add { color: var(--ok); flex: none; }
-.ch-del { color: var(--err); flex: none; }
+.ch-diff-pill { border-color: color-mix(in srgb, var(--color-success) 20%, var(--line)); }
+.ch-ahead { color: var(--color-warning); flex: none; }
+.ch-behind { color: var(--color-accent-hover); flex: none; }
+.ch-add { color: var(--color-success); flex: none; }
+.ch-del { color: var(--color-danger); flex: none; }
 .ch-spacer { flex: 1; min-width: 0; }
 
-.ch-act {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: none;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--dim);
-  font-family: var(--sans);
-  font-size: var(--ui-font-size-xs);
-  padding: 0;
-  cursor: pointer;
-}
-.ch-act:hover { color: var(--ink); }
-.ch-act.open { color: var(--ink); }
-.ch-act svg { flex: none; }
-/* Kebab is icon-only: keep the glyph small but give it a comfortable 28x28
-   click target (and a clear keyboard focus ring). */
-.ch-act-more {
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-}
-.ch-act-more:hover { background: var(--panel2); }
-.ch-act-more:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
+/* Overflow "…" trigger — IconButton (md). The "open" state keeps the
+   sunken highlight while the menu is showing. */
+.ch-act-more.open { background: var(--color-surface-sunken); color: var(--color-text); }
 
+/* GitHub PR badge — semantic state colors aligned with GitHub
+   (open=green, merged=purple, closed=red, draft=gray). */
 .ch-pr {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
   flex: none;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
   cursor: pointer;
-  color: var(--dim);
-  margin-left: -4px;
-  font-size: calc(var(--ui-font-size) - 2.5px);
 }
-.ch-pr.pr-open { color: #1a7f37; border-color: color-mix(in srgb, #1a7f37 30%, var(--line)); }
-.ch-pr.pr-merged { color: #8250df; border-color: color-mix(in srgb, #8250df 30%, var(--line)); }
-.ch-pr.pr-closed { color: var(--err); }
-.ch-pr:hover { background: var(--soft); }
+.ch-pr svg { flex: none; }
+.ch-pr.pr-open { color: var(--color-success); border-color: var(--color-success-bd); background: var(--color-success-soft); }
+.ch-pr.pr-merged { color: var(--color-done); border-color: var(--color-done-bd); background: var(--color-done-soft); }
+.ch-pr.pr-closed { color: var(--color-danger); border-color: var(--color-danger-bd); background: var(--color-danger-soft); }
+.ch-pr.pr-draft { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-surface-sunken); }
+.ch-pr:hover { border-color: var(--color-line-strong); }
 
-/* Fixed more-menu, anchored to the kebab trigger */
+/* Fixed more-menu, anchored to the kebab trigger. Surface / items come from
+   the Menu + MenuItem primitives; only positioning stays here. */
 .ch-menu {
   position: fixed;
   top: 0;
   left: 0;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  z-index: 200;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  overflow: hidden;
-  min-width: 140px;
-}
-.chm-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--ink);
-  padding: 6px 12px;
-}
-.chm-item:hover { background: var(--panel2); }
-.chm-item.del { color: var(--err); }
-.chm-item.del:hover { background: color-mix(in srgb, var(--err) 10%, transparent); }
-
-.chm-divider {
-  height: 1px;
-  background: var(--line);
-  margin: 2px 0;
+  z-index: var(--z-dropdown);
 }
 
 /* On a narrow conversation column, the action labels collapse to icons. */
-@media (max-width: 900px) {
+@media (max-width: 980px) {
   .ch-act-label { display: none; }
 }
 @media (max-width: 640px) {

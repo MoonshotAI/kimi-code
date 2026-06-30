@@ -9,7 +9,7 @@ export default {
     ls: '列目录',
     web_fetch: '抓取',
     search: '搜索',
-    todo: '计划',
+    todo: '待办',
     task: '任务',
   },
   chip: {

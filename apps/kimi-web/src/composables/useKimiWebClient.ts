@@ -6,17 +6,24 @@ import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
-import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import {
+  reconcileWorkspaceOrder,
+  sortByWorkspaceOrder,
+  sortWorkspacesByRecent,
+  type WorkspaceSortMode,
+} from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
   loadWorkspaceOrder,
+  loadWorkspaceSort,
   safeGetString,
   safeRemove,
   safeSetString,
   saveUnread,
   saveWorkspaceOrder,
+  saveWorkspaceSort,
   STORAGE_KEYS,
 } from '../lib/storage';
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
@@ -95,13 +102,17 @@ const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
-// existing `import type { Theme, ColorScheme, Accent } from './useKimiWebClient'`
+// existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
 // callers keep working.
-export type { Accent, ColorScheme, Theme } from './client/useAppearance';
+export type { Accent, ColorScheme } from './client/useAppearance';
 
 // The code-font setting was removed with its UI (b8a9e83). Clear the old
 // persisted key so users who once picked a font aren't frozen on it forever.
 safeRemove(STORAGE_KEYS.codeFont);
+// The UI theme (terminal / modern / kimi) was retired in favor of a single
+// look. Clear the old persisted key so users who once picked one aren't frozen
+// on a value the UI no longer reads.
+safeRemove(STORAGE_KEYS.theme);
 
 function loadPermissionFromStorage(): PermissionMode {
   try {
@@ -569,34 +580,36 @@ function persistSessionProfile(patch: {
 }
 
 // ---------------------------------------------------------------------------
-// Beta: proportional conversation TOC with viewport indicator and hover tooltip.
-// Default off; persisted per browser.
+// Conversation outline (TOC): proportional bubbles with a viewport indicator
+// and hover tooltip. On by default; users can turn it off in Settings.
+// Persisted per browser.
 // ---------------------------------------------------------------------------
-const BETA_TOC_STORAGE_KEY = STORAGE_KEYS.betaToc;
-function loadBetaTocFromStorage(): boolean {
+const CONVERSATION_TOC_STORAGE_KEY = STORAGE_KEYS.conversationToc;
+function loadConversationTocFromStorage(): boolean {
   try {
-    return safeGetString(BETA_TOC_STORAGE_KEY) === 'true';
+    const raw = safeGetString(CONVERSATION_TOC_STORAGE_KEY);
+    return raw === null ? true : raw === 'true';
   } catch {
-    return false;
+    return true;
   }
 }
-function saveBetaTocToStorage(v: boolean): void {
+function saveConversationTocToStorage(v: boolean): void {
   try {
-    safeSetString(BETA_TOC_STORAGE_KEY, v ? 'true' : 'false');
+    safeSetString(CONVERSATION_TOC_STORAGE_KEY, v ? 'true' : 'false');
   } catch {
     // ignore
   }
 }
-const betaToc = ref<boolean>(loadBetaTocFromStorage());
-function setBetaToc(v: boolean): void {
-  betaToc.value = v;
-  saveBetaTocToStorage(v);
+const conversationToc = ref<boolean>(loadConversationTocFromStorage());
+function setConversationToc(v: boolean): void {
+  conversationToc.value = v;
+  saveConversationTocToStorage(v);
 }
 
 // ---------------------------------------------------------------------------
 // Onboarding: a "has the user been onboarded" flag that gates the first-run
-// onboarding screen (preferences: language + theme). Persisted; can be reset to
-// re-open the screen from the settings popover.
+// onboarding screen (preference: language). Persisted; can be reset to re-open
+// the screen from the settings popover.
 // ---------------------------------------------------------------------------
 function loadStringFromStorage(key: string): string {
   try {
@@ -1164,12 +1177,11 @@ function formatTime(iso: string, _status: string): string {
     if (diffMs < 60000) return i18n.global.t('sessions.justNow');
     if (diffH < 1) return `${Math.round(diffMs / 60000)}m`;
     if (diffH < 24) return `${Math.round(diffH)}h`;
-    return d.toLocaleDateString(i18n.global.locale.value, {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    const diffD = diffMs / 86400000;
+    if (diffD < 7) return `${Math.round(diffD)}d`;
+    if (diffD < 30) return `${Math.round(diffD / 7)}w`;
+    if (diffD < 365) return `${Math.round(diffD / 30)}m`;
+    return `${Math.round(diffD / 365)}y`;
   } catch {
     return iso;
   }
@@ -1425,6 +1437,7 @@ function toUiTask(task: AppTask): TaskItem {
     timing,
     meta,
     output,
+    runInBackground: task.runInBackground,
   };
 }
 
@@ -1774,6 +1787,15 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() =>
  */
 const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
 
+/**
+ * Sidebar workspace sort mode. `manual` (default) keeps the persisted/dragged
+ * order; `recent` re-sorts by each workspace's most recent session activity and
+ * stays live as sessions update. Persisted so the choice survives a refresh.
+ */
+const workspaceSortMode = ref<WorkspaceSortMode>(
+  loadWorkspaceSort() === 'recent' ? 'recent' : 'manual',
+);
+
 // Reconcile the persisted order with the set of currently-known workspaces:
 // drop ids that no longer exist, and prepend newly-seen ids (newest first,
 // matching "createdAt desc" — the closest signal we have without a real
@@ -1801,7 +1823,11 @@ watch(
   },
 );
 
-/** Sidebar-facing workspace list, ordered by the persisted/dragged order. */
+/** Sidebar-facing workspace list. Order follows `workspaceSortMode`: the
+ *  persisted/dragged order in `manual` mode, or most-recent-session-first in
+ *  `recent` mode. The recent map is only built (and `rawState.sessions` only
+ *  read) in the recent branch, so manual mode does not re-sort on every session
+ *  update. */
 const workspacesView = computed<WorkspaceView[]>(() => {
   const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
@@ -1811,6 +1837,18 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     branch: w.branch,
     sessionCount: w.sessionCount,
   }));
+  if (workspaceSortMode.value === 'recent') {
+    const lastEditedAt = new Map<string, number>();
+    for (const s of rawState.sessions) {
+      if (s.parentSessionId) continue;
+      const wid = workspaceIdForSession(s);
+      const t = new Date(s.updatedAt).getTime();
+      if (t > (lastEditedAt.get(wid) ?? Number.NEGATIVE_INFINITY)) {
+        lastEditedAt.set(wid, t);
+      }
+    }
+    return sortWorkspacesByRecent(views, lastEditedAt);
+  }
   return sortByWorkspaceOrder(views, workspaceOrder.value);
 });
 
@@ -1837,20 +1875,29 @@ const visibleWorkspace = computed<WorkspaceView | null>(() => {
 const sessionsForView = computed<Session[]>(() => {
   void sessionTimeClock.value;
   const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
+  // Join each session to its workspace name so the search dialog can show which
+  // workspace a hit belongs to. Built once per recompute (O(n+m)) instead of a
+  // per-session find.
+  const nameByWorkspaceId = new Map(workspacesView.value.map((w) => [w.id, w.name]));
   // Child ("side chat") sessions never appear in the main list — they live in
   // the side-chat panel only. Sessions under a removed (hidden) workspace are
   // excluded too, so this flat list matches what the grouped sidebar renders
   // and sidebar search can't resurrect sessions from a removed workspace.
   return rawState.sessions
     .filter((s) => !s.parentSessionId && visibleWorkspaceIds.has(workspaceIdForSession(s)))
-    .map((s) => ({
-      id: s.id,
-      title: s.title,
-      time: formatTime(s.updatedAt, s.status),
-      status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
-      lastPrompt: s.lastPrompt,
-    }));
+    .map((s) => {
+      const workspaceId = workspaceIdForSession(s);
+      return {
+        id: s.id,
+        title: s.title,
+        time: formatTime(s.updatedAt, s.status),
+        status: s.status,
+        busy: isSessionEffectivelyRunning(s.id),
+        lastPrompt: s.lastPrompt,
+        workspaceId,
+        workspaceName: nameByWorkspaceId.get(workspaceId),
+      };
+    });
 });
 
 /** Per-workspace groups for the 'all workspaces' scope. */
@@ -1890,6 +1937,19 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
 function reorderWorkspaces(ids: string[]): void {
   workspaceOrder.value = ids;
   saveWorkspaceOrder(ids);
+  // A drag is an explicit manual ordering, so drop out of `recent` mode — the
+  // dragged order would otherwise be overwritten by the live recency sort.
+  if (workspaceSortMode.value !== 'manual') {
+    workspaceSortMode.value = 'manual';
+    saveWorkspaceSort('manual');
+  }
+}
+
+/** Switch the sidebar workspace sort mode and persist the choice. */
+function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
+  if (workspaceSortMode.value === mode) return;
+  workspaceSortMode.value = mode;
+  saveWorkspaceSort(mode);
 }
 
 /**
@@ -2115,6 +2175,7 @@ export function useKimiWebClient() {
 
     // Workspace view props
     workspacesView,
+    workspaceSortMode,
     visibleWorkspace,
     activeWorkspaceId,
     sessionsForView,
@@ -2127,6 +2188,9 @@ export function useKimiWebClient() {
 
     turns,
     tasks,
+    /** Live `AppTask[]` for the active session — the subagent detail panel
+     *  sources a subagent's streaming `outputLines` from here. */
+    activeAppTasks,
     todos,
     goal,
     swarms,
@@ -2171,16 +2235,12 @@ export function useKimiWebClient() {
     starredModelIds: modelProvider.starredModelIds,
     providers: modelProvider.providers,
 
-    // Theme
-    theme: appearance.theme,
-    setTheme: appearance.setTheme,
-    toggleTheme: appearance.toggleTheme,
     uiFontSize: appearance.uiFontSize,
     setUiFontSize: appearance.setUiFontSize,
 
-    // Beta features
-    betaToc,
-    setBetaToc,
+    // Conversation outline (TOC)
+    conversationToc,
+    setConversationToc,
 
     // Color scheme
     colorScheme: appearance.colorScheme,
@@ -2251,6 +2311,7 @@ export function useKimiWebClient() {
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,
+    setWorkspaceSortMode,
     archiveSession: workspaceState.archiveSession,
     compact: workspaceState.compact,
     forkSession: workspaceState.forkSession,

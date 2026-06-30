@@ -2,6 +2,7 @@
 <!-- Popup list of file paths shown when user types @ in the Composer textarea. -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import { iconSvg } from '../../lib/icons';
 import type { FileItem } from '../../types';
 
 // Re-exported for the .vue consumers (Composer / ChatDock / ConversationPane)
@@ -27,11 +28,11 @@ const { t } = useI18n();
 // Subtle + muted; never an emoji.
 // ---------------------------------------------------------------------------
 
-const ICON_FOLDER = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.4H13a1 1 0 0 1 1 1v6.1a1 1 0 0 1-1 1H2.5a1 1 0 0 1-1-1V4.5z"/></svg>`;
-const ICON_CODE = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" xmlns="http://www.w3.org/2000/svg"><polyline points="5.5,5 2.5,8 5.5,11"/><polyline points="10.5,5 13.5,8 10.5,11"/></svg>`;
-const ICON_DOC = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" xmlns="http://www.w3.org/2000/svg"><path d="M4 1.5h5l3 3v10H4z"/><line x1="6" y1="8" x2="11" y2="8"/><line x1="6" y1="10.5" x2="11" y2="10.5"/></svg>`;
-const ICON_IMAGE = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="5.5" cy="6.5" r="1.1"/><path d="M3 12l3.5-3.5L9 11l2-2 3 3"/></svg>`;
-const ICON_GENERIC = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" xmlns="http://www.w3.org/2000/svg"><path d="M4 1.5h5l3 3v10H4z"/><polyline points="9,1.5 9,4.5 12,4.5"/></svg>`;
+const ICON_FOLDER = iconSvg('folder', 'sm');
+const ICON_CODE = iconSvg('code', 'sm');
+const ICON_DOC = iconSvg('file-text', 'sm');
+const ICON_IMAGE = iconSvg('image', 'sm');
+const ICON_GENERIC = iconSvg('file', 'sm');
 
 const CODE_EXT = new Set([
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'vue', 'json', 'py', 'go', 'rs',
@@ -87,39 +88,42 @@ function fileIcon(item: FileItem): string {
 </template>
 
 <style scoped>
-.mention-menu {
+/* `[role="listbox"]` raises specificity (0,3,0) so the redesign's surface +
+   shadow-md win over any global menu styles. */
+.mention-menu[role="listbox"] {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  z-index: 100;
+  padding: var(--space-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  z-index: var(--z-dropdown);
   max-height: 220px;
   overflow-y: auto;
 }
 
 .mention-state {
   padding: 8px 12px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
 }
 
 .dim {
-  color: var(--muted);
+  color: var(--color-text-muted);
 }
 
 .mention-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 6px 10px;
   cursor: pointer;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  border-bottom: 1px solid var(--line2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  border-radius: var(--radius-sm);
 }
 
 .mention-icon {
@@ -128,7 +132,7 @@ function fileIcon(item: FileItem): string {
   justify-content: center;
   width: 14px;
   height: 14px;
-  color: var(--faint);
+  color: var(--color-text-faint);
   flex-shrink: 0;
 }
 
@@ -141,30 +145,32 @@ function fileIcon(item: FileItem): string {
 
 .mention-item:hover .mention-icon,
 .mention-item.active .mention-icon {
-  color: var(--muted);
+  color: var(--color-text-muted);
 }
 
-.mention-item:last-child {
-  border-bottom: none;
+.mention-item:hover {
+  background: var(--color-surface-sunken);
 }
-
-.mention-item:hover,
 .mention-item.active {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 
 .mention-name {
-  color: var(--ink);
-  font-weight: 600;
+  color: var(--color-text);
+  font-weight: 500;
   min-width: 80px;
   flex-shrink: 0;
 }
 
 .mention-path {
-  color: var(--dim);
-  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- Menu surface defaults ---- */
+.mention-menu { border-radius: var(--radius-lg); box-shadow: var(--sh); }
+.mention-state { font-family: var(--sans); }
 </style>

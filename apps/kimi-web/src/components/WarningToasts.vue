@@ -5,6 +5,7 @@ import { onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppNotice, AppWarning } from '../api/types';
 import { copyTextToClipboard } from '../lib/clipboard';
+import Toast from './ui/Toast.vue';
 
 const props = defineProps<{ warnings: AppWarning[] }>();
 const emit = defineEmits<{ dismiss: [index: number] }>();
@@ -189,39 +190,32 @@ onUnmounted(() => {
 
 <template>
   <div v-if="toasts.length" class="toasts" role="status" aria-live="polite">
-    <div
+    <Toast
       v-for="toast in toasts"
       :key="toast.id"
-      class="toast"
-      :class="{ err: isError(toast.warning) }"
+      :variant="isError(toast.warning) ? 'danger' : 'warning'"
+      :title="toastTitle(toast.warning)"
+      :message="toastMessage(toast.warning)"
+      :dismiss-label="t('warnings.dismiss')"
+      @dismiss="dismissById(toast.id)"
       @pointerenter="pauseTimer(toast.id)"
       @pointerleave="resumeTimer(toast.id)"
     >
-      <span class="dot" aria-hidden="true"></span>
-      <div class="body">
-        <div class="title">{{ toastTitle(toast.warning) }}</div>
-        <div v-if="toastMessage(toast.warning)" class="msg">{{ toastMessage(toast.warning) }}</div>
-        <div v-if="toastDetails(toast.warning)?.length" class="actions">
-          <button class="link" type="button" @click="toggleDetails(toast)">
-            {{ toast.detailsOpen ? t('warnings.hideDetails') : t('warnings.showDetails') }}
-          </button>
-          <button class="link" type="button" @click="copyDetails(toast)">
-            {{ toast.copied ? t('warnings.copied') : t('warnings.copyDetails') }}
-          </button>
-        </div>
-        <dl v-if="toast.detailsOpen && toastDetails(toast.warning)?.length" class="details">
-          <div v-for="detail in toastDetails(toast.warning)" :key="`${detail.label}:${detail.value}`" class="detail-row">
-            <dt>{{ detail.label }}</dt>
-            <dd>{{ detail.value }}</dd>
-          </div>
-        </dl>
+      <div v-if="toastDetails(toast.warning)?.length" class="actions">
+        <button class="link" type="button" @click="toggleDetails(toast)">
+          {{ toast.detailsOpen ? t('warnings.hideDetails') : t('warnings.showDetails') }}
+        </button>
+        <button class="link" type="button" @click="copyDetails(toast)">
+          {{ toast.copied ? t('warnings.copied') : t('warnings.copyDetails') }}
+        </button>
       </div>
-      <button class="x" type="button" :aria-label="t('warnings.dismiss')" @click="dismissById(toast.id)">
-        <svg viewBox="0 0 16 16" width="12" height="12">
-          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
-        </svg>
-      </button>
-    </div>
+      <dl v-if="toast.detailsOpen && toastDetails(toast.warning)?.length" class="details">
+        <div v-for="detail in toastDetails(toast.warning)" :key="`${detail.label}:${detail.value}`" class="detail-row">
+          <dt>{{ detail.label }}</dt>
+          <dd>{{ detail.value }}</dd>
+        </div>
+      </dl>
+    </Toast>
   </div>
 </template>
 
@@ -232,66 +226,23 @@ onUnmounted(() => {
   bottom: 84px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  z-index: 60;
+  gap: var(--space-2);
+  z-index: var(--z-toast);
   width: min(440px, calc(100vw - 32px));
   max-height: 56vh;
   overflow-y: auto;
 }
-.toast {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 9px 10px 11px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
-  font-size: var(--ui-font-size);
-  line-height: 1.45;
-}
-.toast.err {
-  border-color: color-mix(in srgb, var(--err) 35%, transparent);
-}
-.dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  margin-top: 6px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-.toast.err .dot {
-  background: var(--err);
-}
-.body {
-  min-width: 0;
-  flex: 1;
-}
-.title {
-  color: var(--ink);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-.toast.err .title {
-  color: var(--err);
-}
-.msg {
-  margin-top: 2px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 .link {
   border: 0;
   padding: 0;
   background: none;
-  color: var(--accent, var(--link, #2563eb));
+  color: var(--color-accent);
   cursor: pointer;
   font: inherit;
   font-size: var(--ui-font-size-xs);
@@ -304,9 +255,9 @@ onUnmounted(() => {
   gap: 5px;
   margin: 8px 0 0;
   padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--soft);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
 }
 .detail-row {
   display: grid;
@@ -314,30 +265,14 @@ onUnmounted(() => {
   gap: 8px;
 }
 .detail-row dt {
-  color: var(--muted);
+  color: var(--color-text-muted);
 }
 .detail-row dd {
   margin: 0;
-  color: var(--ink);
+  color: var(--color-text);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.x {
-  flex: none;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  color: var(--muted);
-  padding: 1px 2px;
-  display: flex;
-  align-items: center;
-  border-radius: 4px;
-}
-.x:hover {
-  color: var(--ink);
-  background: var(--hover, rgba(0, 0, 0, 0.05));
-}
-
 @media (max-width: 640px) {
   .toasts {
     left: 12px;
@@ -346,19 +281,9 @@ onUnmounted(() => {
     width: auto;
     max-height: 50vh;
   }
-  .toast {
-    padding: 11px 11px 11px 13px;
-    border-radius: 10px;
-  }
   .detail-row {
     grid-template-columns: 1fr;
     gap: 2px;
-  }
-  .x {
-    width: 28px;
-    height: 28px;
-    margin: -4px -4px -4px 0;
-    justify-content: center;
   }
 }
 </style>

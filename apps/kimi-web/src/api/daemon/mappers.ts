@@ -382,6 +382,9 @@ export function toAppTask(wire: WireBackgroundTask): AppTask {
     parentToolCallId: wire.parent_tool_call_id,
     suspendedReason: wire.suspended_reason,
     swarmIndex: wire.swarm_index,
+    // The background task store only holds detached tasks, so any subagent it
+    // returns is a background subagent (foreground ones never persist here).
+    runInBackground: wire.kind === 'subagent' ? true : undefined,
     // outputLines starts undefined; populated by eventReducer via task.progress events
   };
 }

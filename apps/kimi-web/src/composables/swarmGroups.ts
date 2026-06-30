@@ -19,7 +19,7 @@ export interface SwarmGroup {
 
 const PHASES: readonly AppSubagentPhase[] = ['queued', 'working', 'suspended', 'completed', 'failed'];
 
-function phaseForTask(task: AppTask): AppSubagentPhase {
+export function phaseForTask(task: AppTask): AppSubagentPhase {
   if (task.subagentPhase) return task.subagentPhase;
   if (task.status === 'completed') return 'completed';
   if (task.status === 'failed') return 'failed';

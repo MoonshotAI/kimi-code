@@ -12,6 +12,8 @@ import Composer from './Composer.vue';
 import SwarmCard from './SwarmCard.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
+import Icon from '../ui/Icon.vue';
+import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 
@@ -44,8 +46,6 @@ const props = defineProps<{
   fastMoon?: boolean;
   /** Mobile shell: compact chrome. */
   mobile?: boolean;
-  /** Bubble themes (Modern/Kimi): render chat bubbles at all widths (desktop included). */
-  modern?: boolean;
   /** True while switching sessions and the turns array is not yet loaded. */
   sessionLoading?: boolean;
   /** Live compaction state of the active session (non-null while running). */
@@ -78,8 +78,8 @@ const props = defineProps<{
   sessionTitle?: string;
   /** GitHub PR for the current branch, when known (shown in the chat header). */
   pr?: { number: number; state: string; url: string } | null;
-  /** Beta conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
-  betaToc?: boolean;
+  /** Conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
+  conversationToc?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -107,7 +107,7 @@ const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openThinking: [target: { turnId: string; blockIndex: number }];
   openCompaction: [target: { turnId: string }];
-  openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
+  openAgent: [toolCallId: string];
   openToolDiff: [id: string];
   /** Chat header / files pane: focus the diff detail layer and refresh git status. */
   openChanges: [];
@@ -210,10 +210,13 @@ function focusSwarm(): void {
   });
 }
 
-const bubble = computed(() => props.mobile === true || props.modern === true);
-
 const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
-const subagentTasks = computed(() => props.tasks.filter((t) => t.kind === 'subagent'));
+// The dock lists only BACKGROUND subagents. Foreground subagents render inline
+// in the message flow as the `Agent` tool card, so showing them here too would
+// duplicate them (and foreground ones can't be cancelled from the dock anyway).
+const subagentTasks = computed(() =>
+  props.tasks.filter((t) => t.kind === 'subagent' && t.runInBackground),
+);
 const bashRunning = computed(() => bashTasks.value.filter((t) => t.state === 'run').length);
 const subagentRunning = computed(() => subagentTasks.value.filter((t) => t.state === 'run').length);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
@@ -251,85 +254,49 @@ function tocTitle(turn: ChatTurn): string {
   return 'kimi';
 }
 
+// The TOC is keyed by user query: one entry per user turn, not per turn/block.
 const conversationTocItems = computed<ConversationTocItem[]>(() =>
-  props.turns.map((turn, index) => ({
-    id: turn.id,
-    role: turn.role,
-    no: turn.no || index + 1,
-    title: tocTitle(turn),
-  })),
-);
-
-function turnContentLength(turn: ChatTurn): number {
-  if (turn.role === 'compaction') return 20;
-  if (turn.role === 'user') {
-    return (turn.text?.length ?? 0) + (turn.skillActivation ? 20 : 0);
-  }
-  return (
-    (turn.text?.length ?? 0) +
-    (turn.thinking?.length ?? 0) +
-    (turn.tools?.reduce(
-      (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
-      0,
-    ) ?? 0)
-  );
-}
-
-const TOC_BUBBLE_MIN = 10;
-const TOC_BUBBLE_MAX = 56;
-const TOC_TRACK_HEIGHT = 420;
-
-const tocMetrics = computed<{ id: string; height: number }[]>(() => {
-  const items = conversationTocItems.value;
-  const lengths = items.map((item) => {
-    const turn = props.turns.find((t) => t.id === item.id);
-    return turn ? turnContentLength(turn) : TOC_BUBBLE_MIN;
-  });
-  const total = lengths.reduce((s, n) => s + n, 0) || items.length * TOC_BUBBLE_MIN;
-  return items.map((item, i) => {
-    const len = lengths[i] ?? TOC_BUBBLE_MIN;
-    const ratio = total > 0 ? len / total : 0;
-    const height = Math.max(TOC_BUBBLE_MIN, Math.min(TOC_BUBBLE_MAX, ratio * TOC_TRACK_HEIGHT));
-    return { id: item.id, height: Math.round(height) };
-  });
-});
-
-const tocTotalHeight = computed(() =>
-  tocMetrics.value.reduce((s, m) => s + m.height, 0) + (conversationTocItems.value.length - 1) * 4,
+  props.turns
+    .filter((turn) => turn.role === 'user')
+    .map((turn, index) => ({
+      id: turn.id,
+      role: turn.role,
+      no: index + 1,
+      title: tocTitle(turn),
+    })),
 );
 
 const activeTurnId = ref<string | null>(null);
-const tocViewport = ref<{ top: number; height: number } | null>(null);
 
-function updateTocViewport(): void {
+function updateActiveTocQuery(): void {
   const pane = panesRef.value;
   if (!pane) return;
   const anchors = pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]');
   if (anchors.length === 0) return;
+  const items = conversationTocItems.value;
+  if (items.length === 0) return;
+  const userIds = new Set(items.map((item) => item.id));
+
+  // When pinned to the bottom (auto-follow / short content), the latest query is
+  // the active one even if its message sits below the pane's vertical middle —
+  // otherwise the highlight would lag one query behind at the bottom.
+  if (distanceFromBottom() <= BOTTOM_THRESHOLD) {
+    activeTurnId.value = items[items.length - 1]!.id;
+    return;
+  }
+
   const paneRect = pane.getBoundingClientRect();
   const paneMiddle = paneRect.height / 2;
+  // Otherwise the active highlight tracks the query that owns the current
+  // viewport: the last user-turn anchor at or above the middle.
   let bestId: string | null = null;
-  let bestDist = Infinity;
   anchors.forEach((el) => {
-    const rect = el.getBoundingClientRect();
-    const top = rect.top - paneRect.top;
-    const dist = Math.abs(top + rect.height / 2 - paneMiddle);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestId = el.dataset.turnId ?? null;
-    }
+    const id = el.dataset.turnId;
+    if (!id || !userIds.has(id)) return;
+    const top = el.getBoundingClientRect().top - paneRect.top;
+    if (top <= paneMiddle) bestId = id;
   });
-  activeTurnId.value = bestId;
-
-  const maxScroll = pane.scrollHeight - pane.clientHeight;
-  const ratio = maxScroll > 0 ? pane.scrollTop / maxScroll : 0;
-  const total = tocTotalHeight.value;
-  const top = ratio * total;
-  const height = pane.scrollHeight > 0 ? (pane.clientHeight / pane.scrollHeight) * total : total;
-  tocViewport.value = {
-    top: Math.max(0, top),
-    height: Math.max(8, Math.min(height, total - top)),
-  };
+  activeTurnId.value = bestId ?? items[0]!.id;
 }
 
 // The first pending question (if any)
@@ -447,7 +414,7 @@ function onPanesScroll(): void {
     showPill.value = false;
   }
   lastScrollTop = top;
-  updateTocViewport();
+  updateActiveTocQuery();
 }
 
 function scrollToBottom(smooth = false): void {
@@ -639,13 +606,13 @@ watch(scrollKey, async (next, prev) => {
   // Prepending older history changes this key; suppress only that exact case so
   // concurrent bottom appends still raise the new-message pill.
   if (historyLoadInProgress.value && isHistoryPrependOnly(prev, next)) {
-    updateTocViewport();
+    updateActiveTocQuery();
     return;
   }
   await nextTick();
   if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
   else showPill.value = true;
-  updateTocViewport();
+  updateActiveTocQuery();
 });
 
 watch(dockRef, () => {
@@ -690,7 +657,7 @@ watch(
       scrollToBottom(false);
       scheduleStableFollow();
     }
-    updateTocViewport();
+    updateActiveTocQuery();
   },
 );
 
@@ -701,7 +668,7 @@ watch(
     following.value = true;
     await nextTick();
     scheduleStableFollow();
-    updateTocViewport();
+    updateActiveTocQuery();
   },
 );
 
@@ -712,7 +679,7 @@ watch(
     if (!following.value && !hasUserActionFollowLock()) return;
     await nextTick();
     scheduleStableFollow(48);
-    updateTocViewport();
+    updateActiveTocQuery();
   },
 );
 
@@ -855,7 +822,7 @@ onMounted(() => {
     }
     rebindScrollObservers();
     scheduleStableFollow(48);
-    updateTocViewport();
+    updateActiveTocQuery();
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
@@ -913,13 +880,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
       @archive-session="(id) => emit('archiveSession', id)"
     />
 
-    <!-- Beta conversation outline: right edge, proportional bubbles, viewport indicator, hover tooltip. -->
+    <!-- Conversation outline: right edge rail of vertical bars (one per user
+         query); hover to expand a labeled panel. -->
     <ConversationToc
-      v-if="betaToc"
+      v-if="conversationToc"
       :items="conversationTocItems"
-      :metrics="tocMetrics"
       :active-turn-id="activeTurnId"
-      :viewport="tocViewport"
       :mobile="mobile"
       :session-loading="sessionLoading"
       @select="scrollToTurn"
@@ -940,16 +906,13 @@ defineExpose({ loadComposerForEdit, focusComposer });
               <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
               <!-- Workspace picker: choose where this new conversation starts. -->
               <div v-if="hasWorkspaces" class="ws-pick">
-                <button type="button" class="ws-pick-btn" :title="t('conversation.switchWorkspace')" @click.stop="wsPickOpen = !wsPickOpen">
-                  <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
-                    <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-                    <path d="M1 5.5h12"/>
-                  </svg>
-                  <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
-                  <svg class="ws-pick-chev" :class="{ open: wsPickOpen }" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="4,6 8,10 12,6" />
-                  </svg>
-                </button>
+                <Tooltip :text="t('conversation.switchWorkspace')">
+                  <button type="button" class="ws-pick-btn" @click.stop="wsPickOpen = !wsPickOpen">
+                    <Icon name="folder" size="sm" />
+                    <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
+                    <Icon class="ws-pick-chev" :class="{ open: wsPickOpen }" name="chevron-down" size="sm" />
+                  </button>
+                </Tooltip>
                 <div v-if="wsPickOpen" class="ws-pick-backdrop" @click="wsPickOpen = false" />
                 <div v-if="wsPickOpen" class="ws-pick-menu">
                   <button
@@ -977,9 +940,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
                     class="ws-pick-action"
                     @click.stop="wsPickOpen = false; emit('addWorkspace')"
                   >
-                    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-                      <path d="M8 3v10M3 8h10"/>
-                    </svg>
+                    <Icon name="plus" size="sm" />
                     <span>{{ t('conversation.addWorkspace') }}</span>
                   </button>
                 </div>
@@ -990,11 +951,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
                 class="empty-add-workspace"
                 @click="emit('addWorkspace')"
               >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-                  <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-                  <path d="M1 5.5h12"/>
-                  <path d="M8 7.25v4.5M5.75 9.5h4.5"/>
-                </svg>
+                <Icon name="folder-plus" size="sm" />
                 <span>{{ t('conversation.addWorkspace') }}</span>
               </button>
             </div>
@@ -1044,8 +1001,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
               :approvals="approvals"
-              :bubble="bubble"
-              :mobile="mobile"
               :running="running"
               :sending="sending"
               :fast-moon="fastMoon"
@@ -1105,6 +1060,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :mobile="mobile"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
+        @open-agent="emit('openAgent', $event)"
         @answer="handleQuestionAnswer"
         @dismiss="emit('dismiss', $event)"
         @approval="handleApproval"
@@ -1140,18 +1096,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :aria-label="t('conversation.jumpToLatestAria')"
         @click="scrollToBottom(true)"
       >
-        <svg
-          class="pill-chevron"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="4,6 8,10 12,6" />
-        </svg>
+        <Icon class="pill-chevron" name="chevron-down" size="md" />
         {{ t('conversation.newMessages') }}
       </button>
     </Transition>
@@ -1249,16 +1194,16 @@ defineExpose({ loadComposerForEdit, focusComposer });
   gap: 8px;
   text-align: center;
   padding: 0 16px 16px;
-  color: var(--ink);
+  color: var(--color-text);
   font-family: var(--sans);
 }
 .empty-hint-title {
   font-size: calc(var(--ui-font-size) + 16px);
-  font-weight: 600;
+  font-weight: 500;
 }
 .empty-hint-text {
   display: inline-block;
-  font-size: calc(var(--ui-font-size) + 2px);
+  font-size: var(--text-base);
   color: var(--dim);
   max-width: 100%;
   overflow: hidden;
@@ -1281,11 +1226,11 @@ defineExpose({ loadComposerForEdit, focusComposer });
   cursor: pointer;
 }
 .empty-add-workspace:hover {
-  border-color: var(--bd);
-  color: var(--ink);
+  border-color: var(--color-accent-bd);
+  color: var(--color-text);
 }
 .empty-add-workspace:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 .empty-add-workspace svg {
@@ -1311,29 +1256,29 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
 }
-.ws-pick-btn:hover { border-color: var(--bd); color: var(--ink); }
+.ws-pick-btn:hover { border-color: var(--color-accent-bd); color: var(--color-text); }
 .ws-pick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-pick-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
 .ws-pick-chev.open { transform: rotate(180deg); }
 .ws-pick-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 19;
+  z-index: var(--z-sticky);
 }
 .ws-pick-menu {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
   top: calc(100% + 6px);
-  z-index: 20;
+  z-index: var(--z-dropdown);
   min-width: 220px;
   max-width: min(86vw, 340px);
   max-height: 50vh;
   overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 4px;
 }
 .ws-pick-item {
@@ -1351,16 +1296,16 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-family: var(--mono);
 }
 .ws-pick-item:hover { background: var(--panel2); }
-.ws-pick-item.on { background: var(--soft); }
-.ws-pick-item-name { font-size: var(--ui-font-size-sm); color: var(--ink); }
-.ws-pick-item.on .ws-pick-item-name { color: var(--blue2); font-weight: 600; }
-.ws-pick-item-path { font-size: calc(var(--ui-font-size) - 3px); color: var(--muted); }
+.ws-pick-item.on { background: var(--color-accent-soft); }
+.ws-pick-item-name { font-size: var(--ui-font-size-sm); color: var(--color-text); }
+.ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); font-weight: 500; }
+.ws-pick-item-path { font-size: var(--text-base); color: var(--muted); }
 .ws-pick-item.ws-pick-more {
   flex-direction: row;
   justify-content: center;
   color: var(--dim);
 }
-.ws-pick-item.ws-pick-more:hover { color: var(--ink); }
+.ws-pick-item.ws-pick-more:hover { color: var(--color-text); }
 .ws-pick-divider {
   height: 1px;
   margin: 4px 6px;
@@ -1381,7 +1326,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-size: var(--ui-font-size-sm);
   color: var(--dim);
 }
-.ws-pick-action:hover { background: var(--panel2); color: var(--ink); }
+.ws-pick-action:hover { background: var(--panel2); color: var(--color-text); }
 .ws-pick-action svg { flex: none; }
 
 /* Chat scroll area: owns only messages; the dock is the bottom sibling. */
@@ -1409,11 +1354,11 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--panel);
-  color: var(--ink);
+  color: var(--color-text);
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
-  z-index: 10;
+  box-shadow: var(--shadow-sm);
+  z-index: var(--z-sticky);
 }
 .newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {
@@ -1436,12 +1381,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
   top: 60px;
   transform: translateX(-50%);
   padding: 8px 14px;
-  border-radius: 6px;
-  background: var(--ink);
+  border-radius: var(--radius-sm);
+  background: var(--color-text);
   color: var(--bg);
   font-size: var(--ui-font-size-sm);
-  z-index: 20;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  z-index: var(--z-sticky);
+  box-shadow: var(--shadow-sm);
 }
 .abort-toast-text {
   display: flex;
@@ -1457,4 +1402,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   opacity: 0;
   transform: translateX(-50%) translateY(-6px);
 }
+
+.con { background: var(--bg); }
+.newmsg-pill { font-family: var(--sans); }
 </style>

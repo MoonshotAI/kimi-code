@@ -14,7 +14,6 @@ export const STORAGE_KEYS = {
   planMode: 'kimi-web.plan-mode',
   swarmMode: 'kimi-web.swarm-mode',
   goalMode: 'kimi-web.goal-mode',
-  theme: 'kimi-web.theme',
   uiFontSize: 'kimi-web.ui-font-size',
   starredModels: 'kimi-web.starred-models',
   unread: 'kimi-web.unread',
@@ -25,7 +24,11 @@ export const STORAGE_KEYS = {
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
   workspaceOrder: 'kimi-web.workspace-order',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
-  betaToc: 'kimi-web.beta-toc',
+  workspaceSort: 'kimi-web.workspace-sort',
+  // Conversation outline (TOC). The value keeps the legacy `beta-toc` name so
+  // users who explicitly turned it off while it was experimental keep their
+  // preference after it became on-by-default.
+  conversationToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
   notifyOnQuestion: 'kimi-web.notify-on-question',
   soundOnComplete: 'kimi-web.sound-on-complete',
@@ -40,6 +43,7 @@ export const STORAGE_KEYS = {
   // deprecated cleanups (kept so the removals still fire for old users)
   codeFont: 'kimi-web.code-font',
   contentAlign: 'kimi-web.content-align',
+  theme: 'kimi-web.theme',
 } as const;
 
 /** Per-session composer draft key. */
@@ -180,4 +184,17 @@ export function loadWorkspaceNameOverrides(): Record<string, string> {
 
 export function saveWorkspaceNameOverrides(overrides: Record<string, string>): void {
   safeSetJson(STORAGE_KEYS.workspaceNameOverrides, overrides);
+}
+
+/**
+ * Sidebar workspace sort mode preference (`'manual'` or `'recent'`). Stored as
+ * a raw string with no enum check here — the call site narrows it to
+ * `WorkspaceSortMode`. Returns null when unset or storage is unavailable.
+ */
+export function loadWorkspaceSort(): string | null {
+  return safeGetString(STORAGE_KEYS.workspaceSort);
+}
+
+export function saveWorkspaceSort(mode: string): void {
+  safeSetString(STORAGE_KEYS.workspaceSort, mode);
 }
