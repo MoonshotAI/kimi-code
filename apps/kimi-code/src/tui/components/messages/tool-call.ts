@@ -414,7 +414,7 @@ function extractKeyArgument(
   };
 
   // Glob: concatenate multiple args into a single summary so the header
-  // shows pattern, optional explicit path, and include_dirs override.
+  // shows pattern, optional explicit path, and ignored-file inclusion.
   if (toolName === 'Glob') {
     const pattern = args['pattern'];
     if (typeof pattern !== 'string' || pattern.length === 0) return null;
@@ -423,8 +423,8 @@ function extractKeyArgument(
     if (typeof path === 'string' && path.length > 0) {
       summary += ` · ${makeWorkspaceRelativePath(path, workspaceDir)}`;
     }
-    if (args['include_dirs'] === false) {
-      summary += ' · no dirs';
+    if (args['include_ignored'] === true) {
+      summary += ' · include ignored';
     }
     return truncateArgValue('pattern', summary);
   }

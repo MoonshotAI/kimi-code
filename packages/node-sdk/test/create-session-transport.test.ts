@@ -111,6 +111,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -132,6 +133,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -169,6 +171,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'print',
@@ -201,6 +204,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -236,6 +240,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -255,6 +260,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -295,6 +301,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -333,6 +340,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: forked.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -368,6 +376,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: null,
           client_version: null,
           ui_mode: 'shell',

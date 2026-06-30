@@ -70,6 +70,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
     }
     host.track('login', {
       provider: DEFAULT_OAUTH_PROVIDER_NAME,
+      method: 'oauth',
       already_logged_in: alreadyLoggedIn,
     });
     if (alreadyLoggedIn) {

@@ -22,6 +22,10 @@ import { IWSGateway } from '#/services/gateway/wsGateway';
 import { WSGateway } from '#/services/gateway/wsGatewayService';
 import { IWSBroadcastService } from '#/services/gateway/wsBroadcast';
 import { WSBroadcastService } from '#/services/gateway/wsBroadcastService';
+import {
+  IModelCatalogRefreshScheduler,
+  ModelCatalogRefreshScheduler,
+} from '#/services/modelCatalog/modelCatalogRefreshScheduler';
 import { ISnapshotService, SnapshotService, loadSnapshotConfig } from '#/services/snapshot';
 
 export interface ServerServiceCollectionOptions {
@@ -43,6 +47,7 @@ export function createServerServiceCollection(
     [IConnectionRegistry, new SyncDescriptor(ConnectionRegistry, [], false)],
     [ISessionClientsService, new SyncDescriptor(SessionClientsService, [], false)],
     [IWSBroadcastService, new SyncDescriptor(WSBroadcastService, [], false)],
+    [IModelCatalogRefreshScheduler, new SyncDescriptor(ModelCatalogRefreshScheduler, [], false)],
     [Services.IApprovalService, new SyncDescriptor(ApprovalService, [], false)],
     [Services.IQuestionService, new SyncDescriptor(QuestionService, [], false)],
   );
@@ -52,6 +57,14 @@ export function createServerServiceCollection(
   }
 
   services.set(Services.ILogService, new PinoLoggerAdapter(pinoLogger));
+  services.set(
+    Services.IFsSearchService,
+    new SyncDescriptor(
+      Services.FsSearchService,
+      [server.coreProcessOptions?.telemetry ?? Services.noopTelemetryClient],
+      true,
+    ),
+  );
   services.set(IRestGateway, new FastifyRestGateway(app));
   services.set(Services.IEnvironmentService, envService);
 

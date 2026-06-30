@@ -1065,26 +1065,21 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.delete<{ deleted: true }>(`/providers/${encodeURIComponent(id)}`);
   }
 
-  async refreshProvider(id: string): Promise<AppProvider> {
-    // PRESUMED endpoint: POST /v1/providers/{id}:refresh → WireProvider
-    const data = await this.http.post<WireProvider>(
+  async refreshProvider(id: string): Promise<ProviderRefreshResult> {
+    const data = await this.http.post<WireProviderRefreshResult>(
       `/providers/${encodeURIComponent(id)}:refresh`,
     );
-    return toAppProvider(data);
+    return toProviderRefreshResult(data);
+  }
+
+  async refreshAllProviders(): Promise<ProviderRefreshResult> {
+    const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh');
+    return toProviderRefreshResult(data);
   }
 
   async refreshOAuthProviderModels(): Promise<ProviderRefreshResult> {
     const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh_oauth');
-    return {
-      changed: data.changed.map((item) => ({
-        providerId: item.provider_id,
-        providerName: item.provider_name,
-        added: item.added,
-        removed: item.removed,
-      })),
-      unchanged: data.unchanged,
-      failed: data.failed,
-    };
+    return toProviderRefreshResult(data);
   }
 
   // -------------------------------------------------------------------------
@@ -1362,4 +1357,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
     };
   }
+}
+
+function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefreshResult {
+  return {
+    changed: data.changed.map((item) => ({
+      providerId: item.provider_id,
+      providerName: item.provider_name,
+      added: item.added,
+      removed: item.removed,
+    })),
+    unchanged: data.unchanged,
+    failed: data.failed,
+  };
 }

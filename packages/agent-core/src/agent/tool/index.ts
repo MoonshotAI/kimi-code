@@ -481,8 +481,8 @@ export class ToolManager {
         new b.ReadTool(kaos, workspace),
         new b.WriteTool(kaos, workspace),
         new b.EditTool(kaos, workspace),
-        new b.GrepTool(kaos, workspace),
-        new b.GlobTool(kaos, workspace),
+        new b.GrepTool(kaos, workspace, this.agent.telemetry),
+        new b.GlobTool(kaos, workspace, this.agent.telemetry),
         new b.BashTool(kaos, cwd, background, {
           allowBackground,
         }),
@@ -566,7 +566,7 @@ export class ToolManager {
           ...base,
           outcome: 'error',
           duration_ms: Date.now() - startedAt,
-          error: error instanceof Error ? error.message : String(error),
+          error_type: error instanceof Error ? error.name : 'Unknown',
         });
         throw error;
       }

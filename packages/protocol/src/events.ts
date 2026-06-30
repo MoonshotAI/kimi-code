@@ -5,6 +5,12 @@ import { messageContentSchema, type MessageContent } from './message';
 import { sessionSchema, sessionStatusSchema, type Session, type SessionStatus } from './session';
 import { isoDateTimeSchema } from './time';
 import { configResponseSchema, type ConfigResponse } from './rest/config';
+import {
+  providerRefreshChangeSchema,
+  providerRefreshFailureSchema,
+  type ProviderRefreshChange,
+  type ProviderRefreshFailure,
+} from './modelCatalog';
 import { workspaceSchema, type Workspace } from './workspace';
 
 export interface TokenUsage {
@@ -355,6 +361,19 @@ export interface ConfigChangedEvent {
   readonly config: ConfigResponse;
 }
 
+/**
+ * Pushed when the daemon refreshes provider model metadata (manual or
+ * scheduled) and the effective catalog changed. Carries the per-provider
+ * diff so clients can both refresh their model/provider caches and surface a
+ * summary ("3 models added") without re-diffing the whole config.
+ */
+export interface ModelCatalogChangedEvent {
+  readonly type: 'event.model_catalog.changed';
+  readonly changed: readonly ProviderRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly ProviderRefreshFailure[];
+}
+
 export interface GoalUpdatedEvent {
   readonly type: 'goal.updated';
   readonly snapshot: GoalSnapshot | null;
@@ -628,6 +647,7 @@ export type AgentEvent =
   | WorkspaceDeletedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
+  | ModelCatalogChangedEvent
   | GoalUpdatedEvent
   | SkillActivatedEvent
   | TurnStartedEvent
@@ -1013,6 +1033,13 @@ export const configChangedEventSchema = z.object({
   config: configResponseSchema,
 }) satisfies z.ZodType<ConfigChangedEvent>;
 
+export const modelCatalogChangedEventSchema = z.object({
+  type: z.literal('event.model_catalog.changed'),
+  changed: z.array(providerRefreshChangeSchema),
+  unchanged: z.array(z.string().min(1)),
+  failed: z.array(providerRefreshFailureSchema),
+}) satisfies z.ZodType<ModelCatalogChangedEvent>;
+
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -1279,6 +1306,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
   sessionStatusChangedEventSchema,
+  modelCatalogChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   turnStartedEventSchema,

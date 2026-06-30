@@ -4,8 +4,17 @@ import type {
   ModelCatalogItem,
   ProviderCatalogItem,
   RefreshOAuthProviderModelsResponse,
+  RefreshProviderModelsResponse,
   SetDefaultModelResponse,
 } from '@moonshot-ai/protocol';
+
+export type RefreshProviderModelsScope = 'all' | 'oauth';
+
+export interface RefreshProviderModelsOptions {
+  readonly scope?: RefreshProviderModelsScope;
+  /** Refresh only this provider id. When set, `scope` is ignored. */
+  readonly providerId?: string;
+}
 
 export interface IModelCatalogService {
   readonly _serviceBrand: undefined;
@@ -15,6 +24,9 @@ export interface IModelCatalogService {
   getProvider(providerId: string): Promise<ProviderCatalogItem>;
   setDefaultModel(modelId: string): Promise<SetDefaultModelResponse>;
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
+  refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
