@@ -7,6 +7,7 @@ import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/exte
 import {
   CTRL_C_HINT,
   CTRL_D_HINT,
+  DOUBLE_ESC_WINDOW_MS,
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
@@ -35,6 +36,7 @@ export interface EditorKeyboardHost {
   detachCurrentForegroundTask(): void;
   cancelRunningShellCommand(): void;
   hideSessionPicker(): void;
+  openUndoSelector(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
@@ -44,6 +46,7 @@ export interface EditorKeyboardHost {
 
 export class EditorKeyboardController {
   private pendingExit: PendingExit | null = null;
+  private pendingUndoEsc: { readonly timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(
     private readonly host: EditorKeyboardHost,
@@ -60,6 +63,7 @@ export class EditorKeyboardController {
 
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
+      if (this.pendingUndoEsc) this.clearPendingUndoEsc();
       host.updateEditorBorderHighlight(text);
     };
 
@@ -124,18 +128,30 @@ export class EditorKeyboardController {
       if (this.pendingExit) this.clearPendingExit();
       if (host.state.activeDialog === 'session-picker') {
         host.hideSessionPicker();
+        this.clearPendingUndoEsc();
         return;
       }
       if (host.state.appState.isCompacting) {
         this.cancelCurrentCompaction();
+        this.clearPendingUndoEsc();
         return;
       }
       if (host.btwPanelController.closeOrCancel()) {
+        this.clearPendingUndoEsc();
         return;
       }
       if (host.state.appState.streamingPhase !== 'idle') {
         this.cancelCurrentStream();
+        this.clearPendingUndoEsc();
+        return;
       }
+      // Idle: a second Esc within the double-tap window opens the undo selector.
+      if (this.pendingUndoEsc !== null) {
+        this.clearPendingUndoEsc();
+        host.openUndoSelector();
+        return;
+      }
+      this.armPendingUndoEsc();
     };
 
     editor.onShiftTab = () => {
@@ -262,6 +278,22 @@ export class EditorKeyboardController {
     clearTimeout(this.pendingExit.timer);
     this.host.state.footer.setTransientHint(null);
     this.pendingExit = null;
+  }
+
+  private armPendingUndoEsc(): void {
+    this.clearPendingUndoEsc();
+    const timer = setTimeout(() => {
+      if (this.pendingUndoEsc?.timer === timer) {
+        this.pendingUndoEsc = null;
+      }
+    }, DOUBLE_ESC_WINDOW_MS);
+    this.pendingUndoEsc = { timer };
+  }
+
+  private clearPendingUndoEsc(): void {
+    if (!this.pendingUndoEsc) return;
+    clearTimeout(this.pendingUndoEsc.timer);
+    this.pendingUndoEsc = null;
   }
 
   private armPendingExit(kind: 'ctrl-c' | 'ctrl-d', hint: string): void {
