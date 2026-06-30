@@ -1868,12 +1868,18 @@ export class KimiTUI {
   }
 
   private isTurnBoundaryComponent(child: Component): boolean {
-    if (!(child instanceof UserMessageComponent)) return false;
+    if (
+      !(child instanceof UserMessageComponent) &&
+      !(child instanceof SkillActivationComponent) &&
+      !(child instanceof PluginCommandComponent)
+    ) {
+      return false;
+    }
     const entry = getTranscriptComponentEntry(child);
     if (entry === undefined) return false;
-    // Live user messages have an undefined turnId; replayed user messages get a
-    // `replay:N` turnId. Both start a new turn. Steer messages carry a defined
-    // non-replay turnId and are not boundaries.
+    // Live user messages / slash activations have an undefined turnId; replayed
+    // ones get a `replay:N` turnId. Both start a new turn. Steer messages carry
+    // a defined non-replay turnId and are not boundaries.
     return entry.turnId === undefined || entry.turnId.startsWith('replay:');
   }
 
