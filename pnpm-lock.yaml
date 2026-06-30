@@ -299,7 +299,7 @@ importers:
   docs:
     dependencies:
       mermaid:
-        specifier: ^11.12.2
+        specifier: ^11.15.0
         version: 11.15.0
       vitepress-plugin-llms:
         specifier: ^1.10.0
