@@ -24,6 +24,7 @@ export default {
   add: '添加',
   cancel: '取消',
   addHint: '粘贴一个绝对路径，或从最近用过的文件夹中选择。',
+  addFailed: '无法打开此文件夹，请检查路径后重试。',
   // Folder browser
   openThisFolder: '打开此文件夹',
   up: '上一级',

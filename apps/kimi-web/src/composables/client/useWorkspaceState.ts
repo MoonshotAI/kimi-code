@@ -662,8 +662,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /**
    * Add a workspace by folder path, registering it with the daemon. Returns true
    * when the workspace was registered and selected; false when the daemon
-   * rejected the path (the error is surfaced to the user) so callers can keep
-   * any pending submission instead of dropping it.
+   * rejected the path, so callers can keep the picker open and any pending
+   * submission instead of dropping it. The caller surfaces the failure to the
+   * user (e.g. an inline error in the picker).
    */
   async function addWorkspaceByPath(root: string): Promise<boolean> {
     const trimmed = root.trim();
@@ -674,8 +675,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
       return true;
-    } catch (err) {
-      pushOperationFailure('addWorkspace', err);
+    } catch {
       return false;
     }
   }

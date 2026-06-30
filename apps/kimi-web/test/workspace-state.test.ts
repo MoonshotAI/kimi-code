@@ -243,7 +243,7 @@ describe('useWorkspaceState — addWorkspaceByPath', () => {
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });
 
-  it('surfaces the error and adds no local workspace on failure', async () => {
+  it('returns false and adds no local workspace on failure', async () => {
     const err = new Error('path not found');
     apiMock.addWorkspace.mockRejectedValue(err);
     const state = createState();
@@ -253,7 +253,8 @@ describe('useWorkspaceState — addWorkspaceByPath', () => {
     const ok = await workspace.addWorkspaceByPath('/abs/missing');
 
     expect(ok).toBe(false);
-    expect(deps.pushOperationFailure).toHaveBeenCalledWith('addWorkspace', err);
+    // The caller (the picker) is responsible for surfacing the failure inline.
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
     expect(state.workspaces).toEqual([]);
     expect(state.activeWorkspaceId).toBeNull();
   });

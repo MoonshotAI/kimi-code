@@ -244,6 +244,10 @@ type SubmitPayload = {
   attachments: { fileId: string; kind: 'image' | 'video' }[];
 };
 const pendingWorkspaceSubmit = ref<SubmitPayload | null>(null);
+// Inline error shown inside the add-workspace picker after the daemon rejects
+// a path. Kept separate from the global toast so the feedback is visible above
+// the picker's backdrop and persists until the user retries or closes.
+const addWorkspaceError = ref<string | null>(null);
 
 // Any of these modal/overlay layers, when open, owns Escape. The global
 // capture-phase handler must NOT close a background side panel out from under an
@@ -483,11 +487,16 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
 }
 
 async function handleAddWorkspace(root: string): Promise<void> {
+  addWorkspaceError.value = null;
   const added = await client.addWorkspaceByPath(root);
   // Keep the picker open (and the pending submission intact) when the daemon
-  // rejects the path so the user can retry with a valid one. Closing via
-  // Escape goes through handleCloseAddWorkspace, which drops the pending prompt.
-  if (!added) return;
+  // rejects the path so the user can retry with a valid one. The error is shown
+  // inline in the picker. Closing via Escape goes through handleCloseAddWorkspace,
+  // which drops the pending prompt.
+  if (!added) {
+    addWorkspaceError.value = t('workspace.addFailed');
+    return;
+  }
   showAddWorkspace.value = false;
   const pending = pendingWorkspaceSubmit.value;
   pendingWorkspaceSubmit.value = null;
@@ -499,6 +508,7 @@ async function handleAddWorkspace(root: string): Promise<void> {
 
 function handleCloseAddWorkspace(): void {
   pendingWorkspaceSubmit.value = null;
+  addWorkspaceError.value = null;
   showAddWorkspace.value = false;
 }
 
@@ -885,6 +895,7 @@ function openPr(url: string): void {
       :browse-fs="client.browseFs"
       :get-fs-home="client.getFsHome"
       :default-path="client.visibleWorkspace.value?.root ?? client.status.value.cwd"
+      :error="addWorkspaceError"
       @add="handleAddWorkspace($event)"
       @close="handleCloseAddWorkspace"
     />
