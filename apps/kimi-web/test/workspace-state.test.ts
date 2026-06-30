@@ -2,6 +2,7 @@ import { computed, ref } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSession } from '../src/api/types';
 import { createInitialState } from '../src/api/daemon/eventReducer';
+import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 
@@ -151,5 +152,65 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_stale');
     expect(apiMock.abortSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('mergeWorkspaces', () => {
+  it('collapses registered workspaces that share a root, keeping the first entry and its sessions', () => {
+    const result = mergeWorkspaces({
+      workspaces: [
+        // Server orders by last_opened_at desc, so the most recently opened
+        // (typically the canonical re-add) comes first.
+        { id: 'wd_current', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
+        { id: 'wd_legacy', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
+      ],
+      // A session whose daemon workspace_id points at the dropped (legacy) entry.
+      sessions: [{ id: 's1', cwd: '/agent/GEO', workspaceId: 'wd_legacy' }],
+      hiddenWorkspaceRoots: [],
+      activeRoot: undefined,
+      activeBranch: null,
+      sessionsHasMoreByWorkspace: { wd_current: false },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.root).toBe('/agent/GEO');
+    // Keeps the first (most recent) entry, matching the sidebar's first-match
+    // session assignment so the rendered workspace is the one sessions land under.
+    expect(result[0]?.id).toBe('wd_current');
+    expect(result[0]?.sessionCount).toBe(1);
+  });
+
+  it('keeps distinct roots separate and appends derived cwds after real ones', () => {
+    const result = mergeWorkspaces({
+      workspaces: [
+        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+      ],
+      sessions: [
+        { id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' },
+        { id: 's2', cwd: '/agent/B', workspaceId: 'wd_b' },
+      ],
+      hiddenWorkspaceRoots: [],
+      activeRoot: undefined,
+      activeBranch: null,
+      sessionsHasMoreByWorkspace: {},
+    });
+
+    expect(result.map((w) => w.root)).toEqual(['/agent/A', '/agent/B']);
+    expect(result.find((w) => w.root === '/agent/B')?.id).toBe('wd_b');
+  });
+
+  it('hides workspaces whose root the user removed', () => {
+    const result = mergeWorkspaces({
+      workspaces: [
+        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+      ],
+      sessions: [{ id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' }],
+      hiddenWorkspaceRoots: ['/agent/A'],
+      activeRoot: undefined,
+      activeBranch: null,
+      sessionsHasMoreByWorkspace: {},
+    });
+
+    expect(result.map((w) => w.root)).not.toContain('/agent/A');
   });
 });
