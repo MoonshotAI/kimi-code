@@ -951,7 +951,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('keeps an unresolved tool exchange out of the compaction prompt', async () => {
+  it('closes an unresolved tool exchange in the compaction prompt with a synthetic result', async () => {
     const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -976,11 +976,13 @@ describe('FullCompaction', () => {
         user: text "run both tools"
         assistant: []  calls call_open_one:LookupOne { "query": "one" }, call_open_two:LookupTwo { "query": "two" }
         tool[call_open_one]: text "one result"
+        tool[call_open_two]: text "Tool result is not available in the current context. Do not assume the tool completed successfully."
         user: text "You are about to run out of context. Write a first-person handoff note to\\nyourself so you can seamlessly continue this task after the earlier\\nconversation is cleared.\\n\\n--- This message is a direct task, not part of the above conversation ---\\n\\nWrite the note as your own continuing train of thought — first person, present\\ntense, the way you would reason through the next move. Do not write a\\nthird-party report about someone else's work, and do not impose rigid section\\nheadings; let the shape follow the task.\\n\\nMake the note self-sufficient: the next turn will see only your most recent user\\nmessages and this note — every assistant message, tool call, and tool result\\nabove will be gone. In your own words, preserve what you genuinely need to\\ncontinue:\\n\\n- The latest user request, quoted verbatim, and what it is actually asking for.\\n- The instructions and constraints currently in force (user preferences,\\n  project rules, environment and tooling limits) — condensed to what still\\n  matters.\\n- What has actually been done, at high fidelity: keep the exact commands that\\n  were run, the exact file paths touched, and whether each succeeded or failed.\\n  Keep only the final working version of any code; drop intermediate attempts\\n  and already-resolved errors.\\n- The precise next action — including the exact next command or tool call you\\n  intend to make — and any required format for the final answer.\\n\\nBe honest about uncertainty. If an earlier step claimed something was done but\\nwas never verified (tests \\"passing\\", a fix \\"working\\", a file \\"created\\"), say so\\nplainly and treat it as unverified rather than fact — re-check before relying\\non it.\\n\\nBe concise. Include the critical data, identifiers, and references needed to\\ncontinue, and omit anything that does not change the next move.\\n\\nRespond with text only. Do not call any tools — you already have everything you\\nneed in the conversation history.\\n\\n\\nOptional user instruction:\\nKeep stable facts."
     `);
-    // The unresolved tool exchange is sent to the model (see the compaction input
-    // above) but is dropped from the replacement history, leaving only the real
-    // user messages followed by the compaction summary.
+    // The unresolved tool call is sent to the model with a synthetic tool_result
+    // closing it (so a strict provider accepts the summary request), while the
+    // whole exchange is still dropped from the replacement history, leaving only
+    // the real user messages followed by the compaction summary.
     expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
       'user',
       'user',

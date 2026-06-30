@@ -12,7 +12,7 @@
 // Compaction is a hot path, so these intentionally drive the real
 // Agent/ContextMemory/FullCompaction machinery through the test harness rather
 // than mocking it.
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart, Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { AgentOptions } from '../../../src/agent';
@@ -77,6 +77,36 @@ describe('compaction — guard tests', () => {
     expect(summaries).toHaveLength(1);
     expect(summaryMessageText(ctx)).toContain('Second summary.');
     expect(historyTexts(ctx).join('\n')).not.toContain('First summary.');
+  });
+
+  it('closes a dangling tool_use in the compaction summary request via synthesizeMissing', async () => {
+    // Full compaction projects its summarizer input with { synthesizeMissing: true }
+    // so an unresolved tool_use (whose result is sliced out / not yet recorded)
+    // is answered by a synthetic tool_result — keeping the summary request
+    // well-formed for strict providers instead of 400-ing on a dangling call.
+    let summarizerMessages: Message[] | undefined;
+    const capture: GenerateFn = async (_provider, _system, _tools, messages) => {
+      summarizerMessages = messages;
+      return textResult('Compacted summary.');
+    };
+    const ctx = testAgent({ generate: capture });
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendUnresolvedToolExchange(0); // assistant with 2 tool calls, no results
+
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const msgs = summarizerMessages ?? [];
+    const assistantIndex = msgs.findIndex(
+      (message) => message.role === 'assistant' && message.toolCalls.length > 0,
+    );
+    expect(assistantIndex).toBeGreaterThanOrEqual(0);
+    for (const toolCall of msgs[assistantIndex]!.toolCalls) {
+      const answered = msgs
+        .slice(assistantIndex + 1)
+        .some((message) => message.role === 'tool' && message.toolCallId === toolCall.id);
+      expect(answered).toBe(true);
+    }
   });
 });
 

@@ -387,7 +387,7 @@ export class FullCompaction {
       let overflowShrinkCount = 0;
       while (true) {
         const messages = [
-          ...this.agent.context.project(historyForModel),
+          ...this.agent.context.project(historyForModel, { synthesizeMissing: true }),
           createUserMessage(instruction),
         ];
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);

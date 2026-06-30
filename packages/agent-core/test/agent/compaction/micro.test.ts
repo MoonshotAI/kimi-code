@@ -35,8 +35,8 @@ describe('MicroCompaction', () => {
     vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '1');
   });
 
-  it('defaults the micro_compaction flag on', () => {
-    expect(new FlagResolver({}, FLAG_DEFINITIONS).enabled('micro_compaction')).toBe(true);
+  it('defaults the micro_compaction flag off', () => {
+    expect(new FlagResolver({}, FLAG_DEFINITIONS).enabled('micro_compaction')).toBe(false);
   });
 
   it('truncates old tool results after cache miss', () => {

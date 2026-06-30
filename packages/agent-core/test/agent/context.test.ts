@@ -563,6 +563,94 @@ describe('Agent context', () => {
     await ctx.expectResumeMatches();
   });
 
+  // Regression: a user message injected after `step.begin` but before the first
+  // `tool.call` (e.g. a background-task notification flushed mid-step) lands
+  // between the assistant `tool_use` and its `tool_result` in history, which
+  // strict providers (Anthropic) reject with HTTP 400. The projector must repair
+  // the adjacency so the `tool_result` immediately follows the `tool_use`. Micro
+  // compaction exposed this latent misordering by busting the prompt cache.
+  it('repairs a tool_use/tool_result adjacency broken by an injected user message', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const stepUuid = 'mid-step-notify-step';
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'drive the tank' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '0', step: 1 },
+    });
+
+    // Notification arrives in the gap between step.begin and tool.call, when no
+    // tool result is yet pending, so it is pushed directly into history.
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: '<notification>bg done</notification>' }], {
+      kind: 'background_task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'task:task-1:completed',
+    });
+
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_drive',
+        turnId: '0',
+        step: 1,
+        stepUuid,
+        toolCallId: 'call_drive',
+        name: 'Drive',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '0',
+        step: 1,
+        finishReason: 'tool_use',
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_drive',
+        toolCallId: 'call_drive',
+        result: { output: 'drove forward' },
+      },
+    });
+
+    // History preserves the original (misordered) sequence: the notification sits
+    // between the assistant tool_use and its tool_result.
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'tool',
+    ]);
+
+    // Projection repairs the adjacency: the tool_result immediately follows the
+    // assistant tool_use, and the sandwiched notification is moved after it.
+    const projected = ctx.agent.context.messages;
+    expect(projected.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    const assistantIndex = projected.findIndex(
+      (message) => message.role === 'assistant' && message.toolCalls.length > 0,
+    );
+    expect(projected[assistantIndex]?.toolCalls.map((toolCall) => toolCall.id)).toEqual([
+      'call_drive',
+    ]);
+    expect(projected[assistantIndex + 1]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_drive',
+    });
+    expect(projected[assistantIndex + 2]?.content).toEqual([
+      { type: 'text', text: '<notification>bg done</notification>' },
+    ]);
+    await ctx.expectResumeMatches();
+  });
+
   it('drops deferred reminders when compaction drops a pending tool exchange', async () => {
     const ctx = testAgent();
     ctx.configure();
