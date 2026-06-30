@@ -22,6 +22,21 @@ export type {
   ContentPart,
   Message,
   ToolCall,
+  BackgroundTaskInfo,
+  BackgroundTaskStatus,
+  ProcessBackgroundTaskInfo,
+  AgentBackgroundTaskInfo,
+  QuestionBackgroundTaskInfo,
+  BackgroundTaskEntry,
+  BackgroundTasksResponse,
+  TaskOutputResponse,
+  CronTask,
+  CronTasksResponse,
+  ImportInfo,
+  ImportManifest,
+  ImportResult,
+  LogLine,
+  LogsResponse,
 } from '../../server/src/lib/agent-record-types';
 
 export type {

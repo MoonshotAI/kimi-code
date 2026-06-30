@@ -299,6 +299,13 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 {String(isError)}
               </span>
             </FieldRow>
+            {event.result.truncated === true ? (
+              <FieldRow label="truncated">
+                <span className="text-[var(--color-sev-warning)]">
+                  true · output was paged or dropped before the model saw it
+                </span>
+              </FieldRow>
+            ) : null}
             {event.result.message !== undefined ? (
               <FieldRow label="message" wide>
                 <pre className="whitespace-pre-wrap break-words text-fg-1">
