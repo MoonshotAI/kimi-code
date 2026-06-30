@@ -3504,7 +3504,7 @@ command = "vim"
       expect(output).toContain(' Status ');
       expect(output).toContain('>_ Kimi Code');
       expect(output).toContain('Model');
-      expect(output).toContain('thinking on');
+      expect(output).toContain('thinking high');
       expect(output).toContain('Permissions  auto');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');
@@ -4193,7 +4193,7 @@ command = "vim"
       expect(session.setThinking).toHaveBeenCalledWith('on');
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'turbo',
-        thinking: { enabled: true, effort: 'on' },
+        thinking: { enabled: true },
       });
     });
     expect(driver.state.appState.model).toBe('turbo');
