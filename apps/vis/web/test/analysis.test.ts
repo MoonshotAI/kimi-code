@@ -132,4 +132,20 @@ describe('analyzeWire', () => {
     expect(a.turns[0]!.steps[0]!.retries).toHaveLength(2);
     expect(a.turns[0]!.steps[0]!.retries![0]!.failedAttempt).toBe(1);
   });
+
+  it('does not reset context-window fill on a zero-usage step.end', () => {
+    line = 0;
+    const a = analyzeWire([
+      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'q' }], origin: { kind: 'user' } }, 0),
+      loop({ type: 'step.begin', uuid: 's1', turnId: 'T', step: 0 }, 1),
+      loop({ type: 'step.end', uuid: 's1', turnId: 'T', step: 0, finishReason: 'tool_use', usage: { inputOther: 100, output: 20, inputCacheRead: 80, inputCacheCreation: 0 } }, 2),
+      loop({ type: 'step.begin', uuid: 's2', turnId: 'T', step: 1 }, 3),
+      // content-filtered: usage all zero — must keep the prior 200, not drop to 0.
+      loop({ type: 'step.end', uuid: 's2', turnId: 'T', step: 1, finishReason: 'filtered', usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 } }, 4),
+    ]);
+    expect(a.turns[0]!.steps[0]!.contextTokens).toBe(200);
+    expect(a.turns[0]!.steps[1]!.contextTokens).toBe(200); // carried, not 0
+    expect(a.contextSeries.map((p) => p.contextTokens)).toEqual([200, 200]);
+    expect(a.summary.peakContextTokens).toBe(200);
+  });
 });

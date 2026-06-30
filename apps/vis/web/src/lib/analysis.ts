@@ -329,11 +329,18 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             step.isError = ev.finishReason === 'filtered';
             if ('usage' in ev && ev.usage !== undefined) {
               step.usage = ev.usage;
-              step.contextTokens = contextFill(ev.usage);
-              contextTokens = step.contextTokens;
-              if (contextTokens > peakContext) peakContext = contextTokens;
               if (current) addUsage(current.tokens, ev.usage);
               addUsage(cache, ev.usage);
+              // A zero-usage step.end (e.g. a content-filtered response) must
+              // not reset the context-window fill to 0 — agent-core's
+              // ContextMemory keeps the prior snapshot in that case. Carry the
+              // running value so the chart shows no false drop.
+              const fill = contextFill(ev.usage);
+              if (fill > 0) {
+                contextTokens = fill;
+                if (contextTokens > peakContext) peakContext = contextTokens;
+              }
+              step.contextTokens = contextTokens;
               contextSeries.push({
                 lineNo: entry.lineNo,
                 time: t,
