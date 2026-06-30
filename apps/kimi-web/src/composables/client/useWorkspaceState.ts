@@ -23,7 +23,6 @@ import type {
 } from '../../api/types';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
-import { basename } from '../../lib/pathBasename';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import type {
@@ -660,11 +659,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /**
-   * Add a workspace by folder path. Tries the daemon registry; on failure (or in
-   * fallback mode) creates a locally-derived workspace from the path and
-   * remembers it, then selects it.
-   */
+  /** Add a workspace by folder path, registering it with the daemon. */
   async function addWorkspaceByPath(root: string): Promise<void> {
     const trimmed = root.trim();
     if (!trimmed) return;
@@ -673,22 +668,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const ws = await api.addWorkspace({ root: trimmed });
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
-    } catch {
-      // Fallback: remember a derived workspace locally (id = root = path).
-      const existing = rawState.workspaces.find((w) => w.root === trimmed);
-      if (!existing) {
-        rawState.workspaces = [
-          {
-            id: trimmed,
-            root: trimmed,
-            name: basename(trimmed),
-            isGitRepo: false,
-            sessionCount: 0,
-          },
-          ...rawState.workspaces,
-        ];
-      }
-      openWorkspaceDraft(trimmed);
+    } catch (err) {
+      pushOperationFailure('addWorkspace', err);
     }
   }
 

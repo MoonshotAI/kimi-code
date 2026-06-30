@@ -9,6 +9,7 @@ import type { ExtendedState } from '../src/composables/useKimiWebClient';
 const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
   abortSession: vi.fn(),
+  addWorkspace: vi.fn(),
 }));
 
 vi.mock('../src/api', () => ({
@@ -212,5 +213,46 @@ describe('mergeWorkspaces', () => {
     });
 
     expect(result.map((w) => w.root)).not.toContain('/agent/A');
+  });
+});
+
+describe('useWorkspaceState — addWorkspaceByPath', () => {
+  beforeEach(() => {
+    apiMock.addWorkspace.mockReset();
+  });
+
+  it('registers the workspace with the daemon and selects it', async () => {
+    const registered = {
+      id: 'wd_abc',
+      root: '/abs/path',
+      name: 'path',
+      isGitRepo: false,
+      sessionCount: 0,
+    };
+    apiMock.addWorkspace.mockResolvedValue(registered);
+    const state = createState();
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    await workspace.addWorkspaceByPath('  /abs/path  ');
+
+    expect(apiMock.addWorkspace).toHaveBeenCalledWith({ root: '/abs/path' });
+    expect(state.workspaces).toContainEqual(registered);
+    expect(state.activeWorkspaceId).toBe('wd_abc');
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the error and adds no local workspace on failure', async () => {
+    const err = new Error('path not found');
+    apiMock.addWorkspace.mockRejectedValue(err);
+    const state = createState();
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    await workspace.addWorkspaceByPath('/abs/missing');
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('addWorkspace', err);
+    expect(state.workspaces).toEqual([]);
+    expect(state.activeWorkspaceId).toBeNull();
   });
 });
