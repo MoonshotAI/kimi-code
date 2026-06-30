@@ -731,6 +731,45 @@ describe('BashTool', () => {
     }
   });
 
+  it('clears the yield timer when a foreground task finishes before auto-yield', async () => {
+    vi.useFakeTimers();
+    try {
+      const { proc, finish } = pendingProcess();
+      const manager = createBackgroundManager().manager;
+      const tool = bashTool(
+        createFakeKaos({
+          execWithEnv: vi.fn().mockResolvedValue(proc),
+          osEnv: posixEnv,
+        }),
+        '/workspace',
+        manager,
+      );
+
+      const running = executeTool(
+        tool,
+        context({ command: 'echo done', timeout: 60, yield_time_ms: 10_000 }),
+      );
+
+      await vi.waitFor(() => {
+        expect(manager.list(false)).toHaveLength(1);
+      });
+
+      (proc.stdout as PassThrough).write('done\n');
+      finish();
+      const result = await running;
+
+      expect(result).toMatchObject({
+        isError: false,
+        message: 'Command executed successfully.',
+      });
+      expect(result.output).toContain('done\n');
+      expect(result.output).not.toContain('task_id:');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('persists complete output after yielding a foreground task', async () => {
     vi.useFakeTimers();
     const sessionDir = mkdtempSync(join(tmpdir(), 'bash-yield-persist-'));

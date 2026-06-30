@@ -23,10 +23,13 @@
  */
 
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
-import { sleep } from '@antfu/utils';
 import { z } from 'zod';
 
-import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
+import {
+  ProcessBackgroundTask,
+  type BackgroundManager,
+  type ForegroundTaskReleaseReason,
+} from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type {
@@ -343,10 +346,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       // resulting task. Subagent profiles can expose Bash without TaskOutput or
       // TaskStop, so returning a task_id there would strand the command result.
       const release = this.allowBackground && options.autoYield !== false
-        ? await Promise.race([
-            completionOrDetach,
-            sleep(args.yield_time_ms ?? 10_000).then(() => 'yielded' as const),
-          ])
+        ? await waitForCompletionOrYield(completionOrDetach, args.yield_time_ms ?? 10_000)
         : await completionOrDetach;
       if (release === 'yielded') {
         // Command is still running after yield_time_ms.  Return partial output
@@ -526,6 +526,28 @@ export class BashTool implements BuiltinTool<BashInput> {
       'next_step: Use TaskStop only if the task must be cancelled.\n'
     );
   }
+}
+
+function waitForCompletionOrYield(
+  completionOrDetach: Promise<ForegroundTaskReleaseReason | undefined>,
+  yieldMs: number,
+): Promise<ForegroundTaskReleaseReason | undefined | 'yielded'> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      resolve('yielded');
+    }, yieldMs);
+
+    void completionOrDetach.then(
+      (release) => {
+        clearTimeout(timer);
+        resolve(release);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function backgroundResultMessage(title: string, suffix: string): string {
