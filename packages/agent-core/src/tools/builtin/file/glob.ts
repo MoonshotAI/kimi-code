@@ -25,7 +25,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
-import { normalize, resolve } from 'pathe';
+import { dirname, join, normalize, resolve } from 'pathe';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -201,17 +201,17 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // Running from the search root makes glob matching relative to it.
     const execKaos = this.kaos.withCwd(searchRoot);
 
-    let runResult = await runRipgrepOnce(
-      execKaos,
-      buildRgArgs(rgPath, args),
-      signal,
-      { abortedMessage: 'Glob aborted' },
-    );
+    const insideGitRepo =
+      args.include_ignored === true ? true : await isInsideGitRepo(this.kaos, searchRoot);
+
+    let runResult = await runRipgrepOnce(execKaos, buildRgArgs(rgPath, args, insideGitRepo), signal, {
+      abortedMessage: 'Glob aborted',
+    });
     if (runResult.kind === 'tool-error') return runResult.result;
     if (shouldRetryRipgrepEagain(runResult)) {
       runResult = await runRipgrepOnce(
         execKaos,
-        buildRgArgs(rgPath, args, true),
+        buildRgArgs(rgPath, args, insideGitRepo, true),
         signal,
         { abortedMessage: 'Glob aborted' },
       );
@@ -312,16 +312,27 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   }
 }
 
-function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): string[] {
+function buildRgArgs(
+  rgPath: string,
+  args: GlobInput,
+  insideGitRepo: boolean,
+  singleThreaded = false,
+): string[] {
   const cmd: string[] = [rgPath];
   if (singleThreaded) cmd.push('-j', '1');
   cmd.push('--files', '--hidden', '--sortr=modified');
+  if (!insideGitRepo && args.include_ignored !== true) {
+    cmd.push('--no-require-git');
+  }
   for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
     cmd.push('--glob', `!${dir}`);
   }
-  // Positive pattern first, then sensitive-file exclusions so a broad
-  // pattern cannot re-include a sensitive path.
-  cmd.push('--glob', args.pattern);
+  // Positive pattern before sensitive-file exclusions unless it is broad
+  // enough to enumerate everything. Broad positive globs re-include files
+  // that ignore files exclude, so let `rg --files` walk those directly.
+  if (!isBroadPattern(args.pattern)) {
+    cmd.push('--glob', args.pattern);
+  }
   for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
     cmd.push('--glob', `!${glob}`);
   }
@@ -330,6 +341,29 @@ function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): s
   // (see execution()); this keeps `--glob` matching relative to that root.
   cmd.push('.');
   return cmd;
+}
+
+function isBroadPattern(pattern: string): boolean {
+  return pattern === '*' || pattern === '**' || pattern === '**/*';
+}
+
+async function isInsideGitRepo(kaos: Kaos, searchRoot: string): Promise<boolean> {
+  let current = kaos.normpath(searchRoot);
+  for (;;) {
+    if (await pathExists(kaos, join(current, '.git'))) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+async function pathExists(kaos: Kaos, path: string): Promise<boolean> {
+  try {
+    await kaos.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function formatGlobError(searchRoot: string, stderr: string): string {

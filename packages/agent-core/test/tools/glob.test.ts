@@ -250,6 +250,44 @@ describe('GlobTool', () => {
     expect(execArgs(exec)).not.toContain('--no-ignore');
   });
 
+  it('does not emit a positive --glob for broad all-file patterns', async () => {
+    for (const pattern of ['*', '**', '**/*'] as const) {
+      const exec = execReturning('/workspace/a.ts\n');
+      const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+      await executeTool(tool, context({ pattern }));
+
+      const args = execArgs(exec);
+      expect(args).not.toContain(pattern);
+      expect(args).toContain('--glob');
+      expect(args.some((arg) => arg.startsWith('!'))).toBe(true);
+    }
+  });
+
+  it('keeps a positive --glob for anchored patterns', async () => {
+    const exec = execReturning('/workspace/src/a.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    await executeTool(tool, context({ pattern: 'src/**/*.ts' }));
+
+    expect(execArgs(exec)).toContain('src/**/*.ts');
+  });
+
+  it('adds --no-require-git when the search root is outside a git repo', async () => {
+    const exec = execReturning('/workspace/a.ts\n');
+    const stat = vi.fn(async (candidate: string) => {
+      if (candidate.endsWith('/.git')) {
+        throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+      }
+      return dirStat();
+    });
+    const tool = new GlobTool(createFakeKaos({ exec, stat }), workspace);
+
+    await executeTool(tool, context({ pattern: '*.ts', path: '/workspace' }));
+
+    expect(execArgs(exec)).toContain('--no-require-git');
+  });
+
   it('caps returned matches and surfaces the truncation header', async () => {
     const stdout =
       Array.from({ length: MAX_MATCHES + 1 }, (_, i) => `/workspace/${String(i)}.ts`).join('\n') +
@@ -726,5 +764,30 @@ describe('GlobTool integration (real ripgrep)', () => {
     } finally {
       await fs.rm(externalDir, { recursive: true, force: true });
     }
+  });
+
+  it('respects .gitignore by default for broad patterns in a git repo', async () => {
+    await touch('kept.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('ignored.log', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), '*.log\n');
+    await fs.mkdir(path.join(tmpDir!, '.git'), { recursive: true });
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*', path: tmpDir! }));
+
+    expect(result.output).toContain('kept.ts');
+    expect(result.output).not.toContain('ignored.log');
+  });
+
+  it('respects .gitignore by default in a non-git directory', async () => {
+    await touch('kept.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('ignored.log', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), '*.log\n');
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*', path: tmpDir! }));
+
+    expect(result.output).toContain('kept.ts');
+    expect(result.output).not.toContain('ignored.log');
   });
 });
