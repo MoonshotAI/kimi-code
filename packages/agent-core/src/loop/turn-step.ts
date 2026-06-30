@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type { TokenUsage } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
-import type { LoopEventDispatcher, LoopStepRetryRecord } from './events';
+import type { LoopEventDispatcher } from './events';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 import { chatWithRetry } from './retry';
 import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
@@ -110,7 +110,6 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       stepUuid,
     }),
   };
-  const retries: LoopStepRetryRecord[] = [];
   const response: LLMChatResponse = await chatWithRetry({
     llm,
     params: chatParams,
@@ -120,7 +119,6 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     stepUuid,
     maxAttempts: maxRetryAttempts,
     log,
-    onRetry: (record) => retries.push(record),
   });
   const usage = response.usage;
   const usageResult = await recordUsage(usage);
@@ -151,7 +149,6 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     finishReason: effectiveStopReason,
     llmFirstTokenLatencyMs: response.streamTiming?.firstTokenLatencyMs,
     llmStreamDurationMs: response.streamTiming?.streamDurationMs,
-    ...(retries.length > 0 ? { retries } : {}),
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
 

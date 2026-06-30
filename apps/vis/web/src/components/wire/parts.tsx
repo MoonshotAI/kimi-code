@@ -306,14 +306,6 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 </span>
               </FieldRow>
             ) : null}
-            {event.progress !== undefined ? (
-              <FieldRow label="progress" wide>
-                <span className="text-fg-1">
-                  {event.progress.updateCount} update{event.progress.updateCount === 1 ? '' : 's'}
-                  {event.progress.maxPercent !== undefined ? ` · reached ${event.progress.maxPercent}%` : ''}
-                </span>
-              </FieldRow>
-            ) : null}
             {event.result.message !== undefined ? (
               <FieldRow label="message" wide>
                 <pre className="whitespace-pre-wrap break-words text-fg-1">
@@ -392,37 +384,6 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 <FieldRow label="inputCacheCreation">
                   <span className="text-[var(--color-sev-info)]">{usage.inputCacheCreation}</span>
                 </FieldRow>
-              </div>
-            </div>
-          ) : null}
-          {event.retries !== undefined && event.retries.length > 0 ? (
-            <div>
-              <div className="mb-1 text-fg-2">
-                retries{' '}
-                <span className="text-[var(--color-sev-warning)]">
-                  ({event.retries.length} recovered before success)
-                </span>
-              </div>
-              <div className="space-y-1">
-                {event.retries.map((r, i) => (
-                  <div
-                    key={i}
-                    className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px] border-l-2 border-[var(--color-sev-warning)] pl-2"
-                  >
-                    <FieldRow label="attempt">
-                      <span className="text-fg-1">
-                        {r.failedAttempt} → {r.nextAttempt}, backoff {r.delayMs}ms
-                      </span>
-                    </FieldRow>
-                    <FieldRow label="error" wide>
-                      <span className="text-[var(--color-sev-error)]">
-                        {r.errorName}
-                        {r.statusCode !== undefined ? ` (${r.statusCode})` : ''}
-                      </span>
-                      <span className="text-fg-3"> · {r.errorMessage}</span>
-                    </FieldRow>
-                  </div>
-                ))}
               </div>
             </div>
           ) : null}

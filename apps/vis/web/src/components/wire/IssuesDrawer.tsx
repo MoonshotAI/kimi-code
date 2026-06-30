@@ -25,7 +25,6 @@ const KIND_LABEL: Record<Issue['kind'], string> = {
   tool_truncated: 'tool output truncated',
   model_filtered: 'response filtered',
   model_max_tokens: 'hit max_tokens',
-  step_retried: 'step retried',
   incomplete_step: 'incomplete step',
   incomplete_compaction: 'incomplete compaction',
   active_plan_mode: 'plan mode active',

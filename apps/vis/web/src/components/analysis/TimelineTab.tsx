@@ -288,11 +288,6 @@ function StepRow({ step, turnDurationMs }: { step: StepNode; turnDurationMs?: nu
         {step.finishReason ? (
           <span className={step.isError ? 'text-[var(--color-sev-error)]' : 'text-fg-3'}>{step.finishReason}</span>
         ) : null}
-        {step.retries && step.retries.length > 0 ? (
-          <Pill tone="warning" variant="outline" title={step.retries.map((r) => `${r.errorName}${r.statusCode ? ` (${r.statusCode})` : ''}`).join(', ')}>
-            retried {step.retries.length}×
-          </Pill>
-        ) : null}
         <span className="text-fg-3 tabular" title="step wall-clock duration">{formatDuration(step.durationMs)}</span>
         {step.llmFirstTokenLatencyMs !== undefined ? (
           <span className="text-fg-3 tabular" title="time to first token">ttft {step.llmFirstTokenLatencyMs}ms</span>
@@ -329,11 +324,6 @@ function ToolRow({ tc, stepDurationMs }: { tc: ToolCallNode; stepDurationMs?: nu
       ) : null}
       {tc.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
       {tc.truncated ? <Pill tone="warning" variant="outline">truncated</Pill> : null}
-      {tc.progress ? (
-        <span className="text-fg-3" title="tool reported progress while running">
-          progress {tc.progress.maxPercent !== undefined ? `${tc.progress.maxPercent}%` : `${tc.progress.updateCount}×`}
-        </span>
-      ) : null}
       {tc.resultLineNo === undefined ? <Pill tone="warning" variant="outline">no result</Pill> : null}
       {widthPct > 0 ? (
         <div className="ml-auto h-1 w-24 bg-surface-2">

@@ -26,7 +26,7 @@ import { PathSecurityError } from '../tools/policies/path-access';
 
 import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
-import type { LoopEventDispatcher, LoopToolCallEvent, LoopToolProgressSummary } from './events';
+import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
 import { parseToolCallArguments } from './tool-args-parse';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
@@ -36,7 +36,6 @@ import type {
   ExecutableTool,
   LoopHooks,
   ToolCall,
-  ToolUpdate,
   PrepareToolExecutionResult,
   ExecutableToolResult,
   RunnableToolExecution,
@@ -108,35 +107,6 @@ interface PendingToolResult {
   readonly args: unknown;
   readonly result: ExecutableToolResult;
   readonly stopTurn?: boolean | undefined;
-  readonly progress?: LoopToolProgressSummary | undefined;
-}
-
-/** Mutable accumulator for a tool's sparse progress, distilled into a
- *  constant-size {@link LoopToolProgressSummary} when the tool settles. */
-interface MutableProgress {
-  updateCount: number;
-  maxPercent?: number;
-}
-
-function recordProgress(p: MutableProgress, update: ToolUpdate): void {
-  // stdout/stderr are streamed output, already reflected in result.output;
-  // persisting them per-chunk would bloat the wire. Only count the sparse
-  // status/percent/custom signals. Free-form `text` is intentionally NOT
-  // captured: it can carry sensitive data (e.g. an OAuth URL) that must not
-  // leak into persisted wire files or exported debug bundles.
-  if (update.kind === 'stdout' || update.kind === 'stderr') return;
-  p.updateCount += 1;
-  if (typeof update.percent === 'number') {
-    p.maxPercent = Math.max(p.maxPercent ?? 0, update.percent);
-  }
-}
-
-function progressSummary(p: MutableProgress): LoopToolProgressSummary | undefined {
-  if (p.updateCount === 0) return undefined;
-  return {
-    updateCount: p.updateCount,
-    ...(p.maxPercent !== undefined ? { maxPercent: p.maxPercent } : {}),
-  };
 }
 
 interface PreparedToolCallTask {
@@ -188,7 +158,6 @@ export async function runToolCallBatch(
         parentUuid: result.toolCall.id,
         toolCallId: result.toolCall.id,
         result: result.result,
-        ...(result.progress !== undefined ? { progress: result.progress } : {}),
       });
     }
   } finally {
@@ -495,9 +464,8 @@ async function runRunnableToolCall(
   }
 
   let toolResult: ExecutableToolResult;
-  const progress: MutableProgress = { updateCount: 0 };
   try {
-    const raw = await executeTool(step, execution, toolCall, toolName, metadata, progress);
+    const raw = await executeTool(step, execution, toolCall, toolName, metadata);
     toolResult = coerceToolResult(raw, toolName);
   } catch (error) {
     const aborted = isAbortError(error) || signal.aborted;
@@ -511,13 +479,10 @@ async function runRunnableToolCall(
     const output = aborted
       ? abortedToolOutput(toolName, signal)
       : `Tool "${toolName}" failed: ${errorMessage(error)}`;
-    // Carry any sparse progress the tool reported before it threw — a failing
-    // long-running tool is exactly where that evidence is most useful, and the
-    // success/malformed-return paths already preserve it.
-    return makeErrorToolResult(call, effectiveArgs, output, progressSummary(progress));
+    return makeErrorToolResult(call, effectiveArgs, output);
   }
 
-  return makeToolResult(call, effectiveArgs, toolResult, progressSummary(progress));
+  return makeToolResult(call, effectiveArgs, toolResult);
 }
 
 async function finalizePendingToolResult(
@@ -577,7 +542,6 @@ async function executeTool(
   toolCall: ToolCall,
   toolName: string,
   metadata: unknown,
-  progress: MutableProgress,
 ): Promise<ExecutableToolResult> {
   const { dispatchEvent, signal, turnId } = step;
 
@@ -590,7 +554,6 @@ async function executeTool(
     signal,
     onUpdate: (update) => {
       if (signal.aborted) return;
-      recordProgress(progress, update);
       dispatchEvent({
         type: 'tool.progress',
         toolCallId: toolCall.id,
@@ -706,7 +669,6 @@ function makeToolResult(
   call: PreflightedToolCall,
   args: unknown,
   result: ExecutableToolResult,
-  progress?: LoopToolProgressSummary | undefined,
 ): PendingToolResult {
   return {
     toolCall: call.toolCall,
@@ -714,7 +676,6 @@ function makeToolResult(
     args,
     result,
     stopTurn: toolResultStopsTurn(result),
-    ...(progress !== undefined ? { progress } : {}),
   };
 }
 
@@ -726,9 +687,8 @@ function makeErrorToolResult(
   call: PreflightedToolCall,
   args: unknown,
   output: string,
-  progress?: LoopToolProgressSummary | undefined,
 ): PendingToolResult {
-  return makeToolResult(call, args, { output, isError: true }, progress);
+  return makeToolResult(call, args, { output, isError: true });
 }
 
 /**

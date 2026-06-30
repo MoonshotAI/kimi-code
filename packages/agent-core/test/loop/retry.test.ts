@@ -47,29 +47,6 @@ describe('chatWithRetry: terminated stream drops', () => {
     expect(response).toEqual(okResponse());
   });
 
-  it('reports each recovered failure to onRetry in attempt order', async () => {
-    let calls = 0;
-    const llm: LLM = {
-      systemPrompt: '',
-      modelName: 'mock',
-      isRetryableError: (e) => isRetryableGenerateError(e),
-      async chat(_params: LLMChatParams): Promise<LLMChatResponse> {
-        calls += 1;
-        if (calls < 3) throw new APIConnectionError('terminated');
-        return okResponse();
-      },
-    };
-
-    const retries: { failedAttempt: number; nextAttempt: number; errorName: string }[] = [];
-    const input = { ...makeInput(llm, new AbortController().signal), onRetry: (r: { failedAttempt: number; nextAttempt: number; errorName: string }) => retries.push(r) };
-    await chatWithRetry(input);
-
-    expect(calls).toBe(3);
-    expect(retries.map((r) => r.failedAttempt)).toEqual([1, 2]);
-    expect(retries.map((r) => r.nextAttempt)).toEqual([2, 3]);
-    expect(retries.every((r) => typeof r.errorName === 'string')).toBe(true);
-  });
-
   it('does NOT retry when the signal is aborted (user ESC), surfacing a clean AbortError', async () => {
     // Even though `terminated` is retryable, a user-aborted request must never
     // be retried: the abort signal is checked before any retry, so it surfaces

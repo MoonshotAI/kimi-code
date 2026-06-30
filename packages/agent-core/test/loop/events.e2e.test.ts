@@ -158,56 +158,6 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
     expect(typeof tr?.result.output).toBe('string');
   });
 
-  it('summarizes sparse tool progress on the tool.result event (count + percent only, no status text)', async () => {
-    const progressTool = new ProgressTool([
-      { kind: 'stdout', text: 'noise' }, // streamed output — excluded from the summary
-      { kind: 'progress', percent: 30 },
-      { kind: 'status', text: 'sensitive https://auth.example/cb?token=secret' }, // text must NOT be persisted
-      { kind: 'progress', percent: 80 },
-    ]);
-    const { sink } = await runTurn({
-      tools: [progressTool],
-      responses: [
-        makeToolUseResponse([makeToolCall('progress', {}, 'tc-p')]),
-        makeEndTurnResponse('done'),
-      ],
-    });
-    const tr = sink.byType('tool.result')[0];
-    expect(tr?.progress).toEqual({ updateCount: 3, maxPercent: 80 });
-    // The free-form status text (which could carry an OAuth URL/secret) is gone.
-    expect(JSON.stringify(tr?.progress)).not.toContain('secret');
-  });
-
-  it('omits the progress summary when a tool reports no sparse progress', async () => {
-    const { sink } = await runTurn({
-      tools: [new EchoTool()],
-      responses: [
-        makeToolUseResponse([makeToolCall('echo', { text: 'hi' }, 'tc-e')]),
-        makeEndTurnResponse('done'),
-      ],
-    });
-    expect(sink.byType('tool.result')[0]?.progress).toBeUndefined();
-  });
-
-  it('keeps the progress summary on a thrown tool failure', async () => {
-    // A long-running tool that reports progress and then throws — the error
-    // tool.result must still carry the progress evidence, like the success path.
-    const tool = new ProgressTool([
-      { kind: 'progress', percent: 40 },
-      { kind: 'status', text: 'still going' },
-    ], 'boom');
-    const { sink } = await runTurn({
-      tools: [tool],
-      responses: [
-        makeToolUseResponse([makeToolCall('progress', {}, 'tc-f')]),
-        makeEndTurnResponse('done'),
-      ],
-    });
-    const tr = sink.byType('tool.result')[0];
-    expect(tr?.result.isError).toBe(true);
-    expect(tr?.progress).toEqual({ updateCount: 2, maxPercent: 40 });
-  });
-
   it('accepts a custom emitter function', async () => {
     class StrictCollector {
       readonly events: LoopEvent[] = [];

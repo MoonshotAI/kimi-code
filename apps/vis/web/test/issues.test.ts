@@ -34,28 +34,4 @@ describe('computeIssues — runtime error categories', () => {
     // The tool.result rows are properly paired, so no orphan noise.
     expect(issues.some((i) => i.kind === 'orphan_tool_call' || i.kind === 'missing_tool_result')).toBe(false);
   });
-
-  it('flags a step that retried before succeeding', () => {
-    line = 0;
-    const issues = computeIssues(
-      [
-        loop({ type: 'step.begin', uuid: 's', turnId: 'T', step: 0 }),
-        loop({
-          type: 'step.end',
-          uuid: 's',
-          turnId: 'T',
-          step: 0,
-          finishReason: 'end_turn',
-          retries: [
-            { failedAttempt: 1, nextAttempt: 2, delayMs: 300, errorName: 'APIConnectionError', errorMessage: 'terminated', statusCode: 503 },
-          ],
-        }),
-      ],
-      [],
-    );
-    const retried = issues.find((i) => i.kind === 'step_retried');
-    expect(retried).toMatchObject({ severity: 'info' });
-    expect(retried!.detail).toContain('APIConnectionError');
-    expect(retried!.detail).toContain('503');
-  });
 });

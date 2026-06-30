@@ -184,7 +184,6 @@ export class ProgressTool implements ExecutableTool<ProgressInput> {
       { kind: 'stdout', text: 'working...' },
       { kind: 'progress', percent: 50 },
     ],
-    private readonly throwMessage?: string,
   ) {
     this.updates = updates;
   }
@@ -199,7 +198,6 @@ export class ProgressTool implements ExecutableTool<ProgressInput> {
           turnId: ctx.turnId,
         });
         for (const update of this.updates) ctx.onUpdate?.(update);
-        if (this.throwMessage !== undefined) throw new Error(this.throwMessage);
         return { output: 'done' };
       },
     };

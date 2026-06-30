@@ -26,7 +26,6 @@ export type IssueKind =
   | 'tool_truncated'
   | 'model_filtered'
   | 'model_max_tokens'
-  | 'step_retried'
   | 'incomplete_step'
   | 'incomplete_compaction'
   | 'active_plan_mode'
@@ -114,16 +113,6 @@ export function computeIssues(
           });
         } else if (ev.type === 'step.end') {
           stepBeginByUuid.delete(ev.uuid);
-          if (ev.retries !== undefined && ev.retries.length > 0) {
-            const last = ev.retries[ev.retries.length - 1];
-            out.push({
-              severity: 'info',
-              kind: 'step_retried',
-              lineNo,
-              summary: `step ${ev.step} retried ${ev.retries.length}× before succeeding`,
-              detail: last !== undefined ? `last: ${last.errorName}${last.statusCode !== undefined ? ` (${last.statusCode})` : ''}` : undefined,
-            });
-          }
           if (ev.finishReason === 'filtered') {
             out.push({
               severity: 'error',

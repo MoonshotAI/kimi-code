@@ -13,7 +13,7 @@
 // Pure: consumes the same `WireEntry[]` the Wire tab already fetches, so the
 // Timeline view needs no extra server round-trip.
 
-import type { TokenUsage, WireEntry, LoopStepRetryRecord, LoopToolProgressSummary } from '../types';
+import type { TokenUsage, WireEntry } from '../types';
 
 export interface ContentSummary {
   textChars: number;
@@ -36,8 +36,6 @@ export interface ToolCallNode {
   outputBytes?: number;
   /** Optional human-readable side-channel message on the result. */
   resultMessage?: string;
-  /** Bounded summary of sparse progress the tool reported while running. */
-  progress?: LoopToolProgressSummary;
 }
 
 export interface StepNode {
@@ -56,8 +54,6 @@ export interface StepNode {
   contextTokens?: number;
   llmFirstTokenLatencyMs?: number;
   llmStreamDurationMs?: number;
-  /** Transient provider failures recovered before this step succeeded. */
-  retries?: readonly LoopStepRetryRecord[];
   content: ContentSummary;
   toolCalls: ToolCallNode[];
 }
@@ -321,7 +317,6 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             step.finishReason = ev.finishReason;
             step.llmFirstTokenLatencyMs = ev.llmFirstTokenLatencyMs;
             step.llmStreamDurationMs = ev.llmStreamDurationMs;
-            if (ev.retries !== undefined && ev.retries.length > 0) step.retries = ev.retries;
             if (step.beginTime !== undefined && t !== undefined) step.durationMs = t - step.beginTime;
             // Steps don't carry a generic 'error' finish reason (errors are
             // thrown, not recorded). 'filtered' means the provider blocked the
@@ -383,7 +378,6 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             node.truncated = truncated;
             node.outputBytes = bytes;
             node.resultMessage = ev.result.message;
-            if (ev.progress !== undefined) node.progress = ev.progress;
             if (node.callTime !== undefined && t !== undefined) node.durationMs = t - node.callTime;
             if (isError && current) current.toolErrorCount += 1;
             recordToolStat(toolStatMap, node);

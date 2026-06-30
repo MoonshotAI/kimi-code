@@ -16,8 +16,6 @@ export type {
   LoopRecordedEvent,
   ContextMessage,
   PromptOrigin,
-  LoopStepRetryRecord,
-  LoopToolProgressSummary,
   // Background-task shapes are part of agent-core's public surface, so the
   // visualizer tracks them directly instead of duplicating the union.
   BackgroundTaskInfo,

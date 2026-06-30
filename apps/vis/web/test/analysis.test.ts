@@ -116,23 +116,6 @@ describe('analyzeWire', () => {
     expect(a.configChanges[1]!.changed).toEqual([{ field: 'model', value: 'sonnet' }]);
   });
 
-  it('captures step retries on step.end', () => {
-    line = 0;
-    const a = analyzeWire([
-      e({ type: 'turn.prompt', input: [{ type: 'text', text: 'go' }], origin: { kind: 'user' } }, 0),
-      loop({ type: 'step.begin', uuid: 's', turnId: 'T', step: 0 }, 1),
-      loop({
-        type: 'step.end', uuid: 's', turnId: 'T', step: 0, finishReason: 'end_turn',
-        retries: [
-          { failedAttempt: 1, nextAttempt: 2, delayMs: 300, errorName: 'APIConnectionError', errorMessage: 'terminated' },
-          { failedAttempt: 2, nextAttempt: 3, delayMs: 600, errorName: 'APIConnectionError', errorMessage: 'terminated' },
-        ],
-      }, 5),
-    ]);
-    expect(a.turns[0]!.steps[0]!.retries).toHaveLength(2);
-    expect(a.turns[0]!.steps[0]!.retries![0]!.failedAttempt).toBe(1);
-  });
-
   it('does not reset context-window fill on a zero-usage step.end', () => {
     line = 0;
     const a = analyzeWire([
