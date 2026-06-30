@@ -142,6 +142,23 @@ describe('TodoListTool', () => {
     ]);
   });
 
+  it('accepts "completed" as a status and maps it to "done"', async () => {
+    const { tool, getTodos } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: {
+        todos: [{ title: 'done task', status: 'completed' }],
+      },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('[done] done task');
+    expect(getTodos()).toEqual([{ title: 'done task', status: 'done' }]);
+  });
+
   it('renders a done todo with a marker matching the status enum value', async () => {
     const { tool } = makeTool([{ title: 'shipped', status: 'done' }]);
 
