@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia } from '../../types';
 import ToolCall from './ToolCall.vue';
 import Markdown from './Markdown.vue';
+import StreamingBlocks from './StreamingBlocks.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
 import AgentCard from './AgentCard.vue';
@@ -23,6 +24,7 @@ import {
   turnFinalText,
   turnToMarkdown,
 } from '../chatTurnRendering';
+import { streamingBySession, type StreamingBlock } from '../../composables/client/streamingStore';
 
 const { t } = useI18n();
 
@@ -44,6 +46,12 @@ onUnmounted(() => {
 const props = withDefaults(
   defineProps<{
     turns: ChatTurn[];
+    /**
+     * The session these turns belong to. Used by the streaming renderer to look
+     * up the live text in the streaming store. Optional so SideChatPanel (which
+     * renders a subagent transcript, not a streaming session) can omit it.
+     */
+    sessionId?: string;
     approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
     /**
      * Bubble chat layout: render each turn as a chat bubble (user = right-aligned
@@ -198,7 +206,7 @@ const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   copyConversationCopied: [];
   /** Show a thinking block's full text in the right-side panel. */
-  openThinking: [target: { turnId: string; blockIndex: number }];
+  openThinking: [target: { turnId: string; blockIndex: number; live?: boolean }];
   /** Show a compaction divider's summary text in the right-side panel. */
   openCompaction: [target: { turnId: string }];
   /** Show a subagent's full detail in the right-side panel. */
@@ -293,14 +301,37 @@ function confirmEditMessage(turn: ChatTurn): void {
 const copiedConversation = ref(false);
 let copiedConversationTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Live text/thinking blocks for the turn currently streaming, if any. */
+function liveBlocksForStreaming(): StreamingBlock[] {
+  if (!props.running || !props.sessionId) return [];
+  return streamingBySession[props.sessionId]?.blocks ?? [];
+}
+
+/**
+ * Merge the still-streaming live blocks into a turn for serialization (copy).
+ * Live text/thinking is not in `turn.blocks` during streaming (deltas bypass
+ * messagesBySession), so without this a copy mid-stream would drop the tail.
+ */
+function withLiveBlocks(turn: ChatTurn, liveBlocks: StreamingBlock[]): ChatTurn {
+  if (liveBlocks.length === 0) return turn;
+  const blocks = turn.blocks ? [...turn.blocks] : turnBlocks(turn);
+  for (const blk of liveBlocks) {
+    if (blk.kind === 'text' && blk.text) blocks.push({ kind: 'text', text: blk.text });
+    else if (blk.kind === 'thinking' && blk.text) blocks.push({ kind: 'thinking', thinking: blk.text });
+  }
+  return { ...turn, blocks };
+}
+
 /** Convert the entire conversation to Markdown and copy to clipboard. */
 function copyConversation(): void {
   if (props.turns.length === 0) return;
+  const liveBlocks = liveBlocksForStreaming();
   const lines: string[] = [];
   for (const turn of props.turns) {
     if (turn.role === 'compaction') continue; // dividers don't copy
+    const t = turn.id === streamingTurnId.value ? withLiveBlocks(turn, liveBlocks) : turn;
     const roleLabel = turn.role === 'user' ? 'User' : 'Assistant';
-    const content = turnToMarkdown(turn);
+    const content = turnToMarkdown(t);
     if (content.trim()) {
       lines.push(`**${roleLabel}**\n\n${content}`);
     }
@@ -329,8 +360,9 @@ function assistantRunEndingAt(index: number): ChatTurn[] {
 }
 
 function assistantRunFinalText(index: number): string {
+  const liveBlocks = liveBlocksForStreaming();
   return assistantRunEndingAt(index)
-    .map((t) => turnFinalText(t))
+    .map((t) => turnFinalText(t.id === streamingTurnId.value ? withLiveBlocks(t, liveBlocks) : t))
     .filter(Boolean)
     .join('\n\n');
 }
@@ -566,6 +598,14 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
         </template>
+        <StreamingBlocks
+          v-if="sessionId && turn.id === streamingTurnId"
+          :session-id="sessionId"
+          :turn-id="turn.id"
+          :mobile="childBubble"
+          @open-file="(target) => emit('openFile', target)"
+          @open-thinking="emit('openThinking', $event)"
+        />
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
           <span v-if="turn.durationMs !== undefined" class="a-duration" :title="`${turn.durationMs} ms`">{{ formatDuration(turn.durationMs) }}</span>
           <button
@@ -708,6 +748,14 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
               <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
               <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
             </template>
+            <StreamingBlocks
+              v-if="sessionId && turn.id === streamingTurnId"
+              :session-id="sessionId"
+              :turn-id="turn.id"
+              :mobile="childBubble"
+              @open-file="(target) => emit('openFile', target)"
+              @open-thinking="emit('openThinking', $event)"
+            />
           </template>
         </div>
 

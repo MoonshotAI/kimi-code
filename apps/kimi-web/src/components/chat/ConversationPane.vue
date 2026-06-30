@@ -105,7 +105,7 @@ const emit = defineEmits<{
   selectModel: [modelId: string];
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
-  openThinking: [target: { turnId: string; blockIndex: number }];
+  openThinking: [target: { turnId: string; blockIndex: number; live?: boolean }];
   openCompaction: [target: { turnId: string }];
   openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
   openToolDiff: [id: string];
@@ -1042,6 +1042,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               ref="chatPaneRef"
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
+              :session-id="sessionId"
               :approvals="approvals"
               :bubble="bubble"
               :mobile="mobile"

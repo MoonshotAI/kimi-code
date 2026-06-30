@@ -19,6 +19,7 @@ import {
   STORAGE_KEYS,
 } from '../lib/storage';
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
+import { appendStreamingDelta, clearStreaming } from './client/streamingStore';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
 import { useSoundNotification } from './client/useSoundNotification';
@@ -488,6 +489,7 @@ function forgetSession(sessionId: string): void {
   // That would make hasLoadedMessages() treat the stale empty cache as
   // authoritative and skip the next snapshot fetch for this id.
   enqueueEvent.flush();
+  clearStreaming(sessionId);
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
@@ -641,8 +643,28 @@ function nextOptimisticMsgId(): string {
 // past the queue check and clobber promptIdBySession (breaking abort).
 const inFlightPromptSessions = new Set<string>();
 
+// Mirror of the reducer's advanceSeq, for the one event (assistantDelta) that
+// bypasses the reducer. lastSeqBySession is a resync cursor with no rendering
+// dependencies, so mutating it in place is both safe and cheap.
+function advanceSeqCursor(sessionId: string | undefined, seq: number | undefined): void {
+  if (sessionId !== undefined && seq !== undefined && seq > 0) {
+    const prev = rawState.lastSeqBySession[sessionId] ?? 0;
+    if (seq > prev) rawState.lastSeqBySession[sessionId] = seq;
+  }
+}
+
 // Helper: mutate rawState by applying a reducer on a snapshot then re-assigning fields
 function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq: number): void {
+  // Streaming text/thinking deltas bypass the reducer entirely. Appending to the
+  // fine-grained streaming store is O(1) and dirties only the single
+  // StreamingBlocks component — instead of cloning all of `rawState` and
+  // re-rendering the whole App + sidebar on every token.
+  if (event.type === 'assistantDelta') {
+    appendStreamingDelta(sessionId, event.messageId, event.contentIndex, event.delta);
+    advanceSeqCursor(sessionId, seq);
+    return;
+  }
+
   const snapshot: KimiClientState = {
     sessions: rawState.sessions,
     activeSessionId: rawState.activeSessionId,
@@ -671,6 +693,27 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.compactionBySession = next.compactionBySession;
   rawState.config = next.config ?? null;
   rawState.warnings = next.warnings;
+
+  // `messageUpdated` carries the authoritative full content of a message (tool
+  // slot / step end / turn end): drop the live streaming entry so the just-
+  // committed content takes over without rendering the same text twice.
+  if (event.type === 'messageUpdated') {
+    clearStreaming(sessionId);
+  }
+  // Turn end: release the streaming entry for the session.
+  if (
+    event.type === 'sessionStatusChanged' &&
+    (event.status === 'idle' || event.status === 'aborted')
+  ) {
+    clearStreaming(sessionId);
+  }
+  // Session removed via the WS delete event: release the streaming entry so it
+  // does not leak as an orphan. `forgetSession()` already does this, but that
+  // path only covers not-found / archive — the WS delete event flows through the
+  // reducer instead, so it must clear the store here too.
+  if (event.type === 'sessionDeleted') {
+    clearStreaming(sessionId);
+  }
 
   if (event.type === 'configChanged') {
     rawState.defaultModel = event.config.defaultModel ?? null;
@@ -1043,8 +1086,14 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // messagesBySession[sessionId]. The snapshot is authoritative (it already
     // contains everything up to asOfSeq); applying stale queued deltas on top
     // of it would duplicate text / tool output. Flushing here applies them to
-    // the pre-snapshot array, which the snapshot then overwrites.
+    // the pre-snapshot state, which the snapshot then overwrites.
     enqueueEvent.flush();
+    // The snapshot is authoritative for the live streaming text too: any deltas
+    // the flush just landed in the streaming store are superseded by the
+    // snapshot (and the in-flight seed below), so drop them. Without this, a
+    // reconnect or delta-gap resync mid-stream would render stale live chunks
+    // on top of the seeded snapshot.
+    clearStreaming(sessionId);
 
     updateSession(sessionId, (s) => ({
       ...snap.session,
