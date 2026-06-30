@@ -67,20 +67,11 @@ export class FileMentionProvider implements AutocompleteProvider {
     const currentLine = lines[cursorLine] ?? '';
     const textBeforeCursor = currentLine.slice(0, cursorCol);
 
-    if (shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)) {
-      return null;
-    }
-
-    if (
-      shouldSuppressSlashArgumentCompletion(
-        textBeforeCursor,
-        currentLine.slice(cursorCol),
-        options.force,
-      )
-    ) {
-      return null;
-    }
-
+    // `@` file / folder mentions take priority over the slash-command guards
+    // below. Without this, typing `@` inside a slash command's argument text
+    // (e.g. `/goal Fix the @|checkout docs`) would be swallowed by
+    // `shouldSuppressSlashArgumentCompletion` before the mention branch ever
+    // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
       if (this.fdPath === null || this.additionalDirs.length > 0) {
@@ -102,6 +93,20 @@ export class FileMentionProvider implements AutocompleteProvider {
           options.signal,
         );
       }
+    }
+
+    if (shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)) {
+      return null;
+    }
+
+    if (
+      shouldSuppressSlashArgumentCompletion(
+        textBeforeCursor,
+        currentLine.slice(cursorCol),
+        options.force,
+      )
+    ) {
+      return null;
     }
 
     // Handle slash-command name completion ourselves so that aliases are

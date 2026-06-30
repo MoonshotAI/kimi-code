@@ -99,6 +99,21 @@ describe('FileMentionProvider', () => {
     expect(result).toBeNull();
   });
 
+  it('opens @ file mention when typed in the middle of a slash command argument', async () => {
+    writeFileSync(join(workDir, 'README.md'), 'readme');
+    const provider = new FileMentionProvider([GOAL_COMMAND], workDir, NO_FD);
+    // Cursor sits in the middle of the /goal argument text, right after a
+    // freshly typed `@`. The slash-argument guard must not suppress the @
+    // file list here.
+    const line = '/goal Fix the @checkout docs';
+    const result = await provider.getSuggestions([line], 0, '/goal Fix the @'.length, {
+      signal: ctrl(),
+    });
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@');
+    expect(result!.items.map((item) => item.value)).toContain('@README.md');
+  });
+
   it('still completes slash arguments at the end of an empty argument', async () => {
     const provider = new FileMentionProvider([GOAL_COMMAND], workDir, NO_FD);
     const line = '/goal ';
