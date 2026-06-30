@@ -17,7 +17,6 @@ import {
 } from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { createStaticCapabilities, type TerminalCapabilities } from "./terminal-capabilities.ts";
-import type { ProbeResult } from "./terminal-probe.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 import { LedgerTuiEngine } from "./ledger/engine.ts";
 
@@ -667,13 +666,13 @@ export class TUI extends Container {
 	 * object is already mutated in place by the terminal; this just re-reads it.
 	 */
 	private attachProbeRefresh(): void {
-		const probeReady = (this.terminal as { probeReady?: Promise<ProbeResult> }).probeReady;
+		const probeReady = this.terminal.probeReady;
 		if (!probeReady) return;
 		void probeReady.then(() => {
 			if (this.stopped) return;
 			this.ledgerEngine?.refreshSyncFraming();
 			this.requestRender();
-		});
+		}).catch(() => {});
 	}
 
 	addInputListener(listener: InputListener): () => void {
@@ -1669,7 +1668,7 @@ export class TUI extends Container {
 	 * defaults.
 	 */
 	private resolveTerminalCapabilities(): TerminalCapabilities {
-		const caps = (this.terminal as { terminalCapabilities?: TerminalCapabilities }).terminalCapabilities;
+		const caps = this.terminal.terminalCapabilities;
 		return caps ?? createStaticCapabilities();
 	}
 

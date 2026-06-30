@@ -66,25 +66,6 @@ export function createStaticCapabilities(env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
- * Assemble an immutable {@link TerminalCapabilities} snapshot from a completed
- * probe. The only probed field consumed today is `syncOutput` (DECRQM ?2026);
- * the remaining fields are conservative defaults until later tasks wire them in.
- */
-export function createProbedCapabilities(
-	result: ProbeResult,
-	env: NodeJS.ProcessEnv = process.env,
-): TerminalCapabilities {
-	return {
-		syncEnabled: shouldEnableSyncOutput(env, result.syncOutput),
-		supportsScreenToScrollback: false,
-		deccara: false,
-		hyperlinks: shouldEnableHyperlinks(env),
-		imageProtocol: "none",
-		isImageLine: detectImageLine,
-	};
-}
-
-/**
  * Mutable, terminal-owned capabilities. Starts with the static env-derived
  * defaults and is updated in place when the startup probe resolves, so an
  * engine holding a reference to this instance observes the probed values

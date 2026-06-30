@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { setKittyProtocolActive } from "./keys.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
-import { ProcessTerminalCapabilities } from "./terminal-capabilities.ts";
+import { ProcessTerminalCapabilities, type TerminalCapabilities } from "./terminal-capabilities.ts";
 import { type ProbeIO, type ProbeResult, probeCapabilities } from "./terminal-probe.ts";
 
 const cjsRequire = createRequire(import.meta.url);
@@ -81,6 +81,12 @@ export interface Terminal {
 
 	// Whether Kitty keyboard protocol is active
 	get kittyProtocolActive(): boolean;
+
+	/** Resolves with the startup probe result; undefined when probing is skipped (non-TTY). */
+	probeReady?: Promise<ProbeResult>;
+
+	/** Mutable, probe-backed terminal capabilities shared with the ledger engine. */
+	readonly terminalCapabilities?: TerminalCapabilities;
 
 	// Cursor positioning (relative to current position)
 	moveBy(lines: number): void; // Move cursor up (negative) or down (positive) by N lines
@@ -236,32 +242,14 @@ export class ProcessTerminal implements Terminal {
 	 * keyboard-protocol negotiation buffer, without writing the kitty query. In
 	 * TTY mode the kitty query is emitted by the capability probe (its first probe
 	 * is `CSI ? u` + DA1), so this must not write a second one — a duplicate would
-	 * desync the probe's DA1 FIFO. Split out from {@link queryAndEnableKittyProtocol}
-	 * so start() can order the flag push, the probe, and the headless fallback.
+	 * desync the probe's DA1 FIFO. Kept separate so start() can order the flag push,
+	 * the probe, and the headless fallback.
 	 */
 	private setupKeyboardProtocolPipeline(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
 		this.keyboardProtocolPushed = true;
 		this.clearKeyboardProtocolNegotiationBuffer();
-	}
-
-	/**
-	 * Query terminal for Kitty keyboard protocol support and enable it if available.
-	 *
-	 * Kitty's progressive enhancement detection requires requesting the desired
-	 * flags before querying them. The trailing DA query is a sentinel supported by
-	 * terminals that do not know Kitty keyboard protocol; receiving DA before a
-	 * Kitty response enables modifyOtherKeys fallback without a startup timeout.
-	 *
-	 * The requested flags are:
-	 * - 1 = disambiguate escape codes
-	 * - 2 = report event types (press/repeat/release)
-	 * - 4 = report alternate keys (shifted key, base layout key)
-	 */
-	private queryAndEnableKittyProtocol(): void {
-		this.setupKeyboardProtocolPipeline();
-		process.stdout.write(KITTY_KEYBOARD_PROTOCOL_QUERY);
 	}
 
 	/**
