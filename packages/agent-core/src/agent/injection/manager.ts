@@ -40,16 +40,21 @@ export class InjectionManager {
     await this.activeGoalInjector()?.inject();
   }
 
+  async injectAfterCompaction(): Promise<void> {
+    await this.injectGoal();
+    await this.inject();
+  }
+
   onContextClear(): void {
     for (const injector of this.lifecycleInjectors()) {
       injector.onContextClear();
     }
   }
 
-  onContextCompacted(compactedCount: number): void {
+  onContextCompacted(): void {
     for (const injector of this.lifecycleInjectors()) {
       try {
-        injector.onContextCompacted(compactedCount);
+        injector.onContextCompacted();
       } catch {
         continue;
       }

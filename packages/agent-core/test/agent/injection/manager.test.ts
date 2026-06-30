@@ -15,9 +15,9 @@ class RecordingInjector extends DynamicInjector {
     super.onContextClear();
   }
 
-  override onContextCompacted(compactedCount: number): void {
+  override onContextCompacted(): void {
     this.compactionCalls += 1;
-    super.onContextCompacted(compactedCount);
+    super.onContextCompacted();
   }
 
   protected override getInjection(): string | undefined {
@@ -28,7 +28,7 @@ class RecordingInjector extends DynamicInjector {
 class BoomInjector extends DynamicInjector {
   override readonly injectionVariant = 'boom_test';
 
-  override onContextCompacted(_compactedCount: number): void {
+  override onContextCompacted(): void {
     throw new Error('boom-compact');
   }
 
@@ -49,7 +49,7 @@ describe('InjectionManager.onContextCompacted', () => {
     const b = new RecordingInjector(ctx.agent);
     installInjectors(ctx.agent.injection, [a, b]);
 
-    ctx.agent.injection.onContextCompacted(3);
+    ctx.agent.injection.onContextCompacted();
 
     expect(a.compactionCalls).toBe(1);
     expect(b.compactionCalls).toBe(1);
@@ -62,7 +62,7 @@ describe('InjectionManager.onContextCompacted', () => {
     installInjectors(ctx.agent.injection, [new BoomInjector(ctx.agent), recorder]);
 
     expect(() => {
-      ctx.agent.injection.onContextCompacted(2);
+      ctx.agent.injection.onContextCompacted();
     }).not.toThrow();
     expect(recorder.compactionCalls).toBe(1);
   });
@@ -74,11 +74,11 @@ describe('InjectionManager.onContextCompacted', () => {
     installInjectors(ctx.agent.injection, [new BoomInjector(ctx.agent), recorder]);
 
     expect(() => {
-      ctx.agent.injection.onContextCompacted(1);
+      ctx.agent.injection.onContextCompacted();
     }).not.toThrow();
     expect(recorder.compactionCalls).toBe(1);
 
-    ctx.agent.injection.onContextCompacted(1);
+    ctx.agent.injection.onContextCompacted();
     expect(recorder.compactionCalls).toBe(2);
   });
 

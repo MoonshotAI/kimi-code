@@ -700,10 +700,10 @@ describe('MicroCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await compacted;
 
-    expect(ctx.agent.context.messages).toHaveLength(1);
-    expect(ctx.agent.context.messages[0]).toMatchObject({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Summary.' }],
+    expect(ctx.agent.context.messages).toHaveLength(2);
+    expect(ctx.agent.context.messages[1]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: expect.stringContaining('Summary.') }],
     });
   });
 

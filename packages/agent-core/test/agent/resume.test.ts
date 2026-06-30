@@ -79,7 +79,8 @@ describe('Agent resume', () => {
         system: <system-prompt>
         tools: Bash
         messages:
-          assistant: text "Historical compacted summary."
+          user: text "Historical prompt"
+          user: text "Historical compacted summary."
           user: text "Fresh prompt after resume"
           user: text <plan-mode-reminder>
     `);
@@ -355,7 +356,11 @@ describe('Agent resume', () => {
 
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({
-        role: 'assistant',
+        role: 'user',
+        content: [{ type: 'text', text: 'Historical prompt before compaction' }],
+      }),
+      expect.objectContaining({
+        role: 'user',
         content: [{ type: 'text', text: 'Compacted implementation notes.' }],
         origin: { kind: 'compaction_summary' },
       }),
@@ -375,6 +380,7 @@ describe('Agent resume', () => {
           compactedCount: 1,
           tokensBefore: 120,
           tokensAfter: 24,
+          keptUserMessageCount: 1,
         },
         instruction: 'preserve implementation notes',
       }),

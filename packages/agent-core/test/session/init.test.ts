@@ -166,6 +166,53 @@ describe('Session.init', () => {
     }
   });
 
+  it('refreshes AGENTS.md from a resumed native session system prompt', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    await mkdir(join(workDir, '.git'));
+    await writeFile(join(workDir, 'AGENTS.md'), 'initial resume instructions', 'utf-8');
+
+    const firstSession = new Session({
+      id: 'test-resume-system-prompt-refresh',
+      kaos: testKaos.withCwd(workDir),
+      persistenceKaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+    try {
+      const agent = await firstSession.createMain();
+      expect(agent.config.systemPrompt).toContain('initial resume instructions');
+    } finally {
+      await firstSession.closeForReload();
+    }
+
+    await writeFile(join(workDir, 'AGENTS.md'), 'updated resume instructions', 'utf-8');
+
+    const resumedSession = new Session({
+      id: 'test-resume-system-prompt-refresh',
+      kaos: testKaos.withCwd(workDir),
+      persistenceKaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+    try {
+      await resumedSession.resume();
+      const resumedAgent = await resumedSession.ensureAgentResumed('main');
+      expect(resumedAgent.config.systemPrompt).toContain('initial resume instructions');
+
+      await resumedAgent.refreshSystemPrompt();
+
+      expect(resumedAgent.config.systemPrompt).toContain('updated resume instructions');
+      expect(resumedAgent.config.systemPrompt).not.toContain('initial resume instructions');
+    } finally {
+      await resumedSession.close();
+    }
+  });
+
   it('rebuilds builtin tools when rebinding the session tool kaos', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();

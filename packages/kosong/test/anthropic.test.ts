@@ -1024,6 +1024,28 @@ describe('AnthropicChatProvider', () => {
       expect(msgs[3]!.content[0]!.text).toBe('Now summarize');
     });
 
+    it('merges consecutive plain-text user messages into one', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'First' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Second' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Third' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const msgs = body['messages'] as Array<{
+        role: string;
+        content: Array<{ type: string; text?: string }>;
+      }>;
+
+      // Strict Anthropic-compatible backends reject consecutive user messages,
+      // so back-to-back plain-text user turns (e.g. the post-compaction shape
+      // of kept prompts + user-role summary + reminders) must be collapsed.
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]!.role).toBe('user');
+      expect(msgs[0]!.content.map((block) => block.text)).toEqual(['First', 'Second', 'Third']);
+    });
+
     it('assistant with thinking (has encrypted -> ThinkingBlockParam)', async () => {
       const provider = createProvider();
       const history: Message[] = [

@@ -1,24 +1,21 @@
+You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
 --- This message is a direct task, not part of the above conversation ---
 
-You are now given a task to compact this conversation context according to specific priorities and output requirements.
+You are now given a task to compact this conversation context according to the priorities and output requirements below.
 
-Output text only. DO NOT CALL ANY TOOLS. Calling tools will be rejected and fails the task. You already have all the information you need in the conversation history. You have only one chance.
+The goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.
 
-The goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared work.
+Compression priorities, in order:
 
-{{ customInstruction }}
+1. Current Task State: what is being worked on right now
+2. Errors & Solutions: unresolved or recurring errors and their resolutions
+3. Code Evolution: final working versions only; remove intermediate attempts
+4. System Context: project structure, dependencies, environment setup
+5. Design Decisions: architectural choices and their rationale
+6. TODO Items: unfinished tasks and known issues
 
-<!-- Compression Priorities (in order) -->
-
-1. **Current Task State**: What is being worked on RIGHT NOW
-2. **Errors & Solutions**: All encountered errors and their resolutions
-3. **Code Evolution**: Final working versions only (remove intermediate attempts)
-4. **System Context**: Project structure, dependencies, environment setup
-5. **Design Decisions**: Architectural choices and their rationale
-6. **TODO Items**: Unfinished tasks and known issues
-
-<!-- Required Output Structure -->
+Required output structure:
 
 ## Current Focus
 
@@ -54,16 +51,18 @@ The goal of compaction is to keep essential code patterns, technical details, an
 - [Useful classes/methods/functions]: [Brief description/usage]
 - ...
 
-<!-- Omit non-critical code, intermediate attempts, and resolved errors -->
+Omit non-critical code, intermediate attempts, and resolved errors.
 
 ## Important Context
 
 - [Any crucial information not covered above]
 - ...
 
-## All User Messages
+Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
 
-- [Detailed non tool use user message]
-- ...
+Respond with text only. Do not call any tools — you already have everything you need in the conversation history.
 
-<!-- Must output a summary matching the above template in the **final answer**, not in thinking. -->
+{% if customInstruction %}
+Optional user instruction:
+{{ customInstruction }}
+{% endif %}

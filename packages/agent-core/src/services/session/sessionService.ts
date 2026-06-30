@@ -1,6 +1,7 @@
 import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
 import { Emitter } from '../../base/common/event';
 import { ErrorCodes, KimiError } from '../../errors';
+import { isRealUserInput } from '../../agent/compaction';
 import type { AgentContextData, ContextMessage } from '../../agent/context';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '../../rpc';
 import type { SessionMeta } from '../../session';
@@ -59,19 +60,12 @@ function canUndoHistory(history: readonly ContextMessage[], count: number): bool
     if (message === undefined) continue;
     if (message.origin?.kind === 'injection') continue;
     if (message.origin?.kind === 'compaction_summary') return false;
-    if (isRealUserPrompt(message)) {
+    if (isRealUserInput(message)) {
       found++;
       if (found >= count) return true;
     }
   }
   return false;
-}
-
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  return origin.kind === 'skill_activation' && origin.trigger === 'user-slash';
 }
 
 function pageContextMessages(

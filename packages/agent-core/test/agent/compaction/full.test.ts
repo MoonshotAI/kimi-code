@@ -18,10 +18,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { KimiConfig } from '../../../src/config';
 import type { AgentOptions } from '../../../src/agent';
-import { DefaultCompactionStrategy, type CompactionStrategy } from '../../../src/agent/compaction';
+import {
+  COMPACTION_SUMMARY_PREFIX,
+  DefaultCompactionStrategy,
+  type CompactionStrategy,
+} from '../../../src/agent/compaction';
 import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
 import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
-import { estimateTokensForMessages } from '../../../src/utils/tokens';
+import { estimateTokens, estimateTokensForMessages } from '../../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
 import type { TestAgentContext, TestAgentOptions } from '../harness/agent';
 import { testAgent } from '../harness/agent';
@@ -44,138 +48,6 @@ const CATALOGUED_MODEL_CAPABILITIES = {
 const MICRO_COMPACTION_FLAG_ENV = getMicroCompactionFlagEnv();
 
 describe('FullCompaction', () => {
-  it('keeps an oversized trailing user message as recent', () => {
-    const strategy = testCompactionStrategy();
-    const messages = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
-      textMessage('user', `pending user ${'x'.repeat(1_200)}`),
-    ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('keeps consecutive trailing user messages as recent', () => {
-    const strategy = testCompactionStrategy();
-    const messages = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
-      textMessage('user', `pending user one ${'x'.repeat(1_200)}`),
-      textMessage('user', `pending user two ${'x'.repeat(1_200)}`),
-    ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('compacts the prefix when the trailing exchange itself is oversized', () => {
-    const strategy = testCompactionStrategy();
-    const messages = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
-      textMessage('user', 'recent user'),
-      textMessage('assistant', `recent assistant ${'x'.repeat(1_200)}`),
-    ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('returns 0 when there is nothing to compact', () => {
-    const strategy = testCompactionStrategy();
-    expect(strategy.computeCompactCount([], 'auto')).toBe(0);
-    expect(strategy.computeCompactCount([textMessage('user', 'only pending')], 'auto')).toBe(0);
-    expect(
-      strategy.computeCompactCount(
-        [
-          textMessage('user', 'a'),
-          textMessage('user', 'b'),
-          textMessage('user', 'c'),
-        ],
-        'auto',
-      ),
-    ).toBe(0);
-  });
-
-  it('returns 0 when no intermediate split exists and the last message is also unsplittable', () => {
-    const strategy = testCompactionStrategy();
-    const messages: Message[] = [
-      textMessage('user', 'inspect'),
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [{ type: 'function', id: 'call_a', name: 'Lookup', arguments: '{}' }],
-      },
-    ];
-
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(0);
-  });
-
-  it('does not split inside a parallel tool exchange', () => {
-    const strategy = testCompactionStrategy();
-    const messages: Message[] = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
-      textMessage('user', 'run both tools'),
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          { type: 'function', id: 'call_a', name: 'Lookup', arguments: '{}' },
-          { type: 'function', id: 'call_b', name: 'Lookup', arguments: '{}' },
-        ],
-      },
-      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCalls: [], toolCallId: 'call_a' },
-      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCalls: [], toolCallId: 'call_b' },
-      textMessage('user', 'next prompt'),
-    ];
-
-    // The only valid split is before the parallel exchange (after 'old assistant'),
-    // never between tool_a and tool_b — that would leave tool_b as an orphan.
-    expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
-  });
-
-  it('reserves response context by default before the ratio threshold is reached', () => {
-    const strategy = new DefaultCompactionStrategy(() => 256_000);
-
-    expect(strategy.shouldCompact(210_000)).toBe(true);
-    expect(strategy.shouldBlock(210_000)).toBe(true);
-  });
-
-  it('backs off overflow compaction by at least five percent of the context window', () => {
-    const strategy = testCompactionStrategy(1_000);
-    const messages = [
-      textMessage('user', 'old user'),
-      textMessage('assistant', 'old assistant'),
-      ...Array.from({ length: 20 }, () => [
-        textMessage('user', 'continue'),
-        textMessage('assistant', ''),
-      ]).flat(),
-    ];
-
-    const reduced = strategy.reduceCompactOnOverflow(messages);
-    const removed = messages.slice(reduced);
-
-    expect(reduced).toBeGreaterThan(0);
-    expect(estimateTokensForMessages(removed)).toBeGreaterThanOrEqual(50);
-  });
-
-  it('ignores reserved context when the reserve is not smaller than the model window', () => {
-    const strategy = new DefaultCompactionStrategy(() => 32_000, {
-      triggerRatio: 0.85,
-      blockRatio: 0.85,
-      reservedContextSize: 50_000,
-      maxCompactionPerTurn: 3,
-      maxRecentMessages: 3,
-      maxRecentUserMessages: Infinity,
-      maxRecentSizeRatio: 0.2,
-      minOverflowReductionRatio: 0.05,
-    });
-
-    expect(strategy.shouldCompact(1)).toBe(false);
-    expect(strategy.shouldBlock(1)).toBe(false);
-    expect(strategy.shouldCompact(28_000)).toBe(true);
-    expect(strategy.shouldBlock(28_000)).toBe(true);
-  });
-
   it('runs manual compaction and applies the compacted context', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({ telemetry: recordingTelemetry(records) });
@@ -204,12 +76,12 @@ describe('FullCompaction', () => {
       [wire] context.append_message     { "message": { "role": "user", "content": [ { "type": "text", "text": "recent user three" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] full_compaction.begin      { "source": "manual", "instruction": "Keep the important test facts.", "time": "<time>" }
       [emit] compaction.started         { "trigger": "manual", "instruction": "Keep the important test facts." }
-      [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 520, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
-      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 120, "maxContextTokens": 256000, "contextUsage": 0.00046875, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 520, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 520, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction   { "summary": "Compacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 5, "time": "<time>" }
-      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 5, "maxContextTokens": 256000, "contextUsage": 0.00001953125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 520, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 520, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
+      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 120, "maxContextTokens": 256000, "contextUsage": 0.00046875, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.apply_compaction   { "summary": "Compacted summary.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 119, "keptUserMessageCount": 3, "time": "<time>" }
+      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 119, "maxContextTokens": 256000, "contextUsage": 0.00046484375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 507, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete   { "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Compacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 5 } }
+      [emit] compaction.completed       { "result": { "summary": "Compacted summary.", "compactedCount": 6, "tokensBefore": 39, "tokensAfter": 119, "keptUserMessageCount": 3 } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -221,13 +93,26 @@ describe('FullCompaction', () => {
         assistant: text "old assistant two"
         user: text "recent user three"
         assistant: text "recent assistant three"
-        user: text <compaction-instruction>
+        user: text "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\n--- This message is a direct task, not part of the above conversation ---\\n\\nYou are now given a task to compact this conversation context according to the priorities and output requirements below.\\n\\nThe goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.\\n\\nCompression priorities, in order:\\n\\n1. Current Task State: what is being worked on right now\\n2. Errors & Solutions: unresolved or recurring errors and their resolutions\\n3. Code Evolution: final working versions only; remove intermediate attempts\\n4. System Context: project structure, dependencies, environment setup\\n5. Design Decisions: architectural choices and their rationale\\n6. TODO Items: unfinished tasks and known issues\\n\\nRequired output structure:\\n\\n## Current Focus\\n\\n[What we're working on now]\\n\\n## Environment\\n\\n- [Key setup/config points]\\n- ...\\n\\n## Completed Tasks\\n\\n- [Task]: [Brief outcome]\\n- ...\\n\\n## Active Issues\\n\\n- [Issue]: [Status/Next steps]\\n- ...\\n\\n## Code State\\n\\n### [Critical file name]\\n\\n[Brief description of the file's purpose and current state]\\n\\n\`\`\`\\n[The latest version of critical code snippets in this file, <20 lines]\\n\`\`\`\\n\\n### [Critical file name]\\n\\n- [Useful classes/methods/functions]: [Brief description/usage]\\n- ...\\n\\nOmit non-critical code, intermediate attempts, and resolved errors.\\n\\n## Important Context\\n\\n- [Any crucial information not covered above]\\n- ...\\n\\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.\\n\\nRespond with text only. Do not call any tools — you already have everything you need in the conversation history.\\n\\n\\nOptional user instruction:\\nKeep the important test facts."
     `);
     expect(ctx.compactHistory()).toMatchInlineSnapshot(`
       [
         {
-          "role": "assistant",
-          "text": "Compacted summary.",
+          "role": "user",
+          "text": "old user one",
+        },
+        {
+          "role": "user",
+          "text": "old user two",
+        },
+        {
+          "role": "user",
+          "text": "recent user three",
+        },
+        {
+          "role": "user",
+          "text": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:
+      Compacted summary.",
         },
       ]
     `);
@@ -236,16 +121,167 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         tokens_before: 39,
-        tokens_after: 5,
+        tokens_after: 119,
         duration_ms: expect.any(Number),
         compacted_count: 6,
         retry_count: 0,
         thinking_level: 'off',
-        input_tokens: 520,
+        input_tokens: 507,
         output_tokens: 8,
       }),
     });
     await ctx.expectResumeMatches();
+  });
+
+  it('emits the raw summary while keeping the prefixed summary in model context', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const completedEvent = ctx.allEvents.find((entry) => entry.event === 'compaction.completed');
+    expect(completedEvent?.args).toEqual({
+      result: expect.objectContaining({
+        summary: 'Compacted summary.',
+      }),
+    });
+    expect(completedEvent?.args).not.toEqual({
+      result: expect.objectContaining({
+        summary: expect.stringContaining(COMPACTION_SUMMARY_PREFIX),
+      }),
+    });
+    expect(ctx.agent.context.history.at(-1)?.content).toEqual([
+      { type: 'text', text: `${COMPACTION_SUMMARY_PREFIX}\nCompacted summary.` },
+    ]);
+  });
+
+  it('keeps only real user input and re-injects permission reminders after compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'real user one', 'assistant one', 20);
+    ctx.agent.context.appendBashInput('pwd');
+    ctx.agent.context.appendBashOutput('/tmp/repo', '', false);
+    ctx.agent.context.appendLocalCommandStdout('local command output');
+    ctx.agent.context.appendSystemReminder('stale reminder', {
+      kind: 'injection',
+      variant: 'system_reminder',
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'background task done' }], {
+      kind: 'background_task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'notification-1',
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'real user two' }]);
+    ctx.agent.permission.setMode('auto');
+
+    const permissionReminder = new Promise<void>((resolve) => {
+      const handler = (entry: unknown) => {
+        const record = entry as {
+          event?: string;
+          args?: { message?: { origin?: { kind?: string; variant?: string } } };
+        };
+        const origin = record.args?.message?.origin;
+        if (
+          record.event === 'context.append_message' &&
+          origin?.kind === 'injection' &&
+          origin.variant === 'permission_mode'
+        ) {
+          ctx.emitter.off('context.append_message', handler);
+          resolve();
+        }
+      };
+      ctx.emitter.on('context.append_message', handler);
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+    await permissionReminder;
+
+    expect(ctx.agent.context.history.map((message) => message.origin?.kind ?? 'user')).toEqual([
+      'user',
+      'user',
+      'compaction_summary',
+      'injection',
+    ]);
+    expect(
+      ctx.agent.context.history.map((message) =>
+        message.origin?.kind === 'injection' ? message.origin.variant : undefined,
+      ),
+    ).toEqual([undefined, undefined, undefined, 'permission_mode']);
+
+    const applyCompaction = [...ctx.allEvents]
+      .toReversed()
+      .find((entry) => entry.type === '[wire]' && entry.event === 'context.apply_compaction');
+    expect(applyCompaction).toBeDefined();
+    const record = applyCompaction?.args as {
+      keptUserMessageCount?: number;
+      tokensAfter?: number;
+      summary?: string;
+      contextSummary?: string;
+    };
+    expect(record.keptUserMessageCount).toBe(2);
+    const expectedContextSummary = `${COMPACTION_SUMMARY_PREFIX}\nCompacted summary.`;
+    expect(record.summary).toBe('Compacted summary.');
+    expect(record.contextSummary).toBe(expectedContextSummary);
+    expect(record.tokensAfter).toBe(
+      estimateTokens(expectedContextSummary) +
+        estimateTokensForMessages(ctx.agent.context.history.slice(0, 2)),
+    );
+  });
+
+  it('refreshes the system prompt after compaction completes', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 40);
+
+    const refreshSpy = vi.spyOn(ctx.agent, 'refreshSystemPrompt');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reset active tools while refreshing the system prompt after compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.agent.useProfile({
+      name: 'tool-profile',
+      systemPrompt: () => '<profile-prompt>',
+      tools: ['Read', 'Write'],
+    });
+    ctx.agent.tools.setActiveTools(['Read']);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const activeTools = ctx.agent.tools
+      .data()
+      .filter((tool) => tool.active)
+      .map((tool) => tool.name)
+      .toSorted();
+    expect(activeTools).toEqual(['Read']);
   });
 
   it('projects the compacted prefix before sending the summary request', async () => {
@@ -385,7 +421,9 @@ describe('FullCompaction', () => {
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token', 'fresh-token']);
     expect(tokenCalls).toEqual([undefined, true, undefined]);
     expect(ctx.compactHistory()).toEqual([
-      { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'old user one' },
+      { role: 'user', text: 'recent user two' },
+      { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nRecovered compacted summary.` },
     ]);
     await ctx.expectResumeMatches();
   });
@@ -547,20 +585,22 @@ describe('FullCompaction', () => {
     await completed;
 
     expect(attempts).toBe(3);
-    // Each empty summary shrinks the compacted prefix before retrying, so the
-    // recovered summary compacts only the older exchange and leaves the recent
-    // one in history.
+    // Empty summaries are retried without shrinking the history; the recovered
+    // summary replaces the whole history with the real user messages plus the
+    // prefixed summary.
     expect(ctx.compactHistory()).toEqual([
-      { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'old user one' },
       { role: 'user', text: 'recent user two' },
-      { role: 'assistant', text: 'recent assistant two' },
+      { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nRecovered compacted summary.` },
     ]);
     expect(
       ctx.allEvents.filter((event) => event.event === 'compaction.completed'),
     ).toEqual([
       expect.objectContaining({
         args: expect.objectContaining({
-          result: expect.objectContaining({ summary: 'Recovered compacted summary.' }),
+          result: expect.objectContaining({
+            summary: expect.stringContaining('Recovered compacted summary.'),
+          }),
         }),
       }),
     ]);
@@ -603,12 +643,12 @@ describe('FullCompaction', () => {
     await completed;
 
     expect(inputs).toHaveLength(2);
-    // The retry compacts a strictly smaller prefix than the first attempt.
+    // The retry sends a strictly smaller input than the first attempt.
     expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
     expect(ctx.compactHistory()).toEqual([
-      { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'old user one' },
       { role: 'user', text: 'recent user two' },
-      { role: 'assistant', text: 'recent assistant two' },
+      { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nRecovered compacted summary.` },
     ]);
     await ctx.expectResumeMatches();
   });
@@ -640,8 +680,10 @@ describe('FullCompaction', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
-    // MAX_COMPACTION_RETRY_ATTEMPTS attempts, with prefix reduction between them.
-    expect(inputs).toHaveLength(5);
+    // Each empty/think-only response drops the oldest item and resets the retry
+    // counter; once only one item remains, MAX_COMPACTION_RETRY_ATTEMPTS more
+    // retries run before failing. 3 drops + 5 retries = 8 generate calls.
+    expect(inputs).toHaveLength(8);
     expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
     expect(records).toContainEqual({
       event: 'compaction_failed',
@@ -831,7 +873,9 @@ describe('FullCompaction', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     const events = await ctx.untilTurnEnd();
 
-    expect(attempts).toBe(5);
+    // A single-item history cannot be shrunk further, so the truncated response
+    // fails immediately instead of looping through retries.
+    expect(attempts).toBe(1);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',
@@ -929,13 +973,18 @@ describe('FullCompaction', () => {
       messages:
         user: text "old user one"
         assistant: text "old assistant one"
-        user: text <compaction-instruction>
+        user: text "run both tools"
+        assistant: []  calls call_open_one:LookupOne { "query": "one" }, call_open_two:LookupTwo { "query": "two" }
+        tool[call_open_one]: text "one result"
+        user: text "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\n--- This message is a direct task, not part of the above conversation ---\\n\\nYou are now given a task to compact this conversation context according to the priorities and output requirements below.\\n\\nThe goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.\\n\\nCompression priorities, in order:\\n\\n1. Current Task State: what is being worked on right now\\n2. Errors & Solutions: unresolved or recurring errors and their resolutions\\n3. Code Evolution: final working versions only; remove intermediate attempts\\n4. System Context: project structure, dependencies, environment setup\\n5. Design Decisions: architectural choices and their rationale\\n6. TODO Items: unfinished tasks and known issues\\n\\nRequired output structure:\\n\\n## Current Focus\\n\\n[What we're working on now]\\n\\n## Environment\\n\\n- [Key setup/config points]\\n- ...\\n\\n## Completed Tasks\\n\\n- [Task]: [Brief outcome]\\n- ...\\n\\n## Active Issues\\n\\n- [Issue]: [Status/Next steps]\\n- ...\\n\\n## Code State\\n\\n### [Critical file name]\\n\\n[Brief description of the file's purpose and current state]\\n\\n\`\`\`\\n[The latest version of critical code snippets in this file, <20 lines]\\n\`\`\`\\n\\n### [Critical file name]\\n\\n- [Useful classes/methods/functions]: [Brief description/usage]\\n- ...\\n\\nOmit non-critical code, intermediate attempts, and resolved errors.\\n\\n## Important Context\\n\\n- [Any crucial information not covered above]\\n- ...\\n\\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.\\n\\nRespond with text only. Do not call any tools — you already have everything you need in the conversation history.\\n\\n\\nOptional user instruction:\\nKeep stable facts."
     `);
+    // The unresolved tool exchange is sent to the model (see the compaction input
+    // above) but is dropped from the replacement history, leaving only the real
+    // user messages followed by the compaction summary.
     expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
-      'tool',
+      'user',
+      'user',
     ]);
     ctx.dispatch({
       type: 'context.append_loop_event',
@@ -947,11 +996,9 @@ describe('FullCompaction', () => {
       },
     });
     expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
-      'tool',
-      'tool',
+      'user',
+      'user',
     ]);
     await ctx.expectResumeMatches();
   });
@@ -979,12 +1026,12 @@ describe('FullCompaction', () => {
       [wire] full_compaction.begin      { "source": "manual", "time": "<time>" }
       [emit] compaction.started         { "trigger": "manual" }
       [wire] context.append_message     { "message": { "role": "user", "content": [ { "type": "text", "text": "new user while compacting" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
-      [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 499, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
-      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 80, "maxContextTokens": 256000, "contextUsage": 0.0003125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 499, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 499, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction   { "summary": "Compacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 5, "time": "<time>" }
-      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 5, "maxContextTokens": 256000, "contextUsage": 0.00001953125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 499, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 499, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
+      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 80, "maxContextTokens": 256000, "contextUsage": 0.0003125, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.apply_compaction   { "summary": "Compacted prefix.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nCompacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 122, "keptUserMessageCount": 3, "time": "<time>" }
+      [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 122, "maxContextTokens": 256000, "contextUsage": 0.0004765625, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 478, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete   { "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Compacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 5 } }
+      [emit] compaction.completed       { "result": { "summary": "Compacted prefix.", "compactedCount": 4, "tokensBefore": 25, "tokensAfter": 122, "keptUserMessageCount": 3 } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
@@ -994,116 +1041,32 @@ describe('FullCompaction', () => {
         assistant: text "old assistant one"
         user: text "recent user two"
         assistant: text "recent assistant two"
-        user: text <compaction-instruction>
+        user: text "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\n--- This message is a direct task, not part of the above conversation ---\\n\\nYou are now given a task to compact this conversation context according to the priorities and output requirements below.\\n\\nThe goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.\\n\\nCompression priorities, in order:\\n\\n1. Current Task State: what is being worked on right now\\n2. Errors & Solutions: unresolved or recurring errors and their resolutions\\n3. Code Evolution: final working versions only; remove intermediate attempts\\n4. System Context: project structure, dependencies, environment setup\\n5. Design Decisions: architectural choices and their rationale\\n6. TODO Items: unfinished tasks and known issues\\n\\nRequired output structure:\\n\\n## Current Focus\\n\\n[What we're working on now]\\n\\n## Environment\\n\\n- [Key setup/config points]\\n- ...\\n\\n## Completed Tasks\\n\\n- [Task]: [Brief outcome]\\n- ...\\n\\n## Active Issues\\n\\n- [Issue]: [Status/Next steps]\\n- ...\\n\\n## Code State\\n\\n### [Critical file name]\\n\\n[Brief description of the file's purpose and current state]\\n\\n\`\`\`\\n[The latest version of critical code snippets in this file, <20 lines]\\n\`\`\`\\n\\n### [Critical file name]\\n\\n- [Useful classes/methods/functions]: [Brief description/usage]\\n- ...\\n\\nOmit non-critical code, intermediate attempts, and resolved errors.\\n\\n## Important Context\\n\\n- [Any crucial information not covered above]\\n- ...\\n\\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.\\n\\nRespond with text only. Do not call any tools — you already have everything you need in the conversation history."
     `);
     expect(ctx.compactHistory()).toMatchInlineSnapshot(`
       [
         {
-          "role": "assistant",
-          "text": "Compacted prefix.",
+          "role": "user",
+          "text": "old user one",
+        },
+        {
+          "role": "user",
+          "text": "recent user two",
         },
         {
           "role": "user",
           "text": "new user while compacting",
+        },
+        {
+          "role": "user",
+          "text": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:
+      Compacted prefix.",
         },
       ]
     `);
     await ctx.expectResumeMatches();
   });
 
-  it('continues a manual compaction run when the first pass still exceeds the trigger', async () => {
-    const ctx = testAgent();
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
-      modelCapabilities: {
-        ...CATALOGUED_MODEL_CAPABILITIES,
-        max_context_tokens: 4_000,
-      },
-    });
-    ctx.appendExchange(
-      1,
-      `old user one ${'u'.repeat(14_000)}`,
-      `old assistant one ${'a'.repeat(14_000)}`,
-      6_000,
-    );
-    const firstSummary = `large manual summary ${'x'.repeat(14_000)}`;
-    let appliedCount = 0;
-    const secondCompacted = new Promise<void>((resolve) => {
-      const handler = () => {
-        appliedCount += 1;
-        if (appliedCount === 2) {
-          ctx.emitter.off('context.apply_compaction', handler);
-          resolve();
-        }
-      };
-      ctx.emitter.on('context.apply_compaction', handler);
-    });
-
-    ctx.mockNextResponse({ type: 'text', text: firstSummary });
-    ctx.mockNextResponse({ type: 'text', text: 'Second manual summary.' });
-    const completed = ctx.once('compaction.completed');
-    await ctx.rpc.beginCompaction({});
-    ctx.appendExchange(2, 'new user while compacting', 'new assistant while compacting', 6_000);
-    await secondCompacted;
-    await completed;
-
-    const events = ctx.newEvents();
-    expect(countEvents(events, 'context.apply_compaction')).toBe(2);
-    expect(countEvents(events, 'compaction.started')).toBe(1);
-    expect(countEvents(events, 'compaction.completed')).toBe(1);
-    expect(ctx.llmCalls).toHaveLength(2);
-    const [firstCompactionCall, secondCompactionCall] = ctx.llmCalls;
-    expect(firstCompactionCall?.history.map(messageText)).not.toContain('new user while compacting');
-    expect(secondCompactionCall?.history.map(messageText)).toContain(firstSummary);
-    expect(secondCompactionCall?.history.map(messageText)).toContain('new user while compacting');
-    expect(secondCompactionCall?.history.map(messageText)).toContain('new assistant while compacting');
-    expect(ctx.compactHistory()).toEqual([
-      {
-        role: 'assistant',
-        text: 'Second manual summary.',
-      },
-    ]);
-    await ctx.expectResumeMatches();
-  });
-
-  it('auto-compacts very large context in window-sized rounds', async () => {
-    const maxContextTokens = 4_000;
-    const ctx = testAgent();
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
-      modelCapabilities: {
-        ...CATALOGUED_MODEL_CAPABILITIES,
-        max_context_tokens: maxContextTokens,
-      },
-    });
-    for (let i = 1; i <= 22; i++) {
-      ctx.appendAssistantTextWithUsage(
-        i,
-        `history chunk ${String(i)} ${'x'.repeat(7_200)}`,
-        i * 1_850,
-      );
-    }
-    const initialTokens = estimateTokensForMessages(ctx.agent.context.history);
-    const completed = ctx.once('compaction.completed');
-    for (let i = 1; i <= 30; i++) {
-      ctx.mockNextResponse({ type: 'text', text: `Auto summary ${String(i)}.` });
-    }
-
-    ctx.agent.fullCompaction.begin({ source: 'auto', instruction: undefined });
-    await completed;
-
-    const events = ctx.newEvents();
-    const compactedPrefixSizes = ctx.llmCalls.map((call) =>
-      estimateTokensForMessages(call.history.slice(0, -1)),
-    );
-    expect(initialTokens).toBeGreaterThan(maxContextTokens * 9);
-    expect(countEvents(events, 'context.apply_compaction')).toBeGreaterThan(1);
-    expect(countEvents(events, 'compaction.completed')).toBe(1);
-    expect(compactedPrefixSizes.length).toBeGreaterThan(1);
-    expect(compactedPrefixSizes.every((size) => size <= maxContextTokens)).toBe(true);
-    expect(ctx.agent.context.tokenCount).toBeLessThan(maxContextTokens * 0.85);
-    await ctx.expectResumeMatches();
-  });
 
   it('cancels when the compacted prefix changes before completion', async () => {
     const ctx = testAgent();
@@ -1127,8 +1090,8 @@ describe('FullCompaction', () => {
       [emit] compaction.started       { "trigger": "manual" }
       [wire] context.clear            { "time": "<time>" }
       [emit] agent.status.updated     { "model": "kimi-code", "contextTokens": 0, "maxContextTokens": 256000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
-      [wire] usage.record             { "model": "kimi-code", "usage": { "inputOther": 499, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
-      [emit] agent.status.updated     { "model": "kimi-code", "contextTokens": 0, "maxContextTokens": 256000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 499, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 499, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] usage.record             { "model": "kimi-code", "usage": { "inputOther": 478, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
+      [emit] agent.status.updated     { "model": "kimi-code", "contextTokens": 0, "maxContextTokens": 256000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 478, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 478, "output": 7, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.cancel   { "time": "<time>" }
       [emit] compaction.cancelled     {}
     `);
@@ -1140,7 +1103,7 @@ describe('FullCompaction', () => {
         assistant: text "old assistant one"
         user: text "recent user two"
         assistant: text "recent assistant two"
-        user: text <compaction-instruction>
+        user: text "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\n--- This message is a direct task, not part of the above conversation ---\\n\\nYou are now given a task to compact this conversation context according to the priorities and output requirements below.\\n\\nThe goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.\\n\\nCompression priorities, in order:\\n\\n1. Current Task State: what is being worked on right now\\n2. Errors & Solutions: unresolved or recurring errors and their resolutions\\n3. Code Evolution: final working versions only; remove intermediate attempts\\n4. System Context: project structure, dependencies, environment setup\\n5. Design Decisions: architectural choices and their rationale\\n6. TODO Items: unfinished tasks and known issues\\n\\nRequired output structure:\\n\\n## Current Focus\\n\\n[What we're working on now]\\n\\n## Environment\\n\\n- [Key setup/config points]\\n- ...\\n\\n## Completed Tasks\\n\\n- [Task]: [Brief outcome]\\n- ...\\n\\n## Active Issues\\n\\n- [Issue]: [Status/Next steps]\\n- ...\\n\\n## Code State\\n\\n### [Critical file name]\\n\\n[Brief description of the file's purpose and current state]\\n\\n\`\`\`\\n[The latest version of critical code snippets in this file, <20 lines]\\n\`\`\`\\n\\n### [Critical file name]\\n\\n- [Useful classes/methods/functions]: [Brief description/usage]\\n- ...\\n\\nOmit non-critical code, intermediate attempts, and resolved errors.\\n\\n## Important Context\\n\\n- [Any crucial information not covered above]\\n- ...\\n\\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.\\n\\nRespond with text only. Do not call any tools — you already have everything you need in the conversation history."
     `);
     expect(ctx.compactHistory()).toMatchInlineSnapshot(`[]`);
     await ctx.expectResumeMatches();
@@ -1171,20 +1134,20 @@ describe('FullCompaction', () => {
       [wire] full_compaction.begin       { "source": "auto", "time": "<time>" }
       [emit] compaction.started          { "trigger": "auto" }
       [emit] compaction.blocked          { "turnId": 0 }
-      [wire] usage.record                { "model": "kimi-code", "usage": { "inputOther": 498, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 950000, "maxContextTokens": 256000, "contextUsage": 3.7109375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 498, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 498, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction    { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28, "time": "<time>" }
-      [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 28, "maxContextTokens": 256000, "contextUsage": 0.000109375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 498, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 498, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] usage.record                { "model": "kimi-code", "usage": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
+      [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 950000, "maxContextTokens": 256000, "contextUsage": 3.7109375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.apply_compaction    { "summary": "Auto compacted summary.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nAuto compacted summary.", "compactedCount": 7, "tokensBefore": 46, "tokensAfter": 127, "keptUserMessageCount": 4, "time": "<time>" }
+      [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 127, "maxContextTokens": 256000, "contextUsage": 0.00049609375, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 499, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete    { "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28 } }
+      [emit] compaction.completed        { "result": { "summary": "Auto compacted summary.", "compactedCount": 7, "tokensBefore": 46, "tokensAfter": 127, "keptUserMessageCount": 4 } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I can answer after compaction." }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I can answer after compaction." } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 31, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
-      [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 31, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
-      [wire] usage.record                { "model": "kimi-code", "usage": { "inputOther": 31, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 42, "maxContextTokens": 256000, "contextUsage": 0.0001640625, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 529, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 529, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 31, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 126, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
+      [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 126, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
+      [wire] usage.record                { "model": "kimi-code", "usage": { "inputOther": 126, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 137, "maxContextTokens": 256000, "contextUsage": 0.00053515625, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 625, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 625, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 126, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
@@ -1196,22 +1159,23 @@ describe('FullCompaction', () => {
           assistant: text "old assistant one"
           user: text "old user two"
           assistant: text "old assistant two"
-          user: text <compaction-instruction>
-
-      call 2:
-        messages:
-          assistant: text "Auto compacted summary."
           user: text "recent user three"
           assistant: text "recent assistant three"
           user: text "Answer after compacting"
+          user: text "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\n--- This message is a direct task, not part of the above conversation ---\\n\\nYou are now given a task to compact this conversation context according to the priorities and output requirements below.\\n\\nThe goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.\\n\\nCompression priorities, in order:\\n\\n1. Current Task State: what is being worked on right now\\n2. Errors & Solutions: unresolved or recurring errors and their resolutions\\n3. Code Evolution: final working versions only; remove intermediate attempts\\n4. System Context: project structure, dependencies, environment setup\\n5. Design Decisions: architectural choices and their rationale\\n6. TODO Items: unfinished tasks and known issues\\n\\nRequired output structure:\\n\\n## Current Focus\\n\\n[What we're working on now]\\n\\n## Environment\\n\\n- [Key setup/config points]\\n- ...\\n\\n## Completed Tasks\\n\\n- [Task]: [Brief outcome]\\n- ...\\n\\n## Active Issues\\n\\n- [Issue]: [Status/Next steps]\\n- ...\\n\\n## Code State\\n\\n### [Critical file name]\\n\\n[Brief description of the file's purpose and current state]\\n\\n\`\`\`\\n[The latest version of critical code snippets in this file, <20 lines]\\n\`\`\`\\n\\n### [Critical file name]\\n\\n- [Useful classes/methods/functions]: [Brief description/usage]\\n- ...\\n\\nOmit non-critical code, intermediate attempts, and resolved errors.\\n\\n## Important Context\\n\\n- [Any crucial information not covered above]\\n- ...\\n\\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.\\n\\nRespond with text only. Do not call any tools — you already have everything you need in the conversation history."
+
+      call 2:
+        messages:
+          user: text "old user one\\n\\nold user two\\n\\nrecent user three\\n\\nAnswer after compacting"
+          user: text "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nAuto compacted summary."
     `);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
         tokens_before: 46,
-        tokens_after: 28,
-        compacted_count: 4,
+        tokens_after: 127,
+        compacted_count: 7,
         retry_count: 0,
       }),
     });
@@ -1244,15 +1208,18 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await compacted;
 
-    // Compaction preserves the in-flight tool exchange in recent; the deferred
-    // reminder still cannot land because the tool exchange is still open.
+    // Compaction drops the in-flight tool exchange and the deferred reminder
+    // (initial context is rebuilt every turn); only real user messages and
+    // the compaction summary remain.
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
+      'user',
+      'user',
     ]);
+    expect(ctx.agent.context.history.at(-1)?.origin).toEqual({ kind: 'compaction_summary' });
 
-    // Closing the exchange flushes the deferred reminder to history.
+    // The dropped tool calls no longer exist, so late tool results are orphans
+    // and do not change history.
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: {
@@ -1273,15 +1240,9 @@ describe('FullCompaction', () => {
     });
 
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
-      'tool',
-      'tool',
       'user',
-    ]);
-    expect(ctx.agent.context.history.at(-1)?.content).toEqual([
-      { type: 'text', text: '<system-reminder>\nhost note\n</system-reminder>' },
+      'user',
     ]);
   });
 
@@ -1312,13 +1273,18 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await compacted;
 
+    // Compaction drops the partially-resolved tool exchange and the deferred
+    // reminder (initial context is rebuilt every turn); only real user
+    // messages and the compaction summary remain.
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
-      'tool',
+      'user',
+      'user',
     ]);
+    expect(ctx.agent.context.history.at(-1)?.origin).toEqual({ kind: 'compaction_summary' });
 
+    // The dropped tool calls no longer exist, so a late tool result is an orphan
+    // and does not change history.
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: {
@@ -1330,74 +1296,98 @@ describe('FullCompaction', () => {
     });
 
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
-      'tool',
-      'tool',
       'user',
-    ]);
-    expect(ctx.agent.context.history.at(-1)?.content).toEqual([
-      { type: 'text', text: '<system-reminder>\nhost note\n</system-reminder>' },
+      'user',
     ]);
   });
 
-  it('fails the turn with compaction.unable when auto compaction has no compactable prefix', async () => {
+  it('rejects manual compaction with compaction.unable when history is empty', async () => {
     const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
-      modelCapabilities: {
-        ...CATALOGUED_MODEL_CAPABILITIES,
-        max_context_tokens: 2_000,
-      },
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    const oversizedPrompt = `initial-pending-verbatim:${'x'.repeat(8_000)}`;
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: oversizedPrompt }] });
-    const events = await ctx.untilTurnEnd();
-
-    expect(eventIndex(events, 'compaction.started')).toBe(-1);
+    await expect(ctx.rpc.beginCompaction({})).rejects.toMatchObject({
+      code: 'compaction.unable',
+    });
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        event: 'turn.ended',
-        args: expect.objectContaining({
-          reason: 'failed',
-          error: expect.objectContaining({ code: 'compaction.unable' }),
-        }),
-      }),
-    );
-    await ctx.expectResumeMatches();
   });
 
-  it('rejects manual compaction with compaction.unable when no prefix is compactable', async () => {
+  it('compacts a single user message and keeps it ahead of the summary', async () => {
     const ctx = testAgent();
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'only pending user' }]);
-
-    await expect(ctx.rpc.beginCompaction({})).rejects.toMatchObject({
-      code: 'compaction.unable',
-    });
-    expect(ctx.llmCalls).toHaveLength(0);
-
-    ctx.agent.context.clear();
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
     const compacted = ctx.once('context.apply_compaction');
     const completed = ctx.once('compaction.completed');
 
-    ctx.mockNextResponse({ type: 'text', text: 'Compacted after no-op cancel.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Single message summary.' });
     await ctx.rpc.beginCompaction({});
     await compacted;
     await completed;
 
     expect(ctx.llmCalls).toHaveLength(1);
     expect(ctx.compactHistory()).toEqual([
-      { role: 'assistant', text: 'Compacted after no-op cancel.' },
+      { role: 'user', text: 'only pending user' },
+      { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nSingle message summary.` },
     ]);
+    await ctx.expectResumeMatches();
+  });
+
+  it('reinjects the plan-mode reminder after manual compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    await ctx.agent.planMode.enter('compact-plan', false);
+    const planFilePath = ctx.agent.planMode.planFilePath;
+    if (planFilePath === null) throw new Error('plan file path missing');
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'draft the plan' }]);
+    await ctx.agent.injection.inject();
+    expect(ctx.compactHistory().at(-1)?.text).toContain(`Plan file: ${planFilePath}`);
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Plan-mode compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    await vi.waitFor(() => {
+      const planReminders = ctx.agent.context.history.filter(
+        (message) => message.origin?.kind === 'injection' && message.origin.variant === 'plan_mode',
+      );
+      expect(planReminders).toHaveLength(1);
+      expect(messageText(planReminders[0])).toContain(`Plan file: ${planFilePath}`);
+    });
+    expect(ctx.compactHistory().at(-1)?.text).toContain(`Plan file: ${planFilePath}`);
+    await ctx.expectResumeMatches();
+  });
+
+  it('includes the plan-mode reminder in the answer request after auto compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    await ctx.agent.planMode.enter('auto-compact-plan', false);
+    const planFilePath = ctx.agent.planMode.planFilePath;
+    if (planFilePath === null) throw new Error('plan file path missing');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 950_000);
+    await ctx.agent.injection.inject();
+
+    ctx.mockNextResponse({ type: 'text', text: 'Auto plan compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'I can answer with the plan path.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue the plan' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    const answerTexts = ctx.llmCalls[1]?.history.map(messageText) ?? [];
+    expect(answerTexts.some((text) => text.includes(`Plan file: ${planFilePath}`))).toBe(true);
     await ctx.expectResumeMatches();
   });
 
@@ -1451,8 +1441,10 @@ describe('FullCompaction', () => {
 
     expect(ctx.llmCalls).toHaveLength(2);
     const [compactionCall, answerCall] = ctx.llmCalls;
-    expect(messageText(compactionCall?.history.at(-1))).toContain('<!-- Compression Priorities');
-    expect(answerCall?.history.map(messageText)).toContain('Reserved compacted summary.');
+    expect(messageText(compactionCall?.history.at(-1))).toContain('CONTEXT CHECKPOINT COMPACTION');
+    expect(
+      answerCall?.history.map(messageText).some((text) => text.includes('Reserved compacted summary.')),
+    ).toBe(true);
     await ctx.expectResumeMatches();
   });
 
@@ -1476,10 +1468,21 @@ describe('FullCompaction', () => {
     expect(ctx.llmCalls).toHaveLength(2);
     const [compactionCall, answerCall] = ctx.llmCalls;
     const compactionTexts = compactionCall?.history.map(messageText) ?? [];
-    expect(compactionTexts.some((text) => text.includes('keep-this-pending-verbatim'))).toBe(false);
-    expect(compactionCall?.history.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
-    expect(answerCall?.history.map(messageText)).toContain('Oversized prompt summary.');
-    expect(messageText(answerCall?.history.at(-1))).toBe(oversizedPrompt);
+    // The whole history is compacted, so the pending prompt is included in the
+    // compaction input and kept verbatim in the post-compaction replacement.
+    expect(compactionTexts.some((text) => text.includes('keep-this-pending-verbatim'))).toBe(true);
+    expect(compactionCall?.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'user',
+    ]);
+    expect(
+      answerCall?.history.map(messageText).some((text) => text.includes('Oversized prompt summary.')),
+    ).toBe(true);
+    expect(
+      answerCall?.history.map(messageText).some((text) => text.includes('keep-this-pending-verbatim')),
+    ).toBe(true);
     await ctx.expectResumeMatches();
   });
 
@@ -1492,6 +1495,8 @@ describe('FullCompaction', () => {
         max_context_tokens: 1_000_000,
       },
     });
+    // The auto-compact ratio is 0.85, so the context alone (840k) sits below
+    // the 850k threshold and the pending prompt pushes it over.
     ctx.appendExchange(1, 'old user one', 'old assistant one', 840_000);
     const pendingPrompt = `ratio-pending-verbatim:${'x'.repeat(60_000)}`;
 
@@ -1503,10 +1508,21 @@ describe('FullCompaction', () => {
     expect(ctx.llmCalls).toHaveLength(2);
     const [compactionCall, answerCall] = ctx.llmCalls;
     const compactionTexts = compactionCall?.history.map(messageText) ?? [];
-    expect(compactionTexts.some((text) => text.includes('ratio-pending-verbatim'))).toBe(false);
-    expect(compactionCall?.history.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
-    expect(answerCall?.history.map(messageText)).toContain('Ratio compacted summary.');
-    expect(messageText(answerCall?.history.at(-1))).toBe(pendingPrompt);
+    // The whole history is compacted, so the pending prompt is included in the
+    // compaction input and kept verbatim in the post-compaction replacement.
+    expect(compactionTexts.some((text) => text.includes('ratio-pending-verbatim'))).toBe(true);
+    expect(compactionCall?.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'user',
+    ]);
+    expect(
+      answerCall?.history.map(messageText).some((text) => text.includes('Ratio compacted summary.')),
+    ).toBe(true);
+    expect(
+      answerCall?.history.map(messageText).some((text) => text.includes('ratio-pending-verbatim')),
+    ).toBe(true);
 
     await ctx.expectResumeMatches();
   });
@@ -1554,8 +1570,8 @@ describe('FullCompaction', () => {
       expect.objectContaining({
         event: 'context.apply_compaction',
         args: expect.objectContaining({
-          summary: 'Overflow compacted summary.',
-          compactedCount: 2,
+          summary: expect.stringContaining('Overflow compacted summary.'),
+          compactedCount: 4,
         }),
       }),
     );
@@ -1575,47 +1591,137 @@ describe('FullCompaction', () => {
         [
           "user: old user one",
           "assistant: old assistant one",
+          "user: Retry after provider overflow",
           "user: <compaction-instruction>",
         ],
         [
-          "assistant: Overflow compacted summary.",
-          "user: Retry after provider overflow",
+          "user: old user one
+
+      Retry after provider overflow",
+          "user: Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:
+      Overflow compacted summary.",
         ],
       ]
     `);
     await ctx.expectResumeMatches();
   });
 
-  it('uses observed max from overflow to size compaction input', async () => {
-    const ctx = testAgent();
+  it('stops repeated provider-overflow compactions when the compacted context still overflows', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      callCount += 1;
+      if (messageText(history.at(-1)).includes('CONTEXT CHECKPOINT COMPACTION')) {
+        return textResult(`Still too large summary ${String(callCount)}.`);
+      }
+      throw new APIContextOverflowError(400, 'Context length exceeded', `req-overflow-${String(callCount)}`);
+    };
+    const ctx = testAgent({ generate });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
-      modelCapabilities: {
-        ...CATALOGUED_MODEL_CAPABILITIES,
-        max_context_tokens: 1_000_000,
-      },
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    for (let i = 0; i < 20; i++) {
-      ctx.appendExchange(
-        i + 1,
-        `old user ${String(i)}`,
-        `old assistant ${String(i)} ${'x'.repeat(40_000)}`,
-        20_000,
-      );
-    }
-    ctx.agent.fullCompaction.observeContextOverflow(200_000);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry until overflow guard' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(countEvents(events, 'compaction.started')).toBe(3);
+    expect(callCount).toBe(7);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'context.overflow',
+            message: 'Compaction failed to bring the context under the model window after 3 attempts.',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('does not leave an orphan tool result at the start when reducing overflowing compaction input', async () => {
+    const inputs: string[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      inputs.push(inputHistorySnapshot(history));
+      if (inputs.length === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-compact-overflow');
+      }
+      return textResult('Reduced tool history summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendToolExchange();
+    let applyRecord: { compactedCount?: number; droppedCount?: number } | undefined;
+    ctx.emitter.on('context.apply_compaction', (entry) => {
+      applyRecord = (entry as { args: { compactedCount?: number; droppedCount?: number } }).args;
+    });
     const compacted = ctx.once('context.apply_compaction');
     const completed = ctx.once('compaction.completed');
 
-    ctx.mockNextResponse({ type: 'text', text: 'Observed max summary.' });
     await ctx.rpc.beginCompaction({});
     await compacted;
     await completed;
 
-    expect(ctx.agent.fullCompaction.getEffectiveMaxContextTokens()).toBe(170_000);
-    const compactionTokens = estimateTokensForMessages(ctx.llmCalls[0]?.history ?? []);
-    expect(compactionTokens).toBeLessThan(200_000);
-    expect(ctx.compactHistory()[0]).toEqual({ role: 'assistant', text: 'Observed max summary.' });
+    expect(inputs).toHaveLength(2);
+    const reducedHistory = inputs[1]!.slice(0, -1);
+    expect(reducedHistory[0]?.split(':', 1)[0]).not.toBe('tool');
+    // The whole 3-message history was folded (compactedCount), and all 3 were
+    // trimmed from the summarizer input on overflow (droppedCount), so the
+    // record honestly reports that the summary covers none of them.
+    expect(applyRecord?.compactedCount).toBe(3);
+    expect(applyRecord?.droppedCount).toBe(3);
+    await ctx.expectResumeMatches();
+  });
+
+  it('shrinks overflowing compaction input aggressively instead of one message at a time', async () => {
+    const inputs: string[][] = [];
+    let applyRecord: { compactedCount?: number; droppedCount?: number } | undefined;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      inputs.push(inputHistorySnapshot(history));
+      const compactedHistory = history.slice(0, -1);
+      if (compactedHistory.length > 20) {
+        throw new APIContextOverflowError(
+          400,
+          'Context length exceeded',
+          `req-long-compact-${String(inputs.length)}`,
+        );
+      }
+      return textResult('Aggressively reduced summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    for (let i = 0; i < 30; i++) {
+      ctx.appendExchange(
+        i,
+        `old user ${String(i)} ${'u'.repeat(400)}`,
+        `old assistant ${String(i)} ${'a'.repeat(400)}`,
+        10,
+      );
+    }
+    ctx.emitter.on('context.apply_compaction', (entry) => {
+      applyRecord = (entry as { args: { compactedCount?: number; droppedCount?: number } }).args;
+    });
+    const compacted = ctx.once('context.apply_compaction');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(inputs[0]?.length).toBeGreaterThan(50);
+    expect(inputs.length).toBeLessThanOrEqual(4);
+    const finalCompactedHistory = inputs.at(-1)!.slice(0, -1);
+    expect(finalCompactedHistory[0]?.split(':', 1)[0]).not.toBe('tool');
+    expect(applyRecord?.compactedCount).toBe(60);
+    expect(applyRecord?.droppedCount).toBeGreaterThan(0);
     await ctx.expectResumeMatches();
   });
 
@@ -1794,8 +1900,8 @@ describe('FullCompaction', () => {
       expect.objectContaining({
         event: 'context.apply_compaction',
         args: expect.objectContaining({
-          summary: 'Unknown window compacted summary.',
-          compactedCount: 2,
+          summary: expect.stringContaining('Unknown window compacted summary.'),
+          compactedCount: 4,
         }),
       }),
     );
@@ -2000,8 +2106,8 @@ describe('FullCompaction', () => {
       expect.objectContaining({
         event: 'context.apply_compaction',
         args: expect.objectContaining({
-          summary: 'Placeholder compacted summary.',
-          compactedCount: 2,
+          summary: expect.stringContaining('Placeholder compacted summary.'),
+          compactedCount: 4,
         }),
       }),
     );
@@ -2028,12 +2134,12 @@ describe('FullCompaction', () => {
       [wire] full_compaction.begin       { "source": "auto", "time": "<time>" }
       [emit] compaction.started          { "trigger": "auto" }
       [emit] compaction.blocked          { "turnId": 0 }
-      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 482, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 482, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 482, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] context.apply_compaction    { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6, "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 6, "maxContextTokens": 1000000, "contextUsage": 0.000006, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 482, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 482, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.apply_compaction    { "summary": "First compacted summary.", "contextSummary": "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nFirst compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 114, "keptUserMessageCount": 1, "time": "<time>" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 114, "maxContextTokens": 1000000, "contextUsage": 0.000114, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 461, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] full_compaction.complete    { "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6 } }
+      [emit] compaction.completed        { "result": { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 114, "keptUserMessageCount": 1 } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I need a tool." }
@@ -2043,10 +2149,10 @@ describe('FullCompaction', () => {
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_missing", "name": "MissingTool", "args": {} }
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_missing", "toolCallId": "call_missing", "result": { "output": "Tool \\"MissingTool\\" not found", "isError": true } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_missing", "output": "Tool \\"MissingTool\\" not found", "isError": true }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 9, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
-      [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 9, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
-      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 9, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 20, "maxContextTokens": 1000000, "contextUsage": 0.00002, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 491, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 491, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 9, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 115, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
+      [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 115, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
+      [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 115, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
+      [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 126, "maxContextTokens": 1000000, "contextUsage": 0.000126, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 576, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 576, "output": 20, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 115, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 2, "reason": "error", "message": "Compaction limit exceeded (1)" }
       [emit] turn.ended                  { "turnId": 0, "reason": "failed", "error": { "code": "context.overflow", "message": "Compaction limit exceeded (1)", "name": "KimiError", "details": { "maxCompactions": 1, "turnId": 0 }, "retryable": true } }
     `);
@@ -2059,49 +2165,16 @@ describe('FullCompaction', () => {
         tools: []
         messages:
           user: text "Trigger repeated compaction"
-          user: text <compaction-instruction>
+          user: text "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.\\n\\n--- This message is a direct task, not part of the above conversation ---\\n\\nYou are now given a task to compact this conversation context according to the priorities and output requirements below.\\n\\nThe goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared.\\n\\nCompression priorities, in order:\\n\\n1. Current Task State: what is being worked on right now\\n2. Errors & Solutions: unresolved or recurring errors and their resolutions\\n3. Code Evolution: final working versions only; remove intermediate attempts\\n4. System Context: project structure, dependencies, environment setup\\n5. Design Decisions: architectural choices and their rationale\\n6. TODO Items: unfinished tasks and known issues\\n\\nRequired output structure:\\n\\n## Current Focus\\n\\n[What we're working on now]\\n\\n## Environment\\n\\n- [Key setup/config points]\\n- ...\\n\\n## Completed Tasks\\n\\n- [Task]: [Brief outcome]\\n- ...\\n\\n## Active Issues\\n\\n- [Issue]: [Status/Next steps]\\n- ...\\n\\n## Code State\\n\\n### [Critical file name]\\n\\n[Brief description of the file's purpose and current state]\\n\\n\`\`\`\\n[The latest version of critical code snippets in this file, <20 lines]\\n\`\`\`\\n\\n### [Critical file name]\\n\\n- [Useful classes/methods/functions]: [Brief description/usage]\\n- ...\\n\\nOmit non-critical code, intermediate attempts, and resolved errors.\\n\\n## Important Context\\n\\n- [Any crucial information not covered above]\\n- ...\\n\\nBe concise, structured, and focused on helping the next LLM seamlessly continue the work.\\n\\nRespond with text only. Do not call any tools — you already have everything you need in the conversation history."
 
       call 2:
         messages:
-          assistant: text "First compacted summary."
+          user: text "Trigger repeated compaction"
+          user: text "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:\\nFirst compacted summary."
     `);
     await ctx.expectResumeMatches();
   });
 
-  it('appends the todo list to the compaction summary', async () => {
-    const ctx = testAgent();
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
-      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
-    });
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
-
-    ctx.agent.tools.updateStore('todo', [
-      { title: 'Fix the auth bug', status: 'in_progress' },
-      { title: 'Add tests', status: 'pending' },
-    ]);
-
-    const compacted = new Promise<void>((resolve) => {
-      ctx.emitter.once('context.apply_compaction', () => {
-        resolve();
-      });
-    });
-    const completed = ctx.once('compaction.completed');
-
-    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
-    await ctx.rpc.beginCompaction({});
-    await compacted;
-    await completed;
-
-    const history = ctx.compactHistory();
-    expect(history).toHaveLength(1);
-    expect(history[0]).toMatchObject({
-      role: 'assistant',
-      text: 'Compacted summary.\n\n## TODO List\n  [in_progress] Fix the auth bug\n  [pending] Add tests',
-    });
-    await ctx.expectResumeMatches();
-  });
 });
 
 afterEach(() => {
@@ -2244,10 +2317,9 @@ function realKosongGenerate(
 const alwaysCompactOnce: CompactionStrategy = {
   shouldCompact: () => true,
   shouldBlock: () => true,
-  computeCompactCount: (messages: readonly Message[]) => messages.length,
-  reduceCompactOnOverflow: (messages: readonly Message[]) => messages.length,
   checkAfterStep: true,
   maxCompactionPerTurn: 1,
+  maxOverflowCompactionAttempts: 3,
 };
 
 function missingToolCall(): ToolCall {
@@ -2259,29 +2331,13 @@ function missingToolCall(): ToolCall {
   };
 }
 
-function testCompactionStrategy(maxSize: number = 1_000): DefaultCompactionStrategy {
-  return new DefaultCompactionStrategy(() => maxSize, {
-    triggerRatio: 0.85,
-    blockRatio: 0.85,
-    reservedContextSize: 0,
-    maxCompactionPerTurn: 3,
-    maxRecentMessages: 10,
-    maxRecentUserMessages: Infinity,
-    maxRecentSizeRatio: 0.2,
-    minOverflowReductionRatio: 0.05,
-  });
-}
-
 function overflowOnlyCompactionStrategy(maxSize: number = 14): DefaultCompactionStrategy {
   return new DefaultCompactionStrategy(() => maxSize, {
     triggerRatio: Infinity,
     blockRatio: Infinity,
     reservedContextSize: 0,
     maxCompactionPerTurn: 3,
-    maxRecentMessages: 3,
-    maxRecentUserMessages: Infinity,
-    maxRecentSizeRatio: 0.2,
-    minOverflowReductionRatio: 0.05,
+    maxOverflowCompactionAttempts: 3,
   });
 }
 
@@ -2331,5 +2387,5 @@ function inputHistorySnapshot(history: readonly Message[]): string[] {
 }
 
 function normalizeInputText(text: string): string {
-  return text.includes('compact this conversation context') ? '<compaction-instruction>' : text;
+  return text.includes('CONTEXT CHECKPOINT COMPACTION') ? '<compaction-instruction>' : text;
 }

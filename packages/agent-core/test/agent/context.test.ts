@@ -563,7 +563,7 @@ describe('Agent context', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('preserves deferred reminders when compaction keeps a pending tool exchange', async () => {
+  it('drops deferred reminders when compaction drops a pending tool exchange', async () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -576,20 +576,24 @@ describe('Agent context', () => {
     });
     ctx.agent.context.applyCompaction({
       summary: 'summary of old prompt',
-      compactedCount: 1,
+      compactedCount: 4,
       tokensBefore: 100,
-      tokensAfter: 40,
     });
     ctx.agent.context.appendSystemReminder('second reminder', {
       kind: 'injection',
       variant: 'host',
     });
 
+    // Compaction keeps only the real user prompt plus the summary; the deferred
+    // first reminder is dropped because initial context is rebuilt every turn.
+    // The second reminder, appended after compaction, is preserved.
     expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
-      'tool',
+      'user',
+      'user',
+    ]);
+    expect(ctx.agent.context.messages[2]?.content).toEqual([
+      { type: 'text', text: '<system-reminder>\nsecond reminder\n</system-reminder>' },
     ]);
 
     ctx.dispatch({
@@ -602,22 +606,45 @@ describe('Agent context', () => {
       },
     });
 
+    // The pending tool exchange was dropped by compaction, so the late tool
+    // result is ignored and the history is unchanged.
     expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
-      'assistant',
-      'user',
-      'assistant',
-      'tool',
-      'tool',
       'user',
       'user',
-    ]);
-    expect(ctx.agent.context.messages[5]?.content).toEqual([
-      { type: 'text', text: '<system-reminder>\nfirst reminder\n</system-reminder>' },
-    ]);
-    expect(ctx.agent.context.messages[6]?.content).toEqual([
-      { type: 'text', text: '<system-reminder>\nsecond reminder\n</system-reminder>' },
+      'user',
     ]);
     await ctx.expectResumeMatches();
+  });
+
+  it('applyCompaction keeps only real user input from mixed user-role history', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'real prompt' }]);
+    ctx.agent.context.appendBashInput('pwd');
+    ctx.agent.context.appendBashOutput('/tmp/repo', '', false);
+    ctx.agent.context.appendLocalCommandStdout('local command output');
+    ctx.agent.context.appendSystemReminder('stale reminder', {
+      kind: 'injection',
+      variant: 'host',
+    });
+
+    const result = ctx.agent.context.applyCompaction({
+      summary: 'summary of mixed history',
+      compactedCount: 5,
+      tokensBefore: 100,
+    });
+    ctx.agent.context.appendSystemReminder('fresh reminder', {
+      kind: 'injection',
+      variant: 'host',
+    });
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'user' } },
+      { role: 'user', origin: { kind: 'compaction_summary' } },
+      { role: 'user', origin: { kind: 'injection', variant: 'host' } },
+    ]);
+    expect(result.keptUserMessageCount).toBe(1);
   });
 
   it('clears context before the next LLM request', async () => {
@@ -648,9 +675,8 @@ describe('Agent context', () => {
       summary: 'summary of old context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
-    expect(ctx.agent.context.history[0]?.origin).toEqual({ kind: 'compaction_summary' });
+    expect(ctx.agent.context.history.at(-1)?.origin).toEqual({ kind: 'compaction_summary' });
 
     ctx.mockNextResponse({ type: 'text', text: 'after compaction' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'new prompt' }] });
@@ -660,8 +686,9 @@ describe('Agent context', () => {
       system: <system-prompt>
       tools: []
       messages:
-        assistant: text "summary of old context"
-        user: text "recent user message\\n\\nnew prompt"
+        user: text "old user message\\n\\nrecent user message"
+        user: text "summary of old context"
+        user: text "new prompt"
     `);
     await ctx.expectResumeMatches();
   });
@@ -812,7 +839,6 @@ describe('Agent context', () => {
       summary: 'summary of compacted context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
     ctx.agent.context.appendMessage({
@@ -830,7 +856,11 @@ describe('Agent context', () => {
 
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({
-        role: 'assistant',
+        role: 'user',
+        content: [{ type: 'text', text: 'old user message' }],
+      }),
+      expect.objectContaining({
+        role: 'user',
         origin: { kind: 'compaction_summary' },
         content: [{ type: 'text', text: 'summary of compacted context' }],
       }),
@@ -852,7 +882,6 @@ describe('Agent context', () => {
       summary: 'summary of compacted context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
     ctx.agent.context.appendMessage({
@@ -866,7 +895,11 @@ describe('Agent context', () => {
     }).not.toThrow();
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({
-        role: 'assistant',
+        role: 'user',
+        content: [{ type: 'text', text: 'old user message' }],
+      }),
+      expect.objectContaining({
+        role: 'user',
         origin: { kind: 'compaction_summary' },
         content: [{ type: 'text', text: 'summary of compacted context' }],
       }),
