@@ -18,11 +18,20 @@ import { ToolAccesses } from './tool-access';
 
 export interface ToolCallTask<Result> {
   readonly accesses: ToolAccesses;
-  readonly start: () => Promise<{ readonly result: Promise<Result> }>;
+  readonly start: () => Promise<{
+    readonly result: Promise<Result>;
+    readonly holdAccessUntil?: Promise<unknown> | undefined;
+  }>;
+  readonly cancel?: (() => Result) | undefined;
 }
 
 interface ScheduledToolCallTask<Result> extends ToolCallTask<Result> {
   readonly result: ControlledPromise<Result>;
+}
+
+interface StartedToolCallTask<Result> {
+  readonly result: Promise<Result>;
+  readonly holdAccessUntil?: Promise<unknown> | undefined;
 }
 
 export class ToolScheduler<Result> {
@@ -41,6 +50,18 @@ export class ToolScheduler<Result> {
     }
 
     return result;
+  }
+
+  cancelQueued(): void {
+    const queuedTasks = this.queuedTasks;
+    this.queuedTasks = [];
+    for (const task of queuedTasks) {
+      if (task.cancel !== undefined) {
+        task.result.resolve(task.cancel());
+      } else {
+        task.result.reject(new Error('Queued tool task was cancelled.'));
+      }
+    }
   }
 
   private isBlocked(
@@ -63,7 +84,7 @@ export class ToolScheduler<Result> {
 
   private start(task: ScheduledToolCallTask<Result>): void {
     this.activeTasks.push(task);
-    let started: Promise<{ readonly result: Promise<Result> }>;
+    let started: Promise<StartedToolCallTask<Result>>;
     try {
       started = task.start();
     } catch (error) {
@@ -73,8 +94,13 @@ export class ToolScheduler<Result> {
     }
 
     void started
-      .then(({ result }) => result)
-      .then(task.result.resolve, task.result.reject)
+      .then(({ result, holdAccessUntil }) => {
+        void result.then(task.result.resolve, task.result.reject);
+        return (holdAccessUntil ?? result).catch(() => undefined);
+      })
+      .catch((error) => {
+        task.result.reject(error);
+      })
       .finally(() => {
         this.finish(task);
       });

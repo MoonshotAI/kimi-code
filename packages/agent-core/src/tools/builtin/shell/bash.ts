@@ -364,6 +364,7 @@ export class BashTool implements BuiltinTool<BashInput> {
             `task_id: ${taskId}\n` +
             `Use TaskOutput(task_id="${taskId}", block=false) to poll for more output, ` +
             `or TaskStop(task_id="${taskId}") to cancel.</system>`,
+          holdAccessUntil: completionOrDetach,
         };
       }
       if (release === 'detached') {
