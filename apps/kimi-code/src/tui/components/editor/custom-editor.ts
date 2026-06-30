@@ -122,6 +122,11 @@ function getNewlineInput(data: string): string | undefined {
 
 export class CustomEditor extends Editor {
   public onEscape?: () => void;
+  /**
+   * Fired for every input that is not a lone Escape. Used to disarm a pending
+   * double-Esc so only two consecutive Escape presses trigger the shortcut.
+   */
+  public onNonEscapeInput?: () => void;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
@@ -251,7 +256,7 @@ export class CustomEditor extends Editor {
     const firstContentIdx = 1;
     const isBash = this.inputMode === 'bash';
     const text = this.getText().trimStart();
-    if (text.startsWith('/')) {
+    if (text.startsWith('/') && !isBash) {
       // Paint only the FIRST editor content line; multi-line slash commands
       // are not a thing in practice.
       const original = lines[firstContentIdx];
@@ -291,6 +296,8 @@ export class CustomEditor extends Editor {
   }
 
   private computeArgumentHint(): string | undefined {
+    // Argument hints describe slash commands, which do not exist in bash mode.
+    if (this.inputMode === 'bash') return undefined;
     const text = this.getText();
     const match = /^\/(\S+)( ?)$/.exec(text);
     if (match === null) return undefined;
@@ -310,6 +317,12 @@ export class CustomEditor extends Editor {
     const normalized = normalizeCapsLockedCtrl(data);
     if (isKeyRelease(normalized)) {
       return;
+    }
+
+    // Any input other than a lone Escape breaks a pending double-Esc sequence,
+    // so the shortcut only fires for two consecutive Escape presses.
+    if (!matchesKey(normalized, Key.escape)) {
+      this.onNonEscapeInput?.();
     }
 
     // When a paste marker was just expanded, discard the trailing bracketed
@@ -501,17 +514,24 @@ export class CustomEditor extends Editor {
     // Reopen path / argument completion right after a `/` is typed
     // (e.g. `/add-dir /` or an `@dir/` mention).
     if (textBeforeCursor.endsWith('/')) {
-      const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
       const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
-      if (isSlashArgument || isAtMention) {
+      if (isAtMention) {
         trigger();
-      } else if (this.inputMode === 'bash' && textBeforeCursor.trimStart() !== '/') {
+      } else if (this.inputMode === 'bash') {
         // In bash mode `/` is a path separator, not a slash command. A bare
         // leading `/` is already handled by the tryTriggerAutocomplete shadow
         // in the constructor; this branch covers the inline case (e.g. `ls /`,
-        // `cat /etc/`) that pi-tui never auto-triggers. force:true bypasses
-        // the slash-command branch so path completion runs.
-        editor.requestAutocomplete?.({ force: true, explicitTab: false });
+        // `cat /etc/`, `/add-dir/`) that pi-tui never auto-triggers. force:true
+        // is required so pi-tui's own slash-command handling is bypassed —
+        // force:false would let it pop up subcommand completions.
+        if (textBeforeCursor.trimStart() !== '/') {
+          editor.requestAutocomplete?.({ force: true, explicitTab: false });
+        }
+      } else {
+        const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
+        if (isSlashArgument) {
+          trigger();
+        }
       }
       return;
     }
@@ -519,7 +539,10 @@ export class CustomEditor extends Editor {
     // After accepting a slash command name via Tab, pi-tui inserts a trailing
     // space and closes the menu without triggering argument completion. Reopen
     // it so subcommands (e.g. `/goal ` → status/pause/…) show immediately.
+    // Skipped in bash mode: `/` is a path there, and force:false would let
+    // pi-tui's own slash-command handling pop up subcommand completions.
     if (
+      this.inputMode !== 'bash' &&
       textBeforeCursor.endsWith(' ') &&
       textBeforeCursor.startsWith('/') &&
       textBeforeCursor.includes(' ')

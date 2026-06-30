@@ -2615,6 +2615,10 @@ export class KimiTUI {
     this.restoreEditor();
   }
 
+  openUndoSelector(): void {
+    void slashCommands.handleUndoCommand(this, '');
+  }
+
   private mountSessionPicker(options: {
     readonly onCancel: () => void;
     readonly onCtrlC?: () => void;

@@ -170,9 +170,15 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
-    const slashArgumentSuggestions = await getSlashArgumentSuggestions(this.slashCommands, textBeforeCursor);
-    if (slashArgumentSuggestions !== null) {
-      return slashArgumentSuggestions;
+    // In bash mode `/` is a path separator, not a slash command. Skip slash
+    // command argument handling so an absolute path that happens to start with
+    // a command name (e.g. `/add-dir/...`) completes inside the path instead of
+    // returning the command's argument completions.
+    if (this.getInputMode() !== 'bash') {
+      const slashArgumentSuggestions = await getSlashArgumentSuggestions(this.slashCommands, textBeforeCursor);
+      if (slashArgumentSuggestions !== null) {
+        return slashArgumentSuggestions;
+      }
     }
 
     try {
@@ -235,7 +241,9 @@ function isDotPrefixedEntry(item: AutocompleteItem): boolean {
  * Replace `prefix` with `item.value` verbatim, mirroring pi-tui's file-path
  * branch (no trailing space, so a completed directory can be extended with the
  * next `/`). Used in bash mode to avoid pi-tui's slash-command branch, which
- * would prepend an extra `/` to a bare leading `/` path.
+ * would prepend an extra `/` to a bare leading `/` path. For a quoted
+ * directory value (path contains spaces), the cursor stays inside the closing
+ * quote so follow-up `/` completion keeps working.
  */
 function applyPathCompletion(
   lines: string[],
@@ -250,10 +258,14 @@ function applyPathCompletion(
   const newLine = beforePrefix + item.value + afterCursor;
   const newLines = [...lines];
   newLines[cursorLine] = newLine;
+  const isDirectory = item.label.endsWith('/');
+  const hasTrailingQuote = item.value.endsWith('"');
+  const cursorOffset =
+    isDirectory && hasTrailingQuote ? item.value.length - 1 : item.value.length;
   return {
     lines: newLines,
     cursorLine,
-    cursorCol: beforePrefix.length + item.value.length,
+    cursorCol: beforePrefix.length + cursorOffset,
   };
 }
 

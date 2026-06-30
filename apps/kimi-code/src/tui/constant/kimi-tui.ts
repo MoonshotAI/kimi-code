@@ -9,6 +9,10 @@ export const CTRL_C_HINT = 'Press Ctrl+C again to exit';
 export const MAIN_AGENT_ID = 'main';
 export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /login to login.';
 export const EXIT_CONFIRM_WINDOW_MS = 1500;
+// Time window for treating two consecutive Esc presses as a double-Esc, which
+// opens the undo selector. Kept short (double-click feel) so two deliberate
+// presses far apart don't accidentally trigger undo.
+export const DOUBLE_ESC_WINDOW_MS = 600;
 
 export function isManagedUsageProvider(
   providerKey: string | undefined,

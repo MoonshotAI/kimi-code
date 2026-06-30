@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
 
@@ -478,6 +478,20 @@ describe('FileMentionProvider', () => {
       expect(result.cursorCol).toBe('cd /Applications/'.length);
     });
 
+    it('keeps the cursor inside the closing quote for a spaced directory', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'bash');
+      const result = provider.applyCompletion(
+        ['cd /tmp/My'],
+        0,
+        10,
+        { value: '"/tmp/My Dir/"', label: 'My Dir/' },
+        '/tmp/My',
+      );
+      expect(result.lines[0]).toBe('cd "/tmp/My Dir/"');
+      // Cursor sits before the closing quote so the next `/` continues inside it.
+      expect(result.cursorCol).toBe('cd "/tmp/My Dir/'.length);
+    });
+
     it('keeps pi-tui slash-command behaviour in prompt mode', () => {
       const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'prompt');
       const result = provider.applyCompletion(
@@ -489,6 +503,74 @@ describe('FileMentionProvider', () => {
       );
       // pi-tui's slash-command branch: beforePrefix + '/' + value + ' '
       expect(result.lines[0]).toBe('/help ');
+    });
+  });
+
+  describe('bash-mode slash argument completion suppression', () => {
+    it('does not invoke slash argument completions for an absolute path in bash mode', async () => {
+      const getArgumentCompletions = vi.fn(() => [
+        { value: '/should-not-appear/', label: 'should-not-appear/' },
+      ]);
+      const provider = new FileMentionProvider(
+        [{ name: 'add-dir', description: 'Add directory', getArgumentCompletions }],
+        workDir,
+        NO_FD,
+        [],
+        () => 'bash',
+      );
+
+      const text = '/add-dir/tmp/';
+      const result = await provider.getSuggestions([text], 0, text.length, {
+        signal: ctrl(),
+        force: true,
+      });
+
+      expect(getArgumentCompletions).not.toHaveBeenCalled();
+      expect(result?.items.map((item) => item.label) ?? []).not.toContain('should-not-appear/');
+    });
+
+    it('does not invoke slash argument completions for a trailing-space command in bash mode', async () => {
+      const getArgumentCompletions = vi.fn(() => [{ value: 'list', label: 'list' }]);
+      const provider = new FileMentionProvider(
+        [{ name: 'add-dir', description: 'Add directory', getArgumentCompletions }],
+        workDir,
+        NO_FD,
+        [],
+        () => 'bash',
+      );
+
+      // `/add-dir ` (trailing space) used to be re-triggered with force:false,
+      // which let pi-tui's own slash-command handling return subcommand
+      // completions. Bash mode now only ever triggers force:true path
+      // completion, so the argument completer must not run.
+      const text = '/add-dir ';
+      const result = await provider.getSuggestions([text], 0, text.length, {
+        signal: ctrl(),
+        force: true,
+      });
+
+      expect(getArgumentCompletions).not.toHaveBeenCalled();
+      expect(result?.items.map((item) => item.label) ?? []).not.toContain('list');
+    });
+
+    it('keeps slash argument completion in prompt mode', async () => {
+      const getArgumentCompletions = vi.fn(() => [{ value: '/shared/', label: 'shared/' }]);
+      const provider = new FileMentionProvider(
+        [{ name: 'add-dir', description: 'Add directory', getArgumentCompletions }],
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+      );
+
+      const text = '/add-dir /';
+      const result = await provider.getSuggestions([text], 0, text.length, {
+        signal: ctrl(),
+        force: false,
+      });
+
+      expect(getArgumentCompletions).toHaveBeenCalled();
+      expect(result?.items.map((item) => item.label)).toContain('shared/');
     });
   });
 });
