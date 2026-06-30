@@ -204,6 +204,10 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       return;
     }
     case 'plugin-command': {
+      if (host.state.appState.model.trim().length === 0) {
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
       const session = host.session;
       if (session === undefined) {
         host.showError(LLM_NOT_SET_MESSAGE);

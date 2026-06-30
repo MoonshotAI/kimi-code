@@ -152,6 +152,7 @@ export class SessionEventHandler {
     this.backgroundTaskTranscriptedTerminal.clear();
     this.subAgentEventHandler.resetRuntimeState();
     this.renderedSkillActivationIds.clear();
+    this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
