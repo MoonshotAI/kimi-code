@@ -210,7 +210,103 @@ describe('server-v2 /api/v1/sessions', () => {
   it('rejects an unsupported action suffix (40001)', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const { body } = await postJson<null>(`/api/v1/sessions/${created.body.data.id}:fork`);
+    const { body } = await postJson<null>(`/api/v1/sessions/${created.body.data.id}:restart`);
     expect(body.code).toBe(40001);
+  });
+
+  it('creates a child session tagged with parent_session_id and child_session_kind', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    expect(parent.body.code).toBe(0);
+    const parentId = parent.body.data.id;
+
+    const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {
+      title: 'child-title',
+      metadata: { branch: 'direct-child' },
+    });
+    expect(child.status).toBe(200);
+    expect(child.body.code).toBe(0);
+    expect(child.body.data.id).not.toBe(parentId);
+    expect(child.body.data.title).toBe('child-title');
+    expect(child.body.data.metadata['parent_session_id']).toBe(parentId);
+    expect(child.body.data.metadata['child_session_kind']).toBe('child');
+    // caller-supplied metadata is preserved alongside the markers, and cwd wins.
+    expect(child.body.data.metadata['branch']).toBe('direct-child');
+    expect(child.body.data.metadata.cwd).toBe(cwd);
+  });
+
+  it('defaults the child title to "Child: <parent title>"', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', {
+      title: 'parent-title',
+      metadata: { cwd },
+    });
+    const child = await postJson<SessionWire>(
+      `/api/v1/sessions/${parent.body.data.id}/children`,
+      {},
+    );
+    expect(child.body.code).toBe(0);
+    expect(child.body.data.title).toBe('Child: parent-title');
+  });
+
+  it('lists direct children and omits grandchildren', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {
+      metadata: { branch: 'child' },
+    });
+    const childId = child.body.data.id;
+    const grandchild = await postJson<SessionWire>(`/api/v1/sessions/${childId}/children`, {
+      metadata: { branch: 'grandchild' },
+    });
+    const grandchildId = grandchild.body.data.id;
+
+    const parentChildren = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
+    expect(parentChildren.body.code).toBe(0);
+    expect(parentChildren.body.data.items.some((s) => s.id === childId)).toBe(true);
+    expect(parentChildren.body.data.items.some((s) => s.id === grandchildId)).toBe(false);
+
+    const childChildren = await getJson<PageWire>(`/api/v1/sessions/${childId}/children`);
+    expect(childChildren.body.code).toBe(0);
+    expect(childChildren.body.data.items.some((s) => s.id === grandchildId)).toBe(true);
+  });
+
+  it('does not list a plain fork as a child (kind must be "child")', async () => {
+    const cwd = home as string;
+    const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const parentId = parent.body.data.id;
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(forked.body.code).toBe(0);
+
+    const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
+    expect(children.body.code).toBe(0);
+    expect(children.body.data.items.some((s) => s.id === forked.body.data.id)).toBe(false);
+  });
+
+  it('returns 40401 when listing children of a missing parent', async () => {
+    const { body } = await getJson<null>('/api/v1/sessions/sess_missing_parent/children');
+    expect(body.code).toBe(40401);
+  });
+
+  it('returns 40401 when creating a child for a missing parent', async () => {
+    const { body } = await postJson<null>('/api/v1/sessions/sess_missing_parent/children', {});
+    expect(body.code).toBe(40401);
+  });
+
+  it('returns an empty warnings list for an existing session', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const { status, body } = await getJson<{ warnings: unknown[] }>(
+      `/api/v1/sessions/${created.body.data.id}/warnings`,
+    );
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(body.data).toEqual({ warnings: [] });
+  });
+
+  it('returns 40401 for warnings of a missing session', async () => {
+    const { body } = await getJson<null>('/api/v1/sessions/sess_missing_warnings/warnings');
+    expect(body.code).toBe(40401);
   });
 });

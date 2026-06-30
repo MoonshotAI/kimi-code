@@ -10,15 +10,21 @@
  *   POST   /sessions/{session_id}/profile      update title (partial)
  *   POST   /sessions/{tail}                    action: fork / compact / undo /
  *                                              abort / btw / archive
+ *   GET    /sessions/{session_id}/children     list child sessions
+ *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
+ *   GET    /sessions/{session_id}/warnings     empty (no warning sources ported)
  *
- * The `POST /sessions/{tail}` actions are dispatched to `ISessionLegacyService`
- * (a v1 edge adapter over the native v2 services); `archive` stays on the
- * native `ISessionLifecycleService`. Both `create` and `fork` publish
+ * The `POST /sessions/{tail}` actions and the `/sessions/{id}/children`
+ * endpoints are dispatched to `ISessionLegacyService` (a v1 edge adapter over
+ * the native v2 services); `archive` stays on the native
+ * `ISessionLifecycleService`. `create`, `fork`, and child creation publish
  * `event.session.created` on the core event bus, matching v1.
  *
- * Remaining v1 endpoints (children / warnings) are not yet registered — see the
- * server-v2 sessions gap list.
+ * `GET /sessions/{id}/warnings` returns `{ warnings: [] }`: the only v1 warning
+ * (`agents-md-oversized`) is computed by `prepareSystemPromptContext`, which is
+ * not ported to v2 yet. This is within v1's observable behaviour — it falls back
+ * to `[]` whenever the underlying computation throws.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
  * (`packages/agent-core/src/services/session/session.ts`), which populates
@@ -52,14 +58,17 @@ import {
   archiveSessionResponseSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
+  createSessionChildRequestSchema,
   createSessionRequestSchema,
   emptySessionUsage,
   forkSessionRequestSchema,
+  listSessionChildrenResponseSchema,
   pageResponseSchema,
   sessionAbortResponseSchema,
   sessionSchema,
   sessionStatusResponseSchema,
   sessionStatusSchema,
+  sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   undoSessionRequestSchema,
   undoSessionResponseSchema,
@@ -126,6 +135,27 @@ const sessionsListQueryCoercion = z
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
+
+// Mirrors v1's children query: id-cursors + page_size + status. `status` is
+// accepted for wire compatibility but not applied by `ISessionLegacyService`
+// (the wire projection reports a hardcoded 'idle'; see gap G10 / G5).
+const sessionChildrenListQueryCoercion = z
+  .object({
+    before_id: z.string().min(1).optional(),
+    after_id: z.string().min(1).optional(),
+    page_size: z.coerce.number().int().min(1).max(100).optional(),
+    status: sessionStatusSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.before_id !== undefined && value.after_id !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'before_id and after_id are mutually exclusive',
+        path: ['before_id'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+  });
 
 const sessionActionTailParamSchema = z.object({
   tail: z.string().min(1),
@@ -534,6 +564,82 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     sessionActionRoute.handler as Parameters<SessionRouteHost['post']>[2],
   );
 
+  const listChildrenRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/children',
+      params: sessionIdParamSchema,
+      querystring: sessionChildrenListQueryCoercion,
+      success: { data: listSessionChildrenResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'List child sessions',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const page = await core.accessor.get(ISessionLegacyService).listChildren(session_id, req.query);
+        reply.send(
+          okEnvelope(
+            {
+              items: page.items.map((fields) => toWireSession(fields, fields.root)),
+              has_more: page.has_more,
+            },
+            req.id,
+          ),
+        );
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
+      }
+    },
+  );
+  app.get(
+    listChildrenRoute.path,
+    listChildrenRoute.options,
+    listChildrenRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
+
+  const createChildRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/children',
+      params: sessionIdParamSchema,
+      body: createSessionChildRequestSchema,
+      success: { data: sessionSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.SESSION_BUSY]: {},
+      },
+      description: 'Create a child session',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const fields = await core
+          .accessor.get(ISessionLegacyService)
+          .createChild(session_id, req.body);
+        const session = toWireSession(fields, fields.root);
+        core.accessor.get(IEventService).publish({
+          type: 'event.session.created',
+          payload: { agentId: 'main', sessionId: session.id, session },
+        });
+        reply.send(okEnvelope(session, req.id));
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
+      }
+    },
+  );
+  app.post(
+    createChildRoute.path,
+    createChildRoute.options,
+    createChildRoute.handler as Parameters<SessionRouteHost['post']>[2],
+  );
+
   const statusRoute = defineRoute(
     {
       method: 'GET',
@@ -581,6 +687,41 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     statusRoute.path,
     statusRoute.options,
     statusRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
+
+  const sessionWarningsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/warnings',
+      params: sessionIdParamSchema,
+      success: { data: sessionWarningsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'Get session-level warnings (e.g. oversized AGENTS.md)',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      const { session_id } = req.params;
+      const summary = await core.accessor.get(ISessionIndex).get(session_id);
+      if (summary === undefined) {
+        reply.send(
+          errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
+        );
+        return;
+      }
+      // No warning sources are ported to v2 yet (the v1 `agents-md-oversized`
+      // detection lives in `prepareSystemPromptContext`, which is not wired
+      // here). Return an empty list — within v1's own observable behaviour,
+      // since it falls back to `[]` whenever the underlying computation throws.
+      reply.send(okEnvelope({ warnings: [] }, req.id));
+    },
+  );
+  app.get(
+    sessionWarningsRoute.path,
+    sessionWarningsRoute.options,
+    sessionWarningsRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 }
 

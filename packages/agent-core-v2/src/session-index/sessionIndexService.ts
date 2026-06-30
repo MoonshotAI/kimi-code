@@ -120,6 +120,11 @@ export class FileSessionIndex implements ISessionIndex {
     const meta =
       (await this.readMeta(base)) ?? (await this.readMeta(`${base}/${META_SCOPE}`));
     if (meta === undefined) return undefined;
+    const rawCustom = meta['custom'];
+    const custom =
+      rawCustom !== null && typeof rawCustom === 'object' && !Array.isArray(rawCustom)
+        ? (rawCustom as Record<string, unknown>)
+        : undefined;
     return {
       id: sessionId,
       workspaceId,
@@ -128,6 +133,7 @@ export class FileSessionIndex implements ISessionIndex {
       createdAt: parseTime(meta['createdAt']),
       updatedAt: parseTime(meta['updatedAt']),
       archived: meta['archived'] === true,
+      custom,
     };
   }
 

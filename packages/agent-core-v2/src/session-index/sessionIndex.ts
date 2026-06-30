@@ -21,6 +21,14 @@ export interface SessionSummary {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly archived: boolean;
+  /**
+   * Free-form custom metadata read from the session's `state.json` (wire
+   * `Session.metadata` minus reserved keys such as `goal`). Surfaced so the v1
+   * edge can project it into `Session.metadata` and filter child sessions by
+   * the `parent_session_id` / `child_session_kind` markers without a per-session
+   * document read.
+   */
+  readonly custom?: Record<string, unknown>;
 }
 
 export interface SessionListQuery {

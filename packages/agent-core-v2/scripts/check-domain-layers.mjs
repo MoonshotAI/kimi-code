@@ -111,6 +111,7 @@ const DOMAIN_LAYER = new Map([
   ['prompt', 4],
   ['replayBuilder', 4],
   ['todoList', 4],
+  ['web', 4],
   // L5 — async lifecycle
   ['background', 5],
   ['mcp', 5],
@@ -132,6 +133,7 @@ const DOMAIN_LAYER = new Map([
   ['gateway', 7],
   ['rpc', 7],
   ['promptLegacy', 7],
+  ['sessionLegacy', 7],
 ]);
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
