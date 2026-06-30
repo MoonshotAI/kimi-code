@@ -7,6 +7,7 @@ import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -226,12 +227,6 @@ function saveActiveWorkspaceToStorage(id: string): void {
   } catch {
     // ignore
   }
-}
-
-/** basename of an absolute path (last non-empty segment), defaulting to the path. */
-function basename(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1]! : path;
 }
 
 /** Shorten a $HOME-prefixed absolute path to `~/…` for dim display. */
@@ -1761,67 +1756,16 @@ function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string
  * derived workspace (id = root = cwd). This makes the switcher + grouping work
  * immediately off existing sessions until /workspaces ships.
  */
-const mergedWorkspaces = computed<AppWorkspace[]>(() => {
-  const hidden = new Set(rawState.hiddenWorkspaceRoots);
-  const byRoot = new Map<string, AppWorkspace>();
-  // Real workspaces win on root (unless the user removed them from the sidebar).
-  for (const w of rawState.workspaces) {
-    if (hidden.has(w.root)) continue;
-    byRoot.set(w.root, { ...w });
-  }
-  // Derive from sessions for any cwd without a real workspace.
-  for (const s of rawState.sessions) {
-    const root = s.cwd;
-    if (!root) continue;
-    if (hidden.has(root)) continue; // removed from the sidebar — keep it hidden
-    if (!byRoot.has(root)) {
-      byRoot.set(root, {
-        // Use the session's REAL daemon workspace_id (wd_<slug>_<hash>) so
-        // createSession({ workspaceId }) is accepted; fall back to cwd only
-        // when the daemon hasn't tagged the session yet.
-        id: s.workspaceId ?? root,
-        root,
-        name: basename(root),
-        isGitRepo: false,
-        sessionCount: 0,
-      });
-    }
-  }
-  // Compute live session counts + a branch hint from the active session's git.
-  const counts = new Map<string, number>();
-  for (const s of rawState.sessions) {
-    const wid = workspaceIdForSession(s);
-    counts.set(wid, (counts.get(wid) ?? 0) + 1);
-  }
-  const activeGit = gitInfo.value;
-  const activeRoot = rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd;
-
-  // Order: real workspaces in listWorkspaces order, then derived workspaces
-  // sorted by root path so the order is stable (not tied to session activity).
-  // Hidden roots must be excluded here too — `byRoot` skips them, so a hidden
-  // real workspace would otherwise make `byRoot.get(root)` return undefined.
-  const realRoots = rawState.workspaces.filter((w) => !hidden.has(w.root)).map((w) => w.root);
-  const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
-  derivedRoots.sort((a, b) => a.localeCompare(b));
-
-  const result: AppWorkspace[] = [];
-  for (const root of [...realRoots, ...derivedRoots]) {
-    const w = byRoot.get(root)!;
-    // When a workspace's sessions are fully loaded (hasMore === false), the
-    // local count is exact — prefer it so archiving the last session drops the
-    // count to 0 immediately. While pages remain, the local count is only a
-    // lower bound, so keep the daemon session_count as a floor.
-    const localCount = counts.get(w.id) ?? counts.get(w.root) ?? 0;
-    const count =
-      rawState.sessionsHasMoreByWorkspace[w.id] === false
-        ? localCount
-        : Math.max(w.sessionCount, localCount);
-    let branch = w.branch;
-    if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
-    result.push({ ...w, sessionCount: count, branch });
-  }
-  return result;
-});
+const mergedWorkspaces = computed<AppWorkspace[]>(() =>
+  mergeWorkspaces({
+    workspaces: rawState.workspaces,
+    sessions: rawState.sessions,
+    hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
+    activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
+    activeBranch: gitInfo.value?.branch ?? null,
+    sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
+  }),
+);
 
 /**
  * User-defined display order of workspace ids, persisted to localStorage. The
@@ -2056,7 +2000,6 @@ const workspaceState = useWorkspaceState(rawState, {
   saveActiveWorkspaceToStorage,
   saveHiddenWorkspacesToStorage,
   goalErrorMessage,
-  basename,
   resetFastMoon: appearance.resetFastMoon,
   initialized,
   selectedDiffPath,
