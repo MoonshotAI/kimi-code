@@ -1906,7 +1906,14 @@ export class KimiTUI {
 
     let boundariesToRemove = 0;
     for (const entry of toRemove) {
-      if (entry.kind === 'user' && entry.turnId === undefined) boundariesToRemove++;
+      if (
+        (entry.kind === 'user' ||
+          entry.kind === 'skill_activation' ||
+          entry.kind === 'plugin_command') &&
+        entry.turnId === undefined
+      ) {
+        boundariesToRemove++;
+      }
     }
     if (boundariesToRemove === 0) {
       this.state.transcriptEntries = this.state.transcriptEntries.filter((e) => !toRemove.has(e));
