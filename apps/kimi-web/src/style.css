@@ -882,7 +882,7 @@ html[data-theme="kimi"] .composer-card {
 }
 
 html[data-theme="kimi"] .toolbar {
-  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  border-radius: 0 0 calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px);
 }
 
 /* Cards stay flat: no hover lift, no shadow (Quiet Utility / card.md). */
