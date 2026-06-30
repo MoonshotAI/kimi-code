@@ -313,16 +313,21 @@ export class FullCompaction {
     try {
       const result = await this.compactionRound(signal, data);
       if (!result) return;
-      this.markCompleted();
+      // Stay "compacting" through reinjection: a follow-up prompt/steer that lands
+      // now is buffered (TurnFlow defers on `isCompacting`) until the
+      // post-compaction reminders are back, so the first post-compaction turn
+      // never builds a request before they are reinjected. Only after reinjection
+      // do we clear the flag, announce completion, and replay deferred input.
       try {
         await this.agent.refreshSystemPrompt();
       } catch (error) {
         this.agent.log.error('failed to refresh system prompt after compaction', { error });
       }
+      await this.agent.injection.injectAfterCompaction();
+      this.markCompleted();
       const { contextSummary: _contextSummary, ...eventResult } = result;
       void _contextSummary;
       this.agent.emitEvent({ type: 'compaction.completed', result: eventResult });
-      await this.agent.injection.injectAfterCompaction();
       this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (isAbortError(error)) return;
@@ -336,6 +341,12 @@ export class FullCompaction {
         type: 'error',
         ...toKimiErrorPayload(error),
       });
+    } finally {
+      // Replay prompts/steers deferred while compaction held the context — on the
+      // success path (after reinjection above), on an A1 prefix/tail cancel
+      // (`!result`), and on failure/abort. `compacting` is null by now in every
+      // path, so the replay's launch actually starts a turn instead of re-buffering.
+      this.agent.turn.onCompactionFinished();
     }
   }
 

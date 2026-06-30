@@ -137,7 +137,11 @@ export class TurnFlow {
       input,
       origin,
     });
-    if (this.activeTurn) {
+    // Buffer while a turn is active OR a manual compaction holds the context;
+    // `onCompactionFinished` replays the buffer once compaction's full lifecycle
+    // (summary + reinjection) is done. Returning null means "buffered" — which is
+    // exactly what fire-and-forget callers (background notifications, cron) assume.
+    if (this.activeTurn || this.agent.fullCompaction.isCompacting) {
       this.steerBuffer.push({ input, origin });
       return null;
     }
@@ -161,19 +165,15 @@ export class TurnFlow {
       return null;
     }
 
-    // Refuse to start a turn while a compaction holds the context. Compaction
-    // snapshots history, summarizes async, then rebuilds it; a turn appending or
-    // streaming in that window would be neither summarized nor preserved. (When a
-    // turn is already active the check above wins, so this only fires for a
-    // manual/SDK compaction started at an otherwise-idle boundary.)
+    // While a manual/SDK compaction holds the context, defer the launch instead
+    // of rejecting it: buffer the input and replay it from `onCompactionFinished`
+    // once compaction's full lifecycle (summary + reinjection) completes. The
+    // deferred turn's eventual `turn.started` lets PromptService associate the
+    // pending prompt, so a prompt submitted mid-compaction completes normally
+    // rather than getting stuck "running". (Auto compaction runs inside an active
+    // turn, so the `activeTurn` check above already covers it.)
     if (this.agent.fullCompaction.isCompacting) {
-      this.agent.emitEvent({
-        type: 'error',
-        ...makeErrorPayload(
-          'turn.agent_busy',
-          'Cannot launch a new turn while a compaction is in progress',
-        ),
-      });
+      this.steerBuffer.push({ input, origin });
       return null;
     }
 
@@ -303,6 +303,25 @@ export class TurnFlow {
     }
     steers.length = 0;
     return true;
+  }
+
+  /**
+   * Replay inputs (prompts or steers) that were deferred while a manual compaction
+   * held the context. Called by `FullCompaction` once the compaction lifecycle
+   * (summary + reinjection) is done — and on cancel/failure — so deferred input is
+   * never lost or stuck. If a turn is somehow already active (e.g. one that raced
+   * and cancelled the compaction), let it consume the buffer like any other steer;
+   * otherwise launch a fresh turn from the first buffered item, with the rest
+   * draining into it via `flushSteerBuffer`.
+   */
+  onCompactionFinished(): void {
+    if (this.steerBuffer.length === 0) return;
+    if (this.activeTurn !== null) {
+      this.flushSteerBuffer();
+      return;
+    }
+    const next = this.steerBuffer.shift()!;
+    this.launch(next.input, next.origin);
   }
 
   finishResume(): void {

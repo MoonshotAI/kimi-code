@@ -682,7 +682,7 @@ function blinkOnce(): void {
    and turn the empty header area into the window-drag region; interactive
    controls opt out with no-drag. */
 .side.macos-desktop .ch {
-  padding-left: 80px;
+  padding-left: 100px;
   -webkit-app-region: drag;
 }
 .side.macos-desktop .ch-logo,
