@@ -64,7 +64,12 @@ function assistantStep(uuid: string, text: string, time?: number): AgentRecord[]
   ];
 }
 
-function compaction(summary: string, compactedCount: number, time?: number): AgentRecord {
+function compaction(
+  summary: string,
+  compactedCount: number,
+  time?: number,
+  keptUserMessageCount?: number,
+): AgentRecord {
   return {
     type: 'context.apply_compaction',
     summary,
@@ -72,6 +77,7 @@ function compaction(summary: string, compactedCount: number, time?: number): Age
     tokensBefore: 1000,
     tokensAfter: 100,
     time,
+    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
   } as AgentRecord;
 }
 
@@ -219,6 +225,24 @@ describe('reduceWireRecords', () => {
     expect(entries.map((e) => textOf(e.message))).toEqual(['u1', '', 'SUM', 'u2']);
     // live folded view would be [u1, SUM, u2]
     expect(foldedLength).toBe(3);
+  });
+
+  it('reproduces the legacy [summary, tail] fold length for records without keptUserMessageCount', () => {
+    // A pre-rework record (no keptUserMessageCount) kept history.slice(compactedCount)
+    // verbatim, and ContextMemory's legacy restore now reproduces [summary, ...tail].
+    // The reducer must track that same folded length — 1 + (preCompactionLength -
+    // compactedCount) — not the re-derived kept-user count, or MessageService's
+    // length comparison diverges from the live context for old sessions.
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s2', 'a2'),
+      compaction('SUM', 1),
+    ]);
+    // Pre-compaction live history = [u1, a1, u2, a2] (4); legacy restore keeps
+    // [SUM, ...slice(1)] = [SUM, a1, u2, a2] = 4. (Re-deriving kept users gives 3.)
+    expect(foldedLength).toBe(4);
   });
 
   it('undo removes through the last real user prompt and skips injections', () => {
@@ -518,8 +542,9 @@ describe('MessageService over a compacted wire log', () => {
       ...assistantStep('s1', 'a1', SESSION_CREATED_AT + 2_000),
       appendMessage(userMessage('u2'), SESSION_CREATED_AT + 3_000),
       ...assistantStep('s2', 'a2', SESSION_CREATED_AT + 4_000),
-      // folded = [u1, a1, u2, a2] → compact first 3.
-      compaction('SUM', 3, SESSION_CREATED_AT + 5_000),
+      // New-format record: the summary covered all 4 messages and 2 user
+      // prompts were kept verbatim, so the live fold is [u1, u2, SUM] below.
+      compaction('SUM', 4, SESSION_CREATED_AT + 5_000, 2),
     ];
     await mkdir(path.join(dir, 'agents', 'main'), { recursive: true });
     await writeFile(

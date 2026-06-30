@@ -271,7 +271,19 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         // that predate the field.
         if (record.keptUserMessageCount !== undefined) {
           foldedLength = record.keptUserMessageCount + 1;
+        } else if (record.compactedCount < foldedLength) {
+          // Legacy record (predates keptUserMessageCount) that kept
+          // history.slice(compactedCount) verbatim. Mirror ContextMemory's
+          // legacy restore ([summary, ...tail]): `foldedLength` here still holds
+          // the pre-compaction live length, so the post-compaction length is the
+          // summary plus the tail kept after compactedCount. Re-deriving the
+          // kept-user count instead would diverge from the live context (and
+          // make MessageService mis-handle the messages endpoint for old sessions).
+          foldedLength = 1 + (foldedLength - record.compactedCount);
         } else {
+          // Legacy record whose compactedCount covered the whole live history (no
+          // tail, matching live restore's `compactedCount < length` guard): fall
+          // back to the new kept-user + summary derivation.
           const keptUserMessages = selectRecentUserMessages(
             collectCompactableUserMessages(transcript.map((entry) => entry.message)),
             COMPACT_USER_MESSAGE_MAX_TOKENS,
