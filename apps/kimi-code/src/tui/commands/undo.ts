@@ -15,6 +15,7 @@ import { BackgroundAgentStatusComponent } from '../components/messages/backgroun
 import { CronMessageComponent } from '../components/messages/cron-message';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { SkillActivationComponent } from '../components/messages/skill-activation';
+import { PluginCommandComponent } from '../components/messages/plugin-command';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { UserMessageComponent } from '../components/messages/user-message';
@@ -237,6 +238,9 @@ function isContextUndoAnchor(message: ContextMessage): boolean {
   if (origin.kind === 'skill_activation') {
     return origin.trigger === 'user-slash';
   }
+  if (origin.kind === 'plugin_command') {
+    return origin.trigger === 'user-slash';
+  }
   return false;
 }
 
@@ -442,7 +446,8 @@ function removeUndoContextComponents(
 function isUndoAnchorComponent(child: Component): boolean {
   return (
     child instanceof UserMessageComponent ||
-    (child instanceof SkillActivationComponent && child.trigger === 'user-slash')
+    (child instanceof SkillActivationComponent && child.trigger === 'user-slash') ||
+    child instanceof PluginCommandComponent
   );
 }
 
@@ -461,6 +466,7 @@ function isUndoContextComponent(child: Component): boolean {
     child instanceof AgentSwarmProgressComponent ||
     child instanceof ReadGroupComponent ||
     child instanceof SkillActivationComponent ||
+    child instanceof PluginCommandComponent ||
     child instanceof BackgroundAgentStatusComponent ||
     child instanceof CronMessageComponent
   );
