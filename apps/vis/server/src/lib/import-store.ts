@@ -107,7 +107,11 @@ export async function listImportedIds(home: string): Promise<string[]> {
 export async function readImportMeta(home: string, importId: string): Promise<ImportInfo | null> {
   try {
     const raw = await readFile(join(importedDirOf(home, importId), META_FILE), 'utf8');
-    return JSON.parse(raw) as ImportInfo;
+    const meta = JSON.parse(raw) as ImportInfo;
+    // The sidecar is vis-written, but re-sanitize the manifest in case the
+    // imported directory was hand-edited, so a corrupt type cannot reach the
+    // session list and crash the UI.
+    return { ...meta, manifest: meta.manifest ? sanitizeManifest(meta.manifest) : null };
   } catch {
     return null;
   }
@@ -123,10 +127,34 @@ export async function deleteImported(home: string, importId: string): Promise<bo
 
 async function readManifest(dir: string): Promise<ImportManifest | null> {
   try {
-    return JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')) as ImportManifest;
+    return sanitizeManifest(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')));
   } catch {
     return null;
   }
+}
+
+/** Declared string fields of {@link ImportManifest}. `shellEnv` is free-form. */
+const MANIFEST_STRING_FIELDS = [
+  'sessionId', 'exportedAt', 'kimiCodeVersion', 'wireProtocolVersion', 'os',
+  'nodejsVersion', 'sessionFirstActivity', 'sessionLastActivity', 'title',
+  'workspaceDir', 'sessionLogPath', 'globalLogPath', 'installSource',
+] as const;
+
+/**
+ * Coerce an untrusted manifest object so every declared string field is either
+ * a string or absent. A type-corrupt bundle (e.g. `{ "workspaceDir": 123 }`)
+ * would otherwise propagate a non-string into `SessionSummary.workDir`, where
+ * the session rail calls `.split('/')` and crashes the whole list.
+ */
+function sanitizeManifest(raw: unknown): ImportManifest | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const o = raw as Record<string, unknown>;
+  const m: Record<string, unknown> = {};
+  for (const field of MANIFEST_STRING_FIELDS) {
+    if (typeof o[field] === 'string') m[field] = o[field];
+  }
+  if (o['shellEnv'] !== undefined) m['shellEnv'] = o['shellEnv'];
+  return m as ImportManifest;
 }
 
 async function pathExists(p: string): Promise<boolean> {

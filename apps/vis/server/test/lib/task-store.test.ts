@@ -89,6 +89,29 @@ describe('task-store', () => {
     expect(await listBackgroundTasks(sessionDir)).toEqual([]);
   });
 
+  it('tolerates type-corrupt legacy fields instead of failing the whole listing', async () => {
+    const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    await writeTask(sessionDir, 'bash-aaaaaaaa.json', {
+      taskId: 'bash-aaaaaaaa', kind: 'process', description: 'ok', command: 'x',
+      pid: 1, exitCode: 0, status: 'completed', detached: true, startedAt: 100, endedAt: 200,
+    });
+    // Passes the shape guard (has task_id) but stop_reason / subagent_type are
+    // numbers — the old code threw on `.trim()` and lost ALL tasks.
+    await writeTask(sessionDir, 'agent-bbbbbbbb.json', {
+      task_id: 'agent-bbbbbbbb', command: '', description: 'bad', pid: 0,
+      started_at: 50, ended_at: null, exit_code: null, status: 'failed',
+      stop_reason: 5, subagent_type: 5,
+    });
+
+    const tasks = await listBackgroundTasks(sessionDir);
+    // No throw; both tasks listed, the corrupt fields coerced away.
+    expect(tasks.map((t) => t.taskId).toSorted()).toEqual(['agent-bbbbbbbb', 'bash-aaaaaaaa']);
+    const bad = tasks.find((t) => t.taskId === 'agent-bbbbbbbb')!;
+    expect(bad.stopReason).toBeUndefined();
+    expect(bad.kind === 'agent' ? bad.subagentType : 'n/a').toBeUndefined();
+  });
+
   it('returns [] when there is no tasks directory', async () => {
     const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;

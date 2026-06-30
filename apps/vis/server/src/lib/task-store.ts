@@ -70,7 +70,14 @@ export async function listBackgroundTasks(
       continue;
     }
     if (!isReadablePersistedTask(parsed)) continue;
-    out.push(normalizePersistedTask(parsed));
+    try {
+      out.push(normalizePersistedTask(parsed));
+    } catch {
+      // A record can pass the shape guard but still hold type-corrupt fields
+      // (e.g. a legacy `stop_reason` that is a number). Honour the
+      // silently-skips contract instead of failing the whole listing.
+      continue;
+    }
   }
   // Newest first; tasks with no start time sort last.
   out.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
@@ -226,8 +233,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function optionalNonEmptyString(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
+function optionalNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
