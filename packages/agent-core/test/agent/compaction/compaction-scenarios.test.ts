@@ -1,0 +1,293 @@
+// Compaction scenario + probe tests.
+//
+// Two kinds of tests live here:
+//   * GUARD tests lock in behavior we rely on (so future refactors can't
+//     silently regress it).
+//   * PROBE tests exercise the high-risk scenarios surfaced in review and in
+//     our own audit, asserting the DESIRED behavior. Where the current
+//     implementation does NOT meet that bar, the probe is marked `it.fails`:
+//     the suite stays green, but the test documents the exact defect and will
+//     start failing (forcing its removal) the day the behavior is fixed.
+//
+// Compaction is a hot path, so these intentionally drive the real
+// Agent/ContextMemory/FullCompaction machinery through the test harness rather
+// than mocking it.
+import type { ContentPart } from '@moonshot-ai/kosong';
+import { describe, expect, it } from 'vitest';
+
+import type { AgentOptions } from '../../../src/agent';
+import { COMPACTION_SUMMARY_PREFIX } from '../../../src/agent/compaction';
+import type { ContextMessage } from '../../../src/agent/context';
+import { testAgent, type TestAgentContext } from '../harness/agent';
+
+type GenerateFn = NonNullable<AgentOptions['generate']>;
+
+const PROVIDER = { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' } as const;
+const CAPS = {
+  image_in: true,
+  video_in: true,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 256_000,
+} as const;
+
+function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
+  return {
+    id: 'mock-compaction-summary',
+    message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+    usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+    finishReason: 'completed',
+    rawFinishReason: 'stop',
+  };
+}
+
+function historyTexts(ctx: TestAgentContext): string[] {
+  return ctx.agent.context.history.map((message) =>
+    message.content.map((part) => (part.type === 'text' ? part.text : `[${part.type}]`)).join(''),
+  );
+}
+
+function summaryMessageText(ctx: TestAgentContext): string {
+  const summary = ctx.agent.context.history.find(
+    (message) => message.origin?.kind === 'compaction_summary',
+  );
+  return summary?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
+}
+
+describe('compaction — guard tests', () => {
+  it('repeated compaction folds the prior summary into the new one, never stacking two summaries', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendExchange(1, 'user one', 'assistant one', 40);
+
+    ctx.mockNextResponse({ type: 'text', text: 'First summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'user two' }]);
+    ctx.mockNextResponse({ type: 'text', text: 'Second summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const summaries = ctx.agent.context.history.filter(
+      (message) => message.origin?.kind === 'compaction_summary',
+    );
+    // Exactly one summary survives; the first was re-summarized, not carried.
+    expect(summaries).toHaveLength(1);
+    expect(summaryMessageText(ctx)).toContain('Second summary.');
+    expect(historyTexts(ctx).join('\n')).not.toContain('First summary.');
+  });
+});
+
+describe('compaction — probe tests (high-risk scenarios)', () => {
+  // PROBE #1 / CMP-02 — messages appended while the summarizer request is in
+  // flight (manual/background compaction racing a live step). The summarizer
+  // only saw the pre-compaction snapshot, and the all-user rebuild drops any
+  // assistant/tool appended during the await, with no guard tripped.
+  it.fails('preserves an assistant turn appended while the summarizer call is in flight', async () => {
+    let ctx!: TestAgentContext;
+    const appendDuringGenerate: GenerateFn = async () => {
+      // Simulate the turn loop completing a step while compaction awaits.
+      ctx.agent.context.appendLoopEvent({
+        type: 'step.begin',
+        uuid: 'race-step',
+        turnId: '',
+        step: 9,
+      });
+      ctx.agent.context.appendLoopEvent({
+        type: 'content.part',
+        uuid: 'race-part',
+        turnId: '',
+        step: 9,
+        stepUuid: 'race-step',
+        part: { type: 'text', text: 'RACE-ASSISTANT-OUTPUT' },
+      });
+      ctx.agent.context.appendLoopEvent({
+        type: 'step.end',
+        uuid: 'race-step',
+        turnId: '',
+        step: 9,
+        finishReason: 'end_turn',
+      });
+      return textResult('Compacted summary.');
+    };
+    ctx = testAgent({ generate: appendDuringGenerate });
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendExchange(1, 'user one', 'assistant one', 40);
+
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    expect(historyTexts(ctx).join('\n')).toContain('RACE-ASSISTANT-OUTPUT');
+  });
+
+  // PROBE #2 — empty/truncated summarizer responses drop one oldest message and
+  // reset retryCount, so MAX_COMPACTION_RETRY_ATTEMPTS does not bound the number
+  // of provider calls: a model that always returns empty makes ~one call per
+  // message in the history before failing.
+  it.fails('bounds summarizer calls by the retry limit when the model keeps returning empty', async () => {
+    let calls = 0;
+    // Empty 7 times, then a valid summary. Pre-fix, each empty drops one oldest
+    // message and resets retryCount, so all 7 are tolerated and compaction
+    // completes on the 8th call; a retry-bounded impl would give up by ~call 6.
+    const flakyEmpty: GenerateFn = async () => {
+      calls += 1;
+      return calls <= 7 ? textResult('') : textResult('Compacted summary.');
+    };
+    const ctx = testAgent({ generate: flakyEmpty });
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    for (let i = 1; i <= 5; i++) {
+      ctx.appendExchange(i, `user ${String(i)}`, `assistant ${String(i)}`, 40);
+    }
+
+    await ctx.rpc.beginCompaction({});
+    await Promise.race([ctx.once('compaction.completed'), ctx.once('error')]);
+
+    // A retry budget of MAX_COMPACTION_RETRY_ATTEMPTS(5) should bound calls.
+    expect(calls).toBeLessThanOrEqual(6);
+  });
+
+  // PROBE #3 / CMP-08 — the kept-user budget is a fixed 20k and ignores the
+  // model window, so on a small-window model the post-compaction context can
+  // still exceed the trigger, re-compacting every turn without converging.
+  it.fails('keeps the post-compaction context below the auto-compaction trigger on a small window', async () => {
+    const SMALL_WINDOW = 16_000;
+    const ctx = testAgent();
+    ctx.configure({
+      provider: PROVIDER,
+      modelCapabilities: { ...CAPS, max_context_tokens: SMALL_WINDOW },
+    });
+    // ~7.5k tokens of user text per message (30k ascii chars / 4).
+    for (let i = 1; i <= 3; i++) {
+      ctx.appendExchange(i, 'u'.repeat(30_000), `assistant ${String(i)}`, 40);
+    }
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    // tokenCount after compaction should leave headroom below the 85% trigger,
+    // otherwise the next turn immediately re-compacts and never converges.
+    expect(ctx.agent.context.tokenCount).toBeLessThan(SMALL_WINDOW * 0.85);
+  });
+
+  // PROBE #4 / CMP-01 — compaction started while a tool exchange is still open
+  // (SDK/REST caller mid-tool) clears pendingToolResultIds, so the tool.result
+  // that arrives afterwards is treated as an orphan and silently dropped.
+  it.fails('does not drop a tool result that arrives after a compaction started mid-exchange', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendUnresolvedToolExchange(0); // assistant with 2 tool calls, no results yet
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    // The tool finishes after compaction; its result must not vanish.
+    ctx.agent.context.appendLoopEvent({
+      type: 'tool.result',
+      parentUuid: 'call_unresolved_one',
+      toolCallId: 'call_unresolved_one',
+      result: { output: 'LATE-TOOL-RESULT' },
+    });
+
+    expect(historyTexts(ctx).join('\n')).toContain('LATE-TOOL-RESULT');
+  });
+
+  // PROBE #5 / CMP-12 — replaying a legacy `context.apply_compaction` record
+  // (no contextSummary / keptUserMessageCount; written for the old
+  // `[summary, ...history.slice(compactedCount)]` semantics) drops the verbatim
+  // assistant/tool tail beyond compactedCount under the new all-user rebuild.
+  it.fails('preserves the verbatim tail when applying a legacy compaction record', () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendExchange(1, 'summarized user', 'TAIL-ASSISTANT', 40);
+
+    // Legacy-shaped input: compactedCount covers only index 0; the old code kept
+    // history.slice(1) (the assistant tail) verbatim. No contextSummary/
+    // keptUserMessageCount, exactly like a pre-rework wire record.
+    ctx.agent.context.applyCompaction({
+      summary: 'Legacy summary.',
+      compactedCount: 1,
+      tokensBefore: 100,
+    });
+
+    expect(historyTexts(ctx).join('\n')).toContain('TAIL-ASSISTANT');
+  });
+
+  // PROBE #6 — when the summarizer request overflows, historyForModel is shrunk
+  // to a recent suffix but still projected through MicroCompaction.compact()
+  // with the cutoff computed for the FULL history. The absolute cutoff applied
+  // to the shifted suffix can clear recent tool results the summary needs.
+  it.fails('does not clear recent tool results when projecting a shrunk suffix under an active micro-compaction cutoff', () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+
+    const bigToolOutput = 'TOOL-OUTPUT-CONTENT '.repeat(60); // > minContentTokens(100)
+    const full: ContextMessage[] = [];
+    for (let i = 0; i < 20; i++) {
+      if (i === 15) {
+        full.push({
+          role: 'tool',
+          content: [{ type: 'text', text: bigToolOutput } satisfies ContentPart],
+          toolCalls: [],
+          toolCallId: `tool-${String(i)}`,
+        });
+      } else {
+        full.push({
+          role: i % 2 === 0 ? 'user' : 'assistant',
+          content: [{ type: 'text', text: `m${String(i)}` }],
+          toolCalls: [],
+          origin: i % 2 === 0 ? { kind: 'user' } : undefined,
+        });
+      }
+    }
+
+    // Cutoff computed for the full history: keep the recent 10 (indices >= 10).
+    ctx.agent.microCompaction.apply(10);
+
+    // In the full history the tool result is at index 15 (>= cutoff) -> kept.
+    const projectedFull = ctx.agent.context.project(full);
+    const fullToolText = projectedFull
+      .map((m) => m.content.map((p) => (p.type === 'text' ? p.text : '')).join(''))
+      .join('\n');
+    expect(fullToolText).toContain('TOOL-OUTPUT-CONTENT');
+
+    // After an overflow shrink drops the oldest 10, the SAME tool result sits at
+    // suffix index 5; the unchanged cutoff(10) now covers it. It must still be
+    // preserved (it is a recent result the summary depends on).
+    const shrunkSuffix = full.slice(10);
+    const projectedSuffix = ctx.agent.context.project(shrunkSuffix);
+    const suffixToolText = projectedSuffix
+      .map((m) => m.content.map((p) => (p.type === 'text' ? p.text : '')).join(''))
+      .join('\n');
+    expect(suffixToolText).toContain('TOOL-OUTPUT-CONTENT');
+  });
+
+  // PROBE #7 / CMP-07 — when the oldest kept user message overflows the budget
+  // it is truncated to text only, silently discarding any image/audio/video it
+  // carried.
+  it.fails('keeps media on the oldest kept user message instead of dropping it on truncation', () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    // Oldest user message: an image + long text that will overflow the budget.
+    ctx.agent.context.appendUserMessage(
+      [
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        { type: 'text', text: 'x'.repeat(120_000) }, // ~30k tokens of text
+      ],
+      { kind: 'user' },
+    );
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user' }], { kind: 'user' });
+
+    ctx.agent.context.applyCompaction({
+      summary: 'Summary.',
+      compactedCount: 2,
+      tokensBefore: 100,
+    });
+
+    const keptParts = ctx.agent.context.history.flatMap((message) => message.content);
+    expect(keptParts.some((part) => part.type === 'image_url')).toBe(true);
+  });
+});
