@@ -286,7 +286,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
         const changed: { field: string; value: string }[] = [];
         if (rec.profileName !== undefined) changed.push({ field: 'profile', value: rec.profileName });
         if (rec.modelAlias !== undefined) changed.push({ field: 'model', value: rec.modelAlias });
-        if (rec.thinkingLevel !== undefined) changed.push({ field: 'thinking', value: rec.thinkingLevel });
+        if (rec.thinkingEffort !== undefined) changed.push({ field: 'thinking', value: rec.thinkingEffort });
         if (rec.cwd !== undefined) changed.push({ field: 'cwd', value: rec.cwd });
         if (rec.systemPrompt !== undefined) changed.push({ field: 'systemPrompt', value: `${rec.systemPrompt.length} chars` });
         if (changed.length > 0) configChanges.push({ lineNo: entry.lineNo, time: t, changed });
