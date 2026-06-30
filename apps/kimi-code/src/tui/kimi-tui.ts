@@ -385,6 +385,7 @@ export class KimiTUI {
       this.state.appState.workDir,
       this.fdPath,
       this.state.appState.additionalDirs,
+      () => this.state.appState.inputMode,
     );
     this.state.editor.setAutocompleteProvider(provider);
 

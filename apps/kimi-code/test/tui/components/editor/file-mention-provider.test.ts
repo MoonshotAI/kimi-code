@@ -410,4 +410,85 @@ describe('FileMentionProvider', () => {
     );
     expect(dir.lines[0]).toBe('hey @src/');
   });
+
+  describe('bash-mode path completion dotfile filtering', () => {
+    it('hides dot-prefixed entries (matching /add-dir) in bash mode', async () => {
+      mkdirSync(join(workDir, '.hidden'));
+      mkdirSync(join(workDir, 'visible'));
+      writeFileSync(join(workDir, '.dotfile'), '');
+      writeFileSync(join(workDir, 'normal.txt'), '');
+
+      const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'bash');
+      const text = `cd ${workDir}/`;
+      const result = await provider.getSuggestions([text], 0, text.length, {
+        signal: ctrl(),
+        force: true,
+      });
+
+      expect(result).not.toBeNull();
+      const labels = result!.items.map((item) => item.label);
+      expect(labels).toContain('visible/');
+      expect(labels).toContain('normal.txt');
+      expect(labels).not.toContain('.hidden/');
+      expect(labels).not.toContain('.dotfile');
+    });
+
+    it('keeps dot-prefixed entries in prompt mode', async () => {
+      mkdirSync(join(workDir, '.hidden'));
+      writeFileSync(join(workDir, '.dotfile'), '');
+
+      const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'prompt');
+      const text = `cd ${workDir}/`;
+      const result = await provider.getSuggestions([text], 0, text.length, {
+        signal: ctrl(),
+        force: true,
+      });
+
+      expect(result).not.toBeNull();
+      const labels = result!.items.map((item) => item.label);
+      expect(labels).toContain('.hidden/');
+      expect(labels).toContain('.dotfile');
+    });
+  });
+
+  describe('bash-mode path applyCompletion', () => {
+    it('does not double the leading slash for a bare / path', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'bash');
+      const result = provider.applyCompletion(
+        ['/'],
+        0,
+        1,
+        { value: '/Applications/', label: 'Applications/' },
+        '/',
+      );
+      expect(result.lines[0]).toBe('/Applications/');
+      expect(result.cursorCol).toBe('/Applications/'.length);
+    });
+
+    it('replaces the path prefix after a command without a trailing space', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'bash');
+      const result = provider.applyCompletion(
+        ['cd /App'],
+        0,
+        7,
+        { value: '/Applications/', label: 'Applications/' },
+        '/App',
+      );
+      expect(result.lines[0]).toBe('cd /Applications/');
+      expect(result.cursorCol).toBe('cd /Applications/'.length);
+    });
+
+    it('keeps pi-tui slash-command behaviour in prompt mode', () => {
+      const provider = new FileMentionProvider([], workDir, NO_FD, [], () => 'prompt');
+      const result = provider.applyCompletion(
+        ['/'],
+        0,
+        1,
+        { value: 'help', label: 'help' },
+        '/',
+      );
+      // pi-tui's slash-command branch: beforePrefix + '/' + value + ' '
+      expect(result.lines[0]).toBe('/help ');
+    });
+  });
 });

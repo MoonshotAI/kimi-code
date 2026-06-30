@@ -49,6 +49,11 @@ interface AutocompleteListFactoryInternals {
   createAutocompleteList?: (prefix: string, items: SelectItem[]) => SelectList;
 }
 
+interface AutocompleteTriggerInternals {
+  tryTriggerAutocomplete: (explicitTab?: boolean) => void;
+  requestAutocomplete: (options: { force: boolean; explicitTab: boolean }) => void;
+}
+
 // Mirror pi-tui's private SLASH_COMMAND_SELECT_LIST_LAYOUT
 // (dist/components/editor.js); keep in sync when bumping pi-tui.
 const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
@@ -187,6 +192,17 @@ export class CustomEditor extends Editor {
         );
       }
       return new SelectList(items, this.getAutocompleteMaxVisible(), theme.selectList);
+    };
+
+    // pi-tui auto-triggers autocomplete for `/` (and letters in a slash
+    // context) with force:false, which routes through the slash-command
+    // branch. In bash mode `/` is a path separator, not a command prefix, so
+    // shadow the trigger to request file path completion (force:true) instead.
+    // Prompt mode keeps the original force:false behaviour. `tryTriggerAutocomplete`
+    // is private in pi-tui's typings but a plain prototype method at runtime.
+    const triggerInternals = this as unknown as AutocompleteTriggerInternals;
+    triggerInternals.tryTriggerAutocomplete = (explicitTab = false) => {
+      triggerInternals.requestAutocomplete({ force: this.inputMode === 'bash', explicitTab });
     };
   }
 
@@ -489,6 +505,13 @@ export class CustomEditor extends Editor {
       const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
       if (isSlashArgument || isAtMention) {
         trigger();
+      } else if (this.inputMode === 'bash' && textBeforeCursor.trimStart() !== '/') {
+        // In bash mode `/` is a path separator, not a slash command. A bare
+        // leading `/` is already handled by the tryTriggerAutocomplete shadow
+        // in the constructor; this branch covers the inline case (e.g. `ls /`,
+        // `cat /etc/`) that pi-tui never auto-triggers. force:true bypasses
+        // the slash-command branch so path completion runs.
+        editor.requestAutocomplete?.({ force: true, explicitTab: false });
       }
       return;
     }

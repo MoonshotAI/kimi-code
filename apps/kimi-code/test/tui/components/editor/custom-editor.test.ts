@@ -29,6 +29,22 @@ function providerReturning(items: AutocompleteItem[]): AutocompleteProvider {
   };
 }
 
+function providerRecordingForce(items: AutocompleteItem[]): {
+  provider: AutocompleteProvider;
+  calls: Array<{ force: boolean | undefined; text: string }>;
+} {
+  const calls: Array<{ force: boolean | undefined; text: string }> = [];
+  const provider: AutocompleteProvider = {
+    getSuggestions: vi.fn(async (lines, cursorLine, cursorCol, options) => {
+      const text = (lines[cursorLine] ?? '').slice(0, cursorCol);
+      calls.push({ force: options?.force, text });
+      return { items, prefix: text };
+    }),
+    applyCompletion: vi.fn((lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol })),
+  };
+  return { provider, calls };
+}
+
 describe('CustomEditor autocomplete Escape handling', () => {
   it('escape closes a visible slash command menu without firing app-level escape', async () => {
     const editor = makeEditor();
@@ -637,5 +653,48 @@ describe('CustomEditor bash mode via paste', () => {
 
     expect(editor.inputMode).toBe('bash');
     expect(editor.getText()).toBe('');
+  });
+});
+
+describe('CustomEditor bash mode file completion', () => {
+  it('triggers file completion (force:true) for a leading / in bash mode, not the slash menu', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'auto', label: 'auto' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: true, text: '/' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('triggers file completion (force:true) for an inline / in bash mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'etc', label: 'etc' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    for (const char of 'ls /') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: true, text: 'ls /' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('keeps force:false (slash menu) for a leading / in prompt mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'help', label: 'help' }]);
+    editor.setAutocompleteProvider(provider);
+    // inputMode defaults to 'prompt'
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: false, text: '/' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
   });
 });
