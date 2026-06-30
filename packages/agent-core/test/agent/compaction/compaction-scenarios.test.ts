@@ -109,6 +109,43 @@ describe('compaction — guard tests', () => {
       expect(answered).toBe(true);
     }
   });
+
+  // Mutual exclusion: compaction and turn processing must not run concurrently,
+  // or a turn mutating the context mid-summary loses output. Auto compaction is
+  // structurally safe (it runs while the turn blocks at a step boundary); the
+  // manual/SDK path is guarded explicitly here.
+  it('rejects a manual compaction while a turn is active', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'seed' }], { kind: 'user' });
+    ctx.mockNextResponse({ type: 'text', text: 'turn done' });
+
+    // launch() sets the active turn synchronously, so a turn is active before the
+    // worker yields — exactly the window an SDK beginCompaction could land in.
+    ctx.agent.turn.prompt([{ type: 'text', text: 'go' }]);
+    expect(ctx.agent.turn.hasActiveTurn).toBe(true);
+
+    await expect(ctx.rpc.beginCompaction({})).rejects.toThrow(/turn/i);
+
+    await ctx.agent.turn.waitForCurrentTurn();
+  });
+
+  it('rejects a new turn while a manual compaction is in progress', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendExchange(1, 'user one', 'assistant one', 40);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+
+    // begin() sets the compacting flag synchronously before the summarizer yields.
+    void ctx.rpc.beginCompaction({});
+    expect(ctx.agent.fullCompaction.isCompacting).toBe(true);
+
+    // A new turn must be refused while compaction holds the context.
+    const turnId = ctx.agent.turn.prompt([{ type: 'text', text: 'new turn' }]);
+    expect(turnId).toBeNull();
+
+    await ctx.once('compaction.completed');
+  });
 });
 
 describe('compaction — probe tests (high-risk scenarios)', () => {

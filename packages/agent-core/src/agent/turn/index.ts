@@ -161,6 +161,22 @@ export class TurnFlow {
       return null;
     }
 
+    // Refuse to start a turn while a compaction holds the context. Compaction
+    // snapshots history, summarizes async, then rebuilds it; a turn appending or
+    // streaming in that window would be neither summarized nor preserved. (When a
+    // turn is already active the check above wins, so this only fires for a
+    // manual/SDK compaction started at an otherwise-idle boundary.)
+    if (this.agent.fullCompaction.isCompacting) {
+      this.agent.emitEvent({
+        type: 'error',
+        ...makeErrorPayload(
+          'turn.agent_busy',
+          'Cannot launch a new turn while a compaction is in progress',
+        ),
+      });
+      return null;
+    }
+
     // Per-turn setup (telemetry, usage window, `turn.started`, appending the
     // prompt) now lives in `runOneTurn`, so a goal-driven run emits a clean
     // start/end pair per continuation turn rather than one mega-turn.

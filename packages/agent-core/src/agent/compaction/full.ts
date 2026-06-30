@@ -160,6 +160,19 @@ export class FullCompaction {
     if (this.agent.context.history.length === 0) {
       throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
+    // Manual (SDK/REST) compaction must not start while a turn is running: the
+    // turn keeps mutating the context (streaming content, appending messages)
+    // while the summarizer is in flight, and that output is then neither
+    // summarized nor preserved by the rebuild. Auto compaction is exempt — it is
+    // triggered from within the turn at a step boundary, which blocks the turn
+    // for the duration. Refuse manual compaction here so it only runs at a clean
+    // boundary; the caller can retry once the turn finishes.
+    if (data.source === 'manual' && this.agent.turn.hasActiveTurn) {
+      throw new KimiError(
+        ErrorCodes.COMPACTION_UNABLE,
+        'Cannot compact while a turn is active. Wait for it to finish, then retry.',
+      );
+    }
     this.agent.records.logRecord({
       type: 'full_compaction.begin',
       ...data,
