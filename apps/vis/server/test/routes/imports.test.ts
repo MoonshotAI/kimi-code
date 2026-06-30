@@ -113,6 +113,22 @@ describe('imports + logs routes', () => {
     expect(((await wireRes.json()) as { records: unknown[] }).records.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('falls back to disk discovery when an imported agents map is type-corrupt', async () => {
+    home = await mkdtemp(join(tmpdir(), 'vis-imp-route-'));
+    // state.json present, agents map non-empty but the entry is null — must not
+    // 500; the on-disk main wire should still be discoverable.
+    const corruptAgents: Record<string, string> = {
+      'manifest.json': JSON.stringify({ sessionId: 'session_orig' }),
+      'state.json': JSON.stringify({ createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T01:00:00.000Z', title: 'demo', agents: { main: null }, custom: {} }),
+      'agents/main/wire.jsonl': `${META}\n${PROMPT}\n`,
+    };
+    const importId = ((await (await importsRoute(home).request('/?name=x.zip', { method: 'POST', body: await buildZip(corruptAgents) })).json()) as { sessionId: string }).sessionId;
+
+    const wireRes = await wireRoute(home).request(`/${importId}/wire?agent=main`);
+    expect(wireRes.status).toBe(200);
+    expect(((await wireRes.json()) as { records: unknown[] }).records.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('sanitizes type-corrupt manifest fields so the session list cannot crash', async () => {
     home = await mkdtemp(join(tmpdir(), 'vis-imp-route-'));
     const corrupt: Record<string, string> = {

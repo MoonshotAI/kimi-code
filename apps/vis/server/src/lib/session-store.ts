@@ -25,7 +25,10 @@ interface StateJson {
   title?: string;
   isCustomTitle?: boolean;
   lastPrompt?: string;
-  agents?: Record<string, { homedir: string; type: 'main' | 'sub' | 'independent'; parentAgentId: string | null; swarmItem?: string }>;
+  // Agent metadata comes from an untrusted state.json (a corrupt or imported
+  // bundle may hold non-object entries like `{ "main": null }`), so the value
+  // type allows null and inventoryAgents skips anything that isn't an object.
+  agents?: Record<string, { homedir: string; type: 'main' | 'sub' | 'independent'; parentAgentId: string | null; swarmItem?: string } | null>;
   custom?: Record<string, unknown>;
 }
 
@@ -255,6 +258,10 @@ async function inventoryAgents(sessionDir: string, state: StateJson, deriveHomed
   const result: AgentInfo[] = [];
   for (const [id, meta] of Object.entries(state.agents ?? {})) {
     if (!isSafeAgentId(id)) continue;
+    // A type-corrupt entry (e.g. `{ "main": null }`) must not throw on the
+    // field dereferences below; skip it so the empty-inventory fallback in
+    // readImportedDetail can recover the agent from disk instead.
+    if (typeof meta !== 'object' || meta === null) continue;
     const wirePath = join(sessionDir, 'agents', id, 'wire.jsonl');
     const exists = await pathExists(wirePath);
     let readable = exists;
