@@ -702,6 +702,13 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
               </div>
               <div v-if="turn.skillActivation.args" class="skill-act-args">{{ turn.skillActivation.args }}</div>
             </div>
+            <div v-else-if="turn.pluginCommand" class="skill-act">
+              <div class="skill-act-head">
+                <span class="skill-act-arrow">▶</span>
+                <span>/{{ turn.pluginCommand.pluginId }}:{{ turn.pluginCommand.commandName }}</span>
+              </div>
+              <div v-if="turn.pluginCommand.args" class="skill-act-args">{{ turn.pluginCommand.args }}</div>
+            </div>
             <template v-else>{{ turn.text }}</template>
           </div>
 
