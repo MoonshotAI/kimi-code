@@ -122,7 +122,7 @@ describe('FooterComponent', () => {
     };
     const footer = new FooterComponent(state);
 
-    expect(footer.render(120).join('\n')).toContain('thinking:max');
+    expect(footer.render(120).join('\n')).toContain('thinking: max');
   });
 
   it('does not show the effort for a legacy boolean model', () => {

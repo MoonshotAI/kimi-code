@@ -55,8 +55,7 @@ function formatModelStatus(options: StatusReportOptions): string {
   if (model.trim().length === 0) return 'not set';
 
   const effort = options.status?.thinkingEffort ?? options.thinkingEffort;
-  const thinking = effort === 'off' ? 'off' : 'on';
-  return `${displayModelName(model, options.availableModels)} (thinking ${thinking})`;
+  return `${displayModelName(model, options.availableModels)} (thinking ${effort})`;
 }
 
 function addFieldRows(

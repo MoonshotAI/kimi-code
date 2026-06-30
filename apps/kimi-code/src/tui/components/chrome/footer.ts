@@ -270,7 +270,7 @@ export class FooterComponent implements Component {
       const thinkingLabel =
         effort !== 'off'
           ? hasEfforts && effort !== 'on'
-            ? ` thinking:${effort}`
+            ? ` thinking: ${effort}`
             : ' thinking'
           : '';
       const modelLabel = `${model}${thinkingLabel}`;
