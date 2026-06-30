@@ -663,6 +663,7 @@ export class TurnFlow {
           signal,
           llm: this.agent.llm,
           buildMessages: () => this.agent.context.messages,
+          buildMessagesStrict: () => this.agent.context.strictMessages,
           dispatchEvent: this.buildDispatchEvent(turnId),
           tools: this.agent.tools.loopTools,
           log: this.agent.log,

@@ -1,7 +1,7 @@
 import type { ContentPart, Message, ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { project } from '../../../src/agent/context/projector';
+import { project, type ProjectionAnomaly } from '../../../src/agent/context/projector';
 import type { ContextMessage } from '../../../src/agent/context/types';
 
 // ---------------------------------------------------------------------------
@@ -14,8 +14,10 @@ import type { ContextMessage } from '../../../src/agent/context/types';
 // result exists anywhere in the projected history, that result sits in the
 // consecutive tool messages immediately following the assistant message.
 //
-// A tool call with no recorded result anywhere is considered still in-flight
-// (pending) and is intentionally left untouched — it is not an orphan.
+// A tool call with no recorded result anywhere is closed with a synthetic
+// `tool_result` when a later turn follows it (it cannot be in-flight). Only the
+// trailing exchange's missing result is left untouched — there the call is
+// genuinely still pending.
 
 interface MisplacedToolUse {
   readonly assistantIndex: number;
@@ -61,6 +63,30 @@ function findMisplacedToolUses(messages: readonly Message[]): MisplacedToolUse[]
     }
   }
   return violations;
+}
+
+/**
+ * Strict wire-compliance check: every assistant `tool_use` must be answered by a
+ * `tool_result` in the consecutive tool messages immediately following it. Use
+ * only where no trailing in-flight call is expected — an in-flight call has no
+ * result by design and would (correctly) fail this check.
+ */
+function everyToolUseImmediatelyAnswered(messages: readonly Message[]): boolean {
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]!;
+    if (message.role !== 'assistant' || message.toolCalls.length === 0) continue;
+    const adjacentResultIds = new Set<string>();
+    let j = i + 1;
+    while (j < messages.length && messages[j]!.role === 'tool') {
+      const id = messages[j]!.toolCallId;
+      if (id !== undefined) adjacentResultIds.add(id);
+      j++;
+    }
+    if (message.toolCalls.some((toolCall) => !adjacentResultIds.has(toolCall.id))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +249,7 @@ describe('project tool_use/tool_result adjacency', () => {
 
   it('leaves a pending (in-flight) tool call without a recorded result untouched', () => {
     const history: ContextMessage[] = [user('u1'), assistant(['a', 'b']), tool('a')];
-    // b has no recorded result — it is still pending, not orphaned.
+    // b has no recorded result — it is the trailing exchange, still in-flight.
     const projected = project(history);
     expect(projected.map((m) => [m.role, m.toolCallId])).toEqual([
       ['user', undefined],
@@ -231,6 +257,42 @@ describe('project tool_use/tool_result adjacency', () => {
       ['tool', 'a'],
     ]);
     // No new (synthetic) tool result for b was introduced.
+    expect(projected.some((m) => m.toolCallId === 'b')).toBe(false);
+  });
+
+  it('synthesizes a result for a mid-history tool call whose result is missing entirely', () => {
+    // 'a' has no recorded result anywhere, but a later turn (u2 / assistant b)
+    // proves the model already moved on — the call cannot be in-flight, so it is
+    // a genuine orphan that strict providers reject. It must be closed in place.
+    const history: ContextMessage[] = [
+      user('u1'),
+      assistant(['a']),
+      user('u2'),
+      assistant(['b']),
+      tool('b'),
+    ];
+    const projected = project(history);
+    const aIndex = projected.findIndex((m) => m.toolCalls.some((tc) => tc.id === 'a'));
+    expect(projected[aIndex + 1]).toMatchObject({ role: 'tool', toolCallId: 'a' });
+    expect(textOf(projected[aIndex + 1])).toContain('not available');
+    expect(findMisplacedToolUses(projected)).toEqual([]);
+    // No assistant tool_use is left unanswered for a strict provider.
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
+
+  it('closes a mid-history orphan while leaving the trailing in-flight call untouched', () => {
+    // 'a' is a mid-history orphan (a later turn follows); 'b' is the trailing
+    // exchange whose result is genuinely still pending.
+    const history: ContextMessage[] = [
+      user('u1'),
+      assistant(['a']),
+      user('u2'),
+      assistant(['b']),
+    ];
+    const projected = project(history);
+    const aIndex = projected.findIndex((m) => m.toolCalls.some((tc) => tc.id === 'a'));
+    expect(projected[aIndex + 1]).toMatchObject({ role: 'tool', toolCallId: 'a' });
+    // The trailing in-flight call 'b' is not closed with a synthetic result.
     expect(projected.some((m) => m.toolCallId === 'b')).toBe(false);
   });
 
@@ -310,6 +372,68 @@ describe('project tool_use/tool_result adjacency', () => {
     expect(findMisplacedToolUses(projected)).toEqual([]);
     const aIndex = projected.findIndex((m) => m.toolCalls.some((tc) => tc.id === 'a'));
     expect(projected[aIndex + 1]).toMatchObject({ role: 'tool', toolCallId: 'a' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Repair reporting (onAnomaly)
+// ---------------------------------------------------------------------------
+
+describe('project repair reporting', () => {
+  it('reports nothing for an already well-formed history', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project([user('u1'), assistant(['a']), tool('a'), user('u2')], {
+      onAnomaly: (a) => anomalies.push(a),
+    });
+    expect(anomalies).toEqual([]);
+  });
+
+  it('reports a displaced result that had to be moved up', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project([user('u1'), assistant(['a']), notification('ping'), tool('a')], {
+      onAnomaly: (a) => anomalies.push(a),
+    });
+    expect(anomalies).toEqual([{ kind: 'tool_result_reordered', toolCallId: 'a' }]);
+  });
+
+  it('does not report adjacent parallel results that are merely out of order', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project([user('u1'), assistant(['a', 'b', 'c']), tool('c'), tool('a'), tool('b')], {
+      onAnomaly: (a) => anomalies.push(a),
+    });
+    expect(anomalies).toEqual([]);
+  });
+
+  it('reports a mid-history synthesis as a non-trailing (defect) repair', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project([user('u1'), assistant(['a']), user('u2'), assistant(['b']), tool('b')], {
+      onAnomaly: (a) => anomalies.push(a),
+    });
+    expect(anomalies).toEqual([
+      { kind: 'tool_result_synthesized', toolCallId: 'a', trailing: false },
+    ]);
+  });
+
+  it('marks a forced trailing synthesis as trailing (expected, not a defect)', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project([user('u1'), assistant(['a', 'b']), tool('a')], {
+      synthesizeMissing: true,
+      onAnomaly: (a) => anomalies.push(a),
+    });
+    expect(anomalies).toEqual([
+      { kind: 'tool_result_synthesized', toolCallId: 'b', trailing: true },
+    ]);
+  });
+
+  it('reports a dropped orphan result only on the strict path', () => {
+    const history: ContextMessage[] = [user('u1'), assistant(['a']), tool('a'), tool('stray')];
+    const normal: ProjectionAnomaly[] = [];
+    project(history, { onAnomaly: (a) => normal.push(a) });
+    expect(normal).toEqual([]); // normal path leaves the stray result in place
+
+    const strict: ProjectionAnomaly[] = [];
+    project(history, { dropOrphanResults: true, onAnomaly: (a) => strict.push(a) });
+    expect(strict).toEqual([{ kind: 'orphan_tool_result_dropped', toolCallId: 'stray' }]);
   });
 });
 

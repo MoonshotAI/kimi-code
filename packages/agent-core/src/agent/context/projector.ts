@@ -5,19 +5,61 @@ import type { ContextMessage } from './types';
 
 export interface ProjectOptions {
   /**
-   * When `true`, emit a synthetic `tool_result` for any assistant `tool_use`
-   * whose result is not present in the provided messages. Used by full
-   * compaction, where the compacted prefix is a slice that may exclude a
-   * delayed result preserved in the retained tail; the synthetic result keeps
-   * the exchange closed so the summary request is not rejected. Leave `false`
-   * for normal turns, where a missing result means the call is still in-flight
-   * and must not be closed prematurely.
+   * When `true`, emit a synthetic `tool_result` for *every* assistant `tool_use`
+   * whose result is not present in the provided messages — including a trailing,
+   * still-in-flight call. Used by full compaction, where the compacted prefix is
+   * a slice that may exclude a delayed result preserved in the retained tail; the
+   * synthetic result keeps the exchange closed so the summary request is not
+   * rejected. Leave `false` for normal turns: a *trailing* missing result there
+   * means the call is still in-flight and must not be closed prematurely. (A
+   * *non-trailing* missing result is always closed regardless of this flag — see
+   * `repairToolExchangeAdjacency` — because a later turn proves it is not
+   * in-flight.)
    */
   readonly synthesizeMissing?: boolean;
+  /**
+   * When `true`, drop any `tool_result` whose `toolCallId` matches no assistant
+   * `tool_use` anywhere in the provided messages. Strict providers reject such a
+   * stray result as an "unexpected `tool_result`". Off by default so the normal
+   * path never silently discards recorded output; the post-400 strict-resend
+   * fallback enables it (together with `synthesizeMissing`) as a last resort to
+   * force a wire-compliant request out of an otherwise-bricked session.
+   */
+  readonly dropOrphanResults?: boolean;
+  /**
+   * Optional sink invoked for every repair the projector applies to keep the
+   * outgoing wire valid: a displaced result moved back next to its call, a
+   * synthetic result invented for a missing one, or a stray result dropped. The
+   * projection itself stays a pure transform; the caller decides whether/how to
+   * surface these (the context logs them so a silently-mangled history is never
+   * papered over without a trace). Not called when the history is already
+   * well-formed.
+   */
+  readonly onAnomaly?: (anomaly: ProjectionAnomaly) => void;
 }
 
+/**
+ * A repair the projector applied to make the history wire-valid. Each one means
+ * the stored history was not directly sendable to a strict provider.
+ */
+export type ProjectionAnomaly =
+  /** A recorded result was not adjacent to its call and had to be moved up. */
+  | { readonly kind: 'tool_result_reordered'; readonly toolCallId: string }
+  /**
+   * No result existed for a call, so a placeholder was synthesized. `trailing`
+   * is true when it closed a still-open tail call (expected under
+   * `synthesizeMissing`), false when it closed a mid-history orphan whose result
+   * was lost (a genuine defect worth investigating).
+   */
+  | { readonly kind: 'tool_result_synthesized'; readonly toolCallId: string; readonly trailing: boolean }
+  /** A result with no matching call anywhere was dropped (strict resend only). */
+  | { readonly kind: 'orphan_tool_result_dropped'; readonly toolCallId: string };
+
 export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
-  return repairToolExchangeAdjacency(mergeAdjacentUserMessages(history), options);
+  const repaired = repairToolExchangeAdjacency(mergeAdjacentUserMessages(history), options);
+  return options?.dropOrphanResults === true
+    ? dropOrphanToolResults(repaired, options.onAnomaly)
+    : repaired;
 }
 
 // Strict providers (Anthropic) require every assistant `tool_use` to be answered
@@ -32,16 +74,21 @@ export function project(history: readonly ContextMessage[], options?: ProjectOpt
 // Repair the adjacency so every assistant `tool_use` is immediately followed by
 // its matching `tool_result` message(s). Matching results are moved up from
 // wherever they appear later in the history; any intervening messages keep their
-// relative order and simply follow the repaired exchange. A tool call with no
-// recorded result anywhere later in the history is left untouched by default —
-// it is still in-flight (pending) rather than orphaned, and the
-// trailing-open-exchange trim plus the interrupted-result synthesis during replay
-// own those cases. With `synthesizeMissing`, a synthetic `tool_result` is emitted
-// for such calls instead; full compaction uses this to keep a sliced prefix
-// closed when a delayed result lives in the retained tail. This is purely a
-// projection-time fix: the underlying history is left untouched, so replay and
-// transcripts keep their original order, while the model always sees a
-// well-formed tool exchange.
+// relative order and simply follow the repaired exchange.
+//
+// A tool call with no recorded result anywhere is closed with a synthetic
+// `tool_result` UNLESS it belongs to the trailing exchange (no later
+// user/assistant message follows it). A non-trailing missing result can never be
+// in-flight — a subsequent turn proves the model already moved on — so leaving it
+// open would strand the whole session behind a 400 on every send; it is closed
+// here instead. The trailing exchange is left untouched by default: there a
+// missing result genuinely means the call is still pending, and the
+// trailing-open-exchange trim plus replay's interrupted-result synthesis own that
+// case. With `synthesizeMissing`, even the trailing call is closed; full
+// compaction uses this to keep a sliced prefix closed when a delayed result lives
+// in the retained tail. This is purely a projection-time fix: the underlying
+// history is left untouched, so replay and transcripts keep their original order,
+// while the model always sees a well-formed tool exchange.
 const SYNTHETIC_TOOL_RESULT_TEXT =
   'Tool result is not available in the current context. Do not assume the tool completed successfully.';
 
@@ -49,6 +96,16 @@ function repairToolExchangeAdjacency(
   messages: readonly Message[],
   options?: ProjectOptions,
 ): Message[] {
+  // The trailing exchange is the only one whose missing result may still be
+  // in-flight: any assistant `tool_use` that precedes a later user/assistant
+  // message has been overtaken by a new turn and cannot be pending. Find the last
+  // non-tool message so an orphan can be classified as trailing (index >= it) or
+  // mid-history (index < it).
+  let lastNonToolIndex = messages.length - 1;
+  while (lastNonToolIndex >= 0 && messages[lastNonToolIndex]?.role === 'tool') {
+    lastNonToolIndex -= 1;
+  }
+
   const out: Message[] = [];
   const consumed = new Set<number>();
   for (let i = 0; i < messages.length; i++) {
@@ -61,6 +118,10 @@ function repairToolExchangeAdjacency(
 
     out.push(message);
     const pending = new Set(message.toolCalls.map((toolCall) => toolCall.id));
+    // Tracks whether a foreign message (anything that is not one of this
+    // exchange's own results) sits between the call and a later matching result;
+    // if so, that result was displaced and pulling it up is a real repair.
+    let foreignBetween = false;
     for (let j = i + 1; j < messages.length && pending.size > 0; j++) {
       if (consumed.has(j)) continue;
       const next = messages[j]!;
@@ -69,21 +130,50 @@ function repairToolExchangeAdjacency(
         out.push(next);
         consumed.add(j);
         pending.delete(toolCallId);
+        if (foreignBetween) options?.onAnomaly?.({ kind: 'tool_result_reordered', toolCallId });
+      } else {
+        foreignBetween = true;
       }
     }
-    if (options?.synthesizeMissing === true) {
-      // Close any tool call whose result is absent from the provided messages.
-      // Only used by full compaction, where the prefix is a slice that may
-      // exclude a delayed result preserved in the retained tail. For normal
-      // turns a missing result means the call is still in-flight, so it is left
-      // for the trailing-open-exchange trim and replay's interrupted-result
-      // synthesis instead of being closed here.
+    // Close any tool call whose result is absent. A mid-history orphan (a later
+    // user/assistant message follows) is always closed — it cannot be in-flight.
+    // The trailing exchange is closed only when `synthesizeMissing` is set, so a
+    // genuinely pending call is left for the trim / replay synthesis otherwise.
+    const isMidHistory = i < lastNonToolIndex;
+    if (options?.synthesizeMissing === true || isMidHistory) {
       for (const missingId of pending) {
         out.push(makeSyntheticToolResult(missingId));
+        options?.onAnomaly?.({
+          kind: 'tool_result_synthesized',
+          toolCallId: missingId,
+          trailing: !isMidHistory,
+        });
       }
     }
   }
   return out;
+}
+
+// Remove any `tool_result` whose `toolCallId` matches no assistant `tool_use`
+// anywhere in the projected messages. Strict providers reject such a stray
+// result; the post-400 strict-resend fallback drops them as a last resort. Kept
+// separate from the adjacency repair so the normal path never discards output.
+function dropOrphanToolResults(
+  messages: readonly Message[],
+  onAnomaly?: (anomaly: ProjectionAnomaly) => void,
+): Message[] {
+  const toolUseIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      for (const toolCall of message.toolCalls) toolUseIds.add(toolCall.id);
+    }
+  }
+  return messages.filter((message) => {
+    if (message.role !== 'tool' || message.toolCallId === undefined) return true;
+    if (toolUseIds.has(message.toolCallId)) return true;
+    onAnomaly?.({ kind: 'orphan_tool_result_dropped', toolCallId: message.toolCallId });
+    return false;
+  });
 }
 
 function makeSyntheticToolResult(toolCallId: string): Message {

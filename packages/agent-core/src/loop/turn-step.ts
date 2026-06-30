@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TokenUsage } from '@moonshot-ai/kosong';
+import { isToolExchangeAdjacencyError, type TokenUsage } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
@@ -33,6 +33,7 @@ export interface ExecuteLoopStepDeps {
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly buildMessages: LoopMessageBuilder;
+  readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly llm: LLM;
   readonly tools?: readonly ExecutableTool[] | undefined;
@@ -51,6 +52,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     signal,
     buildMessages,
+    buildMessagesStrict,
     dispatchEvent,
     llm,
     tools,
@@ -110,16 +112,38 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       stepUuid,
     }),
   };
-  const response: LLMChatResponse = await chatWithRetry({
+  const retryInput = {
     llm,
-    params: chatParams,
     dispatchEvent,
     turnId,
     currentStep,
     stepUuid,
     maxAttempts: maxRetryAttempts,
     log,
-  });
+  } as const;
+  let response: LLMChatResponse;
+  try {
+    response = await chatWithRetry({ ...retryInput, params: chatParams });
+  } catch (error) {
+    // A tool_use/tool_result adjacency 400 means the projected history is not
+    // wire-compliant for a strict provider — and since the same history is
+    // re-sent every turn, the session would stay stuck on this error forever.
+    // Resend ONCE with a strict, guaranteed-compliant rebuild (every open call
+    // closed, stray results dropped) as a last resort. Any other error, or a
+    // host that supplied no strict builder, propagates unchanged.
+    if (buildMessagesStrict === undefined || !isToolExchangeAdjacencyError(error)) throw error;
+    signal.throwIfAborted();
+    log?.warn('provider rejected tool_use/tool_result pairing; resending with strict projection', {
+      turnStep: `${turnId}.${String(currentStep)}`,
+      model: llm.modelName,
+    });
+    const strictMessages = await buildMessagesStrict();
+    signal.throwIfAborted();
+    response = await chatWithRetry({
+      ...retryInput,
+      params: { ...chatParams, messages: strictMessages },
+    });
+  }
   const usage = response.usage;
   const usageResult = await recordUsage(usage);
   const stopTurnAfterUsage = usageResult?.stopTurn === true;

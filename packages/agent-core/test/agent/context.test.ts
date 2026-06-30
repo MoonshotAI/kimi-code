@@ -248,6 +248,12 @@ describe('Agent context', () => {
         toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
       },
       {
+        role: 'tool',
+        content: [{ type: 'text', text: 'result' }],
+        toolCalls: [],
+        toolCallId: 'call_empty',
+      },
+      {
         role: 'assistant',
         content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
         toolCalls: [],
@@ -269,6 +275,12 @@ describe('Agent context', () => {
         role: 'assistant',
         content: [],
         toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'result' }],
+        toolCalls: [],
+        toolCallId: 'call_empty',
       },
       {
         role: 'assistant',

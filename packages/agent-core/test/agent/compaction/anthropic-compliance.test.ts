@@ -221,6 +221,64 @@ describe('compaction — Anthropic wire compliance', () => {
     assertValidAnthropic(wire);
   });
 
+  it('closes a mid-history tool call whose result is missing on the normal send path', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    // 'call_1' was issued but its result was never recorded; a later real turn
+    // ('call_2' + result) proves it is not in-flight. On a strict provider this
+    // bricks the session — every normal send re-rejects. The projector closes the
+    // mid-history orphan WITHOUT synthesizeMissing (the normal send path).
+    const orphaned: ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'run it' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'first call' }],
+        toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' }],
+      },
+      { role: 'user', content: [{ type: 'text', text: 'next thing' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'second call' }],
+        toolCalls: [{ type: 'function', id: 'call_2', name: 'Bash', arguments: '{}' }],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'done' }], toolCalls: [], toolCallId: 'call_2' },
+    ];
+
+    // Normal send path: no synthesizeMissing, no dropOrphanResults.
+    const projected = ctx.agent.context.project(orphaned);
+    const wire = await toAnthropicWire(projected, [BASH_TOOL]);
+    assertValidAnthropic(wire);
+    // The mid-history orphan 'call_1' is closed by a synthetic tool_result.
+    const call1Index = wire.findIndex((m) =>
+      m.content.some((b) => b.type === 'tool_use' && b.id === 'call_1'),
+    );
+    expect(call1Index).toBeGreaterThanOrEqual(0);
+    expect(
+      wire[call1Index + 1]!.content.some(
+        (b) => b.type === 'tool_result' && b.tool_use_id === 'call_1',
+      ),
+    ).toBe(true);
+  });
+
+  it('drops a stray tool result with no matching call on the strict resend path', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    // A tool_result whose tool_use is gone (e.g. an undo removed the assistant).
+    // The normal path leaves it (it has no anchor); the strict resend drops it.
+    const stray: ContextMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'tool', content: [{ type: 'text', text: 'orphan output' }], toolCalls: [], toolCallId: 'gone' },
+    ];
+
+    const projected = ctx.agent.context.project(stray, {
+      synthesizeMissing: true,
+      dropOrphanResults: true,
+    });
+    expect(projected.some((m) => m.role === 'tool')).toBe(false);
+    const wire = await toAnthropicWire(projected);
+    assertValidAnthropic(wire);
+  });
+
   it('closes a still-open tool call in the summarizer request with a synthetic result', async () => {
     const ctx = testAgent();
     ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
