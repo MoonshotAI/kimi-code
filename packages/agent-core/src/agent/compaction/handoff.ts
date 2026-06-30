@@ -47,6 +47,7 @@ export function compactionUserMessageDisposition(
     case 'user':
       return 'keep';
     case 'skill_activation':
+    case 'plugin_command':
       return origin.trigger === 'user-slash' ? 'keep' : 'drop';
     case 'injection':
     case 'shell_command':

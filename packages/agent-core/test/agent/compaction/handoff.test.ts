@@ -25,6 +25,7 @@ function messageText(message: Message): string {
 const ALL_PROMPT_ORIGIN_KINDS = {
   user: true,
   skill_activation: true,
+  plugin_command: true,
   injection: true,
   shell_command: true,
   compaction_summary: true,
@@ -39,6 +40,7 @@ const ALL_PROMPT_ORIGIN_KINDS = {
 const EXPECTED_DISPOSITION: Record<PromptOrigin['kind'], CompactionUserDisposition> = {
   user: 'keep',
   skill_activation: 'keep',
+  plugin_command: 'keep',
   injection: 'drop',
   shell_command: 'drop',
   compaction_summary: 'drop',
@@ -59,6 +61,14 @@ function originForKind(kind: PromptOrigin['kind']): PromptOrigin {
         kind: 'skill_activation',
         activationId: 'activation',
         skillName: 'skill',
+        trigger: 'user-slash',
+      };
+    case 'plugin_command':
+      return {
+        kind: 'plugin_command',
+        activationId: 'activation',
+        pluginId: 'plugin',
+        commandName: 'command',
         trigger: 'user-slash',
       };
     case 'injection':

@@ -177,12 +177,16 @@ export function projectContext(
           // Absolute context-window fill, mirroring agent-core
           // ContextMemory._tokenCount: the latest step.end usage REPLACES the
           // snapshot (it is not cumulative — see Task P1.7 note on byScope).
+          // A zero-usage step.end (e.g. a content-filtered response) is the one
+          // exception agent-core makes — it keeps the prior count instead of
+          // resetting to 0 — so guard against a false drop here too.
           if ('usage' in ev && ev.usage !== undefined) {
-            contextTokens =
+            const fill =
               ev.usage.inputCacheRead +
               ev.usage.inputCacheCreation +
               ev.usage.inputOther +
               ev.usage.output;
+            if (fill > 0) contextTokens = fill;
           }
           openSteps.delete(ev.uuid);
         } else if (ev.type === 'tool.result') {
@@ -360,7 +364,7 @@ export function projectContext(
         // Mirror agent-core `undo` (`agent/context/index.ts`): walk from the
         // end, skip `origin.kind === 'injection'`, stop at
         // `origin.kind === 'compaction_summary'`, remove others, counting real
-        // user prompts via `isRealUserPrompt` until `count` is reached. Then
+        // user prompts via `isRealUserInput` until `count` is reached. Then
         // leave an undo marker.
         //
         // `computeUndoCutoff` is the single source of truth for that skip/stop
@@ -617,7 +621,7 @@ function isHistoryEntry(pm: ProjectedMessage): boolean {
  *  projection modes. Mirrors agent-core `undo` (`agent/context/index.ts`): walk
  *  from the end, skip `origin.kind === 'injection'` (those are KEPT even when
  *  they sit inside the undo window), stop at `origin.kind === 'compaction_summary'`,
- *  and count real user prompts via `isRealUserPrompt` until `count` is reached.
+ *  and count real user prompts via `isRealUserInput` until `count` is reached.
  *
  *  Returns the `cutoff` (lowest index to remove from, inclusive) plus the
  *  `removedMessageCount` (number of non-skipped messages in the window). In

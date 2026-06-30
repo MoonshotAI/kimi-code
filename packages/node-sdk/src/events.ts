@@ -16,6 +16,7 @@ export type {
   SessionMetaUpdatedEvent,
   GoalUpdatedEvent,
   SkillActivatedEvent,
+  PluginCommandActivatedEvent,
   ErrorEvent,
   WarningEvent,
   UsageStatus,

@@ -23,6 +23,7 @@ import type {
 } from '../../api/types';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
+import { basename } from '../../lib/pathBasename';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import type {
@@ -97,7 +98,6 @@ export interface UseWorkspaceStateDeps {
   saveActiveWorkspaceToStorage: (id: string) => void;
   saveHiddenWorkspacesToStorage: (roots: string[]) => void;
   goalErrorMessage: (err: unknown) => string | undefined;
-  basename: (path: string) => string;
   resetFastMoon: () => void;
   initialized: Ref<boolean>;
   selectedDiffPath: Ref<string | null>;
@@ -140,7 +140,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     saveActiveWorkspaceToStorage,
     saveHiddenWorkspacesToStorage,
     goalErrorMessage,
-    basename,
     resetFastMoon,
     initialized,
     selectedDiffPath,

@@ -52,6 +52,7 @@ import type {
   ResumedSessionSummary,
   SessionSummary,
   SkillSummary,
+  PluginCommandDef,
   Unsubscribe,
 } from '#/types';
 
@@ -97,6 +98,12 @@ export type SetSessionSwarmModeRpcInput =
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly name: string;
+  readonly args?: string | undefined;
+}
+
+export interface ActivatePluginCommandRpcInput extends SessionIdRpcInput {
+  readonly pluginId: string;
+  readonly commandName: string;
   readonly args?: string | undefined;
 }
 
@@ -483,6 +490,11 @@ export abstract class SDKRpcClientBase {
     return rpc.listSkills({ sessionId: input.sessionId });
   }
 
+  async listPluginCommands(input: SessionIdRpcInput): Promise<readonly PluginCommandDef[]> {
+    const rpc = await this.getRpc();
+    return rpc.listPluginCommands({ sessionId: input.sessionId });
+  }
+
   async listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
   ): Promise<readonly BackgroundTaskInfo[]> {
@@ -629,6 +641,17 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
       name: input.name,
+      args: input.args,
+    });
+  }
+
+  async activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.activatePluginCommand({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      pluginId: input.pluginId,
+      commandName: input.commandName,
       args: input.args,
     });
   }

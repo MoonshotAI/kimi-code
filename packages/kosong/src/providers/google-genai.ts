@@ -790,6 +790,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       // the initial SDK request against the caller's abort signal ourselves.
       // Once we have a response/stream object, the wrapper below continues to
       // check the signal at each chunk boundary.
+      options?.onRequestSent?.();
       if (this._stream) {
         const stream = await Promise.race([
           models.generateContentStream(params),
