@@ -547,20 +547,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /** Upsert a workspace: preserve existing order when updating; prepend only
    *  for truly new workspaces. */
   function upsertWorkspacePreserveOrder(workspace: AppWorkspace): void {
+    // A locally-renamed derived workspace may carry a saved name override; apply
+    // it so a daemon upsert (e.g. registering the root on first chat) doesn't
+    // clobber the name with the default basename.
+    const override = loadWorkspaceNameOverrides()[workspace.root];
+    const ws = override !== undefined ? { ...workspace, name: override } : workspace;
     // Re-adding a path the user previously removed should bring it back.
-    if (rawState.hiddenWorkspaceRoots.includes(workspace.root)) {
-      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter((r) => r !== workspace.root);
+    if (rawState.hiddenWorkspaceRoots.includes(ws.root)) {
+      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter((r) => r !== ws.root);
       saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
     }
     const index = rawState.workspaces.findIndex(
-      (w) => w.id === workspace.id || w.root === workspace.root,
+      (w) => w.id === ws.id || w.root === ws.root,
     );
     if (index === -1) {
-      rawState.workspaces = [workspace, ...rawState.workspaces];
+      rawState.workspaces = [ws, ...rawState.workspaces];
       return;
     }
     const next = [...rawState.workspaces];
-    next[index] = workspace;
+    next[index] = ws;
     rawState.workspaces = next;
   }
 

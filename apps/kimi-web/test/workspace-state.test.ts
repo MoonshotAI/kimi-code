@@ -4,7 +4,7 @@ import type { AppSession } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
-import { loadWorkspaceNameOverrides } from '../src/lib/storage';
+import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 
@@ -309,6 +309,19 @@ describe('useWorkspaceState — renameWorkspace', () => {
     expect(state.workspaces[0]?.name).toBe('Old');
     expect(loadWorkspaceNameOverrides()).toEqual({});
     expect(deps.pushOperationFailure).toHaveBeenCalled();
+  });
+
+  it('keeps a saved name override when a workspace is upserted (derived → registered)', () => {
+    // Simulates: user renamed a derived workspace, then the daemon registers
+    // the root (e.g. on first chat) and returns the default basename.
+    saveWorkspaceNameOverrides({ '/abs/path': 'Renamed' });
+    const state = createState();
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    ws.upsertWorkspacePreserveOrder(workspace('wd_1', '/abs/path', 'path'));
+
+    expect(state.workspaces[0]?.name).toBe('Renamed');
   });
 });
 
