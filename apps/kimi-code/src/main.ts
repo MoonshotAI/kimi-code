@@ -23,7 +23,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { createProgram } from './cli/commands';
-import { scheduleHeadlessForceExit } from './cli/headless-exit';
+import { finalizeHeadlessRun } from './cli/headless-exit';
 import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
@@ -157,14 +157,18 @@ export function main(): void {
     version,
     (opts) => {
       void handleMainCommand(opts, version)
-        .then((outcome) => {
+        .then(async (outcome) => {
           // Only the process entrypoint disposes of the process. Print mode
-          // relies on the event loop draining to exit; arm an unref'd fallback
-          // so a stray ref'd handle left over from the run can't wedge a
-          // completed `kimi -p` until an external timeout. A healthy run drains
-          // and exits before it fires.
+          // relies on the event loop draining to exit; flush any buffered output
+          // and then arm an unref'd fallback so a stray ref'd handle left over
+          // from the run can't wedge a completed `kimi -p` until an external
+          // timeout. A healthy run drains and exits before the fallback fires.
           if (outcome.headlessCompleted) {
-            scheduleHeadlessForceExit(process, () => Number(process.exitCode) || 0);
+            await finalizeHeadlessRun(
+              process,
+              [process.stdout, process.stderr],
+              () => Number(process.exitCode) || 0,
+            );
           }
         })
         .catch(async (error: unknown) => {

@@ -32,7 +32,7 @@ const mocks = vi.hoisted(() => {
     })),
     initializeCliTelemetry: vi.fn(),
     handleUpgrade: vi.fn(),
-    scheduleHeadlessForceExit: vi.fn(),
+    finalizeHeadlessRun: vi.fn(),
     log: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -129,7 +129,7 @@ vi.mock('../../src/cli/run-prompt', () => ({
 }));
 
 vi.mock('../../src/cli/headless-exit', () => ({
-  scheduleHeadlessForceExit: mocks.scheduleHeadlessForceExit,
+  finalizeHeadlessRun: mocks.finalizeHeadlessRun,
 }));
 
 class ExitCalled extends Error {
@@ -265,7 +265,7 @@ describe('main entry command handling', () => {
     // Process disposition belongs to the entrypoint, never to this reusable,
     // unit-tested handler: arming a process.exit here would kill the test runner
     // or any embedding host. The handler only reports what ran.
-    expect(mocks.scheduleHeadlessForceExit).not.toHaveBeenCalled();
+    expect(mocks.finalizeHeadlessRun).not.toHaveBeenCalled();
     expect(outcome).toEqual({ headlessCompleted: true });
   });
 
@@ -278,7 +278,7 @@ describe('main entry command handling', () => {
     const outcome = await handleMainCommand(opts, '0.0.1-alpha.2');
 
     expect(outcome).toEqual({ headlessCompleted: false });
-    expect(mocks.scheduleHeadlessForceExit).not.toHaveBeenCalled();
+    expect(mocks.finalizeHeadlessRun).not.toHaveBeenCalled();
   });
 
   it('arms the force-exit fallback at the entrypoint after a completed headless run', async () => {
@@ -286,6 +286,7 @@ describe('main entry command handling', () => {
     mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
     mocks.runUpdatePreflight.mockResolvedValue('continue');
     mocks.runPrompt.mockResolvedValue(void 0);
+    mocks.finalizeHeadlessRun.mockResolvedValue(void 0);
 
     main();
     const programArgs = mocks.createProgram.mock.calls[0] as unknown as unknown[];
@@ -293,11 +294,11 @@ describe('main entry command handling', () => {
     mainAction(opts);
 
     await waitForAssertion(() => {
-      expect(mocks.scheduleHeadlessForceExit).toHaveBeenCalledTimes(1);
+      expect(mocks.finalizeHeadlessRun).toHaveBeenCalledTimes(1);
     });
     // The exit code is resolved lazily so a goal turn that sets process.exitCode wins.
-    const forceExitArgs = mocks.scheduleHeadlessForceExit.mock.calls[0] as unknown as unknown[];
-    expect(typeof forceExitArgs[1]).toBe('function');
+    const forceExitArgs = mocks.finalizeHeadlessRun.mock.calls[0] as unknown as unknown[];
+    expect(typeof forceExitArgs[2]).toBe('function');
   });
 
   it('keeps shell mode update preflight interactive by default', async () => {

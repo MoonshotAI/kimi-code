@@ -27,6 +27,13 @@ export const PROMPT_CLEANUP_TIMEOUT_MS = 8000;
 // well before this fires.
 export const HEADLESS_FORCE_EXIT_GRACE_MS = 2000;
 
+// Max time to wait for buffered stdout/stderr to flush before arming the
+// force-exit fallback. A slow/piped consumer's still-draining stdio is a
+// legitimate ref'd handle — flushing first prevents the fallback from
+// truncating completed output. Bounded so a permanently-stuck consumer can't
+// re-introduce the hang.
+export const HEADLESS_STDIO_DRAIN_TIMEOUT_MS = 10000;
+
 // Published npm package name; this can differ from the executable command.
 export const NPM_PACKAGE_NAME = '@moonshot-ai/kimi-code';
 
