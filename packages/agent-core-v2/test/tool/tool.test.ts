@@ -1,6 +1,6 @@
 import { Readable, type Writable } from 'node:stream';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,11 +37,13 @@ describe('Agent tools', () => {
   });
 
   describe('PreToolUse blocking', () => {
-    let execWithEnv: ReturnType<typeof vi.fn>;
+    let execWithEnv: NonNullable<Kaos['execWithEnv']>;
     let triggered: Array<[string, string, number]>;
 
     beforeEach(() => {
-      execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute'));
+      execWithEnv = vi
+        .fn<NonNullable<Kaos['execWithEnv']>>()
+        .mockRejectedValue(new Error('Bash should not execute'));
       triggered = [];
       const hookEngine = new HookEngine(
         [

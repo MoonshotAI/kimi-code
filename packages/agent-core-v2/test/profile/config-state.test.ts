@@ -120,7 +120,7 @@ describe('ConfigState model capabilities', () => {
           provider: 'deepseek',
           model: 'deepseek-v4-flash',
           maxContextSize: 1_000_000,
-          maxOutputSize: 384000,
+          maxOutputSize: 384_000,
         },
       },
     };

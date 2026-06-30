@@ -26,12 +26,16 @@ import { MASTER_ENV } from '#/flag/flagService';
 import { microCompactionFlag } from '#/microCompaction/flag';
 import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
-import type { TestAgentContext, TestAgentOptions } from '../harness';
-import { testAgent } from '../harness';
+import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../harness';
+import { coreServices, testAgent } from '../harness';
 import {
   IFullCompaction,
   IMicroCompactionService,
+  IOAuthService,
+  IProfileService,
+  IToolStoreService,
 } from '#/index';
+import { TODO_STORE_KEY } from '#/todoList/tools/todo-list';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
@@ -49,6 +53,15 @@ const CATALOGUED_MODEL_CAPABILITIES = {
   max_context_tokens: 256_000,
 } as const;
 const MICRO_COMPACTION_FLAG_ENV = getMicroCompactionFlagEnv();
+const SNAPSHOT_VISIBLE_TOOLS = [
+  'Agent',
+  'AgentSwarm',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'EnterPlanMode',
+  'ExitPlanMode',
+] as const;
 
 describe('FullCompaction', () => {
   it('keeps an oversized trailing user message as recent', () => {
@@ -189,6 +202,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
@@ -233,7 +247,7 @@ describe('FullCompaction', () => {
     expect(completeEvent?.args).not.toHaveProperty('summary');
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
-      tools: Agent, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
+      tools: Agent, AgentSwarm, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
       messages:
         user: text "old user one"
         assistant: text "old assistant one"
@@ -276,6 +290,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     await ctx.dispatch({
@@ -330,6 +345,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
 
     // Force-construct the micro-compaction service so it registers its
@@ -376,7 +392,10 @@ describe('FullCompaction', () => {
       }
       return textResult('Recovered compacted summary.');
     };
-    const ctx = testAgent({ ...oauthOptions, generate });
+    const ctx = testAgent(oauthOptions.services, {
+      initialConfig: oauthOptions.initialConfig,
+      generate,
+    });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -439,6 +458,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
@@ -492,6 +512,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
@@ -945,6 +966,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendPartiallyResolvedParallelToolExchange();
@@ -958,7 +980,7 @@ describe('FullCompaction', () => {
 
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
-      tools: Agent, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
+      tools: Agent, AgentSwarm, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
       messages:
         user: text "old user one"
         assistant: text "old assistant one"
@@ -998,6 +1020,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
@@ -1021,7 +1044,7 @@ describe('FullCompaction', () => {
     );
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
-      tools: Agent, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
+      tools: Agent, AgentSwarm, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
       messages:
         user: text "old user one"
         assistant: text "old assistant one"
@@ -1130,6 +1153,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
@@ -1158,7 +1182,7 @@ describe('FullCompaction', () => {
     );
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: <system-prompt>
-      tools: Agent, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
+      tools: Agent, AgentSwarm, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
       messages:
         user: text "old user one"
         assistant: text "old assistant one"
@@ -1176,6 +1200,7 @@ describe('FullCompaction', () => {
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
     ctx.appendExchange(2, 'old user two', 'old assistant two', 200);
@@ -1198,7 +1223,7 @@ describe('FullCompaction', () => {
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
       call 1:
         system: <system-prompt>
-        tools: Agent, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
+        tools: Agent, AgentSwarm, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
         messages:
           user: text "old user one"
           assistant: text "old assistant one"
@@ -1701,7 +1726,7 @@ describe('FullCompaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    ctx.profile.update({ thinkingLevel: 'high' });
+    ctx.get(IProfileService).update({ thinkingLevel: 'high' });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -1752,7 +1777,7 @@ describe('FullCompaction', () => {
       ...resolve(model),
       modelCapabilities: UNKNOWN_CAPABILITY,
     });
-    expect(ctx.profile.data().modelCapabilities.max_context_tokens).toBe(0);
+    expect(ctx.get(IProfileService).data().modelCapabilities.max_context_tokens).toBe(0);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -1925,7 +1950,7 @@ describe('FullCompaction', () => {
 
   it('emits context.overflow and terminates the turn after too many auto compactions', async () => {
     const ctx = testAgent({ fullCompaction: { compactionStrategy: alwaysCompactOnce } });
-    ctx.configure();
+    ctx.configure({ tools: SNAPSHOT_VISIBLE_TOOLS });
 
     ctx.mockNextResponse({ type: 'text', text: 'First compacted summary.' });
     ctx.mockNextResponse({ type: 'text', text: 'I need a tool.' }, missingToolCall());
@@ -1952,7 +1977,7 @@ describe('FullCompaction', () => {
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
       call 1:
         system: <system-prompt>
-        tools: Agent, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
+        tools: Agent, AgentSwarm, CronCreate, CronDelete, CronList, EnterPlanMode, ExitPlanMode
         messages:
           user: text "Trigger repeated compaction"
           user: text <compaction-instruction>
@@ -1973,7 +1998,7 @@ describe('FullCompaction', () => {
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
 
-    ctx.toolStore.set('todo', [
+    ctx.get(IToolStoreService).set(TODO_STORE_KEY, [
       { title: 'Fix the auth bug', status: 'in_progress' },
       { title: 'Add tests', status: 'pending' },
     ]);
@@ -2040,7 +2065,10 @@ function countEvents(events: ReturnType<TestAgentContext['newEvents']>, type: st
 
 function oauthTestAgentOptions(
   getAccessToken: (options?: { readonly force?: boolean }) => Promise<string>,
-): Pick<TestAgentOptions, 'initialConfig' | 'modelResolverOverrides'> {
+): {
+  readonly initialConfig: TestAgentOptions['initialConfig'];
+  readonly services: TestAgentServiceOverride;
+} {
   return {
     initialConfig: {
       defaultModel: 'kimi-code',
@@ -2059,9 +2087,11 @@ function oauthTestAgentOptions(
         },
       },
     },
-    modelResolverOverrides: {
-      resolveOAuthTokenProvider: () => ({ getAccessToken }),
-    },
+    services: coreServices((reg) => {
+      reg.definePartialInstance(IOAuthService, {
+        resolveTokenProvider: () => ({ getAccessToken }),
+      });
+    }),
   };
 }
 

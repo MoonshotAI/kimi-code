@@ -28,6 +28,7 @@ function stubOAuth(): IOAuthService {
     cancelLogin: () => Promise.reject(new Error('not implemented')),
     logout: () => Promise.reject(new Error('not implemented')),
     status: () => Promise.resolve({ loggedIn: false }),
+    refreshOAuthProviderModels: () => Promise.reject(new Error('not implemented')),
     resolveTokenProvider: () => undefined,
     getCachedAccessToken: () => Promise.resolve(undefined),
   };

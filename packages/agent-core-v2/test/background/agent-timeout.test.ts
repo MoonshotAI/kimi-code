@@ -1,5 +1,5 @@
 /**
- * BackgroundManager task timeout using AgentBackgroundTask metadata.
+ * BackgroundService task timeout for AgentBackgroundTask registrations.
  *
  * Semantics:
  *   - manager-owned deadline fires → status=`timed_out`
@@ -17,21 +17,13 @@ import { createTestAgent, type TestAgentContext } from '../harness';
 function agentTask(
   completion: Promise<{ result: string }>,
   description: string,
-  timeoutMs?: number,
 ): AgentBackgroundTask {
-  const task = new AgentBackgroundTask(
+  return new AgentBackgroundTask(
     { agentId: 'agent-child', profileName: 'coder', completion },
     description,
     { markActiveChildDetached: vi.fn() },
     new AbortController(),
   );
-  if (timeoutMs !== undefined) {
-    Object.defineProperty(task, 'timeoutMs', {
-      value: timeoutMs,
-      enumerable: true,
-    });
-  }
-  return task;
 }
 
 describe('AgentBackgroundTask — timeoutMs', () => {
@@ -56,7 +48,9 @@ describe('AgentBackgroundTask — timeoutMs', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     // A never-resolving completion — only the deadline will fire.
     const hangForever = new Promise<{ result: string }>(() => {});
-    const taskId = background.registerTask(agentTask(hangForever, 'hang', 2_000));
+    const taskId = background.registerTask(agentTask(hangForever, 'hang'), {
+      timeoutMs: 2_000,
+    });
 
     // Advance past the deadline and manager-owned stop grace.
     const terminalPromise = background.wait(taskId);
@@ -87,9 +81,9 @@ describe('AgentBackgroundTask — timeoutMs', () => {
     const internalErr = new Error('aiohttp sock_read timeout');
     internalErr.name = 'TimeoutError';
     const rejecting = Promise.reject(internalErr);
-    const taskId = background.registerTask(
-      agentTask(rejecting, 'internal timeout', 900_000),
-    );
+    const taskId = background.registerTask(agentTask(rejecting, 'internal timeout'), {
+      timeoutMs: 900_000,
+    });
 
     const info = await background.wait(taskId);
     expect(info?.status).toBe('failed');
@@ -103,7 +97,7 @@ describe('AgentBackgroundTask — timeoutMs', () => {
   // downstream wait-cap consumers can honour the agent-supplied value
   // instead of falling back to a hard-coded default. (gap #6 family.)
   //
-  // Uses fake timers so the 30-min deadline armed by registerAgentTask
+  // Uses fake timers so the deadline armed by registerTask
   // does not leak across the test boundary into the Vitest worker —
   // the `completion` promise here never resolves, so the lifecycle
   // promise's `.finally(clearTimeout)` would not run under real time.
@@ -114,7 +108,8 @@ describe('AgentBackgroundTask — timeoutMs', () => {
       resolveFn = res;
     });
     const taskId = background.registerTask(
-      agentTask(completion, 'persist timeout', 1_800_000),
+      agentTask(completion, 'persist timeout'),
+      { timeoutMs: 1_800_000 },
     );
     const info = background.getTask(taskId);
     expect((info as unknown as { timeoutMs?: number }).timeoutMs).toBe(1_800_000);
@@ -133,7 +128,7 @@ describe('AgentBackgroundTask — timeoutMs', () => {
   //
   // This test is kept (rather than deleted) to act as a regression
   // guard: if someone later adds a hard-coded default in
-  // registerAgentTask, the assertion below catches it.
+  // registerTask, the assertion below catches it.
   it('omitted timeoutMs leaves the task info field undefined', async () => {
     let resolveFn!: (r: { result: string }) => void;
     const completion = new Promise<{ result: string }>((res) => {
@@ -158,7 +153,9 @@ describe('AgentBackgroundTask — timeoutMs', () => {
     const completion = new Promise<{ result: string }>((res) => {
       resolveFn = res;
     });
-    const taskId = background.registerTask(agentTask(completion, 'zero timeout', 0));
+    const taskId = background.registerTask(agentTask(completion, 'zero timeout'), {
+      timeoutMs: 0,
+    });
     // The literal zero is preserved on the task info.
     const initial = background.getTask(taskId);
     expect((initial as unknown as { timeoutMs?: number }).timeoutMs).toBe(0);

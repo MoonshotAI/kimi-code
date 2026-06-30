@@ -734,7 +734,8 @@ function workspaceStub(initialWorkDir: string): IWorkspaceContext {
 }
 
 function kaosStub(pathClass: ReturnType<KaosService['pathClass']> = 'posix'): KaosService {
-  const kaos = {
+  let kaos!: KaosService;
+  kaos = {
     _serviceBrand: undefined,
     name: 'test',
     cwd: '/workspace',

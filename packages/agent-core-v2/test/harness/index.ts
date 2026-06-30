@@ -33,6 +33,7 @@ export {
   testAgent,
   wireRecordPersistenceServices,
   type TestAgentContext,
+  type TestAgentOptions,
   type TestAgentServiceGroup,
   type TestAgentServiceOverride,
   type TestAgentServiceRegistration,

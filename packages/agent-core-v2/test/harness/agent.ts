@@ -4,7 +4,21 @@ import { Readable, type Writable } from 'node:stream';
 
 import { createControlledPromise } from '@antfu/utils';
 import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
-import type { ContentPart, ModelCapability, ProviderConfig, generate as kosongGenerate } from '@moonshot-ai/kosong';
+import {
+  isToolCall,
+  isToolCallPart,
+  type ChatProvider,
+  type ContentPart,
+  type GenerateOptions,
+  type Message as KosongMessage,
+  type ModelCapability,
+  type ProviderConfig,
+  type StreamedMessage,
+  type StreamedMessagePart,
+  type ThinkingEffort,
+  type Tool as KosongTool,
+  type generate as kosongGenerate,
+} from '@moonshot-ai/kosong';
 import { expect, vi } from 'vitest';
 
 import {
@@ -28,6 +42,7 @@ import {
   IContextSizeService,
   IEventSink,
   IExternalHooksService,
+  IFileToolsService,
   IFullCompaction,
   IKaos,
   ILLMRequester,
@@ -38,8 +53,10 @@ import {
   IPermissionModeService,
   IPermissionRulesService,
   ISessionContext,
+  IShellToolsService,
   IStorageService,
   ISubagentHost,
+  ISwarmService,
   ITelemetryService,
   ITerminalBackend,
   IToolRegistry,
@@ -71,6 +88,7 @@ import type { PromisifyMethods } from '#/_base/utils/types';
 import type { ApprovalResponse } from '#/approval';
 import { IBlobStoreService, type IBlobStoreService as BlobStoreService } from '#/blobStore';
 import { IOAuthService } from '#/auth/auth';
+import { IChatProviderFactory } from '#/chatProvider';
 import type { ContextMessage } from '#/contextMemory';
 import { ICronService } from '#/cron/cron';
 import { CronService } from '#/cron/cronService';
@@ -78,7 +96,7 @@ import type { HookEngine } from '#/externalHooks/engine';
 import type { FullCompactionServiceOptions } from '#/fullCompaction';
 import type { ILogger, LogContext, LogLevel } from '#/log';
 import type { McpServiceOptions } from '#/mcp';
-import type { MicroCompactionServiceOptions } from '#/microCompaction';
+import { MICRO_COMPACTION_SECTION, type MicroCompactionConfig } from '#/microCompaction';
 import { IModelResolver, ModelResolver, type ResolvedModel } from '#/modelRuntime';
 import type { PermissionGateOptions } from '#/permissionGate';
 import type { PermissionMode } from '#/permissionPolicy';
@@ -145,6 +163,7 @@ interface ModelConfigForConfig {
   readonly provider: string;
   readonly model: string;
   readonly maxContextSize: number;
+  readonly maxOutputSize?: number;
   readonly capabilities?: readonly string[];
 }
 
@@ -239,6 +258,7 @@ interface ResumeStateSnapshot {
   readonly background: ReturnType<IBackgroundService['list']>;
   readonly config: {
     readonly cwd: string;
+    readonly activeToolNames: readonly string[] | undefined;
     readonly provider: ProviderConfig | undefined;
     readonly profileName: string | undefined;
     readonly thinkingLevel: string;
@@ -249,7 +269,6 @@ interface ResumeStateSnapshot {
     readonly tokenCount: number;
   };
   readonly permission: ReturnType<IPermissionGate['data']>;
-  readonly tools: ReturnType<AgentTestContext['toolsData']>;
   readonly toolStore: ReturnType<IToolStoreService['data']>;
   readonly usage: ReturnType<IUsageService['status']>;
 }
@@ -261,6 +280,20 @@ interface ConfigureOptions {
 }
 
 export type TestAgentContext = AgentTestContext;
+
+export interface TestAgentOptions {
+  readonly generate?: GenerateFn | undefined;
+  readonly telemetry?: ITelemetryService | undefined;
+  readonly persistence?: WireRecordPersistence | undefined;
+  readonly microCompaction?: {
+    readonly config?: Partial<MicroCompactionConfig> | undefined;
+  } | undefined;
+  readonly fullCompaction?: FullCompactionServiceOptions | undefined;
+  readonly hookEngine?: Pick<HookEngine, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined;
+  readonly initialConfig?: Partial<KimiConfig> | undefined;
+  readonly autoConfigure?: boolean | undefined;
+  readonly [key: string]: unknown;
+}
 
 type MutableScopeSeed = Array<readonly [ServiceIdentifier<unknown>, unknown]>;
 
@@ -285,6 +318,8 @@ interface TestAgentScopedServiceOverride {
 export type TestAgentServiceOverride =
   | TestAgentScopedServiceOverride
   | readonly TestAgentServiceOverride[];
+
+type TestAgentInput = TestAgentServiceOverride | TestAgentOptions;
 
 export function coreServices(group: TestAgentServiceGroup): TestAgentServiceOverride {
   return scopedServices('core', group);
@@ -397,7 +432,7 @@ export function logServices(logger: Logger): TestAgentServiceOverride {
 }
 
 export function llmGenerateServices(generate: GenerateFn): TestAgentServiceOverride {
-  return agentService(ILLMRequester, new SyncDescriptor(LLMRequesterService, [{ generate }]));
+  return coreService(IChatProviderFactory, createGenerateBackedChatProviderFactory(generate));
 }
 
 export function telemetryServices(telemetry: ITelemetryService): TestAgentServiceOverride {
@@ -418,12 +453,12 @@ export function externalHookServices(
 }
 
 export function microCompactionServices(
-  options: MicroCompactionServiceOptions,
+  options: { readonly config?: Partial<MicroCompactionConfig> },
 ): TestAgentServiceOverride {
-  return agentService(
-    IMicroCompactionService,
-    new SyncDescriptor(MicroCompactionService, [options]),
-  );
+  return configServices(() => ({
+    ...emptyConfig(),
+    [MICRO_COMPACTION_SECTION]: options.config,
+  }));
 }
 
 export function fullCompactionServices(
@@ -514,12 +549,57 @@ export function createCommandKaos(stdout: string): Kaos {
   });
 }
 
-export function testAgent(...overrides: readonly TestAgentServiceOverride[]): AgentTestContext {
-  return createTestAgent(...overrides);
+export function testAgent(...inputs: readonly TestAgentInput[]): AgentTestContext {
+  return createTestAgent(...inputs);
 }
 
-export function createTestAgent(...overrides: readonly TestAgentServiceOverride[]): AgentTestContext {
-  return new AgentTestContext(overrides);
+export function createTestAgent(...inputs: readonly TestAgentInput[]): AgentTestContext {
+  const { options, overrides } = normalizeTestAgentInputs(inputs);
+  return new AgentTestContext(overrides, options);
+}
+
+function normalizeTestAgentInputs(
+  inputs: readonly TestAgentInput[],
+): { readonly options: TestAgentOptions; readonly overrides: readonly TestAgentServiceOverride[] } {
+  let options: TestAgentOptions = {};
+  const overrides: TestAgentServiceOverride[] = [];
+  for (const input of inputs) {
+    if (isTestAgentOptions(input)) {
+      options = mergeTestAgentOptions(options, input);
+    } else {
+      overrides.push(input);
+    }
+  }
+  return { options, overrides };
+}
+
+function isTestAgentOptions(input: TestAgentInput): input is TestAgentOptions {
+  return !Array.isArray(input) && !('scope' in input);
+}
+
+function mergeTestAgentOptions(
+  base: TestAgentOptions,
+  next: TestAgentOptions,
+): TestAgentOptions {
+  return {
+    ...base,
+    ...next,
+    microCompaction:
+      base.microCompaction === undefined && next.microCompaction === undefined
+        ? undefined
+        : {
+          ...base.microCompaction,
+          ...next.microCompaction,
+          config: {
+            ...base.microCompaction?.config,
+            ...next.microCompaction?.config,
+          },
+        },
+    initialConfig: {
+      ...base.initialConfig,
+      ...next.initialConfig,
+    },
+  };
 }
 
 function flattenServiceOverrides(
@@ -704,6 +784,7 @@ class RecordingWireRecordService extends WireRecordService {
 
 export class AgentTestContext {
   private readonly serviceOverrides: readonly TestAgentScopedServiceOverride[];
+  private readonly options: TestAgentOptions;
   private readonly scriptedGenerate = createScriptedGenerate();
   readonly recordHistory: PersistedWireRecord[] = [];
   private readonly root: Scope;
@@ -724,15 +805,19 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
-  constructor(overrides: readonly TestAgentServiceOverride[] = []) {
+  constructor(
+    overrides: readonly TestAgentServiceOverride[] = [],
+    options: TestAgentOptions = {},
+  ) {
+    this.options = options;
     this.serviceOverrides = flattenServiceOverrides(overrides);
     this.emitter.on('error', () => {});
-    this.kimiConfig = emptyConfig();
+    this.kimiConfig = applyTestAgentOptionsToConfig(emptyConfig(), options);
 
     const kaos = createFakeKaos();
     const sessionId = 'test-session';
     const agentId = 'main';
-    const persistence = new InMemoryWireRecordPersistence();
+    const persistence = options.persistence ?? new InMemoryWireRecordPersistence();
 
     const coreSeeds = collectScopeSeed([
       (reg) => {
@@ -756,6 +841,15 @@ export class AgentTestContext {
           ),
         );
         reg.defineInstance(ILogService, createLogService(undefined));
+        reg.defineInstance(
+          IChatProviderFactory,
+          createGenerateBackedChatProviderFactory(
+            options.generate ?? this.scriptedGenerate.generate,
+          ),
+        );
+        if (options.telemetry !== undefined) {
+          reg.defineInstance(ITelemetryService, options.telemetry);
+        }
       },
     ], this.serviceOverrides, 'core');
     this.root = createCoreScope({ extra: coreSeeds });
@@ -789,13 +883,18 @@ export class AgentTestContext {
             (event: PersistedWireRecord) => this.captureRecord(event),
           ]));
           reg.defineDescriptor(IProfileService, new SyncDescriptor(ProfileService));
+          reg.defineDescriptor(ILLMRequester, new SyncDescriptor(LLMRequesterService));
           reg.defineDescriptor(
-            ILLMRequester,
-            new SyncDescriptor(LLMRequesterService, [{ generate: this.scriptedGenerate.generate }]),
+            IExternalHooksService,
+            new SyncDescriptor(ExternalHooksService, [
+              options.hookEngine === undefined ? {} : { hookEngine: options.hookEngine },
+            ]),
           );
-          reg.defineDescriptor(IExternalHooksService, new SyncDescriptor(ExternalHooksService, [{}]));
-          reg.defineDescriptor(IMicroCompactionService, new SyncDescriptor(MicroCompactionService, [{}]));
-          reg.defineDescriptor(IFullCompaction, new SyncDescriptor(FullCompactionService, [{}]));
+          reg.defineDescriptor(IMicroCompactionService, new SyncDescriptor(MicroCompactionService));
+          reg.defineDescriptor(
+            IFullCompaction,
+            new SyncDescriptor(FullCompactionService, [options.fullCompaction ?? {}]),
+          );
           reg.defineDescriptor(
             IPermissionRulesService,
             new SyncDescriptor(PermissionRulesService),
@@ -843,11 +942,25 @@ export class AgentTestContext {
     const rpcMethods = this.get(IAgentRPCService);
     this.rpc = this.createPromiseAgentApi(rpcMethods);
 
-    this.configure();
+    if (options.autoConfigure !== false) {
+      this.configure();
+    }
   }
 
   get<T>(id: ServiceIdentifier<T>): T {
     return this.runtime.get(id);
+  }
+
+  get context(): IContextMemory {
+    return this.get(IContextMemory);
+  }
+
+  get contextSize(): IContextSizeService {
+    return this.get(IContextSizeService);
+  }
+
+  get wireRecord(): IWireRecord {
+    return this.get(IWireRecord);
   }
 
   private initializeRestorableServices(): void {
@@ -861,10 +974,16 @@ export class AgentTestContext {
     const permissionRules = this.get(IPermissionRulesService);
     const cron = this.get(ICronService);
     const plan = this.get(IPlanService);
+    const fileTools = this.get(IFileToolsService);
+    const shellTools = this.get(IShellToolsService);
+    const swarm = this.get(ISwarmService);
 
     context.get();
     const microCompaction = this.get(IMicroCompactionService);
     microCompaction;
+    void fileTools._serviceBrand;
+    void shellTools._serviceBrand;
+    void swarm.isActive;
     contextSize.getStatus();
     usage.status();
     toolStore.data();
@@ -1178,10 +1297,11 @@ export class AgentTestContext {
     await this.drainWirePersistence();
     const profile = this.get(IProfileService);
     const resumed = createTestAgent(
+      { autoConfigure: false },
       ...this.serviceOverrides,
       kaosServices(createResumeNoSideEffectKaos(profile.data().cwd)),
       configServices(() => this.kimiConfig),
-      agentService(ILLMRequester, new SyncDescriptor(LLMRequesterService, [{ generate: failOnResumeGenerate }])),
+      llmGenerateServices(failOnResumeGenerate),
       wireRecordPersistenceServices(new InMemoryWireRecordPersistence(
         withMetadata(this.recordHistory.map(cloneRecord)),
       )),
@@ -1578,7 +1698,6 @@ function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
     config: configStateSnapshot(ctx),
     context: resumeContextSnapshot(ctx),
     permission: permission.data(),
-    tools: ctx.toolsData(),
     toolStore: toolStore.data(),
     usage: usage.status(),
   };
@@ -1606,6 +1725,7 @@ function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config
   const data = profile.data();
   return {
     cwd: data.cwd,
+    activeToolNames: data.activeToolNames,
     provider: data.provider,
     profileName: data.profileName,
     thinkingLevel: data.thinkingLevel,
@@ -1615,6 +1735,29 @@ function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config
 
 function emptyConfig(): KimiConfig {
   return configWithProvider({ providers: {} }, MOCK_PROVIDER, undefined);
+}
+
+function applyTestAgentOptionsToConfig(
+  config: KimiConfig,
+  options: TestAgentOptions,
+): KimiConfig {
+  const initialConfig = options.initialConfig ?? {};
+  return {
+    ...config,
+    ...initialConfig,
+    providers: {
+      ...config.providers,
+      ...initialConfig.providers,
+    },
+    models: {
+      ...config.models,
+      ...initialConfig.models,
+    },
+    [MICRO_COMPACTION_SECTION]:
+      options.microCompaction?.config ??
+      initialConfig[MICRO_COMPACTION_SECTION] ??
+      config[MICRO_COMPACTION_SECTION],
+  };
 }
 
 function configService(readConfig: () => KimiConfig): IConfigService {
@@ -1676,6 +1819,11 @@ function cronEnvOverrides(base: Record<string, unknown>): Record<string, unknown
   setBoolean('noStale', 'KIMI_CRON_NO_STALE');
   setBoolean('disabled', 'KIMI_DISABLE_CRON');
   setBoolean('manualTick', 'KIMI_CRON_MANUAL_TICK');
+  const pollIntervalMs = parseEnvCronPollIntervalMs(process.env['KIMI_CRON_POLL_INTERVAL_MS']);
+  if (pollIntervalMs !== undefined) {
+    next['pollIntervalMs'] = pollIntervalMs;
+    changed = true;
+  }
   if (process.env['KIMI_CRON_CLOCK'] !== undefined) {
     next['clock'] = process.env['KIMI_CRON_CLOCK'];
     changed = true;
@@ -1686,6 +1834,15 @@ function cronEnvOverrides(base: Record<string, unknown>): Record<string, unknown
 function parseEnvBoolean(raw: string | undefined): boolean | undefined {
   if (raw === undefined) return undefined;
   return raw === '1';
+}
+
+function parseEnvCronPollIntervalMs(raw: string | undefined): number | null | undefined {
+  const value = raw?.trim();
+  if (value === undefined || value.length === 0) return undefined;
+  if (value === 'null') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) return undefined;
+  return parsed;
 }
 
 function parseEnvCompletionTokens(raw: string | undefined): number | undefined {
@@ -1797,6 +1954,163 @@ function createLogService(
       { ...bindings, ...childBindings },
     ),
     flush: () => Promise.resolve(),
+  };
+}
+
+function createGenerateBackedChatProviderFactory(generate: GenerateFn): IChatProviderFactory {
+  return {
+    _serviceBrand: undefined,
+    create: (config) => new GenerateBackedChatProvider(config, generate),
+    register: () => {},
+  };
+}
+
+class GenerateBackedChatProvider implements ChatProvider {
+  readonly name: string;
+  readonly modelName: string;
+
+  constructor(
+    private readonly config: ProviderConfig,
+    private readonly generateFn: GenerateFn,
+    readonly thinkingEffort: ThinkingEffort | null = null,
+    readonly modelParameters: Record<string, unknown> = modelParametersFromConfig(config),
+  ) {
+    this.name = config.type;
+    this.modelName = modelNameFromConfig(config);
+  }
+
+  async generate(
+    systemPrompt: string,
+    tools: KosongTool[],
+    history: KosongMessage[],
+    options?: GenerateOptions,
+  ): Promise<StreamedMessage> {
+    const parts: StreamedMessagePart[] = [];
+    const result = await this.generateFn(
+      this,
+      systemPrompt,
+      tools,
+      history,
+      {
+        onMessagePart: (part) => {
+          parts.push(structuredClone(part));
+        },
+      },
+      {
+        signal: options?.signal,
+        auth: options?.auth,
+      },
+    );
+    return createStreamedMessage(
+      parts.length > 0
+        ? normalizeProviderStreamParts(parts)
+        : partsFromGeneratedMessage(result.message),
+      {
+        id: result.id,
+        usage: result.usage,
+        finishReason: result.finishReason,
+        rawFinishReason: result.rawFinishReason,
+      },
+    );
+  }
+
+  withThinking(effort: ThinkingEffort): ChatProvider {
+    return new GenerateBackedChatProvider(
+      this.config,
+      this.generateFn,
+      effort,
+      this.modelParameters,
+    );
+  }
+
+  withMaxCompletionTokens(maxCompletionTokens: number): ChatProvider {
+    return new GenerateBackedChatProvider(
+      this.config,
+      this.generateFn,
+      this.thinkingEffort,
+      {
+        ...this.modelParameters,
+        [completionBudgetParamName(this.config.type)]: maxCompletionTokens,
+      },
+    );
+  }
+}
+
+function modelParametersFromConfig(config: ProviderConfig): Record<string, unknown> {
+  return {
+    model: modelNameFromConfig(config),
+    baseUrl: 'baseUrl' in config ? config.baseUrl : undefined,
+    ...('generationKwargs' in config ? config.generationKwargs : undefined),
+  };
+}
+
+function modelNameFromConfig(config: ProviderConfig): string {
+  return 'model' in config ? config.model : 'test-model';
+}
+
+function completionBudgetParamName(type: ProviderConfig['type']): string {
+  if (type === 'kimi') return 'max_completion_tokens';
+  if (type === 'openai_responses') return 'max_output_tokens';
+  return 'max_tokens';
+}
+
+function partsFromGeneratedMessage(message: Awaited<ReturnType<GenerateFn>>['message']): StreamedMessagePart[] {
+  const parts: StreamedMessagePart[] = [
+    ...message.content.map((part) => structuredClone(part)),
+    ...message.toolCalls.map((part) => structuredClone(part)),
+  ];
+  return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
+}
+
+function normalizeProviderStreamParts(parts: readonly StreamedMessagePart[]): StreamedMessagePart[] {
+  const normalized: StreamedMessagePart[] = [];
+  const pendingIndexedDeltas = new Map<number | string, StreamedMessagePart[]>();
+  const seenIndexes = new Set<number | string>();
+
+  for (const part of parts) {
+    if (isToolCallPart(part) && part.index !== undefined && !seenIndexes.has(part.index)) {
+      const pending = pendingIndexedDeltas.get(part.index) ?? [];
+      pending.push(structuredClone(part));
+      pendingIndexedDeltas.set(part.index, pending);
+      continue;
+    }
+
+    normalized.push(structuredClone(part));
+
+    if (isToolCall(part) && part._streamIndex !== undefined) {
+      seenIndexes.add(part._streamIndex);
+      const pending = pendingIndexedDeltas.get(part._streamIndex);
+      if (pending !== undefined) {
+        pendingIndexedDeltas.delete(part._streamIndex);
+        normalized.push(...pending);
+      }
+    }
+  }
+
+  for (const pending of pendingIndexedDeltas.values()) {
+    normalized.push(...pending);
+  }
+
+  return normalized;
+}
+
+function createStreamedMessage(
+  parts: readonly StreamedMessagePart[],
+  meta: Pick<
+    Awaited<ReturnType<GenerateFn>>,
+    'id' | 'usage' | 'finishReason' | 'rawFinishReason'
+  >,
+): StreamedMessage {
+  return {
+    id: meta.id,
+    usage: meta.usage,
+    finishReason: meta.finishReason ?? null,
+    rawFinishReason: meta.rawFinishReason ?? null,
+    async *[Symbol.asyncIterator]() {
+      for (const part of parts) {
+        yield structuredClone(part);
+      }
+    },
   };
 }
 

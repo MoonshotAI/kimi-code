@@ -139,7 +139,7 @@ export class ToolExecutorService implements IToolExecutor {
           result: toolResult,
           stopTurn: toolResult.stopTurn === true,
         }),
-        stopBatchAfterThis: toolResult.stopBatchAfterThis,
+        stopBatchAfterThis: toolResult.stopBatchAfterThis ?? toolResult.stopTurn,
       };
     };
 

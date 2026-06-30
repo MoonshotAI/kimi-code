@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFakeKaos } from '../../../tools/fixtures/fake-kaos';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { IContextInjector } from '#/contextInjector';
 import { IContextMemory, type ContextMessage } from '#/contextMemory';
 import { IPlanService } from '#/plan';
@@ -63,7 +63,7 @@ describe('PlanModeService dynamic injection content', () => {
     readText = async () => '';
     ctx = createTestAgent(kaosServices(createFakeKaos({
       mkdir: vi.fn().mockResolvedValue(undefined),
-      readText: (path) => readText(path),
+      readText: (path: string) => readText(path),
       writeText: vi.fn(async (_path: string, content: string) => content.length),
     })));
     context = ctx.get(IContextMemory);
