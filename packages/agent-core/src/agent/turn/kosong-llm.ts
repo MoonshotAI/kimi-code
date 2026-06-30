@@ -87,10 +87,14 @@ export class KosongLLM implements LLM {
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
     let requestStartedAt = Date.now();
+    let requestSentAt: number | undefined;
     let firstChunkAt: number | undefined;
     let streamEndedAt: number | undefined;
     const markRequestStart = (): void => {
       requestStartedAt = Date.now();
+    };
+    const markRequestSent = (): void => {
+      requestSentAt ??= Date.now();
     };
     const markStreamEnd = (): void => {
       streamEndedAt = Date.now();
@@ -113,6 +117,7 @@ export class KosongLLM implements LLM {
     const options: GenerateOptionsWithRequestLogFields = {
       signal: params.signal,
       onRequestStart: markRequestStart,
+      onRequestSent: markRequestSent,
       onStreamEnd: markStreamEnd,
       requestLogFields: params.requestLogFields,
     };
@@ -147,7 +152,7 @@ export class KosongLLM implements LLM {
       streamTiming:
         firstChunkAt === undefined
           ? undefined
-          : buildStreamTiming(requestStartedAt, firstChunkAt, streamEndedAt),
+          : buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt),
     };
 
     return response;
@@ -160,14 +165,27 @@ export class KosongLLM implements LLM {
 
 function buildStreamTiming(
   requestStartedAt: number,
+  requestSentAt: number | undefined,
   firstChunkAt: number,
   streamEndedAt: number | undefined,
 ): LLMStreamTiming {
   const outputEndedAt = streamEndedAt ?? Date.now();
-  return {
-    firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
+  const firstTokenLatencyMs = Math.max(0, firstChunkAt - requestStartedAt);
+  const timing: {
+    -readonly [K in keyof LLMStreamTiming]: LLMStreamTiming[K];
+  } = {
+    firstTokenLatencyMs,
     streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
   };
+  // Split TTFT across the request-dispatch boundary when the provider reported
+  // it. Clamp `requestSentAt` into [requestStartedAt, firstChunkAt] so a stray
+  // clock reading can never produce a negative or over-long component.
+  if (requestSentAt !== undefined) {
+    const sentAt = Math.min(Math.max(requestSentAt, requestStartedAt), firstChunkAt);
+    timing.requestBuildMs = sentAt - requestStartedAt;
+    timing.serverFirstTokenMs = firstChunkAt - sentAt;
+  }
+  return timing;
 }
 
 function buildKosongCallbacks(

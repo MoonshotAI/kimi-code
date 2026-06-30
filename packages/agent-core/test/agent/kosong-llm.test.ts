@@ -134,6 +134,78 @@ describe('KosongLLM stream timing', () => {
     expect(response.streamTiming?.firstTokenLatencyMs).toBeGreaterThanOrEqual(0);
     expect(response.streamTiming?.streamDurationMs).toBeGreaterThanOrEqual(0);
   });
+
+  it('splits first-token latency across the request-dispatch boundary', async () => {
+    const generate: GenerateFn = async (
+      _provider,
+      _systemPrompt,
+      _tools,
+      _history,
+      callbacks,
+      options,
+    ) => {
+      options?.onRequestStart?.();
+      options?.onRequestSent?.();
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
+      options?.onStreamEnd?.();
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'timed' }], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+
+    const response = await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    const timing = response.streamTiming;
+    expect(timing?.requestBuildMs).toBeGreaterThanOrEqual(0);
+    expect(timing?.serverFirstTokenMs).toBeGreaterThanOrEqual(0);
+    // The two components reconstruct the total (allowing for clock granularity).
+    expect((timing?.requestBuildMs ?? 0) + (timing?.serverFirstTokenMs ?? 0)).toBe(
+      timing?.firstTokenLatencyMs,
+    );
+  });
+
+  it('leaves the split undefined when the provider does not report dispatch', async () => {
+    const generate: GenerateFn = async (
+      _provider,
+      _systemPrompt,
+      _tools,
+      _history,
+      callbacks,
+      options,
+    ) => {
+      options?.onRequestStart?.();
+      // No onRequestSent — older providers / stubs that do not mark dispatch.
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
+      options?.onStreamEnd?.();
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'timed' }], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+
+    const response = await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response.streamTiming?.firstTokenLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(response.streamTiming?.requestBuildMs).toBeUndefined();
+    expect(response.streamTiming?.serverFirstTokenMs).toBeUndefined();
+  });
 });
 
 describe('KosongLLM completion budget', () => {

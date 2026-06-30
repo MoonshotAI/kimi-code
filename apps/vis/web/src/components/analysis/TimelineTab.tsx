@@ -290,7 +290,19 @@ function StepRow({ step, turnDurationMs }: { step: StepNode; turnDurationMs?: nu
         ) : null}
         <span className="text-fg-3 tabular" title="step wall-clock duration">{formatDuration(step.durationMs)}</span>
         {step.llmFirstTokenLatencyMs !== undefined ? (
-          <span className="text-fg-3 tabular" title="time to first token">ttft {step.llmFirstTokenLatencyMs}ms</span>
+          <span
+            className="text-fg-3 tabular"
+            title={
+              step.llmServerFirstTokenMs !== undefined && step.llmRequestBuildMs !== undefined
+                ? `time to first token (api ${step.llmServerFirstTokenMs}ms + client ${step.llmRequestBuildMs}ms)`
+                : 'time to first token'
+            }
+          >
+            ttft {step.llmFirstTokenLatencyMs}ms
+            {step.llmServerFirstTokenMs !== undefined && step.llmRequestBuildMs !== undefined
+              ? ` (api ${step.llmServerFirstTokenMs} + client ${step.llmRequestBuildMs})`
+              : ''}
+          </span>
         ) : null}
         {step.contextTokens !== undefined ? (
           <span className="text-fg-3 tabular" title="context-window fill after step">ctx {formatTokens(step.contextTokens)}</span>

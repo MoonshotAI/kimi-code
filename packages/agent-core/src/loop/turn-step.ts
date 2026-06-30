@@ -149,8 +149,12 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     finishReason: effectiveStopReason,
     llmFirstTokenLatencyMs: response.streamTiming?.firstTokenLatencyMs,
     llmStreamDurationMs: response.streamTiming?.streamDurationMs,
+    llmRequestBuildMs: response.streamTiming?.requestBuildMs,
+    llmServerFirstTokenMs: response.streamTiming?.serverFirstTokenMs,
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
+
+  logStepTiming(log, turnId, currentStep, response);
 
   let stopTurnAfterStep = stopTurnAfterUsage;
   if (hooks?.afterStep !== undefined) {
@@ -174,6 +178,32 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     stopReason:
       stopTurnAfterStep && effectiveStopReason === 'tool_use' ? 'end_turn' : effectiveStopReason,
   };
+}
+
+/**
+ * Emit a per-step completion log with the LLM response timing. TTFT is split
+ * into the client-side request-build portion and the network + API-server
+ * portion so slow turns can be attributed without parsing the wire log.
+ */
+function logStepTiming(
+  log: Logger | undefined,
+  turnId: string,
+  step: number,
+  response: LLMChatResponse,
+): void {
+  if (log === undefined) return;
+  const timing = response.streamTiming;
+  if (timing === undefined) return;
+  log.info('llm response', {
+    turnStep: `${turnId}/${String(step)}`,
+    ttftMs: timing.firstTokenLatencyMs,
+    ...(timing.requestBuildMs !== undefined ? { requestBuildMs: timing.requestBuildMs } : {}),
+    ...(timing.serverFirstTokenMs !== undefined
+      ? { serverFirstTokenMs: timing.serverFirstTokenMs }
+      : {}),
+    streamDurationMs: timing.streamDurationMs,
+    outputTokens: response.usage.output,
+  });
 }
 
 function deriveStepStopReason(response: LLMChatResponse): LoopStepStopReason {

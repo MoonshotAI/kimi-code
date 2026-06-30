@@ -430,6 +430,13 @@ export interface TurnStepCompletedEvent {
   readonly finishReason?: string;
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
+  /**
+   * Split of `llmFirstTokenLatencyMs`: in-process request-building time on the
+   * client vs. network + API-server time to the first token. Both omitted when
+   * the provider does not report the client/server boundary.
+   */
+  readonly llmRequestBuildMs?: number;
+  readonly llmServerFirstTokenMs?: number;
   readonly providerFinishReason?: FinishReason;
   readonly rawFinishReason?: string;
 }
@@ -1096,6 +1103,8 @@ export const turnStepCompletedEventSchema = z.object({
   finishReason: z.string().optional(),
   llmFirstTokenLatencyMs: z.number().optional(),
   llmStreamDurationMs: z.number().optional(),
+  llmRequestBuildMs: z.number().optional(),
+  llmServerFirstTokenMs: z.number().optional(),
   providerFinishReason: finishReasonSchema.optional(),
   rawFinishReason: z.string().optional(),
 }) satisfies z.ZodType<TurnStepCompletedEvent>;

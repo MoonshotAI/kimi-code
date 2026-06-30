@@ -119,6 +119,16 @@ export interface GenerateOptions {
    */
   onRequestStart?: () => void;
   /**
+   * Host-side instrumentation hook fired by the provider adapter immediately
+   * before it dispatches the network request to the upstream API. The window
+   * between {@link onRequestStart} and this hook is in-process request-building
+   * time (message serialization, param assembly) spent by the client; the
+   * window between this hook and the first streamed part is network + server
+   * time. Splitting time-to-first-token across this boundary lets hosts
+   * attribute latency to the client vs. the API server.
+   */
+  onRequestSent?: () => void;
+  /**
    * Host-side instrumentation hook fired after the provider stream is fully
    * drained, before post-processing the assembled response.
    */

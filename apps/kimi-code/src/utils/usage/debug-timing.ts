@@ -10,6 +10,13 @@ interface DebugTokenUsage {
 export interface StepTimingInput {
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
+  /**
+   * Split of `llmFirstTokenLatencyMs` into the client-side request-build
+   * portion (`llmRequestBuildMs`) and the network + API-server portion
+   * (`llmServerFirstTokenMs`). Both present together or not at all.
+   */
+  readonly llmRequestBuildMs?: number;
+  readonly llmServerFirstTokenMs?: number;
   readonly usage?: DebugTokenUsage;
 }
 
@@ -26,7 +33,7 @@ export function formatStepDebugTiming(input: StepTimingInput): string | undefine
   const streamMs = input.llmStreamDurationMs;
   if (latency === undefined || streamMs === undefined) return undefined;
 
-  const parts: string[] = [`TTFT: ${formatDuration(latency)}`];
+  const parts: string[] = [`TTFT: ${formatTtft(input)}`];
   const outputTokens = input.usage?.output;
   if (outputTokens !== undefined && outputTokens > 0) {
     if (streamMs >= MIN_STREAM_MS_FOR_TPS) {
@@ -63,6 +70,17 @@ export function formatStepDebugTiming(input: StepTimingInput): string | undefine
 function usageInputTotal(usage: DebugTokenUsage | undefined): number {
   if (usage === undefined) return 0;
   return (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0);
+}
+
+// Render TTFT, splitting the latency into the network + API-server portion and
+// the in-process request-build portion when the provider reported the
+// boundary. Falls back to the bare total otherwise.
+function formatTtft(input: StepTimingInput): string {
+  const total = formatDuration(input.llmFirstTokenLatencyMs ?? 0);
+  const build = input.llmRequestBuildMs;
+  const server = input.llmServerFirstTokenMs;
+  if (build === undefined || server === undefined) return total;
+  return `${total} (api ${formatDuration(server)} + client ${formatDuration(build)})`;
 }
 
 function formatDuration(ms: number): string {

@@ -31,6 +31,19 @@ export interface LLMRequestLogFields {
 export interface LLMStreamTiming {
   readonly firstTokenLatencyMs: number;
   readonly streamDurationMs: number;
+  /**
+   * Portion of `firstTokenLatencyMs` spent in-process building the request
+   * (message serialization, param assembly) before the provider dispatched the
+   * network call. `undefined` when the provider does not report the
+   * client/server boundary (no `onRequestSent`).
+   */
+  readonly requestBuildMs?: number;
+  /**
+   * Portion of `firstTokenLatencyMs` spent waiting on the network + API server
+   * from request dispatch to the first streamed token. `undefined` when the
+   * provider does not report the client/server boundary.
+   */
+  readonly serverFirstTokenMs?: number;
 }
 
 export interface LLMChatParams {

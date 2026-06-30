@@ -89,6 +89,29 @@ describe('formatStepDebugTiming', () => {
     expect(result).toContain('900ms');
   });
 
+  it('splits TTFT into api-server and client portions when both are present', () => {
+    const result = formatStepDebugTiming({
+      llmFirstTokenLatencyMs: 2500,
+      llmStreamDurationMs: 5000,
+      llmServerFirstTokenMs: 2400,
+      llmRequestBuildMs: 100,
+      usage: { output: 200 },
+    });
+    expect(result).toBe(
+      '[Debug] TTFT: 2.5s (api 2.4s + client 100ms) | TPS: 40.0 tok/s (200 tokens in 5.0s)',
+    );
+  });
+
+  it('falls back to the bare TTFT when only one split component is present', () => {
+    const result = formatStepDebugTiming({
+      llmFirstTokenLatencyMs: 800,
+      llmStreamDurationMs: 5000,
+      llmServerFirstTokenMs: 700,
+      usage: { output: 0 },
+    });
+    expect(result).toBe('[Debug] TTFT: 800ms');
+  });
+
   it('formats durations at or above 1s as seconds', () => {
     const result = formatStepDebugTiming({
       llmFirstTokenLatencyMs: 1500,
