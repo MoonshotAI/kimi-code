@@ -806,8 +806,8 @@ export class StreamingUIController {
 
     if (this._thinkingDraft.length > 0 || this._streamingBlock !== null) {
       this.finalizeLiveTextBuffers('tool');
-      this.compactPendingThinking();
     }
+    this.compactPendingThinking();
 
     const existingComponent = this._pendingToolComponents.get(id);
     if (existingComponent !== undefined) {

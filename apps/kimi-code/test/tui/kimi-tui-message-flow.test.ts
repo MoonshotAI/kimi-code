@@ -4758,6 +4758,51 @@ command = "vim"
     }
   });
 
+  it('compacts finalized pending thinking before a streaming tool-call preview', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.appState.streamingPhase = 'thinking';
+      driver.state.appState.streamingStartTime = 1;
+
+      streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 2,
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_bash',
+          name: 'Bash',
+          argumentsPart: '{"command":"echo hi"}',
+        } as Event,
+        vi.fn(),
+      );
+
+      await vi.runOnlyPendingTimersAsync();
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(driver.streamingUI.getToolComponent('call_bash')).toBeDefined();
+      expect(transcript).toContain('line1');
+      expect(transcript).toContain('line2');
+      expect(transcript).not.toContain('line7');
+      expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+      expect(transcript).toContain('Using Bash');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {
     const { driver } = await makeDriver();
     driver.state.toolOutputExpanded = true;
