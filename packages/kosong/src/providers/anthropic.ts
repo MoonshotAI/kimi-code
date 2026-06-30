@@ -995,19 +995,25 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
-    // Convert messages, merging consecutive user messages of the same kind into
-    // one. Strict Anthropic-compatible backends reject consecutive user messages
-    // with HTTP 400 ("roles must alternate"), and api.anthropic.com concatenates
-    // them anyway — so merging is safe for native Anthropic and required for
-    // strict backends. Plain-text user messages merge with plain-text user
-    // messages; tool-result-only user messages merge with tool-result-only ones
-    // (the parallel-tool-use spec requires all tool_result blocks answering
-    // parallel tool_use calls to live in a single user message). A plain-text
-    // user message is intentionally NOT merged into an adjacent tool-result one:
-    // the two carry different semantics and must stay separate. Consecutive
-    // plain-text user messages arise naturally after compaction (kept user
-    // prompts + user-role summary + injected reminders) and from back-to-back
-    // system messages converted to user role above.
+    // Convert messages, merging consecutive user messages into one. Strict
+    // Anthropic-compatible backends reject consecutive user messages with HTTP
+    // 400 ("roles must alternate"), and api.anthropic.com concatenates them
+    // anyway — so merging is safe for native Anthropic and required for strict
+    // backends. The merge is asymmetric, keyed on whether the running message
+    // (`last`) is tool-result-only:
+    //   - tool-result-only `last` absorbs whatever follows — another
+    //     tool-result-only message (the parallel-tool-use spec requires all
+    //     tool_result blocks answering parallel tool_use calls to share one
+    //     user message) or a following plain-text turn, yielding a valid
+    //     `[tool_result, …, text]` user message.
+    //   - plain-text `last` absorbs only a following plain-text message, never
+    //     a tool-result-only one (a leading tool_result must respond to the
+    //     immediately preceding assistant tool_use, which a plain-text `last`
+    //     is not — though in well-formed transcripts this ordering never
+    //     arises, since a tool-result user always follows the assistant turn).
+    // Consecutive plain-text user messages arise naturally after compaction
+    // (kept user prompts + user-role summary + injected reminders) and from
+    // back-to-back system messages converted to user role above.
     const messages: MessageParam[] = [];
     const normalizedHistory = normalizeToolCallIdsForProvider(
       history,
@@ -1020,7 +1026,7 @@ export class AnthropicChatProvider implements ChatProvider {
         last !== undefined &&
         last.role === 'user' &&
         converted.role === 'user' &&
-        isToolResultOnly(last) === isToolResultOnly(converted)
+        (isToolResultOnly(last) || !isToolResultOnly(converted))
       ) {
         last.content = [
           ...(last.content as ContentBlockParam[]),
