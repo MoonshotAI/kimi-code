@@ -18,6 +18,7 @@ import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profi
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
+import { compressImageContentParts } from '../tools/support/image-compress';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
 import {
@@ -285,14 +286,19 @@ export class Agent {
 
   get rpcMethods(): PromisableMethods<AgentAPI> {
     return {
-      prompt: (payload) => {
-        this.turn.prompt(payload.input);
+      prompt: async (payload) => {
+        // Single ingestion chokepoint: every client transport (CLI, web,
+        // desktop, ACP, SDK) submits prompts through this RPC, so compressing
+        // oversized images here — before the turn records or sends them —
+        // covers them all with one hook. Best effort: originals pass through on
+        // failure.
+        this.turn.prompt(await compressImageContentParts(payload.input));
       },
       runShellCommand: (payload) => this.tools.runShellCommand(payload.command, payload.commandId),
       cancelShellCommand: (payload) => this.tools.cancelShellCommand(payload.commandId),
-      steer: (payload) => {
+      steer: async (payload) => {
         this.telemetry.track('input_steer', { parts: payload.input.length });
-        this.turn.steer(payload.input);
+        this.turn.steer(await compressImageContentParts(payload.input));
       },
       cancel: (payload) => {
         if (this.turn.hasActiveTurn) {

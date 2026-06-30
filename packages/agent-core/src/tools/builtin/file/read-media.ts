@@ -30,6 +30,7 @@ import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
+import { compressImageForModel } from '../../support/image-compress';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
@@ -222,12 +223,17 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       }
 
       const data = await this.kaos.readBytes(safePath);
-      const base64 = data.toString('base64');
       let mediaPart: ContentPart;
       if (fileType.kind === 'image') {
+        // Shrink oversized images so a large screenshot neither wastes context
+        // tokens nor trips the provider's per-image byte ceiling. Best effort:
+        // on any failure compressImageForModel returns the original bytes, so
+        // the read still succeeds with the uncompressed image.
+        const compressed = await compressImageForModel(data, fileType.mimeType);
+        const base64 = Buffer.from(compressed.data).toString('base64');
         mediaPart = {
           type: 'image_url',
-          imageUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
+          imageUrl: { url: `data:${compressed.mimeType};base64,${base64}` },
         };
       } else if (this.videoUploader !== undefined) {
         mediaPart = await this.videoUploader({
@@ -236,6 +242,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           filename: safePath.split(/[\\/]/).at(-1),
         });
       } else {
+        const base64 = data.toString('base64');
         mediaPart = {
           type: 'video_url',
           videoUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
@@ -246,6 +253,10 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       const openText = `<${tag} path="${safePath}">`;
       const closeText = `</${tag}>`;
 
+      // The summary always reports the ORIGINAL pixel size and byte size: the
+      // model derives relative coordinates and scales them by the original
+      // dimensions, so it must see the pre-compression size even when the
+      // image_url above carries a downsampled copy.
       const dimensions =
         fileType.kind === 'image' ? sniffImageDimensions(data) : null;
       const systemText = buildSystemSummary({
