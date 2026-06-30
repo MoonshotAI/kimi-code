@@ -483,11 +483,12 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
 }
 
 async function handleAddWorkspace(root: string): Promise<void> {
-  showAddWorkspace.value = false;
   const added = await client.addWorkspaceByPath(root);
-  // Keep the pending submission when the daemon rejects the path so the user
-  // can retry with a valid one instead of losing their prompt.
+  // Keep the picker open (and the pending submission intact) when the daemon
+  // rejects the path so the user can retry with a valid one. Closing via
+  // Escape goes through handleCloseAddWorkspace, which drops the pending prompt.
   if (!added) return;
+  showAddWorkspace.value = false;
   const pending = pendingWorkspaceSubmit.value;
   pendingWorkspaceSubmit.value = null;
   const wsId = client.activeWorkspaceId.value;
