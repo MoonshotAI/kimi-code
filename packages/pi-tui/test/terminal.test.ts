@@ -172,6 +172,29 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			mock.timers.reset();
 		}
 	});
+
+	it("drops capability-probe replies (DECRPM / OSC 11) before they reach the editor", () => {
+		const harness = setupNegotiation();
+		try {
+			// DECRPM private-mode report (DECRQM ?2026 synchronized output reply).
+			harness.send("\x1b[?2026;2$y");
+			assert.equal(harness.getInput(), undefined);
+
+			// OSC 11 background-color reply, BEL-terminated.
+			harness.send("\x1b]11;rgb:1e1e/1e1e/2e2e\x07");
+			assert.equal(harness.getInput(), undefined);
+
+			// OSC 11 background-color reply, ST-terminated.
+			harness.send("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\");
+			assert.equal(harness.getInput(), undefined);
+
+			// A normal keypress must still be delivered.
+			harness.send("a");
+			assert.equal(harness.getInput(), "a");
+		} finally {
+			harness.cleanup();
+		}
+	});
 });
 
 describe("ProcessTerminal start", () => {

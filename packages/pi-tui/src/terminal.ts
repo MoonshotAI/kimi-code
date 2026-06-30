@@ -25,7 +25,13 @@ const KITTY_KEYBOARD_PROTOCOL_PUSH = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FL
 
 export type KeyboardProtocolNegotiationSequence =
 	| { type: "kitty-flags"; flags: number }
-	| { type: "device-attributes" };
+	| { type: "device-attributes" }
+	// Capability-probe replies (DECRPM private-mode report, OSC 11 background
+	// color) observed by the startup probe's stdin tap. They are never user
+	// input and must be consumed at this gate so they cannot leak into the
+	// editor (plan goal: 探测字节不漏进编辑器).
+	| { type: "decrpm" }
+	| { type: "osc11" };
 
 export function parseKeyboardProtocolNegotiationSequence(
 	sequence: string,
@@ -37,11 +43,24 @@ export function parseKeyboardProtocolNegotiationSequence(
 	if (/^\x1b\[\?[\d;]*c$/.test(sequence)) {
 		return { type: "device-attributes" };
 	}
+	// DECRPM private-mode report: ESC [ ? <mode> ; <status> $ y
+	if (/^\x1b\[\?\d+;\d+\$y$/.test(sequence)) {
+		return { type: "decrpm" };
+	}
+	// OSC 11 background-color reply: ESC ] 11 ; <payload> (BEL | ST)
+	if (/^\x1b\]11;.*(?:\x07|\x1b\\)$/.test(sequence)) {
+		return { type: "osc11" };
+	}
 	return undefined;
 }
 
 function isKeyboardProtocolNegotiationSequencePrefix(sequence: string): boolean {
-	return sequence === "\x1b[" || /^\x1b\[\?[\d;]*$/.test(sequence);
+	// CSI ? ... — kitty flags / DA1 / DECRPM partials. Allows a trailing `$`
+	// (DECRPM's intermediate byte) so a split `\x1b[?2026;2$` + `y` reassembles.
+	if (sequence === "\x1b[" || /^\x1b\[\?[\d;]*\$?$/.test(sequence)) return true;
+	// OSC 11 ... — background-color reply partial (terminated by BEL / ST).
+	if (/^\x1b\](?:1(?:1(?:;[^\x07]*)?)?)?$/.test(sequence)) return true;
+	return false;
 }
 
 export function isAppleTerminalSession(): boolean {
@@ -338,9 +357,16 @@ export class ProcessTerminal implements Terminal {
 			return true;
 		}
 
-		if (!this._kittyProtocolActive) {
-			this.enableModifyOtherKeys();
+		if (negotiationSequence.type === "device-attributes") {
+			if (!this._kittyProtocolActive) {
+				this.enableModifyOtherKeys();
+			}
+			return true;
 		}
+
+		// DECRPM / OSC 11 capability-probe replies: observed by the probe's
+		// stdin tap and never legitimate user input. Consume them here so they
+		// cannot leak into the editor.
 		return true;
 	}
 
