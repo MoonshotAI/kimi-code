@@ -257,15 +257,29 @@ export class ContextMemory {
         droppedCount: result.droppedCount,
       },
     });
-    this._history = [
-      ...keptUserMessages,
-      {
-        role: 'user',
-        content: [{ type: 'text', text: contextSummary }],
-        toolCalls: [],
-        origin: { kind: 'compaction_summary' },
-      },
-    ];
+    const summaryMessage: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: contextSummary }],
+      toolCalls: [],
+      origin: { kind: 'compaction_summary' },
+    };
+    // Wire backward-compat: a pre-rework `context.apply_compaction` record (which
+    // has no `keptUserMessageCount`) used `[summary, ...history.slice(compactedCount)]`
+    // semantics and kept a verbatim recent tail. Reproduce that exact shape on
+    // restore so resuming a session compacted by an older version does not
+    // silently drop the recent assistant/tool tail beyond `compactedCount`. Gated
+    // on `records.restoring`, so the live/forward path — which always sets
+    // `contextSummary` and `keptUserMessageCount` — is unaffected. The projector's
+    // tool-adjacency repair keeps the restored tail well-formed for strict
+    // providers; compaction only runs at a clean step boundary, so the tail has no
+    // open tool exchange to track.
+    const isLegacyRestore =
+      this.agent.records.restoring !== null &&
+      input.keptUserMessageCount === undefined &&
+      input.compactedCount < this._history.length;
+    this._history = isLegacyRestore
+      ? [summaryMessage, ...this._history.slice(input.compactedCount)]
+      : [...keptUserMessages, summaryMessage];
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     // Drop deferred messages (mostly injections/system reminders) instead of

@@ -225,22 +225,24 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
     expect(historyTexts(ctx).join('\n')).toContain('LATE-TOOL-RESULT');
   });
 
-  // PROBE #5 / CMP-12 — replaying a legacy `context.apply_compaction` record
-  // (no contextSummary / keptUserMessageCount; written for the old
-  // `[summary, ...history.slice(compactedCount)]` semantics) drops the verbatim
-  // assistant/tool tail beyond compactedCount under the new all-user rebuild.
-  it.fails('preserves the verbatim tail when applying a legacy compaction record', () => {
+  // CMP-12 fix — restoring a legacy `context.apply_compaction` record (pre-rework:
+  // no keptUserMessageCount; the old `[summary, ...history.slice(compactedCount)]`
+  // semantics kept a verbatim recent tail). On restore we reproduce that shape so
+  // an upgraded session does not lose its recent assistant/tool tail.
+  it('preserves the verbatim tail when restoring a legacy compaction record', () => {
     const ctx = testAgent();
     ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
     ctx.appendExchange(1, 'summarized user', 'TAIL-ASSISTANT', 40);
 
-    // Legacy-shaped input: compactedCount covers only index 0; the old code kept
-    // history.slice(1) (the assistant tail) verbatim. No contextSummary/
-    // keptUserMessageCount, exactly like a pre-rework wire record.
-    ctx.agent.context.applyCompaction({
+    // Goes through the real restore path so `records.restoring` gates the legacy
+    // reconstruction. No keptUserMessageCount + compactedCount < length marks the
+    // pre-rework record that kept history.slice(compactedCount) as a tail.
+    ctx.agent.records.restore({
+      type: 'context.apply_compaction',
       summary: 'Legacy summary.',
       compactedCount: 1,
       tokensBefore: 100,
+      tokensAfter: 50,
     });
 
     expect(historyTexts(ctx).join('\n')).toContain('TAIL-ASSISTANT');
