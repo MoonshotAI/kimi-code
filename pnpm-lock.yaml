@@ -169,6 +169,9 @@ importers:
       markstream-vue:
         specifier: ^1.0.4
         version: 1.0.4(katex@0.17.0)(mermaid@11.15.0)(stream-markdown@0.0.16(react@19.2.5)(shiki@4.3.0)(vue@3.5.35(typescript@6.0.2)))(vue-i18n@11.4.5(vue@3.5.35(typescript@6.0.2)))(vue@3.5.35(typescript@6.0.2))
+      mermaid:
+        specifier: ^11.15.0
+        version: 11.15.0
       shiki:
         specifier: ^4.3.0
         version: 4.3.0

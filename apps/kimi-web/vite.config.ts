@@ -43,4 +43,10 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
   },
+  // Workers that import modules with code-splitting (e.g. mermaid's dynamic
+  // diagram imports) need ES format — IIFE cannot split chunks. The app
+  // already targets ES2022 so all supported browsers handle module workers.
+  worker: {
+    format: 'es',
+  },
 });

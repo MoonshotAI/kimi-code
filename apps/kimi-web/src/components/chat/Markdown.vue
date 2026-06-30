@@ -2,7 +2,15 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MarkdownRender, enableKatex } from 'markstream-vue';
+import {
+  MarkdownRender,
+  enableKatex,
+  enableMermaid,
+  setKaTeXWorker,
+  clearKaTeXWorker,
+  setMermaidWorker,
+  clearMermaidWorker,
+} from 'markstream-vue';
 import type { MarkdownIt } from 'markstream-vue';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
@@ -22,6 +30,38 @@ import 'markstream-vue/index.px.css';
 // together.
 import 'katex/dist/katex.min.css';
 enableKatex();
+
+// Mermaid diagram rendering. enableMermaid() registers the default
+// `import('mermaid')` loader — same pattern as enableKatex(). Without a worker,
+// mermaid.parse() runs on the main thread; with a worker (set via
+// setMermaidWorker), the MermaidBlockNode can validate partial-stream code
+// off-thread so the UI stays responsive during live diagram output.
+enableMermaid();
+
+// ---------------------------------------------------------------------------
+// Off-main-thread workers for KaTeX and Mermaid
+//
+// Both katex.renderToString and mermaid.parse are CPU-heavy. markstream-vue
+// ships pre-built workers (katexRenderer.worker.js, mermaidParser.worker.js)
+// that follow the exact protocol its internal worker clients expect. We import
+// them via Vite's `?worker&type=module` so they're built as ES module chunks
+// (supporting code-splitting, which mermaid needs for per-diagram dynamic
+// imports).
+//
+// markstream-vue's MermaidBlockNode and MathBlockNode auto-detect the presence
+// of a worker: when set, heavy parsing/rendering is dispatched off-thread; when
+// absent, everything runs on the main thread.
+// ---------------------------------------------------------------------------
+
+import KatexWorkerFactory from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
+import MermaidWorkerFactory from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
+
+// Tear down any previous worker (e.g. from HMR) before setting a new one.
+clearKaTeXWorker();
+clearMermaidWorker();
+
+setKaTeXWorker(new KatexWorkerFactory());
+setMermaidWorker(new MermaidWorkerFactory());
 
 // Only `$$…$$` display math is rendered; single `$` inline math is disabled so
 // prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`) stay literal
