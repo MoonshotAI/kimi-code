@@ -2,6 +2,7 @@ import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/ki
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runPrompt } from '#/cli/run-prompt';
+import { PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 
 type CreateKimiDeviceId = typeof createKimiDeviceIdFn;
 
@@ -216,6 +217,35 @@ describe('runPrompt', () => {
     expect(stderr.text()).toBe('To resume this session: kimi -r ses_prompt\n');
     expect(mocks.shutdownTelemetry).toHaveBeenCalled();
     expect(mocks.harnessClose).toHaveBeenCalled();
+  });
+
+  it('completes even if harness.close() never resolves (cleanup is time-bounded)', async () => {
+    vi.useFakeTimers();
+    try {
+      const stdout = writer();
+      const stderr = writer();
+      // Simulate a shutdown step that hangs (e.g. a wedged SessionEnd hook or a
+      // blackholed connection in a firewalled sandbox). A completed headless run
+      // must not stay alive forever waiting on cleanup.
+      mocks.harnessClose.mockReturnValueOnce(new Promise<void>(() => {}));
+
+      let settled = false;
+      const done = runPrompt(opts(), '1.2.3-test', {
+        stdout,
+        stderr,
+        process: fakeProcess(),
+      }).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(PROMPT_CLEANUP_TIMEOUT_MS + 100);
+      await done;
+
+      expect(settled).toBe(true);
+      expect(mocks.harnessClose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('stops prompt startup when session creation fails', async () => {

@@ -19,7 +19,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import { resolve } from 'pathe';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 
 import type { CLIOptions, PromptOutputFormat } from './options';
 import {
@@ -31,6 +31,28 @@ import {
 } from './goal-prompt';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
+
+/**
+ * Await `promise` but give up after `timeoutMs`, resolving either way.
+ *
+ * Used to bound shutdown so a wedged cleanup step can't keep a completed
+ * headless run alive. The timer is unref'd so it never keeps the loop alive on
+ * its own, and the promise is guarded so a late rejection after we stop waiting
+ * does not surface as an unhandled rejection.
+ */
+async function raceWithTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
+  const guarded = promise.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([guarded, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 interface PromptOutput {
   readonly columns?: number | undefined;
@@ -96,7 +118,7 @@ export async function runPrompt(
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   const cleanupPromptRun = async (): Promise<void> => {
-    cleanupPromise ??= (async () => {
+    const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
       setCrashPhase('shutdown');
       try {
@@ -105,8 +127,13 @@ export async function runPrompt(
         await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
         await harness.close();
       }
-    })();
-    await cleanupPromise;
+    })());
+    // Bound cleanup so a wedged shutdown step (e.g. a SessionEnd hook, MCP
+    // shutdown, or a connection blackholed by a restrictive firewall) cannot
+    // keep a completed headless run alive forever. The cleanup keeps running in
+    // the background if it overruns; the caller (`kimi -p`) force-exits shortly
+    // after, so any straggling work is torn down with the process.
+    await raceWithTimeout(pending, PROMPT_CLEANUP_TIMEOUT_MS);
   };
   removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanupPromptRun);
 

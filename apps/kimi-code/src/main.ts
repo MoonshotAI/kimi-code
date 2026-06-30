@@ -23,6 +23,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { createProgram } from './cli/commands';
+import { scheduleHeadlessForceExit } from './cli/headless-exit';
 import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
@@ -60,6 +61,11 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
 
   if (validated.uiMode === 'print') {
     await runPrompt(validated.options, version);
+    // Print mode never calls process.exit(); it relies on the event loop
+    // draining. Arm an unref'd fallback so a stray ref'd handle left over from
+    // the run can't wedge a completed `kimi -p` until an external timeout. A
+    // healthy run drains and exits before this fires.
+    scheduleHeadlessForceExit(process, () => Number(process.exitCode) || 0);
     return;
   }
 
