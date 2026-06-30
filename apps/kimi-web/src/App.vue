@@ -234,6 +234,10 @@ function handleSelectWorkspaces(ids: string[]): void {
 // Dialog visibility refs
 const showModelPicker = ref(false);
 const showProviders = ref(false);
+
+// Provider management (add / delete) is not shipped by the daemon yet — hide the
+// manager UI entry points for now. Re-enable once POST/DELETE /providers land.
+const PROVIDER_MANAGER_ENABLED = false;
 const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
@@ -439,7 +443,7 @@ function handleCommand(cmd: string): void {
       void openModelPicker();
       break;
     case '/provider':
-      void openProviders();
+      if (PROVIDER_MANAGER_ENABLED) void openProviders();
       break;
     case '/login':
       openLogin();
