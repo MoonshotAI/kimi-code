@@ -1,5 +1,48 @@
 # @moonshot-ai/kimi-code
 
+## 0.21.0
+
+### Minor Changes
+
+- [#1204](https://github.com/MoonshotAI/kimi-code/pull/1204) [`5cb80ce`](https://github.com/MoonshotAI/kimi-code/commit/5cb80ce879406d239048c32d61202778cb860e58) - Plugins can now provide slash commands via a `commands` field in their manifest, registered as `<plugin>:<command>` and invoked with `$ARGUMENTS` expansion.
+
+- [#1214](https://github.com/MoonshotAI/kimi-code/pull/1214) [`86e0c92`](https://github.com/MoonshotAI/kimi-code/commit/86e0c9201ed58c7c1ce5543b1dfb47a4cf5117f6) - Rework conversation compaction:
+
+  - Keep only recent user prompts plus a single user-role summary; drop assistant and tool messages.
+  - Repair tool_use/tool_result adjacency before sending, fixing a strict-provider HTTP 400 when a tool call and its result became non-adjacent.
+  - Merge consecutive user turns for strict providers (Gemini/Vertex), fixing an HTTP 400 ("roles must alternate") after compaction or when a turn is steered in right after a tool result.
+  - Micro-compaction now defaults off.
+
+- [#1132](https://github.com/MoonshotAI/kimi-code/pull/1132) [`108299b`](https://github.com/MoonshotAI/kimi-code/commit/108299be3cdffc31a23f64efd3ff5ba50976b412) - Refactor the thinking effort system
+
+### Patch Changes
+
+- [#1231](https://github.com/MoonshotAI/kimi-code/pull/1231) [`ceb27f5`](https://github.com/MoonshotAI/kimi-code/commit/ceb27f5e449e177493f320d90e292487a8fc3410) - Add a server-side key-value store API for persisting web UI preferences to the user's data directory.
+
+- [#1220](https://github.com/MoonshotAI/kimi-code/pull/1220) [`ec51324`](https://github.com/MoonshotAI/kimi-code/commit/ec51324230484f2ebaad1ab0aebf2e38f531d914) - Add a double-Esc shortcut to open the undo selector. Press Esc twice while idle to undo.
+
+- [#1223](https://github.com/MoonshotAI/kimi-code/pull/1223) [`80e6888`](https://github.com/MoonshotAI/kimi-code/commit/80e6888e34e4362247c0eac5b77340df014ba286) - Fix @ file mentions not opening when typed inside a slash command argument.
+
+- [#1233](https://github.com/MoonshotAI/kimi-code/pull/1233) [`020992c`](https://github.com/MoonshotAI/kimi-code/commit/020992c286f0f6bff6a038a7c7bd7e9db639e3c9) - Force-exit headless runs (`kimi -p`) so a stray ref'd handle left over from the run can't keep a completed run alive until an external timeout, and bound prompt cleanup so a wedged shutdown step can't hang shutdown.
+
+- [#1225](https://github.com/MoonshotAI/kimi-code/pull/1225) [`659062d`](https://github.com/MoonshotAI/kimi-code/commit/659062d11cc272fe631fc6d4faf64d0e0b1a0142) - Show file path completions when typing `/` in shell mode (`!`).
+
+- [#1236](https://github.com/MoonshotAI/kimi-code/pull/1236) [`bfe8e6a`](https://github.com/MoonshotAI/kimi-code/commit/bfe8e6ace3cda76b1991bf29c25b9444611d5512) - Fix adding a workspace by path in the web UI failing silently when the daemon rejects the path; it now shows an error instead of a broken workspace.
+
+- [#1221](https://github.com/MoonshotAI/kimi-code/pull/1221) [`a3f9cec`](https://github.com/MoonshotAI/kimi-code/commit/a3f9cec8a975f11e37e992e42f954789ed394207) - Fix duplicate workspaces showing in the web sidebar when the same folder is registered more than once.
+
+- [#1241](https://github.com/MoonshotAI/kimi-code/pull/1241) [`8ac337a`](https://github.com/MoonshotAI/kimi-code/commit/8ac337a2b2ac800aa79a373459308abb6c9e63bb) - Stop a malformed message history from permanently bricking a session on strict providers (Anthropic). The request is repaired before sending — orphaned tool calls are closed and empty/whitespace-only text blocks dropped — and if the provider still rejects its structure, it is resent once with a wire-compliant rebuild.
+
+- [#1228](https://github.com/MoonshotAI/kimi-code/pull/1228) [`42e37eb`](https://github.com/MoonshotAI/kimi-code/commit/42e37eb898b722829d2ec83e909525ff18e336a5) - Split LLM streaming timing in the session log and `KIMI_CODE_DEBUG=1` output into client vs. API-server portions, so slow turns can be attributed without parsing the wire log. Time-to-first-token splits into the API-server portion (network + server) and the client portion (in-process request building); the decode window splits into time awaiting tokens from the server and time the client spends processing each streamed chunk.
+
+- [#1234](https://github.com/MoonshotAI/kimi-code/pull/1234) [`882cf35`](https://github.com/MoonshotAI/kimi-code/commit/882cf355a9cb45bb5b3424a27b953bde8e106bb0) - Hide the provider management dialog in the web UI until the server supports it.
+
+- [#1226](https://github.com/MoonshotAI/kimi-code/pull/1226) [`7f05f58`](https://github.com/MoonshotAI/kimi-code/commit/7f05f589e7bc77a2f26463a41317ff7087e3c3a0) - Add Mermaid diagram rendering to the web chat. Fenced `mermaid` blocks in assistant responses now render as diagrams. KaTeX math and Mermaid diagram parsing also run in Web Workers to keep the UI responsive during live streaming.
+
+- [#1232](https://github.com/MoonshotAI/kimi-code/pull/1232) [`aa6b0d0`](https://github.com/MoonshotAI/kimi-code/commit/aa6b0d065ee888056c3812781483ddb74739897f) - Always show the usage-data opt-out toggle in the web settings with a clearer label and description.
+
+- [#1234](https://github.com/MoonshotAI/kimi-code/pull/1234) [`882cf35`](https://github.com/MoonshotAI/kimi-code/commit/882cf355a9cb45bb5b3424a27b953bde8e106bb0) - Fix the web workspace rename not persisting after a page refresh.
+
 ## 0.20.3
 
 ### Patch Changes
