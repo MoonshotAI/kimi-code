@@ -125,7 +125,7 @@ describe('FullCompaction', () => {
         duration_ms: expect.any(Number),
         compacted_count: 6,
         retry_count: 0,
-        thinking_level: 'off',
+        thinking_effort: 'off',
         input_tokens: 537,
         output_tokens: 8,
       }),
@@ -1832,7 +1832,7 @@ describe('FullCompaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    ctx.agent.config.update({ thinkingLevel: 'high' });
+    ctx.agent.config.update({ thinkingEffort: 'high' });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -1840,12 +1840,17 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
-    expect(providerThinkingEfforts).toEqual(['high', 'high', 'high']);
+    // The catalogued model declares no supportEfforts, so the kimi provider
+    // treats it as a boolean thinking model: any non-'off' level (incl. 'high')
+    // is sent as thinking.enabled with no effort, which `thinkingEffort`
+    // reports back as 'on'. The agent's stored thinkingEffort ('high') is still
+    // carried across the compaction (see the record assertion below).
+    expect(providerThinkingEfforts).toEqual(['on', 'on', 'on']);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        thinking_level: 'high',
+        thinking_effort: 'high',
       }),
     });
   });

@@ -113,6 +113,11 @@ interface AnthropicGenerationKwargs {
   betaFeatures?: string[] | undefined;
 }
 
+// Anthropic's native effort values. `ThinkingEffort` is an open string, so after
+// clamping (and ruling out 'off') we narrow to this concrete set before writing
+// `output_config.effort` / computing a token budget.
+type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
@@ -338,6 +343,18 @@ function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): 
     return 'high';
   }
   if (effort === 'max' && !adaptive) {
+    return 'high';
+  }
+  // 'on' (boolean models) or any effort Anthropic does not recognize: fall
+  // back to 'high' so budgetTokensForEffort / output_config.effort never see
+  // an unsupported value.
+  if (
+    effort !== 'low' &&
+    effort !== 'medium' &&
+    effort !== 'high' &&
+    effort !== 'xhigh' &&
+    effort !== 'max'
+  ) {
     return 'high';
   }
   return effort;
@@ -1239,10 +1256,11 @@ export class AnthropicChatProvider implements ChatProvider {
       return clone;
     }
 
-    const effectiveEffort = clampEffort(effort, this._model, adaptive);
-    if (effectiveEffort === 'off') {
+    const clamped = clampEffort(effort, this._model, adaptive);
+    if (clamped === 'off') {
       throw new Error('Non-off thinking effort unexpectedly clamped to off.');
     }
+    const effectiveEffort = clamped as AnthropicEffort;
 
     let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
 

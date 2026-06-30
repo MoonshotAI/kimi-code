@@ -12,6 +12,8 @@ import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
+import InternalBuildBanner from './InternalBuildBanner.vue';
+import { isMacosDesktop } from '../lib/desktopFlag';
 
 const { t } = useI18n();
 
@@ -419,7 +421,7 @@ function blinkOnce(): void {
 </script>
 
 <template>
-  <aside class="side">
+  <aside class="side" :class="{ 'macos-desktop': isMacosDesktop }">
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
       <!-- Header: logo + settings (no hard border — flows into workspace list) -->
@@ -438,6 +440,7 @@ function blinkOnce(): void {
             <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
           </svg>
           <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
+          <InternalBuildBanner />
         </div>
         <button
           type="button"
@@ -673,6 +676,19 @@ function blinkOnce(): void {
   padding: 8px 12px;
   width: 100%;
   box-sizing: border-box;
+}
+/* macOS desktop: the window uses a hidden title bar, so the traffic lights float
+   over the top-left of the sidebar. Push the header content right to clear them,
+   and turn the empty header area into the window-drag region; interactive
+   controls opt out with no-drag. */
+.side.macos-desktop .ch {
+  padding-left: 80px;
+  -webkit-app-region: drag;
+}
+.side.macos-desktop .ch-logo,
+.side.macos-desktop .collapse-btn,
+.side.macos-desktop .settings-btn {
+  -webkit-app-region: no-drag;
 }
 .ch-logo {
   height: 22px;

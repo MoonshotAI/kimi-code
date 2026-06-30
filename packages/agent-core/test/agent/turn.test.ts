@@ -1551,7 +1551,7 @@ describe('Agent turn flow', () => {
       cwd: process.cwd(),
       modelAlias: 'kimi-code',
       systemPrompt: 'test system prompt',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     Object.defineProperty(ctx.agent.config, 'provider', {
       configurable: true,

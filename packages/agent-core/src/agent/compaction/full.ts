@@ -520,7 +520,7 @@ export class FullCompaction {
         dropped_count: result.droppedCount,
         retry_count: retryCount,
         round: 1,
-        thinking_level: this.agent.config.thinkingLevel,
+        thinking_effort: this.agent.config.thinkingEffort,
         ...(usage === null
           ? {}
           : { input_tokens: inputTotal(usage), output_tokens: usage.output }),
@@ -535,7 +535,7 @@ export class FullCompaction {
         duration_ms: Date.now() - startedAt,
         round: 1,
         retry_count: retryCount,
-        thinking_level: this.agent.config.thinkingLevel,
+        thinking_effort: this.agent.config.thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
       });
       if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;

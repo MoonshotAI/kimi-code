@@ -27,6 +27,8 @@ import {
   ModelCatalogRefreshScheduler,
 } from '#/services/modelCatalog/modelCatalogRefreshScheduler';
 import { ISnapshotService, SnapshotService, loadSnapshotConfig } from '#/services/snapshot';
+import { IGuiStoreService } from '#/services/guiStore/guiStore';
+import { GuiStoreService } from '#/services/guiStore/guiStoreService';
 
 export interface ServerServiceCollectionOptions {
   readonly server: ServerStartOptions;
@@ -67,6 +69,7 @@ export function createServerServiceCollection(
   );
   services.set(IRestGateway, new FastifyRestGateway(app));
   services.set(Services.IEnvironmentService, envService);
+  services.set(IGuiStoreService, new SyncDescriptor(GuiStoreService, [], false));
 
   services.set(
     IWSGateway,

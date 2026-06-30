@@ -126,6 +126,7 @@ export class ProviderManager implements ModelProvider {
       this.options.promptCacheKey,
       effectiveAdaptiveThinking,
       alias.betaApi,
+      alias.supportEfforts,
     );
 
     return {
@@ -242,6 +243,7 @@ function toKosongProviderConfig(
   promptCacheKey: string | undefined,
   adaptiveThinking: boolean | undefined,
   betaApi: boolean | undefined,
+  supportEfforts: readonly string[] | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
   const envCustomHeaders = parseKimiCodeCustomHeaders();
@@ -296,6 +298,7 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
         generationKwargs: { prompt_cache_key: promptCacheKey },
+        supportEfforts,
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiRequestHeaders,

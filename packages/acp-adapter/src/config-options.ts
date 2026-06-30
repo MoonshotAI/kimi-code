@@ -21,8 +21,9 @@
  *     only knows how to draw `type: 'select'` options, and the spec's
  *     `boolean` arm shows up as "Unknown". Effort granularity
  *     (`'low' | 'medium' | …`) is still hidden behind the adapter —
- *     kimi-code uses a single non-`'off'` level under the hood (default
- *     `'high'`, resolved by agent-core's `resolveThinkingEffort`).
+ *     kimi-code uses a single non-`'off'` level under the hood (the
+ *     model's default effort, resolved by agent-core's
+ *     `resolveThinkingEffort`).
  *   - `id: 'mode'`      (`type: 'select'`, `category: 'mode'`) — the
  *     locked 4-mode taxonomy from PLAN D9 ({@link ACP_MODES}).
  *

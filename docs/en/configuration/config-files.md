@@ -24,7 +24,6 @@ The following example covers the most commonly used configuration fields. You ca
 
 ```toml
 default_model = "kimi-code/kimi-for-coding"
-default_thinking = true
 default_permission_mode = "manual"
 default_plan_mode = false
 merge_all_available_skills = true
@@ -41,7 +40,8 @@ model = "kimi-for-coding"
 max_context_size = 262144
 
 [thinking]
-mode = "auto"
+enabled = true
+effort = "high"
 
 [loop_control]
 max_retries_per_step = 3
@@ -76,7 +76,6 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
-| `default_thinking` | `boolean` | `false` | Whether new sessions enable Thinking (deep reasoning) mode by default; can be toggled from the model menu inside a session. Even when set to `true`, `[thinking].mode = "off"` will still force Thinking off |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `auto` (auto-approve read operations), or `yolo` (auto-approve everything) |
 | `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
@@ -145,12 +144,19 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `thinking`
 
-`thinking` sets the global default behavior for Thinking mode. `mode = "off"` forces Thinking off even when the top-level `default_thinking = true`.
+`thinking` sets the global default behavior for Thinking mode.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `mode` | `string` | — | Trigger policy: `auto` (decided by the model), `on` (always on), `off` (force off) |
-| `effort` | `string` | `high` | Thinking effort level: `low`, `medium`, `high`, `xhigh`, `max`; the levels actually available depend on the provider |
+| `enabled` | `boolean` | `true` | Whether Thinking is enabled by default for new sessions; set to `false` to force Thinking off |
+| `effort` | `string` | — | Thinking effort level (for example `low`, `medium`, `high`, `xhigh`, `max`); the levels actually available depend on the model's declared `support_efforts`, and unrecognized values are ignored by the provider |
+
+### Deprecated fields
+
+| Field | Deprecated in | Description |
+| --- | --- | --- |
+| `default_thinking` | 0.21.0 | Top-level boolean, replaced by `[thinking] enabled`. Migrate `default_thinking = true` to `enabled = true`, and `default_thinking = false` to `enabled = false`. |
+| `thinking.mode` | 0.21.0 | One of `auto` / `on` / `off`, replaced by `[thinking] enabled`. `mode = "off"` becomes `enabled = false`; `mode = "on"` and `mode = "auto"` are equivalent to `enabled = true` (the default) and can be removed. |
 
 ## `loop_control`
 

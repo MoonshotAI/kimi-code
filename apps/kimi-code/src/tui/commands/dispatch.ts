@@ -25,6 +25,7 @@ import {
   handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
+  handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -65,6 +66,7 @@ export {
   handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
+  handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -291,6 +293,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'model':
       await handleModelCommand(host, args);
+      return;
+    case 'effort':
+      await handleEffortCommand(host, args);
       return;
     case 'provider':
       await handleProviderCommand(host);

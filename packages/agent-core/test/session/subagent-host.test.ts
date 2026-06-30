@@ -295,7 +295,7 @@ describe('SessionSubagentHost', () => {
       cwd: parent.agent.config.cwd,
       provider: parent.agent.config.data().provider,
       profileName: 'explore',
-      thinkingLevel: parent.agent.config.thinkingLevel,
+      thinkingEffort: parent.agent.config.thinkingEffort,
     });
     expect(child.agent.config.systemPrompt).toContain('codebase exploration specialist');
     expect(child.agent.permission.mode).toBe('yolo');
