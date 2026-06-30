@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentOptions } from '../../../src/agent';
 import { COMPACTION_SUMMARY_PREFIX } from '../../../src/agent/compaction';
 import type { ContextMessage } from '../../../src/agent/context';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../../src/flags';
 import { testAgent, type TestAgentContext } from '../harness/agent';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
@@ -253,7 +254,16 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
   // with the cutoff computed for the FULL history. The absolute cutoff applied
   // to the shifted suffix can clear recent tool results the summary needs.
   it.fails('does not clear recent tool results when projecting a shrunk suffix under an active micro-compaction cutoff', () => {
-    const ctx = testAgent();
+    // This defect only exists when micro-compaction is active, so enable the
+    // flag explicitly rather than inheriting the ambient KIMI_CODE_EXPERIMENTAL
+    // master switch — otherwise the probe's pass/fail flips with the runner's
+    // environment (on locally with the master switch, off in CI by default).
+    const ctx = testAgent({
+      experimentalFlags: new FlagResolver(
+        { KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION: '1' },
+        FLAG_DEFINITIONS,
+      ),
+    });
     ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
 
     const bigToolOutput = 'TOOL-OUTPUT-CONTENT '.repeat(60); // > minContentTokens(100)
