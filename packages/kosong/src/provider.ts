@@ -124,10 +124,40 @@ export interface GenerateOptions {
    */
   onRequestStart?: () => void;
   /**
-   * Host-side instrumentation hook fired after the provider stream is fully
-   * drained, before post-processing the assembled response.
+   * Host-side instrumentation hook fired by the provider adapter immediately
+   * before it dispatches the network request to the upstream API. The window
+   * between {@link onRequestStart} and this hook is in-process request-building
+   * time (message serialization, param assembly) spent by the client; the
+   * window between this hook and the first streamed part is network + server
+   * time. Splitting time-to-first-token across this boundary lets hosts
+   * attribute latency to the client vs. the API server.
    */
-  onStreamEnd?: () => void;
+  onRequestSent?: () => void;
+  /**
+   * Host-side instrumentation hook fired after the provider stream is fully
+   * drained, before post-processing the assembled response. Receives the
+   * {@link StreamDecodeStats} accounting accumulated across the stream when at
+   * least one part was streamed, or `undefined` for an empty stream.
+   */
+  onStreamEnd?: (stats?: StreamDecodeStats) => void;
+}
+
+/**
+ * Decode-phase accounting for a single streamed generation. Splits the window
+ * from the first streamed part to stream end into the time spent waiting on the
+ * provider for the next part (server + network) versus the time spent
+ * processing each part in-process (deep copy, host callbacks, part merging).
+ *
+ * Because both buckets are wall-clock measured on the single JS thread, a
+ * stop-the-world GC pause that lands while awaiting the next part is counted in
+ * {@link serverDecodeMs}; a non-trivial {@link clientConsumeMs} share is the
+ * unambiguous signal that the host's per-part processing is throttling decode.
+ */
+export interface StreamDecodeStats {
+  /** Cumulative time spent awaiting the next streamed part (server + network). */
+  readonly serverDecodeMs: number;
+  /** Cumulative time spent processing streamed parts in-process (client). */
+  readonly clientConsumeMs: number;
 }
 
 /**

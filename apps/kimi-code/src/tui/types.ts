@@ -143,10 +143,19 @@ export type TranscriptEntryKind =
   | 'thinking'
   | 'status'
   | 'skill_activation'
+  | 'plugin_command'
   | 'cron'
   | 'goal';
 
 export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
+
+export interface PluginCommandTranscriptData {
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly args?: string;
+  readonly trigger: 'user-slash';
+}
 
 export interface TranscriptEntry {
   id: string;
@@ -168,6 +177,7 @@ export interface TranscriptEntry {
   skillName?: string;
   skillArgs?: string;
   skillTrigger?: SkillActivationTrigger;
+  pluginCommandData?: PluginCommandTranscriptData;
 }
 
 export type LivePaneMode =

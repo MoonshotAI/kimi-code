@@ -33,6 +33,7 @@ export interface AuthFlowHost {
   fetchSessions(): Promise<void>;
   updateTerminalTitle(): void;
   refreshSkillCommands(session?: SkillListSession): Promise<void>;
+  refreshPluginCommands(session?: Session): Promise<void>;
 }
 
 export class AuthFlowController {
@@ -96,6 +97,7 @@ export class AuthFlowController {
     void host.fetchSessions();
     host.updateTerminalTitle();
     void host.refreshSkillCommands(host.session);
+    void host.refreshPluginCommands(host.session);
   }
 
   async clearActiveSessionAfterLogout(): Promise<void> {
@@ -107,6 +109,7 @@ export class AuthFlowController {
       sessionTitle: null,
     });
     await this.host.refreshSkillCommands();
+    await this.host.refreshPluginCommands();
   }
 
   async refreshConfigAfterLogin(): Promise<void> {

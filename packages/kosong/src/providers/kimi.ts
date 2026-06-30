@@ -498,6 +498,7 @@ export class KimiChatProvider implements ChatProvider {
       const client = this._createClient(options?.auth);
       // Use type assertion via unknown because we pass the Moonshot-proprietary
       // `thinking` field (via extra_body) that doesn't exist in the OpenAI type definitions.
+      options?.onRequestSent?.();
       const response = (await client.chat.completions.create(
         createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         options?.signal ? { signal: options.signal } : undefined,

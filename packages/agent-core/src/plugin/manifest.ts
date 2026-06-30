@@ -1,4 +1,4 @@
-import { realpath, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -9,6 +9,7 @@ import {
 } from '../config/schema';
 import {
   PLUGIN_NAME_REGEX,
+  type PluginCommandEntry,
   type PluginDiagnostic,
   type PluginInterface,
   type PluginManifest,
@@ -23,7 +24,6 @@ const KIMI_PLUGIN_DIR_PATH = '.kimi-plugin/plugin.json';
 // users can see why a field is silently ignored.
 const UNSUPPORTED_RUNTIME_FIELDS = [
   'tools',
-  'commands',
   'apps',
   'inject',
   'configFile',
@@ -126,6 +126,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
     sessionStart: readSessionStart(raw['sessionStart'], diagnostics),
     mcpServers: await readMcpServers(pluginRoot, raw['mcpServers'], diagnostics),
     hooks: readHooks(raw['hooks'], diagnostics),
+    commands: await readCommands(pluginRoot, raw['commands'], diagnostics),
     interface: readInterface(raw['interface']),
     skillInstructions,
   };
@@ -311,6 +312,77 @@ function readHooks(
     }
   });
   return out.length === 0 ? undefined : out;
+}
+
+async function readCommands(
+  pluginRoot: string,
+  raw: unknown,
+  diagnostics: PluginDiagnostic[],
+): Promise<readonly PluginCommandEntry[] | undefined> {
+  if (raw === undefined) return undefined;
+  const entries: string[] = [];
+  if (typeof raw === 'string') {
+    entries.push(raw);
+  } else if (Array.isArray(raw) && raw.every((entry) => typeof entry === 'string')) {
+    entries.push(...raw);
+  } else {
+    diagnostics.push({ severity: 'warn', message: '"commands" must be a string or string[]' });
+    return undefined;
+  }
+
+  const files: PluginCommandEntry[] = [];
+  for (const entry of entries) {
+    const resolved = await resolvePluginPathField({
+      pluginRoot,
+      field: 'commands',
+      value: entry,
+      diagnostics,
+    });
+    if (resolved === undefined) continue;
+    if (await isDir(resolved)) {
+      files.push(...(await listMarkdownFilesRecursive(resolved)));
+    } else if ((await isFile(resolved)) && resolved.endsWith('.md')) {
+      files.push({ path: resolved, name: commandNameFromFile(resolved, path.dirname(resolved)) });
+    } else {
+      diagnostics.push({
+        severity: 'warn',
+        message: `"commands" entry must be a directory or .md file (${entry})`,
+      });
+    }
+  }
+  return files.length === 0 ? undefined : files.toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+async function listMarkdownFilesRecursive(root: string): Promise<readonly PluginCommandEntry[]> {
+  const out: PluginCommandEntry[] = [];
+  await walkMarkdown(root, root, out);
+  return out;
+}
+
+async function walkMarkdown(
+  root: string,
+  dir: string,
+  out: PluginCommandEntry[],
+): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkMarkdown(root, full, out);
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      out.push({ path: full, name: commandNameFromFile(full, root) });
+    }
+  }
+}
+
+function commandNameFromFile(file: string, root: string): string {
+  const relative = path.relative(root, file).replace(/\.md$/i, '');
+  return relative.split(path.sep).join('/');
 }
 
 async function normalizePluginMcpServer(input: {

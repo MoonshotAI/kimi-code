@@ -11,3 +11,9 @@ catalog:
 overrides:
   "ssh2@1.17.0>cpu-features": "-"
   "ssh2@1.17.0>nan": "-"
+
+# Allow Electron's postinstall to extract its prebuilt binary (needed by
+# apps/kimi-desktop). Other native deps stay unbuilt and rely on their own
+# prebuilds, matching the prior default.
+onlyBuiltDependencies:
+  - electron

@@ -1,0 +1,170 @@
+name: desktop-build
+
+# Builds the Kimi Desktop (Electron) installers for macOS, Windows and Linux.
+# Each runner builds the matching-platform SEA backend first, then packages it
+# with electron-builder.
+#
+# macOS is signed with a Developer ID certificate + notarized (so it opens on
+# any Mac without the "app is damaged" Gatekeeper block) when `sign-macos` is
+# true and the Apple secrets are configured. Windows/Linux ship unsigned in v1.
+#
+# Triggered two ways:
+#   - workflow_dispatch: manual ad-hoc builds from the Actions tab.
+#   - workflow_call:     called by release.yml to attach installers to a release.
+on:
+  workflow_dispatch:
+    inputs:
+      sign-macos:
+        description: 'Sign + notarize macOS (needs Apple secrets)'
+        required: false
+        type: boolean
+        default: true
+      retention-days:
+        description: 'Artifact retention in days'
+        required: false
+        type: number
+        default: 5
+      upload-artifact-prefix:
+        description: 'Prefix for uploaded artifact name'
+        required: false
+        type: string
+        default: 'kimi-desktop'
+  workflow_call:
+    inputs:
+      sign-macos:
+        description: 'Sign + notarize macOS (needs Apple secrets)'
+        required: false
+        type: boolean
+        default: false
+      retention-days:
+        description: 'Artifact retention in days'
+        required: false
+        type: number
+        default: 7
+      upload-artifact-prefix:
+        description: 'Prefix for uploaded artifact name'
+        required: false
+        type: string
+        default: 'kimi-desktop'
+    secrets:
+      APPLE_CERTIFICATE_P12:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_NOTARIZATION_KEY_P8:
+        required: false
+      APPLE_NOTARIZATION_KEY_ID:
+        required: false
+      APPLE_NOTARIZATION_ISSUER_ID:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Desktop installer (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: windows-2025-vs2026
+            target: win32-x64
+          - os: ubuntu-24.04
+            target: linux-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Kimi web assets
+        # The SEA blob embeds apps/kimi-code/dist-web; build the web app and
+        # stage its assets before producing the native executable.
+        # KIMI_WEB_DESKTOP=1 bakes the internal-build banner into the web bundle
+        # (see apps/kimi-web/src/components/InternalBuildBanner.vue); only the
+        # desktop sets this flag, so the CLI `kimi web` stays banner-free.
+        env:
+          KIMI_WEB_DESKTOP: '1'
+        run: |
+          pnpm --filter @moonshot-ai/kimi-web run build
+          node apps/kimi-code/scripts/copy-web-assets.mjs
+
+      - name: Build native executable (local profile)
+        # The Electron app signs the SEA itself (electron-builder, inside-out),
+        # so the native build stays unsigned here.
+        run: pnpm --filter @moonshot-ai/kimi-code run build:native:sea
+
+      - name: Setup macOS keychain (Developer ID)
+        if: runner.os == 'macOS' && inputs.sign-macos
+        uses: ./.github/actions/macos-keychain-setup
+        with:
+          certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Prepare CSC_NAME for electron-builder (macOS)
+        if: runner.os == 'macOS' && inputs.sign-macos
+        shell: bash
+        run: |
+          # electron-builder rejects the "Developer ID Application: " prefix in
+          # CSC_NAME; strip it so the certificate matches by team name + ID.
+          name="${APPLE_SIGNING_IDENTITY}"
+          name="${name#Developer ID Application: }"
+          echo "CSC_NAME=$name" >> "$GITHUB_ENV"
+
+      - name: Prepare notarization API key (macOS)
+        if: runner.os == 'macOS' && inputs.sign-macos
+        shell: bash
+        env:
+          APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/notary-AuthKey.p8"
+          printf '%s' "$APPLE_NOTARIZATION_KEY_P8" | base64 -d > "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build & package desktop app
+        shell: bash
+        env:
+          # macOS signing is driven by env: when sign-macos, electron-builder
+          # signs with the keychain's Developer ID and notarizes via the notary
+          # API key; otherwise it builds unsigned.
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ (runner.os == 'macOS' && inputs.sign-macos) && 'true' || 'false' }}
+          CSC_KEYCHAIN: ${{ env.APPLE_KEYCHAIN_PATH }}
+          KIMI_DESKTOP_NOTARIZE: ${{ (runner.os == 'macOS' && inputs.sign-macos) && 'true' || 'false' }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+        run: pnpm --filter @moonshot-ai/kimi-desktop run dist
+
+      - name: Cleanup macOS keychain
+        if: always() && runner.os == 'macOS' && inputs.sign-macos
+        uses: ./.github/actions/macos-keychain-cleanup
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.upload-artifact-prefix }}-${{ matrix.target }}
+          retention-days: ${{ inputs.retention-days }}
+          path: |
+            apps/kimi-desktop/dist-app/*.dmg
+            apps/kimi-desktop/dist-app/*.zip
+            apps/kimi-desktop/dist-app/*.exe
+            apps/kimi-desktop/dist-app/*.AppImage
+            apps/kimi-desktop/dist-app/*.deb
+          if-no-files-found: ignore

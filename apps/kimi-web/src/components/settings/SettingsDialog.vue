@@ -165,9 +165,17 @@ function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   emit('updateConfig', { defaultPermissionMode: mode });
 }
 
-function toggleConfigBoolean(key: 'defaultThinking' | 'defaultPlanMode' | 'mergeAllAvailableSkills' | 'telemetry'): void {
+function toggleConfigBoolean(key: 'defaultThinking' | 'defaultPlanMode' | 'mergeAllAvailableSkills'): void {
   const current = props.config?.[key];
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
+}
+
+// Telemetry is opt-out: undefined and `true` both mean enabled, only explicit
+// `false` disables it. Toggle based on that effective state so an unset value
+// (displayed as on) flips to `false` instead of writing a redundant `true`.
+function toggleTelemetry(): void {
+  const enabled = props.config?.telemetry !== false;
+  emit('updateConfig', { telemetry: !enabled } as Partial<AppConfig>);
 }
 
 function setTab(tab: SettingsTab): void {
@@ -439,16 +447,20 @@ function setTab(tab: SettingsTab): void {
                   </button>
                 </div>
 
-                <div v-if="config.telemetry !== undefined" class="row">
-                  <span class="rlabel">{{ t('settings.telemetry') }}</span>
+                <div class="row">
+                  <span class="rlabel">
+                    {{ t('settings.telemetry') }}
+                    <span class="hint">{{ t('settings.telemetryHint') }}</span>
+                    <span class="hint">{{ t('settings.telemetryRestartHint') }}</span>
+                  </span>
                   <button
                     type="button"
                     class="switch"
                     role="switch"
-                    :class="{ on: configBool(config.telemetry) }"
-                    :aria-checked="configBool(config.telemetry)"
+                    :class="{ on: config.telemetry !== false }"
+                    :aria-checked="config.telemetry !== false"
                     :disabled="configSaving"
-                    @click="toggleConfigBoolean('telemetry')"
+                    @click="toggleTelemetry()"
                   >
                     <span class="knob" />
                   </button>

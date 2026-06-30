@@ -1,4 +1,4 @@
-import type { ActivateSkillPayload, PromptPayload } from '#/rpc';
+import type { ActivatePluginCommandPayload, ActivateSkillPayload, PromptPayload } from '#/rpc';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 const MAX_TITLE_LENGTH = 200;
@@ -21,6 +21,17 @@ export function promptMetadataTextFromSkill(payload: ActivateSkillPayload): stri
   const args = payload.args?.trim();
   return sanitizeAndTruncatePromptText(
     args === undefined || args.length === 0 ? `/${payload.name}` : `/${payload.name} ${args}`,
+    MAX_LAST_PROMPT_LENGTH,
+  );
+}
+
+export function promptMetadataTextFromPluginCommand(
+  payload: ActivatePluginCommandPayload,
+): string | undefined {
+  const args = payload.args?.trim();
+  const command = `/${payload.pluginId}:${payload.commandName}`;
+  return sanitizeAndTruncatePromptText(
+    args === undefined || args.length === 0 ? command : `${command} ${args}`,
     MAX_LAST_PROMPT_LENGTH,
   );
 }

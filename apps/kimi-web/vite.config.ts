@@ -19,6 +19,10 @@ export default defineConfig({
   define: {
     __KIMI_DEV_PROXY_TARGET__: JSON.stringify(serverTarget),
     __KIMI_WEB_VERSION__: JSON.stringify(pkg.version),
+    // True only for the web bundle embedded in the Kimi Desktop app (set by the
+    // desktop-build workflow). Gates an "internal testing build" banner. When
+    // false (default) the banner is tree-shaken out of the production bundle.
+    __KIMI_WEB_DESKTOP__: JSON.stringify(process.env.KIMI_WEB_DESKTOP === '1'),
   },
   server: {
     port: webPort,

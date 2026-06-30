@@ -28,6 +28,18 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'turn.step.completed'>['llmStreamDurationMs']>().toEqualTypeOf<
       number | undefined
     >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmRequestBuildMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmServerFirstTokenMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmServerDecodeMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmClientConsumeMs']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('narrows subagent lifecycle events by type', () => {
@@ -65,6 +77,7 @@ describe('Event public types', () => {
         case 'event.model_catalog.changed':
         case 'goal.updated':
         case 'skill.activated':
+        case 'plugin_command.activated':
         case 'error':
         case 'warning':
         case 'turn.started':

@@ -362,9 +362,29 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 <span className="text-fg-1">{event.llmFirstTokenLatencyMs} ms</span>
               </FieldRow>
             ) : null}
+            {event.llmServerFirstTokenMs !== undefined ? (
+              <FieldRow label="firstToken/api">
+                <span className="text-fg-1">{event.llmServerFirstTokenMs} ms</span>
+              </FieldRow>
+            ) : null}
+            {event.llmRequestBuildMs !== undefined ? (
+              <FieldRow label="firstToken/client">
+                <span className="text-fg-1">{event.llmRequestBuildMs} ms</span>
+              </FieldRow>
+            ) : null}
             {event.llmStreamDurationMs !== undefined ? (
               <FieldRow label="streamDuration">
                 <span className="text-fg-1">{event.llmStreamDurationMs} ms</span>
+              </FieldRow>
+            ) : null}
+            {event.llmServerDecodeMs !== undefined ? (
+              <FieldRow label="streamDuration/server">
+                <span className="text-fg-1">{event.llmServerDecodeMs} ms</span>
+              </FieldRow>
+            ) : null}
+            {event.llmClientConsumeMs !== undefined ? (
+              <FieldRow label="streamDuration/client">
+                <span className="text-fg-1">{event.llmClientConsumeMs} ms</span>
               </FieldRow>
             ) : null}
           </div>
