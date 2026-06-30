@@ -320,6 +320,36 @@ describe('context-projector', () => {
     expect(proj.messages[2]!.message.content[0]).toMatchObject({ text: 'sum' });
   });
 
+  it('apply_compaction mirrors the legacy verbatim tail for records without keptUserMessageCount (model)', () => {
+    // A pre-rework record has no keptUserMessageCount. agent-core's restore keeps
+    // the old `[summary, ...history.slice(compactedCount)]` tail (assistant/tool
+    // included), so the model view must do the same instead of applying the new
+    // kept-user selection — otherwise it would hide the assistant tail the resumed
+    // agent still has, and surface a pre-compaction user message the agent dropped.
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u0 (compacted away)' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const,
+          message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a1' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'u2 (tail)' }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const,
+          message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'a3 (tail)' }], toolCalls: [] } }, raw: {} },
+      // Legacy record: no keptUserMessageCount, compactedCount(2) < history(4).
+      { lineNo: 5, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 2, tokensBefore: 100, tokensAfter: 10 }, raw: {} },
+    ];
+
+    const model = projectContext(entries as any);
+    // [summary, u2, a3] — the verbatim tail beyond compactedCount, summary first.
+    expect(model.messages.map((m) => m.source)).toEqual([
+      'compaction_summary', 'append_message', 'append_message',
+    ]);
+    expect(model.messages.map((m) => m.message.content[0])).toMatchObject([
+      { text: 'sum' }, { text: 'u2 (tail)' }, { text: 'a3 (tail)' },
+    ]);
+  });
+
   it('apply_compaction drops shell/local-command/background messages in model mode only', () => {
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const,

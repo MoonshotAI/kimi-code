@@ -277,29 +277,42 @@ export function projectContext(
                 } as ContextMessage,
               };
         if (mode === 'model') {
-          // Rebuild the model's-eye view as the kept user messages + summary.
-          // `realUserEntries` is filtered with the exact
-          // `collectCompactableUserMessages` predicate so it stays aligned with
-          // the selection below (genuine user input only — no injections,
-          // system triggers, or prior summaries). `selectRecentUserMessages`
-          // keeps a contiguous suffix of that subsequence, with only the oldest
-          // kept message possibly truncated, so each kept message maps back onto
-          // its original ProjectedMessage wrapper (preserving line/time); we swap
-          // in the (possibly truncated) message object.
+          // Rebuild the model's-eye view. New records carry `keptUserMessageCount`
+          // and use the kept-user selection below; legacy records fall back to the
+          // old verbatim-tail shape (handled first).
           const historyEntries = messages.filter(isHistoryEntry);
-          const realUserEntries = historyEntries.filter(
-            (pm) => collectCompactableUserMessages([pm.message]).length === 1,
-          );
-          const keptUserMessages = selectRecentUserMessages(
-            realUserEntries.map((pm) => pm.message),
-            COMPACT_USER_MESSAGE_MAX_TOKENS,
-          );
-          const suffixStart = realUserEntries.length - keptUserMessages.length;
-          const keptEntries: ProjectedMessage[] = keptUserMessages.map((message, i) => {
-            const original = realUserEntries[suffixStart + i]!;
-            return original.message === message ? original : { ...original, message };
-          });
-          messages = [...keptEntries, modelSummaryBubble];
+          if (rec.keptUserMessageCount === undefined && rec.compactedCount < historyEntries.length) {
+            // Legacy (pre-rework) record: it has no `keptUserMessageCount`, so
+            // agent-core's ContextMemory restore reproduces the old
+            // `[summary, ...history.slice(compactedCount)]` semantics — a verbatim
+            // recent tail (assistant/tool included), not the new kept-user
+            // selection. Mirror that exact shape so opening an older compacted
+            // session in model mode shows the same tail the resumed agent still
+            // holds, instead of hiding it behind the new selection.
+            messages = [modelSummaryBubble, ...historyEntries.slice(rec.compactedCount)];
+          } else {
+            // `realUserEntries` is filtered with the exact
+            // `collectCompactableUserMessages` predicate so it stays aligned with
+            // the selection below (genuine user input only — no injections, system
+            // triggers, or prior summaries). `selectRecentUserMessages` keeps a
+            // contiguous suffix of that subsequence, with only the oldest kept
+            // message possibly truncated, so each kept message maps back onto its
+            // original ProjectedMessage wrapper (preserving line/time); we swap in
+            // the (possibly truncated) message object.
+            const realUserEntries = historyEntries.filter(
+              (pm) => collectCompactableUserMessages([pm.message]).length === 1,
+            );
+            const keptUserMessages = selectRecentUserMessages(
+              realUserEntries.map((pm) => pm.message),
+              COMPACT_USER_MESSAGE_MAX_TOKENS,
+            );
+            const suffixStart = realUserEntries.length - keptUserMessages.length;
+            const keptEntries: ProjectedMessage[] = keptUserMessages.map((message, i) => {
+              const original = realUserEntries[suffixStart + i]!;
+              return original.message === message ? original : { ...original, message };
+            });
+            messages = [...keptEntries, modelSummaryBubble];
+          }
         } else {
           // Full history: keep ALL preceding messages, just append the summary
           // marker inline so the compacted prefix stays visible.
