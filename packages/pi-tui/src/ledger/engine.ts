@@ -50,6 +50,13 @@ export class LedgerTuiEngine {
 	#resizeEventPending = false;
 	#stopped = false;
 
+	// ---- resize viewport defer (Phase B Task 4) ----
+	#resizeViewportActive = false;
+	#resizeViewportSettleTimer: ReturnType<typeof setTimeout> | undefined;
+	#resizeAltActive = false;
+	#resizeViewportPaintCount = 0;
+	static readonly #RESIZE_SETTLE_MS = 120;
+
 	// ---- composed + prepared caches (OMP: 1087-1125) ----
 	#composedFrame: string[] = [];
 	#frameSegments: FrameSegment[] = [];
@@ -99,6 +106,10 @@ export class LedgerTuiEngine {
 
 	get fullRedraws(): number {
 		return this.#fullRedrawCount;
+	}
+
+	get resizeViewportPaintCount(): number {
+		return this.#resizeViewportPaintCount;
 	}
 
 	// ---- cursor control (OMP: 3647-3671, 3120-3130) ----
@@ -541,6 +552,12 @@ export class LedgerTuiEngine {
 		if (this.#stopped) return;
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
+		if (this.#resizeViewportActive) {
+			// dragging: paint viewport only; no ledger/commit/diff
+			this.#renderResizeViewport(width, height);
+			this.#armResizeSettle();
+			return;
+		}
 
 		// 1. compose (Phase A: no partial roots, no image budget pass)
 		const rawFrame = this.#composeFrame(width);
@@ -679,8 +696,61 @@ export class LedgerTuiEngine {
 		this.#resizeEventPending = true;
 	}
 
+	// Called by the TUI's onResize (non-mux).
+	public beginResizeViewport(): void {
+		if (isMultiplexerSession()) return; // mux: no alt-screen
+		if (!this.#resizeViewportActive) {
+			this.terminal.write("\x1b[?1049h");
+			this.#resizeViewportActive = true;
+			this.#resizeAltActive = true;
+		}
+		this.#armResizeSettle();
+	}
+
+	#armResizeSettle(): void {
+		if (this.#resizeViewportSettleTimer) clearTimeout(this.#resizeViewportSettleTimer);
+		this.#resizeViewportSettleTimer = setTimeout(() => this.#settleResizeViewport(), LedgerTuiEngine.#RESIZE_SETTLE_MS);
+		this.#resizeViewportSettleTimer.unref();
+	}
+
+	#settleResizeViewport(): void {
+		this.#resizeViewportSettleTimer = undefined;
+		if (this.#resizeViewportActive) {
+			this.#resizeViewportActive = false;
+			this.#resizeAltActive = false;
+			this.terminal.write("\x1b[?1049l");
+		}
+		// authoritative full repaint after settle (clear scrollback, rewrap)
+		this.requestFullPaint(true);
+		this.doRender();
+	}
+
+	// Viewport fast path: paint only the bottom `height` rows into the alt-screen; do NOT advance ledger/commit/diff
+	#renderResizeViewport(width: number, height: number): void {
+		const rawFrame = this.#composeFrame(width);
+		const frame = this.#prepareFrame(rawFrame, width);
+		const start = Math.max(0, frame.length - height);
+		let buffer = this.#paintBeginSequence + "\x1b[H";
+		for (let r = 0; r < height; r++) {
+			if (r > 0) buffer += "\r\n";
+			buffer += "\x1b[2K" + this.#terminalLine(frame[start + r] ?? "");
+		}
+		buffer += this.#paintEndSequence;
+		this.terminal.write(buffer);
+		this.#resizeViewportPaintCount += 1;
+	}
+
 	public stop(): void {
 		this.#stopped = true;
+		if (this.#resizeViewportSettleTimer) {
+			clearTimeout(this.#resizeViewportSettleTimer);
+			this.#resizeViewportSettleTimer = undefined;
+		}
+		if (this.#resizeAltActive) {
+			this.#resizeViewportActive = false;
+			this.#resizeAltActive = false;
+			this.terminal.write("\x1b[?1049l");
+		}
 	}
 
 	public reset(): void {

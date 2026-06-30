@@ -16,7 +16,7 @@ import {
 	type TerminalColorScheme,
 } from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
-import { createStaticCapabilities, type TerminalCapabilities } from "./terminal-capabilities.ts";
+import { createStaticCapabilities, isMultiplexerSession, type TerminalCapabilities } from "./terminal-capabilities.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 import { LedgerTuiEngine } from "./ledger/engine.ts";
 
@@ -648,6 +648,7 @@ export class TUI extends Container {
 			(data) => this.handleInput(data),
 			() => {
 				this.ledgerEngine?.notifyResize();
+				if (!isMultiplexerSession()) this.ledgerEngine?.beginResizeViewport();
 				this.requestRender();
 			},
 		);
