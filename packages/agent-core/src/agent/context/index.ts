@@ -590,7 +590,12 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
     return isEmptyOutputText(output) ? TOOL_EMPTY_STATUS : output;
   }
 
-  if (output.length === 0) {
+  // Treat an array output with no sendable content (empty, or only empty/
+  // whitespace-only text blocks) the same as an empty string output: emit the
+  // placeholder. Otherwise projection would strip the blank text blocks, leave
+  // the tool message empty, and throw on every send — bricking the session. A
+  // non-text part (image/etc.) or any non-whitespace text keeps the real output.
+  if (isEmptyEquivalentContentArray(output)) {
     return [
       {
         type: 'text',
@@ -602,6 +607,10 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
     return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
   }
   return output;
+}
+
+function isEmptyEquivalentContentArray(output: readonly ContentPart[]): boolean {
+  return output.every((part) => part.type === 'text' && part.text.trim().length === 0);
 }
 
 function isEmptyOutputText(output: string): boolean {
