@@ -130,21 +130,53 @@ describe('compaction — guard tests', () => {
     await ctx.agent.turn.waitForCurrentTurn();
   });
 
-  it('rejects a new turn while a manual compaction is in progress', async () => {
+  it('defers a prompt submitted during compaction and runs it afterward', async () => {
     const ctx = testAgent();
     ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
     ctx.appendExchange(1, 'user one', 'assistant one', 40);
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'answer to the deferred prompt' });
 
     // begin() sets the compacting flag synchronously before the summarizer yields.
     void ctx.rpc.beginCompaction({});
     expect(ctx.agent.fullCompaction.isCompacting).toBe(true);
 
-    // A new turn must be refused while compaction holds the context.
-    const turnId = ctx.agent.turn.prompt([{ type: 'text', text: 'new turn' }]);
+    // A prompt arriving mid-compaction is buffered (deferred), not rejected: null
+    // means "not launched now", and it must run once compaction finishes.
+    const turnId = ctx.agent.turn.prompt([{ type: 'text', text: 'DEFERRED-PROMPT' }]);
     expect(turnId).toBeNull();
 
     await ctx.once('compaction.completed');
+    await ctx.agent.turn.waitForCurrentTurn();
+
+    // Ran after compaction — neither lost nor stuck.
+    expect(historyTexts(ctx).join('\n')).toContain('DEFERRED-PROMPT');
+  });
+
+  it('defers a steer arriving during compaction and delivers it afterward', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.appendExchange(1, 'user one', 'assistant one', 40);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'handled the steer' });
+
+    void ctx.rpc.beginCompaction({});
+    expect(ctx.agent.fullCompaction.isCompacting).toBe(true);
+
+    // A background-task/cron steer mid-compaction must be buffered (null = buffered,
+    // which is exactly what those fire-and-forget callers assume), not dropped.
+    const turnId = ctx.agent.turn.steer([{ type: 'text', text: 'DEFERRED-STEER' }], {
+      kind: 'background_task',
+      taskId: 't',
+      status: 'completed',
+      notificationId: 'n',
+    });
+    expect(turnId).toBeNull();
+
+    await ctx.once('compaction.completed');
+    await ctx.agent.turn.waitForCurrentTurn();
+
+    expect(historyTexts(ctx).join('\n')).toContain('DEFERRED-STEER');
   });
 });
 

@@ -1393,6 +1393,39 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('reinjects reminders before a turn deferred during manual compaction', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    await ctx.agent.planMode.enter('deferred-plan', false);
+    const planFilePath = ctx.agent.planMode.planFilePath;
+    if (planFilePath === null) throw new Error('plan file path missing');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
+    await ctx.agent.injection.inject();
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' }); // summarizer
+    ctx.mockNextResponse({ type: 'text', text: 'answer for the deferred turn' }); // deferred turn
+
+    // A prompt arriving mid-compaction is deferred, then replayed once compaction
+    // finishes. It must run AFTER reinjection, so its request carries the plan-mode
+    // reminder — the post-compaction state is resurfaced on the very first turn.
+    void ctx.rpc.beginCompaction({});
+    expect(ctx.agent.fullCompaction.isCompacting).toBe(true);
+    const turnId = ctx.agent.turn.prompt([{ type: 'text', text: 'Continue the plan' }]);
+    expect(turnId).toBeNull();
+
+    await ctx.once('compaction.completed');
+    await ctx.agent.turn.waitForCurrentTurn();
+
+    // Two generate calls: the summarizer, then the deferred turn — proving the
+    // deferred prompt ran (not stuck) and saw the reinjected reminder.
+    expect(ctx.llmCalls).toHaveLength(2);
+    const answerTexts = ctx.llmCalls[1]?.history.map(messageText) ?? [];
+    expect(answerTexts.some((text) => text.includes(`Plan file: ${planFilePath}`))).toBe(true);
+  });
+
   it('does not auto compact small contexts when reserved size exceeds the model window', async () => {
     const ctx = testAgent({
       initialConfig: {
