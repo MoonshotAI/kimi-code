@@ -41,6 +41,7 @@ import type { PromisableMethods } from '#/utils/types';
 import type { Session, SessionMeta } from '.';
 import {
   promptMetadataTextFromPayload,
+  promptMetadataTextFromPluginCommand,
   promptMetadataTextFromSkill,
   titleFromPromptMetadataText,
 } from './prompt-metadata';
@@ -221,6 +222,9 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     ...payload
   }: AgentScopedPayload<ActivatePluginCommandPayload>) {
     await (await this.getAgent(agentId)).activatePluginCommand(payload);
+    if (agentId === 'main') {
+      await this.updatePromptMetadata(promptMetadataTextFromPluginCommand(payload));
+    }
   }
 
   async startBtw({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>): Promise<string> {
