@@ -89,4 +89,36 @@ describe('executeLoopStep — tool exchange adjacency fallback', () => {
     expect(llm.callCount).toBe(1);
     expect(strictCalls.count).toBe(0);
   });
+
+  it('resends only once: if the strict rebuild is also rejected, it gives up (no loop)', async () => {
+    // Throw a recoverable structural 400 on every attempt; the loop must stop
+    // after exactly two provider calls (first attempt + one strict resend).
+    const llm = new FakeLLM({ responses: [] });
+    let calls = 0;
+    llm.chat = async () => {
+      calls += 1;
+      throw ADJACENCY_400;
+    };
+    const context = new RecordingContext({ messages: [userMessage('normal')] });
+    const sink = new CollectingSink({});
+    let strictCount = 0;
+    const input: RunTurnInput = {
+      turnId: 'turn-1',
+      signal: new AbortController().signal,
+      llm,
+      buildMessages: context.buildMessages,
+      buildMessagesStrict: () => {
+        strictCount += 1;
+        return [userMessage('strict')];
+      },
+      dispatchEvent: createLoopEventDispatcher({
+        appendTranscriptRecord: context.appendTranscriptRecord,
+        emitLiveEvent: sink.emit,
+      }),
+    };
+
+    await expect(runTurn(input)).rejects.toBe(ADJACENCY_400);
+    expect(calls).toBe(2); // first attempt + one strict resend, then give up
+    expect(strictCount).toBe(1);
+  });
 });

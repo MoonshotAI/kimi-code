@@ -435,6 +435,104 @@ describe('project repair reporting', () => {
     project(history, { dropOrphanResults: true, onAnomaly: (a) => strict.push(a) });
     expect(strict).toEqual([{ kind: 'orphan_tool_result_dropped', toolCallId: 'stray' }]);
   });
+
+  it('reports a whitespace-only text drop but not a truly-empty one', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project(
+      [
+        // empty '' block (routine) followed by real text — not reported
+        { role: 'user', content: [textPart(''), textPart('hi')], toolCalls: [] },
+        // whitespace-only block dropped — reported
+        { role: 'assistant', content: [textPart('  \n'), textPart('ok')], toolCalls: [] },
+      ],
+      { onAnomaly: (a) => anomalies.push(a) },
+    );
+    expect(anomalies).toEqual([{ kind: 'whitespace_text_dropped', role: 'assistant' }]);
+  });
+
+  it('reports leading-non-user drops and consecutive-assistant merges (strict)', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project(
+      [
+        { role: 'assistant', content: [textPart('opener')], toolCalls: [] },
+        user('hi'),
+        { role: 'assistant', content: [textPart('one')], toolCalls: [] },
+        { role: 'assistant', content: [textPart('two')], toolCalls: [] },
+      ],
+      { dropLeadingNonUser: true, mergeConsecutiveAssistants: true, onAnomaly: (a) => anomalies.push(a) },
+    );
+    expect(anomalies).toContainEqual({ kind: 'consecutive_assistants_merged' });
+    expect(anomalies).toContainEqual({ kind: 'leading_non_user_dropped', role: 'assistant' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Whitespace-only text + strict-provider sanitizers
+// ---------------------------------------------------------------------------
+
+function ws(text: string): ContextMessage {
+  return { role: 'user', content: [textPart(text)], toolCalls: [] };
+}
+
+function assistantText(text: string): ContextMessage {
+  return { role: 'assistant', content: [textPart(text)], toolCalls: [] };
+}
+
+describe('project drops whitespace-only text', () => {
+  it('drops a text block that is only whitespace (Anthropic rejects it)', () => {
+    const projected = project([
+      user('real'),
+      {
+        role: 'assistant',
+        content: [textPart('   '), textPart('answer')],
+        toolCalls: [],
+      },
+    ]);
+    const assistantMsg = projected.find((m) => m.role === 'assistant');
+    expect(assistantMsg?.content).toEqual([{ type: 'text', text: 'answer' }]);
+  });
+
+  it('drops a message whose only text block is whitespace', () => {
+    const projected = project([user('real'), ws('   \n\t ')]);
+    expect(projected.map((m) => textOf(m))).toEqual(['real']);
+  });
+
+  it('keeps surrounding whitespace inside a non-empty block', () => {
+    const projected = project([user('  hello  ')]);
+    expect(textOf(projected[0])).toBe('  hello  ');
+  });
+});
+
+describe('project strict-provider sanitizers', () => {
+  it('drops leading non-user messages so the first message is a user turn', () => {
+    // History that (pathologically) starts with an assistant turn.
+    const projected = project(
+      [assistantText('stray opener'), user('hi'), assistant(['a']), tool('a')],
+      { dropLeadingNonUser: true },
+    );
+    expect(projected[0]?.role).toBe('user');
+    expect(textOf(projected[0])).toBe('hi');
+  });
+
+  it('only drops leading non-user under the strict flag (normal path keeps them)', () => {
+    const history: ContextMessage[] = [assistantText('stray opener'), user('hi')];
+    expect(project(history)[0]?.role).toBe('assistant');
+    expect(project(history, { dropLeadingNonUser: true })[0]?.role).toBe('user');
+  });
+
+  it('merges consecutive assistant messages under the strict flag', () => {
+    const projected = project([user('hi'), assistantText('part one'), assistantText('part two')], {
+      mergeConsecutiveAssistants: true,
+    });
+    expect(projected.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(textOf(projected[1])).toContain('part one');
+    expect(textOf(projected[1])).toContain('part two');
+  });
+
+  it('leaves consecutive assistant messages untouched on the normal path', () => {
+    const projected = project([user('hi'), assistantText('part one'), assistantText('part two')]);
+    expect(projected.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant']);
+  });
 });
 
 // ---------------------------------------------------------------------------

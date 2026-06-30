@@ -9,10 +9,11 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { isToolExchangeAdjacencyError, type TokenUsage } from '@moonshot-ai/kosong';
+import { isRecoverableRequestStructureError, type TokenUsage } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
+import { errorMessage } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 import { chatWithRetry } from './retry';
 import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
@@ -125,23 +126,41 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   try {
     response = await chatWithRetry({ ...retryInput, params: chatParams });
   } catch (error) {
-    // A tool_use/tool_result adjacency 400 means the projected history is not
-    // wire-compliant for a strict provider — and since the same history is
-    // re-sent every turn, the session would stay stuck on this error forever.
-    // Resend ONCE with a strict, guaranteed-compliant rebuild (every open call
-    // closed, stray results dropped) as a last resort. Any other error, or a
-    // host that supplied no strict builder, propagates unchanged.
-    if (buildMessagesStrict === undefined || !isToolExchangeAdjacencyError(error)) throw error;
+    // A structural request rejection (tool_use/tool_result pairing, empty or
+    // whitespace-only text, non-user first message, non-alternating roles) means
+    // the projected history is not wire-compliant for a strict provider — and
+    // since the same history is re-sent every turn, the session would stay stuck
+    // on this error forever. Resend ONCE with a strict, guaranteed-compliant
+    // rebuild (every open call closed, stray results dropped, leading non-user
+    // trimmed, consecutive assistants merged) as a last resort. Any other error,
+    // or a host that supplied no strict builder, propagates unchanged.
+    if (buildMessagesStrict === undefined || !isRecoverableRequestStructureError(error)) throw error;
     signal.throwIfAborted();
-    log?.warn('provider rejected tool_use/tool_result pairing; resending with strict projection', {
+    log?.warn('provider rejected request structure; resending with strict projection', {
       turnStep: `${turnId}.${String(currentStep)}`,
       model: llm.modelName,
     });
     const strictMessages = await buildMessagesStrict();
     signal.throwIfAborted();
-    response = await chatWithRetry({
-      ...retryInput,
-      params: { ...chatParams, messages: strictMessages },
+    try {
+      response = await chatWithRetry({
+        ...retryInput,
+        params: { ...chatParams, messages: strictMessages },
+      });
+    } catch (strictError) {
+      // The strictly-sanitized rebuild was still rejected — our wire-compliance
+      // repair did not cover this case. Surface it loudly: the session is stuck
+      // and this is the signal we need to diagnose the gap.
+      log?.error('strict resend still rejected by provider; request remains wire-invalid', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+        model: llm.modelName,
+        originalError: errorMessage(error),
+        strictError: errorMessage(strictError),
+      });
+      throw strictError;
+    }
+    log?.info('recovered after strict resend', {
+      turnStep: `${turnId}.${String(currentStep)}`,
     });
   }
   const usage = response.usage;

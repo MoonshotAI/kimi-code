@@ -227,7 +227,7 @@ describe('Agent context', () => {
     ]);
   });
 
-  it('drops empty text parts only in LLM projection', () => {
+  it('drops empty and whitespace-only text parts in LLM projection', () => {
     const history: ContextMessage[] = [
       {
         role: 'user',
@@ -259,6 +259,8 @@ describe('Agent context', () => {
         toolCalls: [],
       },
       {
+        // Whitespace-only message: strict providers reject the block, so the
+        // whole message is dropped from the projection.
         role: 'user',
         content: [{ type: 'text', text: '   ' }],
         toolCalls: [],
@@ -285,11 +287,6 @@ describe('Agent context', () => {
       {
         role: 'assistant',
         content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
-        toolCalls: [],
-      },
-      {
-        role: 'user',
-        content: [{ type: 'text', text: '   ' }],
         toolCalls: [],
       },
     ]);

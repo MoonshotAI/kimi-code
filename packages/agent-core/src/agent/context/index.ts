@@ -349,7 +349,7 @@ export class ContextMemory {
       return;
     }
     const signature = notable
-      .map((anomaly) => `${anomaly.kind}:${anomaly.toolCallId}`)
+      .map((anomaly) => ('toolCallId' in anomaly ? `${anomaly.kind}:${anomaly.toolCallId}` : anomaly.kind))
       .toSorted()
       .join('|');
     if (signature === this.lastProjectionRepairSignature) return;
@@ -358,22 +358,38 @@ export class ContextMemory {
     let reordered = 0;
     let synthesized = 0;
     let droppedOrphan = 0;
+    let leadingDropped = 0;
+    let assistantsMerged = 0;
+    let whitespaceDropped = 0;
     for (const anomaly of notable) {
       if (anomaly.kind === 'tool_result_reordered') reordered += 1;
       else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
-      else droppedOrphan += 1;
+      else if (anomaly.kind === 'orphan_tool_result_dropped') droppedOrphan += 1;
+      else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
+      else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
+      else whitespaceDropped += 1;
     }
-    const toolCallIds = [...new Set(notable.map((anomaly) => anomaly.toolCallId))].slice(0, 5);
-    this.agent.log.warn('repaired tool exchange to keep the request wire-valid', {
+    const toolCallIds = [
+      ...new Set(
+        notable.flatMap((anomaly) => ('toolCallId' in anomaly ? [anomaly.toolCallId] : [])),
+      ),
+    ].slice(0, 5);
+    this.agent.log.warn('repaired the request to keep it wire-valid', {
       reordered,
       synthesized,
       droppedOrphan,
+      leadingDropped,
+      assistantsMerged,
+      whitespaceDropped,
       toolCallIds,
     });
     this.agent.telemetry.track('context_projection_repaired', {
       reordered,
       synthesized,
       dropped_orphan: droppedOrphan,
+      leading_dropped: leadingDropped,
+      assistants_merged: assistantsMerged,
+      whitespace_dropped: whitespaceDropped,
     });
   }
 
@@ -387,7 +403,12 @@ export class ContextMemory {
   // matter how the history was mangled. Only used when the provider has already
   // rejected the normal projection — see the adjacency fallback in `turn-step`.
   get strictMessages(): Message[] {
-    return this.project(this.history, { synthesizeMissing: true, dropOrphanResults: true });
+    return this.project(this.history, {
+      synthesizeMissing: true,
+      dropOrphanResults: true,
+      dropLeadingNonUser: true,
+      mergeConsecutiveAssistants: true,
+    });
   }
 
   useProjectedHistoryFrom(source: ContextMemory): void {
@@ -584,7 +605,7 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
 }
 
 function isEmptyOutputText(output: string): boolean {
-  return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
+  return output.trim().length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
 }
 
 function formatUndoUnavailableMessage(
