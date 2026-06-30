@@ -6,6 +6,22 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.20.3 (2026-06-30)
+
+### Bug Fixes
+
+- Fix provider error messages rendering as blank lines in the TUI when the server returns an HTML error page.
+- Fix the web composer being hidden behind the mobile Safari toolbar and the page auto-zooming when the composer is focused.
+
+### Polish
+
+- Refresh provider model lists automatically in the background instead of only at startup, so newly available models appear without restarting.
+- Glob now uses ripgrep, so it respects .gitignore by default, supports brace patterns, returns only files, and keeps partial results with a warning when some directories are unreadable.
+
+### Refactors
+
+- Align malformed tool call argument handling with schema validation fallback.
+
 ## 0.20.2 (2026-06-29)
 
 ### Features
