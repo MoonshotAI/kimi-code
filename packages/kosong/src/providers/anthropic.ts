@@ -37,6 +37,7 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
+import { mergeConsecutiveUserMessages } from './merge-user-messages';
 import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
@@ -1012,47 +1013,33 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
-    // Convert messages, merging consecutive user messages into one. Strict
+    // Convert messages, then merge consecutive user messages into one. Strict
     // Anthropic-compatible backends reject consecutive user messages with HTTP
     // 400 ("roles must alternate"), and api.anthropic.com concatenates them
     // anyway — so merging is safe for native Anthropic and required for strict
-    // backends. The merge is asymmetric, keyed on whether the running message
-    // (`last`) is tool-result-only:
-    //   - tool-result-only `last` absorbs whatever follows — another
-    //     tool-result-only message (the parallel-tool-use spec requires all
-    //     tool_result blocks answering parallel tool_use calls to share one
-    //     user message) or a following plain-text turn, yielding a valid
-    //     `[tool_result, …, text]` user message.
-    //   - plain-text `last` absorbs only a following plain-text message, never
-    //     a tool-result-only one (a leading tool_result must respond to the
-    //     immediately preceding assistant tool_use, which a plain-text `last`
-    //     is not — though in well-formed transcripts this ordering never
-    //     arises, since a tool-result user always follows the assistant turn).
-    // Consecutive plain-text user messages arise naturally after compaction
-    // (kept user prompts + user-role summary + injected reminders) and from
-    // back-to-back system messages converted to user role above.
-    const messages: MessageParam[] = [];
-    const normalizedHistory = normalizeToolCallIdsForProvider(
-      history,
-      ANTHROPIC_TOOL_CALL_ID_POLICY,
+    // backends. Consecutive plain-text user messages arise naturally after
+    // compaction (kept user prompts + user-role summary + injected reminders)
+    // and from back-to-back system messages converted to user role above; a
+    // tool-result user turn followed by a text turn arises from steering after
+    // a tool result. The shared helper applies the asymmetric merge rule (see
+    // mergeConsecutiveUserMessages) so this provider and Gemini/Vertex stay in
+    // step.
+    const messages = mergeConsecutiveUserMessages(
+      normalizeToolCallIdsForProvider(history, ANTHROPIC_TOOL_CALL_ID_POLICY).map((msg) =>
+        convertMessage(msg, this._model),
+      ),
+      {
+        isUser: (message) => message.role === 'user',
+        isToolResultOnly,
+        merge: (last, next) => ({
+          ...last,
+          content: [
+            ...(last.content as ContentBlockParam[]),
+            ...(next.content as ContentBlockParam[]),
+          ],
+        }),
+      },
     );
-    for (const msg of normalizedHistory) {
-      const converted = convertMessage(msg, this._model);
-      const last = messages.at(-1);
-      if (
-        last !== undefined &&
-        last.role === 'user' &&
-        converted.role === 'user' &&
-        (isToolResultOnly(last) || !isToolResultOnly(converted))
-      ) {
-        last.content = [
-          ...(last.content as ContentBlockParam[]),
-          ...(converted.content as ContentBlockParam[]),
-        ];
-      } else {
-        messages.push(converted);
-      }
-    }
 
     // Inject cache_control on last content block of last message (after merge,
     // so it lands on the final tool_result block in the merged user message).
