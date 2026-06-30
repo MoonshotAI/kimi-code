@@ -16,12 +16,15 @@ export {
 } from '#/constant/app';
 
 export const FEEDBACK_STATUS_SUBMITTING = 'Submitting feedback…';
+export const FEEDBACK_STATUS_UPLOADING = 'Uploading attachments, this could take a few minutes…';
 export const FEEDBACK_STATUS_SUCCESS = 'Feedback submitted, thank you!';
 export const FEEDBACK_STATUS_CANCELLED = 'Feedback cancelled.';
 export const FEEDBACK_STATUS_NETWORK_ERROR = 'Network error, failed to submit feedback.';
 export const FEEDBACK_STATUS_FALLBACK = 'Opening GitHub Issues as fallback…';
 export const FEEDBACK_STATUS_NOT_SIGNED_IN =
   "You're not signed in. Opening GitHub Issues for feedback…";
+export const FEEDBACK_STATUS_UPLOAD_FAILED =
+  'Feedback sent; attachment upload failed — see feedback-upload.log.';
 
 export function feedbackHttpErrorMessage(status: number): string {
   return `Failed to submit feedback (HTTP ${String(status)}).`;
@@ -29,6 +32,10 @@ export function feedbackHttpErrorMessage(status: number): string {
 
 export function feedbackSessionLine(sessionId: string): string {
   return `Session: ${sessionId}`;
+}
+
+export function feedbackIdLine(feedbackId: number): string {
+  return `Feedback ID: ${String(feedbackId)}`;
 }
 
 // Hint shown beneath session-level error messages in the TUI to point users

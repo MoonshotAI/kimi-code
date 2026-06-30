@@ -23,6 +23,7 @@ import type {
 } from '../../api/types';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
+import { basename } from '../../lib/pathBasename';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import type {
@@ -97,7 +98,6 @@ export interface UseWorkspaceStateDeps {
   saveActiveWorkspaceToStorage: (id: string) => void;
   saveHiddenWorkspacesToStorage: (roots: string[]) => void;
   goalErrorMessage: (err: unknown) => string | undefined;
-  basename: (path: string) => string;
   resetFastMoon: () => void;
   initialized: Ref<boolean>;
   selectedDiffPath: Ref<string | null>;
@@ -140,7 +140,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     saveActiveWorkspaceToStorage,
     saveHiddenWorkspacesToStorage,
     goalErrorMessage,
-    basename,
     resetFastMoon,
     initialized,
     selectedDiffPath,
@@ -287,7 +286,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   const SESSION_PAGE_SIZE = 100;
   // Sessions fetched per workspace on first load — keeps the initial request
   // count at (number of workspaces) and each response small.
-  const SESSIONS_INITIAL_PAGE_SIZE = 10;
+  const SESSIONS_INITIAL_PAGE_SIZE = 5;
   // Sessions fetched per "load more" click within a workspace.
   const SESSIONS_LOAD_MORE_SIZE = 30;
 
@@ -299,7 +298,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const items: AppSession[] = [];
     let beforeId: string | undefined;
     for (;;) {
-      const page = await api.listSessions({ pageSize: SESSION_PAGE_SIZE, beforeId });
+      const page = await api.listSessions({
+        pageSize: SESSION_PAGE_SIZE,
+        beforeId,
+        excludeEmpty: true,
+      });
       items.push(...page.items);
       if (!page.hasMore || page.items.length === 0) break;
       beforeId = page.items[page.items.length - 1]!.id;
@@ -326,7 +329,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const pages = await Promise.all(
       workspaces.map((w) =>
         api
-          .listSessions({ workspaceId: w.id, pageSize: SESSIONS_INITIAL_PAGE_SIZE })
+          .listSessions({
+            workspaceId: w.id,
+            pageSize: SESSIONS_INITIAL_PAGE_SIZE,
+            excludeEmpty: true,
+          })
           .then((page) => ({ workspaceId: w.id, page }))
           .catch(() => ({
             workspaceId: w.id,
@@ -372,6 +379,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         workspaceId,
         pageSize: SESSIONS_LOAD_MORE_SIZE,
         beforeId,
+        excludeEmpty: true,
       });
       // Append de-duped against the latest list so a concurrently added/removed
       // session is respected.
@@ -598,42 +606,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     selectWorkspace(workspaceId);
     clearActiveSession();
     clearFileDiff();
-  }
-
-  /**
-   * Create a session in a workspace — the one-click path (no cwd typing).
-   * Register/touch the workspace first when the daemon supports it; if that
-   * fails, fall back to the legacy cwd-only create path.
-   */
-  async function createSessionInWorkspace(workspaceId: string): Promise<AppSession | undefined> {
-    const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-    if (!ws) return undefined;
-    try {
-      const api = getKimiWebApi();
-      let workspaceIdForCreate: string | undefined;
-      let cwdForCreate = ws.root;
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        cwdForCreate = registered.root;
-        upsertWorkspacePreserveOrder(registered);
-      } catch {
-        // Older daemons may not have /workspaces. In that mode, sending a local
-        // path-like workspace id as workspace_id would fail validation, so use
-        // metadata.cwd only.
-      }
-      const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
-      upsertSessionFront(session);
-      selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-      // Locally created sessions start empty; trust that so the empty-composer
-      // renders immediately instead of flashing a loading state.
-      sessionsKnownEmpty.add(session.id);
-      await selectSession(session.id);
-      return session;
-    } catch (err) {
-      pushOperationFailure('createSessionInWorkspace', err);
-      return undefined;
-    }
   }
 
   /**
@@ -875,20 +847,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (rawState.activeSessionId === sessionId) {
         rawState.sessionLoading = false;
       }
-    }
-  }
-
-  async function createSession(cwd: string, opts?: { title?: string; model?: string }): Promise<void> {
-    try {
-      const api = getKimiWebApi();
-      const session = await api.createSession({ cwd, title: opts?.title, model: opts?.model });
-      upsertSessionFront(session);
-      // Locally created sessions start empty; trust that so the empty-composer
-      // renders immediately instead of flashing a loading state.
-      sessionsKnownEmpty.add(session.id);
-      await selectSession(session.id);
-    } catch (err) {
-      pushOperationFailure('createSession', err);
     }
   }
 
@@ -1721,7 +1679,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     applyWorkspaceEvent,
     clearActiveSession,
     openWorkspaceDraft,
-    createSessionInWorkspace,
     startSessionAndSendPrompt,
     addWorkspaceByPath,
     browseFs,
@@ -1731,7 +1688,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     onSessionRoutePopState,
     bindSessionRoute,
     selectSession,
-    createSession,
     submitPromptInternal,
     sendPrompt,
     steerPrompt,

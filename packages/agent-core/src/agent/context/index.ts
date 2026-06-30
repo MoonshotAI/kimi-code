@@ -468,6 +468,9 @@ function isRealUserPrompt(message: ContextMessage): boolean {
   if (origin.kind === 'skill_activation') {
     return origin.trigger === 'user-slash';
   }
+  if (origin.kind === 'plugin_command') {
+    return origin.trigger === 'user-slash';
+  }
   return false;
 }
 

@@ -70,11 +70,11 @@ export async function runShell(
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
-        track('oauth_refresh', { success: true });
+        track('oauth_refresh', { outcome: 'success' });
         return;
       }
       track('oauth_refresh', {
-        success: false,
+        outcome: 'error',
         reason: outcome.reason,
       });
     },
@@ -145,7 +145,7 @@ export async function runShell(
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasEverHadSessionContent();
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_s: (Date.now() - startedAt) / 1000 });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
 
     // Clean up the git worktree for empty sessions so abandoned worktrees
     // do not accumulate. Use the lifetime flag so `/new` does not delete a
@@ -191,7 +191,7 @@ export async function runShell(
     });
   } catch (error) {
     setCrashPhase('shutdown');
-    trackLifecycle('exit', { duration_s: (Date.now() - startedAt) / 1000 });
+    trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     await harness.close();
     throw error;

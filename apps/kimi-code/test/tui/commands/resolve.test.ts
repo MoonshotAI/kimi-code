@@ -14,6 +14,7 @@ function resolve(
   return resolveSlashCommandInput({
     input,
     skillCommandMap: new Map<string, string>(),
+    pluginCommandMap: new Map<string, string>(),
     isStreaming: false,
     isCompacting: false,
     ...overrides,
@@ -306,5 +307,34 @@ describe('slash command busy helpers', () => {
     expect(slashCommandBusyReason({ isStreaming: false, isCompacting: true })).toBe('compacting');
     expect(slashBusyMessage('new', 'streaming')).toContain('Cannot /new while streaming');
     expect(slashBusyMessage('new', 'compacting')).toContain('Cannot /new while compacting');
+  });
+
+  it('resolves a namespaced plugin command to a plugin-command intent', () => {
+    const pluginCommandMap = new Map([['my-plugin:deploy', 'Deploy $ARGUMENTS']]);
+    expect(resolve('/my-plugin:deploy prod', { pluginCommandMap })).toEqual({
+      kind: 'plugin-command',
+      commandName: 'deploy',
+      pluginId: 'my-plugin',
+      args: 'prod',
+    });
+  });
+
+  it('resolves a nested plugin command whose name contains a slash', () => {
+    const pluginCommandMap = new Map([['my-plugin:frontend/component', 'body']]);
+    expect(resolve('/my-plugin:frontend/component spin', { pluginCommandMap })).toEqual({
+      kind: 'plugin-command',
+      commandName: 'frontend/component',
+      pluginId: 'my-plugin',
+      args: 'spin',
+    });
+  });
+
+  it('blocks a plugin command while streaming', () => {
+    const pluginCommandMap = new Map([['my-plugin:deploy', 'Deploy']]);
+    expect(resolve('/my-plugin:deploy', { pluginCommandMap, isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'my-plugin:deploy',
+      reason: 'streaming',
+    });
   });
 });

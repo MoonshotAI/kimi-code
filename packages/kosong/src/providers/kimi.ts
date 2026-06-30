@@ -4,6 +4,7 @@ import type {
   ChatProvider,
   FinishReason,
   GenerateOptions,
+  MaxCompletionTokensOptions,
   ProviderRequestAuth,
   StreamedMessage,
   ThinkingEffort,
@@ -487,6 +488,7 @@ export class KimiChatProvider implements ChatProvider {
       const client = this._createClient(options?.auth);
       // Use type assertion via unknown because we pass Moonshot-proprietary fields
       // (reasoning_effort, thinking) that don't exist in the OpenAI type definitions.
+      options?.onRequestSent?.();
       const response = (await client.chat.completions.create(
         createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         options?.signal ? { signal: options.signal } : undefined,
@@ -527,8 +529,19 @@ export class KimiChatProvider implements ChatProvider {
     return this._withGenerationKwargs(kwargs);
   }
 
-  withMaxCompletionTokens(maxCompletionTokens: number): KimiChatProvider {
-    return this._withGenerationKwargs({ max_completion_tokens: maxCompletionTokens });
+  withMaxCompletionTokens(
+    maxCompletionTokens: number,
+    options?: MaxCompletionTokensOptions,
+  ): KimiChatProvider {
+    let cap = maxCompletionTokens;
+    if (
+      options?.usedContextTokens !== undefined &&
+      options?.maxContextTokens !== undefined &&
+      options.maxContextTokens > 0
+    ) {
+      cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
+    }
+    return this._withGenerationKwargs({ max_completion_tokens: Math.max(1, cap) });
   }
 
   withExtraBody(extraBody: ExtraBody): KimiChatProvider {

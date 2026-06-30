@@ -228,7 +228,8 @@ function canEditTurn(turn: ChatTurn): boolean {
     turn.id === lastUserTurnId.value &&
     !props.running &&
     !props.sending &&
-    !turn.skillActivation
+    !turn.skillActivation &&
+    !turn.pluginCommand
   );
 }
 
@@ -475,6 +476,14 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             </div>
             <div v-if="turn.skillActivation.args" class="skill-act-args">{{ turn.skillActivation.args }}</div>
           </div>
+          <!-- Plugin command card (replaces expanded body) -->
+          <div v-else-if="turn.pluginCommand" class="skill-act">
+            <div class="skill-act-head">
+              <span class="skill-act-arrow">▶</span>
+              <span>/{{ turn.pluginCommand.pluginId }}:{{ turn.pluginCommand.commandName }}</span>
+            </div>
+            <div v-if="turn.pluginCommand.args" class="skill-act-args">{{ turn.pluginCommand.args }}</div>
+          </div>
           <!-- User input renders verbatim (pre-wrap), never through Markdown -->
           <div v-else class="u-text">{{ turn.text }}</div>
         </div>
@@ -692,6 +701,13 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
                 <span>{{ t('conversation.activatedSkill', { name: turn.skillActivation.name }) }}</span>
               </div>
               <div v-if="turn.skillActivation.args" class="skill-act-args">{{ turn.skillActivation.args }}</div>
+            </div>
+            <div v-else-if="turn.pluginCommand" class="skill-act">
+              <div class="skill-act-head">
+                <span class="skill-act-arrow">▶</span>
+                <span>/{{ turn.pluginCommand.pluginId }}:{{ turn.pluginCommand.commandName }}</span>
+              </div>
+              <div v-if="turn.pluginCommand.args" class="skill-act-args">{{ turn.pluginCommand.args }}</div>
             </div>
             <template v-else>{{ turn.text }}</template>
           </div>

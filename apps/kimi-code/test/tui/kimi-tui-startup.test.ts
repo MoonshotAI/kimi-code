@@ -1269,6 +1269,7 @@ describe('KimiTUI startup', () => {
     });
     expect(harness.track).toHaveBeenCalledWith('login', {
       provider: 'managed:kimi-code',
+      method: 'oauth',
       already_logged_in: false,
     });
   });
@@ -1302,6 +1303,7 @@ describe('KimiTUI startup', () => {
     );
     expect(harness.track).toHaveBeenCalledWith('login', {
       provider: 'managed:kimi-code',
+      method: 'oauth',
       already_logged_in: true,
     });
   });

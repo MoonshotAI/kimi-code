@@ -78,6 +78,7 @@ export interface GoogleGenAIOptions {
   project?: string | undefined;
   location?: string | undefined;
   stream?: boolean | undefined;
+  defaultHeaders?: Record<string, string>;
   clientFactory?: (auth: ProviderRequestAuth) => GenAIClient;
 }
 
@@ -673,6 +674,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   private _apiKey: string | undefined;
   private _project: string | undefined;
   private _location: string | undefined;
+  private _defaultHeaders: Record<string, string> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => GenAIClient) | undefined;
 
   constructor(options: GoogleGenAIOptions) {
@@ -685,6 +687,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._project = options.project;
     this._location = options.location;
+    this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
     this._client =
       this._vertexai || this._apiKey !== undefined ? this._buildClient(this._apiKey) : undefined;
@@ -699,6 +702,13 @@ export class GoogleGenAIChatProvider implements ChatProvider {
             project: this._project,
             location: this._location,
           }
+        : {}),
+      // The Google GenAI SDK deep-merges `httpOptions.headers` into its
+      // default request headers, so a `User-Agent` here overrides the SDK
+      // default (`google-genai-sdk/<ver> …`) while preserving the other
+      // defaults (`x-goog-api-client`, `Content-Type`).
+      ...(this._defaultHeaders !== undefined
+        ? { httpOptions: { headers: this._defaultHeaders } }
         : {}),
     });
   }
@@ -780,6 +790,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       // the initial SDK request against the caller's abort signal ourselves.
       // Once we have a response/stream object, the wrapper below continues to
       // check the signal at each chunk boundary.
+      options?.onRequestSent?.();
       if (this._stream) {
         const stream = await Promise.race([
           models.generateContentStream(params),

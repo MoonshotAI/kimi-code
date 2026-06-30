@@ -294,7 +294,7 @@ kimi migrate
 
 ### `kimi upgrade`
 
-立即检查最新版本并展示更新提示，选择操作后退出。
+立即检查最新版本并展示更新提示，选择操作后退出。也可以使用别名 `kimi update`。
 
 ```sh
 kimi upgrade

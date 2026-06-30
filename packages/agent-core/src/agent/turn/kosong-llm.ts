@@ -19,10 +19,13 @@ import {
   emptyUsage,
   generate as kosongGenerate,
   isRetryableGenerateError,
+  isUnknownCapability,
   type ChatProvider,
+  type ContentPart,
   type GenerateCallbacks,
   type Message,
   type ModelCapability,
+  type StreamDecodeStats,
   type StreamedMessagePart,
 } from '@moonshot-ai/kosong';
 
@@ -55,6 +58,12 @@ export interface KosongLLMConfig {
    * final cap is applied to each request.
    */
   readonly completionBudgetConfig?: CompletionBudgetConfig | undefined;
+  /**
+   * Returns the number of context tokens already consumed by the latest
+   * completed step (API-reported input + output). Used by chat-completions
+   * providers to size the completion budget to the remaining context window.
+   */
+  readonly usedContextTokens?: (() => number) | undefined;
 }
 
 export class KosongLLM implements LLM {
@@ -65,6 +74,7 @@ export class KosongLLM implements LLM {
   private readonly provider: ChatProvider;
   private readonly generate: GenerateFn;
   private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
+  private readonly usedContextTokens: (() => number) | undefined;
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
@@ -73,17 +83,24 @@ export class KosongLLM implements LLM {
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
     this.completionBudgetConfig = config.completionBudgetConfig;
+    this.usedContextTokens = config.usedContextTokens;
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
     let requestStartedAt = Date.now();
+    let requestSentAt: number | undefined;
     let firstChunkAt: number | undefined;
     let streamEndedAt: number | undefined;
+    let decodeStats: StreamDecodeStats | undefined;
     const markRequestStart = (): void => {
       requestStartedAt = Date.now();
     };
-    const markStreamEnd = (): void => {
+    const markRequestSent = (): void => {
+      requestSentAt ??= Date.now();
+    };
+    const markStreamEnd = (stats?: StreamDecodeStats): void => {
       streamEndedAt = Date.now();
+      decodeStats = stats;
     };
     const markStreamOutput = (): void => {
       firstChunkAt ??= Date.now();
@@ -98,10 +115,12 @@ export class KosongLLM implements LLM {
       provider: this.provider,
       budget: this.completionBudgetConfig,
       capability: this.capability,
+      usedContextTokens: this.usedContextTokens?.(),
     });
     const options: GenerateOptionsWithRequestLogFields = {
       signal: params.signal,
       onRequestStart: markRequestStart,
+      onRequestSent: markRequestSent,
       onStreamEnd: markStreamEnd,
       requestLogFields: params.requestLogFields,
     };
@@ -110,7 +129,7 @@ export class KosongLLM implements LLM {
       effectiveProvider,
       this.systemPrompt,
       [...params.tools],
-      params.messages,
+      downgradeUnsupportedMedia(params.messages, this.capability),
       callbacks,
       options,
     );
@@ -136,7 +155,7 @@ export class KosongLLM implements LLM {
       streamTiming:
         firstChunkAt === undefined
           ? undefined
-          : buildStreamTiming(requestStartedAt, firstChunkAt, streamEndedAt),
+          : buildStreamTiming(requestStartedAt, requestSentAt, firstChunkAt, streamEndedAt, decodeStats),
     };
 
     return response;
@@ -149,14 +168,34 @@ export class KosongLLM implements LLM {
 
 function buildStreamTiming(
   requestStartedAt: number,
+  requestSentAt: number | undefined,
   firstChunkAt: number,
   streamEndedAt: number | undefined,
+  decodeStats: StreamDecodeStats | undefined,
 ): LLMStreamTiming {
   const outputEndedAt = streamEndedAt ?? Date.now();
-  return {
-    firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
+  const firstTokenLatencyMs = Math.max(0, firstChunkAt - requestStartedAt);
+  const timing: {
+    -readonly [K in keyof LLMStreamTiming]: LLMStreamTiming[K];
+  } = {
+    firstTokenLatencyMs,
     streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
   };
+  // Split TTFT across the request-dispatch boundary when the provider reported
+  // it. Clamp `requestSentAt` into [requestStartedAt, firstChunkAt] so a stray
+  // clock reading can never produce a negative or over-long component.
+  if (requestSentAt !== undefined) {
+    const sentAt = Math.min(Math.max(requestSentAt, requestStartedAt), firstChunkAt);
+    timing.requestBuildMs = sentAt - requestStartedAt;
+    timing.serverFirstTokenMs = firstChunkAt - sentAt;
+  }
+  // Split the decode window into server (awaiting parts) vs. client (processing
+  // parts) time, as accounted by the stream loop.
+  if (decodeStats !== undefined) {
+    timing.serverDecodeMs = Math.max(0, decodeStats.serverDecodeMs);
+    timing.clientConsumeMs = Math.max(0, decodeStats.clientConsumeMs);
+  }
+  return timing;
 }
 
 function buildKosongCallbacks(
@@ -253,4 +292,51 @@ export function buildMessagesWithSystem(systemPrompt: string, history: Message[]
     { role: 'system', content: [{ type: 'text', text: systemPrompt }], toolCalls: [] },
     ...history,
   ];
+}
+
+export function downgradeUnsupportedMedia(
+  messages: readonly Message[],
+  capability: ModelCapability | undefined,
+): Message[] {
+  if (capability === undefined || isUnknownCapability(capability)) return [...messages];
+  const dropImage = !capability.image_in;
+  const dropVideo = !capability.video_in;
+  const dropAudio = !capability.audio_in;
+  if (!dropImage && !dropVideo && !dropAudio) return [...messages];
+
+  const drop = { dropImage, dropVideo, dropAudio };
+  let changed = false;
+  const out: Message[] = [];
+  for (const message of messages) {
+    let nextContent: ContentPart[] | undefined;
+    for (let i = 0; i < message.content.length; i++) {
+      const part = message.content[i]!;
+      const placeholder = mediaPlaceholder(part, drop);
+      if (placeholder === undefined) {
+        nextContent?.push(part);
+        continue;
+      }
+      nextContent ??= message.content.slice(0, i);
+      nextContent.push({ type: 'text', text: placeholder });
+      changed = true;
+    }
+    out.push(nextContent === undefined ? message : { ...message, content: nextContent });
+  }
+  return changed ? out : [...messages];
+}
+
+function mediaPlaceholder(
+  part: ContentPart,
+  drop: { readonly dropImage: boolean; readonly dropVideo: boolean; readonly dropAudio: boolean },
+): string | undefined {
+  if (part.type === 'image_url' && drop.dropImage) {
+    return '[image omitted: current model has no image input]';
+  }
+  if (part.type === 'video_url' && drop.dropVideo) {
+    return '[video omitted: current model has no video input]';
+  }
+  if (part.type === 'audio_url' && drop.dropAudio) {
+    return '[audio omitted: current model has no audio input]';
+  }
+  return undefined;
 }

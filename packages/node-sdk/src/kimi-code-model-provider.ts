@@ -12,6 +12,7 @@ import {
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiCodeBaseUrl,
+  parseKimiCodeCustomHeaders,
   resolveKimiCodeOAuthRef,
   type KimiHostIdentity,
   type ManagedKimiOAuthRef,
@@ -83,6 +84,7 @@ export class KimiForCodingProvider implements ModelProvider {
         ? { prompt_cache_key: this.promptCacheKey }
         : undefined,
       defaultHeaders: {
+        ...parseKimiCodeCustomHeaders(),
         ...createKimiDefaultHeaders({
           homeDir: this.homeDir,
           ...this.identity,
@@ -95,6 +97,8 @@ export class KimiForCodingProvider implements ModelProvider {
       providerName: 'kimi-for-coding',
       provider,
       modelCapabilities: UNKNOWN_CAPABILITY,
+      type: 'kimi',
+      protocol: undefined,
     };
   }
 

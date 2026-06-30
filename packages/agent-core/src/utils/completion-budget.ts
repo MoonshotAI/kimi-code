@@ -79,6 +79,7 @@ export function applyCompletionBudget(args: {
   readonly provider: ChatProvider;
   readonly budget: CompletionBudgetConfig | undefined;
   readonly capability: ModelCapability | undefined;
+  readonly usedContextTokens?: number;
 }): ChatProvider {
   if (args.budget === undefined) return args.provider;
   if (args.provider.withMaxCompletionTokens === undefined) return args.provider;
@@ -86,5 +87,8 @@ export function applyCompletionBudget(args: {
     budget: args.budget,
     capability: args.capability,
   });
-  return args.provider.withMaxCompletionTokens(cap);
+  return args.provider.withMaxCompletionTokens(cap, {
+    usedContextTokens: args.usedContextTokens,
+    maxContextTokens: args.capability?.max_context_tokens,
+  });
 }

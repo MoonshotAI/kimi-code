@@ -22,8 +22,12 @@ const props = defineProps<{
   accountModel?: string | null;
   /** Browser-notification-on-completion preference. */
   notify: boolean;
+  /** Browser-notification-on-question (needs answer) preference. */
+  notifyQuestion: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
   notifyPermission?: string;
+  /** Play-a-sound-on-completion preference. */
+  sound: boolean;
   /** Beta conversation TOC (proportional, viewport, hover tooltip). */
   betaToc?: boolean;
   /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
@@ -41,6 +45,8 @@ const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
+  setNotifyQuestion: [on: boolean];
+  setSound: [on: boolean];
   setBetaToc: [on: boolean];
   login: [];
   logout: [];
@@ -159,9 +165,17 @@ function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   emit('updateConfig', { defaultPermissionMode: mode });
 }
 
-function toggleConfigBoolean(key: 'defaultThinking' | 'defaultPlanMode' | 'mergeAllAvailableSkills' | 'telemetry'): void {
+function toggleConfigBoolean(key: 'defaultThinking' | 'defaultPlanMode' | 'mergeAllAvailableSkills'): void {
   const current = props.config?.[key];
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
+}
+
+// Telemetry is opt-out: undefined and `true` both mean enabled, only explicit
+// `false` disables it. Toggle based on that effective state so an unset value
+// (displayed as on) flips to `false` instead of writing a redundant `true`.
+function toggleTelemetry(): void {
+  const enabled = props.config?.telemetry !== false;
+  emit('updateConfig', { telemetry: !enabled } as Partial<AppConfig>);
 }
 
 function setTab(tab: SettingsTab): void {
@@ -174,7 +188,7 @@ function setTab(tab: SettingsTab): void {
     <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('settings.title')">
       <div class="dh">
         <span class="dtitle">{{ t('settings.title') }}</span>
-        <button class="close-btn" :title="t('newSession.close')" @click="emit('close')">
+        <button class="close-btn" :title="t('settings.close')" @click="emit('close')">
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">
             <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
           </svg>
@@ -262,6 +276,36 @@ function setTab(tab: SettingsTab): void {
                   :aria-checked="notify"
                   :disabled="notifyPermission === 'denied'"
                   @click="emit('setNotify', !notify)"
+                >
+                  <span class="knob" />
+                </button>
+              </div>
+              <div class="row">
+                <span class="rlabel">
+                  {{ t('settings.notifyOnQuestion') }}
+                  <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
+                </span>
+                <button
+                  type="button"
+                  class="switch"
+                  role="switch"
+                  :class="{ on: notifyQuestion }"
+                  :aria-checked="notifyQuestion"
+                  :disabled="notifyPermission === 'denied'"
+                  @click="emit('setNotifyQuestion', !notifyQuestion)"
+                >
+                  <span class="knob" />
+                </button>
+              </div>
+              <div class="row">
+                <span class="rlabel">{{ t('settings.soundOnComplete') }}</span>
+                <button
+                  type="button"
+                  class="switch"
+                  role="switch"
+                  :class="{ on: sound }"
+                  :aria-checked="sound"
+                  @click="emit('setSound', !sound)"
                 >
                   <span class="knob" />
                 </button>
@@ -403,16 +447,20 @@ function setTab(tab: SettingsTab): void {
                   </button>
                 </div>
 
-                <div v-if="config.telemetry !== undefined" class="row">
-                  <span class="rlabel">{{ t('settings.telemetry') }}</span>
+                <div class="row">
+                  <span class="rlabel">
+                    {{ t('settings.telemetry') }}
+                    <span class="hint">{{ t('settings.telemetryHint') }}</span>
+                    <span class="hint">{{ t('settings.telemetryRestartHint') }}</span>
+                  </span>
                   <button
                     type="button"
                     class="switch"
                     role="switch"
-                    :class="{ on: configBool(config.telemetry) }"
-                    :aria-checked="configBool(config.telemetry)"
+                    :class="{ on: config.telemetry !== false }"
+                    :aria-checked="config.telemetry !== false"
                     :disabled="configSaving"
-                    @click="toggleConfigBoolean('telemetry')"
+                    @click="toggleTelemetry()"
                   >
                     <span class="knob" />
                   </button>

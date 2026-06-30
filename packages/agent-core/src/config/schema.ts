@@ -45,10 +45,15 @@ export const ModelAliasSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
   reasoningKey: z.string().optional(),
+  protocol: z.literal('anthropic').optional(),
   // Explicitly declare adaptive-thinking support, overriding the kosong
   // model-name version inference. Needed for custom-named Anthropic endpoints
   // whose model name does not encode a parseable Claude version.
   adaptiveThinking: z.boolean().optional(),
+  // Route the Anthropic transport through the beta Messages API
+  // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
+  // managed Kimi Code models that declare `protocol: 'anthropic'`.
+  betaApi: z.boolean().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
@@ -103,6 +108,15 @@ export const BackgroundConfigSchema = z.object({
 });
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
+
+export const ModelCatalogConfigSchema = z.object({
+  /** Interval (ms) between automatic provider-model refreshes. `0` disables. */
+  refreshIntervalMs: z.number().int().min(0).optional(),
+  /** Refresh once shortly after the daemon starts. */
+  refreshOnStart: z.boolean().optional(),
+});
+
+export type ModelCatalogConfig = z.infer<typeof ModelCatalogConfigSchema>;
 
 export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
@@ -218,6 +232,7 @@ export const KimiConfigSchema = z.object({
   extraSkillDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
+  modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
@@ -231,6 +246,7 @@ const ThinkingConfigPatchSchema = ThinkingConfigSchema.partial();
 const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
+const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
 const ServicesConfigPatchSchema = z.object({
@@ -257,6 +273,7 @@ export const KimiConfigPatchSchema = z
     extraSkillDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
+    modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
     telemetry: z.boolean().optional(),
   })

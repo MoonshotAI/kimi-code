@@ -2,8 +2,6 @@
 
 Plugins package reusable Kimi Code CLI capabilities into installable units — they can add [Agent Skills](./skills.md), automatically load a specified Skill at session start, and declare MCP servers to provide real tool capabilities. They are ideal for sharing workflows with a team, connecting to external services, or installing extensions from the official marketplace.
 
-Kimi Code CLI applies a conservative loading strategy for plugins: installing a plugin does not execute any Python, Node.js, shell, hook, or command scripts it contains.
-
 ## Installation and Management
 
 Run `/plugins` in the TUI to open the plugin manager. It is a single panel with four tabs — **Installed** (manage what you have), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from a URL) — switched with `Tab` / `Shift-Tab`. Common keys:
@@ -159,8 +157,9 @@ Supported fields:
 | `sessionStart.skill` | Loads the specified plugin Skill into the main Agent when a new or resumed session starts |
 | `skillInstructions` | Additional instructions appended whenever a Skill from this plugin is loaded |
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
+| `hooks` | Hook rules run on lifecycle events while the plugin is enabled; see [Hooks in Plugins](#hooks-in-plugins) |
 
-Unsupported runtime fields such as `tools`, `commands`, `hooks`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
+Unsupported runtime fields such as `tools`, `commands`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
 
 ## Skills and Session Start
 
@@ -221,11 +220,36 @@ Plugin MCP servers start after `/reload` or in new sessions. To enable or disabl
 /reload
 ```
 
+## Hooks in Plugins
+
+A plugin can declare hook rules in its manifest that run on lifecycle events while the plugin is enabled. Each entry uses the same fields as a [`[[hooks]]` rule in `config.toml`](./hooks.md#configuration) (`event`, `matcher`, `command`, `timeout`):
+
+```json
+{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "node ./hooks/check-bash.mjs",
+      "timeout": 5
+    }
+  ]
+}
+```
+
+Plugin hooks reuse the same mechanism as global hooks — see [Hooks](./hooks.md) for the event list, the stdin JSON payload, and how exit codes and return values affect the main flow. The differences are:
+
+- A plugin's hooks are active only while the plugin is **enabled**; disabling the plugin stops its hooks.
+- Each hook runs with its working directory set to the plugin root, so `command` can use `./` paths inside the plugin.
+- The hook process receives two extra environment variables: `KIMI_CODE_HOME` and `KIMI_PLUGIN_ROOT` (the plugin root directory).
+
+Installing a plugin never runs its hooks by itself — they only fire when their matching event occurs while the plugin is enabled.
+
 ## Security Model
 
 Plugins have a limited loading scope. The following operations do not occur during installation or session startup:
 
-- Command-type plugin tools, hooks, and legacy tool runtimes are not executed
+- Command-type plugin tools and legacy tool runtimes are not executed
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions

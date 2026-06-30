@@ -58,6 +58,8 @@ export interface ICoreProcessService {
   /** The core RPC methods. Service impls call e.g. `core.rpc.createSession(...)`. */
   readonly rpc: CoreRPC;
 
+  readonly kimiRequestHeaders?: Record<string, string> | undefined;
+
   /**
    * Resolves once `KimiCore` is fully constructed and the SDK side of the
    * in-process RPC has been bound. Repeated calls return the cached promise.

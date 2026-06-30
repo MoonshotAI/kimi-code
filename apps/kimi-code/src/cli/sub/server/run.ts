@@ -18,7 +18,7 @@ import { startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_UI_MODE } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -114,6 +114,10 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     .option(
       '--host [host]',
       `Bind host. Omit to bind ${DEFAULT_SERVER_HOST} (this machine only); pass --host to bind ${DEFAULT_LAN_HOST} (all interfaces), or --host <host> for a specific host. The bearer token is printed at startup.`,
+    )
+    .option(
+      '--allowed-host <host...>',
+      'Extra Host header value to allow through the DNS-rebinding check. Repeat or comma-separate; a leading dot matches a domain suffix (e.g. .example.com).',
     )
     .option(
       '--insecure-no-tls',
@@ -247,6 +251,7 @@ export async function startServerBackground(
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    allowedHosts: options.allowedHosts,
     idleGraceMs: options.idleGraceMs,
   });
 }
@@ -325,6 +330,7 @@ async function runServerInProcess(
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    allowedHosts: options.allowedHosts,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
       identity: createKimiCodeHostIdentity(version),
@@ -340,7 +346,7 @@ async function runServerInProcess(
     },
   });
 
-  track('server_started', { ui_mode: WEB_UI_MODE, daemon: mode.daemon });
+  track('server_started', { daemon: mode.daemon });
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');

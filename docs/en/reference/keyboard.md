@@ -39,6 +39,7 @@ Type `!` in an empty input box to enter shell mode and run terminal commands dir
 | `Ctrl-V` | Paste an image or video from the clipboard (Unix / macOS) |
 | `Alt-V` | Paste an image or video from the clipboard (Windows) |
 | `Ctrl--` | Undo |
+| `Esc` `Esc` | Open the undo selector (double-press while idle) |
 
 Pressing `Ctrl-G` opens an external editor, selected according to the following priority:
 

@@ -71,7 +71,7 @@ export class MicroCompaction {
       const previousEffect = this.measureEffect(history, previousCutoff);
       const rawContextTokens = estimateTokensForMessages(history);
       // Whole-context length before/after this cutoff change, mirroring the
-      // `tokensBefore`/`tokensAfter` fields on `compaction_finished` so the
+      // `tokens_before`/`tokens_after` fields on `compaction_finished` so the
       // two compaction paths can be compared on the same axis.
       const tokensBefore =
         rawContextTokens -
@@ -82,15 +82,21 @@ export class MicroCompaction {
         effect.truncatedToolResultTokensBefore +
         effect.truncatedToolResultTokensAfter;
       this.agent.telemetry.track('micro_compaction_finished', {
-        ...config,
-        ...effect,
-        tokensBefore,
-        tokensAfter,
+        keep_recent_messages: config.keepRecentMessages,
+        min_content_tokens: config.minContentTokens,
+        cache_missed_threshold_ms: config.cacheMissedThresholdMs,
+        truncated_marker: config.truncatedMarker,
+        min_context_usage_ratio: config.minContextUsageRatio,
+        truncated_tool_result_count: effect.truncatedToolResultCount,
+        truncated_tool_result_tokens_before: effect.truncatedToolResultTokensBefore,
+        truncated_tool_result_tokens_after: effect.truncatedToolResultTokensAfter,
+        tokens_before: tokensBefore,
+        tokens_after: tokensAfter,
         previous_cutoff: previousCutoff,
         cutoff: nextCutoff,
         message_count: history.length,
         cache_age_ms: cacheAgeMs,
-        thinkingLevel: this.agent.config.thinkingLevel,
+        thinking_level: this.agent.config.thinkingLevel,
       });
     }
   }

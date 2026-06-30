@@ -24,7 +24,7 @@ export const CreateGoalToolInputSchema = z
     replace: z
       .boolean()
       .optional()
-      .describe('Replace an existing active or paused goal instead of failing.'),
+      .describe('Replace an existing active, paused, or blocked goal instead of failing.'),
   })
   .strict();
 

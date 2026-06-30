@@ -1,5 +1,7 @@
 import { ensureDaemon } from '#/cli/sub/server/daemon';
+import { tryResolveServerToken } from '#/cli/sub/server/shared';
 import { openUrl } from '#/utils/open-url';
+import { getDataDir } from '#/utils/paths';
 
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -63,13 +65,28 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
     return;
   }
 
-  const url = webSessionUrl(origin, sessionId);
+  // Resolve the persistent token so the opened browser auto-authenticates via
+  // the `#token=` fragment — matching the `kimi web` subcommand. Show the URL
+  // and token in green under the status line so they can be copied before the
+  // terminal exits. Best-effort: an older/never-started server has no token
+  // file, so we fall back to the plain URL and skip the token line.
+  const token = tryResolveServerToken(getDataDir());
+  const url = webSessionUrl(origin, sessionId, token);
+  host.showStatus(`open ${url}`, 'success');
+  if (token !== undefined) {
+    host.showStatus(`Token:    ${token}`, 'success');
+  }
   openUrl(url);
   host.setExitOpenUrl(url);
   await host.stop();
 }
 
-/** Build the deep-link URL the web UI recognises for a session. */
-export function webSessionUrl(origin: string, sessionId: string): string {
-  return `${origin.replace(/\/+$/, '')}/sessions/${encodeURIComponent(sessionId)}`;
+/**
+ * Build the deep-link URL the web UI recognises for a session. When a token is
+ * known it rides in the `#token=` fragment (never sent to the server, so never
+ * logged), so the browser authenticates on load just like `kimi web`.
+ */
+export function webSessionUrl(origin: string, sessionId: string, token?: string): string {
+  const base = `${origin.replace(/\/+$/, '')}/sessions/${encodeURIComponent(sessionId)}`;
+  return token === undefined ? base : `${base}#token=${token}`;
 }

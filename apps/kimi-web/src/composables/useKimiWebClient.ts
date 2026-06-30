@@ -7,6 +7,7 @@ import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -21,6 +22,7 @@ import {
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification } from './client/useNotification';
+import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
@@ -28,6 +30,7 @@ import { useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
+const sound = useSoundNotification();
 import type {
   AppEvent,
   AppApprovalRequest,
@@ -224,12 +227,6 @@ function saveActiveWorkspaceToStorage(id: string): void {
   } catch {
     // ignore
   }
-}
-
-/** basename of an absolute path (last non-empty segment), defaulting to the path. */
-function basename(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1]! : path;
 }
 
 /** Shorten a $HOME-prefixed absolute path to `~/…` for dim display. */
@@ -674,6 +671,11 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     rawState.defaultModel = event.config.defaultModel ?? null;
   }
 
+  if (event.type === 'modelCatalogChanged') {
+    void modelProvider.loadModels();
+    void modelProvider.loadProviders();
+  }
+
   if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.swarmMode !== undefined) {
     rawState.swarmMode = event.swarmMode;
   }
@@ -758,6 +760,14 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
     (appEvent.status === 'idle' || appEvent.status === 'aborted')
   ) {
     onSessionIdle(appEvent.sessionId, appEvent.status);
+  }
+
+  // The agent asked a question and is waiting for an answer — surface it so
+  // the user comes back. Hooked on the request event (fires once per new
+  // question, and not for questions restored from a snapshot) rather than the
+  // awaitingQuestion status flip, which can arrive in any order relative to it.
+  if (appEvent.type === 'questionRequested') {
+    onQuestionRequested(appEvent.sessionId, appEvent.question);
   }
 }
 
@@ -1746,67 +1756,16 @@ function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string
  * derived workspace (id = root = cwd). This makes the switcher + grouping work
  * immediately off existing sessions until /workspaces ships.
  */
-const mergedWorkspaces = computed<AppWorkspace[]>(() => {
-  const hidden = new Set(rawState.hiddenWorkspaceRoots);
-  const byRoot = new Map<string, AppWorkspace>();
-  // Real workspaces win on root (unless the user removed them from the sidebar).
-  for (const w of rawState.workspaces) {
-    if (hidden.has(w.root)) continue;
-    byRoot.set(w.root, { ...w });
-  }
-  // Derive from sessions for any cwd without a real workspace.
-  for (const s of rawState.sessions) {
-    const root = s.cwd;
-    if (!root) continue;
-    if (hidden.has(root)) continue; // removed from the sidebar — keep it hidden
-    if (!byRoot.has(root)) {
-      byRoot.set(root, {
-        // Use the session's REAL daemon workspace_id (wd_<slug>_<hash>) so
-        // createSession({ workspaceId }) is accepted; fall back to cwd only
-        // when the daemon hasn't tagged the session yet.
-        id: s.workspaceId ?? root,
-        root,
-        name: basename(root),
-        isGitRepo: false,
-        sessionCount: 0,
-      });
-    }
-  }
-  // Compute live session counts + a branch hint from the active session's git.
-  const counts = new Map<string, number>();
-  for (const s of rawState.sessions) {
-    const wid = workspaceIdForSession(s);
-    counts.set(wid, (counts.get(wid) ?? 0) + 1);
-  }
-  const activeGit = gitInfo.value;
-  const activeRoot = rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd;
-
-  // Order: real workspaces in listWorkspaces order, then derived workspaces
-  // sorted by root path so the order is stable (not tied to session activity).
-  // Hidden roots must be excluded here too — `byRoot` skips them, so a hidden
-  // real workspace would otherwise make `byRoot.get(root)` return undefined.
-  const realRoots = rawState.workspaces.filter((w) => !hidden.has(w.root)).map((w) => w.root);
-  const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
-  derivedRoots.sort((a, b) => a.localeCompare(b));
-
-  const result: AppWorkspace[] = [];
-  for (const root of [...realRoots, ...derivedRoots]) {
-    const w = byRoot.get(root)!;
-    // When a workspace's sessions are fully loaded (hasMore === false), the
-    // local count is exact — prefer it so archiving the last session drops the
-    // count to 0 immediately. While pages remain, the local count is only a
-    // lower bound, so keep the daemon session_count as a floor.
-    const localCount = counts.get(w.id) ?? counts.get(w.root) ?? 0;
-    const count =
-      rawState.sessionsHasMoreByWorkspace[w.id] === false
-        ? localCount
-        : Math.max(w.sessionCount, localCount);
-    let branch = w.branch;
-    if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
-    result.push({ ...w, sessionCount: count, branch });
-  }
-  return result;
-});
+const mergedWorkspaces = computed<AppWorkspace[]>(() =>
+  mergeWorkspaces({
+    workspaces: rawState.workspaces,
+    sessions: rawState.sessions,
+    hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
+    activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
+    activeBranch: gitInfo.value?.branch ?? null,
+    sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
+  }),
+);
 
 /**
  * User-defined display order of workspace ids, persisted to localStorage. The
@@ -1995,21 +1954,6 @@ const attentionByWorkspace = computed<Record<string, number>>(() => {
 /** Recently-used roots for the add-workspace quick-pick (from /fs:home). */
 const recentRoots = computed<string[]>(() => rawState.recentRoots);
 
-/** Distinct cwd values from loaded sessions, most-recent first, deduped, max 8 */
-const recentCwds = computed<string[]>(() => {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const s of rawState.sessions) {
-    const cwd = s.cwd;
-    if (cwd && !seen.has(cwd)) {
-      seen.add(cwd);
-      result.push(cwd);
-      if (result.length >= 8) break;
-    }
-  }
-  return result;
-});
-
 /** Installed external apps the "Open in app" menu may offer for this host. */
 const availableOpenInApps = computed<string[]>(() => rawState.availableOpenInApps);
 
@@ -2056,7 +2000,6 @@ const workspaceState = useWorkspaceState(rawState, {
   saveActiveWorkspaceToStorage,
   saveHiddenWorkspacesToStorage,
   goalErrorMessage,
-  basename,
   resetFastMoon: appearance.resetFastMoon,
   initialized,
   selectedDiffPath,
@@ -2103,6 +2046,12 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
     },
   });
 
+  // Completion sound — only for real completions (aborted/cancelled turns stay
+  // silent). Plays regardless of visibility so it also reaches a backgrounded tab.
+  if (status === 'idle') {
+    sound.maybePlayCompletionSound();
+  }
+
   const queue = rawState.queuedBySession[sid] ?? [];
   if (queue.length === 0) return;
 
@@ -2121,6 +2070,34 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
       }
     });
   }
+}
+
+function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
+  const first = question.questions[0];
+  // Lead with the actionable question text; keep the short header as context
+  // when both are present so the desktop notification actually says what is
+  // being asked (e.g. "Storage: Which database?").
+  const header = first?.header?.trim() ?? '';
+  const questionText = first?.question?.trim() ?? '';
+  const preview =
+    header && questionText ? `${header}: ${questionText}` : questionText || header;
+
+  // Browser notification when the user isn't watching this session.
+  notification.maybeNotifyQuestion(sid, {
+    isActiveAndVisible:
+      sid === rawState.activeSessionId &&
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible',
+    sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+    questionPreview: preview,
+    onClick: () => {
+      void workspaceState.selectSession(sid);
+    },
+  });
+
+  // Attention sound — plays regardless of visibility so it also reaches a
+  // backgrounded tab (same as the completion sound).
+  sound.maybePlayQuestionSound();
 }
 
 // ---------------------------------------------------------------------------
@@ -2166,7 +2143,6 @@ export function useKimiWebClient() {
     activePullRequest,
     changesByPath,
     pendingApprovals,
-    recentCwds,
     availableOpenInApps,
 
     // New Phase 1 computed
@@ -2213,15 +2189,19 @@ export function useKimiWebClient() {
     accent: appearance.accent,
     setAccent: appearance.setAccent,
     notifyOnComplete: notification.notifyOnComplete,
+    notifyOnQuestion: notification.notifyOnQuestion,
     notifyPermission: notification.notifyPermission,
     setNotifyOnComplete: notification.setNotifyOnComplete,
+    setNotifyOnQuestion: notification.setNotifyOnQuestion,
+    soundOnComplete: sound.soundOnComplete,
+    setSoundOnComplete: sound.setSoundOnComplete,
     onboarded,
     setOnboarded,
 
     // Actions
     load: workspaceState.load,
     selectSession: workspaceState.selectSession,
-    createSession: workspaceState.createSession,
+    clearActiveSession: workspaceState.clearActiveSession,
     loadOlderMessages: workspaceState.loadOlderMessages,
 
     // Workspace actions
@@ -2231,7 +2211,6 @@ export function useKimiWebClient() {
     selectWorkspace: workspaceState.selectWorkspace,
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,
-    createSessionInWorkspace: workspaceState.createSessionInWorkspace,
     startSessionAndSendPrompt: workspaceState.startSessionAndSendPrompt,
     addWorkspaceByPath: workspaceState.addWorkspaceByPath,
     browseFs: workspaceState.browseFs,
@@ -2304,6 +2283,7 @@ export function useKimiWebClient() {
     addProvider: modelProvider.addProvider,
     deleteProvider: modelProvider.deleteProvider,
     refreshProvider: modelProvider.refreshProvider,
+    refreshAllProviders: modelProvider.refreshAllProviders,
 
     // Auth state
     authReady,

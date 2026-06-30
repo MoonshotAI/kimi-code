@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import type { ImportInfo } from '../../types';
 import { formatAbsoluteTime, formatRelativeTime } from '../../util/time';
 import { CopyButton } from '../shared/CopyButton';
 import { JsonViewer } from '../shared/JsonViewer';
@@ -7,6 +8,7 @@ import { Pill } from '../shared/Pill';
 
 interface StateTabProps {
   state: unknown;
+  importMeta?: ImportInfo | null;
 }
 
 interface StateJsonShape {
@@ -25,7 +27,7 @@ interface StateJsonShape {
  *  (title / lastPrompt / created / updated / agent count). Below that, the
  *  full JSON is shown via the shared JsonViewer so any custom fields the
  *  upstream writer adds remain readable without code changes. */
-export function StateTab({ state }: StateTabProps) {
+export function StateTab({ state, importMeta }: StateTabProps) {
   const s = useMemo<StateJsonShape>(() => {
     return (state ?? {}) as StateJsonShape;
   }, [state]);
@@ -37,6 +39,8 @@ export function StateTab({ state }: StateTabProps) {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      {importMeta ? <ManifestCard meta={importMeta} /> : null}
+
       <div className="flex items-center justify-between">
         <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
           state.json
@@ -151,6 +155,51 @@ function Card({ label, children }: { label: string; children: import('react').Re
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-2">{children}</div>
     </div>
+  );
+}
+
+/** Export-bundle provenance, shown above state.json for imported sessions. */
+function ManifestCard({ meta }: { meta: ImportInfo }) {
+  const m = meta.manifest;
+  const candidates: [string, string | undefined][] = [
+    ['original session', m?.sessionId],
+    ['kimi-code version', m?.kimiCodeVersion],
+    ['wire protocol', m?.wireProtocolVersion],
+    ['os', m?.os],
+    ['node', m?.nodejsVersion],
+    ['install source', m?.installSource],
+    ['workspace', m?.workspaceDir],
+    ['exported at', m?.exportedAt ? `${formatAbsoluteTime(Date.parse(m.exportedAt))} (${formatRelativeTime(Date.parse(m.exportedAt))})` : undefined],
+    ['first activity', m?.sessionFirstActivity ? formatAbsoluteTime(Date.parse(m.sessionFirstActivity)) : undefined],
+    ['last activity', m?.sessionLastActivity ? formatAbsoluteTime(Date.parse(m.sessionLastActivity)) : undefined],
+    ['imported at', `${formatAbsoluteTime(Date.parse(meta.importedAt))} (${formatRelativeTime(Date.parse(meta.importedAt))})`],
+    ['original file', meta.originalName ?? undefined],
+  ];
+  const rows = candidates
+    .filter((r): r is [string, string] => typeof r[1] === 'string' && r[1].length > 0)
+    .map(([label, value]) => ({ label, value }));
+
+  return (
+    <section className="mb-5 border border-[var(--color-cat-subagent)] bg-[color-mix(in_oklab,var(--color-cat-subagent)_8%,transparent)] p-3">
+      <div className="flex items-center gap-2">
+        <Pill tone="subagent" variant="outline">imported bundle</Pill>
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">manifest</span>
+        <span className="ml-auto"><CopyButton value={JSON.stringify(meta, null, 2)} label="copy manifest" /></span>
+      </div>
+      <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-2">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-baseline gap-2 font-mono text-[11px]">
+            <span className="w-32 shrink-0 text-[10px] uppercase tracking-[0.1em] text-fg-3">{r.label}</span>
+            <span className="min-w-0 break-all text-fg-1">{r.value}</span>
+          </div>
+        ))}
+      </div>
+      {m === null ? (
+        <div className="mt-2 font-mono text-[11px] text-[var(--color-sev-warning)]">
+          manifest.json was missing or unreadable in this bundle
+        </div>
+      ) : null}
+    </section>
   );
 }
 

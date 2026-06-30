@@ -14,6 +14,22 @@ import type { TokenUsage } from './usage';
 export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /**
+ * Optional context passed to {@link ChatProvider.withMaxCompletionTokens} so a
+ * provider can tighten the caller-supplied cap to its own transport
+ * constraints.
+ */
+export interface MaxCompletionTokensOptions {
+  /**
+   * Tokens already consumed by the current context (API-reported input +
+   * output of the latest completed step). Chat-completions providers use it
+   * to size the cap to the remaining context window.
+   */
+  readonly usedContextTokens?: number;
+  /** Model context-window size in tokens (`max_context_size`). */
+  readonly maxContextTokens?: number;
+}
+
+/**
  * Normalized finish-reason signal indicating why a generation stopped.
  *
  * Each provider's native stop value is mapped to one of these, and the
@@ -103,10 +119,40 @@ export interface GenerateOptions {
    */
   onRequestStart?: () => void;
   /**
-   * Host-side instrumentation hook fired after the provider stream is fully
-   * drained, before post-processing the assembled response.
+   * Host-side instrumentation hook fired by the provider adapter immediately
+   * before it dispatches the network request to the upstream API. The window
+   * between {@link onRequestStart} and this hook is in-process request-building
+   * time (message serialization, param assembly) spent by the client; the
+   * window between this hook and the first streamed part is network + server
+   * time. Splitting time-to-first-token across this boundary lets hosts
+   * attribute latency to the client vs. the API server.
    */
-  onStreamEnd?: () => void;
+  onRequestSent?: () => void;
+  /**
+   * Host-side instrumentation hook fired after the provider stream is fully
+   * drained, before post-processing the assembled response. Receives the
+   * {@link StreamDecodeStats} accounting accumulated across the stream when at
+   * least one part was streamed, or `undefined` for an empty stream.
+   */
+  onStreamEnd?: (stats?: StreamDecodeStats) => void;
+}
+
+/**
+ * Decode-phase accounting for a single streamed generation. Splits the window
+ * from the first streamed part to stream end into the time spent waiting on the
+ * provider for the next part (server + network) versus the time spent
+ * processing each part in-process (deep copy, host callbacks, part merging).
+ *
+ * Because both buckets are wall-clock measured on the single JS thread, a
+ * stop-the-world GC pause that lands while awaiting the next part is counted in
+ * {@link serverDecodeMs}; a non-trivial {@link clientConsumeMs} share is the
+ * unambiguous signal that the host's per-part processing is throttling decode.
+ */
+export interface StreamDecodeStats {
+  /** Cumulative time spent awaiting the next streamed part (server + network). */
+  readonly serverDecodeMs: number;
+  /** Cumulative time spent processing streamed parts in-process (client). */
+  readonly clientConsumeMs: number;
 }
 
 /**
@@ -155,11 +201,19 @@ export interface ChatProvider {
    * budget clamped to `maxCompletionTokens`. Optional because not every
    * backend benefits from a client-computed cap.
    *
+   * When `options` are provided, implementations may further tighten the cap
+   * based on their own transport constraints — e.g. chat-completions
+   * endpoints size the cap to the remaining context window
+   * (`maxContextTokens - usedContextTokens`) and/or clamp to a fixed ceiling.
+   *
    * Implementations MUST NOT mutate or replace internal HTTP clients on the
    * returned clone — the clone is expected to share transport state with the
    * original. See `KimiChatProvider._clone()` for the rationale.
    */
-  withMaxCompletionTokens?(maxCompletionTokens: number): ChatProvider;
+  withMaxCompletionTokens?(
+    maxCompletionTokens: number,
+    options?: MaxCompletionTokensOptions,
+  ): ChatProvider;
   /** Upload a video and return a content part that can be sent to this provider. */
   uploadVideo?(input: string | VideoUploadInput, options?: GenerateOptions): Promise<VideoURLPart>;
 }

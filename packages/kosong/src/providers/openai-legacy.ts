@@ -3,6 +3,7 @@ import type {
   ChatProvider,
   FinishReason,
   GenerateOptions,
+  MaxCompletionTokensOptions,
   ProviderRequestAuth,
   StreamedMessage,
   ThinkingEffort,
@@ -46,6 +47,13 @@ import {
 // arms can be overridden by an explicit `reasoningKey` on the provider config.
 const KNOWN_REASONING_KEYS = ['reasoning_content', 'reasoning_details', 'reasoning'] as const;
 const DEFAULT_OUTBOUND_REASONING_KEY = KNOWN_REASONING_KEYS[0];
+
+/**
+ * Hard upper bound on `max_tokens` for OpenAI-compatible chat-completions
+ * endpoints. Many third-party providers reject `max_tokens` above this limit
+ * (the documented range is `[1, 131072]`).
+ */
+const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
@@ -563,6 +571,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     try {
       const client = this._createClient(options?.auth);
+      options?.onRequestSent?.();
       const response = (await client.chat.completions.create(
         createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         options?.signal ? { signal: options.signal } : undefined,
@@ -586,8 +595,20 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     return clone;
   }
 
-  withMaxCompletionTokens(maxCompletionTokens: number): OpenAILegacyChatProvider {
-    return this.withGenerationKwargs(completionTokenKwargs(this._model, maxCompletionTokens));
+  withMaxCompletionTokens(
+    maxCompletionTokens: number,
+    options?: MaxCompletionTokensOptions,
+  ): OpenAILegacyChatProvider {
+    let cap = maxCompletionTokens;
+    if (
+      options?.usedContextTokens !== undefined &&
+      options?.maxContextTokens !== undefined &&
+      options.maxContextTokens > 0
+    ) {
+      cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
+    }
+    cap = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
+    return this.withGenerationKwargs(completionTokenKwargs(this._model, Math.max(1, cap)));
   }
 
   private _clone(): OpenAILegacyChatProvider {

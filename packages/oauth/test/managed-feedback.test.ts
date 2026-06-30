@@ -17,6 +17,8 @@ const SAMPLE_BODY: SubmitFeedbackBody = {
   version: 'kimi-code-0.1.1',
   os: 'Darwin 25.3.0',
   model: 'kimi-code/kimi-for-coding',
+  contact: 'test@example.com',
+  info: { tool: 'kimi-code-cli', env: 'test' },
 };
 
 describe('kimiCodeFeedbackUrl', () => {
@@ -31,8 +33,13 @@ describe('kimiCodeFeedbackUrl', () => {
 });
 
 describe('fetchSubmitFeedback', () => {
-  it('POSTs JSON body with bearer auth and returns ok on 200', async () => {
-    const fetchMock = vi.fn(async () => new Response('', { status: 200 }));
+  it('POSTs JSON body with bearer auth and returns feedback_id on 200', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ feedback_id: 3 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await fetchSubmitFeedback(
@@ -41,7 +48,7 @@ describe('fetchSubmitFeedback', () => {
       SAMPLE_BODY,
     );
 
-    expect(result).toEqual({ kind: 'ok' });
+    expect(result).toEqual({ kind: 'ok', feedbackId: 3 });
 
     const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
     const [calledUrl, init] = calls[0]!;
@@ -56,8 +63,32 @@ describe('fetchSubmitFeedback', () => {
     expect(JSON.parse(init?.body as string)).toEqual(SAMPLE_BODY);
   });
 
+  it('returns an error when the server omits feedback_id', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const result = await fetchSubmitFeedback('https://api.example/feedback', 'access-token', SAMPLE_BODY);
+
+    expect(result).toEqual({
+      kind: 'error',
+      message: 'Failed to submit feedback: missing feedback_id.',
+    });
+  });
+
   it('preserves the kimi-code- version prefix in the request body', async () => {
-    const fetchMock = vi.fn(async () => new Response('', { status: 200 }));
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ feedback_id: 3 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     await fetchSubmitFeedback('https://api.example/feedback', 'tok', SAMPLE_BODY);

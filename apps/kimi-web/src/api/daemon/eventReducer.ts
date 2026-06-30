@@ -591,6 +591,13 @@ export function reduceAppEvent(
     }
 
     // -------------------------------------------------------------------------
+    // Provider-model catalog refresh result. The daemon already persisted the
+    // new catalog; the web picks it up on the next explicit model/provider load
+    // (model picker, session switch). Advance seq silently.
+    case 'modelCatalogChanged':
+      break;
+
+    // -------------------------------------------------------------------------
     // Agent-scoped side-channel events (e.g. BTW side chat) are consumed by the
     // web layer, not the session reducer. Advance seq silently.
     case 'agentDelta':

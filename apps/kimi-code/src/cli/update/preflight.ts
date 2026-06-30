@@ -430,8 +430,6 @@ function trackUpdatePrompted(
   rolloutTelemetry: RolloutTelemetry,
 ): void {
   trackUpdateEvent(track, 'update_prompted', {
-    current: currentVersion,
-    latest: target.version,
     current_version: currentVersion,
     target_version: target.version,
     source,
