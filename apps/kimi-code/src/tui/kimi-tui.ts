@@ -605,9 +605,10 @@ export class KimiTUI {
         if (c.added <= 0) continue;
         this.showStatus(`${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`);
       }
-      for (const f of result.failed) {
-        this.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
-      }
+      // Per-provider failures are best-effort during the startup background
+      // refresh (offline, transient network errors, expired OAuth), so don't
+      // surface them as warnings here. The manual refresh in the model picker
+      // still reports failures when the user asks for it.
     } catch {
       // Best-effort: startup must not crash on background refresh failures.
     }

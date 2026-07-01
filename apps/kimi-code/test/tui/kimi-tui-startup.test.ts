@@ -1094,7 +1094,7 @@ describe('KimiTUI startup', () => {
     expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_THEME_REPORTING);
   });
 
-  it("only shows provider refresh status for added models", async () => {
+  it("only shows provider refresh status for added models and ignores failures", async () => {
     const harness = makeHarness();
     const driver = makeDriver(harness, makeStartupInput());
     const showStatus = vi.spyOn(driver as any, "showStatus").mockImplementation(() => {});
@@ -1105,7 +1105,7 @@ describe('KimiTUI startup', () => {
         { providerId: "metadata-only", providerName: "Metadata Only", added: 0, removed: 0 },
       ],
       unchanged: [],
-      failed: [],
+      failed: [{ provider: "managed:kimi-code", reason: "fetch failed" }],
     });
 
     await (driver as any).refreshProviderModelsInBackground();
