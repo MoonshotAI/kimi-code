@@ -27,6 +27,8 @@ const props = defineProps<{
   wsMenuOpenId: string | null;
   /** True while this group is the active drag source (drag-to-reorder). */
   dragging: boolean;
+  /** When true, render the workspace root path as a stable subtitle line. */
+  showPath: boolean;
   isCollapsed: (id: string) => boolean;
 }>();
 
@@ -77,7 +79,7 @@ function onHeaderDragStart(event: DragEvent): void {
   <div class="group" :class="{ dragging }">
     <div
       class="gh"
-      :class="{ on: group.workspace.id === activeWorkspaceId, collapsed: isCollapsed(group.workspace.id) }"
+      :class="{ on: group.workspace.id === activeWorkspaceId, collapsed: isCollapsed(group.workspace.id), 'show-path': showPath }"
       draggable="true"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
       @contextmenu="emit('groupContextmenu', group.workspace, $event)"
@@ -247,8 +249,11 @@ function onHeaderDragStart(event: DragEvent): void {
   transition: max-height var(--duration-base) var(--ease-out),
     opacity var(--duration-base) var(--ease-out);
 }
-.gh:hover .gh-path,
-.gh:focus-within .gh-path,
+/* Path subtitle — revealed only when the section-header "show paths" toggle is
+   on (`.show-path`) or the group is collapsed. Driven by explicit toggle state
+   rather than hover/focus, so the header height never shifts under the pointer
+   (a11y: stable layout) and the path stays reachable for touch/keyboard users. */
+.gh.show-path .gh-path,
 .gh.collapsed .gh-path {
   max-height: 1.4em;
   opacity: 1;

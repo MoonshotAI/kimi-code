@@ -7,6 +7,8 @@ export default {
   sortRecent: 'Last edited',
   collapseAll: 'Collapse all workspaces',
   expandAll: 'Expand all workspaces',
+  showWorkspacePaths: 'Show workspace paths',
+  hideWorkspacePaths: 'Hide workspace paths',
   newSession: 'New Session',
   newChat: 'New Chat',
   newWorkspace: 'New Workspace',

@@ -7,7 +7,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
-import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
+import {
+  loadCollapsedWorkspaces,
+  loadShowWorkspacePaths,
+  saveCollapsedWorkspaces,
+  saveShowWorkspacePaths,
+} from '../lib/storage';
 import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
@@ -139,6 +144,18 @@ const allCollapsed = computed(
     props.groups.length > 0 &&
     props.groups.every((g) => collapsedIds.value.has(g.workspace.id)),
 );
+
+// ---------------------------------------------------------------------------
+// Workspace path display (toggle in the Workspaces section header)
+// ---------------------------------------------------------------------------
+// Off by default so the list stays compact; turning it on reveals every
+// workspace's root path as a stable subtitle (no hover-induced layout shift).
+const showWorkspacePaths = ref<boolean>(loadShowWorkspacePaths());
+
+function toggleShowWorkspacePaths(): void {
+  showWorkspacePaths.value = !showWorkspacePaths.value;
+  saveShowWorkspacePaths(showWorkspacePaths.value);
+}
 
 // ---------------------------------------------------------------------------
 // Workspace drag-to-reorder
@@ -613,6 +630,20 @@ onBeforeUnmount(() => {
                   <Icon v-else name="collapse" />
                 </IconButton>
               </Tooltip>
+              <Tooltip
+                :text="showWorkspacePaths ? t('sidebar.hideWorkspacePaths') : t('sidebar.showWorkspacePaths')"
+              >
+                <IconButton
+                  class="side-section-toggle"
+                  :class="{ active: showWorkspacePaths }"
+                  size="sm"
+                  :label="showWorkspacePaths ? t('sidebar.hideWorkspacePaths') : t('sidebar.showWorkspacePaths')"
+                  :aria-pressed="showWorkspacePaths"
+                  @click.stop="toggleShowWorkspacePaths()"
+                >
+                  <Icon name="list" />
+                </IconButton>
+              </Tooltip>
             </div>
           </div>
           <div
@@ -638,6 +669,7 @@ onBeforeUnmount(() => {
               :ws-menu-open-id="wsMenuOpenId"
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
+              :show-path="showWorkspacePaths"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
               @toggle-ws-menu="toggleWsMenu"
@@ -969,6 +1001,12 @@ onBeforeUnmount(() => {
 }
 .side-section-toggle:hover {
   color: var(--dim);
+}
+/* Active toggle (e.g. "show paths" is on): keep it visible and accent-colored
+   even when the section label isn't hovered, so the on state is readable. */
+.side-section-toggle.active {
+  color: var(--color-accent);
+  opacity: 1;
 }
 .side-section-toggle svg {
   width: 13px;

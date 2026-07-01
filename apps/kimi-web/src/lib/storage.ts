@@ -22,6 +22,7 @@ export const STORAGE_KEYS = {
   colorScheme: 'kimi-web.color-scheme',
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
+  showWorkspacePaths: 'kimi-web.show-workspace-paths',
   workspaceOrder: 'kimi-web.workspace-order',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   workspaceSort: 'kimi-web.workspace-sort',
@@ -145,6 +146,20 @@ export function loadCollapsedWorkspaces(): string[] {
 
 export function saveCollapsedWorkspaces(ids: Iterable<string>): void {
   safeSetJson(STORAGE_KEYS.collapsedWorkspaces, Array.from(ids));
+}
+
+/**
+ * Whether the sidebar shows each workspace's root path under its name. Off by
+ * default to keep the list compact; toggled from the Workspaces section header.
+ * Stored as a JSON boolean; any missing/unset value reads as false. UI-only
+ * state with no server-side source of truth.
+ */
+export function loadShowWorkspacePaths(): boolean {
+  return safeGetJson<boolean>(STORAGE_KEYS.showWorkspacePaths) === true;
+}
+
+export function saveShowWorkspacePaths(show: boolean): void {
+  safeSetJson(STORAGE_KEYS.showWorkspacePaths, show);
 }
 
 /**
