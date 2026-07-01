@@ -64,6 +64,7 @@
       workspacePaths = [
         ./packages/acp-adapter
         ./packages/agent-core
+        ./packages/agent-core-v2
         ./packages/server
         ./packages/server-e2e
         ./packages/kaos
@@ -87,6 +88,7 @@
       workspaceNames = [
         "@moonshot-ai/acp-adapter"
         "@moonshot-ai/agent-core"
+        "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/server"
         "@moonshot-ai/server-e2e"
         "@moonshot-ai/kaos"
