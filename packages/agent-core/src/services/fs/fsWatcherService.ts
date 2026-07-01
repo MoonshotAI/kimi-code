@@ -99,6 +99,7 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
   private readonly maxPathsPerConnection: number;
   private readonly makeWatcher: () => FSWatcher;
   private readonly sessions: DisposableMap<string, SessionEntry>;
+  private readonly closedSessions = new Set<string>();
 
   private readonly connections = new Map<
     string,
@@ -128,6 +129,7 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
         }));
     this._register(
       sessionService.onDidClose(({ sessionId }) => {
+        this.closedSessions.add(sessionId);
         this.disposeSessionEntry(sessionId);
       }),
     );
@@ -139,6 +141,10 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
     absPaths: readonly string[],
   ): readonly string[] {
     if (this._store.isDisposed) return [];
+    // The session may have been archived while the WS handler was awaiting
+    // session lookup / path resolution before reaching here. Don't create a
+    // fresh watcher entry for a session whose close listener already ran.
+    if (this.closedSessions.has(sessionId)) return [];
 
     const connSessions = this.getOrCreateConnection(connectionId);
     let existingForSession = connSessions.get(sessionId);
@@ -162,6 +168,7 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
 
     let entry = this.sessions.get(sessionId);
     if (!entry) {
+      if (this.closedSessions.has(sessionId)) return [];
       entry = this.createSessionEntry(sessionId, deriveSharedCwd(newlyAdded));
       this.sessions.set(sessionId, entry);
     }

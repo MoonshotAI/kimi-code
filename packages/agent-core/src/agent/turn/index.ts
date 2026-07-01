@@ -376,6 +376,11 @@ export class TurnFlow {
     } finally {
       if (ownsActiveTurn()) {
         this.activeTurn = null;
+        // Goal-driven turns run with standalone === false, so endTurn's
+        // standalone-only clear never fires for them. Clear here so an
+        // aborted autonomous run doesn't retain stale tool-call timing
+        // entries after a tool.call that never got its tool.result.
+        this.toolCallStartedAt.clear();
       }
     }
   }

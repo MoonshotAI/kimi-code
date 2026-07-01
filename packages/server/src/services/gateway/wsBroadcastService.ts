@@ -145,6 +145,9 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
   }
 
   async getBufferedSince(sid: string, cursor: SessionCursor): Promise<BufferedSinceResult> {
+    if (this._closedSessions.has(sid)) {
+      return { events: [], resyncRequired: 'epoch_changed', currentSeq: 0, epoch: '' };
+    }
     const state = this._getOrCreateSession(sid);
     const journal = await state.ready;
     // Drain in-flight dispatches so the watermark reflects everything
@@ -183,6 +186,9 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
   }
 
   async getCursor(sid: string): Promise<{ seq: number; epoch: string }> {
+    if (this._closedSessions.has(sid)) {
+      return { seq: 0, epoch: '' };
+    }
     const state = this._getOrCreateSession(sid);
     const journal = await state.ready;
     await state.queue;
@@ -190,6 +196,9 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
   }
 
   async getSnapshotState(sid: string): Promise<SessionSnapshotState> {
+    if (this._closedSessions.has(sid)) {
+      return { seq: 0, epoch: '', inFlightTurn: null };
+    }
     const state = this._getOrCreateSession(sid);
     const journal = await state.ready;
     await state.queue;

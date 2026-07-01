@@ -341,4 +341,61 @@ describe('TerminalService streams', () => {
     expect(listed.map((t) => t.id)).toEqual([terminal.id]);
     expect((await svc.get('sess_i', terminal.id)).status).toBe('running');
   });
+
+  it('resets the closed flag when kill fails so a later close retries', async () => {
+    const root = join(tmpDir, 'workspace-j');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_j', session('sess_j', root)],
+    ]), closeEmitter));
+    const terminal = await svc.create('sess_j', {});
+    const process = backend.processes[0]!;
+    process.killShouldThrow = true;
+
+    closeEmitter.fire({ sessionId: 'sess_j' });
+    expect(process.killed).toBe(false);
+    expect((await svc.get('sess_j', terminal.id)).status).toBe('running');
+
+    // Now kill succeeds — a second close must actually kill and tear down.
+    process.killShouldThrow = false;
+    closeEmitter.fire({ sessionId: 'sess_j' });
+
+    expect(process.killed).toBe(true);
+    expect(await svc.list('sess_j')).toEqual([]);
+  });
+
+  it('rejects create when the session closes during spawn', async () => {
+    const root = join(tmpDir, 'workspace-k');
+    mkdirSync(root, { recursive: true });
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const sessions = new Map([['sess_k', session('sess_k', root)]]);
+
+    // Backend whose spawn resolves asynchronously so the close event can
+    // fire while create() is still awaiting it.
+    const backend = new FakeTerminalBackend();
+    const origSpawn = backend.spawn.bind(backend);
+    backend.spawn = async (opts) => {
+      await Promise.resolve();
+      await Promise.resolve();
+      return origSpawn(opts);
+    };
+
+    const svc = new TerminalService(
+      { backend },
+      makeSessionService(sessions, closeEmitter),
+    );
+
+    // Fire close after create() has passed session lookup but before
+    // spawn resolves. Two microtasks let create() reach the spawn await.
+    const createPromise = svc.create('sess_k', {});
+    await Promise.resolve();
+    await Promise.resolve();
+    closeEmitter.fire({ sessionId: 'sess_k' });
+
+    await expect(createPromise).rejects.toBeInstanceOf(TerminalNotFoundError);
+    expect(backend.processes[0]!.killed).toBe(true);
+    expect(await svc.list('sess_k')).toEqual([]);
+  });
 });

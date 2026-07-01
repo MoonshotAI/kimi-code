@@ -49,6 +49,7 @@ export class TerminalService extends Disposable implements ITerminalService {
   private readonly defaultRows: number;
   private readonly maxBufferedFrames: number;
   private readonly records = new Map<string, TerminalRecord>();
+  private readonly closedSessions = new Set<string>();
 
   constructor(
     options: TerminalServiceOptions = {},
@@ -62,6 +63,7 @@ export class TerminalService extends Disposable implements ITerminalService {
     this.maxBufferedFrames = options.maxBufferedFrames ?? DEFAULT_MAX_BUFFERED_FRAMES;
     this._register(
       this.sessionService.onDidClose(({ sessionId }) => {
+        this.closedSessions.add(sessionId);
         this.closeSessionRecords(sessionId);
       }),
     );
@@ -77,6 +79,16 @@ export class TerminalService extends Disposable implements ITerminalService {
     const cols = input.cols ?? this.defaultCols;
     const rows = input.rows ?? this.defaultRows;
     const process = await this.backend.spawn({ cwd, shell, cols, rows });
+    // The session may have been archived while we were awaiting spawn().
+    // Kill the just-spawned process and bail so we never store a running
+    // process for a session whose close listener already ran.
+    if (this.closedSessions.has(sessionId)) {
+      try {
+        process.kill();
+      } catch {
+      }
+      throw new TerminalNotFoundError(sessionId, '');
+    }
     const terminal: Terminal = {
       id: `term_${ulid()}`,
       session_id: sessionId,
@@ -194,8 +206,13 @@ export class TerminalService extends Disposable implements ITerminalService {
         // Only tear down the record when the process was actually
         // terminated. If kill() threw, the child may still be running —
         // keep the record and its listeners so it stays managed instead
-        // of leaking as a zombie with no remaining owner.
-        if (!killed) continue;
+        // of leaking as a zombie with no remaining owner. Reset the
+        // closed flag so a later close() or duplicate cleanup retries
+        // the kill instead of skipping it and disposing listeners.
+        if (!killed) {
+          record.closed = false;
+          continue;
+        }
         this.markExited(record, null);
       } else {
         disposeAll(record.disposables);
