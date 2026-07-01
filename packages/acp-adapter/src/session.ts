@@ -148,10 +148,12 @@ export class AcpSession {
    */
   private skillCommandMap: ReadonlyMap<string, string> = new Map();
 
-  // Set while `prompt()` awaits image compression, before any turn exists. A
-  // `session/cancel` in that window has no turn to abort, so it flips this flag
-  // and `prompt()` returns `cancelled` instead of launching the turn afterward.
-  private pendingPromptAbort: { aborted: boolean } | undefined = undefined;
+  // One token per in-flight `prompt()` that is still awaiting image compression
+  // (before any turn exists). A `session/cancel` in that window has no turn to
+  // abort, so it flips every token and each affected `prompt()` returns
+  // `cancelled` instead of launching. A set (not a single field) so concurrent
+  // prompts are all covered rather than only the most recent.
+  private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
 
   /**
    * The most recent command palette advertised to the ACP client. Used by
@@ -274,10 +276,10 @@ export class AcpSession {
    * acceptable.
    */
   async cancel(): Promise<void> {
-    // If a prompt is mid-compression (no turn yet), mark it aborted so it does
-    // not launch once compression finishes.
-    if (this.pendingPromptAbort !== undefined) {
-      this.pendingPromptAbort.aborted = true;
+    // If any prompt is mid-compression (no turn yet), mark them aborted so they
+    // do not launch once compression finishes.
+    for (const pending of this.pendingPromptAborts) {
+      pending.aborted = true;
     }
     await this.session.cancel();
   }
@@ -730,12 +732,12 @@ export class AcpSession {
     // that arrives during it: flip the flag from cancel() and bail out here
     // rather than launching a turn the client already asked to stop.
     const pending = { aborted: false };
-    this.pendingPromptAbort = pending;
+    this.pendingPromptAborts.add(pending);
     let parts: readonly PromptPart[];
     try {
       parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks));
     } finally {
-      this.pendingPromptAbort = undefined;
+      this.pendingPromptAborts.delete(pending);
     }
     if (pending.aborted) {
       return { stopReason: 'cancelled' };
