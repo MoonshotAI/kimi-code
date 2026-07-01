@@ -559,6 +559,9 @@ importers:
       '@types/yazl':
         specifier: ^2.4.6
         version: 2.4.6
+      jimp:
+        specifier: ^1.6.1
+        version: 1.6.1
 
   packages/oauth:
     dependencies:
