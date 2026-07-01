@@ -249,7 +249,7 @@ A legacy mechanism lets a `Delayed` edge turn a "soft cycle" into a non-synchron
 | `Scope` / `LifecycleScope` | §3, §8 | the lifetime tree |
 | `SyncDescriptor` | (tests / low-level) | package a constructor + static args into a pending descriptor |
 
-> Legacy exports (not used in v2, just recognize them): `registerSingleton` / `getSingletonServiceDescriptors` / `refineServiceDecorator` are VS Code's leftover global-singleton registrar. v2 src/test has zero references; always use `registerScopedService`.
+> Legacy export (not used in v2, just recognize it): `refineServiceDecorator` is a VS Code leftover DI helper. v2 src/test has zero references; always use `registerScopedService`.
 
 ## Red lines (this stage)
 

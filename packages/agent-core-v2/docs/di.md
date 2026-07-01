@@ -367,7 +367,7 @@ A 创建中要 B，B 创建中又要 A——容器会抛 `CyclicDependencyError`
 | `Scope` / `LifecycleScope` | 3, 8 | 生命周期树 |
 | `SyncDescriptor` | （测试/底层） | 把「构造器 + 静态参数」打包成待 new 描述符 |
 
-> 遗留导出（v2 不用，知道即可）：`registerSingleton` / `getSingletonServiceDescriptors` / `refineServiceDecorator` 是 VS Code 遗留的全局单例注册器，v2 的 src/test 零引用，统一走 `registerScopedService`。
+> 遗留导出（v2 不用，知道即可）：`refineServiceDecorator` 是 VS Code 遗留的 DI 工具，v2 的 src/test 零引用，统一走 `registerScopedService`。
 
 ## 附录 B：红线汇总
 
