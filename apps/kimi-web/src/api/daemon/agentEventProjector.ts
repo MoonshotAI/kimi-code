@@ -282,16 +282,28 @@ function projectSubagentProgress(
   if (rawType === 'assistant.delta') {
     const delta = stringField(payload, 'delta');
     if (!delta) return [];
-    return [
-      {
-        type: 'taskProgress',
-        sessionId,
-        taskId: subagentId,
-        outputChunk: delta,
-        stream: 'stdout',
-        kind: 'text',
-      },
-    ];
+    // Ensure the subagent task exists before forwarding the text delta. A client
+    // that subscribed from a snapshot after `subagent.spawned` already fired
+    // never received the lifecycle taskCreated, and the reducer only applies
+    // taskProgress to existing tasks — without this, the deltas are dropped and
+    // the live detail stays blank until a non-text frame recreates the task.
+    const previous = state.subagentMeta.get(subagentId);
+    const task = patchSubagent(state, sessionId, subagentId, {
+      status: 'running',
+      subagentPhase: 'working',
+      startedAt: previous?.startedAt ?? new Date().toISOString(),
+    });
+    const out: AppEvent[] = [];
+    if (task) out.push({ type: 'taskCreated', sessionId, task });
+    out.push({
+      type: 'taskProgress',
+      sessionId,
+      taskId: subagentId,
+      outputChunk: delta,
+      stream: 'stdout',
+      kind: 'text',
+    });
+    return out;
   }
 
   const text = subagentProgressText(rawType, payload);
