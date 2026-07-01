@@ -565,6 +565,52 @@ describe('WSBroadcastService (WS transport pump)', () => {
     broadcast.dispose();
     bus.dispose();
   });
+
+  it('drops late events arriving after the session closes', async () => {
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const clients = new FakeSessionClients();
+    const conn = fakeConn('conn_late');
+    clients.subscribe(conn, 'sid_late');
+    const bus = new EventService();
+    const broadcast = new WSBroadcastService(
+      bus,
+      testLogger,
+      clients,
+      new FakeConnectionRegistry(),
+      makeEnv(),
+    );
+    broadcast.bindSessionCloseListener(makeSessionService(closeEmitter));
+    bus.publish({
+      type: 'turn.started',
+      sessionId: 'sid_late',
+      agentId: 'main',
+      turnId: 1,
+      origin: { kind: 'user' },
+    } as unknown as Event);
+    await broadcast._drainForTest('sid_late');
+    const seqBefore = broadcast.currentSeq('sid_late');
+    expect(seqBefore).toBe(1);
+
+    closeEmitter.fire({ sessionId: 'sid_late' });
+
+    // A late turn.ended arrives after close — it must be dropped, not
+    // recreate the journal/tail/in-flight state that was just cleaned up.
+    bus.publish({
+      type: 'turn.ended',
+      sessionId: 'sid_late',
+      agentId: 'main',
+      turnId: 1,
+      reason: 'completed',
+    } as unknown as Event);
+    await broadcast._drainForTest('sid_late');
+
+    expect(broadcast.currentSeq('sid_late')).toBe(0);
+    expect(broadcast._bufferLengthForTest('sid_late')).toBe(0);
+    // No new envelope was sent for the late event.
+    expect(conn.sent.filter((m) => (m as { type: string }).type === 'turn.ended')).toEqual([]);
+    broadcast.dispose();
+    bus.dispose();
+  });
 });
 
 describe('FsWatcherService', () => {

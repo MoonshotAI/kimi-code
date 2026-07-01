@@ -43,6 +43,7 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
   readonly _serviceBrand: undefined;
 
   private readonly _sessions = new Map<string, SessionState>();
+  private readonly _closedSessions = new Set<string>();
   private readonly _maxBufferSize: number;
   private readonly _journalDir: string;
   private readonly _turnTracker = new InFlightTurnTracker();
@@ -91,6 +92,11 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
       );
       return;
     }
+    // A session that timed out waiting for an active turn to settle can
+    // still emit late turn.ended/delta/tool events after onDidClose fired.
+    // Drop them so the cleanup is not undone and stale events are not sent
+    // to subscribed clients.
+    if (this._closedSessions.has(sid)) return;
     const state = this._getOrCreateSession(sid);
     state.queue = state.queue
       .then(() => this._dispatch(sid, state, event))
@@ -237,6 +243,10 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
   }
 
   private _deleteSession(sid: string): void {
+    // Tombstone the session so late events (e.g. a turn.ended arriving
+    // after a close timeout) are dropped instead of recreating the
+    // journal/tail/in-flight state that was just cleaned up.
+    this._closedSessions.add(sid);
     const state = this._sessions.get(sid);
     this._sessions.delete(sid);
     this._turnTracker.clear(sid);
