@@ -67,20 +67,40 @@ export function parseSlash(input: string): { cmd: string; arg: string } | null {
 
 /**
  * Build the full slash-item list: built-in commands followed by the session's
- * skills (each shown as `/<skill-name>`). Skills carry their raw description and
- * an `isSkill` flag so the caller knows to activate rather than run a command.
+ * skills. Built-in skills are shown as `/<skill-name>`; all other session skills
+ * are shown as `/skill:<skill-name>` to match the TUI and make `/skill` a
+ * reliable way to list every non-built-in skill. Skills carry their raw
+ * description and an `isSkill` flag so the caller knows to activate rather than
+ * run a command.
  */
 export function buildSlashItems(
-  skills: ReadonlyArray<{ name: string; description: string }> = [],
+  skills: ReadonlyArray<{ name: string; description: string; source?: string }> = [],
 ): SlashCommand[] {
   const skillItems: SlashCommand[] = skills.map((s) => ({
-    name: `/${s.name}`,
+    name: s.source === 'builtin' ? `/${s.name}` : `/skill:${s.name}`,
     desc: s.description,
     isSkill: true,
     // Keep the selected skill in the composer so arguments can be appended.
     acceptsInput: true,
   }));
   return [...SLASH_COMMANDS, ...skillItems];
+}
+
+/**
+ * Parse a skill-activation command of the form `/<name>` or `/skill:<name>`
+ * (with optional trailing arguments). Returns the underlying skill name and
+ * any arguments, or `null` if no skill name can be extracted.
+ *
+ * The slash menu displays non-built-in session skills as `/skill:<name>` to
+ * match the TUI. This helper strips that prefix before the skill is activated.
+ */
+export function parseSkillCommand(cmd: string): { name: string; args?: string } | null {
+  const space = cmd.indexOf(' ');
+  let name = (space === -1 ? cmd : cmd.slice(0, space)).slice(1);
+  if (name.startsWith('skill:')) name = name.slice('skill:'.length);
+  const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
+  if (!name) return null;
+  return { name, args };
 }
 
 /**

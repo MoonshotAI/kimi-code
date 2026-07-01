@@ -74,11 +74,31 @@ describe('useSlashMenu — update', () => {
     expect(slash.open.value).toBe(false);
   });
 
-  it('includes session skills as /<skill-name>', () => {
-    const { slash } = setup('/', [{ name: 'deploy', description: 'deploy stuff' } as AppSkill]);
+  it('includes builtin session skills as /<skill-name>', () => {
+    const { slash } = setup('/', [{ name: 'deploy', description: 'deploy stuff', source: 'builtin' } as AppSkill]);
     slash.update();
     const names = slash.items.value.map((i) => i.name);
     expect(names).toContain('/deploy');
+  });
+
+  it('includes non-builtin session skills as /skill:<skill-name>', () => {
+    const { slash } = setup('/', [{ name: 'deploy', description: 'deploy stuff', source: 'project' } as AppSkill]);
+    slash.update();
+    const names = slash.items.value.map((i) => i.name);
+    expect(names).toContain('/skill:deploy');
+  });
+
+  it('filters non-builtin skills when typing /skill', () => {
+    const { slash } = setup('/skill', [
+      { name: 'deploy', description: 'deploy stuff', source: 'project' } as AppSkill,
+      { name: 'lint', description: 'lint stuff', source: 'user' } as AppSkill,
+      { name: 'help', description: 'builtin help', source: 'builtin' } as AppSkill,
+    ]);
+    slash.update();
+    const names = slash.items.value.map((i) => i.name);
+    expect(names).toContain('/skill:deploy');
+    expect(names).toContain('/skill:lint');
+    expect(names).not.toContain('/help');
   });
 });
 
