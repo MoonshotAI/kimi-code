@@ -188,6 +188,23 @@ describe('compressImageForModel — fallback', () => {
     expect(result.changed).toBe(false);
     expect(result.data).toBe(webp);
   });
+
+  it('skips compression for absurd pixel counts without decoding (bomb guard)', async () => {
+    // A PNG header advertising 30000×30000 (900 MP) with no pixel data. The
+    // dimension sniff reads the IHDR; the guard must pass through before Jimp
+    // is ever invoked, so this completes instantly with no multi-GB bitmap.
+    const header = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+    header.writeUInt32BE(13, 8); // IHDR chunk length
+    header.write('IHDR', 12, 'latin1');
+    header.writeUInt32BE(30000, 16);
+    header.writeUInt32BE(30000, 20);
+    const bomb = new Uint8Array(header);
+
+    const result = await compressImageForModel(bomb, 'image/png');
+    expect(result.changed).toBe(false);
+    expect(result.data).toBe(bomb); // identity → Jimp was never called
+  });
 });
 
 // ── invariants ───────────────────────────────────────────────────────

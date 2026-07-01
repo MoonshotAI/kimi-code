@@ -38,6 +38,18 @@ const JPEG_QUALITY_STEPS = [80, 60, 40, 20] as const;
 /** Last-ditch longest edge when the budget cannot be met at MAX_IMAGE_EDGE_PX. */
 const FALLBACK_EDGE_PX = 1000;
 
+/**
+ * Pixel-count ceiling above which we skip compression entirely. A tiny-byte,
+ * huge-dimension image (e.g. a solid 30000×30000 PNG) would otherwise be fully
+ * decoded into a multi-gigabyte bitmap by Jimp before any resize — a
+ * decompression-bomb OOM vector, since the byte budget alone never catches it.
+ * The header sniff gives us the dimensions without decoding, so we gate on them
+ * first. Set well above any legitimate photo/screenshot/scan (~100 MP); larger
+ * images pass through uncompressed, exactly as they did before compression
+ * existed.
+ */
+const MAX_DECODE_PIXELS = 100_000_000;
+
 /** Formats we can both decode and re-encode with the default jimp build. */
 const RECODABLE_MIME = new Set(['image/png', 'image/jpeg']);
 
@@ -99,6 +111,10 @@ export async function compressImageForModel(
   const withinBytes = bytes.length <= byteBudget;
   const withinEdge = longestEdge > 0 && longestEdge <= maxEdge;
   if (withinBytes && (withinEdge || longestEdge === 0)) return passthrough();
+
+  // Decompression-bomb guard: refuse to decode absurd pixel counts. The sniff
+  // above gave us the dimensions without decoding, so this costs nothing.
+  if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) return passthrough();
 
   try {
     const { Jimp } = await import('jimp');
