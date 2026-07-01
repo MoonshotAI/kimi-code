@@ -449,6 +449,28 @@ describe('GlobTool', () => {
     expect(result.output).toContain('No matches found');
   });
 
+  it('filters the pattern before the stdout cap so rare matches are not starved', async () => {
+    // Simulate >10MB of non-matching paths followed by a matching path.
+    // Without the streaming line filter, the cap would truncate before the
+    // match and the tool would report "No matches found".
+    const nonMatching = Array.from(
+      { length: 200_000 },
+      (_, i) => `/workspace/noise_${String(i)}.txt`,
+    ).join('\n');
+    const stdout = nonMatching + '\n/workspace/rare/deep/match.ts\n';
+    const exec = execReturning(stdout);
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'rare/**/*.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('rare/deep/match.ts');
+    expect(result.output).not.toContain('noise_');
+  });
+
   it('keeps complete paths and surfaces a warning when rg exits 2 after traversal errors', async () => {
     const exec = execReturning(
       '/workspace/a.ts\n/workspace/src/b.ts\n',
@@ -466,14 +488,37 @@ describe('GlobTool', () => {
     expect(result.output).toContain('Permission denied');
   });
 
-  it('keeps ripgrep errors hard failures when no complete path is produced', async () => {
-    const exec = execReturning('', 'error: invalid glob', 2);
+  it('rejects malformed glob patterns before running ripgrep', async () => {
+    const exec = vi.fn();
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(tool, context({ pattern: '[', path: '/workspace' }));
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Glob failed: error: invalid glob');
+    expect(result.output).toContain('Invalid glob pattern');
+    expect(result.output).toContain('unclosed');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed glob patterns with unclosed braces', async () => {
+    const exec = vi.fn();
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '*.{ts,tsx', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('unclosed');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('surfaces ripgrep errors when no complete path is produced', async () => {
+    const exec = execReturning('', 'error: something went wrong', 2);
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '*.ts', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Glob failed: error: something went wrong');
   });
 
   it('reports "does not exist" when the search directory is missing', async () => {

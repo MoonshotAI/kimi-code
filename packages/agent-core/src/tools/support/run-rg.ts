@@ -58,6 +58,15 @@ export type RipgrepRunOutcome =
 export interface RunRipgrepOptions {
   /** Message surfaced when the run is aborted via `signal`. Defaults to `"Aborted"`. */
   readonly abortedMessage?: string;
+  /**
+   * Optional line-level filter applied to stdout as lines stream in. When
+   * provided, only lines that pass the filter count toward the output cap,
+   * so a selective pattern can't be starved by a large prefix of non-matching
+   * lines (e.g. `rg --files` returning >10MB of paths before the user's glob
+   * matches). Lines are split on `\n`; the filter receives the line without
+   * the trailing newline.
+   */
+  readonly lineFilter?: (line: string) => boolean;
 }
 
 async function disposeProcess(proc: KaosProcess): Promise<void> {
@@ -75,6 +84,7 @@ export async function runRipgrepOnce(
   options: RunRipgrepOptions = {},
 ): Promise<RipgrepRunOutcome> {
   const abortedMessage = options.abortedMessage ?? 'Aborted';
+  const lineFilter = options.lineFilter;
   if (signal.aborted) {
     return { kind: 'tool-error', result: { isError: true, output: abortedMessage } };
   }
@@ -165,7 +175,7 @@ export async function runRipgrepOnce(
   try {
     const isTerminating = (): boolean => timedOut || aborted || killed;
     const [stdoutResult, stderrResult, code] = await Promise.all([
-      readStreamWithCap(proc.stdout, MAX_OUTPUT_BYTES, isTerminating),
+      readStreamWithCap(proc.stdout, MAX_OUTPUT_BYTES, isTerminating, lineFilter),
       readStreamWithCap(proc.stderr, MAX_OUTPUT_BYTES, isTerminating),
       proc.wait(),
     ]);
@@ -229,28 +239,57 @@ async function readStreamWithCap(
   stream: Readable,
   maxBytes: number,
   suppressPrematureClose?: () => boolean,
+  lineFilter?: (line: string) => boolean,
 ): Promise<CappedStreamResult> {
   const chunks: Buffer[] = [];
   let total = 0;
   let truncated = false;
+  let lineBuffer = '';
   try {
     for await (const chunk of stream) {
       const buf: Buffer =
         typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
       if (truncated) continue;
-      if (total + buf.length > maxBytes) {
-        const remaining = maxBytes - total;
-        if (remaining > 0) chunks.push(buf.subarray(0, remaining));
-        total = maxBytes;
-        truncated = true;
-        continue;
+      if (lineFilter) {
+        lineBuffer += buf.toString('utf8');
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop()!;
+        for (const line of lines) {
+          if (!lineFilter(line)) continue;
+          const lineBytes = Buffer.from(line + '\n', 'utf8');
+          if (total + lineBytes.length > maxBytes) {
+            truncated = true;
+            break;
+          }
+          chunks.push(lineBytes);
+          total += lineBytes.length;
+        }
+      } else {
+        if (total + buf.length > maxBytes) {
+          const remaining = maxBytes - total;
+          if (remaining > 0) chunks.push(buf.subarray(0, remaining));
+          total = maxBytes;
+          truncated = true;
+          continue;
+        }
+        chunks.push(buf);
+        total += buf.length;
       }
-      chunks.push(buf);
-      total += buf.length;
     }
   } catch (error) {
     if (!isPrematureCloseError(error) || suppressPrematureClose?.() !== true) {
       throw error;
+    }
+  }
+  if (!truncated && lineBuffer.length > 0) {
+    if (!lineFilter || lineFilter(lineBuffer)) {
+      const lineBytes = Buffer.from(lineBuffer, 'utf8');
+      if (total + lineBytes.length > maxBytes) {
+        truncated = true;
+      } else {
+        chunks.push(lineBytes);
+        total += lineBytes.length;
+      }
     }
   }
   return { text: Buffer.concat(chunks).toString('utf8'), truncated };

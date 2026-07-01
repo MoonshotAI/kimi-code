@@ -16,7 +16,7 @@
  *     files (e.g. build outputs, `node_modules`). Sensitive files such
  *     as `.env` are always filtered out.
  *   - Brace expansion (`*.{ts,tsx}`, `{src,test}/**`) is handled by
- *     ripgrep's glob engine.
+ *     picomatch in-process.
  *   - `path` is validated by `resolvePathAccess` in `absolute-outside-allowed`
  *     mode. Explicit absolute paths outside the workspace are allowed; relative
  *     paths that escape the workspace stay rejected.
@@ -25,7 +25,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
-import { dirname, join, normalize, relative, resolve } from 'pathe';
+import { dirname, isAbsolute, join, normalize, relative, resolve } from 'pathe';
 import picomatch from 'picomatch';
 import { z } from 'zod';
 
@@ -161,6 +161,11 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   ): Promise<ExecutableToolResult> {
     const searchRoot = searchRoots[0] ?? this.workspace.workspaceDir;
 
+    const patternError = validateGlobPattern(args.pattern);
+    if (patternError !== undefined) {
+      return { isError: true, output: patternError };
+    }
+
     // Validate the search root is a directory. `rg --files <file>` exits 0
     // and lists the file itself, so without this check a file root would be
     // returned as its own match instead of rejected. A missing root surfaces
@@ -205,8 +210,12 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     const insideGitRepo =
       args.include_ignored === true ? true : await isInsideGitRepo(this.kaos, searchRoot);
 
+    const pathClass = this.kaos.pathClass();
+    const lineFilter = makeLineFilter(args.pattern, pathClass, searchRoot);
+
     let runResult = await runRipgrepOnce(execKaos, buildRgArgs(rgPath, args, insideGitRepo), signal, {
       abortedMessage: 'Glob aborted',
+      lineFilter,
     });
     if (runResult.kind === 'tool-error') return runResult.result;
     if (shouldRetryRipgrepEagain(runResult)) {
@@ -214,7 +223,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
         execKaos,
         buildRgArgs(rgPath, args, insideGitRepo, true),
         signal,
-        { abortedMessage: 'Glob aborted' },
+        { abortedMessage: 'Glob aborted', lineFilter },
       );
       if (runResult.kind === 'tool-error') return runResult.result;
     }
@@ -255,7 +264,10 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // --glob would override ignore-file logic, so the pattern is not passed
     // to rg; instead rg --files enumerates non-ignored files and we filter
     // here to preserve both the pattern match and the ignore-file respect.
-    const patternMatched = filterByPattern(rawPaths, searchRoot, args.pattern);
+    // The streaming lineFilter already applied this filter before the cap,
+    // but we re-check here as a safety net for any paths that slipped
+    // through (e.g. broad patterns where the filter is skipped).
+    const patternMatched = filterByPattern(rawPaths, searchRoot, args.pattern, pathClass);
 
     // Authoritative sensitive-file check (the rg prefilter is conservative).
     const kept: string[] = [];
@@ -284,7 +296,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // save tokens, but only for the primary workspace. Relative paths are
     // later resolved against workspaceDir, so additionalDir matches stay
     // absolute to keep follow-up Read/Edit calls on the same file.
-    const pathClass = this.kaos.pathClass();
     const shouldRelativize = isWithinDirectory(searchRoot, this.workspace.workspaceDir, pathClass);
     const displayLines = limited.map((p) =>
       shouldRelativize ? relativizeIfUnder(p, searchRoot, pathClass) : p,
@@ -360,10 +371,12 @@ function isBroadPattern(pattern: string): boolean {
  *   - Patterns with `/` match the relative path from the search root.
  *   - `**` matches zero or more directory levels.
  *   - Dotfiles are matched (rg runs with `--hidden`).
+ *   - Matching is case-sensitive, matching ripgrep's default (use
+ *     `--glob-case-insensitive` / `--iglob` for case-insensitive mode).
  *   - Brace expansion (`*.{ts,tsx}`) is handled by picomatch natively.
  */
 function matchUserPattern(relPath: string, pattern: string): boolean {
-  const opts = { dot: true, nocase: true };
+  const opts = { dot: true };
   if (!pattern.includes('/')) {
     const basename = relPath.split('/').pop()!;
     return picomatch.isMatch(basename, pattern, opts);
@@ -375,16 +388,88 @@ function matchUserPattern(relPath: string, pattern: string): boolean {
  * Filter absolute paths from `rg --files` against the user's positive glob
  * pattern. Broad patterns (star, double-star, star-slash-star) match
  * everything, so the filter is skipped for those. Returns the filtered list
- * in the same order.
+ * in the same order. On Windows, the search root and absolute paths are
+ * case-normalized before computing the relative path so that a user-supplied
+ * root with different casing than rg returns doesn't produce escaped paths.
  */
-function filterByPattern(absPaths: string[], searchRoot: string, pattern: string): string[] {
+function filterByPattern(
+  absPaths: string[],
+  searchRoot: string,
+  pattern: string,
+  pathClass: PathClass,
+): string[] {
   if (isBroadPattern(pattern)) return absPaths;
   const result: string[] = [];
+  const normRoot = normalize(searchRoot);
+  const comparableRoot = pathClass === 'win32' ? normRoot.toLowerCase() : normRoot;
   for (const absPath of absPaths) {
-    const rel = relative(searchRoot, absPath);
+    const normAbs = normalize(absPath);
+    const comparableAbs = pathClass === 'win32' ? normAbs.toLowerCase() : normAbs;
+    const rel = relative(comparableRoot, comparableAbs);
     if (matchUserPattern(rel, pattern)) result.push(absPath);
   }
   return result;
+}
+
+/**
+ * Build a streaming line filter for `runRipgrepOnce` that applies the user's
+ * glob pattern to each path line before it counts toward the output cap.
+ * Returns `undefined` for broad patterns (no filtering needed) so the
+ * original byte-level cap path is used.
+ *
+ * rg runs with cwd pinned to the search root, so each line is normally a
+ * relative path like `./src/a.ts` (POSIX) or `.\src\a.ts` (Windows). The
+ * filter strips the leading `./` or `.\` and normalizes backslashes to
+ * forward slashes on Windows before matching. If the line is an absolute
+ * path (e.g. from a test mock or an external root), it is made relative to
+ * the search root first.
+ */
+function makeLineFilter(
+  pattern: string,
+  pathClass: PathClass,
+  searchRoot: string,
+): ((line: string) => boolean) | undefined {
+  if (isBroadPattern(pattern)) return undefined;
+  const normRoot = normalize(searchRoot);
+  const comparableRoot = pathClass === 'win32' ? normRoot.toLowerCase() : normRoot;
+  return (line: string): boolean => {
+    let relPath = line;
+    if (pathClass === 'win32') relPath = relPath.replace(/\\/g, '/');
+    if (relPath.startsWith('./') || relPath.startsWith('.\\')) {
+      relPath = relPath.slice(2);
+    } else if (isAbsolute(relPath)) {
+      const normAbs = pathClass === 'win32' ? normalize(relPath).toLowerCase() : normalize(relPath);
+      relPath = relative(comparableRoot, normAbs);
+    }
+    return matchUserPattern(relPath, pattern);
+  };
+}
+
+/**
+ * Validate a glob pattern for common malformed syntax (unclosed `[` or `{`).
+ * Returns an error message if the pattern is invalid, or `undefined` if it
+ * is well-formed. This mirrors ripgrep's globset parser, which rejects
+ * unclosed character classes and brace expansions with a hard error —
+ * picomatch would silently treat them as literals and report "No matches
+ * found" instead.
+ */
+function validateGlobPattern(pattern: string): string | undefined {
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (ch === '[') bracketDepth++;
+    else if (ch === ']' && bracketDepth > 0) bracketDepth--;
+    else if (ch === '{') braceDepth++;
+    else if (ch === '}' && braceDepth > 0) braceDepth--;
+  }
+  if (bracketDepth > 0) return `Invalid glob pattern: unclosed '[' in "${pattern}"`;
+  if (braceDepth > 0) return `Invalid glob pattern: unclosed '{' in "${pattern}"`;
+  return undefined;
 }
 
 async function isInsideGitRepo(kaos: Kaos, searchRoot: string): Promise<boolean> {
