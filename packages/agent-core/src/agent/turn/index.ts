@@ -487,6 +487,7 @@ export class TurnFlow {
     this.currentStep = 0;
     this.stepToolCallKeys.clear();
     this.toolCallDupType.clear();
+    this.toolCallStartedAt.clear();
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
@@ -591,6 +592,7 @@ export class TurnFlow {
       this.agent.goal.getGoal().goal?.status !== 'active'
     ) {
       this.activeTurn = null;
+      this.toolCallStartedAt.clear();
     }
     if (this.agent.swarmMode.shouldAutoExit) {
       this.agent.swarmMode.exit();
