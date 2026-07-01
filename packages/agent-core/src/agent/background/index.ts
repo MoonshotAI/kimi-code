@@ -439,10 +439,11 @@ export class BackgroundManager {
     return this.toInfo(entry);
   }
 
-  persistOutput(taskId: string): void {
+  async persistOutput(taskId: string): Promise<void> {
     const entry = this.tasks.get(taskId);
     if (entry === undefined) return;
     this.startOutputPersist(entry);
+    await Promise.all([entry.outputWriteQueue, this.persistLive(entry)]);
   }
 
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
