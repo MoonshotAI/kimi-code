@@ -37,7 +37,8 @@ export interface ModelSelection {
 }
 
 export function modelDisplayName(alias: string, model: ModelAlias | undefined): string {
-  return model?.displayName ?? model?.model ?? alias;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.displayName ?? effective?.model ?? alias;
 }
 
 export function providerDisplayName(provider: string): string {

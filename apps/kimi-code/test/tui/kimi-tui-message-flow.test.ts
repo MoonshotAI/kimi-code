@@ -4631,3 +4631,51 @@ command = "vim"
     expect(transcript).not.toContain('<hook_result');
   });
 });
+
+describe('/model status displayName override', () => {
+  it('shows the overridden display name in the switch status', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Remote Turbo',
+            capabilities: ['thinking'],
+            overrides: { displayName: 'Custom Turbo' },
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: false },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true },
+      });
+    });
+
+    expect(renderTranscript(driver)).toContain('Switched to Custom Turbo with thinking on.');
+    expect(renderTranscript(driver)).not.toContain('Remote Turbo');
+  });
+});

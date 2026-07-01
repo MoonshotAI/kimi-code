@@ -165,3 +165,25 @@ describe('FooterComponent overrides', () => {
     expect(footer.render(120).join('\n')).toContain('thinking: high');
   });
 });
+
+describe('FooterComponent displayName override', () => {
+  it('renders the overridden display name', () => {
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k2',
+      availableModels: {
+        'kimi-k2': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+          displayName: 'Remote Name',
+          overrides: { displayName: 'Custom Name' },
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(footer.render(120).join('\n')).toContain('Custom Name');
+    expect(footer.render(120).join('\n')).not.toContain('Remote Name');
+  });
+});

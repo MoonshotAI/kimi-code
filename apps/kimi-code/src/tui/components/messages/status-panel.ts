@@ -5,7 +5,13 @@
  * separate from the TUI orchestration layer.
  */
 
-import type { ModelAlias, PermissionMode, SessionStatus, ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
+import {
+  effectiveModelAlias,
+  type ModelAlias,
+  type PermissionMode,
+  type SessionStatus,
+  type ThinkingEffort,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { PRODUCT_NAME } from '#/constant/app';
 import { currentTheme } from '#/tui/theme';
@@ -47,7 +53,8 @@ type Colorize = (text: string) => string;
 
 function displayModelName(alias: string, models: Record<string, ModelAlias>): string {
   const model = models[alias];
-  return model?.displayName ?? model?.model ?? alias;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.displayName ?? effective?.model ?? alias;
 }
 
 function formatModelStatus(options: StatusReportOptions): string {
