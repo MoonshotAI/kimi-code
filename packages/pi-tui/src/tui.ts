@@ -1458,15 +1458,6 @@ export class TUI extends Container {
 		// and skip above-viewport changes: scrollback keeps stale bytes, but the
 		// user's scroll position is preserved.
 		if (firstChanged < prevViewportTop) {
-			// If content length changed (shrink/grow), fall back to a full redraw
-			// so the viewport is reset to the new content bounds. Only clamp when
-			// length is unchanged (e.g. a spinner tick or markdown reflow above the
-			// viewport during streaming).
-			if (newLines.length !== this.previousLines.length) {
-				logRedraw(`firstChanged < viewportTop with length change (${firstChanged} < ${prevViewportTop}, len ${this.previousLines.length} -> ${newLines.length})`);
-				fullRender(true);
-				return;
-			}
 			let visibleFirstChanged = -1;
 			for (let i = prevViewportTop; i <= lastChanged; i++) {
 				const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";

@@ -739,7 +739,11 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.ok(tui.fullRedraws > redrawsBeforeSwitch, "Branch switch should trigger a full redraw");
+		assert.strictEqual(
+			tui.fullRedraws,
+			redrawsBeforeSwitch,
+			"Branch switch should not trigger a full redraw (clamped to viewport)",
+		);
 
 		const viewport = terminal.getViewport();
 		for (let i = 0; i < 10; i++) {
@@ -749,17 +753,20 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
+		// After clamping, the viewport keeps its previous scroll position
+		// (prevViewportTop=13) rather than resetting to the new content bottom.
+		// The stale "Chat 12/13/14" rows remain in scrollback but are not visible.
 		assert.deepStrictEqual(viewport, [
-			"Chat 5",
-			"Chat 6",
-			"Chat 7",
-			"Chat 8",
-			"Chat 9",
-			"Chat 10",
-			"Chat 11",
-			"Editor 0",
 			"Editor 1",
 			"Editor 2",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
 		]);
 
 		tui.stop();
