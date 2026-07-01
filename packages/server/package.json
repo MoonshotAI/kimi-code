@@ -55,6 +55,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/ws": "^8.18.0"
+    "@types/ws": "^8.18.0",
+    "jimp": "^1.6.1"
   }
 }

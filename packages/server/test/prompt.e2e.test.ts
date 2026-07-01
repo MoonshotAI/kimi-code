@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
+import { Jimp } from 'jimp';
 
 import type { Event, PromptSubmission } from '@moonshot-ai/protocol';
 import { IEventService, IPromptService, PromptService } from '@moonshot-ai/agent-core';
@@ -419,6 +420,111 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
         },
       },
     ]);
+  });
+
+  it('compresses an oversized uploaded image when resolving the prompt, leaving the stored file intact', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const bigPng = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const upload = buildMultipart({
+      file: { fieldName: 'file', filename: 'big.png', contentType: 'image/png', data: bigPng },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string; media_type: string; size: number }>(
+      uploadRes.json(),
+    );
+    expect(uploadEnv.code).toBe(0);
+    // The stored file keeps its ORIGINAL bytes — only the prompt copy is shrunk.
+    expect(uploadEnv.data?.size).toBe(bigPng.length);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploadEnv.data!.id } }],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const part = submitted?.content[0];
+    if (part?.type !== 'image' || part.source.kind !== 'base64') {
+      throw new Error('expected a resolved base64 image part');
+    }
+    const sentBytes = Buffer.from(part.source.data, 'base64');
+    const decoded = await Jimp.fromBuffer(sentBytes);
+    // The model-facing copy is downsampled to the edge cap.
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+  });
+
+  it('compresses an inline base64 image submitted directly in the prompt', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    // Solid 2600×2600: over the edge cap but tiny in bytes, so it stays well
+    // under Fastify's inline-JSON limit yet still benefits from downscaling.
+    const base64 = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: base64 } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const part = submitted?.content[0];
+    if (part?.type !== 'image' || part.source.kind !== 'base64') {
+      throw new Error('expected a base64 image part');
+    }
+    const decoded = await Jimp.fromBuffer(Buffer.from(part.source.data, 'base64'));
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
   });
 
   it('returns 40407 when prompt image file_id is unknown', async () => {

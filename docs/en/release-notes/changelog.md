@@ -6,6 +6,12 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.21.1 (2026-07-01)
+
+### Bug Fixes
+
+- Keep the waiting spinner visible while encrypted reasoning streams, fixing a blank spinner-less gap before the first response text appears.
+
 ## 0.21.0 (2026-07-01)
 
 ### Features

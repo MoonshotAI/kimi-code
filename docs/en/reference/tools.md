@@ -53,7 +53,7 @@ Foreground mode blocks the current turn until the command completes or times out
 | `WebSearch` | Auto-allow | Web search |
 | `FetchURL` | Auto-allow | Fetch the content of a specified URL |
 
-**`WebSearch`** accepts `query` (search terms) and optional `limit` (number of results to return, 1–20; defaults to 5) and `include_content` (whether to return the page body; defaults to false). Requires the host to provide a search implementation; when not injected, the tool does not appear in the tool list.
+**`WebSearch`** accepts `query` (search terms). Requires the host to provide a search implementation; when not injected, the tool does not appear in the tool list.
 
 **`FetchURL`** accepts a single `url` parameter and returns the page content. For HTML pages, the host extracts the body text rather than returning the full HTML; plain text or Markdown pages are passed through directly. Also requires a host-provided implementation.
 
