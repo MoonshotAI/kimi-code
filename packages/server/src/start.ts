@@ -614,6 +614,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     try {
+      await coreProcess.closeAllSessions();
+    } catch (error) {
+      pinoLogger.warn(
+        { err: error instanceof Error ? error : new Error(String(error)) },
+        'failed to close live sessions during server shutdown',
+      );
+    }
+
+    try {
       ix.dispose();
     } catch {
 
