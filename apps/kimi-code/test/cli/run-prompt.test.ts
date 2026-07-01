@@ -219,6 +219,23 @@ describe('runPrompt', () => {
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
 
+  it('includes cd in the resume hint for worktree sessions', async () => {
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), '1.2.3-test', {
+      stdout,
+      stderr,
+      worktree: {
+        worktreePath: '/repo/.kimi/worktrees/wt',
+        parentRepoPath: '/repo',
+        effectiveCwd: process.cwd(),
+      },
+    });
+
+    expect(stderr.text()).toBe(`To resume this session: cd '${process.cwd()}' && kimi -r ses_prompt\n`);
+  });
+
   it('completes even if harness.close() never resolves (cleanup is time-bounded)', async () => {
     vi.useFakeTimers();
     try {

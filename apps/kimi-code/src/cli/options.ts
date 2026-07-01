@@ -11,6 +11,7 @@ export interface CLIOptions {
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
   skillsDirs: string[];
+  worktree?: string;
   addDirs?: string[];
 }
 
@@ -55,6 +56,12 @@ export function validateOptions(opts: CLIOptions): ValidatedOptions {
   }
   if (opts.yolo && opts.auto) {
     throw new OptionConflictError('Cannot combine --yolo with --auto.');
+  }
+  if (opts.worktree !== undefined && opts.session !== undefined) {
+    throw new OptionConflictError('Cannot combine --worktree with --session.');
+  }
+  if (opts.worktree !== undefined && opts.continue) {
+    throw new OptionConflictError('Cannot combine --worktree with --continue.');
   }
   return { options: opts, uiMode: promptMode ? 'print' : 'shell' };
 }

@@ -31,6 +31,8 @@ import {
 } from './goal-prompt';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
+import { formatResumeCommand } from './resume-hint';
+import { metadataFromWorktree, type WorktreeRuntime } from './worktree-runtime';
 
 /**
  * Await `promise`, but stop waiting after `timeoutMs`.
@@ -79,6 +81,14 @@ interface PromptRunIO {
   readonly stdout?: PromptOutput;
   readonly stderr?: PromptOutput;
   readonly process?: PromptProcess;
+  /** The git worktree this prompt session runs in, when launched with --worktree. */
+  readonly worktree?: WorktreeRuntime;
+  /**
+   * Called once the prompt session has been created or resumed. Lets the caller
+   * distinguish a startup failure (before any session exists) from a later turn
+   * failure, e.g. to decide whether an empty worktree should be cleaned up.
+   */
+  readonly onSessionCreated?: () => void;
 }
 
 interface PromptProcess {
@@ -101,6 +111,7 @@ export async function runPrompt(
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
   const promptProcess = io.process ?? process;
+  const worktree = io.worktree;
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
@@ -166,11 +177,14 @@ export async function runPrompt(
         workDir,
         config.defaultModel,
         stderr,
+        worktree,
         (restorePermission) => {
           restorePromptSessionPermission = restorePermission;
         },
       );
     restorePromptSessionPermission = restorePermission;
+    // A session now exists; a later turn failure must not delete its worktree.
+    io.onSessionCreated?.();
 
     initializeCliTelemetry({
       harness,
@@ -193,7 +207,7 @@ export async function runPrompt(
     } else {
       await runPromptTurn(session, opts.prompt!, outputFormat, stdout, stderr);
     }
-    writeResumeHint(session.id, outputFormat, stdout, stderr);
+    writeResumeHint(session.id, outputFormat, stdout, stderr, worktree !== undefined ? workDir : undefined);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
       duration_ms: Date.now() - startedAt,
@@ -261,6 +275,7 @@ async function resolvePromptSession(
   workDir: string,
   defaultModel: string | undefined,
   stderr: PromptOutput,
+  worktree: WorktreeRuntime | undefined,
   setRestorePermission: (restorePermission: () => Promise<void>) => void,
 ): Promise<ResolvedPromptSession> {
   if (opts.session !== undefined) {
@@ -333,10 +348,17 @@ async function resolvePromptSession(
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
+  const metadata = metadataFromWorktree(worktree);
+  // Note: --prompt mode intentionally does not auto-remove the worktree on
+  // exit. Unlike the TUI, a prompt session always produces at least a user
+  // prompt and assistant response, so the "empty session" cleanup rule does
+  // not apply; leaving the worktree makes the non-interactive output
+  // inspectable after the fact.
   const session = await harness.createSession({
     workDir,
     model,
     permission: 'auto',
+    metadata,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
   });
   installHeadlessHandlers(session);
@@ -637,8 +659,9 @@ function writeResumeHint(
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
+  workDir?: string,
 ): void {
-  const command = `kimi -r ${sessionId}`;
+  const command = formatResumeCommand(sessionId, { cwd: workDir });
   const content = `To resume this session: ${command}`;
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {

@@ -304,6 +304,7 @@ export class Agent {
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
+      worktreeInfo: context?.worktreeInfo,
       additionalDirsInfo: context?.additionalDirsInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });

@@ -29,11 +29,17 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
+import { formatResumeCommand } from './resume-hint';
+import {
+  cleanupEmptyWorktree,
+  metadataFromWorktree,
+  type WorktreeRuntime,
+} from './worktree-runtime';
 
 export async function runShell(
   opts: CLIOptions,
   version: string,
-  runOptions: { readonly migrateOnly?: boolean } = {},
+  runOptions: { readonly migrateOnly?: boolean; readonly worktree?: WorktreeRuntime } = {},
 ): Promise<void> {
   const startedAt = Date.now();
   const configStartedAt = startedAt;
@@ -98,6 +104,7 @@ export async function runShell(
     configWarning = combineStartupNotice(configWarning, warning);
   }
   const configMs = Date.now() - configStartedAt;
+  const worktree = runOptions.worktree;
   const tui = new KimiTUI(harness, {
     cliOptions: opts,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
@@ -107,6 +114,7 @@ export async function runShell(
     startupNotice: configWarning,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
+    sessionMetadata: metadataFromWorktree(worktree),
   });
 
   initializeCliTelemetry({
@@ -135,15 +143,26 @@ export async function runShell(
 
   tui.onExit = async (exitCode = 0) => {
     const sessionId = tui.getCurrentSessionId();
-    const hasContent = tui.hasSessionContent();
+    const hasContent = tui.hasEverHadSessionContent();
     setCrashPhase('shutdown');
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
+
+    // Clean up the git worktree for empty sessions so abandoned worktrees
+    // do not accumulate. Use the lifetime flag so `/new` does not delete a
+    // worktree that held an earlier session.
+    if (!hasContent) {
+      cleanupEmptyWorktree(worktree);
+    }
+
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     const gutter = ' '.repeat(CHROME_GUTTER);
     process.stdout.write(`${gutter}Bye!\n`);
     const hints: string[] = [];
     if (sessionId !== '' && hasContent) {
-      hints.push(`${gutter}To resume this session: kimi -r ${sessionId}`);
+      const resumeCommand = formatResumeCommand(sessionId, {
+        cwd: worktree !== undefined ? process.cwd() : undefined,
+      });
+      hints.push(`${gutter}To resume this session: ${resumeCommand}`);
     }
     if (tui.exitOpenUrl !== undefined) {
       hints.push(`${gutter}open ${toTerminalHyperlink(tui.exitOpenUrl, tui.exitOpenUrl)}`);
