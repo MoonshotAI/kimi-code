@@ -1,4 +1,5 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
@@ -360,7 +361,19 @@ export class EditorKeyboardController {
 
     const meta = parseImageMeta(media.bytes);
     if (meta === null) return false;
-    const attachment = this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
+    // Compress at ingestion — a pure data step while building the attachment, so
+    // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
+    // and the submitted image all agree, and the agent core only ever sees an
+    // already-compressed image. Best effort: originals pass through on failure.
+    const compressed = await compressImageForModel(media.bytes, meta.mime);
+    const attachment = compressed.changed
+      ? this.imageStore.addImage(
+          compressed.data,
+          compressed.mimeType,
+          compressed.width,
+          compressed.height,
+        )
+      : this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
     this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
     this.host.state.ui.requestRender();
     this.host.track('shortcut_paste', { kind: 'image' });

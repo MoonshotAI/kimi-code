@@ -309,6 +309,7 @@ function toKosongProviderConfig(
       return {
         type: 'google-genai',
         model,
+        baseUrl: providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
         apiKey: providerApiKey(provider),
         ...defaultHeadersField({
           ...envCustomHeaders,
@@ -329,14 +330,21 @@ function toKosongProviderConfig(
         }),
       };
     case 'vertexai': {
-      const useServiceAccount = hasVertexAIServiceEnv(provider);
+      // Resolve the effective endpoint once (config `base_url` or the
+      // GOOGLE_VERTEX_BASE_URL env fallback) and use it for BOTH forwarding and
+      // location detection, so the env fallback behaves exactly like
+      // `base_url` — including deriving the region from an
+      // `*-aiplatform.googleapis.com` host for the service-account path.
+      const baseUrl = providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
+      const useServiceAccount = hasVertexAIServiceEnv(provider, baseUrl);
       return {
         type: 'vertexai',
         model,
         vertexai: useServiceAccount,
+        baseUrl,
         apiKey: useServiceAccount ? undefined : providerApiKey(provider),
         project: vertexAIProject(provider),
-        location: vertexAILocation(provider),
+        location: vertexAILocation(provider, baseUrl),
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
@@ -404,19 +412,19 @@ function providerApiKey(provider: ProviderConfig): string | undefined {
   }
 }
 
-function hasVertexAIServiceEnv(provider: ProviderConfig): boolean {
-  return vertexAIProject(provider) !== undefined && vertexAILocation(provider) !== undefined;
+function hasVertexAIServiceEnv(provider: ProviderConfig, baseUrl: string | undefined): boolean {
+  return vertexAIProject(provider) !== undefined && vertexAILocation(provider, baseUrl) !== undefined;
 }
 
 function vertexAIProject(provider: ProviderConfig): string | undefined {
   return envValue(provider.env, 'GOOGLE_CLOUD_PROJECT');
 }
 
-function vertexAILocation(provider: ProviderConfig): string | undefined {
-  return (
-    envValue(provider.env, 'GOOGLE_CLOUD_LOCATION') ??
-    locationFromVertexAIBaseUrl(provider.baseUrl)
-  );
+function vertexAILocation(
+  provider: ProviderConfig,
+  baseUrl: string | undefined,
+): string | undefined {
+  return envValue(provider.env, 'GOOGLE_CLOUD_LOCATION') ?? locationFromVertexAIBaseUrl(baseUrl);
 }
 
 function providerValue(

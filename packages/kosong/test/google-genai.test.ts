@@ -888,6 +888,72 @@ describe('GoogleGenAIChatProvider', () => {
     });
   });
 
+  describe('base URL forwarding', () => {
+    // The @google/genai SDK exposes the effective endpoint through its internal
+    // ApiClient. `getCustomBaseUrl()` returns exactly the `httpOptions.baseUrl`
+    // handed to the client, so it is the most direct signal that a configured
+    // base URL survived provider construction — the alternative being a silent
+    // fallback to generativelanguage.googleapis.com.
+    function customBaseUrl(provider: GoogleGenAIChatProvider): string | undefined {
+      const client = (
+        provider as unknown as {
+          _client: { apiClient: { getCustomBaseUrl(): string | undefined } };
+        }
+      )._client;
+      return client.apiClient.getCustomBaseUrl();
+    }
+
+    it('forwards baseUrl to the Google GenAI SDK client', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test-key',
+        baseUrl: 'https://qianxun.example/v1beta',
+      });
+      expect(customBaseUrl(provider)).toBe('https://qianxun.example/v1beta');
+    });
+
+    it('leaves the SDK default endpoint in place when no baseUrl is set', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test-key',
+      });
+      expect(customBaseUrl(provider)).toBeUndefined();
+    });
+
+    it('forwards baseUrl and defaultHeaders together without dropping either', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test-key',
+        baseUrl: 'https://qianxun.example/v1beta',
+        defaultHeaders: { 'User-Agent': 'kimi-code-cli/test' },
+      });
+      const client = (
+        provider as unknown as {
+          _client: {
+            apiClient: {
+              getCustomBaseUrl(): string | undefined;
+              getHeaders(): Record<string, string>;
+            };
+          };
+        }
+      )._client;
+      expect(client.apiClient.getCustomBaseUrl()).toBe('https://qianxun.example/v1beta');
+      expect(client.apiClient.getHeaders()).toMatchObject({
+        'User-Agent': 'kimi-code-cli/test',
+      });
+    });
+
+    it('forwards baseUrl in vertexai mode', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-1.5-pro',
+        apiKey: 'test-key',
+        vertexai: true,
+        baseUrl: 'https://qianxun.example/vertex',
+      });
+      expect(customBaseUrl(provider)).toBe('https://qianxun.example/vertex');
+    });
+  });
+
   describe('response parsing (non-stream)', () => {
     it('yields text from non-stream response', async () => {
       const provider = createProvider({ stream: false });
