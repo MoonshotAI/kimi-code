@@ -487,27 +487,36 @@ function blinkOnce(): void {
   blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
 
-// Logo easter-egg: click the Kimi mark 10 times in a row to open the design
-// system page in a full-screen overlay. The count resets after a short idle so
-// stray clicks don't accumulate, and each click still blinks the mark.
+// Logo long-press easter-egg: holding the Kimi mark for 1 second opens the
+// design system page in a full-screen overlay. A short click still just blinks.
+// Pointer capture keeps the hold alive even if the pointer drifts off the mark.
 const showDesignSystem = ref(false);
-const EGG_CLICKS = 10;
-const EGG_CLICK_RESET_MS = 700;
-let logoClickCount = 0;
-let logoClickResetTimer: ReturnType<typeof setTimeout> | undefined;
+const EGG_HOLD_MS = 1000;
+let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
+let logoLongPressed = false;
+
+function onLogoPointerDown(event: PointerEvent): void {
+  logoLongPressed = false;
+  clearTimeout(logoPressTimer);
+  (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+  logoPressTimer = setTimeout(() => {
+    logoLongPressed = true;
+    showDesignSystem.value = true;
+  }, EGG_HOLD_MS);
+}
+
+function onLogoPointerUp(event: PointerEvent): void {
+  clearTimeout(logoPressTimer);
+  const el = event.currentTarget as HTMLElement;
+  if (el.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId);
+}
 
 function onLogoClick(): void {
-  blinkOnce();
-  logoClickCount += 1;
-  clearTimeout(logoClickResetTimer);
-  if (logoClickCount >= EGG_CLICKS) {
-    logoClickCount = 0;
-    showDesignSystem.value = true;
+  if (logoLongPressed) {
+    logoLongPressed = false;
     return;
   }
-  logoClickResetTimer = setTimeout(() => {
-    logoClickCount = 0;
-  }, EGG_CLICK_RESET_MS);
+  blinkOnce();
 }
 
 function closeDesignSystem(): void {
@@ -522,7 +531,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onDesignSystemKeydown);
 }
 onBeforeUnmount(() => {
-  clearTimeout(logoClickResetTimer);
+  clearTimeout(logoPressTimer);
   if (typeof window !== 'undefined') {
     window.removeEventListener('keydown', onDesignSystemKeydown);
   }
@@ -536,7 +545,7 @@ onBeforeUnmount(() => {
       <!-- Header: logo + settings (no hard border — flows into workspace list) -->
       <div class="ch">
         <div class="ch-brand">
-          <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick">
+          <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
             <defs>
               <mask id="kimiEyes" maskUnits="userSpaceOnUse">
                 <rect x="0" y="0" width="32" height="22" fill="#fff" />
@@ -827,6 +836,7 @@ onBeforeUnmount(() => {
   display: block;
   cursor: pointer;
   user-select: none;
+  touch-action: none;
   transition: transform 0.18s ease;
 }
 .ch-logo:hover {
