@@ -481,6 +481,52 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
   });
 
+  it('compresses an inline base64 image submitted directly in the prompt', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    // Solid 2600×2600: over the edge cap but tiny in bytes, so it stays well
+    // under Fastify's inline-JSON limit yet still benefits from downscaling.
+    const base64 = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: base64 } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const part = submitted?.content[0];
+    if (part?.type !== 'image' || part.source.kind !== 'base64') {
+      throw new Error('expected a base64 image part');
+    }
+    const decoded = await Jimp.fromBuffer(Buffer.from(part.source.data, 'base64'));
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+  });
+
   it('returns 40407 when prompt image file_id is unknown', async () => {
     let submitted = false;
     const r = await bootDaemon([

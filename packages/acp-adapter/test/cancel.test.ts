@@ -14,6 +14,7 @@ import {
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { log, type KimiHarness, type Session } from '@moonshot-ai/kimi-code-sdk';
+import { Jimp } from 'jimp';
 
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
@@ -138,5 +139,44 @@ describe('AcpServer cancel', () => {
       expect.stringContaining('error while cancelling'),
       expect.objectContaining({ sessionId: 'sess-erroring' }),
     );
+  });
+
+  it('returns cancelled without launching when cancel arrives during image compression', async () => {
+    let promptCalls = 0;
+    const fakeSession = {
+      id: 'sess-cancel-compress',
+      prompt: async () => {
+        promptCalls += 1;
+        return undefined;
+      },
+      cancel: async () => undefined,
+      onEvent: () => () => undefined,
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => fakeSession,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    const { sessionId } = await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    // A solid 2600×2600 image is small in bytes but slow enough to compress
+    // that the cancel below reliably lands mid-compression, before any turn.
+    const data = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const promptP = client.prompt({
+      sessionId,
+      prompt: [{ type: 'image', data, mimeType: 'image/png' }],
+    });
+    await client.cancel({ sessionId });
+    const res = await promptP;
+
+    expect(res.stopReason).toBe('cancelled');
+    expect(promptCalls).toBe(0); // the turn was never launched
   });
 });

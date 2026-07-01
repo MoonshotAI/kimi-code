@@ -12,7 +12,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, IFileStore, compressImageForModel, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, IFileStore, compressImageForModel, compressBase64ForModel, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -254,6 +254,22 @@ async function resolvePromptMediaFiles(
   let changed = false;
   const content: PromptSubmission['content'] = [];
   for (const part of body.content) {
+    // Inline base64 image: compress the payload in place. This is the same
+    // input-stage step as the file path below, for REST clients that submit an
+    // image as `{ source: { kind: 'base64' } }` instead of uploading a file.
+    if (part.type === 'image' && part.source.kind === 'base64') {
+      const compressed = await compressBase64ForModel(part.source.data, part.source.media_type);
+      if (compressed.changed) {
+        content.push({
+          type: 'image',
+          source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
+        });
+        changed = true;
+      } else {
+        content.push(part);
+      }
+      continue;
+    }
     if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
       content.push(part);
       continue;

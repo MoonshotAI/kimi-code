@@ -19,6 +19,7 @@ import {
   type KimiErrorPayload,
   type KimiHarness,
   type McpServerInfo,
+  type PromptPart,
   type QuestionAnswers,
   type QuestionRequest,
   type Session,
@@ -147,6 +148,11 @@ export class AcpSession {
    */
   private skillCommandMap: ReadonlyMap<string, string> = new Map();
 
+  // Set while `prompt()` awaits image compression, before any turn exists. A
+  // `session/cancel` in that window has no turn to abort, so it flips this flag
+  // and `prompt()` returns `cancelled` instead of launching the turn afterward.
+  private pendingPromptAbort: { aborted: boolean } | undefined = undefined;
+
   /**
    * The most recent command palette advertised to the ACP client. Used by
    * `/help` so the response matches the client's `available_commands_update`
@@ -268,6 +274,11 @@ export class AcpSession {
    * acceptable.
    */
   async cancel(): Promise<void> {
+    // If a prompt is mid-compression (no turn yet), mark it aborted so it does
+    // not launch once compression finishes.
+    if (this.pendingPromptAbort !== undefined) {
+      this.pendingPromptAbort.aborted = true;
+    }
     await this.session.cancel();
   }
 
@@ -715,7 +726,20 @@ export class AcpSession {
    *    sees a JSON-RPC error rather than a hung request.
    */
   async prompt(blocks: readonly ContentBlock[]): Promise<PromptResponse> {
-    const parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks));
+    // Compression happens before any turn exists, so honor a `session/cancel`
+    // that arrives during it: flip the flag from cancel() and bail out here
+    // rather than launching a turn the client already asked to stop.
+    const pending = { aborted: false };
+    this.pendingPromptAbort = pending;
+    let parts: readonly PromptPart[];
+    try {
+      parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks));
+    } finally {
+      this.pendingPromptAbort = undefined;
+    }
+    if (pending.aborted) {
+      return { stopReason: 'cancelled' };
+    }
     const sessionId = this.id;
     const conn = this.conn;
 
