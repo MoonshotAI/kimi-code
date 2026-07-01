@@ -511,6 +511,58 @@ describe('GlobTool', () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it('accepts brace-in-bracket patterns like [{]foo.ts', async () => {
+    const exec = execReturning('/workspace/{foo.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '[{]foo.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('{foo.ts');
+  });
+
+  it('matches rooted patterns with a leading slash', async () => {
+    const exec = execReturning('/workspace/src/a.ts\n/workspace/other/b.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '/src/*.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).not.toContain('other/b.ts');
+  });
+
+  it('decodes multibyte filenames split across stream chunks', async () => {
+    // Split a multibyte filename across two chunks so naive buf.toString
+    // would produce a replacement character.
+    const fullLine = '/workspace/src/é.ts\n';
+    const fullBuf = Buffer.from(fullLine, 'utf8');
+    const splitPoint = fullBuf.indexOf(0xc3); // first byte of é (0xc3 0xa9)
+    const chunk1 = fullBuf.subarray(0, splitPoint + 1); // splits the multibyte char
+    const chunk2 = fullBuf.subarray(splitPoint + 1);
+    const stdoutStream = Readable.from([chunk1, chunk2]);
+    const exec = vi.fn().mockResolvedValue({
+      ...processWithOutput(''),
+      stdout: stdoutStream,
+    });
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'src/*.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('src/é.ts');
+    expect(result.output).not.toContain('\uFFFD');
+  });
+
   it('surfaces ripgrep errors when no complete path is produced', async () => {
     const exec = execReturning('', 'error: something went wrong', 2);
     const tool = new GlobTool(kaosWithExec(exec), workspace);

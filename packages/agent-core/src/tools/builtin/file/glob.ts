@@ -369,6 +369,8 @@ function isBroadPattern(pattern: string): boolean {
  * semantics ripgrep's `--glob` would have applied:
  *   - Patterns without `/` match the basename at any depth.
  *   - Patterns with `/` match the relative path from the search root.
+ *   - A leading `/` is stripped — ripgrep treats `/src/*.ts` as rooted at
+ *     the search root, equivalent to `src/*.ts`.
  *   - `**` matches zero or more directory levels.
  *   - Dotfiles are matched (rg runs with `--hidden`).
  *   - Matching is case-sensitive, matching ripgrep's default (use
@@ -377,11 +379,12 @@ function isBroadPattern(pattern: string): boolean {
  */
 function matchUserPattern(relPath: string, pattern: string): boolean {
   const opts = { dot: true };
-  if (!pattern.includes('/')) {
+  const normalizedPattern = pattern.startsWith('/') ? pattern.slice(1) : pattern;
+  if (!normalizedPattern.includes('/')) {
     const basename = relPath.split('/').pop()!;
-    return picomatch.isMatch(basename, pattern, opts);
+    return picomatch.isMatch(basename, normalizedPattern, opts);
   }
-  return picomatch.isMatch(relPath, pattern, opts);
+  return picomatch.isMatch(relPath, normalizedPattern, opts);
 }
 
 /**
@@ -389,8 +392,8 @@ function matchUserPattern(relPath: string, pattern: string): boolean {
  * pattern. Broad patterns (star, double-star, star-slash-star) match
  * everything, so the filter is skipped for those. Returns the filtered list
  * in the same order. On Windows, the search root and absolute paths are
- * case-normalized before computing the relative path so that a user-supplied
- * root with different casing than rg returns doesn't produce escaped paths.
+ * case-normalized only to compute the relative path boundary — the original-
+ * case relative path is then used for case-sensitive pattern matching.
  */
 function filterByPattern(
   absPaths: string[],
@@ -400,15 +403,34 @@ function filterByPattern(
 ): string[] {
   if (isBroadPattern(pattern)) return absPaths;
   const result: string[] = [];
-  const normRoot = normalize(searchRoot);
-  const comparableRoot = pathClass === 'win32' ? normRoot.toLowerCase() : normRoot;
   for (const absPath of absPaths) {
-    const normAbs = normalize(absPath);
-    const comparableAbs = pathClass === 'win32' ? normAbs.toLowerCase() : normAbs;
-    const rel = relative(comparableRoot, comparableAbs);
+    const rel = relativePath(searchRoot, absPath, pathClass);
+    if (rel === undefined) continue;
     if (matchUserPattern(rel, pattern)) result.push(absPath);
   }
   return result;
+}
+
+/**
+ * Compute the relative path from `searchRoot` to `absPath`, preserving the
+ * original casing of `absPath`. On Windows, the root and path are compared
+ * case-insensitively to find the boundary, but the returned relative path
+ * keeps the original case so case-sensitive glob matching works correctly.
+ * Returns `undefined` if `absPath` is not under `searchRoot`.
+ */
+function relativePath(searchRoot: string, absPath: string, pathClass: PathClass): string | undefined {
+  const normAbs = normalize(absPath);
+  const normRoot = normalize(searchRoot);
+  if (pathClass !== 'win32') {
+    const rel = relative(normRoot, normAbs);
+    return rel.startsWith('..') ? undefined : rel;
+  }
+  const lowerAbs = normAbs.toLowerCase();
+  const lowerRoot = normRoot.toLowerCase();
+  if (lowerAbs === lowerRoot) return '.';
+  const prefix = lowerRoot.endsWith('/') ? lowerRoot : lowerRoot + '/';
+  if (!lowerAbs.startsWith(prefix)) return undefined;
+  return normAbs.slice(prefix.length);
 }
 
 /**
@@ -422,7 +444,7 @@ function filterByPattern(
  * filter strips the leading `./` or `.\` and normalizes backslashes to
  * forward slashes on Windows before matching. If the line is an absolute
  * path (e.g. from a test mock or an external root), it is made relative to
- * the search root first.
+ * the search root first, preserving original case for pattern matching.
  */
 function makeLineFilter(
   pattern: string,
@@ -430,16 +452,15 @@ function makeLineFilter(
   searchRoot: string,
 ): ((line: string) => boolean) | undefined {
   if (isBroadPattern(pattern)) return undefined;
-  const normRoot = normalize(searchRoot);
-  const comparableRoot = pathClass === 'win32' ? normRoot.toLowerCase() : normRoot;
   return (line: string): boolean => {
     let relPath = line;
     if (pathClass === 'win32') relPath = relPath.replace(/\\/g, '/');
     if (relPath.startsWith('./') || relPath.startsWith('.\\')) {
       relPath = relPath.slice(2);
     } else if (isAbsolute(relPath)) {
-      const normAbs = pathClass === 'win32' ? normalize(relPath).toLowerCase() : normalize(relPath);
-      relPath = relative(comparableRoot, normAbs);
+      const rel = relativePath(searchRoot, relPath, pathClass);
+      if (rel === undefined) return false;
+      relPath = rel;
     }
     return matchUserPattern(relPath, pattern);
   };
@@ -451,9 +472,11 @@ function makeLineFilter(
  * is well-formed. This mirrors ripgrep's globset parser, which rejects
  * unclosed character classes and brace expansions with a hard error —
  * picomatch would silently treat them as literals and report "No matches
- * found" instead.
+ * found" instead. Braces inside a character class (`[{]foo`) are literal
+ * characters and do not count toward brace depth.
  */
 function validateGlobPattern(pattern: string): string | undefined {
+  let inBracket = false;
   let bracketDepth = 0;
   let braceDepth = 0;
   for (let i = 0; i < pattern.length; i++) {
@@ -462,10 +485,16 @@ function validateGlobPattern(pattern: string): string | undefined {
       i++;
       continue;
     }
-    if (ch === '[') bracketDepth++;
-    else if (ch === ']' && bracketDepth > 0) bracketDepth--;
-    else if (ch === '{') braceDepth++;
-    else if (ch === '}' && braceDepth > 0) braceDepth--;
+    if (ch === '[') {
+      inBracket = true;
+      bracketDepth++;
+    } else if (ch === ']' && bracketDepth > 0) {
+      inBracket = false;
+      bracketDepth--;
+    } else if (!inBracket) {
+      if (ch === '{') braceDepth++;
+      else if (ch === '}' && braceDepth > 0) braceDepth--;
+    }
   }
   if (bracketDepth > 0) return `Invalid glob pattern: unclosed '[' in "${pattern}"`;
   if (braceDepth > 0) return `Invalid glob pattern: unclosed '{' in "${pattern}"`;

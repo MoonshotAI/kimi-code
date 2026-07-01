@@ -244,14 +244,18 @@ async function readStreamWithCap(
   const chunks: Buffer[] = [];
   let total = 0;
   let truncated = false;
+  // Use a streaming TextDecoder so multibyte UTF-8 sequences split across
+  // chunk boundaries are decoded correctly instead of producing replacement
+  // characters.
+  const decoder = lineFilter ? new TextDecoder('utf8', { fatal: false }) : undefined;
   let lineBuffer = '';
   try {
     for await (const chunk of stream) {
       const buf: Buffer =
         typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
       if (truncated) continue;
-      if (lineFilter) {
-        lineBuffer += buf.toString('utf8');
+      if (lineFilter && decoder) {
+        lineBuffer += decoder.decode(buf, { stream: true });
         const lines = lineBuffer.split('\n');
         lineBuffer = lines.pop()!;
         for (const line of lines) {
@@ -282,6 +286,8 @@ async function readStreamWithCap(
     }
   }
   if (!truncated && lineBuffer.length > 0) {
+    // Flush any remaining bytes from the decoder.
+    if (decoder) lineBuffer += decoder.decode();
     if (!lineFilter || lineFilter(lineBuffer)) {
       const lineBytes = Buffer.from(lineBuffer, 'utf8');
       if (total + lineBytes.length > maxBytes) {
