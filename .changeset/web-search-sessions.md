@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": minor
+"@moonshot-ai/kimi-code": patch
 ---
 
-Add a session search dialog that filters by title, workspace, and last prompt with highlighted matches. Press Cmd+K or Ctrl+K to open it.
+Improve session search with a Cmd/Ctrl+K palette that filters by title, workspace, and last prompt with highlighted matches. Press Cmd+K or Ctrl+K to open it.

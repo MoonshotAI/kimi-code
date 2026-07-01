@@ -469,6 +469,51 @@ function blinkOnce(): void {
   clearTimeout(blinkTimer);
   blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
+
+// Logo long-press easter-egg: holding the Kimi mark for 3 seconds opens the
+// design system page in a full-screen overlay. A short click still just blinks.
+const showDesignSystem = ref(false);
+let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
+let logoLongPressed = false;
+
+function onLogoPointerDown(): void {
+  logoLongPressed = false;
+  clearTimeout(logoPressTimer);
+  logoPressTimer = setTimeout(() => {
+    logoLongPressed = true;
+    showDesignSystem.value = true;
+  }, 3000);
+}
+
+function onLogoPointerUp(): void {
+  clearTimeout(logoPressTimer);
+}
+
+function onLogoClick(): void {
+  if (logoLongPressed) {
+    logoLongPressed = false;
+    return;
+  }
+  blinkOnce();
+}
+
+function closeDesignSystem(): void {
+  showDesignSystem.value = false;
+}
+
+function onDesignSystemKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && showDesignSystem.value) closeDesignSystem();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', onDesignSystemKeydown);
+}
+onBeforeUnmount(() => {
+  clearTimeout(logoPressTimer);
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('keydown', onDesignSystemKeydown);
+  }
+});
 </script>
 
 <template>
@@ -477,8 +522,8 @@ function blinkOnce(): void {
     <div class="col" :style="{ width: colWidth + 'px' }">
       <!-- Header: logo + settings (no hard border — flows into workspace list) -->
       <div class="ch">
-        <div class="ch-brand">
-          <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="blinkOnce">
+        <div class="ch-brand" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointerleave="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+          <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick">
             <defs>
               <mask id="kimiEyes" maskUnits="userSpaceOnUse">
                 <rect x="0" y="0" width="32" height="22" fill="#fff" />
@@ -673,6 +718,24 @@ function blinkOnce(): void {
       @close="showSearch = false"
     />
   </aside>
+
+  <Teleport to="body">
+    <div
+      v-if="showDesignSystem"
+      class="ds-egg"
+      @mousedown.self="closeDesignSystem"
+    >
+      <div class="ds-egg-frame">
+        <div class="ds-egg-head">
+          <span class="ds-egg-title">Design system</span>
+          <IconButton size="sm" :label="t('diff.close')" @click="closeDesignSystem">
+            <Icon name="close" size="md" />
+          </IconButton>
+        </div>
+        <iframe class="ds-egg-iframe" src="/design-system.html" title="Design system" />
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -755,6 +818,8 @@ function blinkOnce(): void {
   min-width: 0;
   /* Take the row's slack so the action buttons group together on the right. */
   flex: 1;
+  user-select: none;
+  touch-action: none;
 }
 .ch-name {
   font-size: 15px;
@@ -945,4 +1010,47 @@ function blinkOnce(): void {
   z-index: var(--z-dropdown);
 }
 
+/* Logo long-press easter-egg: a dialog showing the design system page. */
+.ds-egg {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-max);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: rgba(13, 17, 23, 0.55);
+}
+.ds-egg-frame {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 94vw);
+  height: min(820px, 92vh);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+.ds-egg-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 12px 18px;
+  border-bottom: 1px solid var(--color-line);
+}
+.ds-egg-title {
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--color-text);
+}
+.ds-egg-iframe {
+  flex: 1;
+  min-height: 0;
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
 </style>

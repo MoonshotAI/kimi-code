@@ -1,0 +1,2251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kimi Web · 设计系统</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* =====================================================================
+     文档自身的设计令牌（仅用于这份提案页面的呈现，与产品 token 解耦）
+     ===================================================================== */
+  :root {
+    --d-bg: #ffffff;
+    --d-surface: #fafbfc;
+    --d-surface-2: #f3f5f8;
+    --d-surface-3: #eef1f5;
+    --d-fg: #0f1216;
+    --d-fg-soft: #3f4652;
+    --d-fg-muted: #6a7280;
+    --d-fg-faint: #98a0ad;
+    --d-line: #e6e9ee;
+    --d-line-2: #eff1f5;
+    --d-accent: #1783ff;
+    --d-accent-2: #0f6fe0;
+    --d-accent-soft: #e9f3ff;
+    --d-accent-bd: #cfe6ff;
+    --d-green: #12803a;
+    --d-green-soft: #e7f6ee;
+    --d-amber: #a9610a;
+    --d-amber-soft: #fbf1e0;
+    --d-red: #bd2a2a;
+    --d-red-soft: #fbeaea;
+    --d-violet: #6d3fc8;
+    --d-code-bg: #f6f8fa;
+    --d-sidebar: #fbfcfd;
+    --d-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+    --d-shadow-md: 0 4px 12px rgba(16, 24, 40, .06), 0 2px 4px rgba(16, 24, 40, .05);
+    --d-shadow-lg: 0 18px 48px rgba(16, 24, 40, .12), 0 6px 16px rgba(16, 24, 40, .08);
+    --sidebar-w: 264px;
+    --content-max: 920px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--d-bg);
+    color: var(--d-fg);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 { color: var(--d-fg); letter-spacing: -.01em; line-height: 1.25; margin: 0; }
+  p { margin: 0 0 14px; color: var(--d-fg-soft); }
+  a { color: var(--d-accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  code {
+    background: var(--d-code-bg);
+    border: 1px solid var(--d-line-2);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: .88em;
+    color: #1f2937;
+    white-space: nowrap;
+  }
+
+  /* ---------- 布局 ---------- */
+  .layout { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); min-height: 100vh; }
+  .sidebar {
+    position: sticky; top: 0; align-self: start; height: 100vh;
+    background: var(--d-sidebar); border-right: 1px solid var(--d-line);
+    padding: 26px 22px; overflow-y: auto;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .brand-mark {
+    width: 26px; height: 26px; border-radius: 7px; flex: none;
+    background: var(--d-fg); color: #fff; display: grid; place-items: center;
+    font-weight: 800; font-size: 14px; letter-spacing: -.04em;
+  }
+  .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
+  .brand-sub { font-size: 12px; color: var(--d-fg-faint); margin-bottom: 26px; padding-left: 36px; }
+  .nav-group { margin: 22px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--d-fg-faint); }
+  .p-section-label { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--d-fg-faint); }
+  .nav a {
+    display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 7px;
+    font-size: 13.5px; font-weight: 500; color: var(--d-fg-soft); margin: 1px 0;
+    transition: background .15s, color .15s;
+  }
+  .nav a .num { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--d-fg-faint); width: 18px; }
+  .nav a:hover { background: var(--d-surface-2); color: var(--d-fg); text-decoration: none; }
+  .nav a.active { background: var(--d-accent-soft); color: var(--d-accent-2); }
+  .nav a.active .num { color: var(--d-accent-2); }
+
+  .content { min-width: 0; }
+  .content-inner { max-width: var(--content-max); margin: 0 auto; padding: 64px 56px 120px; }
+  section { scroll-margin-top: 32px; padding-top: 8px; }
+  section + section { margin-top: 72px; }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 8px 0 40px; border-bottom: 1px solid var(--d-line); margin-bottom: 56px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+    color: var(--d-fg); background: rgba(23,131,255,.1); border: none;
+    padding: 6px 12px; border-radius: 8px; margin-bottom: 22px;
+  }
+  .hero h1 { font-size: 48px; font-weight: 600; line-height: 1.08; letter-spacing: -.025em; margin-bottom: 18px; }
+  .hero h1 .grad { color: var(--d-accent); }
+  .hero p.lead { font-size: 18px; line-height: 1.6; color: var(--d-fg-soft); max-width: 680px; }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+  .meta-chip {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--d-fg-muted);
+    background: var(--d-surface); border: 1px solid var(--d-line); border-radius: 8px; padding: 7px 12px;
+  }
+  .meta-chip b { color: var(--d-fg); font-weight: 600; }
+  .meta-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--d-green); }
+
+  /* ---------- 通用排版 ---------- */
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
+  .sec-num { font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 600; color: var(--d-accent-2); }
+  .sec-title { font-size: 26px; letter-spacing: -.02em; }
+  .sec-desc { font-size: 15.5px; color: var(--d-fg-muted); max-width: 720px; margin-bottom: 28px; }
+  h3.sub { font-size: 17px; margin: 40px 0 14px; display: flex; align-items: center; gap: 10px; }
+  h3.sub::before { content: ""; width: 4px; height: 16px; border-radius: 2px; background: var(--d-accent); }
+  h4.mini { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--d-fg-muted); margin: 24px 0 12px; }
+
+  /* ---------- 统计卡 / 指标 ---------- */
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0; }
+  .stat { background: var(--d-surface); border: 1px solid var(--d-line); border-radius: 14px; padding: 18px 18px 16px; }
+  .stat .v { font-size: 34px; font-weight: 800; letter-spacing: -.03em; line-height: 1; color: var(--d-fg); }
+  .stat .v small { font-size: 16px; color: var(--d-fg-muted); font-weight: 600; }
+  .stat .l { font-size: 12.5px; color: var(--d-fg-muted); margin-top: 8px; line-height: 1.4; }
+  .stat.warn { background: var(--d-amber-soft); border-color: #f0d9b8; }
+  .stat.warn .v { color: var(--d-amber); }
+  .stat.bad { background: var(--d-red-soft); border-color: #f0cccc; }
+  .stat.bad .v { color: var(--d-red); }
+  .stat.good { background: var(--d-green-soft); border-color: #bfe3cc; }
+  .stat.good .v { color: var(--d-green); }
+
+  /* ---------- 卡片 / 面板 ---------- */
+  .panel { background: var(--d-bg); border: 1px solid var(--d-line); border-radius: 16px; box-shadow: var(--d-shadow-sm); }
+  .panel-pad { padding: 22px; }
+  .panel-soft { background: var(--d-surface); border: 1px solid var(--d-line); border-radius: 14px; }
+  .callout {
+    display: flex; gap: 12px; padding: 14px 16px; border-radius: 12px; font-size: 14px; line-height: 1.55;
+    background: var(--d-surface); border: 1px solid var(--d-line); color: var(--d-fg-soft); margin: 18px 0;
+  }
+  .callout .ico { flex: none; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 800; }
+  .callout.info { background: var(--d-accent-soft); border-color: var(--d-accent-bd); }
+  .callout.info .ico { background: var(--d-accent); color: #fff; }
+  .callout.warn { background: var(--d-amber-soft); border-color: #f0d9b8; }
+  .callout.warn .ico { background: var(--d-amber); color: #fff; }
+  .callout.good { background: var(--d-green-soft); border-color: #bfe3cc; }
+  .callout.good .ico { background: var(--d-green); color: #fff; }
+
+  /* ---------- 表格 ---------- */
+  table.dt { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 16px 0; }
+  table.dt th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--d-fg-faint); font-weight: 700; padding: 10px 12px; border-bottom: 1px solid var(--d-line); }
+  table.dt td { padding: 11px 12px; border-bottom: 1px solid var(--d-line-2); color: var(--d-fg-soft); vertical-align: middle; }
+  table.dt tr:last-child td { border-bottom: none; }
+  table.dt td.tk { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--d-fg); white-space: nowrap; }
+  table.dt td.val { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--d-fg-muted); }
+  .swatch { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(0,0,0,.08); vertical-align: -3px; margin-right: 8px; }
+
+  /* ---------- 色板 ---------- */
+  .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+  .color-card { border: 1px solid var(--d-line); border-radius: 12px; overflow: hidden; background: var(--d-bg); }
+  .color-chip { height: 56px; border-bottom: 1px solid var(--d-line); }
+  .color-meta { padding: 10px 12px 12px; }
+  .color-meta .cn { font-size: 13px; font-weight: 600; color: var(--d-fg); }
+  .color-meta .cv { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--d-fg-muted); margin-top: 2px; }
+
+  /* ---------- 字号阶梯 ---------- */
+  .type-row { display: flex; align-items: baseline; gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--d-line-2); }
+  .type-row:last-child { border-bottom: none; }
+  .type-sample { flex: 1; color: var(--d-fg); line-height: 1.2; }
+  .type-meta { width: 190px; flex: none; text-align: right; font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--d-fg-muted); }
+
+  /* ---------- 间距 / 半径 ---------- */
+  .space-row { display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--d-line-2); }
+  .space-row:last-child { border-bottom: none; }
+  .space-bar { height: 18px; border-radius: 4px; background: linear-gradient(90deg, var(--d-accent), var(--d-accent-2)); flex: none; }
+  .space-meta { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--d-fg-soft); width: 150px; }
+  .space-use { font-size: 12.5px; color: var(--d-fg-muted); }
+  .radius-grid { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-end; margin: 16px 0; }
+  .radius-item { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .radius-box { width: 64px; height: 64px; border: 2px solid var(--d-accent); background: var(--d-accent-soft); }
+  .radius-item .rl { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--d-fg-soft); }
+
+  /* ---------- 组件舞台 ---------- */
+  .stage-wrap { border: 1px solid var(--d-line); border-radius: 16px; overflow: hidden; margin: 18px 0; background: var(--d-bg); box-shadow: var(--d-shadow-sm); }
+  .stage-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--d-line); background: var(--d-surface); }
+  .stage-bar .st { font-size: 13px; font-weight: 600; color: var(--d-fg); display: flex; align-items: center; gap: 8px; }
+  .stage-bar .st .tag { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; }
+  .tag.after { background: var(--d-green-soft); color: var(--d-green); }
+  .tag.before { background: var(--d-red-soft); color: var(--d-red); }
+  .tag.spec { background: var(--d-accent-soft); color: var(--d-accent-2); }
+  .stage-bar .sactions { display: flex; gap: 6px; }
+  .tab { font-family: "JetBrains Mono", monospace; font-size: 11.5px; padding: 4px 10px; border-radius: 6px; color: var(--d-fg-muted); cursor: default; }
+  .tab.on { background: var(--d-bg); color: var(--d-fg); border: 1px solid var(--d-line); }
+  .stage {
+    padding: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+    background:
+      radial-gradient(circle at 1px 1px, rgba(0,0,0,.045) 1px, transparent 0) 0 0 / 18px 18px,
+      var(--d-surface);
+  }
+  .stage.col { flex-direction: column; align-items: stretch; }
+  .stage.dark {
+    background:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,.06) 1px, transparent 0) 0 0 / 18px 18px,
+      #0d1117;
+  }
+  .stage-label { width: 100%; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--d-fg-faint); margin-bottom: -6px; }
+  .stage.dark .stage-label { color: #6b7280; }
+
+  /* ---------- Before / After ---------- */
+  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--d-line); border-radius: 16px; overflow: hidden; margin: 18px 0; box-shadow: var(--d-shadow-sm); }
+  .ba-col { min-width: 0; }
+  .ba-col + .ba-col { border-left: 1px solid var(--d-line); }
+  .ba-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; border-bottom: 1px solid var(--d-line); }
+  .ba-head.before { background: var(--d-red-soft); }
+  .ba-head.after { background: var(--d-green-soft); }
+  .ba-head .bh { font-size: 13px; font-weight: 700; }
+  .ba-head.before .bh { color: var(--d-red); }
+  .ba-head.after .bh { color: var(--d-green); }
+  .ba-head .bh small { font-weight: 500; opacity: .7; margin-left: 6px; }
+  .ba-body { padding: 24px; background: var(--d-surface); min-height: 120px; }
+  .ba-col.after .ba-body { background: #fff; }
+
+  /* ---------- 代码块 ---------- */
+  .code { background: #0d1117; border-radius: 12px; overflow: hidden; margin: 16px 0; border: 1px solid #1c2128; }
+  .code-bar { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: #161b22; border-bottom: 1px solid #1c2128; }
+  .code-bar .d { width: 10px; height: 10px; border-radius: 50%; background: #30363d; }
+  .code-bar .fn { font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: #8b949e; margin-left: 4px; }
+  .code pre { margin: 0; padding: 18px; overflow-x: auto; font-size: 12.5px; line-height: 1.7; color: #c9d1d9; }
+  .code .c { color: #8b949e; }
+  .code .k { color: #ff7b72; }
+  .code .s { color: #a5d6ff; }
+  .code .p { color: #79c0ff; }
+  .code .n { color: #d2a8ff; }
+  .code .v { color: #ffa657; }
+
+  /* ---------- 标签 / pill（文档用） ---------- */
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--d-line); background: var(--d-surface); color: var(--d-fg-soft); }
+  .pill.blue { background: var(--d-accent-soft); border-color: var(--d-accent-bd); color: var(--d-accent-2); }
+  .pill.green { background: var(--d-green-soft); border-color: #bfe3cc; color: var(--d-green); }
+  .pill.amber { background: var(--d-amber-soft); border-color: #f0d9b8; color: var(--d-amber); }
+  .pill.red { background: var(--d-red-soft); border-color: #f0cccc; color: var(--d-red); }
+  .pill.mono { font-family: "JetBrains Mono", monospace; }
+
+  /* ---------- 列表 ---------- */
+  ul.clean { list-style: none; padding: 0; margin: 14px 0; }
+  ul.clean li { position: relative; padding: 8px 0 8px 26px; color: var(--d-fg-soft); border-bottom: 1px solid var(--d-line-2); }
+  ul.clean li:last-child { border-bottom: none; }
+  ul.clean li::before { content: ""; position: absolute; left: 4px; top: 17px; width: 7px; height: 7px; border-radius: 50%; background: var(--d-accent); }
+  ul.clean.check li::before { content: "✓"; background: none; color: var(--d-green); font-weight: 800; top: 7px; left: 0; font-size: 14px; }
+  ul.clean.cross li::before { content: "✕"; background: none; color: var(--d-red); font-weight: 800; top: 7px; left: 0; font-size: 13px; }
+  ul.clean li b { color: var(--d-fg); }
+  ul.clean li .path { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--d-fg-muted); }
+
+  /* ---------- 时间线 / 迁移计划 ---------- */
+  .roadmap { position: relative; margin: 24px 0; }
+  .phase { position: relative; display: grid; grid-template-columns: 120px 1fr; gap: 24px; padding: 0 0 32px; }
+  .phase:not(:last-child)::after { content: ""; position: absolute; left: 59px; top: 36px; bottom: 0; width: 2px; background: var(--d-line); }
+  .phase-tag { text-align: right; padding-top: 4px; }
+  .phase-tag .pt { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 700; color: var(--d-accent-2); background: var(--d-accent-soft); border: 1px solid var(--d-accent-bd); padding: 5px 10px; border-radius: 8px; }
+  .phase-tag .pe { font-size: 11.5px; color: var(--d-fg-faint); margin-top: 8px; }
+  .phase-body { background: var(--d-bg); border: 1px solid var(--d-line); border-radius: 14px; padding: 18px 20px; box-shadow: var(--d-shadow-sm); }
+  .phase-body h4 { font-size: 16px; margin-bottom: 8px; }
+  .phase-body p { font-size: 14px; margin-bottom: 12px; }
+  .phase-body ul { margin: 0; }
+
+  /* ---------- 反模式矩阵 ---------- */
+  .matrix { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
+  .anti { border: 1px solid var(--d-line); border-radius: 12px; padding: 16px; background: var(--d-bg); }
+  .anti .ah { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+  .anti .ah .verdict { margin-left: auto; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; }
+  .verdict.pass { background: var(--d-green-soft); color: var(--d-green); }
+  .verdict.fail { background: var(--d-red-soft); color: var(--d-red); }
+  .verdict.warn { background: var(--d-amber-soft); color: var(--d-amber); }
+  .anti p { font-size: 13px; margin: 0; color: var(--d-fg-muted); }
+
+  /* ---------- 脚注 ---------- */
+  .footer { margin-top: 80px; padding-top: 28px; border-top: 1px solid var(--d-line); font-size: 13px; color: var(--d-fg-faint); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .kbd { font-family: "JetBrains Mono", monospace; font-size: 11px; background: var(--d-surface-2); border: 1px solid var(--d-line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; }
+
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; }
+    .nav { display: flex; flex-wrap: wrap; gap: 4px; }
+    .content-inner { padding: 40px 22px 80px; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .ba { grid-template-columns: 1fr; }
+    .ba-col + .ba-col { border-left: none; border-top: 1px solid var(--d-line); }
+    .palette { grid-template-columns: repeat(2, 1fr); }
+    .matrix { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- =====================================================================
+     提案设计系统：组件预览所使用的统一 token 与组件样式
+     ===================================================================== -->
+<style>
+  /* ---- 提案 token：默认 = modern / light ---- */
+  .p, .stage.p-skin, [data-p] {
+    --p-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans SC", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    --p-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --p-bg: #ffffff;
+    --p-surface: #fafbfc;
+    --p-surface-raised: #ffffff;
+    --p-surface-sunken: #f3f5f8;
+    --p-text: rgba(0, 0, 0, 0.9);
+    --p-text-muted: #6b7280;
+    --p-text-faint: #9aa3af;
+    --p-text-on-accent: #ffffff;
+    --p-line: #e7eaee;
+    --p-line-strong: #d4d9e0;
+    --p-accent: #1783ff;
+    --p-accent-hover: #0f6fe0;
+    --p-accent-soft: #e8f3ff;
+    --p-accent-bd: #cfe6ff;
+    --p-success: #0e7a38; --p-success-soft: #e7f6ee; --p-success-bd: #bfe3cc;
+    --p-warning: #a9610a; --p-warning-soft: #fbf1e0; --p-warning-bd: #f0d9b8;
+    --p-danger:  #c0392b; --p-danger-soft:  #fbeaea; --p-danger-bd:  #f0cccc;
+    --p-info: #1783ff;
+    --p-sp-1: 4px; --p-sp-2: 8px; --p-sp-3: 12px; --p-sp-4: 16px; --p-sp-5: 20px; --p-sp-6: 24px; --p-sp-8: 32px;
+    --p-r-xs: 4px; --p-r-sm: 6px; --p-r-md: 8px; --p-r-lg: 12px; --p-r-xl: 16px; --p-r-2xl: 20px; --p-r-full: 999px;
+    --p-sh-xs: 0 1px 2px rgba(16,24,40,.04);
+    --p-sh-sm: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+    --p-sh-md: 0 4px 12px rgba(16,24,40,.07), 0 2px 4px rgba(16,24,40,.05);
+    --p-sh-lg: 0 12px 32px rgba(16,24,40,.12), 0 4px 10px rgba(16,24,40,.08);
+    --p-sh-xl: 0 24px 64px rgba(16,24,40,.18), 0 8px 20px rgba(16,24,40,.10);
+    --p-font-size-xs: 12px; --p-font-size-sm: 13px; --p-font-size-base: 14px; --p-font-size-md: 15px; --p-font-size-lg: 16px; --p-font-size-xl: 18px; --p-font-size-2xl: 22px;
+    --p-leading-tight: 1.25; --p-leading-normal: 1.5; --p-leading-relaxed: 1.7;
+    --p-ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --p-ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+    --p-dur-fast: 120ms; --p-dur: 160ms; --p-dur-slow: 260ms;
+    --p-focus-ring: 0 0 0 3px var(--p-accent-soft);
+    --p-focus-ring-strong: 0 0 0 3px var(--p-accent-soft), 0 0 0 1px var(--p-accent);
+    --p-ic-sm: 14px; --p-ic-md: 16px; --p-ic-lg: 20px;
+    --p-selection: rgba(23,131,255,.18);
+    --p-sidebar-w: 264px;
+    --p-content-max: 760px;   /* 聊天阅读栏 */
+    --p-content-wide: 920px;  /* 宽内容 */
+    --p-bp-sm: 640px;         /* 手机 / 桌面分界 */
+    --p-bp-md: 980px;         /* 窄屏 / 宽屏分界 */
+    font-family: var(--p-font-sans); color: var(--p-text); font-size: var(--p-font-size-base);
+  }
+  /* ---- 暗色皮肤覆盖 ---- */
+  [data-p="dark"] {
+    --p-bg: #0d1117; --p-surface: #161b22; --p-surface-raised: #1c2128; --p-surface-sunken: #0d1117;
+    --p-text: #c9cdd4; --p-text-muted: #9aa0a8; --p-text-faint: #6b7280;
+    --p-line: #2d333b; --p-line-strong: #3d444d;
+    --p-accent: #58a6ff; --p-accent-hover: #79b8ff; --p-accent-soft: rgba(88,166,255,.14); --p-accent-bd: rgba(88,166,255,.28);
+    --p-success: #3fb950; --p-success-soft: rgba(63,185,80,.14); --p-success-bd: rgba(63,185,80,.28);
+    --p-warning: #d29922; --p-warning-soft: rgba(210,153,34,.14); --p-warning-bd: rgba(210,153,34,.28);
+    --p-danger: #f85149;  --p-danger-soft: rgba(248,81,73,.14);  --p-danger-bd: rgba(248,81,73,.28);
+    --p-sh-sm: 0 1px 2px rgba(0,0,0,.4); --p-sh-md: 0 4px 12px rgba(0,0,0,.45); --p-sh-lg: 0 12px 32px rgba(0,0,0,.55);
+    --p-selection: rgba(88,166,255,.32);
+  }
+
+  /* 全局图标基线：所有 .p-ic SVG 默认 16×16，避免无上下文时撑满容器。
+     各组件上下文（.p-btn/.p-badge/.p-pill 等）会按需覆盖尺寸。 */
+  .p-ic { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: middle; }
+
+  /* ===== 按钮 Button ===== */
+  .p-btn {
+    --_h: 36px; --_px: 16px; --_fs: var(--p-font-size-base); --_r: var(--p-r-md);
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: var(--_h); padding: 0 var(--_px); border-radius: var(--_r);
+    font-family: var(--p-font-sans); font-size: var(--_fs); font-weight: 600; line-height: 1;
+    border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+    transition: background var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease),
+                color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease), transform var(--p-dur-fast) var(--p-ease);
+  }
+  .p-btn:active { transform: scale(.98); }
+  .p-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--p-accent-soft), 0 0 0 1px var(--p-accent); }
+  .p-btn .p-ic { width: 16px; height: 16px; }
+  .p-btn.sm { --_h: 30px; --_px: 12px; --_fs: var(--p-font-size-sm); --_r: var(--p-r-sm); }
+  .p-btn.sm .p-ic { width: 14px; height: 14px; }
+  .p-btn.lg { --_h: 42px; --_px: 20px; --_fs: var(--p-font-size-md); --_r: var(--p-r-lg); }
+  .p-btn.primary { background: var(--p-accent); color: var(--p-text-on-accent); border-color: var(--p-accent); box-shadow: var(--p-sh-xs); }
+  .p-btn.primary:hover { background: var(--p-accent-hover); border-color: var(--p-accent-hover); }
+  .p-btn.secondary { background: var(--p-surface-raised); color: var(--p-text); border-color: var(--p-line-strong); box-shadow: var(--p-sh-xs); }
+  .p-btn.secondary:hover { background: var(--p-surface-sunken); border-color: var(--p-line-strong); }
+  .p-btn.ghost { background: transparent; color: var(--p-text); border-color: transparent; }
+  .p-btn.ghost:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-btn.danger { background: var(--p-danger); color: #fff; border-color: var(--p-danger); box-shadow: var(--p-sh-xs); }
+  .p-btn.danger:hover { filter: brightness(.96); }
+  .p-btn.danger-soft { background: var(--p-danger-soft); color: var(--p-danger); border-color: var(--p-danger-bd); }
+  .p-btn.danger-soft:hover { background: var(--p-danger); color: #fff; border-color: var(--p-danger); }
+  .p-btn[disabled], .p-btn.disabled { opacity: .5; cursor: not-allowed; box-shadow: none; transform: none; }
+
+  .p-icon-btn {
+    --_s: 32px; display: inline-grid; place-items: center; width: var(--_s); height: var(--_s); flex: none;
+    border-radius: var(--p-r-md); border: 1px solid transparent; background: transparent; color: var(--p-text-muted); cursor: pointer;
+    transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
+  }
+  .p-icon-btn:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--p-accent-soft); }
+  .p-icon-btn.sm { --_s: 26px; border-radius: var(--p-r-sm); }
+  .p-icon-btn.lg { --_s: 44px; }
+  .p-icon-btn .p-ic { width: 16px; height: 16px; }
+  .p-icon-btn.lg .p-ic { width: 20px; height: 20px; }
+
+  /* ===== 徽标 / 芯片 Badge / Chip / Pill ===== */
+  .p-badge {
+    display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px;
+    border-radius: var(--p-r-full); font-family: var(--p-font-sans); font-size: var(--p-font-size-xs); font-weight: 600; line-height: 1;
+    border: 1px solid var(--p-line); background: var(--p-surface); color: var(--p-text); white-space: nowrap;
+  }
+  .p-badge.sm { height: 18px; padding: 0 7px; font-size: 11px; }
+  .p-badge .bd { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .p-badge.neutral { background: var(--p-surface-sunken); border-color: var(--p-line); color: var(--p-text-muted); }
+  .p-badge.info { background: var(--p-accent-soft); border-color: var(--p-accent-bd); color: var(--p-accent-hover); }
+  .p-badge.success { background: var(--p-success-soft); border-color: var(--p-success-bd); color: var(--p-success); }
+  .p-badge.warning { background: var(--p-warning-soft); border-color: var(--p-warning-bd); color: var(--p-warning); }
+  .p-badge.danger { background: var(--p-danger-soft); border-color: var(--p-danger-bd); color: var(--p-danger); }
+  .p-badge.solid { background: var(--p-text); color: var(--p-bg); border-color: var(--p-text); }
+  .p-badge .p-ic { width: 12px; height: 12px; }
+
+  /* model / mode pill（composer 工具条） */
+  .p-pill {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+    border-radius: var(--p-r-md); border: 1px solid transparent; background: transparent;
+    font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); font-weight: 500; color: var(--p-text); cursor: pointer;
+    transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
+  }
+  .p-pill:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-pill .pp-strong { font-weight: 700; color: var(--p-text); }
+  .p-pill .pp-sub { color: var(--p-accent); font-weight: 600; }
+  .p-pill .p-ic { width: 14px; height: 14px; color: var(--p-text-faint); }
+
+  /* ===== 卡片 / 表面 Card / Surface ===== */
+  /* 统一卡片外壳：扁平、1px 描边、radius-md，无阴影。所有卡片共用此外壳；
+     区别只在头部 —— 操作卡头部紧凑 mono、无底色；注意卡头部带语义色带。 */
+  .p-card {
+    background: var(--p-surface); border: 1px solid var(--p-line); border-radius: var(--p-r-md);
+    overflow: hidden; color: var(--p-text);
+  }
+  .p-card.interactive { transition: background var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease); cursor: pointer; }
+  .p-card.interactive:hover { background: var(--p-surface); border-color: var(--p-line-strong); }
+  .p-card-head { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-bottom: 1px solid var(--p-line); background: var(--p-surface); }
+  .p-card-title { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); font-family: var(--p-font-mono); }
+  .p-card-body { padding: 14px; font-size: var(--p-font-size-base); color: var(--p-text); line-height: var(--p-leading-normal); }
+  .p-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--p-line); background: var(--p-surface); }
+
+  /* ===== 表单 Input / Select / Textarea ===== */
+  .p-field { display: flex; flex-direction: column; gap: 6px; }
+  .p-label { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
+  .p-input, .p-select, .p-textarea {
+    width: 100%; height: 38px; padding: 0 12px; border-radius: var(--p-r-md);
+    border: 1px solid var(--p-line-strong); background: var(--p-surface-raised);
+    font-family: var(--p-font-sans); font-size: var(--p-font-size-base); color: var(--p-text);
+    box-shadow: var(--p-sh-xs); transition: border-color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease);
+  }
+  .p-textarea { height: auto; min-height: 84px; padding: 10px 12px; resize: vertical; line-height: var(--p-leading-normal); }
+  .p-input:hover, .p-select:hover, .p-textarea:hover { border-color: var(--p-line-strong); }
+  .p-input:focus, .p-select:focus, .p-textarea:focus { outline: none; border-color: var(--p-accent); box-shadow: 0 0 0 3px var(--p-accent-soft); }
+  .p-input::placeholder, .p-textarea::placeholder { color: var(--p-text-faint); }
+  .p-input.sm { height: 32px; font-size: var(--p-font-size-sm); border-radius: var(--p-r-sm); }
+  .p-hint { font-size: var(--p-font-size-xs); color: var(--p-text-faint); }
+
+  /* ===== 弹窗 Dialog ===== */
+  .p-dialog {
+    width: 480px; max-width: calc(100vw - 48px); background: var(--p-surface-raised); border: 1px solid var(--p-line);
+    border-radius: var(--p-r-xl); box-shadow: var(--p-sh-xl); overflow: hidden; color: var(--p-text);
+  }
+  .p-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 22px 14px; }
+  .p-dialog-title { font-size: var(--p-font-size-lg); font-weight: 700; letter-spacing: -.01em; }
+  .p-dialog-desc { font-size: var(--p-font-size-base); color: var(--p-text-muted); margin-top: 4px; line-height: var(--p-leading-normal); }
+  .p-dialog-body { padding: 4px 22px 18px; }
+  .p-dialog-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 22px 20px; }
+
+  /* ===== 轻提示 Toast ===== */
+  .p-toast {
+    display: flex; align-items: flex-start; gap: 11px; width: 360px; padding: 13px 14px;
+    background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-lg); box-shadow: var(--p-sh-md);
+  }
+  .p-toast .ti { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; flex: none; margin-top: 1px; }
+  .p-toast.success .ti { background: var(--p-success-soft); color: var(--p-success); }
+  .p-toast.warning .ti { background: var(--p-warning-soft); color: var(--p-warning); }
+  .p-toast .tt { font-size: var(--p-font-size-base); font-weight: 600; color: var(--p-text); }
+  .p-toast .td { font-size: var(--p-font-size-sm); color: var(--p-text-muted); margin-top: 2px; line-height: 1.45; }
+
+  /* ===== 加载 Spinner（普通 SVG 环形，默认加载器） ===== */
+  .p-spinner { width: 18px; height: 18px; animation: p-spin 0.85s linear infinite; }
+  .p-spinner.sm { width: 14px; height: 14px; }
+  .p-spinner circle { fill: none; stroke-width: 2.2; stroke-linecap: round; }
+  .p-spinner .track { stroke: var(--p-line); }
+  .p-spinner .arc { stroke: var(--p-accent); stroke-dasharray: 56 56; stroke-dashoffset: 38; }
+  @keyframes p-spin { to { transform: rotate(360deg); } }
+  .p-thinking { display: inline-flex; align-items: center; gap: 9px; font-size: var(--p-font-size-sm); color: var(--p-text-muted); font-family: var(--p-font-sans); }
+
+  /* ===== 聊天：用户气泡 ===== */
+  .p-bubble-user {
+    align-self: flex-end; max-width: 78%; background: var(--p-accent-soft); border: 1px solid var(--p-accent-bd);
+    color: var(--p-text); border-radius: 18px 18px 5px 18px; padding: 11px 15px;
+    font-size: var(--p-font-size-md); line-height: var(--p-leading-normal); box-shadow: var(--p-sh-xs);
+  }
+  .p-msg { max-width: 760px; font-size: var(--p-font-size-md); line-height: var(--p-leading-relaxed); color: var(--p-text); }
+  .p-msg p { margin: 0 0 10px; color: var(--p-text); }
+  .p-msg code { font-family: var(--p-font-mono); background: var(--p-surface-sunken); border: 1px solid var(--p-line); color: var(--p-accent-hover); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+
+  /* ===== 聊天：Agent 卡 ===== */
+  .p-agent { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; }
+  .p-agent-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; }
+  .p-agent-av { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--p-surface-sunken); border: 1px solid var(--p-line); color: var(--p-text-muted); flex: none; }
+  .p-agent-name { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
+  .p-agent-phase { font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
+  .p-agent-body { padding: 0 14px 13px; }
+
+  /* ===== 聊天：工具调用卡 ===== */
+  .p-tool { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; }
+  .p-tool-head { display: flex; align-items: center; gap: 9px; padding: 9px 13px; background: var(--p-surface); border-bottom: 1px solid var(--p-line); }
+  .p-tool-ic { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; background: var(--p-accent-soft); color: var(--p-accent); flex: none; }
+  .p-tool-name { font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
+  .p-tool-body { padding: 12px 13px; }
+  .p-code { font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); line-height: 1.65; background: var(--p-surface-sunken); border: 1px solid var(--p-line); border-radius: var(--p-r-md); padding: 11px 13px; color: var(--p-text); overflow-x: auto; }
+
+  /* ===== 聊天：提问 / 审批 卡 ===== */
+  .p-action { border-radius: var(--p-r-md); overflow: hidden; border: 1px solid var(--p-accent-bd); background: var(--p-surface); }
+  .p-action.warn { border-color: var(--p-warning-bd); }
+  .p-action-head { display: flex; align-items: center; gap: 9px; padding: 10px 14px; background: var(--p-accent-soft); border-bottom: 1px solid var(--p-accent-bd); }
+  .p-action.warn .p-action-head { background: var(--p-warning-soft); border-bottom-color: var(--p-warning-bd); }
+  .p-action-title { font-size: var(--p-font-size-base); font-weight: 600; color: var(--p-accent-hover); }
+  .p-action.warn .p-action-title { color: var(--p-warning); }
+  .p-action-body { padding: 14px; font-size: var(--p-font-size-base); color: var(--p-text); line-height: var(--p-leading-normal); }
+  .p-action-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--p-line); background: var(--p-surface); }
+
+  /* ===== 聊天：Todo 卡 ===== */
+  .p-todo { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); padding: 6px; }
+  .p-todo-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--p-r-md); font-size: var(--p-font-size-base); color: var(--p-text); }
+  .p-todo-row.done { color: var(--p-text-faint); text-decoration: line-through; }
+  .p-todo-row.active { background: var(--p-accent-soft); color: var(--p-text); }
+  .p-todo-check { width: 16px; flex: none; font-size: var(--p-font-size-base); line-height: 1; text-align: center; user-select: none; color: var(--p-text-faint); }
+  .p-todo-row.done .p-todo-check { color: var(--p-success); }
+  .p-todo-row.active .p-todo-check { color: var(--p-accent); font-weight: 500; }
+
+  /* ===== 聊天：紧凑工具调用（read_file / bash / grep 等高频低权重调用） ===== */
+  /* 状态点 */
+  .p-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--p-text-faint); }
+  .p-dot.done { background: var(--p-success); }
+  .p-dot.error { background: var(--p-danger); }
+  .p-dot.running { background: var(--p-accent); box-shadow: 0 0 0 0 var(--p-accent-soft); animation: p-pulse 1.4s ease-out infinite; }
+  @keyframes p-pulse { 0% { box-shadow: 0 0 0 0 rgba(23,131,255,.4); } 100% { box-shadow: 0 0 0 6px rgba(23,131,255,0); } }
+
+  /* 工具调用组：把连续 / 并行的多次调用收成一叠，整体视觉权重远低于卡片 */
+  .p-tool-group { border: 1px solid var(--p-line); border-radius: var(--p-r-md); background: var(--p-surface); overflow: hidden; }
+  .p-tool-group-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 11px; cursor: pointer; font-size: var(--p-font-size-sm); color: var(--p-text-muted); user-select: none; }
+  .p-tool-group-head:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-tool-group-head .tg-title { font-weight: 600; color: var(--p-text); }
+  .p-tool-group-head .tg-meta { color: var(--p-text-faint); }
+  .p-tool-group-head .tg-car { margin-left: auto; width: 14px; height: 14px; color: var(--p-text-faint); transition: transform var(--p-dur) var(--p-ease); }
+  .p-tool-group.open .p-tool-group-head .tg-car { transform: rotate(90deg); }
+
+  /* 单行工具调用：默认紧凑态，一行搞定 */
+  .p-tool-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px; border-top: 1px solid var(--p-line-2, var(--p-line)); cursor: pointer; font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); color: var(--p-text); }
+  .p-tool-row:hover { background: var(--p-surface-sunken); }
+  .p-tool-row .tr-ic { width: 14px; height: 14px; color: var(--p-text-faint); flex: none; }
+  .p-tool-row .tr-name { font-weight: 600; color: var(--p-text); flex: none; }
+  .p-tool-row .tr-arg { color: var(--p-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .p-tool-row .tr-time { margin-left: auto; color: var(--p-text-faint); font-size: var(--p-font-size-xs); flex: none; }
+  .p-tool-row .tr-car { width: 13px; height: 13px; color: var(--p-text-faint); flex: none; transition: transform var(--p-dur) var(--p-ease); }
+  .p-tool-row.expanded { background: var(--p-surface-sunken); }
+  .p-tool-row.expanded .tr-car { transform: rotate(90deg); }
+
+  /* 单行展开后的细节（代码 / 输出） */
+  .p-tool-detail { padding: 0 11px 11px 36px; background: var(--p-surface-sunken); border-top: 1px solid var(--p-line); }
+  .p-tool-detail .p-code { margin-top: 10px; }
+
+  /* ===== 聊天：Composer ===== */
+  .p-composer { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-xl); box-shadow: var(--p-sh-md); overflow: hidden; }
+  .p-composer:focus-within { border-color: var(--p-accent); box-shadow: var(--p-sh-md), 0 0 0 3px var(--p-accent-soft); }
+  .p-composer-ta { padding: 14px 16px 8px; font-family: var(--p-font-sans); font-size: var(--p-font-size-md); color: var(--p-text); line-height: var(--p-leading-normal); }
+  .p-composer-ta.ph { color: var(--p-text-faint); }
+  .p-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 8px; }
+  .p-composer-left, .p-composer-right { display: flex; align-items: center; gap: 2px; }
+  .p-send { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--p-accent); color: #fff; border: none; cursor: pointer; box-shadow: var(--p-sh-xs); transition: transform var(--p-dur-fast) var(--p-ease), background var(--p-dur) var(--p-ease); }
+  .p-send:hover { background: var(--p-accent-hover); }
+  .p-send:active { transform: scale(.92); }
+  .p-send .p-ic { width: 16px; height: 16px; }
+
+  /* ===== 选中文本 Selection ===== */
+  .p ::selection, [data-p] ::selection { background: var(--p-selection); }
+
+  /* ===== 文字链接 Link ===== */
+  .p-link {
+    color: var(--p-accent); text-decoration: none; font-family: var(--p-font-sans);
+    transition: color var(--p-dur) var(--p-ease);
+  }
+  .p-link:hover { color: var(--p-accent-hover); text-decoration: underline; }
+  .p-link:focus-visible { outline: none; box-shadow: var(--p-focus-ring); border-radius: var(--p-r-xs); }
+  .p-link.muted { color: var(--p-text-muted); }
+  .p-link.muted:hover { color: var(--p-text); }
+  .p-link .p-ic { width: var(--p-ic-sm); height: var(--p-ic-sm); vertical-align: -2px; }
+
+  /* ===== 菜单 / 下拉 Menu · Dropdown ===== */
+  .p-menu {
+    background: var(--p-surface-raised); border: 1px solid var(--p-line);
+    border-radius: var(--p-r-lg); box-shadow: var(--p-sh-sm);
+    padding: var(--p-sp-1); min-width: 180px;
+    font-family: var(--p-font-sans); color: var(--p-text);
+  }
+  .p-menu-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-radius: var(--p-r-sm); font-size: var(--p-font-size-sm); color: var(--p-text);
+    cursor: pointer; transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
+  }
+  .p-menu-item:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-menu-item.active { background: var(--p-accent-soft); color: var(--p-accent-hover); }
+  .p-menu-item.active:hover { background: var(--p-accent-soft); color: var(--p-accent-hover); }
+  .p-menu-item.danger { color: var(--p-danger); }
+  .p-menu-item.danger:hover { background: var(--p-danger-soft); color: var(--p-danger); }
+  .p-menu-item.disabled { opacity: .5; cursor: not-allowed; }
+  .p-menu-item.disabled:hover { background: transparent; color: var(--p-text); }
+  .p-menu-item .p-ic { width: var(--p-ic-sm); height: var(--p-ic-sm); }
+  .p-menu-item.lg { min-height: 44px; padding: 12px 14px; font-size: var(--p-font-size-base); }
+  .p-menu-sep { height: 1px; background: var(--p-line); margin: 4px 0; }
+
+  /* ===== 分段控件 SegmentedControl ===== */
+  .p-seg {
+    display: inline-flex; gap: 2px; padding: 2px;
+    background: var(--p-surface-sunken); border: 1px solid var(--p-line);
+    border-radius: var(--p-r-md); font-family: var(--p-font-sans);
+  }
+  .p-seg-item {
+    padding: 5px 12px; border-radius: var(--p-r-sm); font-size: var(--p-font-size-sm);
+    font-weight: 500; color: var(--p-text); cursor: pointer; white-space: nowrap;
+    transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease);
+  }
+  .p-seg-item:hover { color: var(--p-text); }
+  .p-seg-item.on { background: var(--p-surface-raised); color: var(--p-text); box-shadow: var(--p-sh-xs); }
+
+  /* ===== 标签页 Tabs ===== */
+  .p-tabs {
+    display: flex; align-items: center; gap: 0;
+    border-bottom: 1px solid var(--p-line); font-family: var(--p-font-sans);
+  }
+  .p-tab {
+    padding: 8px 14px; font-size: var(--p-font-size-sm); font-weight: 500;
+    color: var(--p-text-muted); cursor: pointer; white-space: nowrap;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease);
+  }
+  .p-tab:hover { color: var(--p-text); }
+  .p-tab.on { color: var(--p-accent); border-bottom-color: var(--p-accent); }
+
+  /* ===== 开关 Switch ===== */
+  .p-switch {
+    position: relative; display: inline-block; width: 36px; height: 20px; flex: none;
+    border-radius: var(--p-r-full); background: var(--p-line-strong);
+    cursor: pointer; transition: background var(--p-dur) var(--p-ease);
+  }
+  .p-switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: var(--p-r-full);
+    background: var(--p-surface-raised); box-shadow: var(--p-sh-xs);
+    transition: transform var(--p-dur) var(--p-ease);
+  }
+  .p-switch.on { background: var(--p-accent); }
+  .p-switch.on::after { transform: translateX(16px); }
+  .p-switch:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+
+  /* ===== 复选框 Checkbox ===== */
+  .p-check {
+    width: 17px; height: 17px; flex: none; display: inline-grid; place-items: center;
+    border: 1.5px solid var(--p-line-strong); border-radius: var(--p-r-sm);
+    background: var(--p-surface-raised); color: var(--p-text-on-accent);
+    cursor: pointer; transition: background var(--p-dur) var(--p-ease), border-color var(--p-dur) var(--p-ease);
+  }
+  .p-check.on { background: var(--p-accent); border-color: var(--p-accent); }
+  .p-check:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+  .p-check .p-ic { width: 12px; height: 12px; }
+
+  /* ===== 头像 Avatar ===== */
+  .p-avatar {
+    width: 32px; height: 32px; flex: none; display: grid; place-items: center;
+    border-radius: var(--p-r-md); background: var(--p-surface-sunken);
+    border: 1px solid var(--p-line); color: var(--p-text-muted);
+    font-size: var(--p-font-size-sm); font-weight: 600;
+  }
+  .p-avatar.sm { width: 24px; height: 24px; border-radius: var(--p-r-sm); font-size: var(--p-font-size-xs); }
+  .p-avatar .p-ic { width: 16px; height: 16px; }
+  .p-avatar.sm .p-ic { width: 13px; height: 13px; }
+
+  /* ===== 空状态 EmptyState ===== */
+  .p-empty {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 32px 16px; color: var(--p-text-muted); text-align: center;
+  }
+  .p-empty .em-ic { width: 48px; height: 48px; color: var(--p-text-faint); }
+  .p-empty .em-title { font-size: var(--p-font-size-base); font-weight: 600; color: var(--p-text); }
+  .p-empty .em-hint { font-size: var(--p-font-size-sm); color: var(--p-text-muted); }
+
+  /* ===== 分隔线 Divider ===== */
+  .p-divider { width: 100%; height: 1px; background: var(--p-line); border: none; }
+  .p-divider-v { width: 1px; align-self: stretch; background: var(--p-line); border: none; }
+
+  /* ===== 工具提示 Tooltip ===== */
+  .p-tip { position: relative; display: inline-flex; }
+  .p-tip .p-tooltip {
+    position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    background: var(--p-text); color: var(--p-bg); font-size: var(--p-font-size-xs);
+    padding: 4px 8px; border-radius: var(--p-r-sm); white-space: nowrap;
+    opacity: 0; pointer-events: none; transition: opacity var(--p-dur-fast) var(--p-ease);
+  }
+  .p-tip:hover .p-tooltip { opacity: 1; }
+
+  /* ===== 横幅通知 Banner ===== */
+  .p-banner {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-radius: var(--p-r-md); border: 1px solid var(--p-line);
+    background: var(--p-surface); font-size: var(--p-font-size-sm); color: var(--p-text);
+  }
+  .p-banner .bn-ic { width: 18px; height: 18px; flex: none; }
+  .p-banner.info { background: var(--p-accent-soft); border-color: var(--p-accent-bd); }
+  .p-banner.info .bn-ic { color: var(--p-accent); }
+  .p-banner.warning { background: var(--p-warning-soft); border-color: var(--p-warning-bd); }
+  .p-banner.warning .bn-ic { color: var(--p-warning); }
+  .p-banner.danger { background: var(--p-danger-soft); border-color: var(--p-danger-bd); }
+  .p-banner.danger .bn-ic { color: var(--p-danger); }
+
+  /* ===== 底部面板 Sheet / BottomSheet ===== */
+  .p-sheet {
+    background: var(--p-surface-raised); border: 1px solid var(--p-line);
+    border-radius: var(--p-r-xl) var(--p-r-xl) 0 0; box-shadow: var(--p-sh-xl);
+    padding: 8px 16px 20px;
+  }
+  .p-sheet-handle {
+    width: 36px; height: 4px; border-radius: var(--p-r-full);
+    background: var(--p-line-strong); margin: 0 auto 8px;
+  }
+
+  /* ===== 骨架屏 Skeleton ===== */
+  .p-skeleton {
+    background: var(--p-surface-sunken); border-radius: var(--p-r-sm);
+    animation: p-skel 1.2s var(--p-ease-inout) infinite alternate;
+  }
+  @keyframes p-skel { from { opacity: .5; } to { opacity: 1; } }
+
+  /* ===== 命令 + 复制条 Command Bar ===== */
+  .p-cmdbar { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .p-cmd { flex: 1; min-width: 0; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; background: var(--p-surface-sunken); border: 1px solid var(--p-line); border-radius: var(--p-r-md); font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); color: var(--p-text-muted); }
+  .p-cmd .cmd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .p-cmd .cmd-copy { margin-left: auto; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border: none; background: transparent; border-radius: var(--p-r-sm); color: var(--p-text-faint); cursor: pointer; transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease); }
+  .p-cmd .cmd-copy:hover { background: var(--p-surface-raised); color: var(--p-text); }
+  .p-cmd .cmd-copy .p-ic { width: 15px; height: 15px; }
+
+  /* ===== 顶部栏 TopBar ===== */
+  .p-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 48px; padding: 0 16px; background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-lg); }
+  .p-topbar .tb-title { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
+  .p-topbar .tb-actions { display: flex; align-items: center; gap: 4px; }
+  .p-topbar.frost { background: rgba(255,255,255,.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-color: rgba(255,255,255,.6); }
+  [data-p="dark"] .p-topbar.frost { background: rgba(22,27,34,.72); border-color: rgba(255,255,255,.08); }
+
+  /* 色系切换演示：把 accent 一组 token 覆盖为中性黑，演示「黑色系」。
+     真实切换由主题层统一下发，组件无需感知。 */
+  .demo-family-black { --p-accent: #14171c; --p-accent-hover: #2f3540; --p-accent-soft: #f1f2f4; --p-accent-bd: #d8dbe0; --p-text-on-accent: #ffffff; }
+
+  /* 小工具：demo 行 */
+  .demo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .demo-stack { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+  .demo-col { display: flex; flex-direction: column; gap: 10px; }
+  .demo-grow { flex: 1; min-width: 0; }
+  .demo-chat { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 560px; }
+
+  /* 图标目录（§02 Icon library） */
+  .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; margin: 14px 0; }
+  .icon-group-label { grid-column: 1 / -1; margin-top: 10px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--d-fg-muted); }
+  .icon-cell { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--d-line); border-radius: 8px; background: var(--d-surface); }
+  .icon-cell .p-ic { width: 20px; height: 20px; color: var(--d-fg-soft); }
+  .icon-cell .ic-name { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--d-fg); }
+  .icon-sizes { display: flex; align-items: end; gap: 22px; flex-wrap: wrap; }
+  .icon-sizes .sz { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 11px; color: var(--d-fg-muted); font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+  /* ===== 代码 / 差异 Code / Diff ===== */
+  .p-code-inline { font-family: var(--p-font-mono); background: var(--p-surface-sunken); color: var(--p-text); padding: 0 5px; border-radius: var(--p-r-sm); font-size: .9em; }
+  .p-code-block { border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; background: var(--p-surface-sunken); }
+  .p-code-block-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--p-surface); border-bottom: 1px solid var(--p-line); font-family: var(--p-font-mono); font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
+  .p-code-block pre { margin: 0; padding: 12px 14px; font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); line-height: 1.65; color: var(--p-text); overflow-x: auto; }
+  .p-diff { border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); }
+  .p-diff-head { padding: 8px 12px; background: var(--p-surface); border-bottom: 1px solid var(--p-line); font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
+  .p-diff-row { display: flex; gap: 10px; padding: 2px 12px; line-height: 1.6; }
+  .p-diff-row .pm { width: 14px; flex: none; color: var(--p-text-faint); }
+  .p-diff-row.add { background: var(--p-success-soft); }
+  .p-diff-row.add .pm { color: var(--p-success); }
+  .p-diff-row.del { background: var(--p-danger-soft); }
+  .p-diff-row.del .pm { color: var(--p-danger); }
+  .p-diff-row .p-diff-code { color: var(--p-text); }
+
+  /* ===== 表单错误提示 Field error ===== */
+  .p-field-error { color: var(--p-danger); font-size: var(--p-font-size-xs); }
+
+  /* 按钮内嵌 spinner：跟随文字色，保证在 accent 底上可见（无需硬编码颜色） */
+  .p-btn .p-spinner { vertical-align: middle; }
+  .p-btn .p-spinner .track { stroke: currentColor; opacity: .35; }
+  .p-btn .p-spinner .arc { stroke: currentColor; }
+</style>
+<div class="layout">
+  <!-- ===================== 侧边导航 ===================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">K</div>
+      <div class="brand-name">Kimi Web</div>
+    </div>
+    <div class="brand-sub">Design System · v1.0</div>
+
+    <div class="nav-group">导览</div>
+    <nav class="nav" id="nav">
+      <a href="#overview"><span class="num">00</span>总览</a>
+      <a href="#principles"><span class="num">01</span>设计原则</a>
+      <a href="#tokens"><span class="num">02</span>设计令牌</a>
+      <a href="#primitives"><span class="num">03</span>组件基元</a>
+      <a href="#chat"><span class="num">04</span>聊天界面</a>
+      <a href="#themes"><span class="num">05</span>主题系统</a>
+      <a href="#rules"><span class="num">06</span>样式规则</a>
+      <a href="#shell"><span class="num">07</span>应用壳与侧栏</a>
+    </nav>
+
+    <div class="nav-group">配套产出</div>
+    <nav class="nav">
+      <a href="#tokens"><span class="num">↗</span>Token 清单</a>
+      <a href="#primitives"><span class="num">↗</span>组件 API</a>
+      <a href="#rules"><span class="num">↗</span>样式规则</a>
+    </nav>
+  </aside>
+
+  <!-- ===================== 主内容 ===================== -->
+  <main class="content">
+    <div class="content-inner">
+
+      <!-- ===== Hero ===== -->
+      <section id="overview">
+        <div class="hero">
+          <span class="eyebrow">● Design System · v1.0</span>
+          <h1>Kimi Web <span class="grad">设计系统</span></h1>
+          <p class="lead">
+            本文定义 Kimi Web 的视觉语言与组件规范——设计令牌、组件基元、聊天界面、主题系统与样式规则。
+            所有 UI 工作以此为基准：统一、克制、token 驱动、可主题化。
+          </p>
+          <div class="hero-meta">
+            <span class="meta-chip"><span class="dot"></span> 范围 <b>apps/kimi-web</b></span>
+            <span class="meta-chip">组件基元</span>
+            <span class="meta-chip">主题 <b>1 套 · 4 色可定制</b></span>
+            <span class="meta-chip">亮 / 暗模式</span>
+          </div>
+        </div>
+
+        <div class="callout info">
+          <span class="ico">i</span>
+          <div>
+            <b>本规范是改 web UI 时的唯一参考。</b>新增或修改组件、样式、布局、主题前，请先读本文；
+            颜色、字体、圆角、间距、阴影、层级、动效一律使用 §02 的 token，组件复用 §03 的基元，并遵守 §06 的样式规则。
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 01 设计原则 ===== -->
+      <section id="principles">
+        <div class="sec-head">
+          <span class="sec-num">01</span>
+          <h2 class="sec-title">设计原则</h2>
+        </div>
+        <p class="sec-desc">
+          所有 UI 决策回指以下原则。Kimi Web 是给开发者用的本地 Agent 工具：快速扫读、长时间注视、经常在暗色下——设计服务于任务，克制、临床、信息密度优先。
+        </p>
+
+        <ul class="clean check">
+          <li><b>一致性 Consistency</b> —— 同一语义用同一组件。主按钮、弹窗、输入、徽标在全站只应各有「一种」正确写法。</li>
+          <li><b>视觉层级 Hierarchy</b> —— 通过字号、字重、色彩与留白建立清晰层级；用「克制」而非「加粗加大」来强调。</li>
+          <li><b>亲密性 Proximity</b> —— 相关元素归组，无关元素留白。卡片的内边距、行间与分组间距来自同一间距刻度。</li>
+          <li><b>反馈 Feedback</b> —— hover / active / focus / loading / success / error 都有可见状态，且状态语言统一。</li>
+          <li><b>留白 Breathing room</b> —— 用间距刻度而非随机像素控制密度；宁可克制留白，不让控件互相挤压。</li>
+          <li><b>可访问性 A11y</b> —— 文本对比度 ≥ 4.5:1，焦点环可见，触摸目标 ≥ 32px，状态不只依赖颜色。</li>
+          <li><b>少即是多 Reduction</b> —— 颜色数量、圆角数量、阴影层级、字号阶梯都收敛到有限 token，删除游离值。</li>
+        </ul>
+
+        <div class="callout good">
+          <span class="ico">✓</span>
+          <div>
+            <b>品牌调性（反向清单）</b>：冷静、临床、不夸大。<span class="pill red" style="margin:0 4px">拒绝</span>紫色渐变、玻璃拟态、发光阴影、「Boost your productivity」式营销文案、以及用 emoji 充当图标——<b>月相 🌑…🌘 是唯一例外</b>，仅用于「等待 Agent 响应」的聊天态，属品牌特色。
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ===== 02 设计令牌 ===== -->
+      <section id="tokens">
+        <div class="sec-head">
+          <span class="sec-num">02</span>
+          <h2 class="sec-title">设计令牌 Design Tokens</h2>
+        </div>
+        <p class="sec-desc">
+          把所有视觉决策收敛为 token。<b>颜色 token 沿用现有短名并补全语义</b>（降低迁移成本），
+          <b>间距、层级、动效、字重</b>则补齐目前缺失的刻度。每个 token 都有：名称、浅色值、深色值、用途。
+        </p>
+
+        <div class="callout info"><span class="ico">i</span><div>
+          <b>命名约定</b>：<code>--&lt;类别&gt;-&lt;角色&gt;-&lt;状态&gt;</code>。例如 <code>--color-text-muted</code>、<code>--radius-md</code>、<code>--space-4</code>。
+          为减少改动，现有短名（<code>--bg</code> / <code>--ink</code> / <code>--line</code> / <code>--blue</code> …）作为<b>兼容别名</b>保留一个版本周期。
+        </div></div>
+
+        <h3 class="sub">颜色 Color</h3>
+        <p>语义优先、三层递进：<b>背景 / 文字 / 描边</b> + <b>强调色</b> + <b>状态色</b>。所有色值在浅色 / 深色下成对定义，对比度均 ≥ 4.5:1。</p>
+        <div class="callout info"><span class="ico">i</span><div>下表是<b>派生后的语义 token</b>。其中<b>中性色与强调色</b>由 §05 的 4 个颜色种子派生——例如 <code>--color-accent</code> 取自 <code>--accent-primary</code>，<code>--color-bg</code> 取自当前亮 / 暗面。<b>语义状态色</b>（success / warning / danger / info）是与种子配套的独立调色板，亮 / 暗各一套，不自动从种子派生；日常换肤通常只需调 4 个种子，状态色按需微调。</div></div>
+        <div class="palette">
+          <div class="color-card"><div class="color-chip" style="background:#ffffff"></div><div class="color-meta"><div class="cn">bg</div><div class="cv">#ffffff / #0d1117</div></div></div>
+          <div class="color-card"><div class="color-chip" style="background:#fafbfc"></div><div class="color-meta"><div class="cn">surface</div><div class="cv">#fafbfc / #161b22</div></div></div>
+          <div class="color-card"><div class="color-chip" style="background:#f3f5f8"></div><div class="color-meta"><div class="cn">surface-sunken</div><div class="cv">#f3f5f8 / #0d1117</div></div></div>
+          <div class="color-card"><div class="color-chip" style="background:#14171c"></div><div class="color-meta"><div class="cn">fg</div><div class="cv">#14171c / #e8eaed</div></div></div>
+          <div class="color-card"><div class="color-chip" style="background:#6b7280"></div><div class="color-meta"><div class="cn">fg-muted</div><div class="cv">#6b7280 / #9aa0a8</div></div></div>
+          <div class="color-card"><div class="color-chip" style="background:#e7eaee"></div><div class="color-meta"><div class="cn">line</div><div class="cv">#e7eaee / #2d333b</div></div></div>
+          <div class="color-card"><div class="color-chip" style="background:#1783ff"></div><div class="color-meta"><div class="cn">accent (KMBlue)</div><div class="cv">#1783ff / #58a6ff</div></div></div>
+          <div class="color-card"><div class="color-chip" style="background:#e8f3ff"></div><div class="color-meta"><div class="cn">accent-soft</div><div class="cv">#e8f3ff / rgba(88,166,255,.14)</div></div></div>
+        </div>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>浅色</th><th>深色</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--color-bg</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#0d1117"></span>#0d1117</td><td>页面底色</td></tr>
+            <tr><td class="tk">--color-surface</td><td class="val"><span class="swatch" style="background:#fafbfc"></span>#fafbfc</td><td class="val"><span class="swatch" style="background:#161b22"></span>#161b22</td><td>面板 / 侧栏 / 卡片头</td></tr>
+            <tr><td class="tk">--color-surface-raised</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#1c2128"></span>#1c2128</td><td>浮起卡片 / 弹窗 / 输入</td></tr>
+            <tr><td class="tk">--color-text</td><td class="val"><span class="swatch" style="background:#14171c"></span>#14171c</td><td class="val"><span class="swatch" style="background:#e8eaed"></span>#e8eaed</td><td>正文 / 标题</td></tr>
+            <tr><td class="tk">--color-text-muted</td><td class="val"><span class="swatch" style="background:#6b7280"></span>#6b7280</td><td class="val"><span class="swatch" style="background:#9aa0a8"></span>#9aa0a8</td><td>次级文字 / 占位符</td></tr>
+            <tr><td class="tk">--color-line</td><td class="val"><span class="swatch" style="background:#e7eaee"></span>#e7eaee</td><td class="val"><span class="swatch" style="background:#2d333b"></span>#2d333b</td><td>分割线 / 卡片描边</td></tr>
+            <tr><td class="tk">--color-accent</td><td class="val"><span class="swatch" style="background:#1783ff"></span>#1783ff</td><td class="val"><span class="swatch" style="background:#58a6ff"></span>#58a6ff</td><td>主操作 / 链接 / 焦点</td></tr>
+            <tr><td class="tk">--color-success</td><td class="val"><span class="swatch" style="background:#0e7a38"></span>#0e7a38</td><td class="val"><span class="swatch" style="background:#3fb950"></span>#3fb950</td><td>成功 / 通过</td></tr>
+            <tr><td class="tk">--color-warning</td><td class="val"><span class="swatch" style="background:#a9610a"></span>#a9610a</td><td class="val"><span class="swatch" style="background:#d29922"></span>#d29922</td><td>警告 / 待确认</td></tr>
+            <tr><td class="tk">--color-danger</td><td class="val"><span class="swatch" style="background:#c0392b"></span>#c0392b</td><td class="val"><span class="swatch" style="background:#f85149"></span>#f85149</td><td>危险 / 错误 / 中止</td></tr>
+          </tbody>
+        </table>
+
+        <h4 class="mini">表面用法 Surface usage</h4>
+        <p>四层表面各司其职，按「要抬起的层 / 默认平层 / 下沉层 / 页面底色」选用，避免把 <code>--p-surface-raised</code> 当成万能背景。</p>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>浅色</th><th>深色</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--p-surface-raised</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#1c2128"></span>#1c2128</td><td>浮起卡片 / 弹窗 / 输入（要抬起的层）</td></tr>
+            <tr><td class="tk">--p-surface</td><td class="val"><span class="swatch" style="background:#fafbfc"></span>#fafbfc</td><td class="val"><span class="swatch" style="background:#161b22"></span>#161b22</td><td>面板 / 侧栏 / 卡片头（默认平层）</td></tr>
+            <tr><td class="tk">--p-surface-sunken</td><td class="val"><span class="swatch" style="background:#f3f5f8"></span>#f3f5f8</td><td class="val"><span class="swatch" style="background:#0d1117"></span>#0d1117</td><td>代码块 / 输入内嵌 / 凹陷区（下沉层）</td></tr>
+            <tr><td class="tk">--p-bg</td><td class="val"><span class="swatch" style="background:#fff"></span>#ffffff</td><td class="val"><span class="swatch" style="background:#0d1117"></span>#0d1117</td><td>页面底色</td></tr>
+          </tbody>
+        </table>
+
+        <h4 class="mini">焦点环 Focus ring</h4>
+        <p>所有可聚焦控件（按钮、输入、链接、菜单项、开关、复选框）统一使用焦点环 token，禁止各自手写 <code>box-shadow</code> 焦点环。</p>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--p-focus-ring</td><td class="val">0 0 0 3px var(--p-accent-soft)</td><td>默认焦点环（链接、菜单项、开关、复选框）</td></tr>
+            <tr><td class="tk">--p-focus-ring-strong</td><td class="val">0 0 0 3px var(--p-accent-soft), 0 0 0 1px var(--p-accent)</td><td>强焦点环（按钮、主操作）</td></tr>
+          </tbody>
+        </table>
+
+        <h4 class="mini">选中文本 Selection</h4>
+        <p>文本选中色统一走 <code>--p-selection</code>（浅色 <code>rgba(23,131,255,.18)</code> / 深色 <code>rgba(88,166,255,.32)</code>），由全局 <code>::selection</code> 规则套用，不另设高亮背景。</p>
+
+        <h4 class="mini">禁用态 Disabled</h4>
+        <p>所有禁用控件统一 <code>opacity:.5</code> + <code>cursor:not-allowed</code>，不再单独调灰或改色。</p>
+
+        <h3 class="sub">字体族 Font families</h3>
+        <p>Kimi Web 使用两套字体族：<b>--font-ui</b>（UI 与正文，系统字体优先）与 <b>--font-mono</b>（代码与等宽）。组件一律通过变量引用，禁止硬编码字体名。</p>
+
+        <h4 class="mini">--font-ui · UI 与正文（系统字体优先）</h4>
+        <p>正文与 UI 采用各平台原生 UI 字体，观感接近系统、长文与中文更舒适。回退链：</p>
+        <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-ui</span></div><pre>--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI",
+  "PingFang SC", "Microsoft YaHei", "Noto Sans SC",
+  "Helvetica Neue", Arial, sans-serif,
+  "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";</pre></div>
+        <ul class="clean">
+          <li>系统 UI 字体在前：macOS / iOS 用 SF Pro，Windows 用 Segoe UI。</li>
+          <li>CJK 紧随：PingFang SC（macOS）/ Microsoft YaHei（Windows）/ Noto Sans SC（Linux）。</li>
+          <li>Helvetica Neue / Arial / sans-serif 通用兜底；末尾补 emoji 字体。</li>
+        </ul>
+
+        <h4 class="mini">--font-mono · 代码与等宽</h4>
+        <p>代码、工具名、行号、diff 等使用 JetBrains Mono（自托管可变字体），回退到系统等宽：</p>
+        <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-mono</span></div><pre>--font-mono: "JetBrains Mono Variable", "JetBrains Mono",
+  ui-monospace, "SF Mono", Menlo, Consolas, monospace;</pre></div>
+
+        <h4 class="mini">加载策略</h4>
+        <table class="dt">
+          <thead><tr><th>字体</th><th>来源</th><th>打包</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">JetBrains Mono</td><td class="val">@fontsource-variable/jetbrains-mono</td><td class="val">✓ 自托管</td><td>等宽 / 代码（--font-mono）</td></tr>
+            <tr><td class="tk">Inter</td><td class="val">@fontsource-variable/inter</td><td class="val">✓ 自托管</td><td>可选：页面标题 / 品牌字样（--font-display）</td></tr>
+            <tr><td class="tk">系统 UI / CJK 字体</td><td class="val">操作系统</td><td class="val">—</td><td>正文 / UI（--font-ui），不打包</td></tr>
+          </tbody>
+        </table>
+        <div class="callout good"><span class="ico">✓</span><div>
+          自托管 Inter / JetBrains Mono，无外部网络请求、无 FOUT、可离线；系统字体不打包，符合本地优先。
+        </div></div>
+
+        <h4 class="mini">使用规则</h4>
+        <ul class="clean check">
+          <li>组件一律用 <code>var(--font-ui)</code> / <code>var(--font-mono)</code>，禁止硬编码 <code>'Inter'</code> / <code>'JetBrains Mono'</code> 等字体名。</li>
+          <li>正文 / UI 走 <code>--font-ui</code>（系统字体优先）；代码 / 等宽走 <code>--font-mono</code>（JetBrains Mono）。</li>
+          <li>Inter 仅用于需要统一观感的标题 / 品牌场景（可选 <code>--font-display</code>），不再作为正文默认。</li>
+        </ul>
+
+        <h3 class="sub">字号与字重 Type scale & weight</h3>
+        <p>字号阶梯沿用并规范现有的 <code>--ui-font-size</code>（UI，默认 14px）/ <code>--content-font-size</code>（正文，16px）双轨：<b>UI 控件 / 按钮 / 表单</b>用 <code>--text-base</code>（14px）；<b>阅读型正文——包括聊天 Markdown、消息气泡等</b>为提升可读性用 <code>--text-lg</code>（16px，行高 relaxed）；<b>侧栏会话列表</b>为信息密度用 <code>calc(var(--ui-font-size) - 1px)</code>（15px，比侧栏 16px 基底小一档）。
+        删除游离的 <code>font-weight: 650 / 750</code>，统一到 400 / 500 两档（常规 / 强调）。</p>
+        <div class="panel panel-pad" style="margin:16px 0">
+          <div class="type-row"><div class="type-sample" style="font-size:22px;font-weight:500">页面标题 Page Title</div><div class="type-meta">--text-2xl · 22 / 500</div></div>
+          <div class="type-row"><div class="type-sample" style="font-size:18px;font-weight:500">区块标题 Section</div><div class="type-meta">--text-xl · 18 / 500</div></div>
+          <div class="type-row"><div class="type-sample" style="font-size:16px;font-weight:400">聊天正文 / 卡片标题 Content</div><div class="type-meta">--text-lg · 16 / 400</div></div>
+          <div class="type-row"><div class="type-sample" style="font-size:14px;font-weight:500">UI 控件 / 按钮 / 表单 UI</div><div class="type-meta">--text-base · 14 / 500</div></div>
+          <div class="type-row"><div class="type-sample" style="font-size:13px">辅助说明 / 表格</div><div class="type-meta">--text-sm · 13 / 400</div></div>
+          <div class="type-row"><div class="type-sample" style="font-size:12px">徽标 / 时间戳 / 行号</div><div class="type-meta">--text-xs · 12 / 500</div></div>
+        </div>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--font-ui</td><td class="val">-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"…</td><td>UI 与正文（系统字体优先）</td></tr>
+            <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>代码、工具名、行号、diff</td></tr>
+            <tr><td class="tk">--leading-tight/normal/relaxed</td><td class="val">1.25 / 1.5 / 1.7</td><td>标题 / UI / 长文</td></tr>
+            <tr><td class="tk">--weight-regular/medium</td><td class="val">400 / 500</td><td>正文 / 强调</td></tr>
+          </tbody>
+        </table>
+
+        <h4 class="mini">图标尺寸 Icon size</h4>
+        <p>图标统一使用三档尺寸 token，全局 <code>.p-ic</code> 默认 16px（<code>--p-ic-md</code>）；各组件按需选用，禁止手写随机像素。</p>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--p-ic-sm</td><td class="val">14px</td><td>小按钮、徽标、菜单项、链接内嵌图标</td></tr>
+            <tr><td class="tk">--p-ic-md</td><td class="val">16px</td><td>默认（按钮、图标按钮、工具条）</td></tr>
+            <tr><td class="tk">--p-ic-lg</td><td class="val">20px</td><td>Toast 状态图标、空状态插图</td></tr>
+          </tbody>
+        </table>
+
+        <h4 class="mini">图标 Icon</h4>
+        <p>图标一律从集中注册表 <code>lib/icons.ts</code> 取用：模板中用 <code>&lt;Icon name size /&gt;</code> 组件（<code>components/ui/Icon.vue</code>），<code>v-html</code> 场景（如工具 glyph）用 <code>iconSvg(name, size)</code>。<b>禁止手写 <code>&lt;svg&gt;</code></b>——<code>scripts/check-style.mjs</code> 的 <code>icon-from-registry</code> 规则会对游离 SVG 告警。默认线稿风格：描边 1.5px、<code>stroke="currentColor"</code>、<code>stroke-linecap/linejoin: round</code>、无 fill，颜色跟随文字；尺寸走下方三档 token。少数「实心即语义」的图标（<code>play / stop / star</code>）为 fill 例外。</p>
+
+        <h4 class="mini">尺寸阶梯 Size scale</h4>
+        <div class="icon-sizes">
+          <div class="sz"><svg class="p-ic" style="width:14px;height:14px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>sm · 14</div>
+          <div class="sz"><svg class="p-ic" style="width:16px;height:16px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>md · 16</div>
+          <div class="sz"><svg class="p-ic" style="width:20px;height:20px" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>lg · 20</div>
+        </div>
+
+        <h4 class="mini">图标库 Icon library</h4>
+        <p>当前注册的图标（按用途分组）。新增图标时，把图形以 <code>name → body</code> 加入 <code>lib/icons.ts</code>，按需补 <code>viewBox</code>（默认 16×16）/<code>fill</code>，再用 <code>node --experimental-strip-types scripts/gen-icon-catalog.mjs</code> 重新生成本目录，保证注册表与文档不漂移。</p>
+        <div class="icon-grid">
+        <div class="icon-group-label">Actions</div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg><span class="ic-name">plus</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg><span class="ic-name">close</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg><span class="ic-name">check</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><span class="ic-name">search</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="9" height="9" rx="1.5"/><path d="M6 1h7a1 1 0 0 1 1 1v7"/></svg><span class="ic-name">copy</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5a3 3 0 0 0 4.2.3l2-2a3 3 0 0 0-4.2-4.2l-1 1"/><path d="M9.5 6.5a3 3 0 0 0-4.2-.3l-2 2a3 3 0 0 0 4.2 4.2l1-1"/></svg><span class="ic-name">link</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4"/><path d="M13.5 2.5 7.5 8.5"/><path d="M12 8.7V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V5.5A1.5 1.5 0 0 1 4 4h3.3"/></svg><span class="ic-name">external-link</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8"/><path d="M4.5 6.5 8 10l3.5-3.5"/><path d="M2.5 13.5h11"/></svg><span class="ic-name">download</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2.5 3 6l3.5 3.5"/><path d="M3 6h6.5a3.8 3.8 0 1 1 0 7.6H7.5"/></svg><span class="ic-name">undo</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3l6 5.5M8 3L2 8.5M8 3v10"/></svg><span class="ic-name">send</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5" cy="6" r="1.2"/><path d="M2 10.5l3-2.5L8 11l2.5-2L14 11"/></svg><span class="ic-name">image</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/></svg><span class="ic-name">settings</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="20" y2="8"/><circle cx="10" cy="8" r="2.5" fill="var(--color-bg)" stroke="none"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.5" fill="var(--color-bg)" stroke="none"/></svg><span class="ic-name">sliders</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6"/><path d="M9 8H2"/><path d="M5 5l3 3-3 3"/></svg><span class="ic-name">log-in</span></div>
+        <div class="icon-group-label">Navigation &amp; layout</div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg><span class="ic-name">chevron-down</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg><span class="ic-name">chevron-right</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12V4M4 7l4-3 4 3"/></svg><span class="ic-name">arrow-up</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4v8m0 0 3.5-3.5M8 12l-3.5-3.5"/></svg><span class="ic-name">arrow-down</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h10"/><path d="M8 4l4 4-4 4"/></svg><span class="ic-name">arrow-right</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10"/></svg><span class="ic-name">minus</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 6h9"/><path d="M11 12h9"/><path d="M11 18h9"/><path d="M7 9l-3 3 3 3"/></svg><span class="ic-name">panel-collapse</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9"/><path d="M4 12h9"/><path d="M4 18h9"/><path d="M17 9l3 3-3 3"/></svg><span class="ic-name">panel-expand</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg><span class="ic-name">expand</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg><span class="ic-name">collapse</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M2 8h12M2 12h8"/></svg><span class="ic-name">list</span></div>
+        <div class="icon-group-label">Files &amp; tools</div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/><path d="M1 5.5h12"/></svg><span class="ic-name">folder</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3.5" width="12" height="8.5" rx="1"/><path d="M1 5V3.5A1 1 0 0 1 2 2.5h3.5l1.3 2"/></svg><span class="ic-name">folder-closed</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/><path d="M1 5.5h12"/><path d="M8 7.25v4.5M5.75 9.5h4.5"/></svg><span class="ic-name">folder-plus</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.5h3l1.5 2h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z"/></svg><span class="ic-name">folder-solid</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><polyline points="9,1.5 9,4.5 12,4.5"/></svg><span class="ic-name">file</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="1.5" width="9" height="13" rx="1"/><line x1="5" y1="5" x2="9" y2="5"/><line x1="5" y1="7.5" x2="11" y2="7.5"/><line x1="5" y1="10" x2="10" y2="10"/></svg><span class="ic-name">file-text</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12V4.5L8 2l5 2.5V12H3z"/><line x1="6" y1="7" x2="10" y2="7"/><line x1="8" y1="5" x2="8" y2="9"/></svg><span class="ic-name">file-plus</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h7l4 4v10H5V3z"/><path d="M12 3v4h4"/></svg><span class="ic-name">file-off</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="16" height="16" rx="2"/><path d="M7 10h6M10 7v6"/></svg><span class="ic-name">image-off</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="5.5,5 2.5,8 5.5,11"/><polyline points="10.5,5 13.5,8 10.5,11"/></svg><span class="ic-name">code</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><polyline points="4,6 6.5,8 4,10"/><line x1="8" y1="10" x2="12" y2="10"/></svg><span class="ic-name">terminal</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3-8 8H2.5v-3l8-8z"/><line x1="8.5" y1="4.5" x2="11.5" y2="7.5"/></svg><span class="ic-name">pencil</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5C3.5 2.5 3.5 5 3.5 6.5S2.5 8 2.5 8s1 0 1 1.5S3.5 13.5 5 13.5"/><path d="M11 2.5c1.5 0 1.5 2.5 1.5 4S13.5 8 13.5 8s-1 0-1 1.5.5 4-1.5 4"/><line x1="8" y1="6" x2="8" y2="10"/><line x1="6.3" y1="6.8" x2="9.7" y2="9.2"/><line x1="9.7" y1="6.8" x2="6.3" y2="9.2"/></svg><span class="ic-name">glob</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 2c-2 2-3 3.6-3 6s1 4 3 6"/><path d="M8 2c2 2 3 3.6 3 6s-1 4-3 6"/><line x1="2" y1="8" x2="14" y2="8"/></svg><span class="ic-name">globe</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,4.5 3.5,6 5.5,3"/><polyline points="2,11 3.5,12.5 5.5,9.5"/><line x1="8" y1="4.5" x2="14" y2="4.5"/><line x1="8" y1="11" x2="14" y2="11"/></svg><span class="ic-name">check-list</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 1L3 9h4l-1.5 6 5.5-8h-4l1.5-6z"/></svg><span class="ic-name">bolt</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="3"/><path d="M5 9v12"/><circle cx="19" cy="18" r="3"/><path d="m15 9-3-3 3-3"/><path d="M12 6h5a2 2 0 0 1 2 2v7"/></svg><span class="ic-name">git-pull-request</span></div>
+        <div class="icon-group-label">Communication</div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8.5l-2.5 2V11.5H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/></svg><span class="ic-name">message</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l6 4 6-4"/><rect x="2" y="4" width="12" height="8" rx="1.5"/></svg><span class="ic-name">mail</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="3"/><path d="M3 14c0-3 2.2-5 5-5s5 2 5 5"/></svg><span class="ic-name">user</span></div>
+        <div class="icon-group-label">Status &amp; media</div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="5"/><line x1="6" y1="3.5" x2="6" y2="6.5"/><circle cx="6" cy="8.5" r="0.5" fill="currentColor"/></svg><span class="ic-name">info</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M6.2 6a1.8 1.8 0 0 1 3.5.6c0 1.2-1.7 1.4-1.7 2.6"/><circle cx="8" cy="11.5" r=".7" fill="currentColor"/></svg><span class="ic-name">help-circle</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2 14 13H2L8 2Z"/><path d="M8 6v3"/><circle cx="8" cy="11" r=".6" fill="currentColor"/></svg><span class="ic-name">alert-triangle</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/></svg><span class="ic-name">clock</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z"/></svg><span class="ic-name">sparkles</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg><span class="ic-name">play</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg><span class="ic-name">stop</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><span class="ic-name">star</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><span class="ic-name">star-outline</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="8" cy="13" r="1.3"/></svg><span class="ic-name">dots-vertical</span></div>
+        <div class="icon-cell"><svg class="p-ic" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="13" cy="8" r="1.3"/></svg><span class="ic-name">dots-horizontal</span></div>
+        </div>
+
+        <p>禁止用 emoji 充当功能图标（唯一例外：月相 🌑…🌘，仅用于「等待 Agent 响应」聊天态）。Kimi 品牌标记（32×22 的眼睛 logo）属于品牌资产，不在此线稿图标体系内。</p>
+        <p>少数<b>非线稿图形</b>不进注册表，各有专属组件统一维护，禁止复制手写：<code>&lt;ContextRing :pct /&gt;</code>（Composer 上下文进度环，数据驱动）、<code>&lt;AuthStateIcon kind /&gt;</code>（登录流程的成功 / 过期 / 错误彩色插图）、<code>&lt;Spinner /&gt;</code>（加载态）。状态小圆点（如 Provider 列表）一律用 CSS 圆点（<code>border-radius:50%</code>），不再用 SVG。<code>scripts/check-style.mjs</code> 的 <code>icon-from-registry</code> 规则对以上与品牌标记豁免，其余手写 <code>&lt;svg&gt;</code> 一律告警。</p>
+
+        <h3 class="sub">间距 Spacing </h3>
+        <p>4px 基础网格，组件内外所有间距、间隙、内边距都来自此刻度，杜绝随机像素。</p>
+        <div class="panel panel-pad" style="margin:16px 0">
+          <div class="space-row"><div class="space-bar" style="width:4px"></div><div class="space-meta">--space-1 · 4</div><div class="space-use">图标间距、徽标内距</div></div>
+          <div class="space-row"><div class="space-bar" style="width:8px"></div><div class="space-meta">--space-2 · 8</div><div class="space-use">控件间隙、小内边距</div></div>
+          <div class="space-row"><div class="space-bar" style="width:12px"></div><div class="space-meta">--space-3 · 12</div><div class="space-use">按钮内距、表单项间距</div></div>
+          <div class="space-row"><div class="space-bar" style="width:16px"></div><div class="space-meta">--space-4 · 16</div><div class="space-use">卡片内边距、栅格 gap</div></div>
+          <div class="space-row"><div class="space-bar" style="width:20px"></div><div class="space-meta">--space-5 · 20</div><div class="space-use">弹窗内边距</div></div>
+          <div class="space-row"><div class="space-bar" style="width:24px"></div><div class="space-meta">--space-6 · 24</div><div class="space-use">区块间距</div></div>
+          <div class="space-row"><div class="space-bar" style="width:32px"></div><div class="space-meta">--space-8 · 32</div><div class="space-use">大区块间距</div></div>
+        </div>
+
+        <h4 class="mini">密集列表 Dense list（侧栏 / 文件树）</h4>
+        <p>侧栏这类高密度导航列表共用一套节奏，全部落在 4px 网格：<b>行内纵向内距</b> <code>--space-1</code>（4px），行间 <b>无外边距</b>（hover 圆角 pill 自身提供分隔）；<b>区段间距</b>（logo / 搜索 / 操作钮 / 分组标题 / 列表之间）统一 <code>--space-2</code>（8px）；<b>分组之间</b> <code>--space-2</code>；品牌页头顶部略松（<code>--space-3</code>）。新建同类列表时复用此刻度，不要手写 1/6/7/10px。</p>
+
+        <h3 class="sub">圆角 Radius</h3>
+        <p>把现有 14 个值<b>就近归并</b>到 7 档刻度。规则：组件类型决定圆角，而非作者手感。</p>
+        <div class="radius-grid">
+          <div class="radius-item"><div class="radius-box" style="border-radius:4px"></div><span class="rl">xs · 4</span></div>
+          <div class="radius-item"><div class="radius-box" style="border-radius:6px"></div><span class="rl">sm · 6</span></div>
+          <div class="radius-item"><div class="radius-box" style="border-radius:8px"></div><span class="rl">md · 8</span></div>
+          <div class="radius-item"><div class="radius-box" style="border-radius:12px"></div><span class="rl">lg · 12</span></div>
+          <div class="radius-item"><div class="radius-box" style="border-radius:16px"></div><span class="rl">xl · 16</span></div>
+          <div class="radius-item"><div class="radius-box" style="border-radius:20px"></div><span class="rl">2xl · 20</span></div>
+          <div class="radius-item"><div class="radius-box" style="border-radius:999px"></div><span class="rl">full · 999</span></div>
+        </div>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th><th>归并来源</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--radius-xs</td><td class="val">4px</td><td>小徽标、内嵌标签</td><td class="val">2/3/4px →</td></tr>
+            <tr><td class="tk">--radius-sm</td><td class="val">6px</td><td>小按钮、图标按钮、菜单项</td><td class="val">5/6px →</td></tr>
+            <tr><td class="tk">--radius-md</td><td class="val">8px</td><td>按钮、输入、徽标、卡片</td><td class="val">7/8/9px →</td></tr>
+            <tr><td class="tk">--radius-lg</td><td class="val">12px</td><td>下拉面板</td><td class="val">10/12px →</td></tr>
+            <tr><td class="tk">--radius-xl</td><td class="val">16px</td><td>弹窗、底部 Sheet、Composer</td><td class="val">14/16px →</td></tr>
+            <tr><td class="tk">--radius-2xl</td><td class="val">20px</td><td>强调容器 / 大面板</td><td class="val">20px</td></tr>
+            <tr><td class="tk">--radius-full</td><td class="val">999px</td><td>药丸徽标、头像、发送钮</td><td class="val">999px / 50%</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="sub">层级与阴影 Elevation & Z-index </h3>
+        <p>阴影只表达「层级」，不用作装饰（无彩色 glow）。z-index 统一成阶梯，根除 <code>9999</code> 式的互相压盖。</p>
+        <div class="panel panel-pad" style="margin:16px 0">
+          <div class="radius-grid" style="align-items:stretch">
+            <div class="radius-item"><div class="radius-box" style="border:none;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.06)"></div><span class="rl">sm · 下拉菜单 / 吸顶</span></div>
+            <div class="radius-item"><div class="radius-box" style="border:none;background:#fff;box-shadow:0 4px 12px rgba(16,24,40,.07),0 2px 4px rgba(16,24,40,.05)"></div><span class="rl">md · Toast</span></div>
+            <div class="radius-item"><div class="radius-box" style="border:none;background:#fff;box-shadow:0 12px 32px rgba(16,24,40,.12),0 4px 10px rgba(16,24,40,.08)"></div><span class="rl">lg · 浮层（预留）</span></div>
+            <div class="radius-item"><div class="radius-box" style="border:none;background:#fff;box-shadow:0 24px 64px rgba(16,24,40,.18),0 8px 20px rgba(16,24,40,.10)"></div><span class="rl">xl · 弹窗</span></div>
+          </div>
+        </div>
+        <table class="dt">
+          <thead><tr><th>Z-index Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--z-base</td><td class="val">0</td><td>常规流</td></tr>
+            <tr><td class="tk">--z-sticky</td><td class="val">100</td><td>吸顶表头 / 侧栏</td></tr>
+            <tr><td class="tk">--z-dropdown</td><td class="val">200</td><td>下拉菜单 / 工具提示</td></tr>
+            <tr><td class="tk">--z-overlay</td><td class="val">300</td><td>遮罩 / 底部 Sheet</td></tr>
+            <tr><td class="tk">--z-modal</td><td class="val">400</td><td>弹窗</td></tr>
+            <tr><td class="tk">--z-toast</td><td class="val">600</td><td>轻提示</td></tr>
+            <tr><td class="tk">--z-max</td><td class="val">9999</td><td>保留：仅此一档用于极端兜底</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="sub">动效 Motion </h3>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--ease-out</td><td class="val">cubic-bezier(0.16, 1, 0.3, 1)</td><td>进入、悬停、展开</td></tr>
+            <tr><td class="tk">--ease-in-out</td><td class="val">cubic-bezier(0.4, 0, 0.2, 1)</td><td>面板宽度、布局变化</td></tr>
+            <tr><td class="tk">--duration-fast</td><td class="val">120ms</td><td>按下、焦点</td></tr>
+            <tr><td class="tk">--duration-base</td><td class="val">160ms</td><td>悬停、显隐</td></tr>
+            <tr><td class="tk">--duration-slow</td><td class="val">260ms</td><td>弹窗、Sheet、布局</td></tr>
+          </tbody>
+        </table>
+
+        <h4 class="mini">减少动态效果 Reduced motion</h4>
+        <div class="callout info"><span class="ico">i</span><div>
+          在 <code>@media (prefers-reduced-motion: reduce)</code> 下，所有动画与过渡时长降到约 <code>0.001ms</code>（即关闭），<b>MoonSpinner 月相暂停</b>在当前帧。组件不应各自判断，统一在全局样式中处理。
+        </div></div>
+
+        <h3 class="sub">布局与断点 Layout &amp; breakpoints </h3>
+        <p>布局尺寸与响应式断点同样 token 化：侧栏宽度、内容阅读栏宽度、两个全局断点。组件不应各自写死像素。</p>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--p-sidebar-w</td><td class="val">264px</td><td>左侧会话侧栏宽度</td></tr>
+            <tr><td class="tk">--p-content-max</td><td class="val">760px</td><td>聊天阅读栏最大宽度</td></tr>
+            <tr><td class="tk">--p-content-wide</td><td class="val">920px</td><td>宽内容（设置 / 面板）</td></tr>
+            <tr><td class="tk">--p-bp-sm</td><td class="val">640px</td><td>手机 / 桌面分界</td></tr>
+            <tr><td class="tk">--p-bp-md</td><td class="val">980px</td><td>窄屏 / 宽屏分界</td></tr>
+          </tbody>
+        </table>
+        <div class="callout info"><span class="ico">i</span><div>
+          ≤640px 时：弹窗改为底部 Sheet、侧栏折叠为可展开抽屉、Composer 工具条控件允许换行。
+        </div></div>
+      </section>
+
+      <!-- ===== 03 组件基元 ===== -->
+      <section id="primitives">
+        <div class="sec-head">
+          <span class="sec-num">03</span>
+          <h2 class="sec-title">组件基元 Primitives</h2>
+        </div>
+        <p class="sec-desc">
+          组件基元是全站 UI 的「最小正确单元」。
+          每个基元只暴露 <code>variant</code> / <code>size</code> 两个维度的变体，外观由 token 驱动，
+          从而天然支持亮 / 暗模式与可定制主题色。
+        </p>
+
+        <!-- ===== 组件选型指南 ===== -->
+        <h3 class="sub">组件选型指南</h3>
+        <table class="dt">
+          <thead><tr><th>场景</th><th>用什么</th></tr></thead>
+          <tbody>
+            <tr><td>主操作（提交 / 确认）</td><td><code>Button variant=primary</code></td></tr>
+            <tr><td>次操作 / 取消</td><td><code>Button secondary</code> / <code>ghost</code></td></tr>
+            <tr><td>危险操作（删除 / 中止）</td><td><code>Button danger</code> / <code>danger-soft</code></td></tr>
+            <tr><td>状态标记</td><td><code>Badge</code></td></tr>
+            <tr><td>工具条筛选 / 模型切换</td><td><code>Pill</code></td></tr>
+            <tr><td>2–4 项互斥切换</td><td><code>SegmentedControl</code></td></tr>
+            <tr><td>顶部标签页</td><td><code>Tabs</code></td></tr>
+            <tr><td>开关 / 多选</td><td><code>Switch</code> / <code>Checkbox</code></td></tr>
+            <tr><td>浮起内容卡 / 列表动作菜单</td><td><code>Card</code> / <code>Menu</code></td></tr>
+            <tr><td>内联通知 / 全局轻提示</td><td><code>Banner</code> / <code>Toast</code></td></tr>
+            <tr><td>弹窗 / 确认 · 底部面板（移动）</td><td><code>Dialog</code> / <code>Sheet</code></td></tr>
+          </tbody>
+        </table>
+
+        <!-- ===== Button ===== -->
+        <h3 class="sub">Button · 按钮</h3>
+        <p>4 个语义变体 × 3 个尺寸。主操作 <code>primary</code> 的颜色取自当前主题色（§05 可在蓝色系 / 黑色系间切换）。圆角统一走 <code>--radius-md</code>（小尺寸 <code>--radius-sm</code>），字重 600，带可见 focus 环。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">变体矩阵 <span class="tag spec">light</span></span><span class="sactions"><span class="tab on">preview</span></span></div>
+          <div class="stage p col">
+            <span class="stage-label">medium · 默认</span>
+            <div class="demo-row">
+              <button class="p-btn primary">主要操作</button>
+              <button class="p-btn secondary">次要操作</button>
+              <button class="p-btn ghost">幽灵按钮</button>
+              <button class="p-btn danger-soft">危险（弱）</button>
+              <button class="p-btn danger">危险操作</button>
+            </div>
+            <span class="stage-label">small</span>
+            <div class="demo-row">
+              <button class="p-btn primary sm">确认</button>
+              <button class="p-btn secondary sm">取消</button>
+              <button class="p-btn ghost sm">更多</button>
+            </div>
+            <span class="stage-label">带图标 / 状态</span>
+            <div class="demo-row">
+              <button class="p-btn primary"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>新建会话</button>
+              <button class="p-btn secondary"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>已复制</button>
+              <button class="p-btn primary disabled" >加载中…</button>
+            </div>
+          </div>
+        </div>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">暗色皮肤 <span class="tag spec">dark</span></span></div>
+          <div class="stage dark p col" data-p="dark">
+            <div class="demo-row">
+              <button class="p-btn primary">主要操作</button>
+              <button class="p-btn secondary">次要操作</button>
+              <button class="p-btn ghost">幽灵按钮</button>
+              <button class="p-btn danger">危险操作</button>
+            </div>
+          </div>
+        </div>
+
+        <h4 class="mini">API</h4>
+        <div class="code">
+          <div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">Button.vue · 用法</span></div>
+          <pre><span class="k">&lt;Button</span> <span class="p">variant</span>=<span class="s">"primary"</span> <span class="p">size</span>=<span class="s">"md"</span> <span class="p">:loading</span>=<span class="s">"submitting"</span><span class="k">&gt;</span>保存<span class="k">&lt;/Button&gt;</span>
+<span class="c">// variant: primary | secondary | ghost | danger | danger-soft</span>
+<span class="c">// size:    sm | md | lg</span></pre>
+        </div>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">状态</span></div>
+          <div class="stage p">
+            <div class="demo-row">
+              <button class="p-btn primary" disabled style="opacity:.5;cursor:not-allowed">禁用 primary</button>
+              <button class="p-btn primary"><svg class="p-spinner sm" viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="arc" cx="12" cy="12" r="9"/></svg>提交中</button>
+              <button class="p-btn danger" disabled style="opacity:.5;cursor:not-allowed">禁用 danger</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== IconButton ===== -->
+        <h3 class="sub">IconButton · 图标按钮</h3>
+        <p>统一为 26 / 32 / 44px 三档，hover 浅灰底，focus 环可见。替代当前各组件里散落的图标 + 点击区。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">IconButton</span></div>
+          <div class="stage p">
+            <button class="p-icon-btn"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+            <button class="p-icon-btn"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+            <button class="p-icon-btn"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+            <button class="p-icon-btn sm"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+            <button class="p-icon-btn sm"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
+        </div>
+        <div class="callout info"><span class="ico">i</span><div>
+          桌面 IconButton 提供 <code>sm</code> 26 / <code>md</code> 32 两档；在触摸设备上点击目标应 ≥ 44px，用 <code>lg</code> 44px，满足 §01 的可访问性原则（移动端三件套即使用 <code>lg</code>）。
+        </div></div>
+
+        <!-- ===== Badge / Pill ===== -->
+        <h3 class="sub">Badge · Chip · Pill </h3>
+        <p>收敛为两类：<b>Badge</b>（状态徽标，带可选状态点）与 <b>Pill</b>（composer 工具条的可点击药丸）。圆角、字号、内边距全部统一。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Badge · 状态徽标</span></div>
+          <div class="stage p col">
+            <span class="stage-label">语义变体</span>
+            <div class="demo-row">
+              <span class="p-badge neutral"><span class="bd"></span>待运行</span>
+              <span class="p-badge info"><span class="bd"></span>运行中</span>
+              <span class="p-badge success"><span class="bd"></span>已完成</span>
+              <span class="p-badge warning"><span class="bd"></span>需确认</span>
+              <span class="p-badge danger"><span class="bd"></span>失败</span>
+              <span class="p-badge solid">KIMI</span>
+            </div>
+            <span class="stage-label">带图标 / 小尺寸</span>
+            <div class="demo-row">
+              <span class="p-badge info"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5v-9Z" stroke="currentColor" stroke-width="1.4"/></svg>plan</span>
+              <span class="p-badge success sm"><span class="bd"></span>passed</span>
+              <span class="p-badge neutral sm">read-only</span>
+            </div>
+          </div>
+        </div>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Pill · 工具条药丸（composer）</span></div>
+          <div class="stage p">
+            <span class="p-pill"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2 3.5h12M2 8h12M2 12.5h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span class="pp-strong">kimi-k2</span><span class="pp-sub">· thinking</span><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="p-pill"><span style="width:7px;height:7px;border-radius:50%;background:var(--p-warning)"></span>yolo</span>
+            <span class="p-pill"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>12k / 200k</span>
+          </div>
+        </div>
+
+        <!-- ===== Card / Surface ===== -->
+        <h3 class="sub">Card / Surface · 卡片与表面</h3>
+        <p>全站卡片共用<b>一种外壳</b>：扁平、<code>1px</code> 描边、圆角 <code>--radius-md</code>、<b>无阴影</b>。结构上分为 <code>head / body / foot</code> 三段。卡片之间的区别<b>只在头部</b>——按视觉权重分两档，外壳始终保持一致：</p>
+        <ul class="clean">
+          <li><b>操作卡 Operation</b> —— 工具调用、Agent、Todo 等「过程」内容。头部紧凑 mono、无底色，默认低权重，不抢对话。</li>
+          <li><b>注意卡 Attention</b> —— Question / Approval 等需要用户决策的内容。头部带语义色带（accent / warning），从消息流中凸显。</li>
+        </ul>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">操作卡 · 紧凑 mono 头（无底色）</span></div>
+          <div class="stage p col">
+            <div class="p-card" style="max-width:460px">
+              <div class="p-card-head">
+                <span class="p-card-title">read_file</span>
+                <span class="p-badge info sm" style="margin-left:auto">session.ts</span>
+              </div>
+              <div class="p-card-body">头部使用 mono + 中性底色，强调其「代码 / 过程」属性；正文 sans 保证可读性。扁平、radius-md，与工具组、Agent 组同形。</div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">注意卡 · 语义色带头（accent / warning）</span></div>
+          <div class="stage p col">
+            <div class="p-action" style="max-width:460px">
+              <div class="p-action-head"><span class="p-action-title">需要你确认一个决定</span><span class="p-badge info sm" style="margin-left:auto">question</span></div>
+              <div class="p-action-body">头部使用语义色浅底（<code>accent-soft</code> / <code>warning-soft</code>），从消息流中凸显，提示用户必须介入。外壳与操作卡完全相同。</div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">分组 · 容器拥有边框，行间发丝分隔</span></div>
+          <div class="stage p col">
+            <div class="p-tool-group open" style="max-width:460px">
+              <div class="p-tool-group-head"><span class="p-dot done"></span><span class="tg-title">3 个工具调用</span><span class="tg-meta">· 已完成</span></div>
+              <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">read_file</span><span class="tr-arg">session.ts</span></div>
+              <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">grep</span><span class="tr-arg">"jwt" · 4 处</span></div>
+            </div>
+          </div>
+        </div>
+        <ul class="clean check">
+          <li><b>统一外壳</b>：所有卡片扁平 + 1px 描边 + radius-md，不投射阴影。</li>
+          <li><b>差异有意为之</b>：仅头部区分类型（mono 紧凑 vs 语义色带），外壳始终保持一致。</li>
+          <li><b>分组</b>：外层容器拥有边框与圆角，内部行用 <code>border-top</code> 发丝分隔，不再让每行各自成卡。</li>
+          <li><b>状态点</b>：运行中（脉冲蓝）/ 完成（绿）/ 失败（红），共用同一套颜色词汇（详见 §04 工具调用）。</li>
+        </ul>
+
+        <!-- ===== Input ===== -->
+        <h3 class="sub">Input / Select / Textarea · 表单输入 </h3>
+        <p>统一高度 38px（小尺寸 32px）、圆角 <code>--radius-md</code>、<code>--color-surface-raised</code> 底、统一蓝色焦点环（<code>0 0 0 3px accent-soft</code>）。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">表单基元</span></div>
+          <div class="stage p col">
+            <div class="demo-row" style="align-items:flex-start">
+              <div class="p-field demo-grow">
+                <label class="p-label">工作区名称</label>
+                <input class="p-input" placeholder="例如：frontend" />
+                <span class="p-hint">只能包含字母、数字与连字符。</span>
+              </div>
+              <div class="p-field demo-grow">
+                <label class="p-label">模型提供方</label>
+                <select class="p-select"><option>Anthropic</option><option>OpenAI</option><option>Moonshot</option></select>
+              </div>
+            </div>
+            <div class="p-field">
+              <label class="p-label">系统提示词</label>
+              <textarea class="p-textarea" placeholder="描述这个 Agent 的角色与边界……"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">状态</span></div>
+          <div class="stage p col">
+            <div class="demo-row" style="align-items:flex-start">
+              <div class="p-field demo-grow">
+                <label class="p-label">工作区名称</label>
+                <input class="p-input" value="my workspace!" style="border-color:var(--p-danger)" />
+                <span class="p-field-error">请输入有效的工作区名称</span>
+              </div>
+              <div class="p-field demo-grow">
+                <label class="p-label">显示名</label>
+                <input class="p-input" value="frontend" />
+                <span class="p-hint">正常态 · 通过校验</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Code / Diff ===== -->
+        <h3 class="sub">Code / Diff · 代码与差异</h3>
+        <p>inline code、代码块、diff 三档均使用等宽字体（<code>--p-font-mono</code>）；代码块带文件名标题条与复制按钮；diff 用 <code>+</code> / <code>-</code> 行色表达增删——新增用成功浅底、删除用危险浅底，无渐变。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Code / Diff</span></div>
+          <div class="stage p col">
+            <span class="stage-label">inline code</span>
+            <div>服务端用 <code class="p-code-inline">jwt.verify(token)</code> 校验签名，失败返回 401。</div>
+            <span class="stage-label">code block</span>
+            <div class="p-code-block">
+              <div class="p-code-block-head">
+                <span>session.ts</span>
+                <button class="p-icon-btn sm" aria-label="复制"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 10V3.5A1.5 1.5 0 0 1 4.5 2H10"/></svg></button>
+              </div>
+              <pre>import { verify } from './jwt';
+
+export function auth(token: string) {
+  return verify(token, process.env.JWT_SECRET!);
+}</pre>
+            </div>
+            <span class="stage-label">diff</span>
+            <div class="p-diff">
+              <div class="p-diff-head">session.ts · +3 -1</div>
+              <div class="p-diff-row"><span class="pm"></span><span class="p-diff-code">import { verify } from './jwt';</span></div>
+              <div class="p-diff-row del"><span class="pm">-</span><span class="p-diff-code">const secret = 'dev-secret';</span></div>
+              <div class="p-diff-row add"><span class="pm">+</span><span class="p-diff-code">const secret = process.env.JWT_SECRET!;</span></div>
+              <div class="p-diff-row"><span class="pm"></span><span class="p-diff-code">return verify(token, secret);</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Dialog ===== -->
+        <h3 class="sub">Dialog · 弹窗 </h3>
+        <p>一套弹窗基元替代 6 套手写实现：统一圆角 <code>--radius-xl</code>、阴影 <code>--shadow-xl</code>、头部 20px、底部操作右对齐、关闭按钮用 IconButton。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Dialog 基元 </span></div>
+          <div class="stage p col" style="align-items:center">
+            <div class="p-dialog">
+              <div class="p-dialog-head">
+                <div>
+                  <div class="p-dialog-title">新建会话</div>
+                  <div class="p-dialog-desc">为当前工作区创建一个独立的 Agent 会话。</div>
+                </div>
+                <button class="p-icon-btn sm"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+              </div>
+              <div class="p-dialog-body">
+                <div class="p-field">
+                  <label class="p-label">会话标题（可选）</label>
+                  <input class="p-input" placeholder="自动生成" />
+                </div>
+              </div>
+              <div class="p-dialog-foot">
+                <button class="p-btn secondary">取消</button>
+                <button class="p-btn primary">创建</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout info"><span class="ico">i</span><div>
+          <b>尺寸与高度</b>：Dialog 提供三档宽度 <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760（<code>--p-content-max</code>），按内容分量选择。高度分两种：<code>auto</code>（默认，随内容至 <code>max-height</code>）与 <code>fixed</code>（恒定高度 <code>min(680px, 100vh - 64px)</code>，内容超出由 body 内部滚动）。<b>内容型 / 多 tab 弹窗</b>（设置、模型选择、提供方管理、文件夹浏览）一律用 <code>fixed</code>，使框体尺寸恒定、不随切换 tab 或内容多少而跳动；内容少的确认类弹窗保持 <code>auto</code>。
+        </div></div>
+
+        <!-- ===== Toast ===== -->
+        <h3 class="sub">Toast · 轻提示</h3>
+        <p>统一信息架构：状态图标 + 标题 + 描述。状态色只出现在图标上，避免大面积彩色造成视觉噪音。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Toast</span></div>
+          <div class="stage p col">
+            <div class="p-toast success">
+              <span class="ti"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <div><div class="tt">已连接到服务器</div><div class="td">本地守护进程响应正常，可以开始新会话。</div></div>
+            </div>
+            <div class="p-toast warning">
+              <span class="ti"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M8 2 14 13H2L8 2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="11" r=".6" fill="currentColor"/></svg></span>
+              <div><div class="tt">上下文使用 82%</div><div class="td">建议执行 /compact 以释放空间。</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Spinner ===== -->
+        <h3 class="sub">Spinner · 加载指示器</h3>
+        <p>加载器按场景分两类，<b>不要混用</b>：</p>
+        <ul class="clean">
+          <li><b>Spinner（普通 · SVG 环形）</b>—— 默认加载器。用于按钮 loading、应用启动（GlobalLoading）、通用内联等待等「其他所有情况」。</li>
+          <li><b>MoonSpinner（月相 · 品牌特色）</b>—— <b>仅</b>用于「发出消息、等待 Agent 首条响应」这一聊天等待态（ChatPane 的 sending 占位、SideChatPanel、ActivityNotice）。</li>
+        </ul>
+
+        <h4 class="mini">Spinner · 普通加载器（默认）</h4>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Spinner · 常规场景</span></div>
+          <div class="stage p col">
+            <div class="demo-row">
+              <svg class="p-spinner" viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="arc" cx="12" cy="12" r="9"/></svg>
+              <span class="p-thinking"><svg class="p-spinner sm" viewBox="0 0 24 24"><circle class="track" cx="12" cy="12" r="9"/><circle class="arc" cx="12" cy="12" r="9"/></svg>加载中…</span>
+              <button class="p-btn primary disabled"><svg class="p-spinner sm" viewBox="0 0 24 24" style="--p-accent:#fff;--p-line:rgba(255,255,255,.35)"><circle class="track" cx="12" cy="12" r="9"/><circle class="arc" cx="12" cy="12" r="9"/></svg>提交中</button>
+            </div>
+          </div>
+        </div>
+
+        <h4 class="mini">MoonSpinner · 月相（仅「等待 Agent 响应」）</h4>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">MoonSpinner · 聊天等待态专属 <span class="tag spec">特色</span></span></div>
+          <div class="stage p col">
+            <span class="stage-label">帧循环（8 帧）</span>
+            <div class="demo-row" style="font-size:22px;letter-spacing:2px;line-height:1">
+              <span>🌑</span><span>🌒</span><span>🌓</span><span>🌔</span><span>🌕</span><span>🌖</span><span>🌗</span><span>🌘</span>
+            </div>
+            <span class="stage-label">用法 · 仅聊天等待响应</span>
+            <div class="demo-row">
+              <span class="p-thinking"><span style="font-size:16px;line-height:1">🌔</span>正在思考…</span>
+              <span class="p-thinking"><span style="font-size:16px;line-height:1">🌕</span>正在等待响应…</span>
+            </div>
+          </div>
+        </div>
+        <div class="callout info"><span class="ico">i</span><div>月相是 emoji-as-icon 规则的<b>唯一豁免</b>，且<b>仅限</b>「等待 Agent 首条响应」这一场景。当前它在 <code>MoonSpinner.vue</code> 与 <code>ActivityNotice.vue</code> 各实现了一遍，应合并为单个 <code>MoonSpinner</code> 组件，尺寸走 token、支持 <code>prefers-reduced-motion</code>。其余所有加载态一律用普通 Spinner。</div></div>
+
+        <!-- ===== Link ===== -->
+        <h3 class="sub">Link · 文字链接</h3>
+        <p>行内文本链接：默认主色、无下划线，hover 显示下划线并加深；<code>.muted</code> 变体用次级文字色。用于文本内跳转、外链、「查看全部」等轻量操作。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Link · 行内链接</span></div>
+          <div class="stage p col">
+            <div class="demo-row" style="font-size:var(--p-font-size-base);color:var(--p-text)">
+              <span>阅读完整 <a class="p-link" href="#">设计令牌文档</a> 后再动手。</span>
+              <a class="p-link" href="#">在 GitHub 查看<svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9 2h5v5M14 2 7.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+              <a class="p-link muted" href="#">查看历史记录</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Menu / Dropdown ===== -->
+        <h3 class="sub">Menu / Dropdown · 菜单</h3>
+        <p>下拉菜单面板：浮起表面 + 描边 + 轻阴影（<code>--shadow-sm</code>，扁平化取向）。菜单项支持图标、当前态（active）、危险态（danger）、禁用态，项与项之间用分隔线分组。触摸 / 移动端用 <code>lg</code>（≥44px 行高）作为菜单项。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Menu · 下拉菜单</span></div>
+          <div class="stage p col" style="align-items:flex-start">
+            <div class="p-menu">
+              <div class="p-menu-item"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M3 3h7l3 3v7H3V3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>打开文件</div>
+              <div class="p-menu-item active"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>已选中项</div>
+              <div class="p-menu-item disabled"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/></svg>不可用项</div>
+              <div class="p-menu-sep"></div>
+              <div class="p-menu-item danger"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>删除会话</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== SegmentedControl ===== -->
+        <h3 class="sub">SegmentedControl · 分段控件</h3>
+        <p>互斥的短选项组，常见于「浅色 / 深色 / 跟随系统」这类 2–4 项切换。当前项以浮起表面 + 微阴影突出。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">SegmentedControl · 分段控件</span></div>
+          <div class="stage p col">
+            <div class="p-seg">
+              <span class="p-seg-item on">浅色</span>
+              <span class="p-seg-item">深色</span>
+              <span class="p-seg-item">跟随系统</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Tabs ===== -->
+        <h3 class="sub">Tabs · 标签页</h3>
+        <p>带底部细线的标签页，用于同级内容的分组切换。当前标签以主色文字 + 主色下划线标示。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Tabs · 标签页</span></div>
+          <div class="stage p col">
+            <div class="p-tabs">
+              <span class="p-tab on">通用</span>
+              <span class="p-tab">Agent</span>
+              <span class="p-tab">高级</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Switch ===== -->
+        <h3 class="sub">Switch · 开关</h3>
+        <p>二态开关，用于即时生效的设置项。轨道 36×20、圆角全圆，滑块 16px；开启时轨道变主色、滑块右移，过渡走 token。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Switch · 开关</span></div>
+          <div class="stage p">
+            <span class="p-switch on"></span>
+            <span class="p-switch"></span>
+          </div>
+        </div>
+
+        <!-- ===== Checkbox ===== -->
+        <h3 class="sub">Checkbox · 复选框</h3>
+        <p>17×17 复选框，选中时填充主色并显示白色对勾（inline SVG）。常配合文本标签使用。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Checkbox · 复选框</span></div>
+          <div class="stage p">
+            <span class="p-check on"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="p-check"></span>
+            <label style="display:inline-flex;align-items:center;gap:8px;color:var(--p-text);font-size:var(--p-font-size-base);cursor:pointer"><span class="p-check on"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>启用自动保存</label>
+          </div>
+        </div>
+
+        <!-- ===== Avatar ===== -->
+        <h3 class="sub">Avatar · 头像 </h3>
+        <p>32px 默认头像，圆角 md；<code>.sm</code> 24px。可放首字母或图标，无图片时落回此占位。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Avatar</span></div>
+          <div class="stage p">
+            <span class="p-avatar">K</span>
+            <span class="p-avatar"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor"><circle cx="8" cy="5.5" r="2.5" stroke-width="1.5"/><path d="M3 13c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+            <span class="p-avatar sm">K</span>
+          </div>
+        </div>
+
+        <!-- ===== EmptyState ===== -->
+        <h3 class="sub">EmptyState · 空状态 </h3>
+        <p>列表 / 面板无内容时的居中占位：48px 淡色图标 + 标题 + 提示，避免空白页。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">EmptyState</span></div>
+          <div class="stage p col">
+            <div class="p-empty" style="width:100%;border:1px dashed var(--p-line);border-radius:var(--p-r-lg)">
+              <svg class="em-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v5A1.5 1.5 0 0 1 11.5 11H7l-3 2.5V11H4.5A1.5 1.5 0 0 1 3 9.5z" stroke-width="1.3" stroke-linejoin="round"/></svg>
+              <div class="em-title">暂无会话</div>
+              <div class="em-hint">点击「新建会话」开始与 Kimi 对话</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Divider ===== -->
+        <h3 class="sub">Divider · 分隔线 </h3>
+        <p>1px 水平分隔线（<code>--p-line</code>）；<code>.p-divider-v</code> 为垂直分隔，用于行内元素之间。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Divider</span></div>
+          <div class="stage p col">
+            <div style="width:100%;font-size:var(--p-font-size-sm);color:var(--p-text)">上方内容</div>
+            <hr class="p-divider">
+            <div style="width:100%;font-size:var(--p-font-size-sm);color:var(--p-text)">下方内容</div>
+            <div style="display:flex;align-items:center;gap:10px;height:24px;font-size:var(--p-font-size-sm);color:var(--p-text)">
+              <span>kimi-k2</span>
+              <span class="p-divider-v"></span>
+              <span>thinking</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Tooltip ===== -->
+        <h3 class="sub">Tooltip · 工具提示 </h3>
+        <p>CSS-only 悬停提示，包在 <code>.p-tip</code> 内。反色底（<code>--p-text</code> / <code>--p-bg</code>），单行不换行，仅承载简短说明。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Tooltip（悬停按钮）</span></div>
+          <div class="stage p">
+            <span class="p-tip">
+              <button class="p-icon-btn"><svg class="p-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M8 3v10M3 8h10" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+              <span class="p-tooltip">新建会话</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- ===== Banner ===== -->
+        <h3 class="sub">Banner · 横幅通知 </h3>
+        <p>内联通知条，置于内容区顶部。三态 <code>.info</code> / <code>.warning</code> / <code>.danger</code>，各配同色 18px 图标。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Banner</span></div>
+          <div class="stage p col">
+            <div class="p-banner info"><svg class="bn-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor"><circle cx="8" cy="8" r="6.5" stroke-width="1.5"/><path d="M8 7v4" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="5" r=".7" fill="currentColor" stroke="none"/></svg>已连接到服务器</div>
+            <div class="p-banner warning"><svg class="bn-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M8 2 14 13H2z" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="10.5" r=".7" fill="currentColor" stroke="none"/></svg>当前处于 yolo 模式，工具调用将自动执行</div>
+          </div>
+        </div>
+
+        <!-- ===== Sheet / BottomSheet ===== -->
+        <h3 class="sub">Sheet / BottomSheet · 底部面板 </h3>
+        <p>移动端底部上滑面板：顶部圆角 xl + drag handle，阴影 xl。≤640px 时弹窗改为锚定底部成 Sheet。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">BottomSheet</span></div>
+          <div class="stage p col" style="align-items:center">
+            <div class="p-sheet" style="width:100%;max-width:360px">
+              <div class="p-sheet-handle"></div>
+              <div style="font-size:var(--p-font-size-base);font-weight:700;color:var(--p-text);margin-bottom:8px">选择模型</div>
+              <div class="p-menu-item" style="padding:8px 10px">kimi-k2 · thinking</div>
+              <div class="p-menu-item" style="padding:8px 10px">kimi-k2 · instant</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Skeleton ===== -->
+        <h3 class="sub">Skeleton · 骨架屏 </h3>
+        <p>内容加载中的占位，使用呼吸式透明度动画（无渐变），遵守 <code>no-gradient-text</code> 规则。组合成标题 / 文本行 / 头像。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Skeleton</span></div>
+          <div class="stage p col">
+            <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:360px">
+              <div class="p-skeleton" style="height:16px;width:55%"></div>
+              <div class="p-skeleton" style="height:12px;width:100%"></div>
+              <div class="p-skeleton" style="height:12px;width:82%"></div>
+              <div class="p-skeleton" style="height:32px;width:32px;border-radius:var(--p-r-full)"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== Command Bar ===== -->
+        <h3 class="sub">Command Bar · 命令条 </h3>
+        <p>「主操作 + 命令文本 + 复制」的内联组合，介于按钮与代码块之间，用于安装 / 引导 / 一键执行。主操作复用 <code>Button primary</code>，命令区用 mono 浅灰底。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Command Bar · 命令条</span></div>
+          <div class="stage p col">
+            <div class="p-cmdbar" style="max-width:620px">
+              <button class="p-btn primary">安装 Kimi Code ▾</button>
+              <span class="p-cmd"><span class="cmd-text">curl -fsSL https://code.kimi.com/install.sh | bash</span><button class="cmd-copy"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 5.5V3.6A1.1 1.1 0 0 0 9.4 2.5H3.6A1.1 1.1 0 0 0 2.5 3.6v5.8a1.1 1.1 0 0 0 1.1 1.1h1.9" stroke="currentColor" stroke-width="1.4"/></svg></button></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== TopBar ===== -->
+        <h3 class="sub">TopBar · 顶部栏 </h3>
+        <p>应用顶部条。默认实色；<code>.frost</code> 变体为半透 + 背景模糊，<b>仅用于吸顶导航栏</b>，是 <code>no-glassmorphism</code> 规则的唯一例外（见 §06）。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">TopBar · 实色 / 毛玻璃</span></div>
+          <div class="stage p col" style="gap:14px;background:radial-gradient(circle at 18% 30%,rgba(23,131,255,.16),transparent 42%),radial-gradient(circle at 82% 75%,rgba(20,23,28,.10),transparent 46%),var(--p-surface-sunken)">
+            <div class="p-topbar" style="width:100%;max-width:580px">
+              <span class="tb-title">实色 TopBar</span>
+              <span class="tb-actions"><button class="p-icon-btn sm"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></span>
+            </div>
+            <div class="p-topbar frost" style="width:100%;max-width:580px">
+              <span class="tb-title">毛玻璃 TopBar · .frost</span>
+              <span class="tb-actions"><button class="p-icon-btn sm"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></span>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="sub">SectionLabel · 分组标题 </h3>
+        <p>侧栏列表的分组小标题，用于为下方内容分区（如侧栏的 <code>Workspaces</code>）。规范：13px / 700 / 大写 / 字距 <code>.08em</code>，色取 <code>--color-fg-faint</code>；左对齐到行的起始内边距（<code>--sb-pad-x</code>），与下方分组行保持同一缩进。中文等无大小写文字下 <code>text-transform:uppercase</code> 自动失效，无需特殊处理。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Sidebar · 分组标题</span></div>
+          <div class="stage p col" style="gap:0;background:var(--p-surface);padding:0;max-width:300px;align-items:stretch">
+            <div class="p-section-label" style="padding:12px 16px 4px">Workspaces</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;margin:1px 6px;border-radius:8px;color:var(--p-text);font-size:13px">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="color:var(--d-fg-faint);flex:none"><path d="M1.5 4V3A1.5 1.5 0 0 1 3 1.5h3l1.2 1.6H13A1.5 1.5 0 0 1 14.5 4.6v6.9A1.5 1.5 0 0 1 13 13H3a1.5 1.5 0 0 1-1.5-1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+              kimi-code-web
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;margin:1px 6px;border-radius:8px;color:var(--p-text);font-size:13px">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="color:var(--d-fg-faint);flex:none"><path d="M1.5 4V3A1.5 1.5 0 0 1 3 1.5h3l1.2 1.6H13A1.5 1.5 0 0 1 14.5 4.6v6.9A1.5 1.5 0 0 1 13 13H3a1.5 1.5 0 0 1-1.5-1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+              playground
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 04 聊天界面 ===== -->
+      <section id="chat">
+        <div class="sec-head">
+          <span class="sec-num">04</span>
+          <h2 class="sec-title">聊天界面重构</h2>
+        </div>
+        <p class="sec-desc">
+          消息流是 Kimi Web 的核心。改造目标：让 6 类卡片（Agent / Tool / Question / Approval / Swarm / Todo）
+          <b>共享同一套卡片骨架</b>，仅靠头部图标与语义色区分类型；Composer 收敛为单一圆润容器。
+        </p>
+
+        <h3 class="sub">统一后的消息流</h3>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Conversation · 760px 阅读栏 </span></div>
+          <div class="stage p col" style="align-items:center;background:#fff">
+            <div class="demo-chat">
+
+              <!-- user -->
+              <div class="p-bubble-user">帮我把登录接口改成 JWT，并补上对应的单元测试。</div>
+
+              <!-- thinking -->
+              <span class="p-thinking"><span style="font-size:15px;line-height:1">🌔</span>正在分析认证模块…</span>
+
+              <!-- compact tool group：多次工具调用收成一叠，默认低权重 -->
+              <div class="p-tool-group open">
+                <div class="p-tool-group-head">
+                  <span class="p-dot done"></span>
+                  <svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                  <span class="tg-title">3 个工具调用</span>
+                  <span class="tg-meta">· 已完成 · 0.8s</span>
+                  <svg class="tg-car" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <!-- row 1 · 已展开（按需披露细节） -->
+                <div class="p-tool-row expanded">
+                  <span class="p-dot done"></span>
+                  <svg class="tr-ic" viewBox="0 0 16 16" fill="none"><path d="M3 3h7l3 3v7H3V3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 3v3h3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                  <span class="tr-name">read_file</span>
+                  <span class="tr-arg">src/auth/session.ts</span>
+                  <span class="tr-time">0.2s</span>
+                  <svg class="tr-car" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div class="p-tool-detail">
+                  <div class="p-code">12  export function verify(token: string) {<br/>13    return jwt.verify(token, getSecret());<br/>14  }</div>
+                </div>
+                <!-- row 2 · 折叠 -->
+                <div class="p-tool-row">
+                  <span class="p-dot done"></span>
+                  <svg class="tr-ic" viewBox="0 0 16 16" fill="none"><path d="M3 3h7l3 3v7H3V3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 3v3h3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                  <span class="tr-name">read_file</span>
+                  <span class="tr-arg">src/auth/middleware.ts</span>
+                  <span class="tr-time">0.2s</span>
+                  <svg class="tr-car" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <!-- row 3 · 折叠 -->
+                <div class="p-tool-row">
+                  <span class="p-dot done"></span>
+                  <svg class="tr-ic" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                  <span class="tr-name">grep</span>
+                  <span class="tr-arg">"jwt.verify" · 4 处匹配</span>
+                  <span class="tr-time">0.1s</span>
+                  <svg class="tr-car" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+              </div>
+
+              <!-- assistant prose（结论） -->
+              <div class="p-msg">
+                <p>我看了一下 <code>src/auth</code> 的结构，当前是基于 session cookie 的实现。改动范围如下，你确认后我开始动手。</p>
+              </div>
+
+              <!-- question（需要用户决策 → 保留完整卡片） -->
+              <div class="p-action">
+                <div class="p-action-head">
+                  <svg class="p-ic" viewBox="0 0 16 16" fill="none" style="color:var(--p-accent)"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4"/><path d="M6.2 6a1.8 1.8 0 0 1 3.5.6c0 1.2-1.7 1.4-1.7 2.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.5" r=".7" fill="currentColor"/></svg>
+                  <span class="p-action-title">需要你确认一个决定</span>
+                </div>
+                <div class="p-action-body">JWT 的过期时间希望设多长？默认 7 天，刷新令牌 30 天。</div>
+                <div class="p-action-foot">
+                  <button class="p-btn secondary sm">自定义</button>
+                  <button class="p-btn primary sm">使用默认</button>
+                </div>
+              </div>
+
+              <!-- approval (warning) -->
+              <div class="p-action warn">
+                <div class="p-action-head">
+                  <svg class="p-ic" viewBox="0 0 16 16" fill="none" style="color:var(--p-warning)"><path d="M8 2 14 13H2L8 2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="11" r=".6" fill="currentColor"/></svg>
+                  <span class="p-action-title">需要写入权限</span>
+                  <span class="p-badge warning sm" style="margin-left:auto">write_file</span>
+                </div>
+                <div class="p-action-body">即将修改 <code>src/auth/middleware.ts</code>，共 42 行变更。是否允许？</div>
+                <div class="p-action-foot">
+                  <button class="p-btn secondary sm">拒绝</button>
+                  <button class="p-btn primary sm">允许本次</button>
+                  <button class="p-btn ghost sm">始终允许</button>
+                </div>
+              </div>
+
+              <!-- todo -->
+              <div class="p-todo">
+                <div class="p-todo-row done"><span class="p-todo-check">✓</span>替换 session 为 JWT 签发</div>
+                <div class="p-todo-row active"><span class="p-todo-check">●</span>改造认证中间件</div>
+                <div class="p-todo-row"><span class="p-todo-check">○</span>补充单元测试</div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <h3 class="sub">工具调用：默认紧凑、分组、按需展开</h3>
+        <p><code>read_file</code> / <code>bash</code> / <code>grep</code> 这类高频调用是「操作噪音」——若每条都占一张大卡，并行触发时会迅速淹没对话。
+        新策略按<b>视觉权重</b>分三档，把工具调用压到最轻：</p>
+
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">视觉权重三档</span></div>
+          <div class="stage p col">
+            <span class="stage-label">① 工具行 · 最轻（默认）</span>
+            <div class="p-tool-row" style="border:1px solid var(--p-line);border-radius:8px">
+              <span class="p-dot done"></span>
+              <svg class="tr-ic" viewBox="0 0 16 16" fill="none"><path d="M3 3h7l3 3v7H3V3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 3v3h3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+              <span class="tr-name">read_file</span>
+              <span class="tr-arg">src/auth/session.ts</span>
+              <span class="tr-time">0.2s</span>
+            </div>
+            <span class="stage-label">② 工具组 · 中（连续 / 并行自动归并，折叠只占一行）</span>
+            <div class="p-tool-group">
+              <div class="p-tool-group-head">
+                <span class="p-dot done"></span>
+                <svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <span class="tg-title">3 个工具调用</span>
+                <span class="tg-meta">· 已完成 · 0.8s</span>
+                <svg class="tg-car" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+            </div>
+            <span class="stage-label">③ 决策卡 · 重（仅 question / approval，需用户介入）</span>
+            <div class="p-action warn">
+              <div class="p-action-head"><span class="p-action-title">需要写入权限</span><span class="p-badge warning sm" style="margin-left:auto">write_file</span></div>
+              <div class="p-action-body" style="padding:10px 14px;font-size:13px">即将修改 <code>src/auth/middleware.ts</code>，共 42 行变更。</div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="clean check">
+          <li>工具调用<b>默认渲染为紧凑行</b>（30px 单行 mono + 状态点 + 关键参数），不再有头 / 身 / 阴影。</li>
+          <li>连续或并行的调用<b>自动归为一个工具组</b>，折叠时整组只占一行（<code>N 个工具调用 · 状态</code>）。</li>
+          <li>点击行<b>就地展开</b>细节（代码 / 输出），再点收起——细节默认不抢视觉。</li>
+          <li>状态用<b>颜色点</b>表达：运行中（脉冲蓝）/ 完成（绿）/ 失败（红），不占额外空间。</li>
+          <li><b>仅两类保留完整卡片</b>：<code>Question</code>（需回答）、<code>Approval</code>（需授权）——它们才真正需要用户注意力。</li>
+        </ul>
+
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Tool Call · 紧凑行（按需展开）</span></div>
+          <div class="stage p">
+            <div class="p-tool-group open">
+              <div class="p-tool-group-head"><span class="p-dot done"></span><span class="tg-title">3 个工具调用</span><span class="tg-meta">· 已完成</span></div>
+              <div class="p-tool-row expanded"><span class="p-dot done"></span><span class="tr-name">read_file</span><span class="tr-arg">session.ts</span></div>
+              <div class="p-tool-detail"><div class="p-code" style="font-size:11px;padding:7px 9px;margin-top:8px">12  export function verify(…</div></div>
+              <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">read_file</span><span class="tr-arg">middleware.ts</span></div>
+              <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">grep</span><span class="tr-arg">"jwt" · 4 处</span></div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="sub">Composer · 输入框</h3>
+        <p>统一为单一圆润容器：<code>--radius-xl</code>，聚焦时整体描边变蓝 + 软焦点环。工具条控件全部用 Pill / IconButton 基元，发送按钮 32px 圆形。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Composer </span></div>
+          <div class="stage p col" style="align-items:center;background:#fff">
+            <div class="p-composer" style="width:100%;max-width:620px">
+              <div class="p-composer-ta ph">给 Kimi 发消息，/ 调用命令，@ 引用文件…</div>
+              <div class="p-composer-bar">
+                <div class="p-composer-left">
+                  <button class="p-icon-btn"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+                  <span class="p-pill"><span style="width:7px;height:7px;border-radius:50%;background:var(--p-warning)"></span>yolo</span>
+                  <span class="p-pill"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h8M2 12h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>plan</span>
+                </div>
+                <div class="p-composer-right">
+                  <span class="p-pill"><span class="pp-strong">kimi-k2</span><span class="pp-sub">· thinking</span><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <button class="p-send"><svg class="p-ic" viewBox="0 0 16 16" fill="none"><path d="M8 13V3m0 0L4.5 6.5M8 3l3.5 3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="callout info"><span class="ico">i</span><div>
+          <b>全站统一</b>：composer 只有一种圆角（<code>--radius-xl</code> · 16px）与一种高度，工具条控件全部用 Pill / IconButton 基元，发送按钮 32px 圆形——不再随主题漂移。
+        </div></div>
+
+        <h3 class="sub">响应式 Responsive </h3>
+        <p>断点见 §02 <code>--p-bp-sm</code>。此处仅给出聊天界面的移动端适配指针，完整移动端 mockup 不在本规范范围。</p>
+        <div class="callout info"><span class="ico">i</span><div>
+          ≤640px 时：弹窗锚定底部成 Sheet（顶部圆角 xl、顶部 drag handle），侧栏折叠为可展开抽屉，Composer 工具条允许换行，聊天阅读栏去除 max-width 占满。
+        </div></div>
+      </section>
+
+      <!-- ===== 05 主题系统 ===== -->
+      <section id="themes">
+        <div class="sec-head">
+          <span class="sec-num">05</span>
+          <h2 class="sec-title">主题系统</h2>
+        </div>
+        <p class="sec-desc">
+          Kimi Web 使用<b>一套统一主题</b>：同一套组件、字体、圆角、阴影与表面，「换肤」只换颜色。
+          颜色收敛为 <b>4 个种子 token</b>——两个主题色 + 一个亮面 + 一个暗面；中性色与强调色由它们派生，
+          语义状态色（success / warning / danger）作为独立调色板与种子配套，亮 / 暗各一套。
+        </p>
+
+        <h3 class="sub">颜色种子 Color seeds</h3>
+        <p>日常定制只需调整这 4 个种子，整站的中性色与强调色随之变化：</p>
+        <div class="panel panel-pad" style="margin:16px 0">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+            <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#1783ff;margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">主题色 · 主</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--accent-primary</div></div>
+            <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#6b7280;margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">主题色 · 辅</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--accent-secondary</div></div>
+            <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#ffffff;border:1px solid var(--d-line);margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">亮面</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--surface-light</div></div>
+            <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#0d1117;margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">暗面</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--surface-dark</div></div>
+          </div>
+        </div>
+
+        <h3 class="sub">色系切换 Accent families</h3>
+        <p>一套主题之内，<b>主题色（accent）可在多套色系间切换</b>。当前提供两套并列色系：<b>蓝色系</b>（默认，品牌蓝，承载语义强调）与<b>黑色系</b>（中性黑，承载克制的最强操作）。两套共用同一套组件、字体、圆角与表面——切换色系只换 accent 一组 token，结构零变化；后续可继续扩展（绿 / 紫等）。下面两卡是同一个 <code>primary</code> 按钮在两种色系下的呈现。</p>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">色系切换 · 同一 primary，不同主题色</span></div>
+          <div class="stage p col">
+            <div class="demo-row" style="align-items:stretch">
+              <div class="demo-col" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:12px">
+                <span class="stage-label">蓝色系 · 默认</span>
+                <div class="demo-row"><button class="p-btn primary sm">主要操作</button><span class="p-badge info sm"><span class="bd"></span>accent</span></div>
+                <span class="mono" style="font-size:11px;color:var(--p-text-muted)">--accent #1783ff · soft #e8f3ff</span>
+              </div>
+              <div class="demo-col demo-family-black" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:12px">
+                <span class="stage-label">黑色系 · 中性</span>
+                <div class="demo-row"><button class="p-btn primary sm">主要操作</button><span class="p-badge info sm"><span class="bd"></span>accent</span></div>
+                <span class="mono" style="font-size:11px;color:var(--p-text-muted)">--accent #14171c · soft #f1f2f4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="sub">主题控制台 · 改 4 个色，亮/暗一起变</h3>
+        <div class="stage-wrap">
+          <div class="stage-bar"><span class="st">Theme Console</span></div>
+          <div class="stage p col" style="gap:18px">
+            <div class="demo-row" style="justify-content:center;gap:10px;flex-wrap:wrap">
+              <span class="p-badge info"><span style="width:10px;height:10px;border-radius:3px;background:#1783ff"></span>主色 #1783ff</span>
+              <span class="p-badge neutral"><span style="width:10px;height:10px;border-radius:3px;background:#6b7280"></span>辅色 #6b7280</span>
+              <span class="p-badge neutral"><span style="width:10px;height:10px;border-radius:3px;background:#ffffff;border:1px solid var(--p-line)"></span>亮面 #ffffff</span>
+              <span class="p-badge neutral"><span style="width:10px;height:10px;border-radius:3px;background:#0d1117"></span>暗面 #0d1117</span>
+            </div>
+            <div class="demo-row" style="align-items:stretch">
+              <div class="demo-col" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:10px">
+                <span class="stage-label">亮面预览</span>
+                <button class="p-btn primary sm" style="align-self:flex-start">主要操作</button>
+                <span style="font-size:12px;color:var(--p-text-muted)">白底 + 主色按钮 + 中性文字</span>
+              </div>
+              <div class="demo-col" data-p="dark" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:10px">
+                <span class="stage-label" style="color:#9aa0a8">暗面预览</span>
+                <button class="p-btn primary sm" style="align-self:flex-start">主要操作</button>
+                <span style="font-size:12px;color:var(--p-text-muted)">深底 + 同一主色 + 派生文字</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="sub">亮 / 暗模式</h3>
+        <p>由 <code>--surface-light</code> / <code>--surface-dark</code> 两个表面驱动：当前用哪个表面，就派生出对应的前景、描边、阴影与状态色。亮 / 暗切换只是在这两组派生 token 之间切换，结构零变化。</p>
+
+        <div class="callout good"><span class="ico">✓</span><div>
+          <b>一套主题的收益</b>：组件、字体、圆角、表面全站一致；换肤只改 4 个颜色种子；亮 / 暗模式开箱即用；语义状态色独立可调。
+        </div></div>
+      </section>
+
+
+      <!-- ===== 06 样式规则 ===== -->
+      <section id="rules">
+        <div class="sec-head">
+          <span class="sec-num">06</span>
+          <h2 class="sec-title">样式规则</h2>
+        </div>
+        <p class="sec-desc">
+          所有 UI 代码必须遵守的反模式规则。这些规则也是 check-style 检测脚本的依据，逐条对应一条告警。
+        </p>
+
+        <table class="dt">
+          <thead><tr><th>规则 ID</th><th>检测内容</th><th>处置</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">no-gradient-text</td><td>渐变文字 / 渐变背景</td><td><span class="pill red">禁止</span></td></tr>
+            <tr><td class="tk">no-glassmorphism</td><td><code>backdrop-filter: blur</code>（<b>TopBar 吸顶导航栏</b> 为唯一例外）</td><td><span class="pill amber">TopBar 除外</span></td></tr>
+            <tr><td class="tk">no-color-glow</td><td>彩色 / 大半径 box-shadow 发光</td><td><span class="pill red">禁止</span></td></tr>
+            <tr><td class="tk">no-emoji-icon</td><td>用 emoji 充当功能性图标（<b>月相 🌑…🌘 为唯一豁免</b>，且仅限「等待 Agent 响应」的聊天态；其余加载态用普通 Spinner）</td><td><span class="pill amber">月相除外</span></td></tr>
+            <tr><td class="tk">no-hardcoded-hex</td><td>组件 <code>&lt;style&gt;</code> 内出现未登记十六进制色</td><td><span class="pill amber">警告</span></td></tr>
+            <tr><td class="tk">no-hardcoded-font</td><td>组件内硬编码 <code>font-family</code>（如 <code>'Inter'</code>）而非 <code>var(--font-ui)</code></td><td><span class="pill amber">警告</span></td></tr>
+            <tr><td class="tk">radius-from-scale</td><td>圆角值不在 <code>{4,6,8,12,16,20,999}</code> 内</td><td><span class="pill amber">警告</span></td></tr>
+            <tr><td class="tk">z-from-scale</td><td>z-index 使用未登记的大数字</td><td><span class="pill amber">警告</span></td></tr>
+            <tr><td class="tk">weight-from-scale</td><td>font-weight 不在 <code>{400,500}</code> 内</td><td><span class="pill amber">警告</span></td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="sub">状态矩阵 State matrix </h3>
+        <p>每个可交互基元都应在适用处定义以下状态，缺失即按样式规则告警。<code>focus-visible</code> 一律走 <code>--p-focus-ring</code>，<code>disabled</code> 统一 <code>opacity:.5</code>。</p>
+        <table class="dt">
+          <thead><tr><th>状态 State</th><th>Button</th><th>Input</th><th>Card</th><th>Menu item</th><th>Switch</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">default</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            <tr><td class="tk">hover</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>—</td></tr>
+            <tr><td class="tk">active / pressed</td><td>✓</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+            <tr><td class="tk">focus-visible</td><td>✓</td><td>✓</td><td>—</td><td>—</td><td>✓</td></tr>
+            <tr><td class="tk">disabled</td><td>✓</td><td>✓</td><td>—</td><td>✓</td><td>—</td></tr>
+            <tr><td class="tk">loading</td><td>✓</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+            <tr><td class="tk">selected / active</td><td>—</td><td>—</td><td>—</td><td>✓</td><td>✓</td></tr>
+            <tr><td class="tk">error</td><td>—</td><td>✓</td><td>—</td><td>—</td><td>—</td></tr>
+            <tr><td class="tk">readonly</td><td>—</td><td>✓</td><td>—</td><td>—</td><td>—</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="sub">月相豁免</h3>
+        <div class="callout good"><span class="ico">✓</span><div>
+          「🌑…🌘」月相 emoji 是 Kimi Web 的品牌特色，<b>仅用于「发出消息后、等待 Agent 首条响应」的聊天态</b>，统一由 <code>MoonSpinner</code> 组件渲染；<code>ActivityNotice</code> 等等待态复用它，不再各自实现月相。
+          它是 <code>no-emoji-icon</code> 规则的唯一例外；其余所有加载态一律用普通 <code>Spinner</code>。
+        </div></div>
+
+        <h3 class="sub">毛玻璃豁免</h3>
+        <div class="callout good"><span class="ico">✓</span><div>
+          <code>backdrop-filter: blur</code> 全站禁用，<b>唯一例外是 <code>TopBar</code> 的 <code>.frost</code> 变体</b>——且仅限「吸顶导航栏」这一处，用于在滚动内容上方保持可读。其余任何组件（卡片、弹窗、Toast、面板）一律不得使用毛玻璃，违者按 <code>no-glassmorphism</code> 告警。
+        </div></div>
+
+        <div class="footer">
+          <span>Kimi Web 设计系统 · v1.0</span>
+          <span>改 web UI 时以此为准</span>
+        </div>
+      </section>
+
+      <!-- ===== 07 应用壳与侧栏 ===== -->
+      <section id="shell">
+        <div class="sec-head">
+          <span class="sec-num">07</span>
+          <h2 class="sec-title">应用壳与侧栏 App Shell &amp; Sidebar</h2>
+        </div>
+        <p class="sec-desc">
+          应用壳（三栏网格 + 右侧预览面板）与左侧会话侧栏的结构规范。这些是与具体业务无关的「骨架」，
+          组件、字体、圆角、表面都复用 §02 / §03，但布局与对齐有自己的一套约定。
+        </p>
+
+        <h3 class="sub">布局网格 Layout grid</h3>
+        <p>桌面端是一行 5 轨网格，侧栏与右侧面板各占一条永久轨道，中间是会话栏；两条 0 宽轨道给 ResizeHandle 用。</p>
+        <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">App.vue · .app</span></div><pre>grid-template-columns: var(--side-w) 0 minmax(0, 1fr) 0 auto;
+/*           侧栏 ↑        ↑handle  ↑会话栏        ↑handle ↑右面板(auto) */</pre></div>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--side-w</td><td class="val">248px（可调）</td><td>左侧会话栏宽度，ResizeHandle 拖动改变；应趋近 §02 的 <code>--p-sidebar-w</code>（264px）</td></tr>
+            <tr><td class="tk">--preview-w</td><td class="val">460px</td><td>右侧预览面板打开时的宽度</td></tr>
+            <tr><td class="tk">--panel-head-h</td><td class="val">48px</td><td>所有右侧面板头 + 会话栏头部统一高度，使 hairline 连成一线</td></tr>
+            <tr><td class="tk">--p-bp-sm</td><td class="val">640px</td><td>≤640 切为移动端单列（顶栏 + 会话栏），无侧栏/手柄/右面板</td></tr>
+          </tbody>
+        </table>
+        <ul class="clean">
+          <li>右侧面板轨道永久存在，宽度在 <code>0 ↔ var(--preview-w)</code> 间过渡（打开时挤压会话栏，而非切换模板）。</li>
+          <li>侧栏折叠时，轨道 1 变成一条细「rail」，只放一个展开 IconButton，避免压住会话栏头部。</li>
+          <li>所有网格子项须 <code>min-height:0; min-width:0</code>，确保只有内部滚动容器滚动，整页不跟着滚。</li>
+        </ul>
+
+        <h3 class="sub">侧栏对齐系统 Sidebar alignment（<code>--sb-*</code>）</h3>
+        <p>侧栏所有行（分组头、会话行、New chat 按钮）共用 3 个自定义属性，让「会话标题」精确对齐到「工作区名称」下方。</p>
+        <table class="dt">
+          <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">--sb-pad-x</td><td class="val">16px</td><td>行的水平内边距</td></tr>
+            <tr><td class="tk">--sb-gutter</td><td class="val">20px</td><td>行首图标槽宽（14px 图标 + 6px 留白）</td></tr>
+            <tr><td class="tk">--sb-gap</td><td class="val">6px</td><td>图标槽与文字之间的 gap</td></tr>
+          </tbody>
+        </table>
+        <div class="callout info"><span class="ico">i</span><div>
+          会话标题的起始 x = <code>--sb-pad-x + --sb-gutter + --sb-gap</code>。分组头有文件夹图标，会话行有状态槽，二者图标同宽、同位，所以标题天然对齐。
+        </div></div>
+
+        <h3 class="sub">侧栏结构 Sidebar structure</h3>
+        <p>侧栏自上而下：品牌头 → 搜索 → New chat → 分组列表（工作区头 + 会话行）。控件尽量复用 §03 基元。</p>
+        <table class="dt">
+          <thead><tr><th>区块</th><th>用什么</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>品牌头 brand header</td><td>logo + 名称 + IconButton</td><td>折叠 / 设置用 IconButton sm；logo 带动画（眼睛眨动）</td></tr>
+            <tr><td>搜索 search</td><td>裸搜索行（custom）</td><td>无边框、hover/focus 出 sunken 底；图标 + input + 清除 IconButton。<b>不用</b> Input（38px 带边框太重）</td></tr>
+            <tr><td>New chat</td><td>全宽左对齐按钮（custom）</td><td>与同列表会话行同节奏（左对齐、hover sunken）。<b>不用</b> Button（居中，破坏节奏）</td></tr>
+            <tr><td>分组标题 section label</td><td><code>.p-section-label</code></td><td>「Workspaces」这类大写 muted 小标题</td></tr>
+            <tr><td>工作区头 / 会话行</td><td>见下两节</td><td>共享 <code>--sb-*</code> 对齐</td></tr>
+          </tbody>
+        </table>
+        <div class="callout warn"><span class="ico">!</span><div>
+          <b>为什么 New chat / 搜索 / 行间改名不用 Button / Input：</b>它们是「列表式」控件（全宽、左对齐、紧凑、无边框），而 Button 居中、Input 是 38px 带边框——强行套用会破坏侧栏的视觉密度与对齐。这是有意保留的定制，不是遗漏。
+        </div></div>
+
+        <h3 class="sub">会话行 Session row</h3>
+        <p>会话行是一个 inset 圆角 pill，结构：<code>状态槽 → 标题 → 时间 → 注意力 Badge → kebab</code>。</p>
+        <table class="dt">
+          <thead><tr><th>部位</th><th>规则</th></tr></thead>
+          <tbody>
+            <tr><td>容器</td><td><code>margin: 1px 6px; padding: 7px 10px; radius-md</code>；hover = <code>surface-sunken</code>；active = <code>accent-soft</code> + <code>inset 0 0 0 1px accent-bd</code></td></tr>
+            <tr><td>状态槽 lead</td><td>固定 <code>--sb-gutter</code> 宽；运行中 = <code>Spinner</code> sm，否则未读 = 7px accent 圆点</td></tr>
+            <tr><td>标题 title</td><td>flex:1 截断；双击进入行间改名（紧凑 input，不用 Input）</td></tr>
+            <tr><td>时间 time</td><td>mono xs、<code>fg-faint</code>；hover 时让位给 kebab</td></tr>
+            <tr><td>注意力 Badge</td><td><code>Badge</code> sm：info（待回答）/ warning（待审批）/ danger（已中止）</td></tr>
+            <tr><td>kebab</td><td><code>IconButton</code> sm，hover 才显示；下拉用 <code>Menu/MenuItem</code></td></tr>
+            <tr><td>归档确认</td><td>替换标题区，<code>Button</code> sm（danger 确认 / secondary 取消）</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="sub">工作区分组 Workspace group</h3>
+        <p>分组头与会话行共用 <code>--sb-*</code>：文件夹图标（开/合）→ 名称 → 路径副标题，hover 露出 kebab 与「+」。</p>
+        <ul class="clean">
+          <li>文件夹图标放在 <code>--sb-gutter</code> 槽里，开合态切换图标。</li>
+          <li>名称下方一行 <code>fg-muted</code> 的小字路径。</li>
+          <li>kebab（菜单）与「+」（在该工作区新建）都用 <code>IconButton</code> sm，hover 才显示。</li>
+          <li>分组可折叠；折叠时隐藏其会话列表。</li>
+        </ul>
+
+        <h3 class="sub">拖拽手柄 ResizeHandle</h3>
+        <p>一条 4px 的竖向拖拽条，叠在 1px 列边框上（<code>margin: 0 -2px</code> 让 4px 整条可抓），hover / 拖拽时变 accent。</p>
+        <table class="dt">
+          <thead><tr><th>规则</th><th>值</th></tr></thead>
+          <tbody>
+            <tr><td>宽度 / 光标</td><td>4px / <code>col-resize</code></td></tr>
+            <tr><td>常态 / 激活</td><td>透明 / <code>accent</code> 填充</td></tr>
+            <tr><td>层级</td><td><code>--z-sticky</code>，盖在列边框上</td></tr>
+            <tr><td>行为</td><td>拖拽时面板宽度 1:1 跟随指针（父级关掉过渡避免 lag）；松开后持久化到 localStorage</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="sub">右侧面板 Right panel</h3>
+        <p>右侧面板（文件预览 / Diff / 思考 / 子 Agent / 侧聊）共用同一条轨道与同一个头部基元。</p>
+        <ul class="clean">
+          <li>面板头用 <code>PanelHeader</code> 基元（48px = <code>--panel-head-h</code>），与会话栏头部等高，hairline 连成一线。</li>
+          <li>面板头：粗体 mono 标题 + 可选 muted 副标题 + 中间 slot（Badge / 控件 / 路径）+ 右侧关闭 IconButton。</li>
+          <li>打开时面板宽度从 <code>0 → var(--preview-w)</code>，会话栏被平滑挤压。</li>
+          <li>≤640px 时面板变为全屏覆盖（<code>position:fixed; inset:0</code>）。</li>
+        </ul>
+
+        <div class="callout info"><span class="ico">i</span><div>
+          <b>一句话原则：</b>侧栏 / 壳是「列表 + 网格」骨架，复用 §02 token 与 §03 基元（Button / IconButton / Badge / Menu / Spinner / PanelHeader）；凡是不 fit 基元的紧凑列表控件（search、New chat、行间改名、show-more）保留定制，并以本节为规范。
+        </div></div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  // 滚动时高亮当前章节对应的侧边导航
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('#nav a[href^="#"]'));
+    var map = new Map();
+    links.forEach(function (a) {
+      var id = a.getAttribute('href').slice(1);
+      var el = document.getElementById(id);
+      if (el) map.set(el, a);
+    });
+    var current = null;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          if (current) current.classList.remove('active');
+          current = map.get(e.target);
+          if (current) current.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px', threshold: 0 });
+    map.forEach(function (_a, el) { io.observe(el); });
+    if (links.length) links[0].classList.add('active');
+  })();
+</script>
+</body>
+</html>
