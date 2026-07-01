@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ConversationToc.vue -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn } from '../../types';
 
@@ -48,23 +48,6 @@ function measure(): void {
   fits.value = parentRight - navLeft >= EXPANDED_WIDTH;
 }
 
-onMounted(() => {
-  const parent = navRef.value?.offsetParent as HTMLElement | null;
-  if (!parent) return;
-  if (typeof ResizeObserver !== 'undefined') {
-    observer = new ResizeObserver(measure);
-    observer.observe(parent);
-  }
-  // Run once synchronously so the very first paint is already correct, instead
-  // of flashing a clipped panel before the observer fires.
-  measure();
-});
-
-onBeforeUnmount(() => {
-  observer?.disconnect();
-  observer = null;
-});
-
 // The outline is only useful once there is something to navigate, and it never
 // shows on mobile or while the session is still loading. `fits` is kept out of
 // this computed so the nav stays mounted (and measurable) even when hidden;
@@ -72,6 +55,36 @@ onBeforeUnmount(() => {
 const visible = computed(
   () => !props.mobile && !props.sessionLoading && props.items.length > 1,
 );
+
+// The nav is rendered only while `visible` (v-if), so a mount while navRef is
+// still null (during sessionLoading, on mobile, or before a second user turn)
+// would skip the ResizeObserver setup and leave `fits` at its default `true`.
+// Re-initialize whenever the nav is actually rendered so `fits` is measured
+// against the real layout instead.
+watch(
+  visible,
+  (isVisible) => {
+    observer?.disconnect();
+    observer = null;
+    if (!isVisible) return;
+    void nextTick(() => {
+      const nav = navRef.value;
+      const parent = nav?.offsetParent as HTMLElement | null;
+      if (!nav || !parent) return;
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(measure);
+        observer.observe(parent);
+      }
+      measure();
+    });
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  observer = null;
+});
 </script>
 
 <template>
