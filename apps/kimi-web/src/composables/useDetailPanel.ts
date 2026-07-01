@@ -136,7 +136,12 @@ export function useDetailPanel({
     const tasks = client.activeAppTasks.value;
     const task =
       tasks.find((tk) => tk.id === target) ?? tasks.find((tk) => tk.parentToolCallId === target);
-    return task?.id;
+    if (task) return task.id;
+    // Same fallback as resolveAgentTaskId: a synthesized subagent task (missed
+    // spawn) has no parentToolCallId; if exactly one exists, open it.
+    const unmapped = tasks.filter((tk) => tk.kind === 'subagent' && !tk.parentToolCallId);
+    if (unmapped.length === 1) return unmapped[0]!.id;
+    return undefined;
   }
 
   const agentPanelMember = computed<AgentMember | null>(() => {
