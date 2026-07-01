@@ -49,7 +49,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "pnpm -C ../kimi-web run build && tsdown && node scripts/copy-web-assets.mjs",
+    "build": "pnpm -C ../kimi-web run build && tsdown && node scripts/copy-native-assets.mjs && node scripts/copy-web-assets.mjs",
     "prebuild": "node scripts/build-vis-asset.mjs",
     "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",

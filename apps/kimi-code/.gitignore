@@ -6,3 +6,6 @@ agents/
 # next to it keeps `#/generated/vis-web-asset` type-resolvable on a fresh
 # clone (before any build has produced the `.ts`).
 src/generated/vis-web-asset.ts
+
+# Copied from packages/pi-tui/native at build time by scripts/copy-native-assets.mjs
+native/
