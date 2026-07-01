@@ -109,6 +109,8 @@ interface ManagedTask {
  */
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+const DEFAULT_MAX_RETAINED_TERMINAL_TASKS = 100;
+const DEFAULT_MAX_RETAINED_NOTIFICATION_KEYS = DEFAULT_MAX_RETAINED_TERMINAL_TASKS * 4;
 
 const SIGTERM_GRACE_MS = 5_000;
 const USER_INTERRUPT_REASON = 'Interrupted by user';
@@ -679,6 +681,7 @@ export class BackgroundManager {
     if (this.deliveredNotificationKeys.has(key)) return;
 
     this.scheduledNotificationKeys.add(key);
+    this.trimSet(this.scheduledNotificationKeys, DEFAULT_MAX_RETAINED_NOTIFICATION_KEYS);
     let output = await this.getOutputSnapshot(info.taskId, 0);
     if (!output.fullOutputAvailable) {
       output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
@@ -722,6 +725,7 @@ export class BackgroundManager {
 
   markDeliveredNotification(origin: BackgroundTaskOrigin): void {
     this.deliveredNotificationKeys.add(notificationKey(origin));
+    this.trimSet(this.deliveredNotificationKeys, DEFAULT_MAX_RETAINED_NOTIFICATION_KEYS);
   }
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {
@@ -859,6 +863,46 @@ export class BackgroundManager {
     this.fireTerminalEffects(entry);
     entry.foregroundRelease?.resolve('terminal');
     entry.terminal.resolve();
+    this.evictOldTerminalTasks();
+  }
+
+  private evictOldTerminalTasks(): void {
+    let terminalCount = 0;
+    for (const entry of this.tasks.values()) {
+      if (TERMINAL_STATUSES.has(entry.status)) terminalCount += 1;
+    }
+
+    for (const [taskId, entry] of this.tasks) {
+      if (terminalCount <= DEFAULT_MAX_RETAINED_TERMINAL_TASKS) break;
+      if (!TERMINAL_STATUSES.has(entry.status)) continue;
+      this.evictTerminalTask(taskId, entry);
+      terminalCount -= 1;
+    }
+  }
+
+  private evictTerminalTask(taskId: string, entry: ManagedTask): void {
+    entry.outputChunks.length = 0;
+    entry.pendingOutput = [];
+    entry.pendingOutputBytes = 0;
+    this.deleteNotificationKeysForTask(taskId);
+    this.tasks.delete(taskId);
+  }
+
+  private deleteNotificationKeysForTask(taskId: string): void {
+    const prefix = `${taskId}\0`;
+    for (const key of this.scheduledNotificationKeys) {
+      if (key.startsWith(prefix)) this.scheduledNotificationKeys.delete(key);
+    }
+    for (const key of this.deliveredNotificationKeys) {
+      if (key.startsWith(prefix)) this.deliveredNotificationKeys.delete(key);
+    }
+  }
+
+  private trimSet(set: Set<string>, maxSize: number): void {
+    for (const key of set) {
+      if (set.size <= maxSize) break;
+      set.delete(key);
+    }
   }
 
   private toInfo(entry: ManagedTask): BackgroundTaskInfo {

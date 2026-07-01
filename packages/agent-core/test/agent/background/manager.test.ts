@@ -754,6 +754,31 @@ describe('BackgroundManager', () => {
     });
   });
 
+  it('evicts oldest terminal task entries from the live manager', async () => {
+    const { manager } = createBackgroundManager();
+    const taskIds: string[] = [];
+
+    for (let i = 0; i < 105; i++) {
+      const taskId = registerProcess(
+        manager,
+        immediateProcess(0, `done ${String(i)}\n`),
+        `echo done-${String(i)}`,
+        `done ${String(i)}`,
+      );
+      taskIds.push(taskId);
+      await manager.wait(taskId);
+    }
+
+    const first = taskIds[0];
+    const last = taskIds.at(-1);
+    if (first === undefined || last === undefined) {
+      throw new Error('expected generated background task ids');
+    }
+    expect(manager.getTask(first)).toBeUndefined();
+    expect(manager.getTask(last)).toMatchObject({ status: 'completed' });
+    expect(manager.list(false)).toHaveLength(100);
+  });
+
   it('getTask on an unknown id does not create persisted state', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-mgr-missing-'));
     try {
