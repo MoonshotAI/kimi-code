@@ -24,7 +24,12 @@ interface DesktopEnv {
 }
 
 function detect(): DesktopEnv {
-  let desktop = __KIMI_WEB_DESKTOP__;
+  // `__KIMI_WEB_DESKTOP__` is injected by Vite `define`, but that replacement
+  // is not applied in the dev server (see api/config.ts, which guards its own
+  // defines the same way). Fall back to `false` so a plain browser dev session
+  // doesn't throw a ReferenceError on startup; the runtime query-string /
+  // sessionStorage signals below still detect the desktop app when present.
+  let desktop = typeof __KIMI_WEB_DESKTOP__ !== 'undefined' ? __KIMI_WEB_DESKTOP__ : false;
   let platform: string | null = null;
   try {
     const params = new URLSearchParams(window.location.search);

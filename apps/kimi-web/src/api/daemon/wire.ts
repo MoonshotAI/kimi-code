@@ -381,7 +381,6 @@ export interface WireConfig {
   thinking?: unknown;
   plan_mode?: boolean;
   yolo?: boolean;
-  default_thinking?: boolean;
   default_permission_mode?: string;
   default_plan_mode?: boolean;
   permission?: unknown;

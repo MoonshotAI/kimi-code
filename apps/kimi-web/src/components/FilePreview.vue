@@ -6,6 +6,12 @@ import { useI18n } from 'vue-i18n';
 import Markdown from './chat/Markdown.vue';
 import type { FileData, FilePreviewRequest } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
+import SegmentedControl from './ui/SegmentedControl.vue';
+import Button from './ui/Button.vue';
+import IconButton from './ui/IconButton.vue';
+import Icon from './ui/Icon.vue';
+import PanelHeader from './ui/PanelHeader.vue';
+import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
 
@@ -276,6 +282,16 @@ const htmlMode = ref<'preview' | 'source'>('preview');
 const markdownMode = ref<'preview' | 'source'>('preview');
 const imageFit = ref<'fit' | 'actual'>('fit');
 
+function setHtmlMode(v: string): void {
+  htmlMode.value = v as 'preview' | 'source';
+}
+function setMarkdownMode(v: string): void {
+  markdownMode.value = v as 'preview' | 'source';
+}
+function setImageFit(v: string): void {
+  imageFit.value = v as 'fit' | 'actual';
+}
+
 watch(contentKind, (kind) => {
   htmlMode.value = kind === 'html' ? 'preview' : 'source';
   markdownMode.value = 'preview';
@@ -394,9 +410,9 @@ function truncatePath(path: string, maxLen = 55): string {
     <!-- Empty state: nothing selected -->
     <div v-if="error && !loading" class="fp-empty fp-error">
       <span>{{ error }}</span>
-      <button v-if="closable" type="button" class="fp-action" @click="emit('close')">
+      <Button v-if="closable" variant="secondary" size="sm" @click="emit('close')">
         {{ t('filePreview.close') }}
-      </button>
+      </Button>
     </div>
 
     <div v-else-if="!file && !loading" class="fp-empty">
@@ -412,55 +428,50 @@ function truncatePath(path: string, maxLen = 55): string {
     <!-- File loaded -->
     <template v-else-if="file">
       <!-- Header: shared "Preview" title; the path is the subtitle -->
-      <div class="fp-header">
-        <span class="fp-title">{{ t('common.preview') }}</span>
-        <span class="fp-path" :title="file.path">{{ truncatePath(file.path) }}</span>
+      <PanelHeader
+        wrap
+        :title="t('common.preview')"
+        :closable="closable"
+        :close-label="t('filePreview.close')"
+        @close="emit('close')"
+      >
+        <Tooltip :text="file.path">
+          <span class="fp-path">{{ truncatePath(file.path) }}</span>
+        </Tooltip>
         <span class="fp-meta">
           <span v-if="file.lineCount" class="fp-lines">{{ t('filePreview.lineCount', { count: file.lineCount }) }}</span>
           <span class="fp-size">{{ formatSize(file.size) }}</span>
         </span>
-        <div v-if="contentKind === 'html'" class="fp-seg" role="group" :aria-label="t('filePreview.htmlMode')">
-          <button
-            type="button"
-            class="fp-seg-btn"
-            :class="{ on: htmlMode === 'preview' }"
-            @click="htmlMode = 'preview'"
-          >{{ t('filePreview.preview') }}</button>
-          <button
-            type="button"
-            class="fp-seg-btn"
-            :class="{ on: htmlMode === 'source' }"
-            @click="htmlMode = 'source'"
-          >{{ t('filePreview.source') }}</button>
-        </div>
-        <div v-if="contentKind === 'markdown'" class="fp-seg" role="group" :aria-label="t('filePreview.markdownMode')">
-          <button
-            type="button"
-            class="fp-seg-btn"
-            :class="{ on: markdownMode === 'preview' }"
-            @click="markdownMode = 'preview'"
-          >{{ t('filePreview.preview') }}</button>
-          <button
-            type="button"
-            class="fp-seg-btn"
-            :class="{ on: markdownMode === 'source' }"
-            @click="markdownMode = 'source'"
-          >{{ t('filePreview.source') }}</button>
-        </div>
-        <div v-if="contentKind === 'image'" class="fp-seg" role="group" :aria-label="t('filePreview.imageFit')">
-          <button
-            type="button"
-            class="fp-seg-btn"
-            :class="{ on: imageFit === 'fit' }"
-            @click="imageFit = 'fit'"
-          >{{ t('filePreview.fit') }}</button>
-          <button
-            type="button"
-            class="fp-seg-btn"
-            :class="{ on: imageFit === 'actual' }"
-            @click="imageFit = 'actual'"
-          >{{ t('filePreview.actual') }}</button>
-        </div>
+        <SegmentedControl
+          v-if="contentKind === 'html'"
+          :model-value="htmlMode"
+          size="sm"
+          :options="[
+            { value: 'preview', label: t('filePreview.preview') },
+            { value: 'source', label: t('filePreview.source') },
+          ]"
+          @update:model-value="setHtmlMode"
+        />
+        <SegmentedControl
+          v-if="contentKind === 'markdown'"
+          :model-value="markdownMode"
+          size="sm"
+          :options="[
+            { value: 'preview', label: t('filePreview.preview') },
+            { value: 'source', label: t('filePreview.source') },
+          ]"
+          @update:model-value="setMarkdownMode"
+        />
+        <SegmentedControl
+          v-if="contentKind === 'image'"
+          :model-value="imageFit"
+          size="sm"
+          :options="[
+            { value: 'fit', label: t('filePreview.fit') },
+            { value: 'actual', label: t('filePreview.actual') },
+          ]"
+          @update:model-value="setImageFit"
+        />
         <div v-if="contentKind === 'text' || contentKind === 'json' || contentKind === 'html' || contentKind === 'csv'" class="fp-search">
           <input
             v-model="searchQuery"
@@ -471,47 +482,61 @@ function truncatePath(path: string, maxLen = 55): string {
           <span v-if="searchQuery.trim()" class="fp-search-count">
             {{ searchMatches.length }}
           </span>
-          <button type="button" class="fp-icon-btn" :disabled="searchMatches.length === 0" :title="t('filePreview.prevMatch')" @click="nextMatch(-1)">↑</button>
-          <button type="button" class="fp-icon-btn" :disabled="searchMatches.length === 0" :title="t('filePreview.nextMatch')" @click="nextMatch(1)">↓</button>
+          <Tooltip :text="t('filePreview.prevMatch')">
+            <IconButton size="sm" :disabled="searchMatches.length === 0" :label="t('filePreview.prevMatch')" @click="nextMatch(-1)">
+              <Icon name="arrow-up" size="md" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip :text="t('filePreview.nextMatch')">
+            <IconButton size="sm" :disabled="searchMatches.length === 0" :label="t('filePreview.nextMatch')" @click="nextMatch(1)">
+              <Icon name="arrow-down" size="md" />
+            </IconButton>
+          </Tooltip>
         </div>
         <!-- Icon actions: text labels made the header wrap to two rows at the
              default panel width — icons + title tooltips keep it single-line. -->
-        <button type="button" class="fp-action fp-act-icon" :class="{ copied: copiedPath }" :title="copiedPath ? t('filePreview.copied') : t('filePreview.copyPath')" @click="copyPath">
-          <svg v-if="!copiedPath" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5a3 3 0 0 0 4.2.3l2-2a3 3 0 0 0-4.2-4.2l-1 1"/><path d="M9.5 6.5a3 3 0 0 0-4.2-.3l-2 2a3 3 0 0 0 4.2 4.2l1-1"/></svg>
-          <svg v-else viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3,8 6.5,11.5 13,5"/></svg>
-        </button>
-        <button v-if="externalActions" type="button" class="fp-action fp-act-icon" :title="t('filePreview.openInEditor')" @click="emit('openExternal')">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8.7V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V5.5A1.5 1.5 0 0 1 4 4h3.3"/><path d="M9.5 2.5h4v4"/><path d="M13.5 2.5 7.5 8.5"/></svg>
-        </button>
-        <button v-if="externalActions" type="button" class="fp-action fp-act-icon" :title="t('filePreview.reveal')" @click="emit('reveal')">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 4.5A1.5 1.5 0 0 1 3 3h3l1.5 1.5H13A1.5 1.5 0 0 1 14.5 6v6A1.5 1.5 0 0 1 13 13.5H3A1.5 1.5 0 0 1 1.5 12z"/></svg>
-        </button>
-        <a
-          v-if="downloadUrl"
-          class="fp-action fp-act-icon"
-          :href="downloadUrl"
-          target="_blank"
-          rel="noreferrer"
-          download
-          :title="t('filePreview.download')"
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8"/><path d="M4.5 6.5 8 10l3.5-3.5"/><path d="M2.5 13.5h11"/></svg>
-        </a>
-        <button
-          v-if="!file.isBinary && contentKind !== 'image'"
-          type="button"
-          class="fp-action fp-act-icon"
-          :class="{ copied }"
-          :title="copied ? t('filePreview.copied') : t('filePreview.copy')"
-          @click="copyContent"
-        >
-          <svg v-if="!copied" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="1.5"/><path d="M6 1h7a1 1 0 0 1 1 1v7"/></svg>
-          <svg v-else viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3,8 6.5,11.5 13,5"/></svg>
-        </button>
-        <button v-if="closable" type="button" class="fp-close" :title="t('filePreview.close')" :aria-label="t('filePreview.close')" @click="emit('close')">
-          ×
-        </button>
-      </div>
+        <Tooltip :text="copiedPath ? t('filePreview.copied') : t('filePreview.copyPath')">
+          <IconButton size="sm" :class="{ copied: copiedPath }" :label="copiedPath ? t('filePreview.copied') : t('filePreview.copyPath')" @click="copyPath">
+            <Icon v-if="!copiedPath" name="link" size="md" />
+            <Icon v-else class="fp-check" name="check" size="md" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip :text="t('filePreview.openInEditor')">
+          <IconButton v-if="externalActions" size="sm" :label="t('filePreview.openInEditor')" @click="emit('openExternal')">
+            <Icon name="external-link" size="md" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip :text="t('filePreview.reveal')">
+          <IconButton v-if="externalActions" size="sm" :label="t('filePreview.reveal')" @click="emit('reveal')">
+            <Icon name="folder" size="md" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip :text="t('filePreview.download')">
+          <a
+            v-if="downloadUrl"
+            class="fp-download"
+            :href="downloadUrl"
+            target="_blank"
+            rel="noreferrer"
+            download
+            :aria-label="t('filePreview.download')"
+          >
+            <Icon name="download" size="md" />
+          </a>
+        </Tooltip>
+        <Tooltip :text="copied ? t('filePreview.copied') : t('filePreview.copy')">
+          <IconButton
+            v-if="!file.isBinary && contentKind !== 'image'"
+            size="sm"
+            :class="{ copied }"
+            :label="copied ? t('filePreview.copied') : t('filePreview.copy')"
+            @click="copyContent"
+          >
+            <Icon v-if="!copied" name="copy" size="md" />
+            <Icon v-else class="fp-check" name="check" size="md" />
+          </IconButton>
+        </Tooltip>
+      </PanelHeader>
 
       <!-- Body: Markdown -->
       <div v-if="contentKind === 'markdown'" class="fp-body" :class="{ 'fp-markdown': markdownMode === 'preview' }">
@@ -609,10 +634,7 @@ function truncatePath(path: string, maxLen = 55): string {
         </template>
         <div v-else class="fp-binary-card">
           <span class="fp-binary-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <rect x="2" y="2" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.2" fill="none"/>
-              <path d="M7 10h6M10 7v6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-            </svg>
+            <Icon name="image-off" size="lg" />
           </span>
           <span class="fp-binary-label">{{ t('filePreview.imageNoPreview', { mime: file.mime, size: formatSize(file.size) }) }}</span>
         </div>
@@ -638,10 +660,7 @@ function truncatePath(path: string, maxLen = 55): string {
       <div v-else class="fp-body fp-binary-wrap">
         <div class="fp-binary-card">
           <span class="fp-binary-icon">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M5 3h7l4 4v10H5V3z" stroke="currentColor" stroke-width="1.2" fill="none"/>
-              <path d="M12 3v4h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-            </svg>
+            <Icon name="file-off" size="lg" />
           </span>
           <span class="fp-binary-label">
             {{ t('filePreview.binaryNoPreview', { mime: file.mime || t('filePreview.unknownType'), size: formatSize(file.size) }) }}
@@ -678,33 +697,8 @@ function truncatePath(path: string, maxLen = 55): string {
 }
 
 /* ---- Header ----
-   Single-line baseline matches the conversation header height (32px terminal /
-   40px modern via --panel-head-h) so the hairline reads as one line; wraps
-   taller only when the panel is too narrow. */
-.fp-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  min-height: var(--panel-head-h, 32px);
-  padding: 3px 12px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  flex: none;
-  min-width: 0;
-  overflow: visible;
-}
-
-
-.fp-title {
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-}
+   Structure comes from PanelHeader (wrap mode). Only the slot content
+   (path subtitle, supplementary meta, inline search) is styled here. */
 
 /* The path is the SUBTITLE — supplementary next to the shared panel title.
    nowrap is load-bearing: without it a long path wraps INSIDE the span and
@@ -748,65 +742,6 @@ function truncatePath(path: string, maxLen = 55): string {
   white-space: nowrap;
 }
 
-.fp-action,
-.fp-icon-btn,
-.fp-close,
-.fp-seg-btn {
-  flex: none;
-  padding: 2px 8px;
-  font-size: calc(var(--ui-font-size) - 3px);
-  font-family: var(--mono);
-  background: var(--panel2);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--dim);
-  cursor: pointer;
-  white-space: nowrap;
-  text-decoration: none;
-}
-.fp-action:hover,
-.fp-icon-btn:hover:not(:disabled),
-.fp-close:hover,
-.fp-seg-btn:hover {
-  background: var(--soft);
-  color: var(--blue2);
-  border-color: var(--bd);
-}
-.fp-action:focus-visible,
-.fp-icon-btn:focus-visible,
-.fp-close:focus-visible,
-.fp-seg-btn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -1px;
-}
-.fp-action.copied {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 35%, var(--bg));
-}
-.fp-icon-btn:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-.fp-close {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  /* Fixed icon glyph size (×) — not part of the UI font scale. */
-  font-size: 16px;
-  line-height: 1;
-}
-.fp-seg {
-  display: inline-flex;
-  flex: none;
-  min-width: 0;
-}
-.fp-seg-btn:first-child { border-radius: 3px 0 0 3px; border-right: 0; }
-.fp-seg-btn:last-child { border-radius: 0 3px 3px 0; }
-.fp-seg-btn.on {
-  background: var(--soft);
-  color: var(--blue2);
-  border-color: var(--bd);
-}
 .fp-search {
   display: flex;
   align-items: center;
@@ -816,29 +751,16 @@ function truncatePath(path: string, maxLen = 55): string {
   max-width: 200px;
 }
 
-/* Square icon actions — text labels wrapped the header into two rows. */
-.fp-act-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  flex: none;
-}
-.fp-act-icon svg {
-  flex: none;
-}
 .fp-search-input {
   flex: 1;
   min-width: 0;
-  height: 24px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
+  height: 26px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
   padding: 2px 7px;
-  background: var(--bg);
-  color: var(--ink);
-  font: 11px var(--mono);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font: var(--text-xs) var(--font-mono);
 }
 .fp-search-count {
   color: var(--muted);
@@ -847,14 +769,43 @@ function truncatePath(path: string, maxLen = 55): string {
   text-align: right;
 }
 
+/* Download is a real link (<a href download>), so it can't be an IconButton;
+   mirror the IconButton sm look so the action row stays visually uniform. */
+.fp-download {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+}
+.fp-download:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+.fp-download:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.fp-download svg {
+  width: var(--p-ic-sm);
+  height: var(--p-ic-sm);
+}
+
+/* "Copied" confirmation: tint the check glyph green. */
+.fp-check {
+  color: var(--color-success);
+}
+
 /* ---- Body ---- */
 .fp-body {
   --fp-search-hit-bg: color-mix(in srgb, var(--star) 22%, var(--bg));
   --fp-search-active-bg: color-mix(in srgb, var(--star) 36%, var(--bg));
-  --fp-token-keyword: color-mix(in srgb, var(--blue) 68%, var(--err));
-  --fp-token-string: var(--ok);
-  --fp-token-literal: var(--blue2);
-  --fp-token-tag: var(--warn);
+  --fp-token-keyword: color-mix(in srgb, var(--color-accent) 68%, var(--color-danger));
+  --fp-token-string: var(--color-success);
+  --fp-token-literal: var(--color-accent-hover);
+  --fp-token-tag: var(--color-warning);
 
   flex: 1;
   min-height: 0;
@@ -894,7 +845,7 @@ function truncatePath(path: string, maxLen = 55): string {
 .fp-line-row.target .fp-line-text,
 .fp-table tr.target th,
 .fp-table tr.target td {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 
 .fp-gutter {
@@ -904,7 +855,7 @@ function truncatePath(path: string, maxLen = 55): string {
   text-align: right;
   color: var(--faint);
   user-select: none;
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
   white-space: nowrap;
   border-right: 1px solid var(--line2);
   vertical-align: top;
@@ -913,20 +864,20 @@ function truncatePath(path: string, maxLen = 55): string {
 .fp-line-text {
   display: table-cell;
   padding: 0 12px;
-  color: var(--ink);
+  color: var(--color-text);
   white-space: pre;
   vertical-align: top;
 }
 .fp-line-text :deep(.tok-key),
 .fp-line-text :deep(.tok-keyword) {
   color: var(--fp-token-keyword);
-  font-weight: 600;
+  font-weight: 500;
 }
 .fp-line-text :deep(.tok-string) { color: var(--fp-token-string); }
 .fp-line-text :deep(.tok-number),
 .fp-line-text :deep(.tok-literal) { color: var(--fp-token-literal); }
 .fp-line-text :deep(.tok-comment) { color: var(--muted); font-style: italic; }
-.fp-line-text :deep(.tok-tag) { color: var(--fp-token-tag); font-weight: 600; }
+.fp-line-text :deep(.tok-tag) { color: var(--fp-token-tag); font-weight: 500; }
 .fp-line-text :deep(.tok-attr) { color: var(--fp-token-literal); }
 
 /* ---- HTML / PDF ---- */
@@ -935,7 +886,7 @@ function truncatePath(path: string, maxLen = 55): string {
   width: 100%;
   height: 100%;
   border: 0;
-  background: #fff;
+  background: var(--color-surface-raised);
 }
 .fp-pdf-wrap {
   background: var(--panel2);
@@ -1030,7 +981,7 @@ function truncatePath(path: string, maxLen = 55): string {
   width: 14px;
   height: 14px;
   border: 1.5px solid var(--line);
-  border-top-color: var(--blue);
+  border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -1039,20 +990,17 @@ function truncatePath(path: string, maxLen = 55): string {
         code body keeps its line-number gutter while scrolling sideways for long
         lines. Markdown/images fit the full width. ---- */
 @media (max-width: 640px) {
-  .fp-header { padding: 8px 12px; gap: 8px; }
-  .fp-action,
-  .fp-icon-btn,
-  .fp-close,
-  .fp-seg-btn {
-    min-height: 32px;
-    padding: 5px 12px;
-    font-size: var(--ui-font-size-xs);
-    border-radius: 6px;
-  }
   /* Hide the line-count chip on the narrowest screens to keep the header tidy;
      the size chip + copy stay. */
   .fp-lines { display: none; }
   .fp-markdown { padding: 14px 16px; }
   .fp-body.fp-code { -webkit-overflow-scrolling: touch; }
 }
+
+.fp-empty,
+.fp-loading { font-family: var(--sans); }
+.fp-binary-card { border: 1px solid var(--color-line); border-radius: var(--radius-md); }
+.fp-binary-label { font-family: var(--sans); }
+.fp-image { border-radius: var(--radius-md); }
+.seg-btn { font-family: var(--sans); }
 </style>

@@ -10,9 +10,10 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
 import type { ThinkingLevel } from '../../api/types';
-import type { ColorScheme, Theme } from '../../composables/useKimiWebClient';
+import type { ColorScheme } from '../../composables/useKimiWebClient';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import SegmentedControl from '../ui/SegmentedControl.vue';
 
 const { t } = useI18n();
 
@@ -23,15 +24,14 @@ const props = withDefaults(
     thinking?: ThinkingLevel;
     planMode?: boolean;
     swarmMode?: boolean;
-    theme?: Theme;
     colorScheme?: ColorScheme;
     uiFontSize?: number;
     authReady?: boolean;
-    betaToc?: boolean;
+    conversationToc?: boolean;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
   }>(),
-  { theme: 'terminal', colorScheme: 'system', uiFontSize: 14, authReady: false, serverVersion: '' },
+  { colorScheme: 'system', uiFontSize: 14, authReady: false, serverVersion: '' },
 );
 
 const emit = defineEmits<{
@@ -41,13 +41,16 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   setPermission: [mode: PermissionMode];
-  setTheme: [theme: Theme];
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
-  setBetaToc: [on: boolean];
+  setConversationToc: [on: boolean];
   login: [];
   logout: [];
 }>();
+
+function onColorScheme(v: string): void {
+  emit('setColorScheme', v as ColorScheme);
+}
 
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
 
@@ -57,9 +60,9 @@ const swarmOn = computed<boolean>(() => props.swarmMode === true);
 
 const permColor = computed<string>(() => {
   const p = props.status.permission;
-  if (p === 'yolo') return 'var(--err)';
-  if (p === 'auto') return 'var(--warn)';
-  return 'var(--faint)';
+  if (p === 'yolo') return 'var(--color-danger)';
+  if (p === 'auto') return 'var(--color-warning)';
+  return 'var(--color-text-muted)';
 });
 /** Permission sub-line, e.g. "manual · confirm every tool". */
 const permSub = computed<string>(() => {
@@ -112,6 +115,8 @@ function onLogout(): void {
     :title="t('mobile.settingsTitle')"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <div class="group-title">{{ t('mobile.groupSession') }}</div>
+
     <!-- Model → opens ModelPicker -->
     <button type="button" class="srow" @click="onPickModel">
       <span class="srow-main">
@@ -168,56 +173,22 @@ function onLogout(): void {
       </span>
     </div>
 
-    <!-- App preferences (the desktop settings-popover controls) -->
-    <div class="srow read-only pref">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('theme.label') }}</span>
-      </span>
-      <div class="seg" role="group" :aria-label="t('theme.label')">
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: theme === 'modern' }"
-          :aria-pressed="theme === 'modern'"
-          @click="emit('setTheme', 'modern')"
-        >{{ t('theme.modern') }}</button>
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: theme === 'kimi' }"
-          :aria-pressed="theme === 'kimi'"
-          @click="emit('setTheme', 'kimi')"
-        >{{ t('theme.kimi') }}</button>
-      </div>
-    </div>
+    <div class="group-title">{{ t('mobile.groupApp') }}</div>
 
+    <!-- App preferences (the desktop settings-popover controls) -->
     <div class="srow read-only pref">
       <span class="srow-main">
         <span class="srow-label">{{ t('theme.colorSchemeLabel') }}</span>
       </span>
-      <div class="seg" role="group" :aria-label="t('theme.colorSchemeLabel')">
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: colorScheme === 'light' }"
-          :aria-pressed="colorScheme === 'light'"
-          @click="emit('setColorScheme', 'light')"
-        >{{ t('theme.light') }}</button>
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: colorScheme === 'dark' }"
-          :aria-pressed="colorScheme === 'dark'"
-          @click="emit('setColorScheme', 'dark')"
-        >{{ t('theme.dark') }}</button>
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: colorScheme === 'system' }"
-          :aria-pressed="colorScheme === 'system'"
-          @click="emit('setColorScheme', 'system')"
-        >{{ t('theme.system') }}</button>
-      </div>
+      <SegmentedControl
+        :model-value="colorScheme ?? 'system'"
+        :options="[
+          { value: 'light', label: t('theme.light') },
+          { value: 'dark', label: t('theme.dark') },
+          { value: 'system', label: t('theme.system') },
+        ]"
+        @update:model-value="onColorScheme"
+      />
     </div>
 
     <div class="srow read-only pref">
@@ -246,12 +217,12 @@ function onLogout(): void {
       </label>
     </div>
 
-    <button type="button" class="srow" @click="emit('setBetaToc', !betaToc)">
+    <button type="button" class="srow" @click="emit('setConversationToc', !conversationToc)">
       <span class="srow-main">
-        <span class="srow-label">{{ t('settings.betaToc') }}</span>
-        <span class="srow-sub">{{ t('settings.betaTocHint') }}</span>
+        <span class="srow-label">{{ t('settings.conversationToc') }}</span>
+        <span class="srow-sub">{{ t('settings.conversationTocHint') }}</span>
       </span>
-      <span class="toggle" :class="{ on: betaToc }" role="switch" :aria-checked="betaToc" />
+      <span class="toggle" :class="{ on: conversationToc }" role="switch" :aria-checked="conversationToc" />
     </button>
 
     <!-- Account: sign in / out -->
@@ -277,22 +248,32 @@ function onLogout(): void {
 </template>
 
 <style scoped>
+.group-title {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
 .srow {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   width: 100%;
   min-height: 52px;
-  padding: 15px 16px;
+  padding: var(--space-3);
   background: none;
   border: none;
-  border-bottom: 1px solid var(--line2);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-family: var(--mono);
   text-align: left;
-  color: var(--ink);
+  color: var(--color-text);
 }
-.srow:active:not(.read-only) { background: var(--panel); }
+.srow:hover:not(.read-only) { background: var(--color-surface-sunken); }
+.srow:active:not(.read-only) { background: var(--color-surface-sunken); }
 .srow.read-only { cursor: default; }
 
 .srow-main {
@@ -302,31 +283,30 @@ function onLogout(): void {
   flex-direction: column;
   gap: 1px;
 }
-.srow-label { font-size: calc(var(--ui-font-size) - 0.5px); color: var(--ink); }
+.srow-label { font-size: var(--text-base); color: var(--color-text); }
 .srow-sub {
-  font-size: calc(var(--ui-font-size) - 2.5px);
-  color: var(--faint);
-  font-family: var(--mono);
+  font-size: var(--text-base);
+  color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .srow-val {
   flex: none;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--ui-font-size);
-  font-weight: 600;
-  color: var(--blue2);
+  font-weight: 500;
+  color: var(--color-accent-hover);
 }
 .srow-val.dim {
   font-weight: 400;
-  color: var(--muted);
+  color: var(--color-text-muted);
 }
 
 /* Chevron (prototype ›) — fixed icon glyph size, not part of UI font scale. */
 .chev {
   flex: none;
-  color: var(--faint);
+  color: var(--color-text-faint);
   font-size: 17px;
   line-height: 1;
 }
@@ -336,12 +316,12 @@ function onLogout(): void {
   flex: none;
   width: 44px;
   height: 26px;
-  border-radius: 14px;
-  background: var(--line);
+  border-radius: var(--radius-full);
+  background: var(--color-line);
   position: relative;
   transition: background 0.18s;
 }
-.toggle.on { background: var(--blue); }
+.toggle.on { background: var(--color-accent); }
 .toggle::after {
   content: "";
   position: absolute;
@@ -349,41 +329,17 @@ function onLogout(): void {
   left: 3px;
   width: 20px;
   height: 20px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   box-sizing: border-box;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  box-shadow: var(--shadow-xs);
   transition: left 0.18s;
 }
 .toggle.on::after { left: 21px; }
 
 /* App preference rows: segmented theme/color-scheme toggles + language switcher. */
 .srow.pref { cursor: default; }
-.seg {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--bg);
-  flex: none;
-}
-.seg-opt {
-  border: none;
-  background: none;
-  font-family: inherit;
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  color: var(--muted);
-  cursor: pointer;
-  padding: 7px 14px;
-  line-height: 1.4;
-}
-.seg-opt + .seg-opt { border-left: 1px solid var(--line); }
-.seg-opt.on {
-  background: var(--soft);
-  color: var(--blue2);
-  font-weight: 600;
-}
 
 .num-field {
   display: inline-flex;
@@ -392,43 +348,43 @@ function onLogout(): void {
   flex: none;
   height: 34px;
   padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
 }
 .num-input {
   width: 50px;
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
+  color: var(--color-text);
+  font-family: var(--font-mono);
   font-size: var(--ui-font-size);
   text-align: right;
 }
 .num-unit {
-  color: var(--muted);
-  font-family: var(--mono);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
   font-size: var(--ui-font-size-xs);
 }
 
 /* Account rows */
-.srow.acct.in .srow-label { color: var(--blue2); font-weight: 600; }
-.srow.acct.out .srow-label { color: var(--err); }
+.srow.acct.in .srow-label { color: var(--color-accent-hover); font-weight: 500; }
+.srow.acct.out .srow-label { color: var(--color-danger); }
 
 /* Context meter (96px prototype) */
 .ctx-meter {
   flex: none;
   width: 96px;
   height: 7px;
-  border-radius: 4px;
-  background: var(--panel2);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-sunken);
   overflow: hidden;
 }
 .ctx-meter i {
   display: block;
   height: 100%;
-  background: var(--blue);
+  background: var(--color-accent);
 }
 
 @media (max-width: 640px) {
@@ -437,6 +393,10 @@ function onLogout(): void {
     gap: 10px;
     min-width: 0;
     padding: 14px max(14px, env(safe-area-inset-right)) 14px max(14px, env(safe-area-inset-left));
+  }
+  .group-title {
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
   }
   .srow-main {
     flex: 1 1 auto;
@@ -451,15 +411,6 @@ function onLogout(): void {
   .srow.pref .srow-main {
     flex: 1 0 100%;
   }
-  .seg {
-    max-width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .seg-opt {
-    flex: 0 0 auto;
-    padding: 7px 10px;
-  }
   .num-field {
     margin-left: auto;
   }
@@ -470,4 +421,8 @@ function onLogout(): void {
     margin-top: 2px;
   }
 }
+
+.srow,
+.srow-sub,
+.srow-val { font-family: var(--sans); }
 </style>

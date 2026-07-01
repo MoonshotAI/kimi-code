@@ -86,7 +86,7 @@ function rowClass(line: DiffViewLine): string {
   flex: none;
   padding-right: 14px;
   white-space: pre;
-  color: var(--text);
+  color: var(--color-text);
 }
 
 /* Added / removed lines: a faint background plus a left accent bar mark the
@@ -94,19 +94,19 @@ function rowClass(line: DiffViewLine): string {
    line in green/red competed with reading the code itself; the sign (+/-) and
    the accent carry the colour so the content stays legible. */
 .dl-add {
-  background: color-mix(in srgb, var(--ok) 7%, var(--bg));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  background: var(--color-success-soft);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-success) 55%, transparent);
 }
 .dl-add .dl-sign {
-  color: var(--ok, #0e7a38);
+  color: var(--color-success);
 }
 
 .dl-del {
-  background: color-mix(in srgb, var(--err) 7%, var(--bg));
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--err) 55%, transparent);
+  background: var(--color-danger-soft);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-danger) 55%, transparent);
 }
 .dl-del .dl-sign {
-  color: var(--err, #b91c1c);
+  color: var(--color-danger);
 }
 
 /* Hunk header — muted band spanning the whole row. */

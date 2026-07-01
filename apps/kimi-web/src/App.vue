@@ -16,6 +16,7 @@ import ProviderManager from './components/settings/ProviderManager.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
+import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
@@ -32,9 +33,14 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import { openDialogCount } from './composables/dialogStack';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
+import Button from './components/ui/Button.vue';
+import IconButton from './components/ui/IconButton.vue';
+import Icon from './components/ui/Icon.vue';
+import Tooltip from './components/ui/Tooltip.vue';
 
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -88,8 +94,8 @@ function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
   return current === 'off' ? 'high' : 'off';
 }
 
-// First-run onboarding (theme / language / welcome greeting). Shown until the
-// user finishes it once; re-openable from the settings popover.
+// First-run onboarding (language + welcome greeting). Shown until the user
+// finishes it once; re-openable from the settings popover.
 const showOnboarding = ref(!client.onboarded.value);
 function completeOnboarding(): void {
   client.setOnboarded(true);
@@ -222,15 +228,6 @@ const {
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
 
-// Shift-multi-selected workspace ids; when >1 are selected the main pane
-// shows a "coming soon" placeholder instead of the conversation.
-const selectedWorkspaceIds = ref<string[]>([]);
-const hasMultiSelect = computed(() => selectedWorkspaceIds.value.length > 1);
-
-function handleSelectWorkspaces(ids: string[]): void {
-  selectedWorkspaceIds.value = ids;
-}
-
 // Dialog visibility refs
 const showModelPicker = ref(false);
 const showProviders = ref(false);
@@ -257,16 +254,18 @@ const addWorkspaceError = ref<string | null>(null);
 // capture-phase handler must NOT close a background side panel out from under an
 // open dialog — otherwise Escape dismisses the panel behind the dialog and the
 // dialog's own Escape handler never fires. New top-level dialogs go here too.
-const anyOverlayOpen = computed<boolean>(() =>
-  showModelPicker.value ||
-  showProviders.value ||
-  showLogin.value ||
-  showAddWorkspace.value ||
-  showStatusPanel.value ||
-  showSettings.value ||
-  showOnboarding.value ||
-  showMobileSwitcher.value ||
-  showMobileSettings.value,
+const anyOverlayOpen = computed<boolean>(
+  () =>
+    openDialogCount.value > 0 ||
+    showModelPicker.value ||
+    showProviders.value ||
+    showLogin.value ||
+    showAddWorkspace.value ||
+    showStatusPanel.value ||
+    showSettings.value ||
+    showOnboarding.value ||
+    showMobileSwitcher.value ||
+    showMobileSettings.value,
 );
 
 // Loading state for model/provider fetches
@@ -379,7 +378,7 @@ function handleCommand(cmd: string): void {
     if (arg === 'on') client.setSwarmMode(true);
     else if (arg === 'off') client.setSwarmMode(false);
     else if (arg) { client.setSwarmMode(true); void client.sendPrompt(arg); }
-    else client.toggleSwarmMode();
+    else void client.toggleSwarmMode();
     return;
   }
   // `/goal <objective>` creates a goal (and submits it); `/goal pause|resume|cancel`
@@ -476,6 +475,10 @@ function handleEditQueued(index: number): void {
   client.unqueue(index);
 }
 
+function handleReorderQueue(payload: { from: number; to: number }): void {
+  client.reorderQueue(payload.from, payload.to);
+}
+
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
@@ -570,14 +573,10 @@ function openPr(url: string): void {
           <h1>{{ t('app.authPageTitle') }}</h1>
           <p>{{ t('app.authPageMessage') }}</p>
         </div>
-        <button type="button" class="auth-page-btn" @click="openLogin">
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M6 3h5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6" />
-            <path d="M9 8H2" />
-            <path d="M5 5l3 3-3 3" />
-          </svg>
+        <Button class="auth-page-btn" variant="primary" @click="openLogin">
+          <Icon name="log-in" size="md" />
           <span>{{ t('app.authPageLogin') }}</span>
-        </button>
+        </Button>
       </div>
     </section>
     <div
@@ -599,6 +598,7 @@ function openPr(url: string): void {
         :attention-by-session="client.attentionBySession.value"
         :pending-by-session="client.pendingBySession.value"
         :unread-by-session="client.unreadBySession.value"
+        :workspace-sort-mode="client.workspaceSortMode.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
@@ -610,9 +610,9 @@ function openPr(url: string): void {
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
         @delete-workspace="(id) => client.deleteWorkspace(id)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
+        @set-workspace-sort-mode="client.setWorkspaceSortMode($event)"
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
-        @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
         @collapse="toggleSidebarCollapse"
       />
@@ -625,20 +625,15 @@ function openPr(url: string): void {
         @update:width="sessionColWidth = $event"
       />
       <div v-if="sidebarCollapsed" class="sidebar-rail">
-        <button
-          type="button"
-          class="sidebar-expand-btn"
-          :title="t('sidebar.expandSidebar')"
-          :aria-label="t('sidebar.expandSidebar')"
-          @click="toggleSidebarCollapse"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 6h9" />
-            <path d="M4 12h9" />
-            <path d="M4 18h9" />
-            <path d="M17 9l3 3-3 3" />
-          </svg>
-        </button>
+        <Tooltip :text="t('sidebar.expandSidebar')">
+          <IconButton
+            size="sm"
+            :label="t('sidebar.expandSidebar')"
+            @click="toggleSidebarCollapse"
+          >
+            <Icon name="panel-expand" size="sm" />
+          </IconButton>
+        </Tooltip>
       </div>
     </template>
 
@@ -655,10 +650,8 @@ function openPr(url: string): void {
     />
 
     <ConversationPane
-      v-if="!hasMultiSelect"
       ref="conversationPaneRef"
       :mobile="isMobile"
-      :modern="client.theme.value === 'modern' || client.theme.value === 'kimi'"
       :turns="client.turns.value"
       :session-id="client.activeSessionId.value"
       :approvals="client.pendingApprovals.value"
@@ -678,6 +671,8 @@ function openPr(url: string): void {
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
       :questions="client.questions.value"
+      :pending-question-actions="client.pendingQuestionActions"
+      :pending-approval-actions="client.pendingApprovalActions"
       :running="running"
       :queued="client.queued.value"
       :search-files="client.searchFiles"
@@ -698,7 +693,7 @@ function openPr(url: string): void {
       :active-workspace-id="client.activeWorkspaceId.value"
       :session-title="activeSessionTitle"
       :pr="client.activePullRequest.value"
-      :beta-toc="client.betaToc.value"
+      :conversation-toc="client.conversationToc.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
@@ -713,6 +708,7 @@ function openPr(url: string): void {
       @interrupt="client.abortCurrentPrompt()"
       @unqueue="handleUnqueue"
       @edit-queued="handleEditQueued"
+      @reorder-queue="handleReorderQueue"
       @set-permission="client.setPermission($event)"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"
@@ -735,12 +731,6 @@ function openPr(url: string): void {
       @open-tool-diff="openToolDiff($event)"
       @edit-message="handleEditMessage"
     />
-
-    <!-- Multi-workspace selection placeholder -->
-    <div v-else class="coming-soon">
-      <span class="cs-icon">🚧</span>
-      <span class="cs-text">{{ t('app.comingSoon') }}</span>
-    </div>
 
     <ResizeHandle
       v-if="sidePanelVisible && !isMobile"
@@ -841,8 +831,8 @@ function openPr(url: string): void {
     <!-- Settings page (modal) -->
     <SettingsDialog
       v-if="showSettings"
-      :theme="client.theme.value"
       :color-scheme="client.colorScheme.value"
+      :accent="client.accent.value"
       :ui-font-size="client.uiFontSize.value"
       :auth-ready="client.authReady.value"
       :account-model="client.defaultModel.value"
@@ -850,22 +840,23 @@ function openPr(url: string): void {
       :notify-question="client.notifyOnQuestion.value"
       :notify-permission="client.notifyPermission.value"
       :sound="client.soundOnComplete.value"
-      :beta-toc="client.betaToc.value"
+      :conversation-toc="client.conversationToc.value"
       :config="client.config.value"
       :models="client.models.value"
       :config-saving="configSaving"
       :server-version="client.serverVersion.value"
-      @set-theme="client.setTheme($event)"
       @set-color-scheme="client.setColorScheme($event)"
+      @set-accent="client.setAccent($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-notify="client.setNotifyOnComplete($event)"
       @set-notify-question="client.setNotifyOnQuestion($event)"
       @set-sound="client.setSoundOnComplete($event)"
-      @set-beta-toc="client.setBetaToc($event)"
+      @set-conversation-toc="client.setConversationToc($event)"
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
       @logout="client.logout"
       @open-onboarding="() => { showSettings = false; openOnboarding(); }"
+      @open-providers="() => { showSettings = false; openProviders(); }"
       @close="showSettings = false"
     />
 
@@ -909,11 +900,9 @@ function openPr(url: string): void {
       <GlobalLoading v-if="!client.initialized.value" />
     </Transition>
 
-    <!-- First-run onboarding overlay (theme / language / welcome greeting) -->
+    <!-- First-run onboarding overlay (language + welcome greeting) -->
     <Onboarding
       v-if="showOnboarding && !showAuthGate"
-      :theme="client.theme.value"
-      @set-theme="client.setTheme($event)"
       @complete="completeOnboarding"
       @skip="completeOnboarding"
     />
@@ -923,6 +912,9 @@ function openPr(url: string): void {
 
     <!-- KAP/daemon debug panel (opt-in, ?debug=1) -->
     <DebugPanel v-if="debugEnabled" />
+
+    <!-- Global modal-confirmation host (driven by useConfirmDialog) -->
+    <ConfirmDialogHost />
 
     <!-- Mobile switcher bottom-sheet: workspace groups + sessions (mirrors the
          desktop sidebar) -->
@@ -952,21 +944,19 @@ function openPr(url: string): void {
       :thinking="client.thinking.value"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
-      :theme="client.theme.value"
       :color-scheme="client.colorScheme.value"
       :ui-font-size="client.uiFontSize.value"
       :auth-ready="client.authReady.value"
-      :beta-toc="client.betaToc.value"
+      :conversation-toc="client.conversationToc.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
-      @set-theme="client.setTheme($event)"
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
-      @set-beta-toc="client.setBetaToc($event)"
+      @set-conversation-toc="client.setConversationToc($event)"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />
@@ -1004,7 +994,7 @@ function openPr(url: string): void {
   justify-content: center;
   padding: 32px;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--color-text);
   box-sizing: border-box;
 }
 .auth-page-inner {
@@ -1036,9 +1026,9 @@ function openPr(url: string): void {
   font-family: var(--sans);
   font-size: 30px;
   line-height: 1.15;
-  font-weight: 650;
+  font-weight: 500;
   letter-spacing: 0;
-  color: var(--ink);
+  color: var(--color-text);
 }
 .auth-page-copy p {
   margin: 0;
@@ -1046,28 +1036,6 @@ function openPr(url: string): void {
   font-size: var(--ui-font-size-lg);
   line-height: 1.55;
   color: var(--dim);
-}
-.auth-page-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 8px 14px;
-  border: 1px solid var(--blue);
-  border-radius: 8px;
-  background: var(--blue);
-  color: var(--bg);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  cursor: pointer;
-}
-.auth-page-btn:hover {
-  background: var(--blue2);
-  border-color: var(--blue2);
-}
-.auth-page-btn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
 }
 .app {
   --side-w: 248px;
@@ -1083,7 +1051,7 @@ function openPr(url: string): void {
      column is squeezed over smoothly instead of snapping to a new template. */
   grid-template-columns: var(--side-w) 0 minmax(0, 1fr) 0 auto;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--color-text);
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -1105,33 +1073,9 @@ function openPr(url: string): void {
   background: var(--panel);
   border-right: 1px solid var(--line);
 }
-.sidebar-expand-btn {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: none;
-  border: none;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-}
-.sidebar-expand-btn:hover {
-  background: var(--soft);
-  color: var(--ink);
-}
-.sidebar-expand-btn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
-
 /* The collapsed rail occupies track 1; keep the main pane pinned to the
    conversation track even though the sidebar/handle are display:none. */
-.app.sidebar-collapsed > .con,
-.app.sidebar-collapsed > .coming-soon {
+.app.sidebar-collapsed > .con {
   grid-column: 3;
 }
 
@@ -1170,26 +1114,11 @@ function openPr(url: string): void {
 .global-preview.mobile {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--z-sticky);
   width: auto;
   transition: none;
-  border-top: 2px solid var(--ink);
+  border-top: 2px solid var(--color-text);
 }
-
-/* Multi-workspace selection placeholder */
-.coming-soon {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  height: 100%;
-  color: var(--muted);
-  font-family: var(--mono);
-}
-/* Fixed icon glyph size — not part of the UI font scale. */
-.cs-icon { font-size: 32px; }
-.cs-text { font-size: var(--ui-font-size); }
 
 @media (max-width: 640px) {
   .auth-page {
@@ -1205,7 +1134,6 @@ function openPr(url: string): void {
   }
   .auth-page-btn {
     width: 100%;
-    justify-content: center;
   }
 }
 </style>

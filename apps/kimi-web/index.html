@@ -8,14 +8,11 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
     <!-- Apply persisted display prefs BEFORE the bundle loads: without this,
-         users can get a theme/font flash before useKimiWebClient mirrors the
-         data attributes. Mirrors loadThemeFromStorage and
-         applyColorSchemeToDocument. -->
+         users can get a color-scheme/font flash before useKimiWebClient mirrors
+         the data attributes. Mirrors applyColorSchemeToDocument. -->
     <script>
       (function () {
         try {
-          var theme = localStorage.getItem('kimi-web.theme');
-          document.documentElement.dataset.theme = theme === 'terminal' || theme === 'modern' || theme === 'kimi' ? theme : 'modern';
           var v = localStorage.getItem('kimi-web.color-scheme');
           if (v === 'light' || v === 'dark' || v === 'system') {
             document.documentElement.dataset.colorScheme = v;

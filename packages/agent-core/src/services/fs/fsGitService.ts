@@ -119,7 +119,7 @@ export class FsGitService extends Disposable implements IFsGitService {
 
     const res = await runCommand(
       'gh',
-      ['pr', 'view', '--json', 'number,url,state'],
+      ['pr', 'view', '--json', 'number,url,state,isDraft'],
       cwd,
       {
         timeoutMs: PR_SPAWN_TIMEOUT_MS,
@@ -304,12 +304,20 @@ function parsePullRequest(stdout: string): FsPullRequest | null {
   const number = record['number'];
   const url = record['url'];
   const state = record['state'];
+  const isDraft = record['isDraft'];
   if (typeof number !== 'number' || !Number.isInteger(number) || number <= 0) return null;
   if (typeof url !== 'string' || !isSafeHttpUrl(url)) return null;
   if (typeof state !== 'string') return null;
   const normalized = state.toLowerCase();
-  if (normalized !== 'open' && normalized !== 'merged' && normalized !== 'closed') return null;
-  return { number, state: normalized, url };
+  let prState: FsPullRequest['state'];
+  if (normalized === 'open' || normalized === 'merged' || normalized === 'closed') {
+    // A draft PR reports state OPEN; surface it as its own 'draft' state so
+    // the UI can match GitHub's gray draft styling.
+    prState = isDraft === true && normalized === 'open' ? 'draft' : normalized;
+  } else {
+    return null;
+  }
+  return { number, state: prState, url };
 }
 
 function isSafeHttpUrl(value: string): boolean {

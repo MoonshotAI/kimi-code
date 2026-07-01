@@ -531,7 +531,11 @@ export function reduceAppEvent(
         const patched = [...list];
         // The projected task does not carry reducer-owned accumulated progress;
         // preserve it across the replacement so subagent output keeps growing.
-        patched[idx] = { ...event.task, outputLines: list[idx]!.outputLines };
+        patched[idx] = {
+          ...event.task,
+          outputLines: list[idx]!.outputLines,
+          text: list[idx]!.text,
+        };
         next.tasksBySession[sid] = patched;
       }
       break;
@@ -543,6 +547,12 @@ export function reduceAppEvent(
       const list = next.tasksBySession[sid] ?? [];
       next.tasksBySession[sid] = list.map((t) => {
         if (t.id !== event.taskId) return t;
+        // Subagent streamed output (assistant.delta) concatenates into a single
+        // growing text block rather than fragmenting each delta into its own
+        // line — the detail panel renders it like a thinking block.
+        if (t.kind === 'subagent' && event.kind === 'text') {
+          return { ...t, text: (t.text ?? '') + event.outputChunk };
+        }
         const outputLines = t.outputLines ?? [];
         if (outputLines.at(-1) === event.outputChunk) return t;
         const lines = [...outputLines, event.outputChunk];

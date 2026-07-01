@@ -9,7 +9,7 @@ export default {
     ls: 'List',
     web_fetch: 'Fetch',
     search: 'Search',
-    todo: 'Plan',
+    todo: 'Todo',
     task: 'Task',
   },
   chip: {
@@ -18,5 +18,11 @@ export default {
     edited: 'edited',
     created: 'created',
     todos: '{count} items',
+  },
+  group: {
+    title: '{count} tool call | {count} tool calls',
+    running: 'running',
+    error: 'failed',
+    done: 'done',
   },
 } as const;

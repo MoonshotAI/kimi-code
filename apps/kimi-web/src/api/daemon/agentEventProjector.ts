@@ -36,9 +36,10 @@ import type { WireMessageContent } from './wire';
 // parent transcript — doing so created empty "skeleton" assistant bubbles (a
 // subagent turn.step.started opens a parent assistant message that never gets
 // the main agent's text) and fragmented snippets (subagent deltas appended to
-// the parent). The subagent's progress is surfaced separately via the
-// subagent.* → task → AgentCard path. This mirrors the server's
-// InFlightTurnTracker, which likewise tracks only main-agent activity.
+// the parent). The subagent's live progress is surfaced separately via the
+// subagent.* → task → right-side detail panel path (the spawning `Agent` tool
+// itself renders as a normal tool card in the transcript). This mirrors the
+// server's InFlightTurnTracker, which likewise tracks only main-agent activity.
 const MAIN_AGENT_ID = 'main';
 const MAIN_AGENT_TRANSCRIPT_FRAMES = new Set<string>([
   'turn.started',
@@ -273,6 +274,38 @@ function projectSubagentProgress(
   // agentDelta events; don't pollute the main task output with generic step
   // placeholders like "Started a step".
   if (sideChannelAgents.has(subagentId) && rawType === 'turn.step.started') return [];
+
+  // The subagent's own streamed text: forward each delta as a `text`-kind
+  // progress chunk so the reducer concatenates it into `AppTask.text`, letting
+  // the right-side detail panel show the subagent's output growing live (like
+  // a thinking block) instead of staying blank until the first tool call.
+  if (rawType === 'assistant.delta') {
+    const delta = stringField(payload, 'delta');
+    if (!delta) return [];
+    // Ensure the subagent task exists before forwarding the text delta. A client
+    // that subscribed from a snapshot after `subagent.spawned` already fired
+    // never received the lifecycle taskCreated, and the reducer only applies
+    // taskProgress to existing tasks — without this, the deltas are dropped and
+    // the live detail stays blank until a non-text frame recreates the task.
+    const previous = state.subagentMeta.get(subagentId);
+    const task = patchSubagent(state, sessionId, subagentId, {
+      status: 'running',
+      subagentPhase: 'working',
+      startedAt: previous?.startedAt ?? new Date().toISOString(),
+    });
+    const out: AppEvent[] = [];
+    if (task) out.push({ type: 'taskCreated', sessionId, task });
+    out.push({
+      type: 'taskProgress',
+      sessionId,
+      taskId: subagentId,
+      outputChunk: delta,
+      stream: 'stdout',
+      kind: 'text',
+    });
+    return out;
+  }
+
   const text = subagentProgressText(rawType, payload);
   if (text === null || text.length === 0) return [];
   const previous = state.subagentMeta.get(subagentId);
@@ -987,6 +1020,7 @@ export function createAgentProjector(): AgentProjector {
           subagentType: typeof p?.subagentName === 'string' ? p.subagentName : undefined,
           parentToolCallId: typeof p?.parentToolCallId === 'string' ? p.parentToolCallId : undefined,
           swarmIndex: typeof p?.swarmIndex === 'number' ? p.swarmIndex : undefined,
+          runInBackground: p?.runInBackground === true,
         };
         s.subagentMeta.set(task.id, task);
         out.push({

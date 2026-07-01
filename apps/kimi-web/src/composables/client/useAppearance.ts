@@ -1,15 +1,11 @@
 // apps/kimi-web/src/composables/client/useAppearance.ts
-// Appearance preferences (theme / color scheme / accent / UI font size) and
-// the streaming "fast moon" spinner state. Pure local UI state: only touches
+// Appearance preferences (color scheme / accent / UI font size) and the
+// streaming "fast moon" spinner state. Pure local UI state: only touches
 // storage + the DOM, never rawState or the API. The values are module-level
 // singletons so the whole app shares one instance.
 
 import { ref, watch } from 'vue';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
-
-/** UI theme: 'terminal' = dense line look, 'modern' = bubbles everywhere,
-    'kimi' = the official Kimi design language. */
-export type Theme = 'terminal' | 'modern' | 'kimi';
 
 /** Color scheme: 'light', 'dark', or follow the OS preference ('system'). */
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -19,7 +15,7 @@ export type Accent = 'blue' | 'mono';
 
 const ACCENT_VALUES: readonly string[] = ['blue', 'mono'];
 const COLOR_SCHEME_VALUES: readonly string[] = ['light', 'dark', 'system'];
-const UI_FONT_SIZE_DEFAULT = 15;
+const UI_FONT_SIZE_DEFAULT = 14;
 const UI_FONT_SIZE_MIN = 12;
 const UI_FONT_SIZE_MAX = 20;
 
@@ -55,17 +51,6 @@ function applyColorScheme(c: ColorScheme): void {
   });
 }
 
-function loadTheme(): Theme {
-  const v = safeGetString(STORAGE_KEYS.theme);
-  if (v === 'terminal' || v === 'modern' || v === 'kimi') return v;
-  return 'modern';
-}
-
-function applyTheme(t: Theme): void {
-  if (typeof document === 'undefined' || !document.documentElement) return;
-  document.documentElement.dataset.theme = t;
-}
-
 function clampUiFontSize(value: number): number {
   if (!Number.isFinite(value)) return UI_FONT_SIZE_DEFAULT;
   return Math.min(UI_FONT_SIZE_MAX, Math.max(UI_FONT_SIZE_MIN, Math.round(value)));
@@ -81,25 +66,13 @@ function applyUiFontSize(value: number): void {
   document.documentElement.style.setProperty('--ui-font-size', `${clampUiFontSize(value)}px`);
 }
 
-const theme = ref<Theme>(loadTheme());
 const colorScheme = ref<ColorScheme>(loadColorScheme());
 const accent = ref<Accent>(loadAccent());
 const uiFontSize = ref<number>(loadUiFontSize());
 
-watch(theme, applyTheme, { immediate: true });
 watch(colorScheme, applyColorScheme, { immediate: true });
 watch(accent, applyAccent, { immediate: true });
 watch(uiFontSize, applyUiFontSize, { immediate: true });
-
-function setTheme(t: Theme): void {
-  if (t !== 'terminal' && t !== 'modern' && t !== 'kimi') return;
-  theme.value = t;
-  safeSetString(STORAGE_KEYS.theme, t);
-}
-
-function toggleTheme(): void {
-  setTheme(theme.value === 'modern' ? 'terminal' : 'modern');
-}
 
 function setColorScheme(c: ColorScheme): void {
   if (!COLOR_SCHEME_VALUES.includes(c)) return;
@@ -174,13 +147,10 @@ function recordMoonDelta(chars: number): void {
 
 export function useAppearance() {
   return {
-    theme,
     colorScheme,
     accent,
     uiFontSize,
     fastMoon,
-    setTheme,
-    toggleTheme,
     setColorScheme,
     setAccent,
     setUiFontSize,
