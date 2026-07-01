@@ -162,7 +162,7 @@ describe('GlobTool', () => {
       additionalDirs: [],
     });
 
-    const result = await executeTool(tool, context({ pattern: 'src/**/*.ts', path: 'C:\\WORKSPACE' }));
+    const result = await executeTool(tool, context({ pattern: 'src/**/*.ts', path: 'C:\\workspace' }));
 
     // pathe.normalize renders Windows paths with forward slashes, so the
     // relativized result keeps `/` regardless of the backend path class.
@@ -183,31 +183,37 @@ describe('GlobTool', () => {
     expect(result.output).toContain(`[Truncated at ${String(MAX_MATCHES)} matches`);
   });
 
-  it('passes a brace pattern through to a single rg --glob', async () => {
-    const exec = execReturning('/workspace/a.ts\n/workspace/shared.ts\n/workspace/shared.tsx\n');
+  it('filters brace patterns in-process without passing them as a positive --glob', async () => {
+    const exec = execReturning(
+      '/workspace/a.ts\n/workspace/shared.ts\n/workspace/shared.tsx\n/workspace/b.js\n',
+    );
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(tool, context({ pattern: '*.{ts,tsx}' }));
 
     expect(result.isError).toBeFalsy();
-    expect(execArgs(exec)).toContain('*.{ts,tsx}');
+    // The pattern must NOT be passed as a positive --glob — that would
+    // override ignore-file logic. Filtering happens in-process.
+    expect(execArgs(exec)).not.toContain('*.{ts,tsx}');
     expect(result.output).toContain('a.ts');
     expect(result.output).toContain('shared.ts');
     expect(result.output).toContain('shared.tsx');
+    expect(result.output).not.toContain('b.js');
   });
 
-  it('passes an escaped-brace pattern through unchanged so literal-brace files stay matchable', async () => {
+  it('matches an escaped-brace pattern in-process so literal-brace files stay matchable', async () => {
     // `\{a,b\}.ts` opts out of brace expansion — the user wants a file
-    // literally named `{a,b}.ts`. The pattern must reach rg with the escapes
-    // intact (the tool must not strip or reinterpret the backslashes).
-    const exec = execReturning('/workspace/{a,b}.ts\n');
+    // literally named `{a,b}.ts`. The pattern is matched in-process, so the
+    // escapes are handled by picomatch, not rg.
+    const exec = execReturning('/workspace/{a,b}.ts\n/workspace/other.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(tool, context({ pattern: '\\{a,b\\}.ts' }));
 
     expect(result.isError).toBeFalsy();
-    expect(execArgs(exec)).toContain('\\{a,b\\}.ts');
+    expect(execArgs(exec)).not.toContain('\\{a,b\\}.ts');
     expect(result.output).toContain('{a,b}.ts');
+    expect(result.output).not.toContain('other.ts');
   });
 
   it('searches only the current workspace when path is omitted', async () => {
@@ -248,6 +254,46 @@ describe('GlobTool', () => {
     await executeTool(tool, context({ pattern: '*.ts' }));
 
     expect(execArgs(exec)).not.toContain('--no-ignore');
+  });
+
+  it('does not emit a positive --glob for broad all-file patterns', async () => {
+    for (const pattern of ['*', '**', '**/*'] as const) {
+      const exec = execReturning('/workspace/a.ts\n');
+      const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+      await executeTool(tool, context({ pattern }));
+
+      const args = execArgs(exec);
+      expect(args).not.toContain(pattern);
+      expect(args).toContain('--glob');
+      expect(args.some((arg) => arg.startsWith('!'))).toBe(true);
+    }
+  });
+
+  it('filters anchored patterns in-process without a positive --glob', async () => {
+    const exec = execReturning('/workspace/src/a.ts\n/workspace/other/b.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: 'src/**/*.ts' }));
+
+    expect(execArgs(exec)).not.toContain('src/**/*.ts');
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).not.toContain('other/b.ts');
+  });
+
+  it('adds --no-require-git when the search root is outside a git repo', async () => {
+    const exec = execReturning('/workspace/a.ts\n');
+    const stat = vi.fn(async (candidate: string) => {
+      if (candidate.endsWith('/.git')) {
+        throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+      }
+      return dirStat();
+    });
+    const tool = new GlobTool(createFakeKaos({ exec, stat }), workspace);
+
+    await executeTool(tool, context({ pattern: '*.ts', path: '/workspace' }));
+
+    expect(execArgs(exec)).toContain('--no-require-git');
   });
 
   it('caps returned matches and surfaces the truncation header', async () => {
@@ -291,7 +337,7 @@ describe('GlobTool', () => {
   });
 
   it('filters sensitive files from results', async () => {
-    const exec = execReturning('/workspace/.env\n/workspace/src/a.ts\n');
+    const exec = execReturning('/workspace/src/.env\n/workspace/src/a.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(tool, context({ pattern: 'src/**' }));
@@ -358,15 +404,16 @@ describe('GlobTool', () => {
   });
 
   it('walks "**/" prefix patterns with a literal anchor', async () => {
-    const exec = execReturning('/workspace/a.py\n/workspace/sub/b.py\n');
+    const exec = execReturning('/workspace/a.py\n/workspace/sub/b.py\n/workspace/other.txt\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(tool, context({ pattern: '**/*.py' }));
 
     expect(result.isError).toBeFalsy();
-    expect(execArgs(exec)).toContain('**/*.py');
+    expect(execArgs(exec)).not.toContain('**/*.py');
     expect(result.output).toContain('a.py');
     expect(result.output).toContain('sub/b.py');
+    expect(result.output).not.toContain('other.txt');
   });
 
   it('walks safe recursive patterns with a literal subdirectory anchor', async () => {
@@ -456,14 +503,15 @@ describe('GlobTool', () => {
   });
 
   it('walks "**/" patterns with literal subdirectory anchors after the prefix', async () => {
-    const exec = execReturning('/workspace/src/main/app.py\n');
+    const exec = execReturning('/workspace/src/main/app.py\n/workspace/other/x.py\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(tool, context({ pattern: '**/main/*.py' }));
 
     expect(result.isError).toBeFalsy();
-    expect(execArgs(exec)).toContain('**/main/*.py');
+    expect(execArgs(exec)).not.toContain('**/main/*.py');
     expect(result.output).toContain('src/main/app.py');
+    expect(result.output).not.toContain('other/x.py');
   });
 
   it('matches dotfiles like .gitlab-ci.yml under a simple "*.yml" pattern', async () => {
@@ -726,5 +774,61 @@ describe('GlobTool integration (real ripgrep)', () => {
     } finally {
       await fs.rm(externalDir, { recursive: true, force: true });
     }
+  });
+
+  it('respects .gitignore by default for broad patterns in a git repo', async () => {
+    await touch('kept.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('ignored.log', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), '*.log\n');
+    await fs.mkdir(path.join(tmpDir!, '.git'), { recursive: true });
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*', path: tmpDir! }));
+
+    expect(result.output).toContain('kept.ts');
+    expect(result.output).not.toContain('ignored.log');
+  });
+
+  it('respects .gitignore by default in a non-git directory', async () => {
+    await touch('kept.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('ignored.log', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), '*.log\n');
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*', path: tmpDir! }));
+
+    expect(result.output).toContain('kept.ts');
+    expect(result.output).not.toContain('ignored.log');
+  });
+
+  it('respects .gitignore for specific patterns that would re-include ignored files', async () => {
+    // A positive --glob overrides ignore logic in ripgrep, so
+    // Glob({ pattern: '*.ts' }) in a repo with .gitignore containing
+    // *.ts would surface ignored.ts. The in-process filter avoids this
+    // by letting rg --files enumerate non-ignored files first.
+    await touch('kept.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('ignored.ts', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), '*.ts\n');
+    await fs.mkdir(path.join(tmpDir!, '.git'), { recursive: true });
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*.ts', path: tmpDir! }));
+
+    expect(result.output).toContain('No matches');
+    expect(result.output).not.toContain('kept.ts');
+    expect(result.output).not.toContain('ignored.ts');
+  });
+
+  it('respects .gitignore for specific patterns in a non-git directory', async () => {
+    await touch('kept.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('ignored.ts', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), '*.ts\n');
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*.ts', path: tmpDir! }));
+
+    expect(result.output).toContain('No matches');
+    expect(result.output).not.toContain('kept.ts');
+    expect(result.output).not.toContain('ignored.ts');
   });
 });

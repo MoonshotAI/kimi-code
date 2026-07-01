@@ -25,7 +25,8 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
-import { normalize, resolve } from 'pathe';
+import { dirname, join, normalize, relative, resolve } from 'pathe';
+import picomatch from 'picomatch';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -201,17 +202,17 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // Running from the search root makes glob matching relative to it.
     const execKaos = this.kaos.withCwd(searchRoot);
 
-    let runResult = await runRipgrepOnce(
-      execKaos,
-      buildRgArgs(rgPath, args),
-      signal,
-      { abortedMessage: 'Glob aborted' },
-    );
+    const insideGitRepo =
+      args.include_ignored === true ? true : await isInsideGitRepo(this.kaos, searchRoot);
+
+    let runResult = await runRipgrepOnce(execKaos, buildRgArgs(rgPath, args, insideGitRepo), signal, {
+      abortedMessage: 'Glob aborted',
+    });
     if (runResult.kind === 'tool-error') return runResult.result;
     if (shouldRetryRipgrepEagain(runResult)) {
       runResult = await runRipgrepOnce(
         execKaos,
-        buildRgArgs(rgPath, args, true),
+        buildRgArgs(rgPath, args, insideGitRepo, true),
         signal,
         { abortedMessage: 'Glob aborted' },
       );
@@ -250,10 +251,16 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       resolve(searchRoot, p),
     );
 
+    // Filter by the user's positive glob pattern in-process. A positive
+    // --glob would override ignore-file logic, so the pattern is not passed
+    // to rg; instead rg --files enumerates non-ignored files and we filter
+    // here to preserve both the pattern match and the ignore-file respect.
+    const patternMatched = filterByPattern(rawPaths, searchRoot, args.pattern);
+
     // Authoritative sensitive-file check (the rg prefilter is conservative).
     const kept: string[] = [];
     let filteredSensitive = 0;
-    for (const p of rawPaths) {
+    for (const p of patternMatched) {
       if (isSensitiveFile(p)) {
         filteredSensitive++;
       } else {
@@ -312,16 +319,26 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   }
 }
 
-function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): string[] {
+function buildRgArgs(
+  rgPath: string,
+  args: GlobInput,
+  insideGitRepo: boolean,
+  singleThreaded = false,
+): string[] {
   const cmd: string[] = [rgPath];
   if (singleThreaded) cmd.push('-j', '1');
   cmd.push('--files', '--hidden', '--sortr=modified');
+  if (!insideGitRepo && args.include_ignored !== true) {
+    cmd.push('--no-require-git');
+  }
   for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
     cmd.push('--glob', `!${dir}`);
   }
-  // Positive pattern first, then sensitive-file exclusions so a broad
-  // pattern cannot re-include a sensitive path.
-  cmd.push('--glob', args.pattern);
+  // The user's positive pattern is NOT passed as --glob. A positive --glob
+  // "always overrides any other ignore logic" (ripgrep docs), so it would
+  // re-include files excluded by .gitignore/.ignore/.rgignore. Instead, let
+  // rg --files enumerate non-ignored files and filter the results
+  // in-process via matchUserPattern().
   for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
     cmd.push('--glob', `!${glob}`);
   }
@@ -330,6 +347,63 @@ function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): s
   // (see execution()); this keeps `--glob` matching relative to that root.
   cmd.push('.');
   return cmd;
+}
+
+function isBroadPattern(pattern: string): boolean {
+  return pattern === '*' || pattern === '**' || pattern === '**/*';
+}
+
+/**
+ * Match a file path against the user's glob pattern, using the same
+ * semantics ripgrep's `--glob` would have applied:
+ *   - Patterns without `/` match the basename at any depth.
+ *   - Patterns with `/` match the relative path from the search root.
+ *   - `**` matches zero or more directory levels.
+ *   - Dotfiles are matched (rg runs with `--hidden`).
+ *   - Brace expansion (`*.{ts,tsx}`) is handled by picomatch natively.
+ */
+function matchUserPattern(relPath: string, pattern: string): boolean {
+  const opts = { dot: true, nocase: true };
+  if (!pattern.includes('/')) {
+    const basename = relPath.split('/').pop()!;
+    return picomatch.isMatch(basename, pattern, opts);
+  }
+  return picomatch.isMatch(relPath, pattern, opts);
+}
+
+/**
+ * Filter absolute paths from `rg --files` against the user's positive glob
+ * pattern. Broad patterns (star, double-star, star-slash-star) match
+ * everything, so the filter is skipped for those. Returns the filtered list
+ * in the same order.
+ */
+function filterByPattern(absPaths: string[], searchRoot: string, pattern: string): string[] {
+  if (isBroadPattern(pattern)) return absPaths;
+  const result: string[] = [];
+  for (const absPath of absPaths) {
+    const rel = relative(searchRoot, absPath);
+    if (matchUserPattern(rel, pattern)) result.push(absPath);
+  }
+  return result;
+}
+
+async function isInsideGitRepo(kaos: Kaos, searchRoot: string): Promise<boolean> {
+  let current = kaos.normpath(searchRoot);
+  for (;;) {
+    if (await pathExists(kaos, join(current, '.git'))) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+async function pathExists(kaos: Kaos, path: string): Promise<boolean> {
+  try {
+    await kaos.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function formatGlobError(searchRoot: string, stderr: string): string {
