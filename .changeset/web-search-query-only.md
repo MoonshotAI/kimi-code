@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/agent-core": patch
+"@moonshot-ai/agent-core": minor
 "kimi-code-docs": patch
 ---
 
