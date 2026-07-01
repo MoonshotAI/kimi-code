@@ -4,6 +4,7 @@
      Includes focus trap, Esc-to-close, and optional overlay-click-to-close. -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { openDialogCount } from '../../composables/dialogStack';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
 
@@ -83,13 +84,17 @@ watch(
   () => props.open,
   async (isOpen) => {
     if (isOpen) {
+      openDialogCount.value += 1;
       previouslyFocused = document.activeElement;
       await nextTick();
       const list = focusables();
       (list[0] ?? panel.value)?.focus();
-    } else if (previouslyFocused instanceof HTMLElement) {
-      previouslyFocused.focus();
-      previouslyFocused = null;
+    } else {
+      openDialogCount.value = Math.max(0, openDialogCount.value - 1);
+      if (previouslyFocused instanceof HTMLElement) {
+        previouslyFocused.focus();
+        previouslyFocused = null;
+      }
     }
   },
   // Run immediately so callers that mount with `open` already true (Login,
@@ -104,6 +109,9 @@ if (typeof window !== 'undefined') {
 }
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined') window.removeEventListener('keydown', onKeydown);
+  // Release this dialog's slot if it unmounts while still open (e.g. the
+  // parent v-if's it away before `open` flips to false).
+  if (props.open) openDialogCount.value = Math.max(0, openDialogCount.value - 1);
 });
 </script>
 

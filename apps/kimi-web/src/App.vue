@@ -32,6 +32,7 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import { openDialogCount } from './composables/dialogStack';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
@@ -252,16 +253,18 @@ const addWorkspaceError = ref<string | null>(null);
 // capture-phase handler must NOT close a background side panel out from under an
 // open dialog — otherwise Escape dismisses the panel behind the dialog and the
 // dialog's own Escape handler never fires. New top-level dialogs go here too.
-const anyOverlayOpen = computed<boolean>(() =>
-  showModelPicker.value ||
-  showProviders.value ||
-  showLogin.value ||
-  showAddWorkspace.value ||
-  showStatusPanel.value ||
-  showSettings.value ||
-  showOnboarding.value ||
-  showMobileSwitcher.value ||
-  showMobileSettings.value,
+const anyOverlayOpen = computed<boolean>(
+  () =>
+    openDialogCount.value > 0 ||
+    showModelPicker.value ||
+    showProviders.value ||
+    showLogin.value ||
+    showAddWorkspace.value ||
+    showStatusPanel.value ||
+    showSettings.value ||
+    showOnboarding.value ||
+    showMobileSwitcher.value ||
+    showMobileSettings.value,
 );
 
 // Loading state for model/provider fetches
