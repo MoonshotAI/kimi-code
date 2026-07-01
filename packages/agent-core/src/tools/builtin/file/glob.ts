@@ -365,8 +365,8 @@ function isBroadPattern(pattern: string): boolean {
 }
 
 /**
- * Match a file path against the user's glob pattern, using the same
- * semantics ripgrep's `--glob` would have applied:
+ * Compile a glob matcher for the user's pattern, using the same semantics
+ * ripgrep's `--glob` would have applied:
  *   - Patterns without `/` match the basename at any depth.
  *   - Patterns with `/` match the relative path from the search root.
  *   - A leading `/` is stripped — ripgrep treats `/src/*.ts` as rooted at
@@ -376,15 +376,20 @@ function isBroadPattern(pattern: string): boolean {
  *   - Matching is case-sensitive, matching ripgrep's default (use
  *     `--glob-case-insensitive` / `--iglob` for case-insensitive mode).
  *   - Brace expansion (`*.{ts,tsx}`) is handled by picomatch natively.
+ *
+ * Returns a function that takes a relative path and returns whether it
+ * matches. The picomatch matcher is compiled once so large trees don't
+ * reparse the pattern on every line.
  */
-function matchUserPattern(relPath: string, pattern: string): boolean {
+function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
   const opts = { dot: true };
   const normalizedPattern = pattern.startsWith('/') ? pattern.slice(1) : pattern;
   if (!normalizedPattern.includes('/')) {
-    const basename = relPath.split('/').pop()!;
-    return picomatch.isMatch(basename, normalizedPattern, opts);
+    const matcher = picomatch(normalizedPattern, opts);
+    return (relPath: string) => matcher(relPath.split('/').pop()!);
   }
-  return picomatch.isMatch(relPath, normalizedPattern, opts);
+  const matcher = picomatch(normalizedPattern, opts);
+  return (relPath: string) => matcher(relPath);
 }
 
 /**
@@ -402,11 +407,12 @@ function filterByPattern(
   pathClass: PathClass,
 ): string[] {
   if (isBroadPattern(pattern)) return absPaths;
+  const matches = compileGlobMatcher(pattern);
   const result: string[] = [];
   for (const absPath of absPaths) {
     const rel = relativePath(searchRoot, absPath, pathClass);
     if (rel === undefined) continue;
-    if (matchUserPattern(rel, pattern)) result.push(absPath);
+    if (matches(rel)) result.push(absPath);
   }
   return result;
 }
@@ -452,6 +458,7 @@ function makeLineFilter(
   searchRoot: string,
 ): ((line: string) => boolean) | undefined {
   if (isBroadPattern(pattern)) return undefined;
+  const matches = compileGlobMatcher(pattern);
   return (line: string): boolean => {
     let relPath = line;
     if (pathClass === 'win32') relPath = relPath.replace(/\\/g, '/');
@@ -462,7 +469,7 @@ function makeLineFilter(
       if (rel === undefined) return false;
       relPath = rel;
     }
-    return matchUserPattern(relPath, pattern);
+    return matches(relPath);
   };
 }
 
