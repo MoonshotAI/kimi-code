@@ -955,6 +955,8 @@ export class KimiTUI {
     this.setAppState({ streamingPhase: 'shell' });
     this.state.ui.requestRender();
 
+    this.track('shell_command');
+
     void session.runShellCommand(command, { commandId }).then(
       ({ stdout, stderr, isError, backgrounded }) => {
         this.finishShellOutput(commandId, stdout, stderr, isError, backgrounded);

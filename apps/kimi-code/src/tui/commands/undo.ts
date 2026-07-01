@@ -104,6 +104,8 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     return false;
   }
 
+  host.track('conversation_undo', { count });
+
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
   if (lastUserComponentIndex !== undefined) {

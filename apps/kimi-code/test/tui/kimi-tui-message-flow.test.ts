@@ -1766,12 +1766,14 @@ command = "vim"
   it('echoes a bash command with a $ prompt in the transcript', async () => {
     const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
     const session = makeSession({ runShellCommand });
-    const { driver } = await makeDriver(session);
+    const { driver, harness } = await makeDriver(session);
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
 
     driver.handleUserInput('ls');
     await Promise.resolve();
+
+    expect(harness.track).toHaveBeenCalledWith('shell_command', undefined);
 
     const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
     expect(transcript).toContain('$ ls');

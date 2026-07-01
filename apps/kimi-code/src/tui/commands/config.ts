@@ -420,7 +420,11 @@ async function performModelSwitch(
       host.track('model_switch', { model: alias });
     }
     if (effort !== prevEffort) {
-      host.track('thinking_toggle', { effort });
+      host.track('thinking_toggle', {
+        enabled: effort !== 'off',
+        effort,
+        from: prevEffort,
+      });
     }
   }
 

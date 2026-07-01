@@ -391,7 +391,7 @@ max_context_size = 1000000
     expect(resumeRecords).toContainEqual({
       event: 'thinking_toggle',
       sessionId: created.id,
-      properties: { enabled: false },
+      properties: { enabled: false, effort: 'off', from: 'high' },
     });
   });
 
