@@ -111,7 +111,10 @@ function session(id: string, cwd: string): Session {
   };
 }
 
-function makeSessionService(sessions: Map<string, Session>): ISessionService {
+function makeSessionService(
+  sessions: Map<string, Session>,
+  closeEmitter = new Emitter<{ sessionId: string }>(),
+): ISessionService {
   const emptyEmitter = new Emitter<never>();
   return {
     _serviceBrand: undefined,
@@ -148,7 +151,7 @@ function makeSessionService(sessions: Map<string, Session>): ISessionService {
       throw new Error('not implemented');
     },
     onDidCreate: emptyEmitter.event,
-    onDidClose: emptyEmitter.event,
+    onDidClose: closeEmitter.event,
   };
 }
 
@@ -289,6 +292,27 @@ describe('TerminalService streams', () => {
     const terminal = await svc.create('sess_a', {});
 
     await expect(svc.get('sess_b', terminal.id)).rejects.toBeInstanceOf(
+      TerminalNotFoundError,
+    );
+  });
+
+  it('kills and forgets session terminals when the session closes', async () => {
+    const root = join(tmpDir, 'workspace-h');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_h', session('sess_h', root)],
+    ]), closeEmitter));
+    const terminal = await svc.create('sess_h', {});
+    const process = backend.processes[0]!;
+    process.emitData('buffered output');
+
+    closeEmitter.fire({ sessionId: 'sess_h' });
+
+    expect(process.killed).toBe(true);
+    expect(await svc.list('sess_h')).toEqual([]);
+    await expect(svc.get('sess_h', terminal.id)).rejects.toBeInstanceOf(
       TerminalNotFoundError,
     );
   });

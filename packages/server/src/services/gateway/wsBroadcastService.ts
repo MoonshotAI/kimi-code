@@ -2,7 +2,14 @@
 
 import { join } from 'node:path';
 
-import { Disposable, IEnvironmentService, IEventService, ILogService } from '@moonshot-ai/agent-core';
+import {
+  Disposable,
+  IEnvironmentService,
+  IEventService,
+  ILogService,
+  ISessionService,
+  type ISessionService as ISessionServiceT,
+} from '@moonshot-ai/agent-core';
 import { isVolatileEventType, type Event, type SessionCursor } from '@moonshot-ai/protocol';
 import { IConnectionRegistry } from './connectionRegistry';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
@@ -47,6 +54,7 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
     @ISessionClientsService private readonly sessionClients: ISessionClientsService,
     @IConnectionRegistry private readonly connectionRegistry: IConnectionRegistry,
     @IEnvironmentService env: IEnvironmentService,
+    @ISessionService sessionService?: ISessionServiceT,
   ) {
     super();
     this._maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
@@ -57,6 +65,13 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
         this._onEvent(event);
       }),
     );
+    if (sessionService !== undefined) {
+      this._register(
+        sessionService.onDidClose(({ sessionId }) => {
+          this._deleteSession(sessionId);
+        }),
+      );
+    }
   }
 
   private _onEvent(event: Event): void {
@@ -213,6 +228,19 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
       state = created;
     }
     return state;
+  }
+
+  private _deleteSession(sid: string): void {
+    const state = this._sessions.get(sid);
+    this._sessions.delete(sid);
+    this._turnTracker.clear(sid);
+    if (state === undefined) return;
+    void state.queue
+      .then(() => state.ready)
+      .then((journal) => journal.close())
+      .catch((error: unknown) => {
+        this.logger.warn({ sid, err: String(error) }, 'wsBroadcast session cleanup failed');
+      });
   }
 
   override dispose(): void {
