@@ -826,3 +826,10 @@ class StopSuccessTool implements ExecutableTool<Record<string, unknown>> {
     };
   }
 }
+
+/**
+ * Cross-step dedup is exercised through the Agent layer (agent.turn.prompt),
+ * which wires ToolCallDeduplicator into the loop hooks. The unit tests in
+ * tool-dedup.test.ts cover the deduplicator directly. These e2e tests
+ * cover runTurn's pairing/event invariants, not cross-step dedup behaviour.
+ */
