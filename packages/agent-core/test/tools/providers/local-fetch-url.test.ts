@@ -40,6 +40,24 @@ describe('LocalFetchURLProvider content kind', () => {
     expect(result).toEqual({ content: '# Title\n\nbody', kind: 'passthrough' });
   });
 
+  it('returns image data as base64 for image/* content types', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(Buffer.from('fake-png-bytes'), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    const result = await provider.fetch('https://example.com/chart.png');
+
+    expect(result.kind).toBe('image');
+    expect(result.content).toBe('');
+    expect(result.imageData).toBeDefined();
+    expect(result.imageData?.mimeType).toBe('image/png');
+    expect(result.imageData?.base64).toBe(Buffer.from('fake-png-bytes').toString('base64'));
+  });
+
   it('reports HTML bodies as extracted main content', async () => {
     const html =
       '<html><head><title>Doc</title></head><body><article>' +

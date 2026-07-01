@@ -50,9 +50,7 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
 
   async fetch(url: string, options?: { toolCallId?: string }): Promise<UrlFetchResult> {
     try {
-      const content = await this.fetchViaMoonshot(url, options?.toolCallId);
-      // The service returns text it has already extracted from the page.
-      return { content, kind: 'extracted' };
+      return await this.fetchViaMoonshot(url, options?.toolCallId);
     } catch {
       // Forward an explicit options object even when the caller passed
       // none, so downstream consumers always see a defined second arg.
@@ -63,7 +61,7 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
   private async fetchViaMoonshot(
     url: string,
     toolCallId: string | undefined,
-  ): Promise<string> {
+  ): Promise<UrlFetchResult> {
     const bodyJson = JSON.stringify({ url });
 
     const response = await this.post(bodyJson, toolCallId);
@@ -82,7 +80,19 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
       );
     }
 
-    return response.text();
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    if (contentType.startsWith('image/')) {
+      const buffer = await response.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString('base64');
+      return {
+        content: '',
+        kind: 'image',
+        imageData: { base64, mimeType: contentType.split(';')[0].trim() },
+      };
+    }
+
+    // The service returns text it has already extracted from the page.
+    return { content: await response.text(), kind: 'extracted' };
   }
 
   private async post(bodyJson: string, toolCallId: string | undefined): Promise<Response> {

@@ -249,8 +249,33 @@ describe('FetchURLTool', () => {
     expect(toolContentString(result)).toMatch(/due to network error/i);
   });
 
+  it('returns image data as image_url content parts when fetcher returns an image', async () => {
+    const fetcher: UrlFetcher = {
+      fetch: vi.fn().mockResolvedValue({
+        content: '',
+        kind: 'image' as const,
+        imageData: { base64: 'abc123', mimeType: 'image/png' },
+      }),
+    };
+    const tool = new FetchURLTool(fetcher);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-img',
+      args: { url: 'https://example.com/chart.png' },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(Array.isArray(result.output)).toBe(true);
+    const parts = result.output as Array<{ type: string; text?: string; imageUrl?: { url: string } }>;
+    expect(parts).toHaveLength(2);
+    expect(parts[0].type).toBe('text');
+    expect(parts[0].text).toContain('Fetched image');
+    expect(parts[1].type).toBe('image_url');
+    expect(parts[1].imageUrl?.url).toBe('data:image/png;base64,abc123');
+  });
+
   it('passes through markdown content verbatim instead of running text extraction', async () => {
-    // py: when the server returns text/markdown, extraction is skipped and
     // the body is returned as-is with a different status message. The
     // fetcher signals the bypass via UrlFetchResult.kind = 'passthrough'.
     const markdown = '# Title\n\nThis is a markdown document.\n';
