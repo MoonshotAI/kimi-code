@@ -570,6 +570,14 @@ export class BackgroundManager {
    * Load persisted task records into the ghost map. Does NOT reconcile
    * (call `reconcile()` after `loadFromDisk()`). Idempotent; subsequent
    * calls overwrite the ghost map.
+   *
+   * The ghost set is NOT bounded here — trimming happens in
+   * `reconcile()` after non-terminal ghosts have been reclassified as
+   * `lost`. Trimming here (before reconcile) could drop a still-running
+   * task before `markLoadedTasksLost()` gets a chance to reclassify it
+   * and emit the lost-task notification, since `listTasks()` returns
+   * records in arbitrary directory-enumeration order rather than by
+   * status or age.
    */
   async loadFromDisk(): Promise<void> {
     const persistence = this.persistence;
@@ -580,16 +588,6 @@ export class BackgroundManager {
       // Skip ids that already exist as live processes — live wins.
       if (this.tasks.has(t.taskId)) continue;
       this.ghosts.set(t.taskId, t);
-    }
-    // Bound the ghost set so a session that completed thousands of
-    // detached tasks before a restart doesn't rebuild thousands of
-    // retained task records. Keep the newest entries (end of insertion
-    // order) and drop the oldest, mirroring the live eviction bound.
-    while (this.ghosts.size > DEFAULT_MAX_RETAINED_TERMINAL_TASKS) {
-      const oldestId = this.ghosts.keys().next().value;
-      if (oldestId === undefined) break;
-      this.ghosts.delete(oldestId);
-      this.evictedPreviews.delete(oldestId);
     }
   }
 
@@ -625,6 +623,33 @@ export class BackgroundManager {
       this.emitTaskTerminated(info);
     }
     await this.restoreBackgroundTaskNotifications();
+    // Bound the ghost set AFTER reconcile so that non-terminal ghosts
+    // (running / awaiting_approval) have been reclassified as `lost`
+    // first. This prevents dropping a still-running task before its
+    // lost-task notification is emitted. Only terminal ghosts are
+    // trimmed; the oldest by `startedAt` are dropped first so recent
+    // tasks are retained over ancient ones.
+    this.trimTerminalGhosts();
+  }
+
+  /**
+   * Drop the oldest terminal ghosts until the ghost set is within
+   * `DEFAULT_MAX_RETAINED_TERMINAL_TASKS`. Non-terminal ghosts are never
+   * trimmed — they need to stay addressable for the next reconcile pass.
+   * Oldest is determined by `startedAt` (not insertion order) because
+   * `loadFromDisk` inserts in arbitrary directory-enumeration order.
+   */
+  private trimTerminalGhosts(): void {
+    if (this.ghosts.size <= DEFAULT_MAX_RETAINED_TERMINAL_TASKS) return;
+    const terminal = [...this.ghosts.entries()]
+      .filter(([, info]) => TERMINAL_STATUSES.has(info.status))
+      .toSorted((a, b) => a[1].startedAt - b[1].startedAt);
+    const excess = this.ghosts.size - DEFAULT_MAX_RETAINED_TERMINAL_TASKS;
+    for (let i = 0; i < Math.min(excess, terminal.length); i++) {
+      const id = terminal[i]![0];
+      this.ghosts.delete(id);
+      this.evictedPreviews.delete(id);
+    }
   }
 
   /**
