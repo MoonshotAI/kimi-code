@@ -36,7 +36,7 @@ export interface UsageStatus {
 
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
-export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
+export type SkillSource = 'project' | 'user' | 'extra' | 'system' | 'builtin';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
@@ -757,7 +757,7 @@ export const usageStatusSchema = z.object({
 
 export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']) satisfies z.ZodType<PermissionMode>;
 
-export const skillSourceSchema = z.enum(['project', 'user', 'extra', 'builtin']) satisfies z.ZodType<SkillSource>;
+export const skillSourceSchema = z.enum(['project', 'user', 'extra', 'system', 'builtin']) satisfies z.ZodType<SkillSource>;
 
 export const userPromptOriginSchema = z.object({
   kind: z.literal('user'),

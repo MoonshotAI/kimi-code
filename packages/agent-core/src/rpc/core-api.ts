@@ -262,7 +262,7 @@ export interface SkillSummary {
   readonly name: string;
   readonly description: string;
   readonly path: string;
-  readonly source: 'builtin' | 'user' | 'extra' | 'project';
+  readonly source: 'builtin' | 'system' | 'user' | 'extra' | 'project';
   readonly type?: string | undefined;
   readonly disableModelInvocation?: boolean | undefined;
   readonly isSubSkill?: boolean | undefined;

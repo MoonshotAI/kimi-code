@@ -60,21 +60,24 @@ describe('skill slash commands', () => {
     ]);
   });
 
-  it('sorts built-in skill slash commands before external skill commands', () => {
+  it('sorts bundled skill slash commands before external skill commands', () => {
     const built = buildSkillSlashCommands([
       skill('zeta', 'prompt', { source: 'user' }),
       skill('alpha', 'prompt', { source: 'project' }),
+      skill('kimi-code-docs', 'inline', { source: 'system' }),
       skill('update-config', 'inline', { source: 'builtin' }),
       skill('mcp-config', 'inline', { source: 'builtin' }),
     ]);
 
     expect(built.commands.map((command) => command.name)).toEqual([
+      'kimi-code-docs',
       'mcp-config',
       'update-config',
       'skill:alpha',
       'skill:zeta',
     ]);
     expect([...built.commandMap.entries()]).toEqual([
+      ['kimi-code-docs', 'kimi-code-docs'],
       ['mcp-config', 'mcp-config'],
       ['update-config', 'update-config'],
       ['skill:alpha', 'alpha'],

@@ -63,7 +63,7 @@ Positional arguments support single and double quoting, so in `/skill:commit "fi
 
 ## Skill Locations
 
-Kimi Code CLI scans four tiers by scope; more specific scopes take higher priority: **Project > User > Extra > Built-in**
+Kimi Code CLI scans five tiers by scope; more specific scopes take higher priority: **Project > User > Extra > System > Built-in**
 
 **User level** (applies to all projects):
 - `$KIMI_CODE_HOME/skills/` (default: `~/.kimi-code/skills/`)
@@ -80,6 +80,8 @@ The Kimi-specific user Skill directory moves with `KIMI_CODE_HOME`, so isolated 
 ```toml
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
+
+**System Skills** are distributed with the CLI and registered at runtime. They provide product-aware workflows that should be available without user installation, while still being lower priority than project, user, and extra Skill directories.
 
 **Built-in Skills** are distributed with the CLI and have the lowest priority. They provide out-of-the-box workflows for common tasks — for example, configuring MCP servers, customizing the TUI theme, and editing config files. See [Built-in skill commands](../reference/slash-commands.md#built-in-skill-commands) for the full list.
 

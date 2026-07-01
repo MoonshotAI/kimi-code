@@ -41,6 +41,7 @@ import {
 import type { ProviderManager } from './provider-manager';
 import {
   registerBuiltinSkills,
+  registerSystemSkills,
   SessionSkillRegistry,
   resolveSkillRoots,
   summarizeSkill,
@@ -642,10 +643,14 @@ export class Session {
   }
 
   private async loadSkills(): Promise<void> {
+    const userHomeDir = this.options.skills?.userHomeDir ?? homedir();
+    const brandHomeDir =
+      this.options.skills?.brandHomeDir ?? this.options.kimiHomeDir ?? join(userHomeDir, '.kimi-code');
+
     const roots = await resolveSkillRoots({
       paths: {
-        userHomeDir: this.options.skills?.userHomeDir ?? homedir(),
-        brandHomeDir: this.options.skills?.brandHomeDir ?? this.options.kimiHomeDir,
+        userHomeDir,
+        brandHomeDir,
         workDir: this.options.kaos.getcwd(),
       },
       explicitDirs: this.options.skills?.explicitDirs,
@@ -655,6 +660,7 @@ export class Session {
       builtinDir: this.options.skills?.builtinDir,
     });
     await this.skills.loadRoots(roots);
+    registerSystemSkills(this.skills);
     registerBuiltinSkills(this.skills);
   }
 
