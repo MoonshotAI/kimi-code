@@ -5,7 +5,7 @@ import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 
 function strip(text: string): string {
-  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+  return text.replaceAll(/\[[0-9;]*m/g, '');
 }
 
 const longThinking = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7'].join('\n');
@@ -53,10 +53,25 @@ describe('ThinkingComponent', () => {
     vi.useRealTimers();
   });
 
-  it('finalizes in place into a collapsed preview', () => {
+  it('finalize() enters stable mode with live-format line count', () => {
     const component = new ThinkingComponent(longThinking, true, 'live');
+    const liveOut = strip(component.render(80).join('\n'));
 
     component.finalize();
+
+    const stableOut = strip(component.render(80).join('\n'));
+    // Same number of lines as live mode (no viewport jump)
+    expect(liveOut.split('\n').length).toBe(stableOut.split('\n').length);
+    // Spinner stopped, replaced by bullet
+    expect(stableOut).not.toContain('thinking...');
+    expect(stableOut).toContain(`${STATUS_BULLET}`);
+    expect(stableOut).toContain('thought');
+  });
+
+  it('compact() produces the collapsed preview after stable mode', () => {
+    const component = new ThinkingComponent(longThinking, true, 'live');
+    component.finalize();
+    component.compact();
 
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('line1');
@@ -66,9 +81,15 @@ describe('ThinkingComponent', () => {
     expect(out).toContain('... (5 more lines, ctrl+o to expand)');
   });
 
-  it('expands and collapses after finalization', () => {
+  it('compact() returns false when not in stable mode', () => {
+    const component = new ThinkingComponent('hi', true, 'finalized');
+    expect(component.compact()).toBe(false);
+  });
+
+  it('expands and collapses after compact', () => {
     const component = new ThinkingComponent(longThinking, true, 'live');
     component.finalize();
+    component.compact();
 
     component.setExpanded(true);
     const expanded = strip(component.render(80).join('\n'));
@@ -81,9 +102,10 @@ describe('ThinkingComponent', () => {
     expect(collapsed).toContain('ctrl+o to expand');
   });
 
-  it('keeps the finalized truncation footer within the requested render width', () => {
+  it('keeps the truncated footer within the requested render width after compact', () => {
     const component = new ThinkingComponent(longThinking, true, 'live');
     component.finalize();
+    component.compact();
 
     for (const line of component.render(37)) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);

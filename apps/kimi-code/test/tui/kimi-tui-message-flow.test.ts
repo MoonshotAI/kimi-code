@@ -4560,6 +4560,194 @@ command = "vim"
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
   });
 
+  it('compacts a thinking-only turn after finalizing it on turn end', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('line1');
+    expect(transcript).toContain('line2');
+    expect(transcript).not.toContain('line7');
+    expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+  });
+
+  it('compacts the latest pending thinking block when an older thinking block exists', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['old1', 'old2', 'old3', 'old4', 'old5', 'old6', 'old7']);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        delta: 'first answer',
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 2,
+        delta: ['new1', 'new2', 'new3', 'new4', 'new5', 'new6', 'new7'].join('\n'),
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 2,
+        delta: 'second answer',
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('old1');
+    expect(transcript).toContain('old2');
+    expect(transcript).toContain('new1');
+    expect(transcript).toContain('new2');
+    expect(transcript).not.toContain('new7');
+    expect(countOccurrences(transcript, 'ctrl+o to expand')).toBe(2);
+  });
+
+  it('compacts pending thinking before rendering a tool call', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_read',
+        name: 'Read',
+        args: { path: 'src/a.ts' },
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('line1');
+    expect(transcript).toContain('line2');
+    expect(transcript).not.toContain('line7');
+    expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+    expect(transcript).toContain('Using Read (src/a.ts)');
+  });
+
+  it('compacts pending thinking before rendering a streaming tool-call preview', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.appState.streamingPhase = 'thinking';
+      driver.state.appState.streamingStartTime = 1;
+
+      streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_bash',
+          name: 'Bash',
+          argumentsPart: '{"command":"echo hi"}',
+        } as Event,
+        vi.fn(),
+      );
+
+      await vi.runOnlyPendingTimersAsync();
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(driver.streamingUI.getToolComponent('call_bash')).toBeDefined();
+      expect(transcript).toContain('line1');
+      expect(transcript).toContain('line2');
+      expect(transcript).not.toContain('line7');
+      expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('compacts finalized pending thinking before a streaming tool-call preview', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.appState.streamingPhase = 'thinking';
+      driver.state.appState.streamingStartTime = 1;
+
+      streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 2,
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_bash',
+          name: 'Bash',
+          argumentsPart: '{"command":"echo hi"}',
+        } as Event,
+        vi.fn(),
+      );
+
+      await vi.runOnlyPendingTimersAsync();
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(driver.streamingUI.getToolComponent('call_bash')).toBeDefined();
+      expect(transcript).toContain('line1');
+      expect(transcript).toContain('line2');
+      expect(transcript).not.toContain('line7');
+      expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+      expect(transcript).toContain('Using Bash');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {
     const { driver } = await makeDriver();
     driver.state.toolOutputExpanded = true;
@@ -4631,3 +4819,15 @@ command = "vim"
     expect(transcript).not.toContain('<hook_result');
   });
 });
+
+function streamThinking(driver: MessageDriver, lines: readonly string[]): void {
+  driver.sessionEventHandler.handleEvent(
+    {
+      type: 'thinking.delta',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      delta: lines.join('\n'),
+    } as Event,
+    vi.fn(),
+  );
+}
