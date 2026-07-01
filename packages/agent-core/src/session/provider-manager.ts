@@ -309,6 +309,7 @@ function toKosongProviderConfig(
       return {
         type: 'google-genai',
         model,
+        baseUrl: providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
         apiKey: providerApiKey(provider),
         ...defaultHeadersField({
           ...envCustomHeaders,
@@ -334,6 +335,11 @@ function toKosongProviderConfig(
         type: 'vertexai',
         model,
         vertexai: useServiceAccount,
+        // Forward the endpoint so Vertex requests can target a custom
+        // (e.g. proxied) host. `vertexAILocation` still separately mines the
+        // region out of an `*-aiplatform.googleapis.com` base URL for the
+        // service-account path; the two are independent.
+        baseUrl: providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL'),
         apiKey: useServiceAccount ? undefined : providerApiKey(provider),
         project: vertexAIProject(provider),
         location: vertexAILocation(provider),
