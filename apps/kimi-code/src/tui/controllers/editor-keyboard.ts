@@ -382,6 +382,16 @@ export class EditorKeyboardController {
       controller.abort();
     };
     this.host.cancelInFlight = cancel;
+    // The TUI registers SIGTERM/SIGHUP handlers but not SIGINT. While the
+    // external editor owns the terminal with inherited stdio, Ctrl-C sends
+    // SIGINT to the whole process group and Node's default action exits the
+    // CLI. Install a temporary handler that routes SIGINT to the abort
+    // controller so cancellation reaches the editor instead of killing the
+    // process.
+    const sigintHandler = (): void => {
+      controller.abort();
+    };
+    process.prependListener('SIGINT', sigintHandler);
     state.ui.stop();
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
@@ -396,6 +406,7 @@ export class EditorKeyboardController {
       const msg = formatErrorMessage(error);
       this.host.showError(`External editor failed: ${msg}`);
     } finally {
+      process.off('SIGINT', sigintHandler);
       if (this.host.cancelInFlight === cancel) {
         this.host.cancelInFlight = undefined;
       }

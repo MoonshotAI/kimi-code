@@ -106,6 +106,21 @@ interface DisposedAgent {
   readonly disposed: true;
 }
 
+const DISPOSING_TAG = Symbol('disposing');
+type DisposingPromise = Promise<DisposedAgent> & { readonly [DISPOSING_TAG]: true };
+
+function makeDisposingPromise(p: Promise<DisposedAgent>): DisposingPromise {
+  return Object.assign(p, { [DISPOSING_TAG]: true } as const);
+}
+
+function isDisposingPromise(entry: unknown): entry is DisposingPromise {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    DISPOSING_TAG in (entry as Record<symbol, unknown>)
+  );
+}
+
 export interface CreateAgentOptions {
   readonly profile?: ResolvedAgentProfile;
   readonly parentAgentId?: string;
@@ -458,15 +473,17 @@ export class Session {
   async ensureAgentResumed(id: string): Promise<Agent> {
     const entry = this.agents.get(id);
     if (entry !== undefined) {
-      try {
-        return (await this.resolveAgentEntry(entry)).agent;
-      } catch (error) {
-        // The entry was a disposing promise from pruneReadySubagents.
-        // Fall through to resumeAgent to replay persisted wire now that
-        // disposal (and records.flush) has completed.
-        if (!(error instanceof Error) || !error.message.includes('disposed during pruning')) {
-          throw error;
+      if (isDisposingPromise(entry)) {
+        // Wait for disposal to complete, then fall through to
+        // resumeAgent to replay persisted wire.
+        try {
+          await entry;
+        } catch {
+          // dispose() failed — fall through to replay persisted wire.
         }
+        this.agents.delete(id);
+      } else {
+        return (await this.resolveAgentEntry(entry)).agent;
       }
     }
     if (this.metadata.agents[id] === undefined) {
@@ -818,7 +835,7 @@ export class Session {
     if ('disposed' in resolved) {
       throw new Error('Agent was disposed during pruning; retry resume');
     }
-    return resolved;
+    return resolved as ResumedAgent;
   }
 
   private async pruneReadySubagents(): Promise<void> {
@@ -836,15 +853,25 @@ export class Session {
       if (candidates.length <= DEFAULT_MAX_READY_SUBAGENTS) break;
       const candidate = candidates.shift();
       if (candidate === undefined) break;
-      // Replace the live Agent with a "disposing" promise so a concurrent
-      // ensureAgentResumed / RPC path cannot grab the same idle subagent
-      // and start a new turn while disposal is clearing its tools. The
-      // promise resolves to a DisposedAgent sentinel so ensureAgentResumed
-      // falls through to resumeAgent (replaying persisted wire) only after
-      // disposal — and therefore records.flush() — has completed.
-      const disposing = candidate.agent.dispose().then((): DisposedAgent => ({ disposed: true }));
+      // Replace the live Agent with a tagged disposing promise so a
+      // concurrent ensureAgentResumed / RPC path cannot grab the same
+      // idle subagent and start a new turn while disposal is clearing
+      // its tools. The promise resolves to a DisposedAgent sentinel so
+      // ensureAgentResumed falls through to resumeAgent (replaying
+      // persisted wire) only after disposal — and therefore
+      // records.flush() — has completed.
+      const disposing = makeDisposingPromise(
+        candidate.agent.dispose().then((): DisposedAgent => ({ disposed: true })),
+      );
       this.agents.set(candidate.id, disposing);
-      await disposing;
+      try {
+        await disposing;
+      } catch {
+        // dispose() failed (e.g. records.flush I/O error). Remove the
+        // rejected placeholder so later ensureAgentResumed calls fall
+        // through to resumeAgent instead of rethrowing the cleanup
+        // failure forever.
+      }
       this.agents.delete(candidate.id);
     }
   }
@@ -892,20 +919,24 @@ export class Session {
       return this.resolveAgentEntry(entry);
     }
     // If the entry is a disposing promise, wait for it to complete then
-    // fall through to replay persisted wire.
+    // fall through to replay persisted wire. For a normal in-flight
+    // resume promise, return it directly — don't re-resume.
     if (entry !== undefined) {
-      const promise = (async () => {
-        try {
-          await this.resolveAgentEntry(entry);
-        } catch {
-          // Disposed — fall through below.
-        }
-        const resumed = this.resumePersistedAgent(id, stack);
-        this.agents.set(id, resumed);
-        return resumed;
-      })();
-      this.agents.set(id, promise);
-      return promise;
+      if (isDisposingPromise(entry)) {
+        const promise = (async () => {
+          try {
+            await entry;
+          } catch {
+            // dispose() failed — fall through to replay persisted wire.
+          }
+          const resumed = this.resumePersistedAgent(id, stack);
+          this.agents.set(id, resumed);
+          return resumed;
+        })();
+        this.agents.set(id, promise);
+        return promise;
+      }
+      return this.resolveAgentEntry(entry);
     }
 
     const promise = this.resumePersistedAgent(id, stack);

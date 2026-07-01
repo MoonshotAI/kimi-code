@@ -240,11 +240,11 @@ export class BackgroundManager {
     this.onIdleCallback = callback;
   }
 
-  private fireTerminalEffects(entry: ManagedTask): void {
-    if (!this.isDetached(entry)) return;
+  private fireTerminalEffects(entry: ManagedTask): Promise<void> {
+    if (!this.isDetached(entry)) return Promise.resolve();
     const info = this.toInfo(entry);
-    void this.notifyBackgroundTask(info).catch(() => { });
     this.emitTaskTerminated(info);
+    return this.notifyBackgroundTask(info).catch(() => {});
   }
 
   private emitTaskStarted(info: BackgroundTaskInfo): void {
@@ -906,7 +906,7 @@ export class BackgroundManager {
       entry.pendingOutput = [];
       entry.pendingOutputBytes = 0;
     }
-    this.fireTerminalEffects(entry);
+    await this.fireTerminalEffects(entry);
     entry.foregroundRelease?.resolve('terminal');
     entry.terminal.resolve();
     await this.evictOldTerminalTasks();
