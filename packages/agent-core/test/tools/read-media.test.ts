@@ -391,9 +391,9 @@ describe('ReadMediaFileTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toBe(
-      '"/workspace/sample.txt" is a text file. Use Read to read text files.',
-    );
+    expect(result.output).toContain('is a TEXT FILE, not an image or video');
+    expect(result.output).toContain('ReadMediaFile CANNOT read text files');
+    expect(result.output).toContain('You MUST use the Read tool');
     expect(result.output).not.toContain('ReadFile');
   });
 
@@ -412,9 +412,8 @@ describe('ReadMediaFileTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toBe(
-      '"/workspace/blob.bin" is not a supported image or video file. Use Read for text files, or Bash or an MCP tool for other binary formats.',
-    );
+    expect(result.output).toContain('is NOT a supported image or video file');
+    expect(result.output).toContain('ReadMediaFile ONLY works with images and videos');
     expect(result.output).not.toContain('Python tools');
   });
 
@@ -533,6 +532,20 @@ describe('ReadMediaFileTool', () => {
     expect(tool.description).toContain('supports image and video files for the current model');
   });
 
+  it('surfaces the Read-tool redirect in the first paragraph of the description', () => {
+    // Issue #1218: agents repeatedly call ReadMediaFile on text files (e.g.
+    // AGENTS.md) instead of Read. The redirect to the Read tool must lead the
+    // description so the model sees it before the tips list, not buried as
+    // a tail bullet.
+    const tool = new ReadMediaFileTool(createFakeKaos(), PERMISSIVE_WORKSPACE, capabilities());
+    const description = tool.description;
+    const firstParagraphEnd = description.indexOf('\n\n');
+    const head =
+      firstParagraphEnd === -1 ? description : description.slice(0, firstParagraphEnd);
+    expect(head).toMatch(/use the Read tool/i);
+    expect(head).toMatch(/text file/i);
+  });
+
   it('omits the tool from the toolset when the model has neither image_in nor video_in', () => {
     // Strict skip semantics: construction returns a sentinel the loader can
     // use to drop the tool entirely, instead of registering a tool that
@@ -647,8 +660,21 @@ describe('ReadMediaFileTool', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toBe(
-      '"/workspace/fake.png" is not a supported image or video file. Use Read for text files, or Bash or an MCP tool for other binary formats.',
-    );
+    expect(result.output).toContain('is NOT a supported image or video file');
+    expect(result.output).toContain('ReadMediaFile ONLY works with images and videos');
+  });
+
+  it('surfaces the Read-tool redirect in the first paragraph of the description', () => {
+    // Issue #1218: agents repeatedly call ReadMediaFile on text files (e.g.
+    // AGENTS.md) instead of Read. The redirect to the Read tool must lead the
+    // description so the model sees it before the tips list, not buried as
+    // a tail bullet.
+    const tool = new ReadMediaFileTool(createFakeKaos(), PERMISSIVE_WORKSPACE, capabilities());
+    const description = tool.description;
+    const firstParagraphEnd = description.indexOf('\n\n');
+    const head =
+      firstParagraphEnd === -1 ? description : description.slice(0, firstParagraphEnd);
+    expect(head).toMatch(/use the Read tool/i);
+    expect(head).toMatch(/text file/i);
   });
 });

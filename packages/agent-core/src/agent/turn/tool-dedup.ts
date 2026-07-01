@@ -40,6 +40,27 @@ const REPEAT_REMINDER_2_START = 5;
 const REPEAT_REMINDER_3_START = 8;
 const REPEAT_FORCE_STOP_STREAK = 12;
 
+// ── Wrong-tool error detection ────────────────────────────────────────
+//
+// When a tool error is *categorical* — the model fundamentally used the
+// wrong tool for the task (e.g. ReadMediaFile on a text file) — retries
+// are never productive. These errors escalate faster than generic
+// transient failures.
+
+const WRONG_TOOL_ERROR_PATTERNS = [
+  /is a text file/i,
+  /is not a supported image or video/i,
+  /is not a supported image and video/i,
+  /cannot read text files/i,
+  /only reads image/i,
+  /only works with images and videos/i,
+  /must use the read tool/i,
+];
+
+/** Faster escalation for wrong-tool errors. */
+const WRONG_TOOL_REMINDER_2_START = 2;
+const WRONG_TOOL_FORCE_STOP_STREAK = 4;
+
 interface Deferred<T> {
   readonly promise: Promise<T>;
   resolve(value: T): void;
@@ -86,6 +107,29 @@ function forceStopResult(
 }
 
 /**
+ * Returns the text content of a tool result, collapsing ContentPart[]
+ * arrays into a single string for pattern matching.
+ */
+function toolOutputText(output: ExecutableToolResult['output']): string {
+  if (typeof output === 'string') return output;
+  return output
+    .filter(
+      (p): p is Extract<ContentPart, { type: 'text' }> => p.type === 'text',
+    )
+    .map((p) => p.text)
+    .join('');
+}
+
+/**
+ * Detects tool errors that indicate the model used the wrong tool for the
+ * task — category errors that will never succeed on retry.
+ */
+function isWrongToolError(output: ExecutableToolResult['output']): boolean {
+  const text = toolOutputText(output);
+  return WRONG_TOOL_ERROR_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/**
  * Placeholder result returned from `checkSameStep` for a duplicate call. Never
  * reaches the model — it is replaced in `finalizeResult` by awaiting the
  * original's deferred result. The loop dispatches `tool.result` events using
@@ -107,10 +151,14 @@ const DEDUP_PLACEHOLDER_RESULT: ExecutableToolResult = { output: '' };
  *   reminder once the streak hits 3. The reminder escalates as the streak
  *   grows: r1 (gentle nudge) from streak 3, r2 (concrete repeat report) from
  *   streak 5, r3 (dead-end stop instruction) from streak 8. From streak 12
- *   onward the turn is force-stopped via `{ stopTurn: true }` so the loop
- *   cannot keep spinning on the same call. Force-stop does not flip a
- *   successful tool result into an error — the underlying tool's `isError`
- *   is preserved.
+ *   onward the turn is force-stopped via `{ stopTurn: true }`.
+ *
+ *   For *wrong-tool* errors (e.g. ReadMediaFile on a text file), escalation
+ *   is faster: r2 from streak 2 and force-stop from streak 4, because
+ *   retrying the wrong tool never helps.
+ *
+ *   Force-stop does not flip a successful tool result into an error — the
+ *   underlying tool's `isError` is preserved.
  *
  * Telemetry: every finalized original call with streak >= 2 emits a
  * `tool_call_repeat` event carrying the current streak count as `repeat_count`
@@ -231,8 +279,22 @@ export class ToolCallDeduplicator {
     }
 
     let finalResult = result;
-    let action: 'none' | 'r1' | 'r2' | 'r3' | 'stop' = 'none';
-    if (streak >= REPEAT_FORCE_STOP_STREAK) {
+    let action: 'none' | 'r1' | 'r2' | 'r2_early' | 'r3' | 'stop' = 'none';
+
+    // Wrong-tool errors (category errors that retries will never fix)
+    // escalate faster than generic transient failures.
+    if (isWrongToolError(result.output)) {
+      if (streak >= WRONG_TOOL_FORCE_STOP_STREAK) {
+        finalResult = forceStopResult(result, REMINDER_TEXT_3);
+        action = 'stop';
+      } else if (streak >= WRONG_TOOL_REMINDER_2_START) {
+        finalResult = appendReminder(
+          result,
+          makeReminderText2(toolName, streak, args),
+        );
+        action = 'r2_early';
+      }
+    } else if (streak >= REPEAT_FORCE_STOP_STREAK) {
       finalResult = forceStopResult(result, REMINDER_TEXT_3);
       action = 'stop';
     } else if (streak >= REPEAT_REMINDER_3_START) {
@@ -267,4 +329,8 @@ export const __testing = {
   REPEAT_REMINDER_2_START,
   REPEAT_REMINDER_3_START,
   REPEAT_FORCE_STOP_STREAK,
+  WRONG_TOOL_REMINDER_2_START,
+  WRONG_TOOL_FORCE_STOP_STREAK,
+  toolOutputText,
+  isWrongToolError,
 };

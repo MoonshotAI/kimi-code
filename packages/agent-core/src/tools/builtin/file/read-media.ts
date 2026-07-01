@@ -50,9 +50,10 @@ export const ReadMediaFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      'Path to an image or video file. Relative paths resolve against the working directory; ' +
+      'Path to an IMAGE or VIDEO file (e.g., .png, .jpg, .mp4). ' +
+        'Relative paths resolve against the working directory; ' +
         'a path outside the working directory must be absolute. ' +
-        'Directories and text files are not supported.',
+        'Text files (e.g., .md, .ts, .txt, .json) are REJECTED — use Read instead.',
     ),
 });
 
@@ -179,15 +180,20 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       if (fileType.kind === 'text') {
         return {
           isError: true,
-          output: `"${args.path}" is a text file. Use Read to read text files.`,
+          output:
+            `"${args.path}" is a TEXT FILE, not an image or video. ` +
+            `ReadMediaFile CANNOT read text files. ` +
+            `You MUST use the Read tool to read this file. ` +
+            `Do NOT call ReadMediaFile for this file again.`,
         };
       }
       if (fileType.kind === 'unknown') {
         return {
           isError: true,
           output:
-            `"${args.path}" is not a supported image or video file. ` +
-            'Use Read for text files, or Bash or an MCP tool for other binary formats.',
+            `"${args.path}" is NOT a supported image or video file. ` +
+            `ReadMediaFile ONLY works with images and videos. ` +
+            'Use the Read tool for text files, or Bash / an MCP tool for other binary formats.',
         };
       }
 
