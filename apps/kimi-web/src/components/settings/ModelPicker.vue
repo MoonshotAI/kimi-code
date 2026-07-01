@@ -138,6 +138,7 @@ function selectTab(tabId: string): void {
       <!-- Search -->
       <div class="search-wrap">
         <Input
+          ref="searchRef"
           v-model="query"
           :placeholder="t('model.searchPlaceholder')"
           autocomplete="off"

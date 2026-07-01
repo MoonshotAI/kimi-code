@@ -59,7 +59,7 @@ defineEmits<{ close: [] }>();
 }
 .ui-panel-header__title {
   flex: none;
-  font: var(--weight-bold) var(--text-xs) var(--font-mono);
+  font: var(--weight-semibold) var(--text-xs) var(--font-mono);
   letter-spacing: 0.04em;
   color: var(--color-text);
 }
