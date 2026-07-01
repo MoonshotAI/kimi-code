@@ -251,6 +251,7 @@ export class McpConnectionManager {
   async shutdown(): Promise<void> {
     const entries = Array.from(this.entries.values());
     this.entries.clear();
+    this.listeners.clear();
     const tasks = entries.map((entry) => this.closeClient(entry));
     await Promise.allSettled(tasks);
   }

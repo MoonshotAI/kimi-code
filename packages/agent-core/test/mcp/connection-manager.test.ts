@@ -280,6 +280,20 @@ describe('McpConnectionManager', () => {
     await cm.shutdown();
   }, 15000);
 
+  it('shutdown clears status listeners', async () => {
+    const cm = new McpConnectionManager();
+    const seen: McpServerEntry[] = [];
+    cm.onStatusChange((entry) => {
+      seen.push(entry);
+    });
+
+    await cm.shutdown();
+    await cm.connect('alpha', stdioConfig());
+
+    expect(seen).toEqual([]);
+    await cm.shutdown();
+  }, 15000);
+
   it('shutdown cancels in-flight startup without late status updates', async () => {
     const cm = new McpConnectionManager();
     const hangingListFixture = join(here, 'fixtures', 'hanging-list-stdio-server.mjs');
