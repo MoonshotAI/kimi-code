@@ -7,8 +7,10 @@
 // the view-model computeds stay in the facade; cross-dependencies are injected
 // here as params.
 
-import { type ComputedRef, type Ref } from 'vue';
+import { reactive, type ComputedRef, type Ref } from 'vue';
 import { getKimiWebApi } from '../../api';
+import { i18n } from '../../i18n';
+import { useConfirmDialog } from '../useConfirmDialog';
 import { isDaemonApiError } from '../../api/errors';
 import type {
   AppConfig,
@@ -45,6 +47,36 @@ import type { UseTaskPoller } from './useTaskPoller';
 const MESSAGES_PAGE_SIZE = 50;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
+// Shared "already resolved" conflict (40902). The daemon reuses it for both
+// approvals and questions when a second client races the resolve, so a
+// duplicate submit is reported as a conflict even though the desired end
+// state (resolved) is already reached. We treat it as a benign no-op.
+const ALREADY_RESOLVED_CODE = 40902;
+
+function isAlreadyResolvedError(err: unknown): boolean {
+  return isDaemonApiError(err) && err.code === ALREADY_RESOLVED_CODE;
+}
+
+// 40904 — cancel raced the task reaching a terminal state. Like 40902 this is
+// an idempotent "already in the desired end state" conflict, not a real error.
+const TASK_ALREADY_FINISHED_CODE = 40904;
+
+function isTaskAlreadyFinishedError(err: unknown): boolean {
+  return isDaemonApiError(err) && err.code === TASK_ALREADY_FINISHED_CODE;
+}
+
+/**
+ * Question ids with an in-flight respond/dismiss, keyed by questionId with the
+ * action kind. Drives the card's loading state and guards against a duplicate
+ * submit while the first request is still in flight (the server would reject
+ * the second resolve with 40902). Module-level singleton — matches
+ * `inFlightPromptSessions` in the facade.
+ */
+const pendingQuestionActions = reactive<Record<string, 'answer' | 'dismiss'>>({});
+/** Approval ids with an in-flight respond, keyed by approvalId. */
+const pendingApprovalActions = reactive<Record<string, true>>({});
+/** Task ids with an in-flight cancel, keyed by taskId. */
+const pendingTaskCancellations = reactive<Record<string, true>>({});
 
 type SyncSessionResult = 'ok' | 'not-found' | 'failed';
 
@@ -114,6 +146,8 @@ export interface UseWorkspaceStateDeps {
 }
 
 export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceStateDeps) {
+  const { t } = i18n.global;
+  const { confirm } = useConfirmDialog();
   const {
     taskPoller,
     sideChat,
@@ -736,12 +770,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // between), so the view goes loading → message with no empty-composer frame.
       await selectSession(session.id);
       // Carry any mode toggles the user staged in the empty composer into the
-      // newly-created session, so the first prompt honors them. Reuse the normal
-      // setters (activeSessionId is now the new session) so they persist + post
-      // to the session profile exactly like an interactive toggle.
-      if (draftModes.planMode) setPlanMode(true);
-      if (draftModes.swarmMode) setSwarmMode(true);
-      if (draftModes.goalMode) setGoalMode(true);
+      // newly-created session, so the first prompt honors them. Write them to
+      // this session's per-session maps by id (not via the activeSessionId-based
+      // setters): if the user switches to another session while selectSession is
+      // awaiting the snapshot, the setters would otherwise read the then-current
+      // activeSessionId and pollute that session while this one loses the modes.
+      const sid = session.id;
+      if (draftModes.planMode) {
+        rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
+        savePlanModeToStorage();
+      }
+      if (draftModes.swarmMode) {
+        rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: true };
+        saveSwarmModeToStorage();
+      }
+      if (draftModes.goalMode) {
+        rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
+        saveGoalModeToStorage();
+      }
       draftModes.planMode = false;
       draftModes.swarmMode = false;
       draftModes.goalMode = false;
@@ -1249,12 +1295,31 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  function removePendingApproval(sid: string, approvalId: string): void {
+    const list = rawState.approvalsBySession[sid] ?? [];
+    rawState.approvalsBySession = {
+      ...rawState.approvalsBySession,
+      [sid]: list.filter((a) => a.approvalId !== approvalId),
+    };
+  }
+
+  function removePendingQuestion(sid: string, questionId: string): void {
+    const list = rawState.questionsBySession[sid] ?? [];
+    rawState.questionsBySession = {
+      ...rawState.questionsBySession,
+      [sid]: list.filter((q) => q.questionId !== questionId),
+    };
+  }
+
   async function respondApproval(
     approvalId: string,
     response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
   ): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
+    // Guard against a second click while the first respond is in flight.
+    if (pendingApprovalActions[approvalId]) return;
+    pendingApprovalActions[approvalId] = true;
     try {
       const api = getKimiWebApi();
       const fullResponse: ApprovalResponse = {
@@ -1265,13 +1330,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       };
       await api.respondApproval(sid, approvalId, fullResponse);
       // Remove from local approvals immediately (WS event will confirm)
-      const list = rawState.approvalsBySession[sid] ?? [];
-      rawState.approvalsBySession = {
-        ...rawState.approvalsBySession,
-        [sid]: list.filter((a) => a.approvalId !== approvalId),
-      };
+      removePendingApproval(sid, approvalId);
     } catch (err) {
-      pushOperationFailure('respondApproval', err, { sessionId: sid });
+      if (isAlreadyResolvedError(err)) {
+        // Already resolved (another client or a raced event) — that is the
+        // desired end state, so drop it locally without surfacing an error.
+        removePendingApproval(sid, approvalId);
+      } else {
+        pushOperationFailure('respondApproval', err, { sessionId: sid });
+      }
+    } finally {
+      delete pendingApprovalActions[approvalId];
     }
   }
 
@@ -1281,38 +1350,53 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   ): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
+    // Guard against a second click while the first respond is in flight.
+    if (pendingQuestionActions[questionId]) return;
+    pendingQuestionActions[questionId] = 'answer';
     try {
       const api = getKimiWebApi();
       await api.respondQuestion(sid, questionId, response);
-      const list = rawState.questionsBySession[sid] ?? [];
-      rawState.questionsBySession = {
-        ...rawState.questionsBySession,
-        [sid]: list.filter((q) => q.questionId !== questionId),
-      };
+      removePendingQuestion(sid, questionId);
     } catch (err) {
-      pushOperationFailure('respondQuestion', err, { sessionId: sid });
+      if (isAlreadyResolvedError(err)) {
+        // Already resolved (another client or a raced event) — that is the
+        // desired end state, so drop it locally without surfacing an error.
+        removePendingQuestion(sid, questionId);
+      } else {
+        pushOperationFailure('respondQuestion', err, { sessionId: sid });
+      }
+    } finally {
+      delete pendingQuestionActions[questionId];
     }
   }
 
   async function dismissQuestion(questionId: string): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
+    // Guard against a second click while a respond/dismiss is in flight.
+    if (pendingQuestionActions[questionId]) return;
+    pendingQuestionActions[questionId] = 'dismiss';
     try {
       const api = getKimiWebApi();
       await api.dismissQuestion(sid, questionId);
-      const list = rawState.questionsBySession[sid] ?? [];
-      rawState.questionsBySession = {
-        ...rawState.questionsBySession,
-        [sid]: list.filter((q) => q.questionId !== questionId),
-      };
+      removePendingQuestion(sid, questionId);
     } catch (err) {
-      pushOperationFailure('dismissQuestion', err, { sessionId: sid });
+      if (isAlreadyResolvedError(err)) {
+        removePendingQuestion(sid, questionId);
+      } else {
+        pushOperationFailure('dismissQuestion', err, { sessionId: sid });
+      }
+    } finally {
+      delete pendingQuestionActions[questionId];
     }
   }
 
   async function cancelTask(taskId: string): Promise<void> {
     const sid = rawState.activeSessionId;
     if (!sid) return;
+    // Guard against a second click while the first cancel is in flight.
+    if (pendingTaskCancellations[taskId]) return;
+    pendingTaskCancellations[taskId] = true;
     try {
       const api = getKimiWebApi();
       await api.cancelTask(sid, taskId);
@@ -1325,7 +1409,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         ),
       };
     } catch (err) {
-      pushOperationFailure('cancelTask', err, { sessionId: sid });
+      if (isTaskAlreadyFinishedError(err)) {
+        // Already in a terminal state — that is the desired end state for
+        // "cancel", so stay silent. Don't force status to 'cancelled': the
+        // task may have completed/failed, and the task event stream / poller
+        // will reflect its real status.
+      } else {
+        pushOperationFailure('cancelTask', err, { sessionId: sid });
+      }
+    } finally {
+      delete pendingTaskCancellations[taskId];
     }
   }
 
@@ -1364,12 +1457,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /** Flip swarm mode on/off. In manual permission mode, ask before enabling. */
-  function toggleSwarmMode(): void {
+  async function toggleSwarmMode(): Promise<void> {
     const sid = rawState.activeSessionId;
     const current = sid ? (rawState.swarmModeBySession[sid] ?? false) : draftModes.swarmMode;
     const on = !current;
     if (on && rawState.permission === 'manual') {
-      const ok = confirm('Enable swarm mode? The agent will run multiple sub agents in parallel.');
+      const ok = await confirm({
+        title: t('workspace.swarmEnableConfirm'),
+        variant: 'primary',
+      });
       if (!ok) return;
     }
     setSwarmMode(on);
@@ -1399,7 +1495,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const trimmed = objective.trim();
     if (!trimmed) return;
     if (rawState.permission === 'manual') {
-      const ok = confirm(`Start goal: "${trimmed}"? The agent will run autonomously toward this objective.`);
+      const ok = await confirm({
+        title: t('workspace.goalStartConfirm', { objective: trimmed }),
+        variant: 'primary',
+      });
       if (!ok) return;
     }
     const sid = rawState.activeSessionId;
@@ -1655,6 +1754,23 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
+   * Move a queued message within the active session's queue (drag-to-reorder).
+   * Defensive: no-op if indices are equal, out of range, or no active session.
+   */
+  function reorderQueue(from: number, to: number): void {
+    const sid = rawState.activeSessionId;
+    if (!sid) return;
+    const current = rawState.queuedBySession[sid] ?? [];
+    if (from === to) return;
+    if (from < 0 || from >= current.length || to < 0 || to >= current.length) return;
+    const next = [...current];
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: next };
+  }
+
+  /**
    * List directory contents for the active session.
    * Returns FsEntry[] — defensive, returns [] on error or no active session.
    */
@@ -1837,10 +1953,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     uploadImage,
     enqueue,
     unqueue,
+    reorderQueue,
     abortCurrentPrompt,
     respondApproval,
     respondQuestion,
     dismissQuestion,
+    pendingQuestionActions,
+    pendingApprovalActions,
     cancelTask,
     setPlanMode,
     togglePlanMode,
