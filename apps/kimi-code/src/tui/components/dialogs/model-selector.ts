@@ -374,12 +374,6 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const segments = segmentsFor(choice.model);
     const active = this.effectiveEffort(choice);
     const rendered = segments.map((effort) => segment(effortLabel(effort), effort === active));
-    // Always-on models (including effort-capable ones) additionally surface an
-    // unsupported Off so it's explicit that thinking cannot be disabled — same
-    // shape as the legacy always-on control.
-    if (availability === 'always-on') {
-      rendered.push(unavailable('Off'));
-    }
     return `  ${rendered.join('  ')}`;
   }
 }
