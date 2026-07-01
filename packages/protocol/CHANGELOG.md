@@ -1,5 +1,11 @@
 # @moonshot-ai/protocol
 
+## 0.3.2
+
+### Patch Changes
+
+- [#1258](https://github.com/MoonshotAI/kimi-code/pull/1258) [`b905dd4`](https://github.com/MoonshotAI/kimi-code/commit/b905dd49108c567d0fecd38a096808c121672795) - Show draft pull requests with a distinct draft status instead of displaying them as open.
+
 ## 0.3.1
 
 ### Patch Changes
