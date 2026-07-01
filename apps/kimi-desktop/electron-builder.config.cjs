@@ -18,6 +18,18 @@
 
 const notarize = process.env.KIMI_DESKTOP_NOTARIZE === 'true';
 
+// Internal-testing artifact name:
+//   kcd-beta-alpha-crazy-internal-v50-<arch>-<MMDD>.<ext>
+// The date is MMDD in UTC+8, computed at build time. `v50` is a fixed label
+// (not a version number) — edit it here to bump the internal build label.
+function mmddUTC8() {
+  const utc8 = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const mm = String(utc8.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(utc8.getUTCDate()).padStart(2, '0');
+  return mm + dd;
+}
+const artifactName = 'kcd-beta-alpha-crazy-internal-v50-${arch}-' + mmddUTC8() + '.${ext}';
+
 module.exports = {
   appId: 'ai.moonshot.kimi.desktop',
   productName: 'Kimi Code Desktop',
@@ -44,13 +56,13 @@ module.exports = {
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
     target: ['dmg', 'zip'],
-    artifactName: 'KCD-Internal-${version}-${arch}.${ext}',
+    artifactName,
     notarize,
   },
 
   win: {
     target: ['nsis'],
-    artifactName: 'KCD-Internal-${version}-${arch}.${ext}',
+    artifactName,
   },
 
   nsis: {
@@ -62,7 +74,7 @@ module.exports = {
   linux: {
     category: 'Development',
     target: ['AppImage', 'deb'],
-    artifactName: 'KCD-Internal-${version}-${arch}.${ext}',
+    artifactName,
     maintainer: 'Moonshot AI',
   },
 };
