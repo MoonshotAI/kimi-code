@@ -470,31 +470,27 @@ function blinkOnce(): void {
   blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
 
-// Logo long-press easter-egg: holding the Kimi mark for 3 seconds opens the
-// design system page in a full-screen overlay. A short click still just blinks.
+// Logo easter-egg: click the Kimi mark 10 times in a row to open the design
+// system page in a full-screen overlay. The count resets after a short idle so
+// stray clicks don't accumulate, and each click still blinks the mark.
 const showDesignSystem = ref(false);
-let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
-let logoLongPressed = false;
-
-function onLogoPointerDown(): void {
-  logoLongPressed = false;
-  clearTimeout(logoPressTimer);
-  logoPressTimer = setTimeout(() => {
-    logoLongPressed = true;
-    showDesignSystem.value = true;
-  }, 3000);
-}
-
-function onLogoPointerUp(): void {
-  clearTimeout(logoPressTimer);
-}
+const EGG_CLICKS = 10;
+const EGG_CLICK_RESET_MS = 700;
+let logoClickCount = 0;
+let logoClickResetTimer: ReturnType<typeof setTimeout> | undefined;
 
 function onLogoClick(): void {
-  if (logoLongPressed) {
-    logoLongPressed = false;
+  blinkOnce();
+  logoClickCount += 1;
+  clearTimeout(logoClickResetTimer);
+  if (logoClickCount >= EGG_CLICKS) {
+    logoClickCount = 0;
+    showDesignSystem.value = true;
     return;
   }
-  blinkOnce();
+  logoClickResetTimer = setTimeout(() => {
+    logoClickCount = 0;
+  }, EGG_CLICK_RESET_MS);
 }
 
 function closeDesignSystem(): void {
@@ -509,7 +505,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onDesignSystemKeydown);
 }
 onBeforeUnmount(() => {
-  clearTimeout(logoPressTimer);
+  clearTimeout(logoClickResetTimer);
   if (typeof window !== 'undefined') {
     window.removeEventListener('keydown', onDesignSystemKeydown);
   }
@@ -522,7 +518,7 @@ onBeforeUnmount(() => {
     <div class="col" :style="{ width: colWidth + 'px' }">
       <!-- Header: logo + settings (no hard border — flows into workspace list) -->
       <div class="ch">
-        <div class="ch-brand" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointerleave="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+        <div class="ch-brand">
           <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick">
             <defs>
               <mask id="kimiEyes" maskUnits="userSpaceOnUse">
