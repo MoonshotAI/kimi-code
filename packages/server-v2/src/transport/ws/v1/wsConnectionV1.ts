@@ -12,12 +12,11 @@
  * Mirrors v1's `WsConnection` (`packages/server/src/ws/connection.ts`).
  */
 
-import { timingSafeEqual } from 'node:crypto';
-
 import { WS_PROTOCOL_VERSION, type SessionCursor } from '@moonshot-ai/protocol';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
+import type { CredentialValidator } from '../../../services/auth/credentials';
 import type { IConnectionRegistry } from '../connectionRegistry';
 import {
   type EventEnvelope,
@@ -49,7 +48,14 @@ export interface WsConnectionV1Options {
   readonly socket: WebSocket;
   readonly broadcaster: SessionEventBroadcaster;
   readonly connectionRegistry: IConnectionRegistry;
-  readonly token?: string;
+  /**
+   * Present-only credential check for the post-connect `client_hello`
+   * handshake. The WebSocket upgrade handler (`start.ts`) is the real auth
+   * gate; this is defense-in-depth so a presented handshake token must still
+   * be valid. A missing token is accepted (the production web client sends
+   * the bearer at the upgrade and no token in `client_hello`).
+   */
+  readonly validateCredential?: CredentialValidator;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
   readonly logger?: JournalLogger;
@@ -66,7 +72,7 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private readonly socket: WebSocket;
   private readonly broadcaster: SessionEventBroadcaster;
-  private readonly token?: string;
+  private readonly validateCredential?: CredentialValidator;
   private readonly pingIntervalMs: number;
   private readonly pongTimeoutMs: number;
   private readonly maxBufferSize: number;
@@ -87,7 +93,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.userAgent = opts.userAgent;
     this.socket = opts.socket;
     this.broadcaster = opts.broadcaster;
-    this.token = opts.token;
+    this.validateCredential = opts.validateCredential;
     this.logger = opts.logger;
     this.pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
     this.pongTimeoutMs = opts.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
@@ -154,7 +160,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private async onClientHello(frame: InboundFrame): Promise<void> {
-    if (!this.authorize(frame)) return;
+    if (!(await this.authorize(frame))) return;
     this.gotClientHello = true;
 
     const payload = frame.payload ?? {};
@@ -271,14 +277,20 @@ export class WsConnectionV1 implements BroadcastTarget {
     serverCursors[sid] = { seq: result.currentSeq, epoch: result.epoch };
   }
 
-  private authorize(frame: InboundFrame): boolean {
-    if (this.token === undefined) return true;
+  private async authorize(frame: InboundFrame): Promise<boolean> {
+    // Present-only: the upgrade handler already authenticated the socket, so a
+    // missing `client_hello` token is accepted (the production web client
+    // authenticates at the upgrade and sends no token here). If a token IS
+    // presented it must still be valid.
     const payload = frame.payload ?? {};
     const token = typeof payload['token'] === 'string' ? (payload['token'] as string) : undefined;
-    const ok =
-      token !== undefined &&
-      Buffer.from(token).length === Buffer.from(this.token).length &&
-      timingSafeEqual(Buffer.from(token), Buffer.from(this.token));
+    if (token === undefined || this.validateCredential === undefined) return true;
+    let ok = false;
+    try {
+      ok = await this.validateCredential(token);
+    } catch {
+      ok = false;
+    }
     if (!ok) {
       this.sendFrame(buildAck(frame.id ?? '', 40112, 'unauthorized', {}));
       this.close();

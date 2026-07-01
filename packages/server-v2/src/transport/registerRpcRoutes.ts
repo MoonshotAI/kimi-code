@@ -14,13 +14,13 @@
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode, errEnvelope, okEnvelope } from '@moonshot-ai/protocol';
+import { okEnvelope } from '@moonshot-ai/protocol';
 
 import { actionMap } from './actionMap';
 import type { ScopeKind } from './channel';
 import { parseServiceAction } from './channel';
 import { dispatch } from './dispatcher';
-import { isAuthorized, mapError, validationEnvelope, withTimeout } from './errors';
+import { mapError, validationEnvelope, withTimeout } from './errors';
 
 interface RpcRequest {
   readonly id: string;
@@ -42,7 +42,12 @@ interface RouteHost {
 }
 
 export interface RegisterRpcRoutesOptions {
-  /** When set, require `Authorization: Bearer <token>` on every call. */
+  /**
+   * @deprecated Auth is enforced by the global bearer hook (`middleware/auth`)
+   * before the handler runs — the persistent token (and, when configured, the
+   * `rpcToken`) gates every `/api/v2` route. Kept for call-site compatibility;
+   * the route handler itself no longer performs a separate token check.
+   */
   readonly token?: string;
   /** Per-call deadline in ms. Default 30s. */
   readonly callTimeoutMs?: number;
@@ -74,12 +79,9 @@ function makeHandler(
   return async (req, reply) => {
     const requestId = req.id;
 
-    // Auth.
-    if (opts.token !== undefined && !isAuthorized(req.headers, opts.token)) {
-      return reply
-        .status(401)
-        .send(errEnvelope(ErrorCode.AUTH_TOKEN_UNAUTHORIZED, 'unauthorized', requestId));
-    }
+    // Auth is enforced upstream by the global bearer hook (see
+    // `middleware/auth.ts`); the handler runs only after a valid credential
+    // has been verified.
 
     // Parse `resource:action`.
     const { sa } = req.params as { sa: string };

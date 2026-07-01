@@ -510,6 +510,9 @@ importers:
       undici:
         specifier: ^7.27.1
         version: 7.27.1
+      yauzl:
+        specifier: ^3.3.0
+        version: 3.3.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -529,6 +532,9 @@ importers:
       '@types/sinon':
         specifier: ^21.0.1
         version: 21.0.1
+      '@types/yauzl':
+        specifier: ^2.10.3
+        version: 2.10.3
       sinon:
         specifier: ^22.0.0
         version: 22.0.0
@@ -723,6 +729,9 @@ importers:
       '@moonshot-ai/protocol':
         specifier: workspace:^
         version: link:../protocol
+      bcryptjs:
+        specifier: 2.4.3
+        version: 2.4.3
       fastify:
         specifier: ^5.1.0
         version: 5.8.5
@@ -735,6 +744,9 @@ importers:
       pino-pretty:
         specifier: ^13.0.0
         version: 13.1.3
+      smol-toml:
+        specifier: 1.6.1
+        version: 1.6.1
       ulid:
         specifier: ^3.0.1
         version: 3.0.2
@@ -745,6 +757,9 @@ importers:
         specifier: 'catalog:'
         version: 4.3.6
     devDependencies:
+      '@types/bcryptjs':
+        specifier: 2.4.6
+        version: 2.4.6
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1

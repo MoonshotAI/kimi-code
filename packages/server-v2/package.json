@@ -22,15 +22,18 @@
     "@moonshot-ai/protocol": "workspace:^",
     "@fastify/multipart": "^10.0.0",
     "@fastify/swagger": "^9.7.0",
+    "bcryptjs": "2.4.3",
     "fastify": "^5.1.0",
     "node-pty": "^1.1.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
+    "smol-toml": "1.6.1",
     "ulid": "^3.0.1",
     "ws": "^8.20.0",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@types/bcryptjs": "2.4.6",
     "@types/ws": "^8.18.0",
     "tsx": "^4.21.0"
   }

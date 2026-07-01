@@ -10,6 +10,7 @@ import { ulid } from 'ulid';
 import { WebSocket } from 'ws';
 
 import type { ScopeKind } from '../channel';
+import { WS_BEARER_PROTOCOL_PREFIX } from './bearerProtocol';
 
 interface PendingCall {
   readonly resolve: (data: unknown) => void;
@@ -48,7 +49,13 @@ export class WsClient {
   private readonly listeners = new Map<string, (data: unknown) => void>();
 
   constructor(opts: WsClientOptions) {
-    this.ws = new WebSocket(opts.url);
+    // Present the credential at the upgrade (the server now requires a valid
+    // bearer before completing the handshake) via the bearer subprotocol, the
+    // same mechanism browser clients use. The `hello` frame still carries the
+    // token for the present-only handshake check.
+    const protocols =
+      opts.token !== undefined ? [`${WS_BEARER_PROTOCOL_PREFIX}${opts.token}`] : undefined;
+    this.ws = new WebSocket(opts.url, protocols);
     this.ready = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;

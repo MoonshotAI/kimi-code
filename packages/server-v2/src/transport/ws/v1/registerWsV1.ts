@@ -11,15 +11,18 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 import { WebSocketServer } from 'ws';
 
+import type { CredentialValidator } from '../../../services/auth/credentials';
 import { type IConnectionRegistry } from '../connectionRegistry';
 import type { SessionEventBroadcaster } from './sessionEventBroadcaster';
 import type { JournalLogger } from './sessionEventJournal';
 import { WsConnectionV1 } from './wsConnectionV1';
+import { selectWsBearerProtocol } from '../bearerProtocol';
 
 export const WS_PATH = '/api/v1/ws';
 
 export interface RegisterWsV1Options {
-  readonly token?: string;
+  /** Present-only credential validator forwarded to {@link WsConnectionV1}. */
+  readonly validateCredential?: CredentialValidator;
   readonly registry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly logger?: JournalLogger;
@@ -30,7 +33,7 @@ export interface RegisterWsV1Options {
 
 export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketServer {
   void core; // the broadcaster already holds the Core scope
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, handleProtocols: selectWsBearerProtocol });
   const { registry, broadcaster } = opts;
 
   wss.on('connection', (socket, req) => {
@@ -38,7 +41,7 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       socket,
       broadcaster,
       connectionRegistry: registry,
-      token: opts.token,
+      validateCredential: opts.validateCredential,
       remoteAddress: req.socket.remoteAddress ?? null,
       userAgent: req.headers['user-agent'] ?? null,
       logger: opts.logger,

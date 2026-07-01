@@ -15,8 +15,6 @@
  * can list live clients in the v1 wire shape.
  */
 
-import { timingSafeEqual } from 'node:crypto';
-
 import { ErrorCodes, KimiError, type IDisposable, type Scope } from '@moonshot-ai/agent-core-v2';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
@@ -25,6 +23,7 @@ import type { ScopeKind } from '../channel';
 import { parseServiceAction } from '../channel';
 import { dispatch, resolveScope } from '../dispatcher';
 import { assertSerializable, mapError } from '../errors';
+import type { CredentialValidator } from '../../services/auth/credentials';
 import { resolveEventSource } from './eventMap';
 import type { CallMessage, ListenMessage, ServerMessage } from './wsProtocol';
 import { clientMessageSchema } from './wsProtocol';
@@ -41,7 +40,13 @@ interface PendingEntry {
 export interface WsConnectionOptions {
   readonly socket: WebSocket;
   readonly core: Scope;
-  readonly token?: string;
+  /**
+   * Present-only credential check for the post-connect `hello` handshake. The
+   * WebSocket upgrade handler (`start.ts`) is the real auth gate; this is a
+   * defense-in-depth check so a presented handshake token must still be valid.
+   * When omitted, the handshake accepts any client (upgrade already ran).
+   */
+  readonly validateCredential?: CredentialValidator;
   readonly pingIntervalMs?: number;
   readonly pongTimeoutMs?: number;
   readonly callTimeoutMs?: number;
@@ -60,7 +65,7 @@ export class WsConnection {
   readonly userAgent: string | null;
   private readonly socket: WebSocket;
   private readonly core: Scope;
-  private readonly token?: string;
+  private readonly validateCredential?: CredentialValidator;
   private readonly pingIntervalMs: number;
   private readonly pongTimeoutMs: number;
   private readonly callTimeoutMs: number;
@@ -80,7 +85,7 @@ export class WsConnection {
     this.userAgent = opts.userAgent;
     this.socket = opts.socket;
     this.core = opts.core;
-    this.token = opts.token;
+    this.validateCredential = opts.validateCredential;
     this.pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
     this.pongTimeoutMs = opts.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
     this.callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
@@ -147,18 +152,28 @@ export class WsConnection {
   }
 
   private onHello(token: string | undefined): void {
-    if (this.token !== undefined) {
-      const ok =
-        token !== undefined &&
-        Buffer.from(token).length === Buffer.from(this.token).length &&
-        timingSafeEqual(Buffer.from(token), Buffer.from(this.token));
-      if (!ok) {
-        this.send({ type: 'error', id: '', code: 40112, msg: 'unauthorized' });
-        this.close();
-        return;
-      }
-    }
+    // The upgrade handler (`start.ts`) is the real auth gate: every connection
+    // reaching here already presented a valid bearer, so the handshake is
+    // accepted synchronously. (Setting `gotHello` must stay synchronous — an
+    // awaited validation would yield and let a following `call` frame observe
+    // `gotHello === false`.) A presented handshake token is still re-checked
+    // as defense-in-depth; a mismatch closes the socket. A missing token is
+    // accepted because the upgrade already authenticated the socket. This keeps
+    // the credential validated at upgrade consistent with the handshake and
+    // closes the old "rpcToken unset ⇒ no-auth" hole.
     this.gotHello = true;
+    if (token !== undefined && this.validateCredential !== undefined) {
+      void this.validateCredential(token)
+        .then((ok) => {
+          if (!ok && !this.closed) {
+            this.send({ type: 'error', id: '', code: 40112, msg: 'unauthorized' });
+            this.close();
+          }
+        })
+        .catch(() => {
+          // best-effort; the upgrade already authenticated the socket
+        });
+    }
   }
 
   private async onCall(msg: CallMessage): Promise<void> {

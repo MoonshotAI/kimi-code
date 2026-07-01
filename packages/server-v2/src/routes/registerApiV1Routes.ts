@@ -21,7 +21,9 @@ import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
+import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
+import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
@@ -55,6 +57,9 @@ interface ApiV1RouteHost {
 export interface RegisterApiV1RoutesOptions {
   readonly serverVersion: string;
   readonly debugEndpoints?: boolean;
+  readonly enableShutdown?: boolean;
+  readonly enableTerminals?: boolean;
+  readonly guiStore: IGuiStoreService;
   readonly onShutdown: () => void;
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
@@ -114,11 +119,14 @@ export async function registerApiV1Routes(
       );
       registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], core);
       registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], core);
+      registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], opts.guiStore);
       registerToolsRoutes(apiV1 as unknown as Parameters<typeof registerToolsRoutes>[0], core);
-      registerTerminalsRoutes(
-        apiV1 as unknown as Parameters<typeof registerTerminalsRoutes>[0],
-        core,
-      );
+      if (opts.enableTerminals !== false) {
+        registerTerminalsRoutes(
+          apiV1 as unknown as Parameters<typeof registerTerminalsRoutes>[0],
+          core,
+        );
+      }
       registerConnectionsRoutes(
         apiV1 as unknown as Parameters<typeof registerConnectionsRoutes>[0],
         opts.connectionRegistry,
@@ -127,9 +135,11 @@ export async function registerApiV1Routes(
         core,
         broadcaster: opts.broadcaster,
       });
-      registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {
-        onShutdown: opts.onShutdown,
-      });
+      if (opts.enableShutdown !== false) {
+        registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {
+          onShutdown: opts.onShutdown,
+        });
+      }
     },
     { prefix: '/api/v1' },
   );

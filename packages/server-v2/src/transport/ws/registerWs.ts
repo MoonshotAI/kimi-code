@@ -13,11 +13,14 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 import { WebSocketServer } from 'ws';
 
+import type { CredentialValidator } from '../../services/auth/credentials';
 import { type IConnectionRegistry } from './connectionRegistry';
 import { WsConnection } from './wsConnection';
+import { selectWsBearerProtocol } from './bearerProtocol';
 
 export interface RegisterWsOptions {
-  readonly token?: string;
+  /** Present-only credential validator forwarded to {@link WsConnection}. */
+  readonly validateCredential?: CredentialValidator;
   readonly pingIntervalMs?: number;
   readonly pongTimeoutMs?: number;
   readonly callTimeoutMs?: number;
@@ -28,14 +31,14 @@ export interface RegisterWsOptions {
 export const WS_PATH = '/api/v2/ws';
 
 export function registerWs(core: Scope, opts: RegisterWsOptions): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, handleProtocols: selectWsBearerProtocol });
   const { registry } = opts;
 
   wss.on('connection', (socket, req) => {
     const conn = new WsConnection({
       socket,
       core,
-      token: opts.token,
+      validateCredential: opts.validateCredential,
       pingIntervalMs: opts.pingIntervalMs,
       pongTimeoutMs: opts.pongTimeoutMs,
       callTimeoutMs: opts.callTimeoutMs,

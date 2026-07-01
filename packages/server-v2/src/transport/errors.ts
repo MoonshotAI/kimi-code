@@ -3,8 +3,6 @@
  * envelope, guard serialization, time-box calls, and gate access.
  */
 
-import { timingSafeEqual } from 'node:crypto';
-
 import { ErrorCodes, KimiError } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode, errEnvelope } from '@moonshot-ai/protocol';
 
@@ -101,18 +99,4 @@ export function assertSerializable(value: unknown): unknown {
     );
   }
   return value;
-}
-
-/**
- * Timing-safe bearer-token check against the `Authorization` header. Query
- * `?tkn=` is intentionally not supported on the wire to avoid leaking tokens
- * into logs; use the header.
- */
-export function isAuthorized(headers: Record<string, unknown>, token: string): boolean {
-  const auth = headers['authorization'];
-  if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) return false;
-  const presented = auth.slice('Bearer '.length);
-  const a = Buffer.from(presented);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
 }
