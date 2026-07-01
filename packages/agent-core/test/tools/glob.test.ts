@@ -1156,6 +1156,69 @@ describe('GlobTool', () => {
     expect(tool.description).toContain('C:\\Users\\foo');
     expect(tool.description).toContain('/c/Users/foo');
   });
+
+  it('treats leading ! as rg exclusion marker, not extglob prefix', async () => {
+    // rg --glob '!(a).ts' excludes files matching `(a).ts` and includes
+    // everything else. The leading `!` is an exclusion marker, not a
+    // picomatch extglob prefix.
+    const exec = execReturning(
+      '/workspace/(a).ts\n/workspace/b.ts\n/workspace/c.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '!(a).ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('b.ts');
+    expect(lines).toContain('c.ts');
+    expect(lines).not.toContain('(a).ts');
+  });
+
+  it('negated glob with * excludes all matching files', async () => {
+    // !*.ts should exclude all .ts files and include only non-.ts files.
+    const exec = execReturning(
+      '/workspace/a.ts\n/workspace/b.ts\n/workspace/c.js\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '!*.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('c.js');
+    expect(lines).not.toContain('a.ts');
+    expect(lines).not.toContain('b.ts');
+  });
+
+  it('preserves escaped comma as a literal brace arm, matching rg', async () => {
+    // rg treats `{\,,a}.ts` as two arms: `\,` (literal comma) and `a`.
+    // It matches `,.ts` and `a.ts`. The naive split on `,` would break
+    // the escaped comma into an empty arm and corrupt the group.
+    const exec = execReturning(
+      '/workspace/,.ts\n/workspace/a.ts\n/workspace/b.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '{\\,,a}.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('a.ts');
+    // The literal-comma arm matches `,.ts` — picomatch treats `\,` as
+    // a literal comma after brace expansion.
+    expect(lines).toContain(',.ts');
+    expect(lines).not.toContain('b.ts');
+  });
 });
 
 describe('splitCompletePaths', () => {

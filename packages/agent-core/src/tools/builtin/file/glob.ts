@@ -370,6 +370,13 @@ function buildRgArgs(
 function isBroadPattern(pattern: string): boolean {
   // rg treats an empty --glob as matching all files (respecting ignores),
   // so skip picomatch compilation for it — picomatch throws on empty input.
+  // A leading `!` (rg's exclusion marker) followed by nothing means
+  // "exclude nothing" → keep all files → broad. But `!*` or `!**/*` means
+  // "exclude everything" → NOT broad (needs compilation to negate).
+  if (pattern.startsWith('!')) {
+    const rest = pattern.slice(1);
+    return rest === '';
+  }
   return pattern === '' || pattern === '*' || pattern === '**' || pattern === '**/*';
 }
 
@@ -400,18 +407,30 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
   if (normalizedPattern.startsWith('./')) {
     normalizedPattern = normalizedPattern.slice(2);
   }
+  // rg treats a leading `!` as a glob exclusion marker: `!(a).ts` means
+  // "exclude files matching `(a).ts`". Strip the `!` and negate the
+  // matcher so the in-process filter excludes those files instead of
+  // treating `!` as a picomatch extglob prefix.
+  let negated = false;
+  if (normalizedPattern.startsWith('!')) {
+    negated = true;
+    normalizedPattern = normalizedPattern.slice(1);
+  }
   // Escape picomatch-only extensions that rg --glob does not support,
   // so the in-process matcher matches the same files rg would.
   const escapedPattern = escapeForPicomatch(normalizedPattern);
   // A pattern without `/` matches the basename at any depth — unless the
   // original pattern was rooted with a leading `/`, in which case it
   // matches only at the search root (gitignore-style rooted globs).
+  let matcher: (relPath: string) => boolean;
   if (!normalizedPattern.includes('/') && !rooted) {
-    const matcher = picomatch(escapedPattern, opts);
-    return (relPath: string) => matcher(relPath.split('/').pop()!);
+    const fn = picomatch(escapedPattern, opts);
+    matcher = (relPath: string) => fn(relPath.split('/').pop()!);
+  } else {
+    const fn = picomatch(escapedPattern, opts);
+    matcher = (relPath: string) => fn(relPath);
   }
-  const matcher = picomatch(escapedPattern, opts);
-  return (relPath: string) => matcher(relPath);
+  return negated ? (relPath: string) => !matcher(relPath) : matcher;
 }
 
 /**
@@ -561,7 +580,11 @@ function escapeForPicomatch(pattern: string): string {
         continue;
       }
       if (inner.includes(',')) {
-        const nonEmpty = inner.split(',').filter((a) => a !== '');
+        // Split on unescaped commas only — `\,` is a literal comma arm,
+        // not a separator. rg treats `{\,,a}.ts` as matching both `,.ts`
+        // and `a.ts`.
+        const arms = splitBraceArms(inner);
+        const nonEmpty = arms.filter((a) => a !== '');
         if (nonEmpty.length === 0) {
           // All alternatives empty — rg strips to empty string.
         } else if (nonEmpty.length === 1) {
@@ -598,6 +621,32 @@ function escapeForPicomatch(pattern: string): string {
 function escapeRangeArms(arm: string): string {
   if (!arm.includes('..')) return arm;
   return arm.replaceAll('.', '[.]');
+}
+
+/**
+ * Split a brace group's inner text on unescaped commas only. A `\,` is a
+ * literal comma within an arm, not a separator — rg treats `{\,,a}` as
+ * two arms: `\,` (literal comma) and `a`.
+ */
+function splitBraceArms(inner: string): string[] {
+  const arms: string[] = [];
+  let current = '';
+  for (let k = 0; k < inner.length; k++) {
+    const ck = inner[k]!;
+    if (ck === '\\' && k + 1 < inner.length) {
+      current += ck + inner[k + 1]!;
+      k++;
+      continue;
+    }
+    if (ck === ',') {
+      arms.push(current);
+      current = '';
+      continue;
+    }
+    current += ck;
+  }
+  arms.push(current);
+  return arms;
 }
 
 /**
