@@ -453,6 +453,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _reasoningKey: string | undefined;
   private _reasoningEffort: string | undefined;
   private _generationKwargs: OpenAILegacyGenerationKwargs;
+  private _explicitMaxTokens: boolean;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
@@ -475,6 +476,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         ? normalizedReasoningKey
         : undefined;
     this._reasoningEffort = undefined;
+    this._explicitMaxTokens = options.maxTokens !== undefined;
     this._generationKwargs =
       options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
@@ -607,7 +609,19 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     ) {
       cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
     }
-    cap = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
+    if (this._explicitMaxTokens) {
+      // When max_output_size is explicitly configured, honour it as a hard upper
+      // bound. Third-party OpenAI-compatible providers (HuggingFace, Ollama, etc.)
+      // can have output limits below CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING;
+      // applying the generic ceiling would override the user's intent and cause a 400.
+      const configuredCap =
+        this._generationKwargs.max_tokens ?? this._generationKwargs.max_completion_tokens;
+      if (configuredCap !== undefined) {
+        cap = Math.min(cap, configuredCap);
+      }
+    } else {
+      cap = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
+    }
     return this.withGenerationKwargs(completionTokenKwargs(this._model, Math.max(1, cap)));
   }
 
