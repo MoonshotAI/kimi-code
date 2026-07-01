@@ -881,6 +881,11 @@ export class BackgroundManager {
   }
 
   private evictTerminalTask(taskId: string, entry: ManagedTask): void {
+    // Preserve a lightweight ghost so the task stays addressable via
+    // getTask/list/getOutputSnapshot (which read persisted logs for ghosts)
+    // instead of reporting "Task not found" until a restart reloads the
+    // on-disk record.
+    this.ghosts.set(taskId, this.toInfo(entry));
     entry.outputChunks.length = 0;
     entry.pendingOutput = [];
     entry.pendingOutputBytes = 0;

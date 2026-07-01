@@ -774,9 +774,12 @@ describe('BackgroundManager', () => {
     if (first === undefined || last === undefined) {
       throw new Error('expected generated background task ids');
     }
-    expect(manager.getTask(first)).toBeUndefined();
+    // The evicted task is removed from the live map but preserved as a ghost
+    // so it stays addressable (getTask/list/readOutput) until a restart.
+    expect(manager.getTask(first)).toMatchObject({ taskId: first, status: 'completed' });
     expect(manager.getTask(last)).toMatchObject({ status: 'completed' });
-    expect(manager.list(false)).toHaveLength(100);
+    // 100 live terminal tasks + 5 evicted ghosts = 105 addressable entries.
+    expect(manager.list(false)).toHaveLength(105);
   });
 
   it('getTask on an unknown id does not create persisted state', async () => {
