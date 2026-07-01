@@ -55,6 +55,8 @@ const fullTime = computed(() =>
 const menuOpen = ref(false);
 const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
+// Fixed-position style for the teleported kebab menu, anchored to the ⋯ button.
+const menuStyle = ref<Record<string, string>>({});
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
@@ -62,22 +64,55 @@ function onDocClick(e: MouseEvent): void {
   closeMenu();
 }
 
-function toggleMenu(e: Event): void {
-  e.stopPropagation();
-  if (!menuOpen.value) {
-    menuOpen.value = true;
-    // Defer so the current click doesn't immediately close the menu.
-    setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
-  } else {
-    closeMenu();
+// Anchor the menu to the ⋯ button with a viewport flip (open upward when there
+// isn't room below), mirroring the workspace kebab menu in Sidebar.vue. The menu
+// is rendered through a body teleport so ancestor `overflow: hidden` (notably the
+// collapsing `.group-sessions` list) can't clip it.
+function positionMenu(): void {
+  const btn = kebabRef.value?.el;
+  if (!btn) return;
+  const menu = menuRef.value?.el;
+  const r = btn.getBoundingClientRect();
+  const gap = 4;
+  const margin = 8;
+  const menuH = menu?.offsetHeight ?? 0;
+  const menuW = menu?.offsetWidth ?? 0;
+  let top = r.bottom + gap;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
   }
+  let left = r.right - menuW;
+  if (left < margin) left = margin;
+  menuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
+
+async function toggleMenu(e: Event): Promise<void> {
+  e.stopPropagation();
+  if (menuOpen.value) {
+    closeMenu();
+    return;
+  }
+  menuOpen.value = true;
+  // Defer so the current click doesn't immediately close the menu.
+  setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
+  window.addEventListener('resize', closeMenu);
+  // Wait for the teleported menu to mount so its size can be measured.
+  await nextTick();
+  positionMenu();
 }
 function closeMenu(): void {
   menuOpen.value = false;
   document.removeEventListener('mousedown', onDocClick);
+  window.removeEventListener('resize', closeMenu);
 }
 
-onUnmounted(() => document.removeEventListener('mousedown', onDocClick));
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocClick);
+  window.removeEventListener('resize', closeMenu);
+});
 
 // Inline rename
 const renaming = ref(false);
@@ -231,24 +266,27 @@ defineExpose({ closeMenu, cancelArchive });
       </template>
     </div>
 
-    <!-- Kebab dropdown -->
-    <Menu ref="menuRef" v-if="menuOpen" class="menu" @click.stop>
-      <MenuItem :danger="copyFailed" @click="copySessionId">
-        {{
-          copyFailed
-            ? t('sidebar.copyFailed')
-            : copiedId
-              ? t('sidebar.copied')
-              : t('sidebar.copySessionId')
-        }}
-      </MenuItem>
-      <MenuItem separator />
-      <MenuItem @click="startRename">{{ t('sidebar.rename') }}</MenuItem>
-      <MenuItem @click="forkRow">{{ t('sidebar.fork') }}</MenuItem>
-      <MenuItem danger @click="startArchive">{{ t('sidebar.archive') }}</MenuItem>
-      <MenuItem separator />
-      <div class="menu-time">{{ fullTime }}</div>
-    </Menu>
+    <!-- Kebab dropdown — teleported to <body> and position:fixed so it escapes
+         the `overflow: hidden` on the collapsing `.group-sessions` list. -->
+    <Teleport to="body">
+      <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
+        <MenuItem :danger="copyFailed" @click="copySessionId">
+          {{
+            copyFailed
+              ? t('sidebar.copyFailed')
+              : copiedId
+                ? t('sidebar.copied')
+                : t('sidebar.copySessionId')
+          }}
+        </MenuItem>
+        <MenuItem separator />
+        <MenuItem @click="startRename">{{ t('sidebar.rename') }}</MenuItem>
+        <MenuItem @click="forkRow">{{ t('sidebar.fork') }}</MenuItem>
+        <MenuItem danger @click="startArchive">{{ t('sidebar.archive') }}</MenuItem>
+        <MenuItem separator />
+        <div class="menu-time">{{ fullTime }}</div>
+      </Menu>
+    </Teleport>
   </div>
 </template>
 
@@ -335,10 +373,12 @@ defineExpose({ closeMenu, cancelArchive });
 .kebab.open { display: inline-flex; }
 .kebab.open { color: var(--color-text); background: var(--color-surface-sunken); }
 
+/* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu
+   is teleported to <body> so the collapsing list's `overflow: hidden` can't clip it. */
 .menu {
-  position: absolute;
-  right: 10px;
-  top: 30px;
+  position: fixed;
+  top: 0;
+  left: 0;
   z-index: var(--z-dropdown);
 }
 .menu-time {
