@@ -368,15 +368,19 @@ function buildRgArgs(
 }
 
 function isBroadPattern(pattern: string): boolean {
+  const preprocessed = preprocessGitignoreGlobPattern(pattern);
+  if (preprocessed === undefined) return true;
+  pattern = preprocessed;
   // rg treats an empty --glob as matching all files (respecting ignores),
   // so skip picomatch compilation for it — picomatch throws on empty input.
   // A leading `!` (rg's exclusion marker) followed by nothing means
-  // "exclude nothing" → keep all files → broad. But `!*` or `!**/*` means
-  // "exclude everything" → NOT broad (needs compilation to negate).
-  if (pattern.startsWith('!')) {
-    const rest = pattern.slice(1);
-    return rest === '';
-  }
+  // "exclude the empty glob" → no files → NOT broad. `!*` or `!**/*` also
+  // needs compilation to negate.
+  if (pattern.startsWith('!')) return false;
+  return isBroadPositivePattern(pattern);
+}
+
+function isBroadPositivePattern(pattern: string): boolean {
   return pattern === '' || pattern === '*' || pattern === '**' || pattern === '**/*';
 }
 
@@ -399,14 +403,9 @@ function isBroadPattern(pattern: string): boolean {
  */
 function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
   const opts = { dot: true };
-  const rooted = pattern.startsWith('/');
-  let normalizedPattern = rooted ? pattern.slice(1) : pattern;
-  // Strip a leading `./` — rg's glob subject never has it, and picomatch
-  // treats `./` as optional, which would broaden matches. Normalizing both
-  // sides to the un-prefixed form keeps the in-process filter consistent.
-  if (normalizedPattern.startsWith('./')) {
-    normalizedPattern = normalizedPattern.slice(2);
-  }
+  const preprocessed = preprocessGitignoreGlobPattern(pattern);
+  if (preprocessed === undefined) return () => true;
+  let normalizedPattern = preprocessed;
   // rg treats a leading `!` as a glob exclusion marker: `!(a).ts` means
   // "exclude files matching `(a).ts`". Strip the `!` and negate the
   // matcher so the in-process filter excludes those files instead of
@@ -415,6 +414,19 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
   if (normalizedPattern.startsWith('!')) {
     negated = true;
     normalizedPattern = normalizedPattern.slice(1);
+  }
+  if (negated && normalizedPattern === '') {
+    return () => false;
+  }
+  const rooted = normalizedPattern.startsWith('/');
+  if (rooted) {
+    normalizedPattern = normalizedPattern.slice(1);
+  }
+  // Strip a leading `./` — rg's glob subject never has it, and picomatch
+  // treats `./` as optional, which would broaden matches. Normalizing both
+  // sides to the un-prefixed form keeps the in-process filter consistent.
+  if (normalizedPattern.startsWith('./')) {
+    normalizedPattern = normalizedPattern.slice(2);
   }
   // Escape picomatch-only extensions that rg --glob does not support,
   // so the in-process matcher matches the same files rg would.
@@ -431,6 +443,23 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
     matcher = (relPath: string) => fn(relPath);
   }
   return negated ? (relPath: string) => !matcher(relPath) : matcher;
+}
+
+function preprocessGitignoreGlobPattern(pattern: string): string | undefined {
+  if (pattern.startsWith('#')) return undefined;
+  let end = pattern.length;
+  while (end > 0 && pattern[end - 1] === ' ' && !isEscaped(pattern, end - 1)) {
+    end--;
+  }
+  return pattern.slice(0, end);
+}
+
+function isEscaped(pattern: string, index: number): boolean {
+  let slashCount = 0;
+  for (let i = index - 1; i >= 0 && pattern[i] === '\\'; i--) {
+    slashCount++;
+  }
+  return slashCount % 2 === 1;
 }
 
 /**
@@ -456,7 +485,8 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
  *   literal class members and are never rewritten. `[!` is converted to
  *   `[^` (picomatch's negation syntax). `[:` is escaped to `[\:` to
  *   prevent picomatch from interpreting POSIX classes like `[:digit:]`.
- * - **Escaped chars** (`\x`): passed through unchanged.
+ * - **Escaped chars** (`\x`): gitignore removes escapes before ordinary
+ *   characters; escapes before picomatch syntax are preserved as literals.
  */
 function escapeForPicomatch(pattern: string): string {
   let result = '';
@@ -491,7 +521,8 @@ function escapeForPicomatch(pattern: string): string {
 
     // --- Escaped character (outside char class) ---
     if (ch === '\\' && i + 1 < pattern.length) {
-      result += ch + (pattern[i + 1] ?? '');
+      const escaped = pattern[i + 1]!;
+      result += shouldPreserveEscapeForPicomatch(escaped) ? ch + escaped : escaped;
       i += 2;
       continue;
     }
@@ -535,7 +566,7 @@ function escapeForPicomatch(pattern: string): string {
         continue;
       }
       const inner = pattern.slice(i + 1, j);
-      const escapedInner = inner.replaceAll('|', '\\|');
+      const escapedInner = escapePicomatchParenthesisInner(inner);
       // Check if the previous char in result is an extglob prefix.
       const prev = result.length > 0 ? result.at(-1) : '';
       if (prev === '@' || prev === '!' || prev === '+') {
@@ -606,6 +637,24 @@ function escapeForPicomatch(pattern: string): string {
 
     result += ch;
     i++;
+  }
+  return result;
+}
+
+function shouldPreserveEscapeForPicomatch(ch: string): boolean {
+  return '*?[]{}()!+@,|\\'.includes(ch);
+}
+
+function escapePicomatchParenthesisInner(inner: string): string {
+  let result = '';
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i]!;
+    if (ch === '\\' && i + 1 < inner.length) {
+      result += ch + inner[i + 1]!;
+      i++;
+      continue;
+    }
+    result += ch === '(' || ch === ')' || ch === '|' ? `\\${ch}` : ch;
   }
   return result;
 }

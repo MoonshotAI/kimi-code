@@ -1197,6 +1197,102 @@ describe('GlobTool', () => {
     expect(lines).not.toContain('b.ts');
   });
 
+  it('treats a bare ! as an empty exclusion glob', async () => {
+    const exec = execReturning('/workspace/a.ts\n/workspace/b.js\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '!', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('No matches');
+    expect(result.output).not.toContain('a.ts');
+    expect(result.output).not.toContain('b.js');
+  });
+
+  it('preserves rooted exclusions after stripping the exclusion marker', async () => {
+    const exec = execReturning(
+      '/workspace/foo.ts\n/workspace/src/foo.ts\n/workspace/bar.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '!/foo.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('src/foo.ts');
+    expect(lines).toContain('bar.ts');
+    expect(lines).not.toContain('foo.ts');
+  });
+
+  it('drops escapes before ordinary gitignore glob characters', async () => {
+    const exec = execReturning(
+      '/workspace/foobar\n/workspace/foo\\bar\n/workspace/foo/bar\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'foo\\bar', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('foobar');
+    expect(lines).not.toContain('foo\\bar');
+    expect(lines).not.toContain('foo/bar');
+  });
+
+  it('escapes nested literal parentheses and pipes like rg glob syntax', async () => {
+    const exec = execReturning(
+      '/workspace/(a(b|c)).ts\n/workspace/(ab|c).ts\n/workspace/ac.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '(a(b|c)).ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('(a(b|c)).ts');
+    expect(lines).not.toContain('(ab|c).ts');
+    expect(lines).not.toContain('ac.ts');
+  });
+
+  it('preprocesses comment and trailing-space globs like gitignore lines', async () => {
+    const commentExec = execReturning('/workspace/#foo\n/workspace/foo\n');
+    const commentTool = new GlobTool(kaosWithExec(commentExec), workspace);
+
+    const commentResult = await executeTool(
+      commentTool,
+      context({ pattern: '#foo', path: '/workspace' }),
+    );
+
+    expect(commentResult.isError).toBeFalsy();
+    expect(commentResult.output).toContain('#foo');
+    expect(commentResult.output).toContain('foo');
+
+    const spaceExec = execReturning('/workspace/foo\n/workspace/foo \n');
+    const spaceTool = new GlobTool(kaosWithExec(spaceExec), workspace);
+
+    const spaceResult = await executeTool(
+      spaceTool,
+      context({ pattern: 'foo ', path: '/workspace' }),
+    );
+
+    expect(spaceResult.isError).toBeFalsy();
+    const lines = (spaceResult.output as string).split('\n');
+    expect(lines).toContain('foo');
+    expect(lines).not.toContain('foo ');
+  });
+
   it('preserves escaped comma as a literal brace arm, matching rg', async () => {
     // rg treats `{\,,a}.ts` as two arms: `\,` (literal comma) and `a`.
     // It matches `,.ts` and `a.ts`. The naive split on `,` would break
