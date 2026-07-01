@@ -42,14 +42,6 @@ export interface BackgroundTaskInfoBase {
   readonly terminalNotificationSuppressed?: boolean;
   /** Deadline supplied at registration; surfaced via task info. */
   readonly timeoutMs?: number;
-  /**
-   * In-memory output preview preserved on evicted ghosts when there is no
-   * persistence backend. Undefined for live tasks and for ghosts that have a
-   * persisted `output.log` to read from.
-   */
-  readonly evictedOutputPreview?: string;
-  /** Total output bytes observed before eviction (for evicted ghosts only). */
-  readonly evictedOutputSizeBytes?: number;
 }
 
 export type BackgroundTaskInfo =

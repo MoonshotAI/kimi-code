@@ -294,7 +294,10 @@ export class SessionSubagentHost {
     return run({ ...options, signal: controller.signal }).finally(() => {
       unlinkAbortSignal();
       this.activeChildren.delete(childId);
-      return this.session.releaseIdleSubagent(childId);
+      // Best-effort cleanup: pruning failures (e.g. a records.flush error
+      // from an old evicted agent) must not reject the child's completion
+      // and make the parent report a subagent failure.
+      void this.session.releaseIdleSubagent(childId).catch(() => {});
     });
   }
 

@@ -100,7 +100,11 @@ interface ResumedAgent {
   readonly warning?: string;
 }
 
-type AgentEntry = Agent | Promise<ResumedAgent>;
+type AgentEntry = Agent | Promise<ResumedAgent> | Promise<DisposedAgent>;
+
+interface DisposedAgent {
+  readonly disposed: true;
+}
 
 export interface CreateAgentOptions {
   readonly profile?: ResolvedAgentProfile;
@@ -453,7 +457,18 @@ export class Session {
 
   async ensureAgentResumed(id: string): Promise<Agent> {
     const entry = this.agents.get(id);
-    if (entry !== undefined) return (await this.resolveAgentEntry(entry)).agent;
+    if (entry !== undefined) {
+      try {
+        return (await this.resolveAgentEntry(entry)).agent;
+      } catch (error) {
+        // The entry was a disposing promise from pruneReadySubagents.
+        // Fall through to resumeAgent to replay persisted wire now that
+        // disposal (and records.flush) has completed.
+        if (!(error instanceof Error) || !error.message.includes('disposed during pruning')) {
+          throw error;
+        }
+      }
+    }
     if (this.metadata.agents[id] === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${id}" was not found`);
     }
@@ -799,7 +814,11 @@ export class Session {
 
   private async resolveAgentEntry(entry: AgentEntry): Promise<ResumedAgent> {
     if (entry instanceof Agent) return { agent: entry };
-    return entry;
+    const resolved = await entry;
+    if ('disposed' in resolved) {
+      throw new Error('Agent was disposed during pruning; retry resume');
+    }
+    return resolved;
   }
 
   private async pruneReadySubagents(): Promise<void> {
@@ -817,11 +836,16 @@ export class Session {
       if (candidates.length <= DEFAULT_MAX_READY_SUBAGENTS) break;
       const candidate = candidates.shift();
       if (candidate === undefined) break;
-      // Remove from the live map before awaiting disposal so a concurrent
+      // Replace the live Agent with a "disposing" promise so a concurrent
       // ensureAgentResumed / RPC path cannot grab the same idle subagent
-      // and start a new turn while disposal is clearing its tools.
+      // and start a new turn while disposal is clearing its tools. The
+      // promise resolves to a DisposedAgent sentinel so ensureAgentResumed
+      // falls through to resumeAgent (replaying persisted wire) only after
+      // disposal — and therefore records.flush() — has completed.
+      const disposing = candidate.agent.dispose().then((): DisposedAgent => ({ disposed: true }));
+      this.agents.set(candidate.id, disposing);
+      await disposing;
       this.agents.delete(candidate.id);
-      await candidate.agent.dispose();
     }
   }
 
@@ -864,7 +888,25 @@ export class Session {
     }
 
     const entry = this.agents.get(id);
-    if (entry !== undefined) return this.resolveAgentEntry(entry);
+    if (entry !== undefined && entry instanceof Agent) {
+      return this.resolveAgentEntry(entry);
+    }
+    // If the entry is a disposing promise, wait for it to complete then
+    // fall through to replay persisted wire.
+    if (entry !== undefined) {
+      const promise = (async () => {
+        try {
+          await this.resolveAgentEntry(entry);
+        } catch {
+          // Disposed — fall through below.
+        }
+        const resumed = this.resumePersistedAgent(id, stack);
+        this.agents.set(id, resumed);
+        return resumed;
+      })();
+      this.agents.set(id, promise);
+      return promise;
+    }
 
     const promise = this.resumePersistedAgent(id, stack);
     this.agents.set(id, promise);

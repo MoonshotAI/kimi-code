@@ -216,6 +216,13 @@ export class BackgroundManager {
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
   private onIdleCallback?: () => void;
+  /**
+   * Side table for evicted ghosts that had no persisted output.log. Stores
+   * the in-memory ring-buffer preview so getOutputSnapshot can still return
+   * the tail. Kept off the BackgroundTaskInfo object so list()/TaskList
+   * don't dump up to 1 MiB of output per ghost as task metadata.
+   */
+  private readonly evictedPreviews = new Map<string, { readonly preview: string; readonly sizeBytes: number }>();
 
   constructor(
     private readonly agent: Agent,
@@ -400,13 +407,13 @@ export class BackgroundManager {
 
     const entry = this.tasks.get(taskId);
     if (entry === undefined) {
-      // Ghost with an in-memory preview (no persistence backend): return
+      // Ghost with an in-memory preview (no persisted output.log): return
       // the preserved ring-buffer tail so readOutput is not empty for tasks
       // that had output before eviction.
-      const ghost = this.ghosts.get(taskId);
-      if (ghost?.evictedOutputPreview !== undefined) {
-        const available = Buffer.from(ghost.evictedOutputPreview, 'utf-8');
-        const totalBytes = ghost.evictedOutputSizeBytes ?? available.byteLength;
+      const evicted = this.evictedPreviews.get(taskId);
+      if (evicted !== undefined) {
+        const available = Buffer.from(evicted.preview, 'utf-8');
+        const totalBytes = evicted.sizeBytes;
         const previewBytes = Math.min(previewLimit, available.byteLength);
         const previewOffset = available.byteLength - previewBytes;
         return {
@@ -937,20 +944,23 @@ export class BackgroundManager {
     // Preserve a lightweight ghost so the task stays addressable via
     // getTask/list/getOutputSnapshot (which read persisted logs for ghosts)
     // instead of reporting "Task not found" until a restart reloads the
-    // on-disk record. When there is no persistence backend, carry the
+    // on-disk record. When the task has no persisted output.log (either
+    // because there is no persistence backend, or because it was a
+    // foreground task that stayed under the spill threshold), carry the
     // in-memory ring-buffer preview onto the ghost so readOutput still
     // returns the tail instead of an empty string.
     const info = this.toInfo(entry);
-    if (this.persistence === undefined && entry.outputChunks.length > 0) {
-      const preview = entry.outputChunks.join('');
-      this.ghosts.set(taskId, {
-        ...info,
-        evictedOutputPreview: preview,
-        evictedOutputSizeBytes: entry.outputSizeBytes,
+    // Preserve the in-memory preview when the task has no persisted
+    // output.log to read from: either because there is no persistence
+    // backend, or because it was a foreground task that stayed under the
+    // spill threshold and never started persisting.
+    if ((this.persistence === undefined || !entry.outputPersistStarted) && entry.outputChunks.length > 0) {
+      this.evictedPreviews.set(taskId, {
+        preview: entry.outputChunks.join(''),
+        sizeBytes: entry.outputSizeBytes,
       });
-    } else {
-      this.ghosts.set(taskId, info);
     }
+    this.ghosts.set(taskId, info);
     entry.outputChunks.length = 0;
     entry.pendingOutput = [];
     entry.pendingOutputBytes = 0;
@@ -963,6 +973,7 @@ export class BackgroundManager {
       const oldestId = this.ghosts.keys().next().value;
       if (oldestId === undefined) break;
       this.ghosts.delete(oldestId);
+      this.evictedPreviews.delete(oldestId);
     }
   }
 
