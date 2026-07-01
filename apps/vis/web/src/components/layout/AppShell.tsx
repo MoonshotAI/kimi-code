@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { SessionRail } from '../sessions/SessionRail';
+import { ZipDropOverlay } from '../shared/ZipDropOverlay';
 import { useTheme, type ThemeChoice, type ResolvedTheme } from '../../hooks/useTheme';
 
 interface AppShellProps {
@@ -46,6 +47,7 @@ export function AppShell({ children }: AppShellProps) {
             out horizontally instead of wrapping. */}
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
       </div>
+      <ZipDropOverlay />
     </div>
   );
 }

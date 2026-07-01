@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
@@ -4526,6 +4527,58 @@ command = "vim"
     );
 
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+  });
+
+  it('keeps the waiting moon spinner while reasoning streams only empty (encrypted) thinking deltas', async () => {
+    const { driver } = await makeDriver();
+
+    // Turn begins -> waiting mode shows the moon spinner.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.livePane.mode).toBe('waiting');
+
+    // Encrypted reasoning: thinking.delta events whose visible text is empty.
+    for (let i = 0; i < 3; i++) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'thinking.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          delta: '',
+        } as Event,
+        vi.fn(),
+      );
+    }
+
+    // The moon must stay up: still waiting, no orphan thinking component, and
+    // the activity pane still renders a moon frame (no blank, spinner-less gap).
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.livePane.mode).toBe('waiting');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+    const activity = stripSgr(renderActivity(driver));
+    expect(MOON_SPINNER_FRAMES.some((frame) => activity.includes(frame))).toBe(true);
+
+    // Real thinking text finally arrives -> transition into thinking mode.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: 'actual reasoning',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(driver.state.appState.streamingPhase).toBe('thinking');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(true);
   });
 
   it('finalizes an orphaned thinking component on turn end', async () => {

@@ -1,5 +1,11 @@
 # @moonshot-ai/protocol
 
+## 0.3.1
+
+### Patch Changes
+
+- [#1231](https://github.com/MoonshotAI/kimi-code/pull/1231) [`ceb27f5`](https://github.com/MoonshotAI/kimi-code/commit/ceb27f5e449e177493f320d90e292487a8fc3410) - Add a server-side key-value store API for persisting web UI preferences to the user's data directory.
+
 ## 0.3.0
 
 ### Minor Changes
