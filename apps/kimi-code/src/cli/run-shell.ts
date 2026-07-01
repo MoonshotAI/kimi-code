@@ -136,12 +136,14 @@ export async function runShell(
 
   let savedStty: string | undefined;
   try {
+    // stty operates on the terminal behind stdin, so stdin must be the TTY —
+    // piping /dev/null (ignore) makes stty fail with "not a tty".
     const saved = execSync('stty -g', {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['inherit', 'pipe', 'ignore'],
     });
     savedStty = typeof saved === 'string' ? saved.trim() : undefined;
-    execSync('stty -ixon', { stdio: 'ignore' });
+    execSync('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
   } catch {
     /* ignore */
   }
@@ -149,7 +151,7 @@ export async function runShell(
     if (savedStty === undefined) return;
     const args = savedStty.split(/\s+/).filter((arg) => arg.length > 0);
     if (args.length === 0) return;
-    spawnSync('stty', args, { stdio: 'ignore' });
+    spawnSync('stty', args, { stdio: ['inherit', 'ignore', 'ignore'] });
   };
 
   // If we crash without going through KimiTUI.stop(), the terminal is left in
@@ -203,13 +205,13 @@ export async function runShell(
     if (hints.length > 0) {
       process.stderr.write(`\n${hints.join('\n')}\n`);
     }
+    removeCrashHandlers();
     restoreStty();
     process.exit(exitCode);
   };
   try {
     const initStartedAt = Date.now();
     await tui.start();
-    removeCrashHandlers();
     const initMs = Date.now() - initStartedAt;
     const startupSessionId = tui.getCurrentSessionId();
     const mcpMs = await tui.getStartupMcpMs();
