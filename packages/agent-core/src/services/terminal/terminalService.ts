@@ -185,10 +185,17 @@ export class TerminalService extends Disposable implements ITerminalService {
       if (!key.startsWith(prefix)) continue;
       if (!record.closed) {
         record.closed = true;
+        let killed = true;
         try {
           record.process.kill();
         } catch {
+          killed = false;
         }
+        // Only tear down the record when the process was actually
+        // terminated. If kill() threw, the child may still be running —
+        // keep the record and its listeners so it stays managed instead
+        // of leaking as a zombie with no remaining owner.
+        if (!killed) continue;
         this.markExited(record, null);
       } else {
         disposeAll(record.disposables);

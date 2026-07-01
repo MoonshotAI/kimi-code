@@ -33,6 +33,7 @@ class FakeTerminalProcess implements TerminalProcess {
   readonly writes: string[] = [];
   readonly resizes: Array<{ cols: number; rows: number }> = [];
   killed = false;
+  killShouldThrow = false;
 
   private readonly dataEmitter = new Emitter<string>();
   private readonly exitEmitter = new Emitter<{ exitCode: number | null }>();
@@ -49,6 +50,7 @@ class FakeTerminalProcess implements TerminalProcess {
   }
 
   kill(): void {
+    if (this.killShouldThrow) throw new Error('kill failed');
     this.killed = true;
     this.exitEmitter.fire({ exitCode: null });
   }
@@ -315,5 +317,28 @@ describe('TerminalService streams', () => {
     await expect(svc.get('sess_h', terminal.id)).rejects.toBeInstanceOf(
       TerminalNotFoundError,
     );
+  });
+
+  it('keeps the terminal record when kill fails during session close', async () => {
+    const root = join(tmpDir, 'workspace-i');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_i', session('sess_i', root)],
+    ]), closeEmitter));
+    const terminal = await svc.create('sess_i', {});
+    const process = backend.processes[0]!;
+    process.killShouldThrow = true;
+
+    closeEmitter.fire({ sessionId: 'sess_i' });
+
+    // kill() threw — the child may still be running, so the record must
+    // stay alive (with its listeners) instead of being torn down into a
+    // zombie with no remaining owner.
+    expect(process.killed).toBe(false);
+    const listed = await svc.list('sess_i');
+    expect(listed.map((t) => t.id)).toEqual([terminal.id]);
+    expect((await svc.get('sess_i', terminal.id)).status).toBe('running');
   });
 });
