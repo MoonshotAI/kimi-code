@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+
 import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerStdioConfig } from '#/config/schema';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/utils/proxy';
@@ -155,7 +157,22 @@ export class StdioMcpClient implements MCPClient {
   private async closeStartedClient(): Promise<void> {
     if (!this.started) return;
     this.started = false;
-    await this.client.close();
+    // Capture the transport pid before the SDK clears it. The SDK's
+    // StdioClientTransport only signals the immediate child; on Windows,
+    // npx/uvx wrappers leave grandchild server processes behind.
+    const pid = this.transport.pid;
+    // Start tree cleanup immediately and run it in parallel with the SDK's
+    // graceful close. If we waited for the SDK close to finish first, the
+    // wrapper could already have exited and orphaned the real server before
+    // taskkill /T had a chance to run. Killing the tree up front keeps the
+    // descendant PIDs reachable while they are still children of the root.
+    const treeKill = ensureProcessTreeTerminated(pid);
+    try {
+      await this.client.close();
+    } catch {
+      // The transport may already be gone. Continue to process-tree cleanup.
+    }
+    await treeKill;
   }
 
   private installTransportHooks(): void {
@@ -216,6 +233,99 @@ class BoundedTail {
   snapshot(): string {
     return this.buffer;
   }
+}
+
+const PROCESS_EXIT_POLL_MS = 50;
+const PROCESS_GRACE_TIMEOUT_MS = 2_000;
+const PROCESS_FORCE_TIMEOUT_MS = 2_000;
+
+/**
+ * Returns `true` if a process with the given pid is still alive.
+ * `process.kill(pid, 0)` is the portable Node idiom for this check.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait up to `timeoutMs` for the process at `pid` to exit.
+ * Returns `true` once it is gone, or `false` if the deadline expires.
+ */
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, PROCESS_EXIT_POLL_MS));
+  }
+  return !isProcessAlive(pid);
+}
+
+/**
+ * Kill the whole process tree rooted at `pid`.
+ *
+ * On Windows the immediate child is often a shell wrapper (npx/uvx/cmd) and
+ * Node's default `ChildProcess.kill()` only signals that wrapper, leaving
+ * grandchild server processes orphaned. We use `taskkill /T` to terminate the
+ * entire tree. On POSIX we signal the process group first, then fall back to
+ * the direct child.
+ */
+async function killProcessTree(pid: number, force: boolean): Promise<void> {
+  if (!isProcessAlive(pid)) return;
+
+  if (process.platform === 'win32') {
+    return new Promise<void>((resolve) => {
+      const args = force ? ['/T', '/F', '/PID', String(pid)] : ['/T', '/PID', String(pid)];
+      const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+      const done = (): void => {
+        resolve();
+      };
+      killer.once('error', done);
+      killer.once('close', done);
+    });
+  }
+
+  try {
+    process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM');
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ESRCH') return;
+    if (err.code === 'EPERM') {
+      try {
+        process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+      } catch {
+        /* best effort */
+      }
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Ensure the process tree rooted at `pid` is terminated.
+ *
+ * If `pid` is null/undefined the transport never started a child and there is
+ * nothing to do. Otherwise we issue a tree-kill up front (so the root is still
+ * alive and its descendants are still reachable on Windows), wait briefly for
+ * graceful termination, then escalate to a forced tree-kill.
+ */
+async function ensureProcessTreeTerminated(pid: number | null | undefined): Promise<void> {
+  if (pid === null || pid === undefined || pid <= 0) return;
+
+  // Kill the tree before the root has a chance to vanish and orphan the real
+  // server process. On Windows taskkill /T needs the root PID to still exist
+  // so it can enumerate descendants; waiting for the root to exit first would
+  // skip the tree cleanup entirely.
+  await killProcessTree(pid, false);
+  if (await waitForProcessExit(pid, PROCESS_GRACE_TIMEOUT_MS)) return;
+
+  await killProcessTree(pid, true);
+  await waitForProcessExit(pid, PROCESS_FORCE_TIMEOUT_MS);
 }
 
 function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | undefined): string | undefined {

@@ -14,6 +14,7 @@ const fixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
 const cwdFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
+const grandchildFixture = join(here, 'fixtures', 'grandchild-stdio-server.mjs');
 
 describe('StdioMcpClient', () => {
   it('rejects unsupported executor at construction time', () => {
@@ -293,6 +294,40 @@ describe('StdioMcpClient', () => {
     // suppressed and not merely racing.
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
+  }, 15000);
+
+  it('reaps the whole process tree including a long-lived grandchild', async () => {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [grandchildFixture],
+    });
+    let grandchildPid: number | undefined;
+    try {
+      await client.connect();
+      const result = await client.callTool('get_grandchild_pid', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      grandchildPid = Number.parseInt(text, 10);
+      expect(Number.isInteger(grandchildPid)).toBe(true);
+      expect(grandchildPid).toBeGreaterThan(0);
+    } finally {
+      await client.close();
+    }
+
+    // After close, both the immediate child (the fixture server) and the
+    // grandchild it spawned must be gone. The grandchild ignores SIGTERM and
+    // sleeps forever, so surviving would mean the tree-kill failed.
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(grandchildPid!, 0);
+      } catch {
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    // One final check so the assertion message is useful on failure.
+    expect(() => process.kill(grandchildPid!, 0)).toThrow();
   }, 15000);
 });
 
