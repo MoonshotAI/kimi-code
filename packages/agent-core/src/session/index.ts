@@ -122,6 +122,7 @@ export interface SessionMeta {
 
 const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
 const ACTIVE_TURN_CLOSE_TIMEOUT_MS = 8_000;
+const DEFAULT_MAX_READY_SUBAGENTS = 64;
 
 async function waitForSettlementOrTimeout(
   promise: Promise<unknown>,
@@ -777,6 +778,14 @@ export class Session {
     return entry instanceof Agent ? entry : undefined;
   }
 
+  async releaseIdleSubagent(id: string): Promise<void> {
+    const entry = this.agents.get(id);
+    const meta = this.metadata.agents[id];
+    if (!(entry instanceof Agent) || meta?.type !== 'sub') return;
+    if (!this.isPrunableReadySubagent(id, entry, this.readySubagentParentIds())) return;
+    await this.pruneReadySubagents();
+  }
+
   *readyAgents(): Iterable<Agent> {
     for (const entry of this.agents.values()) {
       if (entry instanceof Agent) yield entry;
@@ -786,6 +795,42 @@ export class Session {
   private async resolveAgentEntry(entry: AgentEntry): Promise<ResumedAgent> {
     if (entry instanceof Agent) return { agent: entry };
     return entry;
+  }
+
+  private async pruneReadySubagents(): Promise<void> {
+    const parentIds = this.readySubagentParentIds();
+    const candidates: Array<{ readonly id: string; readonly agent: Agent }> = [];
+    for (const [id, entry] of this.agents) {
+      if (!(entry instanceof Agent)) continue;
+      if (!this.isPrunableReadySubagent(id, entry, parentIds)) continue;
+      candidates.push({ id, agent: entry });
+    }
+    while (candidates.length > DEFAULT_MAX_READY_SUBAGENTS) {
+      const candidate = candidates.shift();
+      if (candidate === undefined) break;
+      this.agents.delete(candidate.id);
+      await candidate.agent.cron?.stop();
+    }
+  }
+
+  private readySubagentParentIds(): Set<string> {
+    const parentIds = new Set<string>();
+    for (const meta of Object.values(this.metadata.agents)) {
+      if (meta.parentAgentId !== null) parentIds.add(meta.parentAgentId);
+    }
+    return parentIds;
+  }
+
+  private isPrunableReadySubagent(
+    id: string,
+    agent: Agent,
+    parentIds: ReadonlySet<string>,
+  ): boolean {
+    const meta = this.metadata.agents[id];
+    if (meta?.type !== 'sub') return false;
+    if (parentIds.has(id)) return false;
+    if (agent.turn.hasActiveTurn) return false;
+    return agent.background.list(true).length === 0;
   }
 
   private resumeAgent(

@@ -294,6 +294,7 @@ export class SessionSubagentHost {
     return run({ ...options, signal: controller.signal }).finally(() => {
       unlinkAbortSignal();
       this.activeChildren.delete(childId);
+      return this.session.releaseIdleSubagent(childId);
     });
   }
 

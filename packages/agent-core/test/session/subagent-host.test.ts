@@ -1508,6 +1508,36 @@ describe('Session.createAgent', () => {
     const sub = await session.createAgent({ type: 'sub' }, { parentAgentId: main.id });
     expect(sub.agent.mcp).toBe(session.mcp);
   });
+
+  it('evicts oldest idle subagent instances while keeping metadata', async () => {
+    const session = new Session({
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+    const main = await session.createAgent({ type: 'main' });
+    const subagentIds: string[] = [];
+
+    for (let i = 0; i < 70; i++) {
+      const child = await session.createAgent({ type: 'sub' }, { parentAgentId: main.id });
+      subagentIds.push(child.id);
+      await session.releaseIdleSubagent(child.id);
+    }
+
+    const first = subagentIds[0];
+    const last = subagentIds.at(-1);
+    if (first === undefined || last === undefined) {
+      throw new Error('expected generated subagent ids');
+    }
+
+    expect(session.getReadyAgent(first)).toBeUndefined();
+    expect(session.metadata.agents[first]).toBeDefined();
+    expect(session.getReadyAgent(last)).toBeDefined();
+  });
 });
 
 function fakeSession(
@@ -1533,6 +1563,7 @@ function fakeSession(
     writeMetadata: vi.fn(async () => {}),
     systemContextKaos: vi.fn((cwd: string) => parent.kaos.withCwd(cwd)),
     getReadyAgent: vi.fn((id: string) => agents.get(id)),
+    releaseIdleSubagent: vi.fn(async () => {}),
     ensureAgentResumed: vi.fn(async (id: string) => {
       const agent = agents.get(id);
       if (agent === undefined) {
