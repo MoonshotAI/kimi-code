@@ -200,6 +200,22 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             'Tell the user to use a model with image input capability.',
         };
       }
+      // Guard against image formats the model endpoint may reject.
+      // Some providers (e.g. kimi-for-coding) accept PNG/JPEG but reject
+      // WebP/GIF, causing a 400 that bricks the session because the failed
+      // image stays in history and is re-sent on every turn.
+      if (fileType.kind === 'image' && (fileType.mimeType === 'image/webp' || fileType.mimeType === 'image/gif')) {
+        const supported = this.capabilities.supportedImageMimes ?? ['image/png', 'image/jpeg'];
+        if (!supported.includes(fileType.mimeType)) {
+          return {
+            isError: true,
+            output:
+              `The current model does not support ${fileType.mimeType} images. ` +
+              'Supported formats: ' + supported.join(', ') + '. ' +
+              'Convert the image to PNG or JPEG before reading it.',
+          };
+        }
+      }
       if (fileType.kind === 'video' && !this.capabilities.video_in) {
         return {
           isError: true,
