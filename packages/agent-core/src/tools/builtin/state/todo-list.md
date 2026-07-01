@@ -19,9 +19,10 @@ Use this tool to maintain a structured TODO list as you work through a multi-ste
 - If no available tool can move any task forward, tell the user where you are stuck instead of repeatedly re-ordering the same todos.
 
 **How to use:**
-- Call with `todos: [...]` to replace the full list. Statuses: pending / in_progress / done.
+- Call with `todos: [...]` to replace the full list. Statuses: `pending` / `in_progress` / `done`.
 - Call with no `todos` argument to retrieve the current list without changing it.
 - Call with `todos: []` to clear the list.
+- **Important:** the status must be exactly `done`, not `completed` or `finished`.
 - Keep titles short and actionable (e.g. "Read session-control.ts", "Add planMode flag to TurnManager").
 - Update statuses as you make progress.
 - When work is underway, keep exactly one task `in_progress`.

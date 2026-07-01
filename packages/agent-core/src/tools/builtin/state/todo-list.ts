@@ -28,7 +28,7 @@ export const TODO_STORE_KEY = 'todo';
 const TODO_LIST_WRITE_REMINDER =
   'Ensure that you continue to use the todo list to track progress. Mark tasks done immediately after finishing them, and keep exactly one task in_progress when work is underway.';
 
-export type TodoStatus = 'pending' | 'in_progress' | 'done';
+export type TodoStatus = 'pending' | 'in_progress' | 'done' | 'completed';
 
 export interface TodoItem {
   readonly title: string;
@@ -45,7 +45,9 @@ declare module '../../store' {
 
 const TodoItemSchema = z.object({
   title: z.string().min(1).describe('Short, actionable title for the todo.'),
-  status: z.enum(['pending', 'in_progress', 'done']).describe('Current status of the todo.'),
+  status: z
+    .preprocess((val) => (val === 'completed' ? 'done' : val), z.enum(['pending', 'in_progress', 'done']))
+    .describe('Current status of the todo. Must be exactly one of: pending, in_progress, done. Do NOT use completed or finished.'),
 });
 
 export interface TodoListInput {
@@ -81,6 +83,7 @@ function statusMarker(status: TodoStatus): string {
     case 'in_progress':
       return '[in_progress]';
     case 'done':
+    case 'completed':
       return '[done]';
     default: {
       const _exhaustive: never = status;
@@ -133,7 +136,10 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
   private setTodos(todos: readonly TodoItem[]): void {
     this.store.set(
       TODO_STORE_KEY,
-      todos.map((todo) => ({ title: todo.title, status: todo.status })),
+      todos.map((todo) => ({
+        title: todo.title,
+        status: todo.status === 'completed' ? 'done' : todo.status,
+      })),
     );
   }
 }

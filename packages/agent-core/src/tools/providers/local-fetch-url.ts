@@ -161,6 +161,35 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
+    // Image responses: stream as binary and return as base64-encoded image data
+    // so the tool can render them directly as image_url content parts.
+    if (contentType.startsWith('image/')) {
+      const contentLengthRaw = response.headers.get('content-length');
+      if (contentLengthRaw !== null) {
+        const cl = Number(contentLengthRaw);
+        if (Number.isFinite(cl) && cl > this.maxBytes) {
+          throw new Error(
+            `Response body too large: ${String(cl)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+          );
+        }
+      }
+      const buffer = await response.arrayBuffer();
+      const bytes = Buffer.byteLength(buffer);
+      if (bytes > this.maxBytes) {
+        throw new Error(
+          `Response body too large: ${String(bytes)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+        );
+      }
+      const base64 = Buffer.from(buffer).toString('base64');
+      return {
+        content: '',
+        kind: 'image',
+        imageData: { base64, mimeType: contentType.split(';')[0].trim() },
+      };
+    }
+
     // Reject oversized responses before buffering the full body.
     const contentLengthRaw = response.headers.get('content-length');
     if (contentLengthRaw !== null) {
@@ -182,7 +211,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
-    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
       return { content: body, kind: 'passthrough' };
     }

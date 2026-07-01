@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
@@ -26,13 +27,22 @@ import DESCRIPTION from './fetch-url.md?raw';
  * - `extracted` — the body was an HTML page; only the main article text
  *   was extracted and returned.
  */
-export type UrlFetchKind = 'passthrough' | 'extracted';
+export type UrlFetchKind = 'passthrough' | 'extracted' | 'image';
+
+export interface UrlFetchImageData {
+  /** Base64-encoded image bytes. */
+  base64: string;
+  /** MIME type of the image (e.g. image/png). */
+  mimeType: string;
+}
 
 export interface UrlFetchResult {
-  /** The text handed to the LLM. */
+  /** The text handed to the LLM, or an empty string when imageData is present. */
   content: string;
-  /** Whether `content` is a verbatim passthrough or extracted main text. */
+  /** Whether `content` is a verbatim passthrough, extracted main text, or an image. */
   kind: UrlFetchKind;
+  /** When `kind` is 'image', the image data to be rendered as an image_url content part. */
+  imageData?: UrlFetchImageData;
 }
 
 export interface UrlFetcher {
@@ -89,7 +99,20 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const { content, kind } = await this.fetcher.fetch(args.url, { toolCallId });
+      const { content, kind, imageData } = await this.fetcher.fetch(args.url, { toolCallId });
+
+      // If the provider returned an image, render it as an image_url content part
+      // so the model can see it directly.
+      if (imageData) {
+        const output: ContentPart[] = [
+          { type: 'text', text: `Fetched image from ${args.url}` },
+          {
+            type: 'image_url',
+            imageUrl: { url: `data:${imageData.mimeType};base64,${imageData.base64}` },
+          },
+        ];
+        return { output, isError: false };
+      }
 
       if (!content) {
         return {
