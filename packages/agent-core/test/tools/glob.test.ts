@@ -272,6 +272,20 @@ describe('GlobTool', () => {
     }
   });
 
+  it('treats an empty pattern as a broad all-files glob, matching rg --glob', async () => {
+    // rg treats -g '' as matching all files (respecting ignores). picomatch
+    // throws on an empty string, so the tool must short-circuit before
+    // compiling the matcher.
+    const exec = execReturning('/workspace/a.ts\n/workspace/b.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '', path: '/workspace' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('a.ts');
+    expect(result.output).toContain('b.ts');
+  });
+
   it('filters anchored patterns in-process without a positive --glob', async () => {
     const exec = execReturning('/workspace/src/a.ts\n/workspace/other/b.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
@@ -685,6 +699,78 @@ describe('GlobTool', () => {
     expect(lines).not.toContain('1.ts');
     expect(lines).not.toContain('2.ts');
     expect(lines).not.toContain('{1..2}.ts');
+  });
+
+  it('preserves braces inside character classes, matching rg --glob behavior', async () => {
+    // rg treats `[{a}].ts` as a character class containing `{`, `a`, `}` —
+    // matching `{.ts`, `}.ts`, and `a.ts`, but NOT `{a}.ts`. The brace
+    // rewrite must not strip braces inside `[]`.
+    const exec = execReturning(
+      '/workspace/{.ts\n/workspace/}.ts\n/workspace/a.ts\n/workspace/{a}.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '[{a}].ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('{.ts');
+    expect(lines).toContain('}.ts');
+    expect(lines).toContain('a.ts');
+    expect(lines).not.toContain('{a}.ts');
+  });
+
+  it('drops empty brace alternatives, matching rg --glob behavior', async () => {
+    // rg drops empty alternatives: `ab{,c}` matches `abc` only, not `ab`.
+    // picomatch expands the empty arm, so the rewrite must filter it out.
+    const exec = execReturning('/workspace/ab\n/workspace/abc\n/workspace/abd\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'ab{,c}', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('abc');
+    expect(lines).not.toContain('ab');
+  });
+
+  it('drops multiple empty brace alternatives, matching rg --glob behavior', async () => {
+    // `ab{c,,d}` — rg keeps only `c` and `d`, dropping the empty arm.
+    const exec = execReturning('/workspace/ab\n/workspace/abc\n/workspace/abd\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'ab{c,,d}', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('abc');
+    expect(lines).toContain('abd');
+    expect(lines).not.toContain('ab');
+  });
+
+  it('collapses all-empty brace alternatives to the prefix, matching rg', async () => {
+    // `ab{,}` — all alternatives empty, rg strips to `ab`.
+    const exec = execReturning('/workspace/ab\n/workspace/abc\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'ab{,}', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('ab');
+    expect(lines).not.toContain('abc');
   });
 
   it('always searches from `.` so derived paths cannot override ignore rules', async () => {

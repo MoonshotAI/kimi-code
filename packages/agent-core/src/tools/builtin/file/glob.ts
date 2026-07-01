@@ -368,7 +368,9 @@ function buildRgArgs(
 }
 
 function isBroadPattern(pattern: string): boolean {
-  return pattern === '*' || pattern === '**' || pattern === '**/*';
+  // rg treats an empty --glob as matching all files (respecting ignores),
+  // so skip picomatch compilation for it — picomatch throws on empty input.
+  return pattern === '' || pattern === '*' || pattern === '**' || pattern === '**/*';
 }
 
 /**
@@ -425,7 +427,11 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
  * - range braces like {1..2} are reduced to `1..2` (braces removed) to
  *   match rg, which treats a brace group with a single alternative (no
  *   comma) as that alternative with the braces stripped.
- * - brace alternatives like {ts,tsx} are left intact (supported by both).
+ * - brace alternatives like {ts,tsx} are left intact (supported by both),
+ *   but empty alternatives ({,c} or {a,,b}) are dropped to match rg, which
+ *   ignores them.
+ * - braces inside character classes ([{a}]) are left intact — inside `[]`
+ *   `{` and `}` are literal class members, not brace-group delimiters.
  */
 function escapePicomatchExtensions(pattern: string): string {
   let result = pattern;
@@ -438,17 +444,108 @@ function escapePicomatchExtensions(pattern: string): string {
     }
     return `[${prefix}]\\(${escapedInner}\\)`;
   });
-  // Range braces and single-alternative braces: rg treats `{N..M}` and
-  // `{foo}` as a single brace alternative, removing the braces (matching
-  // `N..M` or `foo`, not `{N..M}` or `{foo}`). picomatch 4.x either expands
-  // `{a..z}` as a range or treats `{foo}` as a literal — neither matches
-  // rg. Reduce to the inner text so picomatch matches the same literal.
-  // Escaped braces (`\{...\}`) are left intact via the lookbehind.
-  result = result.replaceAll(/(?<!\\)\{([^{}]*)\}/g, (_match, inner: string) => {
-    // Brace alternatives with commas are expanded by both rg and picomatch.
-    if (inner.includes(',')) return _match;
-    return inner;
-  });
+  // Rewrite brace groups outside character classes. Inside `[]`, braces
+  // are literal class members and must be preserved. rg also drops empty
+  // alternatives (e.g. `ab{,c}` matches `abc` only, not `ab`), so they are
+  // filtered out here to prevent picomatch from expanding them.
+  result = rewriteBraces(result);
+  return result;
+}
+
+/**
+ * Rewrite brace groups in `pattern` to match rg's semantics:
+ *   - Single-alternative braces `{foo}` → `foo` (braces stripped).
+ *   - Comma alternatives with empty arms `{a,,b}` → `{a,b}` (empty arms
+ *     dropped; if only one non-empty arm remains, braces are removed).
+ *   - All-empty `{,,}` → empty string (braces removed, no content).
+ *   - Nested brace groups `{a,{b,c}}` are left intact (both rg and
+ *     picomatch expand them).
+ *   - Escaped braces `\{...\}` are left intact.
+ *   - Braces inside character classes `[{a}]` are left intact — inside
+ *     `[]` they are literal class members, not group delimiters.
+ */
+function rewriteBraces(pattern: string): string {
+  let result = '';
+  let i = 0;
+  let inBracket = false;
+  let bracketContentStart = -1;
+  while (i < pattern.length) {
+    const ch = pattern[i]!;
+    if (inBracket) {
+      result += ch;
+      if (ch === '\\' && i + 1 < pattern.length) {
+        result += pattern[i + 1]!;
+        i += 2;
+        continue;
+      }
+      if (ch === ']') {
+        // A `]` at the first content position is a literal, not the
+        // terminator (mirrors validateGlobPattern logic).
+        if (i !== bracketContentStart) inBracket = false;
+      }
+      i++;
+      continue;
+    }
+    if (ch === '[') {
+      inBracket = true;
+      const next = pattern[i + 1];
+      bracketContentStart = next === '!' || next === '^' ? i + 2 : i + 1;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < pattern.length) {
+      result += ch + (pattern[i + 1] ?? '');
+      i += 2;
+      continue;
+    }
+    if (ch === '{') {
+      // Scan forward to the matching `}`, respecting escaped chars.
+      let depth = 1;
+      let j = i + 1;
+      while (j < pattern.length && depth > 0) {
+        const cj = pattern[j]!;
+        if (cj === '\\' && j + 1 < pattern.length) {
+          j += 2;
+          continue;
+        }
+        if (cj === '{') depth++;
+        else if (cj === '}') depth--;
+        if (depth > 0) j++;
+      }
+      if (depth !== 0) {
+        // Unclosed brace — keep as-is (validator will catch it).
+        result += ch;
+        i++;
+        continue;
+      }
+      const inner = pattern.slice(i + 1, j);
+      // Nested brace groups are left intact (both rg and picomatch
+      // expand them).
+      if (inner.includes('{') || inner.includes('}')) {
+        result += pattern.slice(i, j + 1);
+        i = j + 1;
+        continue;
+      }
+      if (inner.includes(',')) {
+        const nonEmpty = inner.split(',').filter((a) => a !== '');
+        if (nonEmpty.length === 0) {
+          // All alternatives empty — rg strips to empty string.
+        } else if (nonEmpty.length === 1) {
+          result += nonEmpty[0]!;
+        } else {
+          result += `{${nonEmpty.join(',')}}`;
+        }
+      } else {
+        // Single alternative — rg strips the braces.
+        result += inner;
+      }
+      i = j + 1;
+      continue;
+    }
+    result += ch;
+    i++;
+  }
   return result;
 }
 
