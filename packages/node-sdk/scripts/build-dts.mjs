@@ -39,6 +39,7 @@ function run(command, binPath, args) {
     const child = spawn(process.execPath, [binPath, ...args], {
       cwd: packageRoot,
       stdio: 'inherit',
+      shell: process.platform === 'win32',
     });
 
     child.once('error', reject);
