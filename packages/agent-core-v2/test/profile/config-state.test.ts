@@ -266,7 +266,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 });
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
-  let ctx: TestAgentContext;
+  let ctx: TestAgentContext | undefined;
   let profile: IProfileService;
   let kimiConfig: TestKimiConfig;
 
@@ -277,21 +277,26 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
         'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
       },
     };
-    ctx = createTestAgent(configServices(() => kimiConfig));
-    profile = ctx.get(IProfileService);
   });
 
   afterEach(async () => {
     try {
-      await ctx.expectResumeMatches();
+      await ctx?.expectResumeMatches();
     } finally {
-      await ctx.dispose();
+      await ctx?.dispose();
+      ctx = undefined;
       vi.unstubAllEnvs();
     }
   });
 
+  function createAgentWithEnv(): void {
+    ctx = createTestAgent(configServices(() => kimiConfig));
+    profile = ctx.get(IProfileService);
+  }
+
   it('injects KIMI_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', () => {
     vi.stubEnv('KIMI_MODEL_TEMPERATURE', '0.3');
+    createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code' });
 
@@ -303,6 +308,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
   it('injects KIMI_MODEL_THINKING_KEEP into config.provider when thinking is on (so compaction keeps it)', () => {
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
@@ -315,6 +321,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
   it('does NOT inject thinking.keep into config.provider when thinking is off', () => {
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
 

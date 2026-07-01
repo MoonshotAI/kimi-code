@@ -157,25 +157,30 @@ function withoutBackgroundDescription(description: string): string {
 
 export class BashTool implements BuiltinTool<BashInput> {
   readonly name = 'Bash' as const;
-  readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
 
   private readonly isWindowsBash: boolean;
 
-  private readonly allowBackground: boolean;
+  private readonly renderedDescription: string;
+  private readonly allowBackground: () => boolean;
 
   constructor(
     private readonly runner: IProcessRunner,
     private readonly kaos: IKaos,
     private readonly background: IBackgroundService,
     options?: {
-      allowBackground?: boolean;
+      allowBackground?: () => boolean;
     },
   ) {
     this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
-    this.allowBackground = options?.allowBackground ?? true;
-    const rendered = renderBashDescription(this.kaos.osEnv.shellName);
-    this.description = this.allowBackground ? rendered : withoutBackgroundDescription(rendered);
+    this.allowBackground = options?.allowBackground ?? (() => true);
+    this.renderedDescription = renderBashDescription(this.kaos.osEnv.shellName);
+  }
+
+  get description(): string {
+    return this.allowBackground()
+      ? this.renderedDescription
+      : withoutBackgroundDescription(this.renderedDescription);
   }
 
   resolveExecution(args: BashInput): ToolExecution {
@@ -315,7 +320,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (signal.aborted) return { isError: true, output: 'Aborted before command started' };
     if (args.command.length === 0) return { isError: true, output: 'Command cannot be empty.' };
     if (args.run_in_background !== true) return undefined;
-    if (!this.allowBackground) {
+    if (!this.allowBackground()) {
       return {
         isError: true,
         output:
@@ -404,14 +409,16 @@ export class BashTool implements BuiltinTool<BashInput> {
       // The user explicitly moved a foreground call to the background to avoid
       // blocking the current turn. Steer the model away from waiting on it.
       // Only mention TaskOutput when the tool is actually available.
-      const avoid = this.allowBackground ? 'do NOT wait, poll, or call TaskOutput on it' : 'do NOT wait or poll';
+      const avoid = this.allowBackground()
+        ? 'do NOT wait, poll, or call TaskOutput on it'
+        : 'do NOT wait or poll';
       return (
         'next_step: The task now runs in the background. You will be automatically notified ' +
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }
     // background_started: the model chose to launch in the background.
-    if (!this.allowBackground) {
+    if (!this.allowBackground()) {
       return 'next_step: You will be automatically notified when it completes.\n';
     }
     return (

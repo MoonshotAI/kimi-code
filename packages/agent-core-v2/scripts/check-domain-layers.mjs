@@ -155,6 +155,8 @@ const V1_PACKAGE = '@moonshot-ai/agent-core';
  *                              storage backend bindings).
  *
  *  - `permissionGate>approval`  : permissionGate(Agent) requests approval(Session broker).
+ *  - `userTool>interaction`     : userTool(Agent) requests host-side execution
+ *                                 through the Session interaction broker.
  *  - `skill>turn`           : skill activate starts a turn (same Agent scope intent).
  *  - `turn>agent-lifecycle` : turn cancels sub-agents via lifecycle handle.
  *  - `swarm>agent-lifecycle`: swarm spawns/manages sub-agents.
@@ -177,6 +179,7 @@ const V1_PACKAGE = '@moonshot-ai/agent-core';
 const ALLOWED_EXCEPTIONS = new Set([
   'bootstrap>skill',
   'permissionGate>approval',
+  'userTool>interaction',
   'skill>turn',
   'turn>agent-lifecycle',
   'swarm>agent-lifecycle',

@@ -104,7 +104,31 @@ function withoutKey(value: unknown, key: string): unknown {
 export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
   apply(effective, getEnv, validate) {
     const model = trimmed(getEnv('KIMI_MODEL_NAME'));
-    if (model === undefined) return [];
+    const temperature = parseFloatEnv(
+      getEnv('KIMI_MODEL_TEMPERATURE'),
+      'KIMI_MODEL_TEMPERATURE',
+    );
+    const topP = parseFloatEnv(getEnv('KIMI_MODEL_TOP_P'), 'KIMI_MODEL_TOP_P');
+    const thinkingKeep = trimmed(getEnv('KIMI_MODEL_THINKING_KEEP'));
+    const maxCompletionTokens =
+      parseCompletionTokens(getEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS')) ??
+      parseCompletionTokens(getEnv('KIMI_MODEL_MAX_TOKENS'));
+
+    const changed: string[] = [];
+
+    if (model === undefined) {
+      const modelOverrides = collectModelOverrides({
+        temperature,
+        topP,
+        thinkingKeep,
+        maxCompletionTokens,
+      });
+      if (modelOverrides !== undefined) {
+        effective['modelOverrides'] = modelOverrides;
+        changed.push('modelOverrides');
+      }
+      return changed;
+    }
 
     const maxContextRaw = trimmed(getEnv('KIMI_MODEL_MAX_CONTEXT_SIZE'));
     const maxContextSize =
@@ -136,18 +160,6 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     if (reasoningKey !== undefined) alias['reasoningKey'] = reasoningKey;
     if (adaptiveThinking !== undefined) alias['adaptiveThinking'] = adaptiveThinking;
 
-    const temperature = parseFloatEnv(
-      getEnv('KIMI_MODEL_TEMPERATURE'),
-      'KIMI_MODEL_TEMPERATURE',
-    );
-    const topP = parseFloatEnv(getEnv('KIMI_MODEL_TOP_P'), 'KIMI_MODEL_TOP_P');
-    const thinkingKeep = trimmed(getEnv('KIMI_MODEL_THINKING_KEEP'));
-    const maxCompletionTokens =
-      parseCompletionTokens(getEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS')) ??
-      parseCompletionTokens(getEnv('KIMI_MODEL_MAX_TOKENS'));
-
-    const changed: string[] = [];
-
     const models = asRecord(effective['models']);
     const nextModels = { ...models, [ENV_MODEL_ALIAS_KEY]: alias };
     effective['models'] = validate('models', nextModels);
@@ -156,12 +168,13 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     effective['defaultModel'] = ENV_MODEL_ALIAS_KEY;
     changed.push('defaultModel');
 
-    const modelOverrides: Record<string, unknown> = {};
-    if (temperature !== undefined) modelOverrides['temperature'] = temperature;
-    if (topP !== undefined) modelOverrides['topP'] = topP;
-    if (thinkingKeep !== undefined) modelOverrides['thinkingKeep'] = thinkingKeep;
-    if (maxCompletionTokens !== undefined) modelOverrides['maxCompletionTokens'] = maxCompletionTokens;
-    if (Object.keys(modelOverrides).length > 0) {
+    const modelOverrides = collectModelOverrides({
+      temperature,
+      topP,
+      thinkingKeep,
+      maxCompletionTokens,
+    });
+    if (modelOverrides !== undefined) {
       effective['modelOverrides'] = modelOverrides;
       changed.push('modelOverrides');
     }
@@ -183,3 +196,19 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     }
   },
 };
+
+function collectModelOverrides(input: {
+  readonly temperature: number | undefined;
+  readonly topP: number | undefined;
+  readonly thinkingKeep: string | undefined;
+  readonly maxCompletionTokens: number | undefined;
+}): Record<string, unknown> | undefined {
+  const modelOverrides: Record<string, unknown> = {};
+  if (input.temperature !== undefined) modelOverrides['temperature'] = input.temperature;
+  if (input.topP !== undefined) modelOverrides['topP'] = input.topP;
+  if (input.thinkingKeep !== undefined) modelOverrides['thinkingKeep'] = input.thinkingKeep;
+  if (input.maxCompletionTokens !== undefined) {
+    modelOverrides['maxCompletionTokens'] = input.maxCompletionTokens;
+  }
+  return Object.keys(modelOverrides).length > 0 ? modelOverrides : undefined;
+}

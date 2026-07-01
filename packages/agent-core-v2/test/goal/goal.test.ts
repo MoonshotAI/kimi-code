@@ -126,6 +126,7 @@ describe('GoalService creation', () => {
   it('replaces an existing goal when replace is set', async () => {
     const first = await goals.createGoal({ objective: 'first' });
     const second = await goals.createGoal({ objective: 'second', replace: true });
+    await ctx.wireRecord.flush();
 
     expect(second.goalId).not.toBe(first.goalId);
     expect(goals.getGoal().goal?.objective).toBe('second');
@@ -246,6 +247,7 @@ describe('GoalService records', () => {
     await goals.setBudgetLimits({ budgetLimits: { turnBudget: 2 } }, 'model');
     await goals.markBlocked({ reason: 'stuck' });
     await goals.cancelGoal();
+    await ctx.wireRecord.flush();
 
     const recordsWithoutMetadata = goalRecords(records);
     expect(recordsWithoutMetadata).toEqual([

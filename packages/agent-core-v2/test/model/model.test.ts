@@ -140,6 +140,19 @@ describe('kimiModelEnvOverlay', () => {
     expect(result.effective).toEqual(effective);
   });
 
+  it('applies request overrides when KIMI_MODEL_NAME is absent', () => {
+    const { changed, effective } = applyKimiModelEnvOverlay({
+      KIMI_MODEL_TEMPERATURE: '0.3',
+      KIMI_MODEL_THINKING_KEEP: 'all',
+    });
+
+    expect(changed).toEqual(['modelOverrides']);
+    expect(effective['modelOverrides']).toEqual({
+      temperature: 0.3,
+      thinkingKeep: 'all',
+    });
+  });
+
   it('synthesizes an env model alias and default model from the minimal env set', () => {
     const { changed, effective } = applyKimiModelEnvOverlay({
       KIMI_MODEL_NAME: 'kimi-for-coding',

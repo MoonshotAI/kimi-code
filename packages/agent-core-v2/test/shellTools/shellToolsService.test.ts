@@ -4,6 +4,7 @@ import type { IBackgroundService } from '#/background';
 import type { IDisposable } from '#/_base/di';
 import type { IKaos } from '#/kaos';
 import type { IProcessRunner } from '#/process';
+import type { IProfileService } from '#/profile';
 import { ShellToolsService } from '#/shellTools';
 import type { IToolRegistry } from '#/toolRegistry';
 
@@ -27,11 +28,14 @@ const fakeKaos = {
   pathClass: () => 'posix',
 } as unknown as IKaos;
 const fakeBackground = {} as unknown as IBackgroundService;
+const fakeProfile = {
+  isToolActive: () => true,
+} as unknown as IProfileService;
 
 describe('ShellToolsService', () => {
   it('registers Bash into the tool registry', () => {
     const { registry, names } = fakeToolRegistry();
-    new ShellToolsService(registry, fakeRunner, fakeKaos, fakeBackground);
+    new ShellToolsService(registry, fakeRunner, fakeKaos, fakeBackground, fakeProfile);
     expect(names()).toEqual(['Bash']);
   });
 });

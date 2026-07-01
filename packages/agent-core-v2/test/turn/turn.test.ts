@@ -367,7 +367,11 @@ describe('Agent turn flow', () => {
 
     expect(ctx.get(ISwarmService).isActive).toBe(false);
     expect(ctx.contextData().history).toEqual([]);
-    expect(ctx.newEvents()).toMatchInlineSnapshot(`[wire] context.splice   { "start": 0, "deleteCount": 1, "messages": [], "time": "<time>" }`);
+    expect(ctx.newEvents()).toMatchInlineSnapshot(`
+      [wire] swarm_mode.enter   { "trigger": "manual" }
+      [wire] context.splice     { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\nlegacy swarm enter reminder\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "swarm_mode" } } ] }
+      [wire] swarm_mode.exit    {}
+    `);
   });
 
   it('keeps manual swarm mode active after a turn completes normally', async () => {

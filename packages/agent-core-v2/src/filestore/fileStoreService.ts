@@ -28,6 +28,7 @@ import {
 const BLOB_SCOPE = 'files';
 const INDEX_SCOPE = 'filestore';
 const INDEX_KEY = 'index.json';
+const FILE_ID_REGEX = /^f_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -37,12 +38,16 @@ interface IndexFile {
   readonly files: FileMeta[];
 }
 
+function isFileId(value: string): boolean {
+  return FILE_ID_REGEX.test(value);
+}
+
 function isFileMeta(value: unknown): value is FileMeta {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const meta = value as Record<string, unknown>;
   return (
     typeof meta['id'] === 'string' &&
-    meta['id'].startsWith('f_') &&
+    isFileId(meta['id']) &&
     typeof meta['name'] === 'string' &&
     typeof meta['media_type'] === 'string' &&
     typeof meta['size'] === 'number' &&
@@ -97,6 +102,9 @@ export class FileStoreService implements IFileStore {
   }
 
   async get(fileId: string): Promise<GetResult> {
+    if (!isFileId(fileId)) {
+      throw fileNotFoundError(fileId);
+    }
     await this.ensureIndex();
     const meta = this.indexCache!.get(fileId);
     if (meta === undefined) {
@@ -114,6 +122,9 @@ export class FileStoreService implements IFileStore {
   }
 
   async delete(fileId: string): Promise<void> {
+    if (!isFileId(fileId)) {
+      throw fileNotFoundError(fileId);
+    }
     await this.ensureIndex();
     if (!this.indexCache!.has(fileId)) {
       throw fileNotFoundError(fileId);

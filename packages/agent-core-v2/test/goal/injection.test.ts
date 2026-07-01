@@ -233,6 +233,14 @@ function goalReminderRecords(persistence: InMemoryWireRecordPersistence) {
   );
 }
 
+async function flushedGoalReminderRecords(
+  ctx: TestAgentContext,
+  persistence: InMemoryWireRecordPersistence,
+) {
+  await ctx.wireRecord.flush();
+  return goalReminderRecords(persistence);
+}
+
 function lastGoalReminder(context: IContextMemory): string | undefined {
   const message = context.get().findLast((item) => {
     return item.origin?.kind === 'injection' && item.origin.variant === 'goal';
@@ -270,7 +278,7 @@ describe('GoalInjection integration', () => {
 
       await injectDynamic(injector);
 
-      const goalRecords = goalReminderRecords(persistence);
+      const goalRecords = await flushedGoalReminderRecords(ctx, persistence);
       expect(goalRecords).toHaveLength(1);
       const text = JSON.stringify(goalRecords[0]);
       expect(text).toContain('<untrusted_objective>');
@@ -282,7 +290,7 @@ describe('GoalInjection integration', () => {
       await injectDynamic(injector);
       await injectDynamic(injector);
 
-      expect(goalReminderRecords(persistence)).toHaveLength(1);
+      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(1);
     });
 
     it('injects one goal reminder per turn boundary, not per step', async () => {
@@ -300,19 +308,19 @@ describe('GoalInjection integration', () => {
       await toolCallEvents;
       await ctx.untilTurnEnd();
 
-      expect(goalReminderRecords(persistence)).toHaveLength(1);
+      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(1);
 
       ctx.mockNextResponse({ type: 'text', text: 'Next turn.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue' }] });
       await ctx.untilTurnEnd();
 
-      expect(goalReminderRecords(persistence)).toHaveLength(2);
+      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(2);
     });
 
     it('writes no goal record when there is no active goal', async () => {
       await injectDynamic(injector);
 
-      expect(goalReminderRecords(persistence)).toHaveLength(0);
+      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(0);
     });
   });
 
@@ -345,7 +353,7 @@ describe('GoalInjection integration', () => {
 
       await injectDynamic(injector);
 
-      expect(goalReminderRecords(persistence)).toHaveLength(0);
+      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(0);
     });
   });
 });

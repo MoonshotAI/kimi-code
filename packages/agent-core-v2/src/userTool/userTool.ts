@@ -1,4 +1,4 @@
-import { createDecorator } from "#/_base/di";
+import { createDecorator } from '#/_base/di';
 
 export interface UserToolRegistration {
   readonly name: string;
