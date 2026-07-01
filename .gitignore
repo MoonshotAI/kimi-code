@@ -4,9 +4,11 @@ dist-web/
 dist-single/
 dist-native/
 .tmp-api-extractor/
+.local/
 coverage/
 *.tsbuildinfo
 .vitest-results/
+.vite/
 .DS_Store
 .playwright-mcp/
 .claude
