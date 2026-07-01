@@ -1538,6 +1538,68 @@ describe('Session.createAgent', () => {
     expect(session.metadata.agents[first]).toBeDefined();
     expect(session.getReadyAgent(last)).toBeDefined();
   });
+
+  it('does not prune non-persisted interactive subagents (persistMetadata: false)', async () => {
+    // /btw agents are created with persistMetadata: false. Pruning them
+    // would make them unresumable (no metadata entry to replay from).
+    const session = new Session({
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+    const main = await session.createAgent({ type: 'main' });
+    // Create more than the cap of non-persisted subagents.
+    const subagentIds: string[] = [];
+    for (let i = 0; i < 70; i++) {
+      const child = await session.createAgent(
+        { type: 'sub' },
+        { parentAgentId: main.id, persistMetadata: false },
+      );
+      subagentIds.push(child.id);
+      await session.releaseIdleSubagent(child.id);
+    }
+    // None should be pruned — all remain in the live map.
+    for (const id of subagentIds) {
+      expect(session.getReadyAgent(id)).toBeDefined();
+    }
+  });
+
+  it('does not prune subagents with an in-flight compaction', async () => {
+    const session = new Session({
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+    const main = await session.createAgent({ type: 'main' });
+    // Create 65 idle subagents (one over the cap of 64). The first one
+    // created will be the oldest and would normally be pruned first.
+    const subagentIds: string[] = [];
+    for (let i = 0; i < 65; i++) {
+      const child = await session.createAgent({ type: 'sub' }, { parentAgentId: main.id });
+      subagentIds.push(child.id);
+      await session.releaseIdleSubagent(child.id);
+    }
+    // One subagent was pruned (the oldest, subagentIds[0]).
+    expect(session.getReadyAgent(subagentIds[0]!)).toBeUndefined();
+    // Mark the second-oldest as compacting.
+    const compactingAgent = session.getReadyAgent(subagentIds[1]!);
+    expect(compactingAgent).toBeDefined();
+    vi.spyOn(compactingAgent!.fullCompaction, 'isCompacting', 'get').mockReturnValue(true);
+    // Create one more subagent to trigger another prune pass. The
+    // compacting agent should survive — a different non-compacting agent
+    // should be pruned instead.
+    const extra = await session.createAgent({ type: 'sub' }, { parentAgentId: main.id });
+    await session.releaseIdleSubagent(extra.id);
+    expect(session.getReadyAgent(subagentIds[1]!)).toBeDefined();
+  });
 });
 
 function fakeSession(

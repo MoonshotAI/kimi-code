@@ -910,6 +910,17 @@ export class Session {
     if (agent.type !== 'sub') return false;
     if (parentIds.has(id)) return false;
     if (agent.turn.hasActiveTurn) return false;
+    // Don't prune agents with an in-flight compaction — the worker is
+    // mutating context, and a buffered background-task notification may
+    // still arrive. Disposing mid-compaction leaves the agent in an
+    // inconsistent state.
+    if (agent.fullCompaction.isCompacting) return false;
+    // Don't prune non-persisted interactive subagents (e.g. /btw agents
+    // created with persistMetadata: false). After disposal there is no
+    // metadata.agents[id] entry for ensureAgentResumed to replay from,
+    // so the next prompt in the still-open panel would fail with
+    // agent-not-found.
+    if (this.metadata.agents[id] === undefined) return false;
     return agent.background.list(true).length === 0;
   }
 

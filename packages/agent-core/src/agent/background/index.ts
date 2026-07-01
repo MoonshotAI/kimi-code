@@ -1002,10 +1002,19 @@ export class BackgroundManager {
     this.deleteNotificationKeysForTask(taskId);
     this.tasks.delete(taskId);
     // Bound the ghost set so long-lived sessions don't retain one record per
-    // completed task forever. Evict oldest ghosts (by insertion order, which
-    // mirrors completion order since terminal tasks are evicted in order).
+    // completed task forever. Evict oldest ghosts by `startedAt` (not map
+    // insertion order) because `loadFromDisk` inserts restored ghosts in
+    // arbitrary directory-enumeration order, so the first map entry may be
+    // a recently-started restored task rather than the oldest.
     while (this.ghosts.size > DEFAULT_MAX_RETAINED_TERMINAL_TASKS) {
-      const oldestId = this.ghosts.keys().next().value;
+      let oldestId: string | undefined;
+      let oldestStartedAt = Infinity;
+      for (const [gid, ginfo] of this.ghosts) {
+        if (ginfo.startedAt < oldestStartedAt) {
+          oldestStartedAt = ginfo.startedAt;
+          oldestId = gid;
+        }
+      }
       if (oldestId === undefined) break;
       this.ghosts.delete(oldestId);
       this.evictedPreviews.delete(oldestId);

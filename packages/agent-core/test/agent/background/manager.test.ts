@@ -957,6 +957,62 @@ describe('BackgroundManager', () => {
     }
   }, 30_000);
 
+  it('trims ghosts by startedAt, not map insertion order, after resume', async () => {
+    // After loadFromDisk, ghosts are inserted in arbitrary directory-
+    // enumeration order. When a new live task is evicted into the ghost
+    // map and pushes it over the cap, the oldest ghost by startedAt must
+    // be dropped — not the first one in map insertion order.
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-ghost-age-trim-'));
+    try {
+      const { persistence } = createBackgroundManager({ sessionDir });
+      if (!persistence) throw new Error('persistence expected');
+      // Write 100 completed tasks with descending startedAt values so
+      // the "first" task on disk (alphabetically) has the NEWEST
+      // startedAt. If the trim used insertion order, it would drop the
+      // newest task instead of the oldest.
+      for (let i = 0; i < 100; i++) {
+        const suffix = String(i).padStart(2, '0');
+        await persistence.writeTask(
+          {
+            taskId: `bg-task-${suffix}aaaaaa`,
+            kind: 'process',
+            command: 'echo',
+            description: 'old',
+            pid: i,
+            // task-00 has the newest startedAt, task-99 the oldest.
+            startedAt: 2_000_000_000 - i,
+            endedAt: 2_000_000_010 - i,
+            exitCode: 0,
+            status: 'completed',
+          },
+        );
+      }
+      const { manager } = createBackgroundManager({ sessionDir });
+      await manager.loadFromDisk();
+      await manager.reconcile();
+      // 100 ghosts loaded. Now register 101 new live tasks to fill the
+      // live map (100) and trigger one eviction into the ghost map,
+      // pushing ghosts to 101 and triggering the trim.
+      for (let i = 0; i < 101; i++) {
+        const id = registerProcess(
+          manager,
+          immediateProcess(0, `new ${String(i)}\n`),
+          `echo ${String(i)}`,
+          `new task ${String(i)}`,
+        );
+        await waitForTerminal(manager, id);
+      }
+
+      // The oldest ghost (task-99, startedAt = 1_999_999_901) should be
+      // dropped. The newest ghost (task-00, startedAt = 2_000_000_000)
+      // must survive.
+      expect(manager.getTask('bg-task-99aaaaaa')).toBeUndefined();
+      expect(manager.getTask('bg-task-00aaaaaa')).toBeDefined();
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('preserves output preview on ghosts when there is no persistence backend', async () => {
     // Without a sessionDir, the manager has no persistence — evicted tasks
     // would lose all output. The fix carries the ring-buffer preview onto
