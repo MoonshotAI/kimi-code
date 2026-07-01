@@ -2,74 +2,140 @@
  * GlobTool tests for the v2 fileTools domain.
  *
  * Ported from v1 (`packages/agent-core/test/tools/glob.test.ts`) and adapted
- * to the v2 constructor `(fs, kaos, workspace)`. Self-contained: builds minimal
- * fake `ISessionAgentFileSystem` (map/spied `glob` + `stat` + `readdir` + `withCwd`)
- * and `IKaos` inline so the tool can be exercised without the composition root.
- *
- * v2 `ISessionAgentFileSystem.glob(pattern)` searches from `fs.cwd` and returns a
- * collected array (no per-root async generator), so the v1 `(root, pattern)`
- * call assertions become `withCwd(root)` + `glob(pattern)` pairs. v2
- * `AgentFileStat` carries no mtime, so the mtime-sort test is adapted to
- * assert walk order instead.
+ * to the v2 constructor `(fs, kaos, workspace)` and the v2 execution
+ * environment. The Glob search now runs `rg --files` through the `IKaos`
+ * backend (`withCwd(root).backend.exec('rg', ...)`) instead of
+ * `ISessionAgentFileSystem.glob`, so tests fake `kaos.backend.exec` to return
+ * a scripted `KaosProcess` (stdout/stderr streams + exit code) rather than
+ * stubbing `fs.glob`. `fs.readdir` is still faked for the directory
+ * pre-check (missing / non-directory roots).
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { Readable, type Writable } from 'node:stream';
 
+import { LocalKaos } from '@moonshot-ai/kaos';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ensureRgPath } from '#/agentFs/rgLocator';
 import { PathSecurityError, type PathClass } from '../../src/_base/tools/policies/path-access';
 import type { WorkspaceConfig } from '../../src/_base/tools/support/workspace';
-import type { AgentFileStat, ISessionAgentFileSystem } from '../../src/agentFs';
+import type { ISessionAgentFileSystem } from '../../src/agentFs';
+import { SessionAgentFileSystem } from '../../src/agentFs/agentFsService';
 import {
-  expandBraces,
   type GlobInput,
   GlobInputSchema,
   GlobTool,
   MAX_MATCHES,
+  splitCompletePaths,
 } from '../../src/fileTools/tools/glob';
-import type { IKaos } from '../../src/kaos';
+import type { IKaos, KaosProcess } from '../../src/kaos';
+import { KaosService } from '../../src/kaos/kaosService';
+import type { ITelemetryService } from '../../src/telemetry';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../src/tool';
+
+// The ripgrep binary locator is mocked out for the unit tests so they assert
+// on argument building and output parsing without probing a real `rg`. The
+// real locator is exercised end-to-end by the integration suite below (rg is
+// on PATH in that environment, so the resolved `rg` just runs).
+vi.mock('#/agentFs/rgLocator', () => ({
+  ensureRgPath: vi.fn(async (): Promise<{ path: string; source: string }> => ({
+    path: 'rg',
+    source: 'system-path',
+  })),
+  rgUnavailableMessage: (cause: unknown) =>
+    `rg unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+}));
+
+// Synchronous probe so the integration suite can be gated with `skipIf` at
+// definition time. `rg` is on PATH in the standard dev environment.
+const RG_AVAILABLE = spawnSync('rg', ['--version'], { stdio: 'ignore' }).status === 0;
 
 const signal = new AbortController().signal;
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
 
-function fileStat(size = 0): AgentFileStat {
-  return { isFile: true, isDirectory: false, size };
+/** Fake fs with a spied `readdir` for the directory pre-check. */
+function createTestFs(opts: { readdir?: ReturnType<typeof vi.fn> } = {}) {
+  const readdir = opts.readdir ?? vi.fn(async (): Promise<readonly string[]> => []);
+  const fs = { cwd: '/workspace', readdir } as unknown as ISessionAgentFileSystem;
+  return { fs, readdir };
 }
 
-function dirStat(size = 0): AgentFileStat {
-  return { isFile: false, isDirectory: true, size };
-}
-
-function createTestKaos(opts: { home?: string; pathClass?: PathClass } = {}): IKaos {
+/** Build a fake `KaosProcess` that emits `stdout` / `stderr` then exits with `exitCode`. */
+function fakeProcess(stdout: string, stderr = '', exitCode = 0): KaosProcess {
+  const stdoutStream = Readable.from([Buffer.from(stdout)]);
+  const stderrStream = Readable.from([Buffer.from(stderr)]);
   return {
-    pathClass: () => opts.pathClass ?? 'posix',
-    gethome: () => opts.home ?? '/home/test',
-  } as unknown as IKaos;
+    stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+    stdout: stdoutStream,
+    stderr: stderrStream,
+    pid: 123,
+    exitCode,
+    wait: vi.fn().mockResolvedValue(exitCode),
+    kill: vi.fn(async () => {}),
+    dispose: vi.fn(async () => {
+      stdoutStream.destroy();
+      stderrStream.destroy();
+    }),
+  };
+}
+
+function execReturning(stdout: string, stderr = '', exitCode = 0) {
+  return vi.fn().mockResolvedValue(fakeProcess(stdout, stderr, exitCode));
 }
 
 /**
- * Fake fs with spied `glob` / `stat` / `readdir` / `withCwd`. `withCwd` returns
- * a derived fs that shares the same spied IO mocks but carries the new `cwd`,
- * mirroring the real `SessionAgentFileSystem.withCwd` semantics. The base fs's
+ * Fake `IKaos` whose `withCwd(cwd)` returns a derived environment that shares
+ * the same `backend.exec` spy — mirroring the real `IKaos.withCwd` semantics
+ * (the backend is shared across cwd derivations). The root environment's
  * `withCwd` is exposed so tests can assert the resolved search root.
  */
-function createSpiedGlobFs(opts: {
-  cwd?: string;
-  glob?: ReturnType<typeof vi.fn>;
-  stat?: ReturnType<typeof vi.fn>;
-  readdir?: ReturnType<typeof vi.fn>;
-} = {}) {
-  const glob = opts.glob ?? vi.fn(async (): Promise<readonly string[]> => []);
-  const stat = opts.stat ?? vi.fn(async (): Promise<AgentFileStat> => fileStat());
-  const readdir = opts.readdir ?? vi.fn(async (): Promise<readonly string[]> => []);
-
-  function build(cwd: string): { fs: ISessionAgentFileSystem; withCwd: ReturnType<typeof vi.fn> } {
-    const withCwd = vi.fn((nextCwd: string) => build(nextCwd).fs);
-    const fs = { cwd, glob, stat, readdir, withCwd } as unknown as ISessionAgentFileSystem;
-    return { fs, withCwd };
+function createTestKaos(
+  opts: {
+    home?: string;
+    pathClass?: PathClass;
+    exec?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
+  const exec = opts.exec ?? execReturning('');
+  const backend = { exec } as unknown as IKaos['backend'];
+  function build(cwd: string): IKaos {
+    return {
+      cwd,
+      backend,
+      pathClass: () => opts.pathClass ?? 'posix',
+      gethome: () => opts.home ?? '/home/test',
+      withCwd: vi.fn((next: string) => build(next)),
+    } as unknown as IKaos;
   }
+  const kaos = build('/workspace');
+  return { kaos, exec, withCwd: kaos.withCwd as ReturnType<typeof vi.fn> };
+}
 
-  const { fs, withCwd } = build(opts.cwd ?? '/workspace');
-  return { fs, glob, stat, readdir, withCwd };
+function execArgs(exec: ReturnType<typeof vi.fn>): string[] {
+  return exec.mock.calls[0] as string[];
+}
+
+function telemetryStub(
+  events: Array<{ event: string; properties: Record<string, unknown> }>,
+): ITelemetryService {
+  return {
+    _serviceBrand: undefined,
+    track: (event: string, properties: Record<string, unknown>) => {
+      events.push({ event, properties });
+    },
+    withContext: () => telemetryStub(events),
+    setContext: () => {},
+    addAppender: () => ({ dispose: () => {} }),
+    removeAppender: () => {},
+    setAppender: () => {},
+    setEnabled: () => {},
+    flush: async () => {},
+    shutdown: async () => {},
+  };
 }
 
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
@@ -109,8 +175,9 @@ function toolContentString(result: ExecutableToolResult): string {
 
 describe('GlobTool', () => {
   it('exposes current metadata and schema', () => {
-    const { fs } = createSpiedGlobFs();
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos();
+    const tool = new GlobTool(fs, kaos, workspace);
 
     expect(tool.name).toBe('Glob');
     expect(tool.parameters).toMatchObject({
@@ -121,24 +188,29 @@ describe('GlobTool', () => {
     expect(GlobInputSchema.safeParse({ pattern: '*.js', path: '/src' }).success).toBe(true);
   });
 
-  it('exposes the include_dirs default in its JSON Schema without making it required', () => {
-    const { fs } = createSpiedGlobFs();
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('is files-only and exposes include_ignored; include_dirs is deprecated and ignored', () => {
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos();
+    const tool = new GlobTool(fs, kaos, workspace);
     const schema = tool.parameters as {
-      properties: { include_dirs: { default?: unknown } };
+      properties: Record<string, { description?: string; default?: unknown }>;
       required?: string[];
     };
 
-    // The default must be structurally visible to the model, not only
-    // described in prose, so it survives without an explicit argument.
-    expect(schema.properties.include_dirs.default).toBe(true);
-    // A default value must not promote include_dirs into `required`.
+    expect(schema.properties).toHaveProperty('include_ignored');
+    // include_dirs is kept only so older calls that still pass it are not
+    // rejected by parameter validation. It is deprecated and ignored — results
+    // are always files-only regardless of its value, and it carries no default.
+    expect(schema.properties).toHaveProperty('include_dirs');
+    expect(schema.properties['include_dirs']?.description?.toLowerCase()).toContain('deprecated');
+    expect(schema.properties['include_dirs']?.default).toBeUndefined();
     expect(schema.required ?? []).not.toContain('include_dirs');
   });
 
   it('injects the Windows path hint into the description on a win32 backend', () => {
-    const { fs } = createSpiedGlobFs();
-    const tool = new GlobTool(fs, createTestKaos({ pathClass: 'win32' }), workspace);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ pathClass: 'win32' });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     expect(tool.description).toContain('Windows');
     expect(tool.description).toContain('forward slashes');
@@ -146,219 +218,289 @@ describe('GlobTool', () => {
   });
 
   it('omits the Windows path hint from the description on a non-Windows backend', () => {
-    const { fs } = createSpiedGlobFs();
-    const tool = new GlobTool(fs, createTestKaos({ pathClass: 'posix' }), workspace);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ pathClass: 'posix' });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     expect(tool.description).not.toContain('forward slashes');
   });
 
-  it('returns matching paths in walk order, relative to an explicit search root', async () => {
-    // v1 sorted by mtime; v2 `AgentFileStat` carries no mtime, so the
-    // result order is the glob yield order.
-    const glob = vi.fn(async () => ['/workspace/src/old.ts', '/workspace/src/new.ts']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('requests reverse modified sort and preserves the rg output order', async () => {
+    const exec = execReturning('/workspace/src/new.ts\n/workspace/src/old.ts\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: 'src/**/*.ts', path: '/workspace' });
+    const args = execArgs(exec);
 
-    expect(result.output).toBe('src/old.ts\nsrc/new.ts');
+    expect(args).toContain('--sortr=modified');
+    expect(args).not.toContain('--sort=modified');
+    expect(result.output).toBe('src/new.ts\nsrc/old.ts');
     expect(withCwd).toHaveBeenCalledWith('/workspace');
-    expect(glob).toHaveBeenCalledWith('src/**/*.ts');
   });
 
   it('uses the backend path class when displaying paths relative to a windows root', async () => {
-    const glob = vi.fn(async () => ['C:\\workspace\\src\\old.ts']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos({ pathClass: 'win32' }), {
+    const exec = execReturning('C:\\workspace\\src\\old.ts\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ pathClass: 'win32', exec });
+    const tool = new GlobTool(fs, kaos, {
       workspaceDir: 'C:\\workspace',
       additionalDirs: [],
     });
 
     const result = await execute(tool, { pattern: 'src/**/*.ts', path: 'C:\\WORKSPACE' });
 
+    // pathe.normalize renders Windows paths with forward slashes, so the
+    // relativized result keeps `/` regardless of the backend path class.
     expect(result.output).toBe('src/old.ts');
     expect(withCwd).toHaveBeenCalledWith('C:/WORKSPACE');
-    expect(glob).toHaveBeenCalledWith('src/**/*.ts');
   });
 
-  it('walks pure-wildcard patterns instead of rejecting them, capping at MAX_MATCHES', async () => {
-    // Previously rejected up-front; now the 100-match cap is the only
-    // safety. Verifies the pattern reaches the filesystem and the cap fires.
-    const paths = Array.from({ length: MAX_MATCHES + 5 }, (_, i) => `/workspace/${String(i)}.ts`);
-    const glob = vi.fn(async () => paths);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('walks pure-wildcard patterns, capping at MAX_MATCHES', async () => {
+    const stdout =
+      Array.from({ length: MAX_MATCHES + 5 }, (_, i) => `/workspace/${String(i)}.ts`).join('\n') +
+      '\n';
+    const exec = execReturning(stdout);
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '**' });
 
     expect(result.isError).toBeFalsy();
     expect(withCwd).toHaveBeenCalledWith('/workspace');
-    expect(glob).toHaveBeenCalledWith('**');
+    expect(execArgs(exec).at(-1)).toBe('.');
     expect(result.output).toContain(`[Truncated at ${String(MAX_MATCHES)} matches`);
   });
 
-  it('expands brace patterns into multiple sub-pattern walks and dedups paths', async () => {
-    // `*.{ts,tsx}` → two glob calls with `*.ts` and `*.tsx`. Shared hits
-    // are deduped so the same file does not appear twice.
-    const glob = vi.fn(async (pattern: string): Promise<readonly string[]> => {
-      if (pattern === '*.ts') return ['/workspace/a.ts', '/workspace/shared.ts'];
-      if (pattern === '*.tsx') return ['/workspace/shared.tsx', '/workspace/shared.ts'];
-      return [];
-    });
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('passes a brace pattern through to a single rg --glob', async () => {
+    const exec = execReturning('/workspace/a.ts\n/workspace/shared.ts\n/workspace/shared.tsx\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '*.{ts,tsx}' });
 
     expect(result.isError).toBeFalsy();
     expect(withCwd).toHaveBeenCalledWith('/workspace');
-    expect(glob).toHaveBeenCalledWith('*.ts');
-    expect(glob).toHaveBeenCalledWith('*.tsx');
+    expect(execArgs(exec)).toContain('*.{ts,tsx}');
     const output = toolContentString(result);
-    const lines = output.split('\n').filter((l) => l.endsWith('.ts') || l.endsWith('.tsx'));
-    expect(lines).toContain('a.ts');
-    expect(lines).toContain('shared.ts');
-    expect(lines).toContain('shared.tsx');
-    // Dedup: shared.ts appears only once even though both sub-patterns yielded it.
-    expect(lines.filter((l) => l === 'shared.ts')).toHaveLength(1);
+    expect(output).toContain('a.ts');
+    expect(output).toContain('shared.ts');
+    expect(output).toContain('shared.tsx');
   });
 
-  it('collapses redundant separators after brace expansion', async () => {
-    // `src//*.{ts,tsx}` → expandBraces → `src//*.ts` / `src//*.tsx` →
-    // normalize → `src/*.ts` / `src/*.tsx`.
-    const glob = vi.fn(async (pattern: string): Promise<readonly string[]> => {
-      if (pattern === 'src/*.ts') return ['/workspace/src/a.ts'];
-      if (pattern === 'src/*.tsx') return ['/workspace/src/b.tsx'];
-      return [];
-    });
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
-
-    const result = await execute(tool, { pattern: 'src//*.{ts,tsx}' });
-
-    expect(result.isError).toBeFalsy();
-    expect(glob).toHaveBeenCalledWith('src/*.ts');
-    expect(glob).toHaveBeenCalledWith('src/*.tsx');
-  });
-
-  it('removes a leading ./ after brace expansion', async () => {
-    // `./src/*.{ts,tsx}` → expandBraces → `./src/*.ts` / `./src/*.tsx` →
-    // normalize → `src/*.ts` / `src/*.tsx`.
-    const glob = vi.fn(async (pattern: string): Promise<readonly string[]> => {
-      if (pattern === 'src/*.ts') return ['/workspace/src/a.ts'];
-      if (pattern === 'src/*.tsx') return ['/workspace/src/b.tsx'];
-      return [];
-    });
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
-
-    const result = await execute(tool, { pattern: './src/*.{ts,tsx}' });
-
-    expect(result.isError).toBeFalsy();
-    expect(glob).toHaveBeenCalledWith('src/*.ts');
-    expect(glob).toHaveBeenCalledWith('src/*.tsx');
-  });
-
-  it('normalizes `..` inside a brace alternative without collapsing across the braces', async () => {
-    // `src/{foo/../bar,baz}/*.ts` must first split on the brace group,
-    // *then* normalize each alternative — otherwise pathe collapses
-    // `foo/../bar,baz}` together and the whole brace structure is lost.
-    const glob = vi.fn(async (pattern: string): Promise<readonly string[]> => {
-      if (pattern === 'src/bar/*.ts') return ['/workspace/src/bar/a.ts'];
-      if (pattern === 'src/baz/*.ts') return ['/workspace/src/baz/b.ts'];
-      return [];
-    });
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
-
-    const result = await execute(tool, { pattern: 'src/{foo/../bar,baz}/*.ts' });
-
-    expect(result.isError).toBeFalsy();
-    expect(glob).toHaveBeenCalledWith('src/bar/*.ts');
-    expect(glob).toHaveBeenCalledWith('src/baz/*.ts');
-  });
-
-  it('preserves backslash-escaped glob metacharacters end-to-end', async () => {
-    // `\{a,b\}.ts` opts out of brace expansion (the user wants to match a
-    // file literally named `{a,b}.ts`). glob must receive the pattern
-    // unchanged — running pathe.normalize over it would rewrite the escape
-    // backslashes into path separators and break the intent.
-    const glob = vi.fn(async (pattern: string): Promise<readonly string[]> => {
-      if (pattern === '\\{a,b\\}.ts') return ['/workspace/{a,b}.ts'];
-      return [];
-    });
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('passes an escaped-brace pattern through unchanged so literal-brace files stay matchable', async () => {
+    // `\{a,b\}.ts` opts out of brace expansion — the user wants a file
+    // literally named `{a,b}.ts`. The pattern must reach rg with the escapes
+    // intact (the tool must not strip or reinterpret the backslashes).
+    const exec = execReturning('/workspace/{a,b}.ts\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '\\{a,b\\}.ts' });
 
     expect(result.isError).toBeFalsy();
     expect(withCwd).toHaveBeenCalledWith('/workspace');
-    expect(glob).toHaveBeenCalledWith('\\{a,b\\}.ts');
-    // And it must *not* have been called with any brace-expanded form.
-    expect(glob).not.toHaveBeenCalledWith(expect.stringContaining('/'));
+    expect(execArgs(exec)).toContain('\\{a,b\\}.ts');
+    expect(result.output).toContain('{a,b}.ts');
   });
 
   it('searches only the current workspace when path is omitted', async () => {
-    const glob = vi.fn(async () => ['/workspace/a.ts', '/workspace/shared.ts']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = execReturning('/workspace/a.ts\n/workspace/shared.ts\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '*.ts' });
 
-    expect(glob).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledTimes(1);
     expect(withCwd).toHaveBeenCalledWith('/workspace');
-    expect(glob).toHaveBeenCalledWith('*.ts');
+    expect(execArgs(exec).at(-1)).toBe('.');
     expect(result.output).toBe('a.ts\nshared.ts');
   });
 
-  it('can search an additional directory when path is explicit', async () => {
-    const glob = vi.fn(async () => ['/extra/pkg/a.ts']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('keeps results absolute when searching an additional directory', async () => {
+    // additionalDir is outside workspaceDir, so matches stay absolute.
+    const exec = execReturning('/extra/pkg/a.ts\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: 'pkg/**/*.ts', path: '/extra' });
 
     expect(result.output).toBe('/extra/pkg/a.ts');
-    expect(glob).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledTimes(1);
     expect(withCwd).toHaveBeenCalledWith('/extra');
-    expect(glob).toHaveBeenCalledWith('pkg/**/*.ts');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
-  it('filters directories when include_dirs is false', async () => {
-    const glob = vi.fn(async () => ['/workspace/src', '/workspace/src/a.ts']);
-    const stat = vi
-      .fn()
-      .mockResolvedValueOnce(dirStat(2))
-      .mockResolvedValueOnce(fileStat(1));
-    const { fs } = createSpiedGlobFs({ glob, stat });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('adds --no-ignore when include_ignored is true', async () => {
+    const exec = execReturning('/workspace/dist/bundle.js\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
-    const result = await execute(tool, {
-      pattern: 'src*',
-      path: '/workspace',
-      include_dirs: false,
-    });
+    await execute(tool, { pattern: '*.js', include_ignored: true });
 
-    expect(result.output).toBe('src/a.ts');
+    expect(execArgs(exec)).toContain('--no-ignore');
+  });
+
+  it('does not pass --no-ignore by default', async () => {
+    const exec = execReturning('/workspace/a.ts\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
+
+    await execute(tool, { pattern: '*.ts' });
+
+    expect(execArgs(exec)).not.toContain('--no-ignore');
   });
 
   it('caps returned matches and surfaces the truncation header', async () => {
-    const paths = Array.from({ length: MAX_MATCHES + 1 }, (_, i) => `/workspace/${String(i)}.ts`);
-    const glob = vi.fn(async () => paths);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), {
+    const stdout =
+      Array.from({ length: MAX_MATCHES + 1 }, (_, i) => `/workspace/${String(i)}.ts`).join('\n') +
+      '\n';
+    const exec = execReturning(stdout);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
 
     const result = await execute(tool, { pattern: '*.ts' });
 
-    expect(result.output).toContain(
-      `[Truncated at ${String(MAX_MATCHES)} matches — ${String(MAX_MATCHES)} matched so far, use a more specific pattern]`,
-    );
+    expect(result.output).toContain(`[Truncated at ${String(MAX_MATCHES)} matches`);
     expect(result.output).toContain('0.ts');
     expect(result.output).not.toContain(`${String(MAX_MATCHES)}.ts`);
+  });
+
+  it('surfaces a "first N matches" header when matches exceed MAX_MATCHES', async () => {
+    const stdout =
+      Array.from({ length: MAX_MATCHES + 50 }, (_, i) => `/workspace/file_${String(i)}.txt`).join(
+        '\n',
+      ) + '\n';
+    const exec = execReturning(stdout);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, {
+      workspaceDir: '/workspace',
+      additionalDirs: [],
+    });
+
+    const result = await execute(tool, { pattern: '*.txt' });
+
+    expect(result.output).toContain(`Only the first ${String(MAX_MATCHES)} matches are returned`);
+  });
+
+  it('returns a "Found N matches" footer at exactly MAX_MATCHES without truncation', async () => {
+    const stdout =
+      Array.from({ length: MAX_MATCHES }, (_, i) => `/workspace/test_${String(i)}.py`).join('\n') +
+      '\n';
+    const exec = execReturning(stdout);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, {
+      workspaceDir: '/workspace',
+      additionalDirs: [],
+    });
+
+    const result = await execute(tool, { pattern: '*.py' });
+
+    expect(result.output).not.toContain('Only the first');
+    expect(result.output).toContain(`Found ${String(MAX_MATCHES)} matches`);
+  });
+
+  it('filters sensitive files from results', async () => {
+    const exec = execReturning('/workspace/.env\n/workspace/src/a.ts\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
+
+    const result = await execute(tool, { pattern: 'src/**' });
+
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).not.toContain('.env');
+    expect(result.output).toContain('Filtered 1 sensitive file');
+  });
+
+  it('surfaces a "Glob failed" error when rg cannot be spawned', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('spawn rg ENOENT'));
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
+
+    const result = await execute(tool, { pattern: '*.ts' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Glob failed: spawn rg ENOENT');
+  });
+
+  it('retries once single-threaded when rg fails with EAGAIN (os error 11)', async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce(
+        fakeProcess('', 'rg: thread pool: Resource temporarily unavailable (os error 11)', 2),
+      )
+      .mockResolvedValueOnce(fakeProcess('/workspace/a.ts\n', '', 0));
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
+
+    const result = await execute(tool, { pattern: '*.ts', path: '/workspace' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('a.ts');
+    expect(exec).toHaveBeenCalledTimes(2);
+    const retryArgs = exec.mock.calls[1] as string[];
+    expect(retryArgs).toContain('-j');
+    expect(retryArgs).toContain('1');
+  });
+
+  it('surfaces an actionable error and tracks telemetry when rg is unavailable', async () => {
+    vi.mocked(ensureRgPath).mockRejectedValueOnce(
+      new Error('ripgrep (rg) is not available on PATH'),
+    );
+    const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
+    const exec = vi.fn();
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace, telemetryStub(events));
+
+    const result = await execute(tool, { pattern: '*.ts' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('rg unavailable: ripgrep (rg) is not available on PATH');
+    expect(exec).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      event: 'glob_tool_rg_fallback',
+      properties: { outcome: 'failed' },
+    });
+  });
+
+  it('tracks telemetry when rg resolves from a non-PATH fallback source', async () => {
+    vi.mocked(ensureRgPath).mockResolvedValueOnce({
+      path: '/mock/cached/rg',
+      source: 'share-bin-cached',
+    });
+    const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
+    const exec = execReturning('/workspace/a.ts\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace, telemetryStub(events));
+
+    const result = await execute(tool, { pattern: '*.ts' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('a.ts');
+    expect((exec.mock.calls[0] as string[])[0]).toBe('/mock/cached/rg');
+    expect(events).toContainEqual({
+      event: 'glob_tool_rg_fallback',
+      properties: { source: 'share-bin-cached', outcome: 'resolved' },
+    });
   });
 
   describe('skills / additional dirs', () => {
@@ -368,22 +510,24 @@ describe('GlobTool', () => {
     };
 
     it('searches inside a registered additionalDir entry', async () => {
-      const glob = vi.fn(async () => ['/skills/read_content.py', '/skills/utils.py']);
-      const { fs, withCwd } = createSpiedGlobFs({ glob });
-      const tool = new GlobTool(fs, createTestKaos(), skillsWorkspace);
+      const exec = execReturning('/skills/read_content.py\n/skills/utils.py\n');
+      const { fs } = createTestFs();
+      const { kaos, withCwd } = createTestKaos({ exec });
+      const tool = new GlobTool(fs, kaos, skillsWorkspace);
 
       const result = await execute(tool, { pattern: '*.py', path: '/skills' });
 
       expect(result.output).toContain('/skills/read_content.py');
       expect(result.output).toContain('/skills/utils.py');
       expect(withCwd).toHaveBeenCalledWith('/skills');
-      expect(glob).toHaveBeenCalledWith('*.py');
+      expect(execArgs(exec).at(-1)).toBe('.');
     });
 
     it('searches inside a subdirectory of an additionalDir entry', async () => {
-      const glob = vi.fn(async () => ['/skills/feishu/scripts/read_content.py']);
-      const { fs, withCwd } = createSpiedGlobFs({ glob });
-      const tool = new GlobTool(fs, createTestKaos(), skillsWorkspace);
+      const exec = execReturning('/skills/feishu/scripts/read_content.py\n');
+      const { fs } = createTestFs();
+      const { kaos, withCwd } = createTestKaos({ exec });
+      const tool = new GlobTool(fs, kaos, skillsWorkspace);
 
       const result = await execute(tool, {
         pattern: '*.py',
@@ -395,9 +539,10 @@ describe('GlobTool', () => {
     });
 
     it('rejects a relative path that escapes both workspace and additionalDirs', async () => {
-      const glob = vi.fn(async (): Promise<readonly string[]> => []);
-      const { fs, withCwd } = createSpiedGlobFs({ glob });
-      const tool = new GlobTool(fs, createTestKaos(), {
+      const exec = vi.fn();
+      const { fs } = createTestFs();
+      const { kaos, withCwd } = createTestKaos({ exec });
+      const tool = new GlobTool(fs, kaos, {
         workspaceDir: '/workspace/project',
         additionalDirs: ['/skills'],
       });
@@ -406,14 +551,15 @@ describe('GlobTool', () => {
 
       expect(result).toMatchObject({ isError: true });
       expect(result.output).toContain('absolute path');
-      expect(glob).not.toHaveBeenCalled();
+      expect(exec).not.toHaveBeenCalled();
       expect(withCwd).not.toHaveBeenCalled();
     });
 
     it('accepts a path inside a deeply nested additionalDir entry', async () => {
-      const glob = vi.fn(async () => ['/skills/my-skill/scripts/helper.py']);
-      const { fs, withCwd } = createSpiedGlobFs({ glob });
-      const tool = new GlobTool(fs, createTestKaos(), skillsWorkspace);
+      const exec = execReturning('/skills/my-skill/scripts/helper.py\n');
+      const { fs } = createTestFs();
+      const { kaos, withCwd } = createTestKaos({ exec });
+      const tool = new GlobTool(fs, kaos, skillsWorkspace);
 
       const result = await execute(tool, {
         pattern: '*.py',
@@ -425,33 +571,35 @@ describe('GlobTool', () => {
     });
   });
 
-  it('walks "**/" prefix patterns with a literal anchor instead of rejecting them', async () => {
-    // Previously a hard reject; now `**/*.py` reaches the filesystem like
-    // any other pattern and the 100-match cap is the only safety.
-    const glob = vi.fn(async () => ['/workspace/a.py', '/workspace/sub/b.py']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('walks "**/" prefix patterns with a literal anchor', async () => {
+    const exec = execReturning('/workspace/a.py\n/workspace/sub/b.py\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '**/*.py' });
 
     expect(result.isError).toBeFalsy();
     expect(withCwd).toHaveBeenCalledWith('/workspace');
-    expect(glob).toHaveBeenCalledWith('**/*.py');
+    expect(execArgs(exec)).toContain('**/*.py');
     expect(result.output).toContain('a.py');
     expect(result.output).toContain('sub/b.py');
   });
 
   it('walks safe recursive patterns with a literal subdirectory anchor', async () => {
-    const glob = vi.fn(async () => [
-      '/workspace/src/main.py',
-      '/workspace/src/utils.py',
-      '/workspace/src/main/app.py',
-      '/workspace/src/main/config.py',
-      '/workspace/src/test/test_app.py',
-      '/workspace/src/test/test_config.py',
-    ]);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = execReturning(
+      [
+        '/workspace/src/main.py',
+        '/workspace/src/utils.py',
+        '/workspace/src/main/app.py',
+        '/workspace/src/main/config.py',
+        '/workspace/src/test/test_app.py',
+        '/workspace/src/test/test_config.py',
+      ].join('\n') + '\n',
+    );
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: 'src/**/*.py', path: '/workspace' });
 
@@ -463,10 +611,11 @@ describe('GlobTool', () => {
     expect(result.output).toContain('src/test/test_config.py');
   });
 
-  it('surfaces an explicit no-match message when no paths are yielded', async () => {
-    const glob = vi.fn(async (): Promise<readonly string[]> => []);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+  it('surfaces an explicit no-match message when rg exits 1', async () => {
+    const exec = execReturning('', '', 1);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '*.xyz', path: '/workspace' });
 
@@ -474,97 +623,92 @@ describe('GlobTool', () => {
     expect(result.output).toContain('No matches found');
   });
 
+  it('keeps complete paths and surfaces a warning when rg exits 2 after traversal errors', async () => {
+    const exec = execReturning(
+      '/workspace/a.ts\n/workspace/src/b.ts\n',
+      'rg: ./locked: Permission denied (os error 13)',
+      2,
+    );
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
+
+    const result = await execute(tool, { pattern: '*.ts', path: '/workspace' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('a.ts');
+    expect(result.output).toContain('src/b.ts');
+    expect(result.output).toContain('Glob completed with warnings');
+    expect(result.output).toContain('Permission denied');
+  });
+
+  it('keeps ripgrep errors hard failures when no complete path is produced', async () => {
+    const exec = execReturning('', 'error: invalid glob', 2);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
+
+    const result = await execute(tool, { pattern: '[', path: '/workspace' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Glob failed: error: invalid glob');
+  });
+
   it('reports "does not exist" when the search directory is missing', async () => {
-    // Real fs.glob silently returns empty for a missing root because its
-    // kaos walker catches readdir failures. The tool pre-checks with
-    // readdir so ENOENT surfaces before glob runs. Realistic mock: readdir
-    // throws ENOENT, glob is never called.
+    // The pre-check uses fs.readdir; an ENOENT surfaces before rg runs.
     const readdir = vi.fn(async (): Promise<readonly string[]> => {
       throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
     });
-    const glob = vi.fn(async (): Promise<readonly string[]> => []);
-    const { fs, withCwd } = createSpiedGlobFs({ readdir, glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = vi.fn();
+    const { fs } = createTestFs({ readdir });
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '*.py', path: '/workspace/nonexistent' });
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('does not exist');
-    expect(glob).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
     expect(withCwd).not.toHaveBeenCalled();
   });
 
   it('reports "is not a directory" when the search target is a file', async () => {
-    // Real fs.glob silently returns empty when the root is a regular file
-    // because its kaos walker's readdir hits ENOTDIR and exits. The
-    // pre-check uses readdir, which raises ENOTDIR on file-as-dir.
-    // Realistic mock: readdir throws ENOTDIR, glob is never called.
+    // The pre-check uses fs.readdir; an ENOTDIR surfaces before rg runs.
     const readdir = vi.fn(async (): Promise<readonly string[]> => {
       throw Object.assign(new Error('ENOTDIR: not a directory'), { code: 'ENOTDIR' });
     });
-    const glob = vi.fn(async (): Promise<readonly string[]> => []);
-    const { fs, withCwd } = createSpiedGlobFs({ readdir, glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = vi.fn();
+    const { fs } = createTestFs({ readdir });
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '*.py', path: '/workspace/file.txt' });
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('is not a directory');
-    expect(glob).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
     expect(withCwd).not.toHaveBeenCalled();
   });
 
-  it('surfaces a "first N matches" header when matches exceed MAX_MATCHES', async () => {
-    const paths = Array.from(
-      { length: MAX_MATCHES + 50 },
-      (_, i) => `/workspace/file_${String(i)}.txt`,
-    );
-    const glob = vi.fn(async () => paths);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), {
-      workspaceDir: '/workspace',
-      additionalDirs: [],
-    });
-
-    const result = await execute(tool, { pattern: '*.txt' });
-
-    expect(result.output).toContain(`Only the first ${String(MAX_MATCHES)} matches are returned`);
-  });
-
-  it('returns a "Found N matches" footer at exactly MAX_MATCHES without truncation', async () => {
-    const paths = Array.from({ length: MAX_MATCHES }, (_, i) => `/workspace/test_${String(i)}.py`);
-    const glob = vi.fn(async () => paths);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), {
-      workspaceDir: '/workspace',
-      additionalDirs: [],
-    });
-
-    const result = await execute(tool, { pattern: '*.py' });
-
-    expect(result.output).not.toContain('Only the first');
-    expect(result.output).toContain(`Found ${String(MAX_MATCHES)} matches`);
-  });
-
   it('walks "**/" patterns with literal subdirectory anchors after the prefix', async () => {
-    // Previously rejected up-front; now `**/main/*.py` walks like any
-    // other anchored pattern.
-    const glob = vi.fn(async () => ['/workspace/src/main/app.py']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = execReturning('/workspace/src/main/app.py\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '**/main/*.py' });
 
     expect(result.isError).toBeFalsy();
     expect(withCwd).toHaveBeenCalledWith('/workspace');
-    expect(glob).toHaveBeenCalledWith('**/main/*.py');
+    expect(execArgs(exec)).toContain('**/main/*.py');
     expect(result.output).toContain('src/main/app.py');
   });
 
   it('matches dotfiles like .gitlab-ci.yml under a simple "*.yml" pattern', async () => {
-    const glob = vi.fn(async () => ['/workspace/.gitlab-ci.yml', '/workspace/config.yml']);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = execReturning('/workspace/.gitlab-ci.yml\n/workspace/config.yml\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '*.yml' });
 
@@ -573,9 +717,10 @@ describe('GlobTool', () => {
   });
 
   it('descends into hidden directories under a recursive pattern', async () => {
-    const glob = vi.fn(async () => ['/workspace/src/.config/settings.yml']);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = execReturning('/workspace/src/.config/settings.yml\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: 'src/**/*.yml' });
 
@@ -583,9 +728,10 @@ describe('GlobTool', () => {
   });
 
   it('matches files inside an explicitly addressed hidden directory', async () => {
-    const glob = vi.fn(async () => ['/workspace/.github/workflows/ci.yml']);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = execReturning('/workspace/.github/workflows/ci.yml\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '.github/**/*.yml' });
 
@@ -596,9 +742,10 @@ describe('GlobTool', () => {
     // When the search root is not inside workspaceDir, matches must stay
     // absolute in the output. Otherwise the model would resolve a
     // relativized path against the workspace cwd and hit the wrong file.
-    const glob = vi.fn(async () => ['/extra/test.py']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), {
+    const exec = execReturning('/extra/test.py\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
@@ -614,9 +761,10 @@ describe('GlobTool', () => {
     // still resolve against workspaceDir in follow-up Read/Edit calls, so
     // matches under an additionalDir stay absolute.
     const registered: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
-    const glob = vi.fn(async () => ['/extra/test.py']);
-    const { fs } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), registered);
+    const exec = execReturning('/extra/test.py\n');
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, registered);
 
     const result = await execute(tool, { pattern: '*.py', path: '/extra' });
     expect(result.isError).toBeFalsy();
@@ -624,22 +772,24 @@ describe('GlobTool', () => {
   });
 
   it('allows a relative path argument that resolves inside the workspace', async () => {
-    const glob = vi.fn(async () => ['/workspace/relative/path/test.py']);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const exec = execReturning('/workspace/relative/path/test.py\n');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, workspace);
 
     const result = await execute(tool, { pattern: '*.py', path: 'relative/path' });
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('test.py');
     expect(withCwd).toHaveBeenCalledWith('/workspace/relative/path');
-    expect(glob).toHaveBeenCalledWith('*.py');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('expands a leading "~/" path before searching outside the workspace', async () => {
-    const glob = vi.fn(async (): Promise<readonly string[]> => []);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos({ home: '/home/test' }), {
+    const exec = execReturning('');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ home: '/home/test', exec });
+    const tool = new GlobTool(fs, kaos, {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
@@ -649,13 +799,14 @@ describe('GlobTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toBe('No matches found');
     expect(withCwd).toHaveBeenCalledWith('/home/test');
-    expect(glob).toHaveBeenCalledWith('*.py');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('allows a path sharing the workspace prefix when it is absolute', async () => {
-    const glob = vi.fn(async (): Promise<readonly string[]> => []);
-    const { fs, withCwd } = createSpiedGlobFs({ glob });
-    const tool = new GlobTool(fs, createTestKaos(), {
+    const exec = execReturning('');
+    const { fs } = createTestFs();
+    const { kaos, withCwd } = createTestKaos({ exec });
+    const tool = new GlobTool(fs, kaos, {
       workspaceDir: '/parent/workdir',
       additionalDirs: [],
     });
@@ -665,12 +816,13 @@ describe('GlobTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toBe('No matches found');
     expect(withCwd).toHaveBeenCalledWith('/parent/workdir-sneaky');
-    expect(glob).toHaveBeenCalledWith('*.py');
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('locks down brace-expansion mention and large-directory caveats in the description', () => {
-    const { fs } = createSpiedGlobFs();
-    const tool = new GlobTool(fs, createTestKaos(), workspace);
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos();
+    const tool = new GlobTool(fs, kaos, workspace);
 
     expect(tool.description).toContain('**');
     expect(tool.description).toMatch(/\*\*\/\*\.py/);
@@ -680,8 +832,9 @@ describe('GlobTool', () => {
   });
 
   it('mentions Windows path forms in the description on win32 backends', () => {
-    const { fs } = createSpiedGlobFs();
-    const tool = new GlobTool(fs, createTestKaos({ pathClass: 'win32' }), {
+    const { fs } = createTestFs();
+    const { kaos } = createTestKaos({ pathClass: 'win32' });
+    const tool = new GlobTool(fs, kaos, {
       workspaceDir: 'C:\\workspace',
       additionalDirs: [],
     });
@@ -691,47 +844,140 @@ describe('GlobTool', () => {
   });
 });
 
-describe('expandBraces', () => {
-  it('returns the original pattern unchanged when there is no brace group', () => {
-    expect(expandBraces('src/**/*.ts')).toEqual(['src/**/*.ts']);
+describe('splitCompletePaths', () => {
+  it('keeps every line when output is complete (trailing newline)', () => {
+    expect(splitCompletePaths('/a/b.ts\n/c/d.ts\n', false)).toEqual(['/a/b.ts', '/c/d.ts']);
   });
 
-  it('expands a single top-level brace group into one pattern per alternative', () => {
-    expect(expandBraces('*.{ts,tsx}')).toEqual(['*.ts', '*.tsx']);
+  it('keeps every line when output is complete even if flagged truncated', () => {
+    // A trailing newline means the last path is intact; nothing to drop.
+    expect(splitCompletePaths('/a/b.ts\n/c/d.ts\n', true)).toEqual(['/a/b.ts', '/c/d.ts']);
   });
 
-  it('produces the cartesian product when more than one brace group appears', () => {
-    expect(expandBraces('{src,test}/{a,b}.ts')).toEqual([
-      'src/a.ts',
-      'src/b.ts',
-      'test/a.ts',
-      'test/b.ts',
-    ]);
+  it('drops a half-written trailing path when output is truncated', () => {
+    expect(splitCompletePaths('/a/b.ts\n/c/d.t', true)).toEqual(['/a/b.ts']);
   });
 
-  it('recursively expands nested brace groups', () => {
-    expect(expandBraces('{a,{b,c}}.ts')).toEqual(['a.ts', 'b.ts', 'c.ts']);
+  it('keeps the trailing path when output is not flagged truncated', () => {
+    // Without the truncation flag the final segment is trusted as-is.
+    expect(splitCompletePaths('/a/b.ts\n/c/d.ts', false)).toEqual(['/a/b.ts', '/c/d.ts']);
   });
 
-  it('falls through with the literal pattern when a brace group has no top-level comma', () => {
-    // bash also treats `{abc}` as a literal; we follow the same rule.
-    expect(expandBraces('{abc}.ts')).toEqual(['{abc}.ts']);
+  it('returns an empty list when truncated output has no complete line', () => {
+    expect(splitCompletePaths('/partial-no-newline', true)).toEqual([]);
+  });
+});
+
+describe.skipIf(!RG_AVAILABLE)('GlobTool integration (real ripgrep)', () => {
+  // Spawns the actual `rg` binary through a real `IKaos` so the ripgrep
+  // semantics the tool relies on (sort direction, recursion, brace handling,
+  // cwd-relative matching) are exercised end-to-end — not just the argument
+  // plumbing. Gated with `skipIf` so environments without `rg` skip cleanly.
+  // The locator stays mocked (returning `rg`, found on PATH); everything below
+  // it — process spawn, ripgrep itself, output parsing — is real.
+
+  let tmpDir: string | undefined;
+  let kaos: IKaos;
+  let realFs: ISessionAgentFileSystem;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'glob-rg-'));
+    const base = await LocalKaos.create();
+    kaos = new KaosService(base.withCwd(tmpDir));
+    realFs = new SessionAgentFileSystem(kaos);
   });
 
-  it('falls through with the literal pattern when braces are unbalanced', () => {
-    expect(expandBraces('{a,b.ts')).toEqual(['{a,b.ts']);
-    expect(expandBraces('a,b}.ts')).toEqual(['a,b}.ts']);
+  afterEach(async () => {
+    if (tmpDir !== undefined) {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
   });
 
-  it('treats backslash-escaped braces as literals and does not expand them', () => {
-    expect(expandBraces('\\{a,b\\}.ts')).toEqual(['\\{a,b\\}.ts']);
+  async function touch(rel: string, mtime: Date): Promise<void> {
+    const full = path.join(tmpDir!, rel);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, '');
+    await fs.utimes(full, mtime, mtime);
+  }
+
+  const ws = (): WorkspaceConfig => ({ workspaceDir: tmpDir!, additionalDirs: [] });
+
+  it('returns files newest-first by modification time (--sortr=modified)', async () => {
+    await touch('old.ts', new Date('2020-01-01T00:00:00Z'));
+    await touch('mid.ts', new Date('2022-01-01T00:00:00Z'));
+    await touch('new.ts', new Date('2024-01-01T00:00:00Z'));
+    const tool = new GlobTool(realFs, kaos, ws());
+
+    const result = await execute(tool, { pattern: '*.ts', path: tmpDir! });
+
+    expect(result.output).toBe('new.ts\nmid.ts\nold.ts');
   });
 
-  it('falls back to the original pattern when expansion would exceed the fan-out cap', () => {
-    // Seven groups of 3 alternatives = 3^7 = 2187 patterns, well above
-    // the MAX_BRACE_EXPANSIONS = 64 cap. Falling back is preferred over
-    // silently dropping alternatives.
-    const pathological = '{a,b,c}{d,e,f}{g,h,i}{j,k,l}{m,n,o}{p,q,r}{s,t,u}';
-    expect(expandBraces(pathological)).toEqual([pathological]);
+  it('treats a bare pattern (no slash) as recursive across subdirectories', async () => {
+    await touch('root.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('src/a.ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('src/sub/b.ts', new Date('2022-01-01T00:00:00Z'));
+    const tool = new GlobTool(realFs, kaos, ws());
+
+    const result = await execute(tool, { pattern: '*.ts', path: tmpDir! });
+
+    expect(result.output).toContain('root.ts');
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).toContain('src/sub/b.ts');
+  });
+
+  it('matches brace alternatives across directories', async () => {
+    await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('test/a.ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('other/a.ts', new Date('2022-01-01T00:00:00Z'));
+    const tool = new GlobTool(realFs, kaos, ws());
+
+    const result = await execute(tool, { pattern: '{src,test}/*.ts', path: tmpDir! });
+
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).toContain('test/a.ts');
+    expect(result.output).not.toContain('other/a.ts');
+  });
+
+  it('matches a recursive anchored pattern (src/**/*.ts) under an absolute search root', async () => {
+    // Regression guard: with an absolute search root, ripgrep matches a
+    // `--glob` pattern containing a `/` against the absolute path, so
+    // `src/**/*.ts` returns nothing unless the tool runs rg from the search
+    // root (cwd) with `.` as the search path.
+    await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('src/sub/b.ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('other/c.ts', new Date('2022-01-01T00:00:00Z'));
+    const tool = new GlobTool(realFs, kaos, ws());
+
+    const result = await execute(tool, { pattern: 'src/**/*.ts', path: tmpDir! });
+
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).toContain('src/sub/b.ts');
+    expect(result.output).not.toContain('other/c.ts');
+  });
+
+  it('treats an escaped brace as a literal filename', async () => {
+    await touch('{a,b}.ts', new Date('2024-01-01T00:00:00Z'));
+    const tool = new GlobTool(realFs, kaos, ws());
+
+    const result = await execute(tool, { pattern: '\\{a,b\\}.ts', path: tmpDir! });
+
+    expect(result.output).toContain('{a,b}.ts');
+  });
+
+  it('returns absolute paths when the search root is outside the workspace', async () => {
+    const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'glob-ext-'));
+    try {
+      const extFile = path.join(externalDir, 'pkg.ts');
+      await fs.writeFile(extFile, '');
+      const tool = new GlobTool(realFs, kaos, ws());
+
+      const result = await execute(tool, { pattern: '*.ts', path: externalDir });
+
+      expect(result.output).toBe(extFile);
+    } finally {
+      await fs.rm(externalDir, { recursive: true, force: true });
+    }
   });
 });

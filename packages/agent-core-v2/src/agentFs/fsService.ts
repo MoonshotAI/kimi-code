@@ -46,12 +46,14 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, KimiError } from '#/errors';
 import { ISessionProcessRunner } from '#/process';
+import { ITelemetryService } from '#/telemetry';
 import { ISessionWorkspaceContext } from '#/workspaceContext';
 
 import { type AgentFileStat, ISessionAgentFileSystem } from './agentFs';
 import { type FsDownloadResolved, type FsPathResolved, ISessionFsService } from './fs';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './fsGit';
 import { runCommand } from './fsProcess';
+import { ensureRgPath, type RgProbe, type RgResolution } from './rgLocator';
 import {
   compileGrepPattern,
   computeFuzzyScore,
@@ -88,12 +90,18 @@ export class SessionFsService implements ISessionFsService {
     string,
     { value: FsPullRequest | null; fetchedAt: number }
   >();
-  private rgAvailable: boolean | undefined = undefined;
+  /**
+   * Cached ripgrep resolution. `undefined` = not probed yet; `null` = probed
+   * and unavailable (use the node fallback). Mirrors the old `rgAvailable`
+   * boolean cache so we probe at most once per session.
+   */
+  private rgResolution: RgResolution | null | undefined = undefined;
 
   constructor(
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionAgentFileSystem private readonly fs: ISessionAgentFileSystem,
     @ISessionProcessRunner private readonly runner: ISessionProcessRunner,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
   async list(req: FsListRequest): Promise<FsListResponse> {
@@ -424,9 +432,11 @@ export class SessionFsService implements ISessionFsService {
     const timer = setTimeout(() => controller.abort(), GREP_TIMEOUT_MS);
     timer.unref?.();
     try {
-      if (await this.probeRg()) {
-        return await this.grepWithRg(req, controller.signal, startedAt);
+      const resolution = await this.resolveRg();
+      if (resolution !== null) {
+        return await this.grepWithRg(req, controller.signal, startedAt, resolution.path);
       }
+      this.telemetry.track('fs_grep_node_fallback', { reason: 'rg_missing' });
       return await this.grepWithNode(req, controller.signal, startedAt);
     } finally {
       clearTimeout(timer);
@@ -595,6 +605,7 @@ export class SessionFsService implements ISessionFsService {
     req: FsGrepRequest,
     signal: AbortSignal,
     startedAt: number,
+    rgPath: string,
   ): Promise<FsGrepResponse> {
     const args = ['--json'];
     if (req.context_lines > 0) {
@@ -617,7 +628,7 @@ export class SessionFsService implements ISessionFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const res = await runCommand(this.runner, ['rg', ...args], {
+    const res = await runCommand(this.runner, [rgPath, ...args], {
       cwd: this.workspace.workDir,
       signal,
     });
@@ -748,13 +759,25 @@ export class SessionFsService implements ISessionFsService {
     return ig;
   }
 
-  private async probeRg(): Promise<boolean> {
-    if (this.rgAvailable !== undefined) return this.rgAvailable;
-    const res = await runCommand(this.runner, ['rg', '--version'], {
-      cwd: this.workspace.workDir,
-    });
-    this.rgAvailable = res.exitCode === 0;
-    return this.rgAvailable;
+  /**
+   * Resolve a usable `rg` once per session via the shared locator. Probes
+   * `rg --version` through the session runner (so it respects the execution
+   * environment). Returns `null` when `rg` is unavailable so the caller can
+   * fall back to the pure-node walker. The cached-binary fallback is disabled
+   * here — Grep's node fallback already covers the missing-`rg` case and
+   * keeping it off makes the fallback deterministic.
+   */
+  private async resolveRg(): Promise<RgResolution | null> {
+    if (this.rgResolution !== undefined) return this.rgResolution;
+    const probe: RgProbe = {
+      exec: (args) => runCommand(this.runner, args, { cwd: this.workspace.workDir }),
+    };
+    try {
+      this.rgResolution = await ensureRgPath(probe);
+    } catch {
+      this.rgResolution = null;
+    }
+    return this.rgResolution;
   }
 
   private resolveWithin(inputPath: string): string {

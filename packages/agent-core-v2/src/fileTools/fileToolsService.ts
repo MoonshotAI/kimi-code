@@ -12,6 +12,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
 import { ISessionAgentFileSystem, ISessionFsService } from '#/agentFs';
 import { IKaos } from '#/kaos';
+import { ITelemetryService } from '#/telemetry';
 import { IAgentToolRegistryService } from '#/toolRegistry';
 import { ISessionWorkspaceContext } from '#/workspaceContext';
 
@@ -31,6 +32,7 @@ export class AgentFileToolsService implements IAgentFileToolsService {
     @IKaos kaos: IKaos,
     @ISessionWorkspaceContext workspace: ISessionWorkspaceContext,
     @ISessionFsService fsService: ISessionFsService,
+    @ITelemetryService telemetry: ITelemetryService,
   ) {
     const workspaceConfig: WorkspaceConfig = {
       workspaceDir: workspace.workDir,
@@ -40,7 +42,7 @@ export class AgentFileToolsService implements IAgentFileToolsService {
     toolRegistry.register(new WriteTool(fs, kaos, workspaceConfig));
     toolRegistry.register(new EditTool(fs, kaos, workspaceConfig));
     toolRegistry.register(new GrepTool(fsService, kaos, workspaceConfig));
-    toolRegistry.register(new GlobTool(fs, kaos, workspaceConfig));
+    toolRegistry.register(new GlobTool(fs, kaos, workspaceConfig, telemetry));
   }
 }
 

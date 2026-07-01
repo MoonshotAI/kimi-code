@@ -1,41 +1,64 @@
 /**
- * `fileTools` domain — GlobTool, file pattern matching.
+ * `fileTools` domain — GlobTool, file pattern matching via ripgrep.
  *
- * Finds files (and optionally directories) matching a glob pattern and returns
- * them as a newline-separated path list, capped at {@link MAX_MATCHES}. Brace
- * expansion (`*.{ts,tsx}`, `{src,test}/**`) is fanned out at this layer into
- * sub-patterns before each is handed to the filesystem, because the kaos
- * walker treats `{` / `}` as literals.
+ * Finds files matching a glob pattern, returned sorted by modification time
+ * (most recent first). Implemented by shelling out to `rg --files` through the
+ * session `IKaos` backend (`withCwd(root).backend.exec(rgPath, ...)`) — sharing
+ * the ripgrep subprocess plumbing, gitignore handling, and sensitive-file
+ * filtering with the Grep domain.
  *
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/glob.ts`) onto
  * the v2 domains:
- *   - Search root: v1 `kaos.glob(root, pattern)` (async generator) maps to
- *     `fs.withCwd(root).glob(pattern)`, since v2 `ISessionAgentFileSystem.glob`
- *     searches from `fs.cwd` and returns a collected `Promise<readonly
- *     string[]>`. kaos yields absolute paths, so no further joining is needed.
+ *   - Search: v1 `kaos.exec(rgPath, ...)` maps to
+ *     `this.kaos.withCwd(searchRoot).backend.exec(rgPath, ...)`. v2 `IKaos`
+ *     exposes process spawning through `backend.exec`; `withCwd` pins the
+ *     subprocess cwd to the search root so `--glob` patterns match paths
+ *     relative to that root.
+ *   - Binary resolution: `ensureRgPath` (`#/agentFs/rgLocator`) probes the
+ *     execution environment for a working `rg` (system PATH, then the cached
+ *     bootstrap binary) so a missing `rg` surfaces an actionable message
+ *     instead of a naked `spawn rg ENOENT`.
+ *   - Subprocess plumbing: `runRgOnce` / `shouldRetryRipgrepEagain`
+ *     (`#/agentFs/runRg`) own spawn, capped draining, abort/timeout, two-phase
+ *     kill, and the single-threaded EAGAIN retry shared with v1's run-rg.
+ *   - Directory pre-check: `fs.readdir(searchRoot)` surfaces a missing or
+ *     non-directory root as "does not exist" / "is not a directory" instead of
+ *     a misleading "No matches found" (or, for a file root, rg listing the
+ *     file itself as its own match).
  *   - Path safety / home expansion / path class: `resolvePathAccessPath` over
- *     the `kaos` domain, identical to Read/Write/Edit.
- *   - The v1 `iterdir` existence pre-check becomes `fs.readdir(root)`: it
- *     triggers the same directory read that the glob walker would do, so
- *     ENOENT / ENOTDIR surface as "does not exist" / "is not a directory"
- *     instead of a misleading "No matches found".
+ *     the `kaos` domain, identical to Read/Write/Edit/Grep.
  *
- * Documented deviation from v1: results are no longer sorted by modification
- * time. v2 `ISessionAgentFileSystem.stat` exposes `{ isFile, isDirectory, size }`
- * only — it carries no mtime — so matches are returned in walk order (the
- * order `fs.glob` yields them, grouped by expanded sub-pattern). The cap,
- * dedup, truncation markers, and `include_dirs` filtering are unchanged.
+ * Behaviour:
+ *   - `.gitignore` / `.ignore` / `.rgignore` are respected by default
+ *     (ripgrep native). Pass `include_ignored` to also surface ignored files
+ *     (e.g. build outputs, `node_modules`). Sensitive files such as `.env` are
+ *     always filtered out (authoritative post-filter via
+ *     {@link isSensitiveFile}).
+ *   - Results are files-only — `rg --files` never lists directories.
+ *     `include_dirs` is accepted but deprecated and ignored.
+ *   - Brace expansion (`*.{ts,tsx}`, `{src,test}/**`) is handled by ripgrep's
+ *     glob engine; the pattern is passed through to a single `--glob`.
+ *   - Match count is capped at {@link MAX_MATCHES}. Callers are expected to add
+ *     an anchor (extension, subdirectory) when that would not be enough.
  *
  * Output convention: paths shown to the LLM are relativized to the search
  * base only when that base sits inside the primary workspace. External roots
  * stay absolute so downstream Read/Edit calls keep targeting the same file.
  */
 
-import { normalize } from 'pathe';
+import { normalize, resolve } from 'pathe';
 import { z } from 'zod';
 
 import { ISessionAgentFileSystem } from '#/agentFs';
+import { ensureRgPath, rgUnavailableMessage, type RgProbe } from '#/agentFs/rgLocator';
+import {
+  DEFAULT_TIMEOUT_MS,
+  MAX_OUTPUT_BYTES,
+  runRgOnce,
+  shouldRetryRipgrepEagain,
+} from '#/agentFs/runRg';
 import { IKaos } from '#/kaos';
+import { ITelemetryService, noopTelemetryService } from '#/telemetry';
 import { ToolAccesses } from '#/tool';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/tool';
 import {
@@ -43,25 +66,34 @@ import {
   resolvePathAccessPath,
   type PathClass,
 } from '#/_base/tools/policies/path-access';
+import {
+  isSensitiveFile,
+  SENSITIVE_DOT_VARIANT_SUFFIXES,
+} from '#/_base/tools/policies/sensitive';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
 import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
 import globDescription from './glob.md?raw';
 
 export const GlobInputSchema = z.object({
-  pattern: z.string().describe('Glob pattern to match files/directories.'),
+  pattern: z.string().describe('Glob pattern to match files.'),
   path: z
     .string()
     .optional()
     .describe(
       'Absolute path to the directory to search in. Defaults to the current working directory.',
     ),
-  include_dirs: z
+  include_ignored: z
     .boolean()
-    .default(true)
     .optional()
     .describe(
-      'Whether to include directories in results. Defaults to true. Set false to return only files.',
+      'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. Defaults to false.',
+    ),
+  include_dirs: z
+    .boolean()
+    .optional()
+    .describe(
+      'Deprecated and ignored. Results are always files-only — directories are never listed. Accepted only so older calls that still pass this flag are not rejected by parameter validation.',
     ),
 });
 
@@ -69,17 +101,23 @@ export type GlobInput = z.infer<typeof GlobInputSchema>;
 
 export const MAX_MATCHES = 100;
 
-/**
- * Hard upper bound on the number of sub-patterns a single brace expansion
- * is allowed to produce. Generous enough for the common LLM patterns
- * (`*.{ts,tsx,js,jsx,mjs,cjs}` etc.) while still keeping pathological
- * cartesian inputs like `{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}` (= 64) from
- * fanning out unboundedly. Beyond this we fall through with the original
- * pattern unexpanded — kaos would then treat the braces as literals and
- * match zero, which is the right "obvious failure" signal for a pattern
- * the model probably did not mean.
- */
-const MAX_BRACE_EXPANSIONS = 64;
+const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
+
+// Conservative rg-level prefilter. The authoritative sensitive-file check
+// still happens on parsed rg records via `isSensitiveFile` after execution.
+const SENSITIVE_KEY_BASENAMES = ['id_rsa', 'id_ed25519', 'id_ecdsa'] as const;
+const SENSITIVE_GLOBS_TO_EXCLUDE: readonly string[] = [
+  '**/.env',
+  ...SENSITIVE_KEY_BASENAMES.flatMap((name) => [
+    `**/${name}`,
+    `**/${name}[-_]*`,
+    ...SENSITIVE_DOT_VARIANT_SUFFIXES.map((suffix) => `**/${name}${suffix}`),
+  ]),
+  '**/.aws/credentials',
+  '**/.aws/credentials/**',
+  '**/.gcp/credentials',
+  '**/.gcp/credentials/**',
+];
 
 /**
  * Path-shape hint appended to the tool description only on a Windows
@@ -106,11 +144,14 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   readonly name = 'Glob' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GlobInputSchema);
+  private readonly telemetry: ITelemetryService;
   constructor(
     private readonly fs: ISessionAgentFileSystem,
     private readonly kaos: IKaos,
     private readonly workspace: WorkspaceConfig,
+    telemetry: ITelemetryService = noopTelemetryService,
   ) {
+    this.telemetry = telemetry;
     this.description =
       this.kaos.pathClass() === 'win32' ? globDescription + WINDOWS_PATH_HINT : globDescription;
   }
@@ -131,8 +172,8 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     if (args.path !== undefined) {
       detailParts.push(`path: ${args.path}`);
     }
-    if (args.include_dirs === false) {
-      detailParts.push('include_dirs: false');
+    if (args.include_ignored === true) {
+      detailParts.push('include_ignored: true');
     }
 
     return {
@@ -146,142 +187,279 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       },
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
-      execute: () => this.execution(args, searchRoots),
+      execute: ({ signal }) => this.execution(args, signal, searchRoots),
     };
   }
 
   private async execution(
     args: GlobInput,
+    signal: AbortSignal,
     searchRoots: readonly string[],
   ): Promise<ExecutableToolResult> {
-    const subPatterns = expandBraces(args.pattern).map((p) =>
-      hasGlobEscape(p) ? p : normalize(p),
+    const searchRoot = searchRoots[0] ?? this.workspace.workspaceDir;
+
+    // `rg --files <file>` exits 0 and lists the file itself, so without this
+    // check a file root would be returned as its own match instead of
+    // rejected, and a missing root would surface as "No matches found".
+    // readdir triggers the same directory read the walk would do, so ENOENT /
+    // ENOTDIR surface here as actionable messages. Any other failure falls
+    // through and lets the rg run surface its own error.
+    try {
+      await this.fs.readdir(searchRoot);
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === 'ENOENT') {
+        return { isError: true, output: `${searchRoot} does not exist` };
+      }
+      if (code === 'ENOTDIR') {
+        return { isError: true, output: `${searchRoot} is not a directory` };
+      }
+    }
+
+    if (signal.aborted) {
+      return { isError: true, output: 'Glob aborted' };
+    }
+
+    // Resolve a working `rg` before running. Probes the execution environment
+    // (system PATH, then the cached bootstrap binary) so a missing `rg` gets a
+    // clear, actionable message — and so a non-PATH fallback is recorded in
+    // telemetry — instead of a confusing `spawn rg ENOENT`.
+    let rgPath: string;
+    try {
+      const resolution = await ensureRgPath(createRgProbe(this.kaos), {
+        signal,
+        allowCachedFallback: true,
+      });
+      rgPath = resolution.path;
+      if (resolution.source !== 'system-path') {
+        this.telemetry.track('glob_tool_rg_fallback', {
+          source: resolution.source,
+          outcome: 'resolved',
+        });
+      }
+    } catch (error) {
+      if (signal.aborted) {
+        return { isError: true, output: 'Glob aborted' };
+      }
+      this.telemetry.track('glob_tool_rg_fallback', { outcome: 'failed' });
+      return { isError: true, output: rgUnavailableMessage(error) };
+    }
+
+    // Run rg with its cwd pinned to the search root and `.` as the search
+    // path. ripgrep matches `--glob` patterns against the path *as passed to
+    // rg*, so with an absolute search path a pattern containing a `/` (e.g.
+    // `src/**/*.ts`) is matched against the absolute path and never matches.
+    // Running from the search root makes glob matching relative to it.
+    const execKaos = this.kaos.withCwd(searchRoot);
+
+    let run;
+    try {
+      run = await runRgOnce(execKaos, buildRgArgs(rgPath, args), signal);
+    } catch (error) {
+      return {
+        isError: true,
+        output: `Glob failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    if (run.kind === 'aborted') {
+      return { isError: true, output: 'Glob aborted' };
+    }
+
+    // ripgrep can fail with EAGAIN ("os error 11") when its thread pool cannot
+    // spawn a worker under load; a single single-threaded retry sidesteps the
+    // pool and usually succeeds.
+    if (shouldRetryRipgrepEagain(run)) {
+      try {
+        run = await runRgOnce(execKaos, buildRgArgs(rgPath, args, true), signal);
+      } catch (error) {
+        return {
+          isError: true,
+          output: `Glob failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      if (run.kind === 'aborted') {
+        return { isError: true, output: 'Glob aborted' };
+      }
+    }
+
+    const { exitCode, stdoutText, stderrText, bufferTruncated, timedOut } = run;
+
+    // rg exit codes: 0 = matches, 1 = no matches, 2+ = error. Timeout kills
+    // usually surface as a signal exit code; keep any partial paths. If rg
+    // returned complete paths before failing on a traversal error such as an
+    // unreadable subdirectory, keep those paths and surface a warning instead
+    // of failing the whole search. If no complete path was produced, treat
+    // stderr as authoritative (invalid glob, spawn failure, etc.).
+    let traversalWarning: string | undefined;
+    if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
+      const rawPathsBeforeError = splitCompletePaths(stdoutText, true);
+      if (rawPathsBeforeError.length === 0) {
+        return { isError: true, output: formatGlobError(searchRoot, stderrText) };
+      }
+      traversalWarning = formatGlobWarning(stderrText);
+    }
+    if (signal.aborted) {
+      return { isError: true, output: 'Glob aborted' };
+    }
+
+    // One path per line from `rg --files`. When stdout is capped or the run
+    // timed out, the final chunk can cut a path in half; drop any trailing
+    // line that lacks its terminating newline so a half-written path is never
+    // surfaced as a match. rg reports paths relative to its cwd (the search
+    // root), e.g. `./src/a.ts`; resolve them back to absolute paths so the
+    // sensitive-file check, workspace relativization, and display all keep
+    // working on absolute paths.
+    const rawPaths = splitCompletePaths(stdoutText, bufferTruncated || timedOut).map((p) =>
+      resolve(searchRoot, p),
     );
 
-    // Default true. When false, directories yielded by the filesystem are
-    // filtered out using the same stat that v1 used for the mtime sort
-    // (no second stat per path).
-    const includeDirs = args.include_dirs ?? true;
-
-    // `fs.glob` silently returns empty for missing or non-directory roots
-    // (its kaos walker catches the readdir failure and exits without
-    // yielding). Without this pre-check, a Glob against a missing path
-    // would report "No matches found" instead of "does not exist", and the
-    // model would not realize the search root itself was wrong. readdir is
-    // the right signal: it triggers the same directory read that the glob
-    // walker would do, so ENOENT / ENOTDIR surface here for the realistic
-    // backends before the walker is invoked. Any other failure (e.g. an
-    // unmocked test backend that throws "not implemented") falls through
-    // silently so the existing glob path still runs.
-    for (const root of searchRoots) {
-      try {
-        await this.fs.readdir(root);
-      } catch (error) {
-        if (error !== null && typeof error === 'object' && 'code' in error) {
-          const code = (error as { code?: string }).code;
-          if (code === 'ENOENT') {
-            return { isError: true, output: `${root} does not exist` };
-          }
-          if (code === 'ENOTDIR') {
-            return { isError: true, output: `${root} is not a directory` };
-          }
-        }
-        // Unknown failure (including unmocked test backends): fall
-        // through and let fs.glob run; it will either yield results or
-        // its own catch path will surface the error.
+    // Authoritative sensitive-file check (the rg prefilter is conservative).
+    const kept: string[] = [];
+    let filteredSensitive = 0;
+    for (const p of rawPaths) {
+      if (isSensitiveFile(p)) {
+        filteredSensitive++;
+      } else {
+        kept.push(p);
       }
     }
 
-    try {
-      // Two counters, two jobs:
-      //   - `entries.length` caps the *unique* paths we return, so a
-      //     truncation warning only fires after MAX_MATCHES real hits.
-      //   - `yielded` counts every path the glob results emit, including
-      //     duplicates across sub-patterns. Secondary safety belt that
-      //     terminates the walk even if a backend ever re-yields the same
-      //     real file. With brace expansion the legitimate yield volume
-      //     scales with the number of sub-patterns (each is its own
-      //     walk), so the cap scales too.
-      const seen = new Set<string>();
-      const entries: string[] = [];
-      const YIELD_SAFETY_CAP = MAX_MATCHES * 2 * subPatterns.length;
-      let yielded = 0;
-      let truncated = false;
+    const truncated = kept.length > MAX_MATCHES;
+    const limited = truncated ? kept.slice(0, MAX_MATCHES) : kept;
 
-      outer: for (const root of searchRoots) {
-        const searchFs = this.fs.withCwd(root);
-        for (const subPattern of subPatterns) {
-          const matches = await searchFs.glob(subPattern);
-          for (const filePath of matches) {
-            yielded++;
-            if (yielded >= YIELD_SAFETY_CAP) {
-              truncated = true;
-              break outer;
-            }
-            if (seen.has(filePath)) continue;
-            if (entries.length >= MAX_MATCHES) {
-              truncated = true;
-              break outer;
-            }
-            seen.add(filePath);
-            let isDir = false;
-            try {
-              const st = await this.fs.stat(filePath);
-              isDir = st.isDirectory;
-            } catch {
-              // stat failure — assume file so it still surfaces.
-            }
-            // Apply include_dirs *after* marking seen so a filtered dir
-            // doesn't re-enter via a later duplicate yield, and *before*
-            // pushing to entries so MAX_MATCHES continues to cap output
-            // (not pre-filter) size.
-            if (!includeDirs && isDir) continue;
-            entries.push(filePath);
-          }
-        }
+    if (limited.length === 0 && !timedOut) {
+      if (filteredSensitive > 0) {
+        return {
+          output: `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
+        };
       }
+      return { output: 'No matches found' };
+    }
 
-      const paths = entries;
-      // Content shown to the LLM uses paths relative to the search base
-      // to save tokens, but only for the primary workspace. Relative paths
-      // are later resolved against workspaceDir, so additionalDir matches
-      // must stay absolute to keep follow-up Read/Edit calls on the same file.
-      const pathClass = this.kaos.pathClass();
-      const relBase = searchRoots[0] ?? this.workspace.workspaceDir;
-      const shouldRelativize = isWithinDirectory(relBase, this.workspace.workspaceDir, pathClass);
-      const displayLines = paths.map((p) =>
-        shouldRelativize ? relativizeIfUnder(p, relBase, pathClass) : p,
+    // Content shown to the LLM uses paths relative to the search base to
+    // save tokens, but only for the primary workspace. Relative paths are
+    // later resolved against workspaceDir, so additionalDir matches stay
+    // absolute to keep follow-up Read/Edit calls on the same file.
+    const pathClass = this.kaos.pathClass();
+    const shouldRelativize = isWithinDirectory(searchRoot, this.workspace.workspaceDir, pathClass);
+    const displayLines = limited.map((p) =>
+      shouldRelativize ? relativizeIfUnder(p, searchRoot, pathClass) : p,
+    );
+
+    const lines: string[] = [];
+    if (timedOut) {
+      lines.push(
+        `Glob timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned.`,
       );
-
-      if (entries.length === 0 && !truncated) {
-        return { output: 'No matches found' };
-      }
-      const lines: string[] = [];
-      if (truncated) {
-        lines.push(
-          `[Truncated at ${String(MAX_MATCHES)} matches — ${String(seen.size)} matched so far, use a more specific pattern]`,
-        );
-        lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
-      }
-      lines.push(...displayLines);
-      if (!truncated && entries.length === MAX_MATCHES) {
-        lines.push(`Found ${String(entries.length)} matches`);
-      }
-      return { output: lines.join('\n') };
-    } catch (error) {
-      if (error !== null && typeof error === 'object' && 'code' in error) {
-        const code = (error as { code?: string }).code;
-        const path = searchRoots[0] ?? this.workspace.workspaceDir;
-        if (code === 'ENOENT') {
-          return { isError: true, output: `${path} does not exist` };
-        }
-        if (code === 'ENOTDIR') {
-          return { isError: true, output: `${path} is not a directory` };
-        }
-      }
-      return { isError: true, output: error instanceof Error ? error.message : String(error) };
     }
+    if (bufferTruncated) {
+      lines.push(
+        `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; results may be incomplete — use a more specific pattern]`,
+      );
+    }
+    if (traversalWarning !== undefined) {
+      lines.push(traversalWarning);
+    }
+    if (truncated) {
+      lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
+      lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
+    }
+    lines.push(...displayLines);
+    if (filteredSensitive > 0) {
+      lines.push(`Filtered ${String(filteredSensitive)} sensitive file(s).`);
+    }
+    if (!truncated && limited.length === MAX_MATCHES) {
+      lines.push(`Found ${String(limited.length)} matches`);
+    }
+    return { output: lines.join('\n') };
   }
+}
+
+/**
+ * Adapt an `IKaos` execution environment to the locator's {@link RgProbe}. The
+ * probe runs `rg --version` (or the cached binary with `--version`) through the
+ * environment's backend and reports the exit code. stdout/stderr are drained
+ * (flowing mode) so a chatty probe can never block the pipe; the bytes are
+ * discarded.
+ */
+function createRgProbe(kaos: IKaos): RgProbe {
+  return {
+    exec: async (args) => {
+      const proc = await kaos.backend.exec(...args);
+      try {
+        proc.stdin.end();
+      } catch {
+        /* already gone */
+      }
+      proc.stdout.resume();
+      proc.stderr.resume();
+      const exitCode = await proc.wait();
+      try {
+        await proc.dispose();
+      } catch {
+        /* best-effort cleanup */
+      }
+      return { exitCode };
+    },
+  };
+}
+
+function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): string[] {
+  const cmd: string[] = [rgPath];
+  if (singleThreaded) cmd.push('-j', '1');
+  cmd.push('--files', '--hidden', '--sortr=modified');
+  for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
+    cmd.push('--glob', `!${dir}`);
+  }
+  // Positive pattern first, then sensitive-file exclusions so a broad pattern
+  // cannot re-include a sensitive path.
+  cmd.push('--glob', args.pattern);
+  for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
+    cmd.push('--glob', `!${glob}`);
+  }
+  if (args.include_ignored) cmd.push('--no-ignore');
+  // Search path is `.` because the process cwd is pinned to the search root
+  // (see execution()); this keeps `--glob` matching relative to that root.
+  cmd.push('.');
+  return cmd;
+}
+
+function formatGlobError(searchRoot: string, stderr: string): string {
+  const trimmed = stderr.trim();
+  if (/no such file or directory/i.test(trimmed)) {
+    return `${searchRoot} does not exist`;
+  }
+  return trimmed.length > 0 ? `Glob failed: ${trimmed}` : 'Glob failed';
+}
+
+function formatGlobWarning(stderr: string): string {
+  const trimmed = stderr.trim();
+  return trimmed.length > 0
+    ? `Glob completed with warnings; some directories could not be read: ${trimmed}`
+    : 'Glob completed with warnings; some directories could not be read.';
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (error !== null && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Split `rg --files` stdout into complete paths. When the run was capped or
+ * timed out (`truncatedOutput`), a path cut mid-write lacks its terminating
+ * newline; drop that trailing fragment so it is never surfaced as a match.
+ * Complete output always ends in `\n`, so the split is lossless in that case.
+ */
+export function splitCompletePaths(stdoutText: string, truncatedOutput: boolean): string[] {
+  let text = stdoutText;
+  if (truncatedOutput && !text.endsWith('\n')) {
+    const lastNewline = text.lastIndexOf('\n');
+    text = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : '';
+  }
+  return text.split('\n').filter((p) => p.length > 0);
 }
 
 /**
@@ -300,117 +478,4 @@ function relativizeIfUnder(candidate: string, base: string, pathClass: PathClass
     return normCandidate.slice(prefix.length);
   }
   return normCandidate;
-}
-
-/**
- * Expand brace alternations (`{a,b,c}`, `{src,test}/**`) into a flat list
- * of sub-patterns. Recursive — handles cartesian products (`{a,b}/{c,d}.ts`
- * → 4 patterns) and one or more levels of nesting (`{a,{b,c}}.ts`).
- *
- * Falls through with the original pattern as a single-element list when:
- *   - the pattern contains no `{...}` group at all;
- *   - the pattern contains `{...}` groups but none have a top-level comma
- *     (e.g. `{abc}` — bash treats those as literal);
- *   - braces are unbalanced (a stray `{` with no matching `}`, etc.);
- *   - expansion would produce more than `MAX_BRACE_EXPANSIONS` patterns —
- *     pathological cartesian inputs (`{a,b}{c,d}{e,f}{g,h}{i,j}{k,l,m}`
- *     ≥ 192) bail out rather than fan out unboundedly.
- *
- * Backslash-escaped braces (`\{`, `\}`) are treated as literals and skip
- * the structural recognition so a user can opt out of expansion.
- */
-export function expandBraces(pattern: string): string[] {
-  const out: string[] = [];
-  if (!expandInto(pattern, out, MAX_BRACE_EXPANSIONS)) {
-    // Cap exceeded somewhere down the recursion — discard partial
-    // fan-out and report the original. Letting half the alternatives
-    // through would be a silent footgun.
-    return [pattern];
-  }
-  return out;
-}
-
-function hasGlobEscape(pattern: string): boolean {
-  return /\\[{}[\]*?,]/.test(pattern);
-}
-
-function expandInto(pattern: string, out: string[], cap: number): boolean {
-  // Find the first balanced `{...}` group containing a top-level comma.
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
-    if (ch === '\\' && i + 1 < pattern.length) {
-      i++;
-      continue;
-    }
-    if (ch === '{') {
-      if (depth === 0) start = i;
-      depth++;
-      continue;
-    }
-    if (ch === '}') {
-      if (depth === 0) {
-        // Stray `}` — treat the whole pattern as literal.
-        return pushLiteral(pattern, out, cap);
-      }
-      depth--;
-      if (depth === 0 && start !== -1) {
-        const inner = pattern.slice(start + 1, i);
-        const parts = splitTopLevelCommas(inner);
-        if (parts.length < 2) {
-          // No commas at the top level → literal group; skip past it
-          // and keep scanning for a real alternation further right.
-          start = -1;
-          continue;
-        }
-        const prefix = pattern.slice(0, start);
-        const suffix = pattern.slice(i + 1);
-        for (const part of parts) {
-          if (out.length >= cap) return false;
-          if (!expandInto(prefix + part + suffix, out, cap)) return false;
-        }
-        return true;
-      }
-    }
-  }
-
-  if (depth !== 0) {
-    // Unbalanced `{` — treat the whole pattern as literal.
-    return pushLiteral(pattern, out, cap);
-  }
-
-  return pushLiteral(pattern, out, cap);
-}
-
-function pushLiteral(pattern: string, out: string[], cap: number): boolean {
-  if (out.length >= cap) return false;
-  out.push(pattern);
-  return true;
-}
-
-/**
- * Split on commas that sit at brace depth zero. Used by `expandBraces`
- * to slice a `{a,{b,c},d}` group into `["a", "{b,c}", "d"]` rather than
- * `["a", "{b", "c}", "d"]`.
- */
-function splitTopLevelCommas(s: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let last = 0;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (ch === '\\' && i + 1 < s.length) {
-      i++;
-      continue;
-    }
-    if (ch === '{') depth++;
-    else if (ch === '}') depth--;
-    else if (ch === ',' && depth === 0) {
-      parts.push(s.slice(last, i));
-      last = i + 1;
-    }
-  }
-  parts.push(s.slice(last));
-  return parts;
 }

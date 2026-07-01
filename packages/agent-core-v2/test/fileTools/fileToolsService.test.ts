@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ISessionAgentFileSystem, ISessionFsService } from '#/agentFs';
 import { AgentFileToolsService } from '#/fileTools';
 import type { IKaos } from '#/kaos';
+import { noopTelemetryService } from '#/telemetry';
 import type { IDisposable } from '#/_base/di';
 import type { IAgentToolRegistryService } from '#/toolRegistry';
 import type { ISessionWorkspaceContext } from '#/workspaceContext';
@@ -35,7 +36,14 @@ const fakeWorkspace = {
 describe('AgentFileToolsService', () => {
   it('registers Read/Write/Edit/Grep/Glob into the tool registry', () => {
     const { registry, names } = fakeToolRegistry();
-    new AgentFileToolsService(registry, fakeFs, fakeKaos, fakeWorkspace, fakeFsService);
+    new AgentFileToolsService(
+      registry,
+      fakeFs,
+      fakeKaos,
+      fakeWorkspace,
+      fakeFsService,
+      noopTelemetryService,
+    );
     expect(names()).toEqual(['Edit', 'Glob', 'Grep', 'Read', 'Write']);
   });
 });

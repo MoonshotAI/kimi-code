@@ -56,6 +56,24 @@ export const nullTelemetryAppender: ITelemetryAppender = {
   shutdown: () => {},
 };
 
+/**
+ * No-op `ITelemetryService` for callers that want to accept an optional
+ * telemetry service (e.g. tools constructed outside DI in tests). Mirrors v1's
+ * `noopTelemetryClient`.
+ */
+export const noopTelemetryService: ITelemetryService = {
+  _serviceBrand: undefined,
+  track: () => {},
+  withContext: () => noopTelemetryService,
+  setContext: () => {},
+  addAppender: () => ({ dispose: () => {} }),
+  removeAppender: () => {},
+  setAppender: () => {},
+  setEnabled: () => {},
+  flush: async () => {},
+  shutdown: async () => {},
+};
+
 export const ITelemetryService = createDecorator<ITelemetryService>(
   'agentTelemetryService',
 );

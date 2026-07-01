@@ -15,6 +15,8 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentBackgroundService } from '#/background';
 import { ILogService } from '#/log';
 import { IAgentProfileService } from '#/profile';
+import { IKaos } from '#/kaos';
+import { ISessionProcessRunner } from '#/process';
 import { IAgentToolRegistryService } from '#/toolRegistry';
 import { AgentTool } from './agentTool';
 
@@ -26,6 +28,8 @@ export class SessionSubagentHostService extends Disposable implements ISessionSu
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
     @IAgentBackgroundService background: IAgentBackgroundService,
     @IAgentProfileService profile: IAgentProfileService,
+    @IKaos kaos: IKaos,
+    @ISessionProcessRunner runner: ISessionProcessRunner,
     @ILogService log?: ILogService,
   ) {
     super();
@@ -34,6 +38,7 @@ export class SessionSubagentHostService extends Disposable implements ISessionSu
       toolRegistry.register(
         new AgentTool(this, background, undefined, {
           log,
+          gitContext: { cwd: kaos.cwd, runner },
           canRunInBackground: () => {
             return profile.isToolActive('TaskList') &&
               profile.isToolActive('TaskOutput') &&

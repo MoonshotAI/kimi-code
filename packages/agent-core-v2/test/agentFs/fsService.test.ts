@@ -14,6 +14,7 @@ import { ISessionAgentFileSystem } from '#/agentFs';
 import { ISessionFsService } from '#/agentFs/fs';
 import { SessionFsService } from '#/agentFs/fsService';
 import { ISessionProcessRunner, type IProcess } from '#/process';
+import { ITelemetryService } from '#/telemetry';
 import { ISessionWorkspaceContext } from '#/workspaceContext';
 
 const WORK_DIR = '/repo';
@@ -152,6 +153,23 @@ function fakeRunner(handler: RunHandler): ISessionProcessRunner {
   };
 }
 
+function telemetryStub(events: Array<{ event: string; properties: Record<string, unknown> }>): ITelemetryService {
+  return {
+    _serviceBrand: undefined,
+    track: (event: string, properties: Record<string, unknown>) => {
+      events.push({ event, properties });
+    },
+    withContext: () => telemetryStub(events),
+    setContext: () => {},
+    addAppender: () => ({ dispose: () => {} }),
+    removeAppender: () => {},
+    setAppender: () => {},
+    setEnabled: () => {},
+    flush: async () => {},
+    shutdown: async () => {},
+  };
+}
+
 beforeEach(() => {
   _clearScopedRegistryForTests();
   registerScopedService(
@@ -170,12 +188,17 @@ afterEach(() => {
   host = undefined;
 });
 
-function makeSession(files: Record<string, string>, handler: RunHandler): ISessionFsService {
+function makeSession(
+  files: Record<string, string>,
+  handler: RunHandler,
+  events: Array<{ event: string; properties: Record<string, unknown> }> = [],
+): ISessionFsService {
   host = createScopedTestHost();
   const session = host.child(LifecycleScope.Session, 's1', [
     stubPair(ISessionWorkspaceContext, stubWorkspace()),
     stubPair(ISessionAgentFileSystem, fakeFs(files)),
     stubPair(ISessionProcessRunner, fakeRunner(handler)),
+    stubPair(ITelemetryService, telemetryStub(events)),
   ]);
   return session.accessor.get(ISessionFsService);
 }
@@ -254,12 +277,14 @@ describe('SessionFsService.search', () => {
 
 describe('SessionFsService.grep', () => {
   it('falls back to the node implementation when rg is unavailable', async () => {
+    const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
     const fs = makeSession(
       { 'src/a.ts': 'hello world\nfoo bar\nhello again\n' },
       (args) => {
         if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
         return { stdout: '', exitCode: 0 };
       },
+      events,
     );
     const result = await fs.grep({
       pattern: 'hello',
@@ -273,6 +298,10 @@ describe('SessionFsService.grep', () => {
     });
     expect(result.files).toHaveLength(1);
     expect(result.files[0]?.matches).toHaveLength(2);
+    expect(events).toContainEqual({
+      event: 'fs_grep_node_fallback',
+      properties: { reason: 'rg_missing' },
+    });
   });
 
   it('uses rg when available and parses its JSON output', async () => {

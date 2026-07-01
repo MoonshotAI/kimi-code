@@ -18,6 +18,8 @@ import { z } from 'zod';
 
 import type { BuiltinTool } from '#/tool';
 import type { ILogger } from '#/log';
+import { collectGitContext } from '#/agentFs';
+import type { ISessionProcessRunner } from '#/process';
 import { ToolAccesses } from '#/tool';
 import { isAbortError } from '#/loop/errors';
 import type {
@@ -125,9 +127,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     options?: {
       log?: ILogger;
       canRunInBackground?: (() => boolean) | undefined;
+      gitContext?: { cwd: string; runner: ISessionProcessRunner };
     },
   ) {
     this.canRunInBackground = options?.canRunInBackground ?? (() => true);
+    this.gitContext = options?.gitContext;
     const log = options?.log;
     this.typeLines = buildSubagentDescriptions(subagents);
     this.log = log;
@@ -136,6 +140,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   private readonly log?: ILogger;
   private readonly canRunInBackground: () => boolean;
   private readonly typeLines: string;
+  private readonly gitContext?: { cwd: string; runner: ISessionProcessRunner };
 
   get description(): string {
     const backgroundDescription = this.canRunInBackground()
@@ -218,9 +223,13 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
 
       const operation = resumeAgentId !== undefined && resumeAgentId.length > 0 ? 'resume' : 'spawn';
+      const prompt =
+        operation === 'spawn'
+          ? await this.withGitContext(requestedProfileName ?? 'coder', args.prompt)
+          : args.prompt;
       const runOptions = {
         parentToolCallId: toolCallId,
-        prompt: args.prompt,
+        prompt,
         description: args.description,
         runInBackground,
         signal: controller.signal,
@@ -300,6 +309,20 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       return await this.formatForegroundResult(taskId, handle);
     } catch (error) {
       return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
+    }
+  }
+
+  private async withGitContext(profileName: string, prompt: string): Promise<string> {
+    if (profileName !== 'explore' || this.gitContext === undefined) return prompt;
+    try {
+      const context = await collectGitContext(
+        this.gitContext.runner,
+        this.gitContext.cwd,
+        this.log,
+      );
+      return context.length > 0 ? `${context}\n\n${prompt}` : prompt;
+    } catch {
+      return prompt;
     }
   }
 
