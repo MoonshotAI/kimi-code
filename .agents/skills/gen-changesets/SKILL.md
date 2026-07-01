@@ -11,6 +11,8 @@ description: Use when generating changesets in the kimi-code repository, includi
 
 All other `@moonshot-ai/*` packages are treated as internal packages, including `@moonshot-ai/kimi-code-sdk`, `agent-core`, `kosong`, `kaos`, `kimi-code-oauth`, `kimi-telemetry`, and `migration-legacy`.
 
+`@moonshot-ai/pi-tui` is a special internal package: it is a private fork (`private: true`) that is never published, but it keeps its own changelog through changesets. It is an exception to Core Rule 4 — see the dedicated section below.
+
 ## Core Rules
 
 1. **Inspect the actual changes first.** Use `git status` / `git diff --name-only` to identify which packages were actually changed.
@@ -176,6 +178,41 @@ Add the server-hosted web UI, including chat layout and session list behaviors.
 Add the server REST and WebSocket APIs that power the web UI.
 ```
 
+## `@moonshot-ai/pi-tui` changes
+
+`@moonshot-ai/pi-tui` is a vendored fork that lives in `packages/pi-tui`. It is `private: true` and is never published, but it is **not** ignored by changesets: changesets versions it and writes `packages/pi-tui/CHANGELOG.md` so the fork keeps its own history. Because it is bundled into the CLI like other internal packages, it is an exception to Core Rule 4 — do **not** list `@moonshot-ai/kimi-code` for a change that only touches pi-tui.
+
+- Changes that only affect pi-tui (build, package, strict-mode cleanup, renderer fixes): list `@moonshot-ai/pi-tui` only. No CLI changeset.
+- If the same change is also user-visible in the CLI (for example a terminal rendering fix that CLI users can see), add a **separate** changeset that lists `@moonshot-ai/kimi-code` with CLI-focused wording, in addition to the pi-tui changeset. Do not mix both packages in one frontmatter — the two changelogs need different wording.
+
+pi-tui-only change:
+
+```markdown
+---
+"@moonshot-ai/pi-tui": patch
+---
+
+Export the package manifest so the bundled binary can locate its native assets.
+```
+
+pi-tui change that is also visible in the CLI (two separate changesets):
+
+```markdown
+---
+"@moonshot-ai/pi-tui": patch
+---
+
+Clamp the differential render to the visible viewport so scrolling up during streaming no longer jumps to the top.
+```
+
+```markdown
+---
+"@moonshot-ai/kimi-code": patch
+---
+
+Fix the transcript jumping to the top when scrolling up through history during streaming output.
+```
+
 ## Red Flags
 
 - You are about to write `major` without asking the user.
@@ -188,3 +225,4 @@ Add the server REST and WebSocket APIs that power the web UI.
 - The wording claims more than the diff actually did.
 - The CLI wording mentions internal package names, class names, or PR numbers.
 - The entry includes real internal identifiers instead of neutral placeholders.
+- A change that only touches `@moonshot-ai/pi-tui` lists `@moonshot-ai/kimi-code` instead of `@moonshot-ai/pi-tui`, or mixes both packages in one frontmatter.
