@@ -65,4 +65,36 @@ describe('prompt RPC image compression', () => {
     const image = lastUserImagePart(ctx.agent.context.history);
     expect(image?.imageUrl.url).toBe(url);
   });
+
+  it('serializes prompts so the first submitted claims the turn, not the fastest to compress', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+
+    // ALPHA carries an oversized image (slow to compress via jimp); BRAVO is
+    // text-only (compresses in a single microtask). Fire ALPHA first, then
+    // BRAVO, without awaiting ALPHA. Without serialization BRAVO's turn.prompt
+    // would run first and win the turn; the RPC queue must keep submit order.
+    const imageUrl = await pngDataUrl(2600, 2600);
+    const alpha = ctx.rpc.prompt({
+      input: [
+        { type: 'text', text: 'ALPHA' },
+        { type: 'image_url', imageUrl: { url: imageUrl } },
+      ],
+    });
+    const bravo = ctx.rpc.prompt({ input: [{ type: 'text', text: 'BRAVO' }] });
+    await Promise.all([alpha, bravo]);
+    await ctx.untilTurnEnd();
+
+    const userTexts: string[] = [];
+    for (const message of ctx.agent.context.history) {
+      if (message.role !== 'user') continue;
+      for (const part of message.content) {
+        if (part.type === 'text') userTexts.push(part.text);
+      }
+    }
+    // ALPHA (submitted first) owns the turn; BRAVO was rejected as agent_busy.
+    expect(userTexts).toContain('ALPHA');
+    expect(userTexts).not.toContain('BRAVO');
+  });
 });
