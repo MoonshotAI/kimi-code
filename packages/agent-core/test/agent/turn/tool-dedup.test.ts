@@ -593,6 +593,21 @@ describe('ToolCallDeduplicator', () => {
       expect(isWrongToolError('network timeout')).toBe(false);
     });
 
+    // Regression test for Codex review: isWrongToolError only does text matching,
+    // it does NOT check `isError`. The guard that prevents fast-tracking successful
+    // results lives in finalizeResult (result.isError === true && isWrongToolError(...)).
+    // This test documents that isWrongToolError is a pure text matcher.
+    it('isWrongToolError is a pure text matcher (isError is not its concern)', () => {
+      const successOutput = [
+        { type: 'text', text: 'Result: the file is a text file, use Read tool.' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,...' } },
+      ];
+      // isWrongToolError sees only text, so it returns true — the actual safeguard
+      // is the `result.isError === true` guard in finalizeResult.
+      expect(isWrongToolError(successOutput)).toBe(true);
+      expect(isWrongToolError('must use the Read tool for this')).toBe(true);
+    });
+
     it('toolOutputText handles string output', () => {
       expect(toolOutputText('hello')).toBe('hello');
     });
@@ -721,6 +736,56 @@ describe('ToolCallDeduplicator', () => {
       expect(last!.output as string).toContain('repeating the exact same tool call');
       expect(last!.output as string).not.toContain('repeated_times');
       expect(last!.stopTurn).toBeUndefined();
+    });
+
+    // Regression test for Codex review: successful output that coincidentally
+    // contains wrong-tool phrases must follow the generic escalation path,
+    // NOT the fast wrong-tool path (r2 at streak 2, stop at streak 4).
+    // The guard `result.isError === true` in finalizeResult handles this.
+    it('does NOT fast-escalate successful results with wrong-tool-like text', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const { toolOutputText } = __testing;
+      // A successful result (isError !== true) that contains one of the
+      // wrong-tool error phrases — this must NOT trigger the wrong-tool fast path.
+      const successfulButContainingPhrase: ExecutableToolResult = {
+        output: [
+          { type: 'text', text: 'The file is a text file. Use the Read tool.' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,...' } },
+        ],
+      };
+
+      // Build streak to 3 (generic path: r1 at streak 3).
+      // Need to use checkSameStep first so finalizeResult can find the call key.
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        const cached = dedup.checkSameStep(`c${String(i)}`, 'SomeTool', { path: '/x' });
+        expect(cached).toBeNull(); // first occurrence, not a dup
+        await dedup.finalizeResult(
+          `c${String(i)}`,
+          'SomeTool',
+          { path: '/x' },
+          successfulButContainingPhrase,
+        );
+        dedup.endStep();
+      }
+
+      // After 3 successful repeats, should get r1 gentle nudge, NOT r2.
+      // Wrong-tool path would give r2 at streak 2 (and stop at streak 4).
+      dedup.beginStep();
+      const cached = dedup.checkSameStep('c3', 'SomeTool', { path: '/x' });
+      expect(cached).toBeNull();
+      const final = await dedup.finalizeResult(
+        'c3',
+        'SomeTool',
+        { path: '/x' },
+        successfulButContainingPhrase,
+      );
+      const outputText = toolOutputText(final.output);
+      // Generic path: r1 has "repeating the exact same tool call", r2+ has "repeated_times"
+      expect(outputText).toContain('<system-reminder>');
+      expect(outputText).toContain('repeating the exact same tool call');
+      expect(outputText).not.toContain('repeated_times');
+      expect(final.stopTurn).toBeUndefined();
     });
   });
 

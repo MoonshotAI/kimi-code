@@ -283,7 +283,10 @@ export class ToolCallDeduplicator {
 
     // Wrong-tool errors (category errors that retries will never fix)
     // escalate faster than generic transient failures.
-    if (isWrongToolError(result.output)) {
+    // Only trigger on actual tool errors (isError === true) — successful
+    // output that coincidentally contains one of these phrases must not be
+    // fast-tracked.
+    if (result.isError === true && isWrongToolError(result.output)) {
       if (streak >= WRONG_TOOL_FORCE_STOP_STREAK) {
         finalResult = forceStopResult(result, REMINDER_TEXT_3);
         action = 'stop';

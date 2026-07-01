@@ -1,4 +1,4 @@
-**CRITICAL: This tool ONLY reads image files (PNG, JPG, GIF, WebP, SVG, etc.) and video files (MP4, MOV, AVI, etc.). It CANNOT read text files — never pass a .md, .ts, .json, .txt, or any other text file path to this tool. For text files, use the Read tool. To list directories, use `ls` via Bash for a known directory, or Glob for pattern search.**
+**CRITICAL: This tool ONLY reads image files (PNG, JPG, GIF, WebP, etc.) and video files (MP4, MOV, AVI, etc.). It CANNOT read text files — never pass a .md, .ts, .json, .txt, or any other text file path to this tool. For text files, use the Read tool. To list directories, use `ls` via Bash for a known directory, or Glob for pattern search.**
 
 Read media content from a file.
 
