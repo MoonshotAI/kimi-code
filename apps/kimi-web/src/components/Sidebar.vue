@@ -717,25 +717,24 @@ onBeforeUnmount(() => {
       @select="onSelectSession"
       @close="showSearch = false"
     />
-  </aside>
-
-  <Teleport to="body">
-    <div
-      v-if="showDesignSystem"
-      class="ds-egg"
-      @mousedown.self="closeDesignSystem"
-    >
-      <div class="ds-egg-frame">
-        <div class="ds-egg-head">
-          <span class="ds-egg-title">Design system</span>
-          <IconButton size="sm" :label="t('diff.close')" @click="closeDesignSystem">
-            <Icon name="close" size="md" />
-          </IconButton>
+    <Teleport to="body">
+      <div
+        v-if="showDesignSystem"
+        class="ds-egg"
+        @mousedown.self="closeDesignSystem"
+      >
+        <div class="ds-egg-frame">
+          <div class="ds-egg-head">
+            <span class="ds-egg-title">Design system</span>
+            <IconButton size="sm" :label="t('diff.close')" @click="closeDesignSystem">
+              <Icon name="close" size="md" />
+            </IconButton>
+          </div>
+          <iframe class="ds-egg-iframe" src="/design-system.html" title="Design system" />
         </div>
-        <iframe class="ds-egg-iframe" src="/design-system.html" title="Design system" />
       </div>
-    </div>
-  </Teleport>
+    </Teleport>
+  </aside>
 </template>
 
 <style scoped>
