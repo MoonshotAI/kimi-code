@@ -24,8 +24,10 @@ import Icon from './ui/Icon.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
 import Tooltip from './ui/Tooltip.vue';
+import { useConfirmDialog } from '../composables/useConfirmDialog';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 // Dev-only affordance: when the page is served by the Vite dev server, the
 // logo turns yellow and the backend host:port is appended to the title —
@@ -284,7 +286,6 @@ function closeGhMenu(): void {
   ghMenuOpen.value = false;
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   ghMenuTarget.value = null;
-  disarmDeleteWs();
 }
 
 function copyPathFromMenu(): void {
@@ -301,39 +302,19 @@ function startRenameFromMenu(): void {
   closeGhMenu();
 }
 
-function deleteFromMenu(): void {
+async function deleteFromMenu(): Promise<void> {
   const ws = ghMenuTarget.value;
   if (!ws) return;
-  if (!armDeleteWs(ws.id)) return; // first click arms ("confirm?"), keep menu open
-  emit('deleteWorkspace', ws.id);
   closeGhMenu();
-}
-
-// ---------------------------------------------------------------------------
-// Two-step workspace delete (shared by the kebab menu and the context menu):
-// the first click arms the item — it turns into a "confirm" label — and a
-// second click within 2.5s actually deletes; otherwise the item reverts.
-// ---------------------------------------------------------------------------
-const deleteArmedWsId = ref<string | null>(null);
-let deleteArmTimer: ReturnType<typeof setTimeout> | undefined;
-
-function disarmDeleteWs(): void {
-  clearTimeout(deleteArmTimer);
-  deleteArmedWsId.value = null;
-}
-
-/** Returns true when the delete is confirmed (second click while armed). */
-function armDeleteWs(id: string): boolean {
-  if (deleteArmedWsId.value === id) {
-    disarmDeleteWs();
-    return true;
+  if (
+    await confirm({
+      title: t('sidebar.removeWorkspace'),
+      message: t('workspace.removeWorkspaceConfirm', { name: ws.name }),
+      variant: 'danger',
+    })
+  ) {
+    emit('deleteWorkspace', ws.id);
   }
-  clearTimeout(deleteArmTimer);
-  deleteArmedWsId.value = id;
-  deleteArmTimer = setTimeout(() => {
-    deleteArmedWsId.value = null;
-  }, 2500);
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +366,6 @@ async function toggleWsMenu(ws: WorkspaceView, e: MouseEvent): Promise<void> {
 function closeWsMenu(): void {
   wsMenuOpenId.value = null;
   wsMenuTarget.value = null;
-  disarmDeleteWs();
   document.removeEventListener('mousedown', onWsMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
 }
@@ -400,10 +380,17 @@ function startRenameWs(ws: WorkspaceView): void {
   closeWsMenu();
 }
 
-function deleteWs(ws: WorkspaceView): void {
-  if (!armDeleteWs(ws.id)) return; // first click arms ("confirm?"), keep menu open
-  emit('deleteWorkspace', ws.id);
+async function deleteWs(ws: WorkspaceView): Promise<void> {
   closeWsMenu();
+  if (
+    await confirm({
+      title: t('sidebar.removeWorkspace'),
+      message: t('workspace.removeWorkspaceConfirm', { name: ws.name }),
+      variant: 'danger',
+    })
+  ) {
+    emit('deleteWorkspace', ws.id);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +452,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onSortMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
   window.removeEventListener('resize', closeSortMenu);
-  clearTimeout(deleteArmTimer);
 });
 
 // Logo easter-egg: clicking the Kimi mark plays one quick blink. It's a one-shot
@@ -709,9 +695,7 @@ onBeforeUnmount(() => {
     >
       <MenuItem @click="copyPathFromMenu">{{ t('sidebar.copyPath') }}</MenuItem>
       <MenuItem @click="startRenameFromMenu">{{ t('sidebar.rename') }}</MenuItem>
-      <MenuItem danger @click="deleteFromMenu">
-        {{ ghMenuTarget && deleteArmedWsId === ghMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </MenuItem>
+      <MenuItem danger @click="deleteFromMenu">{{ t('sidebar.removeWorkspace') }}</MenuItem>
     </Menu>
 
     <!-- Workspace kebab menu (position:fixed, anchored to the ⋯ button so the
@@ -727,9 +711,7 @@ onBeforeUnmount(() => {
       <MenuItem separator />
       <MenuItem @click="startRenameWs(wsMenuTarget)">{{ t('sidebar.rename') }}</MenuItem>
       <MenuItem separator />
-      <MenuItem danger @click="deleteWs(wsMenuTarget)">
-        {{ deleteArmedWsId === wsMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </MenuItem>
+      <MenuItem danger @click="deleteWs(wsMenuTarget)">{{ t('sidebar.removeWorkspace') }}</MenuItem>
     </Menu>
     <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
     <Menu

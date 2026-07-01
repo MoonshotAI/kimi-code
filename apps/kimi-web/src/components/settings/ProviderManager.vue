@@ -14,8 +14,10 @@ import Input from '../ui/Input.vue';
 import Select from '../ui/Select.vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 const dialogRef = ref<HTMLElement | null>(null);
 // Move focus into the dialog on open; restore it to the opener on close.
@@ -41,19 +43,17 @@ const emit = defineEmits<{
 // Delete confirmation
 // -------------------------------------------------------------------------
 
-const confirmDeleteId = ref<string | null>(null);
-
-function askDelete(id: string): void {
-  confirmDeleteId.value = id;
-}
-function confirmDelete(): void {
-  if (confirmDeleteId.value) {
-    emit('delete', confirmDeleteId.value);
-    confirmDeleteId.value = null;
+// Delete confirmation — modal, consistent with remove-workspace.
+async function onDeleteProvider(id: string): Promise<void> {
+  if (
+    await confirm({
+      title: t('providers.delete'),
+      message: t('providers.confirmDelete'),
+      variant: 'danger',
+    })
+  ) {
+    emit('delete', id);
   }
-}
-function cancelDelete(): void {
-  confirmDeleteId.value = null;
 }
 
 // -------------------------------------------------------------------------
@@ -104,7 +104,6 @@ function submitAdd(): void {
 function handleKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     if (showAddForm.value) { cancelAdd(); return; }
-    if (confirmDeleteId.value) { cancelDelete(); return; }
     emit('close');
   }
 }
@@ -167,17 +166,12 @@ function statusLabel(status: AppProvider['status']): string {
               </span>
             </div>
             <!-- Actions -->
-            <div v-if="confirmDeleteId === p.id" class="confirm-row">
-              <span class="confirm-text">{{ t('providers.confirmDelete') }}</span>
-              <Button variant="danger" size="sm" @click="confirmDelete">{{ t('providers.confirm') }}</Button>
-              <Button variant="secondary" size="sm" @click="cancelDelete">{{ t('providers.cancel') }}</Button>
-            </div>
-            <div v-else class="prov-actions">
+            <div class="prov-actions">
               <Tooltip :text="t('providers.refreshTitle', { type: p.type })">
                 <Button variant="secondary" size="sm" @click="emit('refresh', p.id)">{{ t('providers.refresh') }}</Button>
               </Tooltip>
               <Tooltip :text="t('providers.deleteTitle', { type: p.type })">
-                <Button variant="danger-soft" size="sm" @click="askDelete(p.id)">{{ t('providers.delete') }}</Button>
+                <Button variant="danger-soft" size="sm" @click="onDeleteProvider(p.id)">{{ t('providers.delete') }}</Button>
               </Tooltip>
             </div>
           </div>
@@ -238,7 +232,7 @@ function statusLabel(status: AppProvider['status']): string {
             <div v-if="addError" class="add-error">{{ addError }}</div>
             <div class="form-btns">
               <Button variant="primary" size="sm" @click="submitAdd">{{ t('providers.add') }}</Button>
-              <Button variant="secondary" size="sm" @click="cancelAdd">{{ t('providers.cancel') }}</Button>
+              <Button variant="secondary" size="sm" @click="cancelAdd">{{ t('common.cancel') }}</Button>
             </div>
           </div>
         </template>
@@ -326,19 +320,13 @@ function statusLabel(status: AppProvider['status']): string {
   color: var(--color-text-muted);
 }
 
-.prov-actions, .confirm-row {
+.prov-actions {
   display: flex;
   gap: var(--space-2);
   flex: none;
   align-items: center;
   flex-wrap: wrap;
 }
-.confirm-text {
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  color: var(--color-danger);
-}
-
 /* Add section */
 .add-section {
   border-top: 1px solid var(--color-line);
@@ -377,8 +365,7 @@ function statusLabel(status: AppProvider['status']): string {
     align-items: flex-start;
     flex-wrap: wrap;
   }
-  .prov-actions,
-  .confirm-row {
+  .prov-actions {
     flex: 1 1 100%;
     justify-content: flex-end;
   }

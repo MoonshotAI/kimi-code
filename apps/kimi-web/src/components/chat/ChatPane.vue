@@ -12,6 +12,7 @@ import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { formatMessageTime } from '../../lib/formatMessageTime';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import {
@@ -25,6 +26,7 @@ import {
 } from '../chatTurnRendering';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 onUnmounted(() => {
   if (copiedTimer !== null) {
@@ -236,8 +238,8 @@ function compactionDividerLabel(turn: ChatTurn): string {
 // Per-turn copy button state (keyed by turn id)
 const copiedTurn = ref<string | null>(null);
 
-// Undo/edit-and-resend confirmation state (keyed by turn id)
-const confirmingEditTurnId = ref<string | null>(null);
+// Undo in-flight guard (keyed by turn id) — set while the server rewinds the
+// turn so a second undo can't fire until the first one settles.
 const undoingTurnId = ref<string | null>(null);
 // Fallback that releases the undoing state if the server rewind never removes
 // the turn (e.g. the undo failed). Without it the guard in confirmEditMessage
@@ -266,9 +268,20 @@ function displayMessageTime(iso: string, turnId: string): string {
   return formatMessageTime(iso, t('conversation.yesterday'));
 }
 
+async function onUndo(turn: ChatTurn): Promise<void> {
+  if (
+    await confirm({
+      title: t('conversation.undo'),
+      message: t('conversation.undoConfirm'),
+      variant: 'primary',
+    })
+  ) {
+    confirmEditMessage(turn);
+  }
+}
+
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
-  confirmingEditTurnId.value = null;
   undoingTurnId.value = turn.id;
   emit('editMessage', turn.text);
   // Fallback: if the server rewind never removes the turn (e.g. it failed),
@@ -493,36 +506,16 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           </div>
           <div v-if="turn.createdAt || canEditTurn(turn)" class="u-meta">
             <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
-              <Tooltip
-                v-if="confirmingEditTurnId !== turn.id"
-                :text="t('conversation.undoTooltip')"
-              >
+              <Tooltip :text="t('conversation.undoTooltip')">
                 <button
                   type="button"
                   class="u-edit"
-                  @click="confirmingEditTurnId = turn.id"
+                  @click="onUndo(turn)"
                 >
                   <span class="u-edit-text">{{ t('conversation.undo') }}</span>
                   <Icon name="undo" size="sm" />
                 </button>
               </Tooltip>
-              <div v-else class="u-edit-confirm" @click.stop>
-                <span>{{ t('conversation.undoConfirm') }}</span>
-                <button
-                  type="button"
-                  class="u-edit-confirm-btn confirm"
-                  @click.stop="confirmEditMessage(turn)"
-                >
-                  {{ t('conversation.confirm') }}
-                </button>
-                <button
-                  type="button"
-                  class="u-edit-confirm-btn"
-                  @click.stop="confirmingEditTurnId = null"
-                >
-                  {{ t('conversation.cancel') }}
-                </button>
-              </div>
             </div>
             <Tooltip
               v-if="turn.text.trim().length > 0"
@@ -810,31 +803,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .u-edit-wrap { display: flex; justify-content: flex-end; }
 .chat > .u-edit-wrap { margin-top: 4px; }
 .chat > .u-edit-wrap + .a-msg { margin-top: 8px; }
-/* Inline confirm state shown after the user clicks the undo affordance. */
-.u-edit-confirm {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 5px;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--text-base);
-  border-radius: var(--radius-sm);
-  background: var(--hover);
-}
-.u-edit-confirm span { line-height: 1; }
-.u-edit-confirm-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  color: var(--color-accent);
-  cursor: pointer;
-}
-.u-edit-confirm-btn:hover { text-decoration: underline; }
-.u-edit-confirm-btn.confirm { color: var(--color-accent); }
 
 /* Compaction divider — a full-width separator marking where the daemon
    compacted the context. Prior turns above it are untouched; clicking the

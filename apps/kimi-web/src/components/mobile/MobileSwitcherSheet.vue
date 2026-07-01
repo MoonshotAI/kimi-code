@@ -5,10 +5,11 @@
      Tapping a session selects it AND closes the sheet; tapping a group header
      folds it, same as the desktop sidebar. -->
 <script setup lang="ts">
-import { onUnmounted, ref } from 'vue';
+import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
@@ -17,6 +18,7 @@ import MenuItem from '../ui/MenuItem.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -97,18 +99,13 @@ function wsAttention(id: string): number {
 
 // ---------------------------------------------------------------------------
 // Per-row kebab menu (rename / archive) — opened from the ⋯ button.
-// Archiving is two-step: the first tap arms the item ("Archive session?"),
-// a second tap within 2.5s confirms; otherwise it reverts.
+// Archive is confirmed via modal (consistent with remove-workspace).
 // ---------------------------------------------------------------------------
 const menuFor = ref<string | null>(null);
-const confirmingArchiveId = ref<string | null>(null);
-let confirmArchiveTimer: ReturnType<typeof setTimeout> | undefined;
 
 function toggleMenu(id: string): void {
   menuFor.value = menuFor.value === id ? null : id;
   wsMenuFor.value = null;
-  clearTimeout(confirmArchiveTimer);
-  confirmingArchiveId.value = null;
 }
 function onRename(s: Session): void {
   menuFor.value = null;
@@ -116,59 +113,46 @@ function onRename(s: Session): void {
   const title = next?.trim();
   if (title) emit('rename', s.id, title);
 }
-function onArchive(id: string): void {
-  if (confirmingArchiveId.value === id) {
-    clearTimeout(confirmArchiveTimer);
-    confirmingArchiveId.value = null;
-    menuFor.value = null;
+async function onArchive(id: string): Promise<void> {
+  menuFor.value = null;
+  if (
+    await confirm({
+      title: t('sidebar.archive'),
+      message: t('sidebar.archiveConfirm'),
+      variant: 'danger',
+    })
+  ) {
     emit('archive', id);
-    return;
   }
-  clearTimeout(confirmArchiveTimer);
-  confirmingArchiveId.value = id;
-  confirmArchiveTimer = setTimeout(() => {
-    confirmingArchiveId.value = null;
-  }, 2500);
 }
 
 // ---------------------------------------------------------------------------
-// Per-workspace "…" menu: copy path + delete workspace (two-step confirm,
-// same 2.5s timeout as sessions). Copy path is handled locally, like the
-// desktop sidebar; delete is emitted to the parent.
+// Per-workspace "…" menu: copy path + delete workspace. Copy path is handled
+// locally, like the desktop sidebar; delete is confirmed via modal then
+// emitted to the parent.
 // ---------------------------------------------------------------------------
 const wsMenuFor = ref<string | null>(null);
-const confirmingWsDeleteId = ref<string | null>(null);
-let confirmWsDeleteTimer: ReturnType<typeof setTimeout> | undefined;
 
 function toggleWsMenu(id: string): void {
   wsMenuFor.value = wsMenuFor.value === id ? null : id;
   menuFor.value = null;
-  clearTimeout(confirmWsDeleteTimer);
-  confirmingWsDeleteId.value = null;
 }
 function onCopyWsPath(ws: WorkspaceView): void {
   void copyTextToClipboard(ws.root);
   wsMenuFor.value = null;
 }
-function onDeleteWorkspace(id: string): void {
-  if (confirmingWsDeleteId.value === id) {
-    clearTimeout(confirmWsDeleteTimer);
-    confirmingWsDeleteId.value = null;
-    wsMenuFor.value = null;
-    emit('deleteWorkspace', id);
-    return;
+async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
+  wsMenuFor.value = null;
+  if (
+    await confirm({
+      title: t('sidebar.removeWorkspace'),
+      message: t('workspace.removeWorkspaceConfirm', { name: ws.name }),
+      variant: 'danger',
+    })
+  ) {
+    emit('deleteWorkspace', ws.id);
   }
-  clearTimeout(confirmWsDeleteTimer);
-  confirmingWsDeleteId.value = id;
-  confirmWsDeleteTimer = setTimeout(() => {
-    confirmingWsDeleteId.value = null;
-  }, 2500);
 }
-
-onUnmounted(() => {
-  clearTimeout(confirmArchiveTimer);
-  clearTimeout(confirmWsDeleteTimer);
-});
 </script>
 
 <template>
@@ -241,9 +225,7 @@ onUnmounted(() => {
             <MenuItem size="lg" @click="onCopyWsPath(g.workspace)">
               {{ t('sidebar.copyPath') }}
             </MenuItem>
-            <MenuItem size="lg" danger @click="onDeleteWorkspace(g.workspace.id)">
-              {{ confirmingWsDeleteId === g.workspace.id ? t('sidebar.confirm') : t('sidebar.delete') }}
-            </MenuItem>
+            <MenuItem size="lg" danger @click="onDeleteWorkspace(g.workspace)">{{ t('sidebar.delete') }}</MenuItem>
           </Menu>
         </div>
 
@@ -275,9 +257,7 @@ onUnmounted(() => {
             <!-- Kebab menu -->
             <Menu v-if="menuFor === s.id" class="kmenu" @click.stop>
               <MenuItem size="lg" @click="onRename(s)">{{ t('sidebar.rename') }}</MenuItem>
-              <MenuItem size="lg" danger @click="onArchive(s.id)">
-                {{ confirmingArchiveId === s.id ? t('sidebar.archiveConfirm') : t('sidebar.archive') }}
-              </MenuItem>
+              <MenuItem size="lg" danger @click="onArchive(s.id)">{{ t('sidebar.archive') }}</MenuItem>
             </Menu>
           </div>
           <button

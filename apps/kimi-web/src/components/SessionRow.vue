@@ -8,7 +8,7 @@ import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
 import Spinner from './ui/Spinner.vue';
 import Badge from './ui/Badge.vue';
-import Button from './ui/Button.vue';
+import { useConfirmDialog } from '../composables/useConfirmDialog';
 import IconButton from './ui/IconButton.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
@@ -16,6 +16,7 @@ import Icon from './ui/Icon.vue';
 import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -160,22 +161,22 @@ function forkRow(): void {
   emit('fork', props.session.id);
 }
 
-// Archive confirm
-const confirming = ref(false);
-function startArchive(): void {
+// Archive confirm — modal, consistent with remove-workspace.
+async function startArchive(): Promise<void> {
   closeMenu();
-  confirming.value = true;
-}
-function confirmArchive(): void {
-  emit('archive', props.session.id);
-  confirming.value = false;
-}
-function cancelArchive(): void {
-  confirming.value = false;
+  if (
+    await confirm({
+      title: t('sidebar.archive'),
+      message: t('sidebar.archiveConfirm'),
+      variant: 'danger',
+    })
+  ) {
+    emit('archive', props.session.id);
+  }
 }
 
 // Expose closeMenu so the parent can close on outside-click.
-defineExpose({ closeMenu, cancelArchive });
+defineExpose({ closeMenu });
 </script>
 
 <template>
@@ -183,87 +184,75 @@ defineExpose({ closeMenu, cancelArchive });
     <div class="row">
       <!-- Leading status slot (in the gutter left of the title): a spinner
            while the session runs, otherwise an unread blue dot. Fixed width
-           so the title start never shifts. It stays put in the archive-confirm
-           state too, so the confirm strip aligns with the title and never
-           spills past its left boundary. -->
+           so the title start never shifts. -->
       <span class="lead" aria-hidden="true">
         <Spinner v-if="session.busy" size="sm" />
         <span v-else-if="unread" class="unread-dot" />
       </span>
 
-      <!-- Archive confirm — replaces the title + controls but keeps the lead
-           gutter, so it aligns under the title (not the row's left edge). -->
-      <div v-if="confirming" class="archive-confirm" @click.stop>
-        <span class="archive-label">{{ t('sidebar.archiveConfirm') }}</span>
-        <Button size="sm" variant="danger" @click.stop="confirmArchive">{{ t('sidebar.confirm') }}</Button>
-        <Button size="sm" variant="secondary" @click.stop="cancelArchive">{{ t('sidebar.cancel') }}</Button>
+      <div class="left">
+        <!-- Inline rename input -->
+        <input
+          v-if="renaming"
+          ref="renameInputRef"
+          v-model="renameValue"
+          class="rename-input"
+          @click.stop
+          @keydown.enter.stop="commitRename"
+          @keydown.esc.stop="cancelRename"
+          @blur="commitRename"
+        />
+        <span v-else class="t" @dblclick.stop="startRename">{{ session.title }}</span>
       </div>
 
-      <template v-else>
-        <div class="left">
-          <!-- Inline rename input -->
-          <input
-            v-if="renaming"
-            ref="renameInputRef"
-            v-model="renameValue"
-            class="rename-input"
-            @click.stop
-            @keydown.enter.stop="commitRename"
-            @keydown.esc.stop="cancelRename"
-            @blur="commitRename"
-          />
-          <span v-else class="t" @dblclick.stop="startRename">{{ session.title }}</span>
-        </div>
+      <span class="ts">{{ session.time }}</span>
 
-        <span class="ts">{{ session.time }}</span>
-
-        <!-- Pending tags — coloured per kind, shown even when the row isn't
-             active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-             permission request is waiting. The session's lifecycle status drives
-             the same tags as a fallback for background sessions whose pending
-             lists aren't loaded yet (status known, counts not). -->
-        <Tooltip :text="t('workspace.awaitingAnswerTitle')">
-          <Badge
-            v-if="!renaming && (questionCount > 0 || session.status === 'awaitingQuestion')"
-            variant="info"
-            size="sm"
-          >
-            {{ t('workspace.awaitingAnswer') }}
-          </Badge>
-        </Tooltip>
-        <Tooltip :text="t('workspace.awaitingPermissionTitle')">
-          <Badge
-            v-if="!renaming && (approvalCount > 0 || session.status === 'awaitingApproval')"
-            variant="warning"
-            size="sm"
-          >
-            {{ t('workspace.awaitingPermission') }}
-          </Badge>
-        </Tooltip>
-        <!-- Aborted: a distinct, low-key error tag (not collapsed into idle). -->
-        <Tooltip :text="t('workspace.abortedTitle')">
-          <Badge
-            v-if="!renaming && session.status === 'aborted'"
-            variant="danger"
-            size="sm"
-          >
-            {{ t('workspace.aborted') }}
-          </Badge>
-        </Tooltip>
-
-        <!-- Kebab button (visible on hover) -->
-        <IconButton
-          ref="kebabRef"
-          v-if="!renaming"
-          class="kebab"
-          :class="{ open: menuOpen }"
+      <!-- Pending tags — coloured per kind, shown even when the row isn't
+           active. "Answer" = an askUserQuestion is waiting; "Approve" = a
+           permission request is waiting. The session's lifecycle status drives
+           the same tags as a fallback for background sessions whose pending
+           lists aren't loaded yet (status known, counts not). -->
+      <Tooltip :text="t('workspace.awaitingAnswerTitle')">
+        <Badge
+          v-if="!renaming && (questionCount > 0 || session.status === 'awaitingQuestion')"
+          variant="info"
           size="sm"
-          :label="t('sidebar.options')"
-          @click.stop="toggleMenu($event)"
         >
-          <Icon name="dots-horizontal" size="sm" />
-        </IconButton>
-      </template>
+          {{ t('workspace.awaitingAnswer') }}
+        </Badge>
+      </Tooltip>
+      <Tooltip :text="t('workspace.awaitingPermissionTitle')">
+        <Badge
+          v-if="!renaming && (approvalCount > 0 || session.status === 'awaitingApproval')"
+          variant="warning"
+          size="sm"
+        >
+          {{ t('workspace.awaitingPermission') }}
+        </Badge>
+      </Tooltip>
+      <!-- Aborted: a distinct, low-key error tag (not collapsed into idle). -->
+      <Tooltip :text="t('workspace.abortedTitle')">
+        <Badge
+          v-if="!renaming && session.status === 'aborted'"
+          variant="danger"
+          size="sm"
+        >
+          {{ t('workspace.aborted') }}
+        </Badge>
+      </Tooltip>
+
+      <!-- Kebab button (visible on hover) -->
+      <IconButton
+        ref="kebabRef"
+        v-if="!renaming"
+        class="kebab"
+        :class="{ open: menuOpen }"
+        size="sm"
+        :label="t('sidebar.options')"
+        @click.stop="toggleMenu($event)"
+      >
+        <Icon name="dots-horizontal" size="sm" />
+      </IconButton>
     </div>
 
     <!-- Kebab dropdown — teleported to <body> and position:fixed so it escapes
@@ -403,25 +392,6 @@ defineExpose({ closeMenu, cancelArchive });
   min-width: 0;
 }
 
-.archive-confirm {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  font-size: var(--text-xs);
-}
-.archive-label {
-  color: var(--color-danger);
-  /* Match the normal session title (.t) so the confirm text lines up with it
-     in size and baseline, not as a smaller note. */
-  font-size: var(--text-sm);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .sessions .se {
   margin: 0;
   border-radius: var(--radius-md);

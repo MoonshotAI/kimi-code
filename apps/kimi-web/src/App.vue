@@ -16,6 +16,7 @@ import ProviderManager from './components/settings/ProviderManager.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
+import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
@@ -377,7 +378,7 @@ function handleCommand(cmd: string): void {
     if (arg === 'on') client.setSwarmMode(true);
     else if (arg === 'off') client.setSwarmMode(false);
     else if (arg) { client.setSwarmMode(true); void client.sendPrompt(arg); }
-    else client.toggleSwarmMode();
+    else void client.toggleSwarmMode();
     return;
   }
   // `/goal <objective>` creates a goal (and submits it); `/goal pause|resume|cancel`
@@ -904,6 +905,9 @@ function openPr(url: string): void {
 
     <!-- KAP/daemon debug panel (opt-in, ?debug=1) -->
     <DebugPanel v-if="debugEnabled" />
+
+    <!-- Global modal-confirmation host (driven by useConfirmDialog) -->
+    <ConfirmDialogHost />
 
     <!-- Mobile switcher bottom-sheet: workspace groups + sessions (mirrors the
          desktop sidebar) -->

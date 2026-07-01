@@ -14,8 +14,6 @@ export default {
   newWorkspace: 'New Workspace',
   emptyState: 'No sessions yet · click New Session to start',
   archiveConfirm: 'Archive session?',
-  confirm: 'Confirm',
-  cancel: 'Cancel',
   options: 'Options',
   rename: 'Rename',
   copyPath: 'Copy path',

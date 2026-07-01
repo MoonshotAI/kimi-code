@@ -12,8 +12,10 @@ import MenuItem from '../ui/MenuItem.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 const props = defineProps<{
   sessionId?: string;
@@ -102,7 +104,6 @@ async function toggleMenu(e: Event): Promise<void> {
 
 function closeMenu(): void {
   menuOpen.value = false;
-  disarmDelete();
   document.removeEventListener('mousedown', onDocClick);
   window.removeEventListener('resize', onScrollOrResize);
 }
@@ -180,27 +181,21 @@ function forkSession(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Archive (two-step confirm, same pattern as the workspace menus)
+// Archive — modal confirm (the header has no session row to swap, so use the
+// shared ConfirmDialog instead of the inline strip used in SessionRow).
 // ---------------------------------------------------------------------------
-const deleteArmed = ref(false);
-let deleteArmTimer: ReturnType<typeof setTimeout> | undefined;
-
-function disarmDelete(): void {
-  clearTimeout(deleteArmTimer);
-  deleteArmed.value = false;
-}
-
-function startArchive(): void {
+async function startArchive(): Promise<void> {
   if (!props.sessionId) return;
-  if (deleteArmed.value) {
+  closeMenu();
+  if (
+    await confirm({
+      title: t('header.archiveSession'),
+      message: t('sidebar.archiveConfirm'),
+      variant: 'danger',
+    })
+  ) {
     emit('archiveSession', props.sessionId);
-    closeMenu();
-    return;
   }
-  deleteArmed.value = true;
-  deleteArmTimer = setTimeout(() => {
-    deleteArmed.value = false;
-  }, 2500);
 }
 </script>
 
@@ -266,9 +261,7 @@ function startArchive(): void {
         <MenuItem @click="forkSession">
           {{ t('header.forkSession') }}
         </MenuItem>
-        <MenuItem danger @click="startArchive">
-          {{ deleteArmed ? t('header.confirmArchive') : t('header.archiveSession') }}
-        </MenuItem>
+        <MenuItem danger @click="startArchive">{{ t('header.archiveSession') }}</MenuItem>
       </template>
     </Menu>
 
