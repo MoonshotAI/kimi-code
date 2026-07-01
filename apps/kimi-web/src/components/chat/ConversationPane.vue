@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ConversationPane.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
@@ -219,6 +219,17 @@ const subagentTasks = computed(() =>
 );
 const bashRunning = computed(() => bashTasks.value.filter((t) => t.state === 'run').length);
 const subagentRunning = computed(() => subagentTasks.value.filter((t) => t.state === 'run').length);
+
+// Let AgentTool cards know whether their spawning tool-call has a matching live
+// or background subagent task, so the "Open detail" button can be hidden when
+// the task is gone (e.g. a completed foreground subagent after a page refresh).
+function resolveAgentTaskId(toolCallId: string): string | undefined {
+  const tasks = props.tasks;
+  const task =
+    tasks.find((tk) => tk.id === toolCallId) ?? tasks.find((tk) => tk.parentToolCallId === toolCallId);
+  return task?.id;
+}
+provide('resolveAgentTaskId', resolveAgentTaskId);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 const hasDockWork = computed(() =>
   props.tasks.length > 0 ||

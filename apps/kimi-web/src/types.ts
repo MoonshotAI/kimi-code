@@ -265,6 +265,10 @@ export interface TaskItem {
   /** Background subagents only — the dock lists these; foreground subagents
    *  render inline as the `Agent` tool card instead. */
   runInBackground?: boolean;
+  /** The spawning `Agent` tool-call id — used to resolve a subagent task back
+   *  to its inline tool card, so the card's "Open detail" button can be hidden
+   *  when the task is no longer available. */
+  parentToolCallId?: string;
 }
 
 export interface ConversationStatus {

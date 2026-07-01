@@ -19,4 +19,10 @@ export default {
     created: '已创建',
     todos: '{count} 项',
   },
+  group: {
+    title: '{count} 个工具调用',
+    running: '运行中',
+    error: '有失败',
+    done: '已完成',
+  },
 } as const;

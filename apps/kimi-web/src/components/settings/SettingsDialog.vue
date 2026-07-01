@@ -180,10 +180,13 @@ function toggleConfigBoolean(key: 'defaultPlanMode' | 'mergeAllAvailableSkills')
 // "Default thinking" lives at config.thinking.enabled on the daemon — the legacy
 // top-level defaultThinking field was removed. Read/write it there so the toggle
 // actually persists (the old field was silently stripped by the server).
+//
+// Mirror the core resolver: only enabled === false disables thinking, so a config
+// with an effort but no enabled field still counts as on.
 function thinkingEnabled(): boolean {
   const thinking = props.config?.thinking;
   if (!thinking || typeof thinking !== 'object') return false;
-  return (thinking as { enabled?: boolean }).enabled === true;
+  return (thinking as { enabled?: boolean }).enabled !== false;
 }
 
 function toggleDefaultThinking(): void {

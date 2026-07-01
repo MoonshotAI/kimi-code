@@ -1469,6 +1469,7 @@ function toUiTask(task: AppTask): TaskItem {
     meta,
     output,
     runInBackground: task.runInBackground,
+    parentToolCallId: task.parentToolCallId,
   };
 }
 

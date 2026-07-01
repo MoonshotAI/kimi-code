@@ -4,7 +4,7 @@
      the subagent's LIVE progress streams in the right-side detail panel. The
      trailing "Open" button jumps to that panel. -->
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, inject, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
 import { toolGlyph, toolLabel } from '../../../lib/toolMeta';
@@ -62,6 +62,15 @@ const label = computed(() => toolLabel(props.tool.name));
 const glyph = computed(() => toolGlyph(props.tool.name));
 const summary = computed(() => input.value.description || input.value.subagentType || '');
 
+// Hide the "Open detail" button when no live/background subagent task matches
+// this tool call (e.g. a completed foreground subagent after a page refresh) —
+// otherwise the button emits into a panel that silently no-ops.
+const resolveAgentTaskId = inject<(toolCallId: string) => string | undefined>('resolveAgentTaskId');
+const canOpenAgent = computed(() => {
+  if (!resolveAgentTaskId) return true;
+  return resolveAgentTaskId(props.tool.id) != null;
+});
+
 function toggle(): void {
   if (canExpand.value) open.value = !open.value;
 }
@@ -88,7 +97,7 @@ watch(
     @toggle="toggle"
   >
     <template #trailing>
-      <button type="button" class="at-open" @click.stop="emit('openAgent', tool.id)">
+      <button v-if="canOpenAgent" type="button" class="at-open" @click.stop="emit('openAgent', tool.id)">
         {{ t('tasks.openDetail') }}
       </button>
     </template>

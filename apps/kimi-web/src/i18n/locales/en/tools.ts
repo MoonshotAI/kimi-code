@@ -19,4 +19,10 @@ export default {
     created: 'created',
     todos: '{count} items',
   },
+  group: {
+    title: '{count} tool call | {count} tool calls',
+    running: 'running',
+    error: 'failed',
+    done: 'done',
+  },
 } as const;

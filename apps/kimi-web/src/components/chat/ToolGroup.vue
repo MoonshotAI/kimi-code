@@ -1,6 +1,7 @@
 <!-- apps/kimi-web/src/components/chat/ToolGroup.vue -->
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import ToolCall from './ToolCall.vue';
 import { toolStackKey, toolStackPosition } from '../chatTurnRendering';
 import type { ToolStackItem } from '../chatTurnRendering';
@@ -32,14 +33,16 @@ const aggregateStatus = computed<'running' | 'error' | 'done'>(() => {
   if (props.tools.some((t) => t.tool.status === 'error')) return 'error';
   return 'done';
 });
+const { t } = useI18n();
+
 const statusLabel = computed(() => {
   switch (aggregateStatus.value) {
     case 'running':
-      return '运行中';
+      return t('tools.group.running');
     case 'error':
-      return '有失败';
+      return t('tools.group.error');
     default:
-      return '已完成';
+      return t('tools.group.done');
   }
 });
 
@@ -53,7 +56,7 @@ function toggle(): void {
     <button class="tool-group-head" type="button" :aria-expanded="open" @click="toggle">
       <StatusDot :status="aggregateStatus" />
       <Icon class="tg-ic" name="list" size="sm" />
-      <span class="tg-title">{{ count }} 个工具调用</span>
+      <span class="tg-title">{{ t('tools.group.title', count) }}</span>
       <span class="tg-meta">· {{ statusLabel }}</span>
       <Icon class="tg-car" name="chevron-right" size="sm" />
     </button>
