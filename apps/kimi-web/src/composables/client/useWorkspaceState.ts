@@ -337,12 +337,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     let hasMore = false;
     let isFirstPage = true;
     for (;;) {
-      const page = await api.listSessions({
-        workspaceId,
-        pageSize: SESSIONS_INITIAL_PAGE_SIZE,
-        beforeId,
-        excludeEmpty: true,
-      });
+      let page: { items: AppSession[]; hasMore: boolean };
+      try {
+        page = await api.listSessions({
+          workspaceId,
+          pageSize: SESSIONS_INITIAL_PAGE_SIZE,
+          beforeId,
+          excludeEmpty: true,
+        });
+      } catch (error) {
+        // A failed continuation page must not discard sessions already loaded
+        // from earlier pages; only a page-1 failure propagates (the caller then
+        // falls back to an empty page for that workspace).
+        if (isFirstPage) throw error;
+        break;
+      }
       hasMore = page.hasMore;
       if (page.items.length === 0) break;
       const oldest = page.items[page.items.length - 1]!;
