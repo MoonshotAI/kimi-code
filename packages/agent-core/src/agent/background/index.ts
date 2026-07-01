@@ -724,8 +724,16 @@ export class BackgroundManager {
   }
 
   markDeliveredNotification(origin: BackgroundTaskOrigin): void {
+    // Do NOT trim this set. It must stay complete so that resume replay
+    // (which repopulates it from every historical background_task message
+    // before reconcile() restores persisted terminal tasks) can suppress
+    // duplicate notifications. Trimming here would drop older delivered
+    // keys, causing restoreBackgroundTaskNotifications() to re-append them.
+    // The set is naturally bounded: deleteNotificationKeysForTask cleans up
+    // keys when terminal tasks are evicted (live tasks are capped at
+    // DEFAULT_MAX_RETAINED_TERMINAL_TASKS), and on a fresh resume the set
+    // is repopulated from history, which is itself bounded by context size.
     this.deliveredNotificationKeys.add(notificationKey(origin));
-    this.trimSet(this.deliveredNotificationKeys, DEFAULT_MAX_RETAINED_NOTIFICATION_KEYS);
   }
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {
@@ -863,10 +871,10 @@ export class BackgroundManager {
     this.fireTerminalEffects(entry);
     entry.foregroundRelease?.resolve('terminal');
     entry.terminal.resolve();
-    this.evictOldTerminalTasks();
+    await this.evictOldTerminalTasks();
   }
 
-  private evictOldTerminalTasks(): void {
+  private async evictOldTerminalTasks(): Promise<void> {
     let terminalCount = 0;
     for (const entry of this.tasks.values()) {
       if (TERMINAL_STATUSES.has(entry.status)) terminalCount += 1;
@@ -875,12 +883,19 @@ export class BackgroundManager {
     for (const [taskId, entry] of this.tasks) {
       if (terminalCount <= DEFAULT_MAX_RETAINED_TERMINAL_TASKS) break;
       if (!TERMINAL_STATUSES.has(entry.status)) continue;
-      this.evictTerminalTask(taskId, entry);
+      await this.evictTerminalTask(taskId, entry);
       terminalCount -= 1;
     }
   }
 
-  private evictTerminalTask(taskId: string, entry: ManagedTask): void {
+  private async evictTerminalTask(taskId: string, entry: ManagedTask): Promise<void> {
+    // Flush any queued output.log appends before dropping the live entry.
+    // After eviction, getOutputSnapshot() can only reach the task via the
+    // ghost map and reads the persisted log directly — but it awaits
+    // `this.tasks.get(taskId)?.outputWriteQueue`, which resolves immediately
+    // once the entry is gone. Without flushing here, TaskOutput could return
+    // a truncated log for a task that already completed successfully.
+    await entry.outputWriteQueue;
     // Preserve a lightweight ghost so the task stays addressable via
     // getTask/list/getOutputSnapshot (which read persisted logs for ghosts)
     // instead of reporting "Task not found" until a restart reloads the

@@ -782,6 +782,140 @@ describe('BackgroundManager', () => {
     expect(manager.list(false)).toHaveLength(105);
   });
 
+  it('does not trim delivered notification keys so resume avoids duplicate notifications', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-notif-dedup-'));
+    try {
+      const writer = createBackgroundManager({ sessionDir });
+      // Register and complete a detached terminal task so it has a persisted
+      // record that reconcile will try to restore.
+      const taskId = registerProcess(
+        writer.manager,
+        immediateProcess(0, 'done\n'),
+        'echo done',
+        'dedup test',
+      );
+      await waitForTerminal(writer.manager, taskId);
+      expect(writer.manager.getTask(taskId)).toMatchObject({ status: 'completed' });
+
+      // Simulate the resume flow: history replay calls markDeliveredNotification
+      // for every prior background_task message before reconcile restores
+      // persisted terminal tasks. Add the real task's key plus enough dummy
+      // keys to exceed the old DEFAULT_MAX_RETAINED_NOTIFICATION_KEYS cap (400).
+      const realOrigin = {
+        kind: 'background_task' as const,
+        taskId,
+        status: 'completed' as const,
+        notificationId: `task:${taskId}:completed`,
+      };
+      const reader = createBackgroundManager({ sessionDir });
+      reader.manager.markDeliveredNotification(realOrigin);
+      for (let i = 0; i < 450; i++) {
+        reader.manager.markDeliveredNotification({
+          kind: 'background_task',
+          taskId: `bash-dummy${String(i).padStart(3, '0')}`,
+          status: 'completed',
+          notificationId: `task:dummy${i}:completed`,
+        });
+      }
+
+      // loadFromDisk + reconcile. Without the fix, the trim in
+      // markDeliveredNotification would have dropped the real task's key,
+      // and restoreBackgroundTaskNotification would re-append it as a
+      // duplicate via agent.context.appendUserMessage.
+      await reader.manager.loadFromDisk();
+      await reader.manager.reconcile();
+
+      expect(reader.agent.context.appendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('flushes queued output before evicting a terminal task', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-evict-flush-'));
+    try {
+      // Wrap the real persistence so we can delay appendTaskOutput for the
+      // first task, keeping its outputWriteQueue pending when eviction runs.
+      const real = new BackgroundTaskPersistence(sessionDir);
+      let resolveFirstAppend: () => void = () => {};
+      let firstTaskId: string | undefined;
+      const appendSpy = vi.fn(async (taskId: string, chunk: string) => {
+        if (firstTaskId !== undefined && taskId === firstTaskId) {
+          await new Promise<void>((resolve) => {
+            resolveFirstAppend = resolve;
+          });
+        }
+        return real.appendTaskOutput(taskId, chunk);
+      });
+      const mockPersistence = {
+        writeTask: (t: Parameters<BackgroundTaskPersistence['writeTask']>[0]) =>
+          real.writeTask(t),
+        readTask: (id: string) => real.readTask(id),
+        listTasks: () => real.listTasks(),
+        appendTaskOutput: appendSpy,
+        taskOutputSizeBytes: (id: string) => real.taskOutputSizeBytes(id),
+        taskOutputExists: (id: string) => real.taskOutputExists(id),
+        readTaskOutputBytes: (id: string, off: number, max: number) =>
+          real.readTaskOutputBytes(id, off, max),
+        taskOutputFile: (id: string) => real.taskOutputFile(id),
+      } as unknown as BackgroundTaskPersistence;
+
+      const { manager } = createBackgroundManager({ sessionDir });
+      // Replace the manager's persistence with the delayed mock.
+      (manager as unknown as { persistence: BackgroundTaskPersistence }).persistence =
+        mockPersistence;
+
+      // Register the first task with output that will be delayed on disk.
+      firstTaskId = registerProcess(
+        manager,
+        immediateProcess(0, 'important output\n'),
+        'echo important',
+        'eviction flush test',
+      );
+      await waitForTerminal(manager, firstTaskId);
+
+      // Fill up to 101 terminal tasks so the 101st finalize triggers
+      // eviction of the first (oldest) task.
+      for (let i = 1; i < 101; i++) {
+        const id = registerProcess(
+          manager,
+          immediateProcess(0, `filler ${String(i)}\n`),
+          `echo filler-${String(i)}`,
+          `filler ${String(i)}`,
+        );
+        await waitForTerminal(manager, id);
+      }
+
+      // After the 101st task settles, eviction has run (or is running).
+      // Without the fix: eviction is sync — the first task is already
+      // evicted, its outputWriteQueue (still pending on the delayed
+      // appendTaskOutput) is never awaited, so readOutput returns an
+      // empty snapshot from the ghost path immediately.
+      // With the fix: eviction awaits the first task's outputWriteQueue
+      // (still pending), so the first task is still live and readOutput
+      // blocks on the same queue until we resolve the delay.
+      const readPromise = manager.readOutput(firstTaskId);
+      const result = await Promise.race([
+        readPromise.then((output) => ({ done: true as const, output })),
+        new Promise<{ done: false }>((resolve) =>
+          setTimeout(() => resolve({ done: false }), 100),
+        ),
+      ]);
+
+      // With the fix, readOutput blocks on the pending flush, so it must
+      // NOT resolve within the short timeout. Without the fix, eviction is
+      // sync and readOutput resolves immediately with an empty snapshot.
+      expect(result.done).toBe(false);
+
+      // Resolve the delayed append — unblocks both the pending eviction
+      // and the pending readOutput.
+      resolveFirstAppend();
+      expect(await readPromise).toContain('important output');
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  });
+
   it('getTask on an unknown id does not create persisted state', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-mgr-missing-'));
     try {
