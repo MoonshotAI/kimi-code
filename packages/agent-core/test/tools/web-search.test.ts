@@ -350,7 +350,7 @@ describe('MoonshotWebSearchProvider', () => {
     await provider.search('hello');
 
     const sent = fetchImpl.mock.calls[0]?.[1]?.body;
-    expect(JSON.parse(String(sent))).toEqual({ text_query: 'hello' });
+    expect(sent).toBe(JSON.stringify({ text_query: 'hello' }));
   });
 
   it('does not force-refresh request auth after a 401 response', async () => {

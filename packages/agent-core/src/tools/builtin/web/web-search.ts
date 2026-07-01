@@ -22,8 +22,8 @@ export interface WebSearchResult {
   title: string;
   url: string;
   snippet: string;
-  date?: string | undefined;
-  siteName?: string | undefined;
+  date?: string;
+  siteName?: string;
 }
 
 export interface WebSearchProvider {
