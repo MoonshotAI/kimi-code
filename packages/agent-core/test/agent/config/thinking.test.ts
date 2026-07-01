@@ -125,3 +125,31 @@ describe('defaultThinkingEffortFor overrides', () => {
     ).toBe('high');
   });
 });
+
+describe('resolveThinkingEffort overrides', () => {
+  it('honors overridden always_thinking when clamping off', () => {
+    expect(
+      resolveThinkingEffort(
+        'off',
+        { enabled: false },
+        model({
+          capabilities: ['thinking'],
+          overrides: { capabilities: ['thinking', 'always_thinking'] },
+        }),
+      ),
+    ).toBe('on');
+  });
+
+  it('honors overridden capabilities when always_thinking is removed', () => {
+    expect(
+      resolveThinkingEffort(
+        'off',
+        { enabled: false },
+        model({
+          capabilities: ['thinking', 'always_thinking'],
+          overrides: { capabilities: ['thinking'] },
+        }),
+      ),
+    ).toBe('off');
+  });
+});

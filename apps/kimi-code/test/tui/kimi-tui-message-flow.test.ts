@@ -4679,3 +4679,33 @@ describe('/model status displayName override', () => {
     expect(renderTranscript(driver)).not.toContain('Remote Turbo');
   });
 });
+
+describe('/effort support_efforts override', () => {
+  it('rejects efforts hidden by support_efforts override', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            overrides: { supportEfforts: ['low', 'high'] },
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Unsupported thinking effort "max" for k2. Available: off, low, high');
+    });
+    expect(renderTranscript(driver)).not.toContain('Switched to Kimi K2 with thinking max.');
+  });
+});

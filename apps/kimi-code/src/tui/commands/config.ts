@@ -1,10 +1,11 @@
-import type {
-  ExperimentalFeatureState,
-  FlagId,
-  ModelAlias,
-  PermissionMode,
-  Session,
-  ThinkingEffort,
+import {
+  effectiveModelAlias,
+  type ExperimentalFeatureState,
+  type FlagId,
+  type ModelAlias,
+  type PermissionMode,
+  type Session,
+  type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
@@ -224,10 +225,11 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     host.showError('No model selected. Run /model to select one first.');
     return;
   }
-  const segments = segmentsFor(model);
+  const effective = effectiveModelAlias(model);
+  const segments = segmentsFor(effective);
   const arg = args.trim().toLowerCase();
   if (arg.length === 0) {
-    showEffortPicker(host, model, segments);
+    showEffortPicker(host, effective, segments);
     return;
   }
   if (!segments.includes(arg)) {

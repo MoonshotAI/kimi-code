@@ -56,21 +56,22 @@ export function resolveThinkingEffort(
   config: ThinkingConfig | undefined,
   model: ModelAlias | undefined,
 ): ThinkingEffort {
+  const effectiveModel = model === undefined ? undefined : effectiveModelAlias(model);
   let effort: ThinkingEffort;
   if (requested !== undefined) {
     effort = requested;
   } else if (config?.enabled === false) {
     effort = 'off';
   } else {
-    effort = config?.effort ?? defaultThinkingEffortFor(model);
+    effort = config?.effort ?? defaultThinkingEffortFor(effectiveModel);
   }
 
-  if (effort === 'off' && model?.capabilities?.includes('always_thinking') === true) {
+  if (effort === 'off' && effectiveModel?.capabilities?.includes('always_thinking') === true) {
     // always_thinking forces thinking on, but an explicitly configured effort
     // is still honored — `enabled = false` only expresses the intent to
     // disable, it should not also discard a chosen effort. Fall back to the
     // model default only when no effort is configured.
-    effort = config?.effort ?? defaultThinkingEffortFor(model);
+    effort = config?.effort ?? defaultThinkingEffortFor(effectiveModel);
   }
 
   return effort;
