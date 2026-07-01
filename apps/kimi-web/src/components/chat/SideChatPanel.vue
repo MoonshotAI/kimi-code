@@ -6,8 +6,11 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
-import MoonSpinner from '../MoonSpinner.vue';
+import MoonSpinner from '../ui/MoonSpinner.vue';
+import Icon from '../ui/Icon.vue';
 import type { ChatTurn } from '../../types';
+import PanelHeader from '../ui/PanelHeader.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -100,19 +103,12 @@ function autosize(): void {
 
 <template>
   <div class="sc">
-    <div class="sc-header">
-      <span class="sc-title">{{ panelTitle }}</span>
-      <span class="sc-subtitle" :title="panelSubtitle">{{ panelSubtitle }}</span>
-      <button
-        type="button"
-        class="sc-close"
-        :title="t('thinking.close')"
-        :aria-label="t('thinking.close')"
-        @click="emit('close')"
-      >
-        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-      </button>
-    </div>
+    <PanelHeader
+      :title="panelTitle"
+      :subtitle="panelSubtitle"
+      :close-label="t('thinking.close')"
+      @close="emit('close')"
+    />
     <div ref="bodyRef" class="sc-body">
       <div v-if="turns.length === 0" class="sc-empty">{{ t('sideChat.empty') }}</div>
       <ChatPane
@@ -121,7 +117,6 @@ function autosize(): void {
         :approvals="[]"
         :running="running"
         :sending="sending"
-        bubble
       />
       <div v-if="showLoading" class="sc-loading" aria-hidden="true">
         <MoonSpinner />
@@ -138,9 +133,11 @@ function autosize(): void {
         @input="autosize"
         @keydown="onKeydown"
       ></textarea>
-      <button type="button" class="sc-send" :disabled="!draft.trim()" :title="t('sideChat.send')" @click="submit">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8h10"/><path d="M8 4l4 4-4 4"/></svg>
-      </button>
+      <Tooltip :text="t('sideChat.send')">
+        <button type="button" class="sc-send" :disabled="!draft.trim()" @click="submit">
+          <Icon name="arrow-right" size="sm" />
+        </button>
+      </Tooltip>
     </div>
   </div>
 </template>
@@ -152,55 +149,6 @@ function autosize(): void {
   flex-direction: column;
   min-height: 0;
   background: var(--bg);
-}
-.sc-header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--panel-head-h, 48px);
-  padding: 0 6px 0 12px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-.sc-title {
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-}
-.sc-subtitle {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
-}
-.sc-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.sc-close:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.sc-close:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
 }
 .sc-body {
   flex: 1;
@@ -231,12 +179,12 @@ function autosize(): void {
   border-radius: var(--r-sm, 8px);
   padding: 7px 9px;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--color-text);
   font: var(--ui-font-size)/1.5 var(--sans);
   outline: none;
   max-height: 160px;
 }
-.sc-input:focus { border-color: var(--bd); }
+.sc-input:focus { border-color: var(--color-accent-bd); }
 .sc-send {
   flex: none;
   display: inline-flex;
@@ -246,12 +194,12 @@ function autosize(): void {
   height: 32px;
   border: none;
   border-radius: var(--r-sm, 8px);
-  background: var(--blue);
-  color: var(--bg);
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
   cursor: pointer;
 }
 .sc-send:disabled { opacity: 0.4; cursor: default; }
-.sc-send:not(:disabled):hover { background: var(--blue2); }
+.sc-send:not(:disabled):hover { background: var(--color-accent-hover); }
 
 /* Send → first-token loading indicator (replaces ChatPane's working moon). */
 .sc-loading {

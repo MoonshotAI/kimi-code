@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppSession } from '../src/api/types';
+import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
@@ -13,6 +13,10 @@ const apiMock = vi.hoisted(() => ({
   abortSession: vi.fn(),
   addWorkspace: vi.fn(),
   updateWorkspace: vi.fn(),
+  respondQuestion: vi.fn(),
+  respondApproval: vi.fn(),
+  dismissQuestion: vi.fn(),
+  cancelTask: vi.fn(),
 }));
 
 vi.mock('../src/api', () => ({
@@ -56,9 +60,9 @@ function createState(): ExtendedState {
     connection: 'connected',
     permission: 'manual',
     thinking: 'high',
-    planMode: false,
-    swarmMode: false,
-    goalMode: false,
+    planModeBySession: {},
+    swarmModeBySession: {},
+    goalModeBySession: {},
     loading: false,
     sessionLoading: false,
     queuedBySession: {},
@@ -116,6 +120,7 @@ function createDeps(): UseWorkspaceStateDeps {
     savePlanModeToStorage: vi.fn(),
     saveSwarmModeToStorage: vi.fn(),
     saveGoalModeToStorage: vi.fn(),
+    draftModes: { planMode: false, swarmMode: false, goalMode: false },
     saveUnread: vi.fn(),
     saveActiveWorkspaceToStorage: vi.fn(),
     saveHiddenWorkspacesToStorage: vi.fn(),
@@ -162,6 +167,45 @@ function installStorage(storage: Storage): void {
 
 function workspace(id: string, root: string, name: string) {
   return { id, root, name, isGitRepo: false, sessionCount: 0 };
+}
+
+function questionRequest(questionId: string): AppQuestionRequest {
+  return {
+    questionId,
+    sessionId: 'sess_1',
+    questions: [
+      {
+        id: 'q1',
+        question: 'Pick one',
+        options: [{ id: 'a', label: 'A' }],
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function approvalRequest(approvalId: string): AppApprovalRequest {
+  return {
+    approvalId,
+    sessionId: 'sess_1',
+    toolCallId: 'tc_1',
+    toolName: 'bash',
+    action: 'shell',
+    display: null,
+    expiresAt: '2099-01-01T00:00:00.000Z',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function task(id: string, status: AppTask['status'] = 'running'): AppTask {
+  return {
+    id,
+    sessionId: 'sess_1',
+    kind: 'bash',
+    description: 'run',
+    status,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
 }
 
 describe('useWorkspaceState — abortCurrentPrompt', () => {
@@ -366,5 +410,150 @@ describe('useWorkspaceState — addWorkspaceByPath', () => {
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
     expect(state.workspaces).toEqual([]);
     expect(state.activeWorkspaceId).toBeNull();
+  });
+});
+
+describe('useWorkspaceState — respondQuestion', () => {
+  const response = { answers: {}, method: 'click' as const };
+
+  beforeEach(() => {
+    apiMock.respondQuestion.mockReset();
+  });
+
+  it('removes the question locally and stays silent when already resolved (40902)', async () => {
+    apiMock.respondQuestion.mockRejectedValue(
+      new DaemonApiError({ code: 40902, msg: 'question q_1 already resolved', requestId: 'r' }),
+    );
+    const state = createState();
+    state.questionsBySession = { sess_1: [questionRequest('q_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.respondQuestion('q_1', response);
+
+    expect(apiMock.respondQuestion).toHaveBeenCalledOnce();
+    // Already resolved is the desired end state, so the card is dropped locally
+    // without surfacing a duplicate error to the user.
+    expect(state.questionsBySession['sess_1']).toEqual([]);
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('surfaces genuine errors and keeps the question for retry', async () => {
+    apiMock.respondQuestion.mockRejectedValue(
+      new DaemonApiError({ code: 50001, msg: 'boom', requestId: 'r' }),
+    );
+    const state = createState();
+    state.questionsBySession = { sess_1: [questionRequest('q_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.respondQuestion('q_1', response);
+
+    expect(state.questionsBySession['sess_1']).toHaveLength(1);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+
+  it('drops a duplicate submit while the first respond is still in flight', async () => {
+    let resolveRespond!: (value: { resolved: true; resolvedAt: string }) => void;
+    apiMock.respondQuestion.mockReturnValue(
+      new Promise<{ resolved: true; resolvedAt: string }>((r) => {
+        resolveRespond = r;
+      }),
+    );
+    const state = createState();
+    state.questionsBySession = { sess_1: [questionRequest('q_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    const first = ws.respondQuestion('q_1', response);
+    // Second click while the first request is still in flight must be a no-op.
+    await ws.respondQuestion('q_1', response);
+
+    expect(apiMock.respondQuestion).toHaveBeenCalledOnce();
+
+    // Resolve the first request and ensure the question is removed.
+    resolveRespond({ resolved: true, resolvedAt: '2026-01-01T00:00:00.000Z' });
+    await first;
+    expect(state.questionsBySession['sess_1']).toEqual([]);
+  });
+});
+
+describe('useWorkspaceState — respondApproval', () => {
+  beforeEach(() => {
+    apiMock.respondApproval.mockReset();
+  });
+
+  it('removes the approval locally and stays silent when already resolved (40902)', async () => {
+    apiMock.respondApproval.mockRejectedValue(
+      new DaemonApiError({ code: 40902, msg: 'approval a_1 already resolved', requestId: 'r' }),
+    );
+    const state = createState();
+    state.approvalsBySession = { sess_1: [approvalRequest('a_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.respondApproval('a_1', { decision: 'approved' });
+
+    expect(apiMock.respondApproval).toHaveBeenCalledOnce();
+    expect(state.approvalsBySession['sess_1']).toEqual([]);
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('useWorkspaceState — cancelTask', () => {
+  beforeEach(() => {
+    apiMock.cancelTask.mockReset();
+  });
+
+  it('stays silent and does not force-cancel when the task already finished (40904)', async () => {
+    apiMock.cancelTask.mockRejectedValue(
+      new DaemonApiError({ code: 40904, msg: 'task t_1 already finished', requestId: 'r' }),
+    );
+    const state = createState();
+    state.tasksBySession = { sess_1: [task('t_1', 'running')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.cancelTask('t_1');
+
+    expect(apiMock.cancelTask).toHaveBeenCalledOnce();
+    // Benign idempotent conflict — no error, and we do NOT lie about the
+    // status (the task finished; it was not cancelled).
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+    expect(state.tasksBySession['sess_1']?.[0]?.status).toBe('running');
+  });
+
+  it('marks the task cancelled on success', async () => {
+    apiMock.cancelTask.mockResolvedValue({ cancelled: true });
+    const state = createState();
+    state.tasksBySession = { sess_1: [task('t_1', 'running')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.cancelTask('t_1');
+
+    expect(state.tasksBySession['sess_1']?.[0]?.status).toBe('cancelled');
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('drops a duplicate cancel while the first is still in flight', async () => {
+    let resolveCancel!: (value: { cancelled: true }) => void;
+    apiMock.cancelTask.mockReturnValue(
+      new Promise<{ cancelled: true }>((r) => {
+        resolveCancel = r;
+      }),
+    );
+    const state = createState();
+    state.tasksBySession = { sess_1: [task('t_1', 'running')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    const first = ws.cancelTask('t_1');
+    await ws.cancelTask('t_1');
+
+    expect(apiMock.cancelTask).toHaveBeenCalledOnce();
+
+    resolveCancel({ cancelled: true });
+    await first;
   });
 });

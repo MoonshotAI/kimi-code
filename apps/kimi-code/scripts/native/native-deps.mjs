@@ -27,13 +27,16 @@ const clipboardSubpackageByTarget = Object.freeze({
   'win32-x64': '@mariozechner/clipboard-win32-x64-msvc',
 });
 
-const koffiTripletByTarget = Object.freeze({
-  'darwin-arm64': 'darwin_arm64',
-  'darwin-x64': 'darwin_x64',
-  'linux-arm64': 'linux_arm64',
-  'linux-x64': 'linux_x64',
-  'win32-arm64': 'win32_arm64',
-  'win32-x64': 'win32_x64',
+// pi-tui ships platform-specific native helpers (no Linux build):
+// - darwin: Shift-modifier detection for Terminal.app Shift+Enter
+// - win32: enable ENABLE_VIRTUAL_TERMINAL_INPUT so Shift+Tab is distinguishable
+const piTuiNativeFileByTarget = Object.freeze({
+  'darwin-arm64': ['native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node'],
+  'darwin-x64': ['native/darwin/prebuilds/darwin-x64/darwin-modifiers.node'],
+  'linux-arm64': [],
+  'linux-x64': [],
+  'win32-arm64': ['native/win32/prebuilds/win32-arm64/win32-console-mode.node'],
+  'win32-x64': ['native/win32/prebuilds/win32-x64/win32-console-mode.node'],
 });
 
 export function isSupportedTarget(target) {
@@ -45,13 +48,15 @@ export function isSupportedTarget(target) {
  * @property {string} id                — stable internal id used for parent refs
  * @property {(target: string) => string} name
  *           — npm package name (may depend on target)
- * @property {'js-only'|'native-files'|'js-and-native-file'|'virtual'} collect
+ * @property {'js-only'|'native-files'|'js-and-native-file'|'native-file-only'|'virtual'} collect
  * @property {string|null} parent
  *           — id of another registered dep this nests under (for pnpm),
  *           or null for top-level (resolvable from app root)
  * @property {(target: string) => string[]} [nativeFileRelatives]
  *           — explicit list of .node files relative to package root
- *           (used by 'js-and-native-file'; native-files mode auto-scans *.node)
+ *           (used by 'js-and-native-file' and 'native-file-only';
+ *           native-files mode auto-scans *.node). 'native-file-only' collects
+ *           package.json + these .node files but skips the package entry JS.
  */
 
 /** @type {readonly NativeDepDescriptor[]} */
@@ -70,18 +75,14 @@ export const nativeDeps = Object.freeze([
   },
   {
     id: 'pi-tui',
-    name: () => '@earendil-works/pi-tui',
-    // pi-tui is bundled into main.cjs at build time — we don't collect it as
-    // a native dep, only register it so koffi can declare it as parent.
-    collect: 'virtual',
+    name: () => '@moonshot-ai/pi-tui',
+    // pi-tui's JS is bundled into main.cjs, so only the platform-specific
+    // native helper (.node under native/) ships alongside the binary — its
+    // dist/ JS is intentionally NOT collected (it stays in the bundle). This
+    // keeps the SEA native-asset payload small. Linux has no native helper.
+    collect: 'native-file-only',
     parent: null,
-  },
-  {
-    id: 'koffi',
-    name: () => 'koffi',
-    collect: 'js-and-native-file',
-    parent: 'pi-tui',
-    nativeFileRelatives: (target) => [`build/koffi/${koffiTripletByTarget[target]}/koffi.node`],
+    nativeFileRelatives: (target) => piTuiNativeFileByTarget[target] ?? [],
   },
 ]);
 

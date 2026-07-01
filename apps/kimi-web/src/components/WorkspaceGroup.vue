@@ -9,6 +9,9 @@ import { computed, type ComponentPublicInstance, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
+import IconButton from './ui/IconButton.vue';
+import Icon from './ui/Icon.vue';
+import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
 
@@ -16,7 +19,6 @@ const props = defineProps<{
   group: WorkspaceGroup;
   activeWorkspaceId: string | null;
   activeId: string;
-  selectedIds: Set<string>;
   renamingId: string | null;
   renameValue: string;
   renameInputRef: Ref<HTMLInputElement | null>;
@@ -25,6 +27,8 @@ const props = defineProps<{
   wsMenuOpenId: string | null;
   /** True while this group is the active drag source (drag-to-reorder). */
   dragging: boolean;
+  /** When true, render the workspace root path as a stable subtitle line. */
+  showPath: boolean;
   isCollapsed: (id: string) => boolean;
 }>();
 
@@ -75,7 +79,7 @@ function onHeaderDragStart(event: DragEvent): void {
   <div class="group" :class="{ dragging }">
     <div
       class="gh"
-      :class="{ on: group.workspace.id === activeWorkspaceId, sel: selectedIds.has(group.workspace.id) }"
+      :class="{ on: group.workspace.id === activeWorkspaceId, collapsed: isCollapsed(group.workspace.id), 'show-path': showPath }"
       draggable="true"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
       @contextmenu="emit('groupContextmenu', group.workspace, $event)"
@@ -84,25 +88,8 @@ function onHeaderDragStart(event: DragEvent): void {
     >
       <div class="gh-top">
         <!-- Folder icon -->
-        <svg
-          class="gh-folder"
-          width="14"
-          height="14"
-          viewBox="0 0 14 14"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.2"
-          aria-hidden="true"
-        >
-          <template v-if="isCollapsed(group.workspace.id)">
-            <rect x="1" y="3.5" width="12" height="8.5" rx="1"/>
-            <path d="M1 5V3.5A1 1 0 0 1 2 2.5h3.5l1.3 2"/>
-          </template>
-          <template v-else>
-            <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-            <path d="M1 5.5h12"/>
-          </template>
-        </svg>
+        <Icon v-if="isCollapsed(group.workspace.id)" class="gh-folder" name="folder-closed" size="sm" />
+        <Icon v-else class="gh-folder" name="folder" size="sm" />
 
         <!-- Workspace name -->
         <span
@@ -121,39 +108,41 @@ function onHeaderDragStart(event: DragEvent): void {
           @click.stop
         />
 
-        <button
-          type="button"
-          class="gh-more"
-          :class="{ open: wsMenuOpenId === group.workspace.id }"
-          :title="t('sidebar.options')"
-          :aria-label="t('sidebar.options')"
-          aria-haspopup="menu"
-          :aria-expanded="wsMenuOpenId === group.workspace.id"
-          @click.stop="emit('toggleWsMenu', group.workspace, $event)"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
-            <circle cx="8" cy="3" r="1.3" />
-            <circle cx="8" cy="8" r="1.3" />
-            <circle cx="8" cy="13" r="1.3" />
-          </svg>
-        </button>
+        <Tooltip :text="t('sidebar.options')">
+          <IconButton
+            class="gh-more"
+            :class="{ open: wsMenuOpenId === group.workspace.id }"
+            size="sm"
+            :label="t('sidebar.options')"
+            aria-haspopup="menu"
+            :aria-expanded="wsMenuOpenId === group.workspace.id"
+            @click.stop="emit('toggleWsMenu', group.workspace, $event)"
+          >
+            <Icon name="dots-horizontal" size="sm" />
+          </IconButton>
+        </Tooltip>
 
-        <button
-          type="button"
-          class="gh-add"
-          :title="t('workspace.newInGroup')"
-          :aria-label="t('workspace.newInGroup')"
-          @click.stop="emit('createInWorkspace', group.workspace.id)"
-        >
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M8 3v10M3 8h10"/>
-          </svg>
-        </button>
+        <Tooltip :text="t('workspace.newInGroup')">
+          <IconButton
+            class="gh-add"
+            size="sm"
+            :label="t('workspace.newInGroup')"
+            @click.stop="emit('createInWorkspace', group.workspace.id)"
+          >
+            <Icon name="plus" />
+          </IconButton>
+        </Tooltip>
       </div>
 
-      <div class="gh-path" :title="group.workspace.root">{{ group.workspace.shortPath || group.workspace.root }}</div>
+      <Tooltip :text="group.workspace.root">
+        <div class="gh-path">{{ group.workspace.shortPath || group.workspace.root }}</div>
+      </Tooltip>
     </div>
-    <div v-show="!isCollapsed(group.workspace.id)" class="group-sessions">
+    <div
+      class="group-sessions"
+      :class="{ collapsed: isCollapsed(group.workspace.id) }"
+      :inert="isCollapsed(group.workspace.id)"
+    >
       <SessionRow
         v-for="s in group.sessions"
         :key="s.id"
@@ -187,41 +176,60 @@ function onHeaderDragStart(event: DragEvent): void {
 <style scoped>
 /* Workspace group. The --sb-* custom properties are inherited from .side in
    Sidebar.vue, so they don't need to be redeclared here. */
-.group { padding-bottom: 6px; }
+.group { padding-bottom: var(--space-2); }
 .group.dragging { opacity: 0.45; }
+
+/* Session list: collapses/expands via a height transition. `interpolate-size:
+   allow-keywords` (set on :root) lets `height: auto` interpolate instead of
+   snap. `inert` (set in the template when collapsed) keeps the hidden rows out
+   of the tab order / a11y tree, matching the old `v-show` behavior. */
+.group-sessions {
+  height: auto;
+  overflow: hidden;
+  transition: height var(--duration-base) var(--ease-out);
+}
+.group-sessions.collapsed {
+  height: 0;
+}
+
+/* Workspace header — an inset rounded row that mirrors the session-row inset
+   (6px margin + 10px padding), so the folder icon lands at --sb-pad-x and the
+   name lines up with the session titles below. Hover washes the whole header
+   (name row + path) in the sunken surface. */
 .gh {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 0 var(--sb-pad-x) 4px;
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
+  gap: 2px;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--color-text);
   user-select: none;
   position: relative;
   /* The header doubles as the drag handle for reordering. */
   cursor: grab;
 }
 .gh:active { cursor: grabbing; }
+.gh:hover { background: var(--color-surface-sunken); }
 .gh-top {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
 }
-.gh.sel {
-  background: var(--soft);
-  border-radius: 4px;
-}
 
 .gh-folder {
   flex: none;
-  color: var(--muted);
-  /* 14px icon + 2px margin fills the --sb-gutter icon slot */
+  color: var(--color-text-muted);
+  /* 14px icon + margin fills the --sb-gutter icon slot */
   margin-right: calc(var(--sb-gutter) - 14px);
 }
 
 .gh-name {
-  font-size: var(--ui-font-size);
-  font-weight: 500;
-  color: var(--ink);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -230,100 +238,74 @@ function onHeaderDragStart(event: DragEvent): void {
   cursor: pointer;
 }
 .gh-path {
-  color: var(--faint);
+  color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   padding-left: calc(var(--sb-gutter) + var(--sb-gap));
-  font-size: var(--ui-font-size-xs);
+  font-size: var(--text-xs);
+  max-height: 0;
+  opacity: 0;
+  transition: max-height var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
 }
-.gh-add {
-  background: transparent;
-  border: none;
-  color: var(--faint);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* Keep the icon small but give the button a ≥24px tap target. Extra padding
-     is vertical only so the right-rail alignment below is preserved. */
-  padding: 5px 6px;
-  border-radius: 4px;
-  flex: none;
-  /* Pull the glyph onto the right rail: its right edge lands at --sb-pad-x
-     from the sidebar edge, mirroring the folder icon's left gap and lining
-     up with the session timestamps below. */
-  margin-right: -6px;
-}
-.gh-add:hover { color: var(--dim); }
-.gh-add:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
+/* Path subtitle — revealed only when the section-header "show paths" toggle is
+   on (`.show-path`) or the group is collapsed. Driven by explicit toggle state
+   rather than hover/focus, so the header height never shifts under the pointer
+   (a11y: stable layout) and the path stays reachable for touch/keyboard users. */
+.gh.show-path .gh-path,
+.gh.collapsed .gh-path {
+  max-height: 1.4em;
+  opacity: 1;
 }
 
-/* More button — hidden until hover */
-.gh-more {
-  display: none;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  color: var(--muted);
-  border-radius: 4px;
-}
+/* More button — hidden until hover (or while its menu is open / focused).
+   `.gh .gh-more` out-specificities IconButton's display so the hidden default wins. */
+.gh .gh-more { display: none; }
 .gh:hover .gh-more,
-.gh-more.open {
-  display: inline-flex;
-}
-.gh-more:hover,
-.gh-more.open { color: var(--ink); background: var(--line2); }
-.gh-more:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-  /* Keyboard users can't hover, so the focused kebab must be visible. */
-  display: inline-flex;
-}
+.gh-more.open,
+.gh-more:focus-visible { display: inline-flex; }
+.gh-more.open { color: var(--color-text); background: var(--color-line); }
 
 .group-empty {
-  padding: 8px 10px 8px calc(var(--sb-pad-x) + var(--sb-gutter) + var(--sb-gap));
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  color: var(--faint);
-  font-family: var(--mono);
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) + var(--sb-gutter) + var(--sb-gap));
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
 }
 .show-more {
   display: block;
   width: 100%;
-  padding: 6px 10px 6px calc(var(--sb-pad-x) + var(--sb-gutter) + var(--sb-gap));
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) + var(--sb-gutter) + var(--sb-gap));
   background: none;
   border: none;
-  color: var(--dim);
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  font-family: var(--mono);
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
   cursor: pointer;
   text-align: left;
 }
 .show-more:hover {
-  color: var(--blue2);
-  background: var(--soft);
+  color: var(--color-accent-hover);
+  background: var(--color-surface-sunken);
 }
 
 /* Inline workspace rename input */
 .gh-rename {
   flex: 1;
   min-width: 0;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  font-weight: 400;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--blue);
-  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-xs);
   padding: 2px 5px;
   outline: none;
 }
+
+.gh-rename { border-radius: var(--radius-sm); font-family: var(--sans); }
+.gh-add { color: var(--faint); }
+.gh-add:hover { color: var(--dim); }
 </style>

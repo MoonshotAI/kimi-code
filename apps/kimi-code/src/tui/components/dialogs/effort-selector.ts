@@ -4,7 +4,7 @@ import {
   matchesKey,
   truncateToWidth,
   type Focusable,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 
 import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 

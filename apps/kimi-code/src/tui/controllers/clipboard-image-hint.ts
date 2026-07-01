@@ -1,4 +1,4 @@
-import type { TUI } from '@earendil-works/pi-tui';
+import type { TUI } from '@moonshot-ai/pi-tui';
 
 import { clipboardHasImage } from '#/utils/clipboard/clipboard-has-image';
 

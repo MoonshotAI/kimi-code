@@ -7,7 +7,7 @@ import {
   type Focusable,
   getCapabilities,
   Spacer,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ApprovalRequest,
@@ -2280,6 +2280,10 @@ export class KimiTUI {
       case 'session': {
         this.stopActivitySpinner();
         this.syncAgentSwarmActivitySpinner(undefined);
+        // Keep a placeholder row so the activity area does not fully shrink
+        // when the spinner is removed at the end of streaming; combined with
+        // pi-tui's clamp, this avoids a destructive full redraw (viewport jump).
+        this.state.activityContainer.addChild(new Spacer(1));
         break;
       }
     }

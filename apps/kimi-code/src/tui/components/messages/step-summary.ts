@@ -1,4 +1,4 @@
-import type { Component } from '@earendil-works/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 

@@ -8,12 +8,11 @@ export default {
   copyPath: '复制路径',
   changed: '{n} 处改动',
   gitTooltip: '打开「文件 > 改动」',
-  detached: 'detached',
+  detached: '游离',
   openPr: '打开 Pull Request',
   options: '选项',
   copySessionId: '复制 Session ID',
   renameSession: '重命名',
   forkSession: '分叉会话',
   archiveSession: '归档',
-  confirmArchive: '确认归档？',
 };

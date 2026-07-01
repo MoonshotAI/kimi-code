@@ -3,7 +3,7 @@ import type {
   AutocompleteProvider,
   AutocompleteSuggestions,
   TUI,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';

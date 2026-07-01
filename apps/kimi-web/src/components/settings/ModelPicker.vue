@@ -1,11 +1,17 @@
 <!-- apps/kimi-web/src/components/settings/ModelPicker.vue -->
 <!-- Modal overlay for switching the active session's model. -->
-<!-- Light only, monospace-forward, Kimi blue #1565C0, no emoji. -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
+import Dialog from '../ui/Dialog.vue';
+import Button from '../ui/Button.vue';
+import IconButton from '../ui/IconButton.vue';
+import Icon from '../ui/Icon.vue';
+import Input from '../ui/Input.vue';
+import Badge from '../ui/Badge.vue';
+import Spinner from '../ui/Spinner.vue';
 
 const { t } = useI18n();
 
@@ -127,61 +133,41 @@ function selectTab(tabId: string): void {
 </script>
 
 <template>
-  <!-- Backdrop -->
-  <div class="backdrop" @click.self="emit('close')">
-    <!-- Dialog -->
-    <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('model.dialogLabel')">
-      <!-- Header -->
-      <div class="dh">
-        <span class="dtitle">{{ t('model.title') }}</span>
-        <button class="close-btn" :title="t('model.close')" @click="emit('close')">✕</button>
-      </div>
-
+  <Dialog :open="true" :close-on-esc="false" :title="t('model.title')" size="xl" height="fixed" @close="emit('close')">
+    <div ref="dialogRef" class="mp">
       <!-- Search -->
       <div class="search-wrap">
-        <input
+        <Input
           ref="searchRef"
           v-model="query"
-          class="search-input"
-          type="text"
           :placeholder="t('model.searchPlaceholder')"
           autocomplete="off"
           spellcheck="false"
+          autofocus
         />
       </div>
 
-      <div v-if="providerTabs.length > 1" class="tab-strip" role="tablist" :aria-label="t('model.providerTabs')">
-        <button
+      <div v-if="providerTabs.length > 1" class="tab-strip">
+        <Button
           v-for="tab in providerTabs"
           :key="tab.id"
-          type="button"
-          class="tab-btn"
-          :class="{ on: tab.id === activeTab }"
-          role="tab"
-          :aria-selected="tab.id === activeTab"
+          :variant="tab.id === activeTab ? 'secondary' : 'ghost'"
+          size="sm"
           @click="selectTab(tab.id)"
         >
           {{ tab.label }}
-        </button>
+        </Button>
       </div>
 
       <!-- Loading state -->
-      <div v-if="loading" class="loading-state">
-        <svg class="spin-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5">
-          <circle cx="8" cy="8" r="6" stroke-dasharray="24 12" stroke-linecap="round">
-            <animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="1s" repeatCount="indefinite"/>
-          </circle>
-        </svg>
+      <div v-if="loading" class="state-row">
+        <Spinner size="sm" />
         <span>{{ t('model.loading') }}</span>
       </div>
 
       <!-- Unavailable state (daemon 404 / endpoint not supported) -->
-      <div v-else-if="unavailable" class="unavail-state">
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="var(--warn)" stroke-width="1.5">
-          <path d="M10 2 L19 18 H1 Z"/>
-          <line x1="10" y1="9" x2="10" y2="13"/>
-          <circle cx="10" cy="16" r="0.8" fill="var(--warn)"/>
-        </svg>
+      <div v-else-if="unavailable" class="state-row unavail">
+        <Icon name="alert-triangle" size="lg" />
         <span>{{ t('model.unavailable') }}</span>
       </div>
 
@@ -201,48 +187,25 @@ function selectTab(tabId: string): void {
           @mouseenter="selectedIdx = flatIdx(m)"
         >
           <span class="check">
-            <svg
-              v-if="m.id === current"
-              viewBox="0 0 16 16"
-              width="13"
-              height="13"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 8.5l3.5 3.5L13 4.5"/>
-            </svg>
+            <Icon v-if="m.id === current" name="check" size="sm" />
           </span>
           <span class="model-main">
             <span class="model-name">{{ m.displayName ?? m.model }}</span>
             <span class="model-id">{{ m.id }}</span>
+            <span v-if="m.capabilities && m.capabilities.length > 0" class="caps">
+              <Badge v-for="cap in m.capabilities" :key="cap" variant="info" size="sm">{{ cap }}</Badge>
+            </span>
           </span>
           <span class="model-provider">{{ m.provider }}</span>
           <span class="model-ctx">{{ t('model.contextSuffix', { size: Math.round(m.maxContextSize / 1000) }) }}</span>
-          <span v-if="m.capabilities && m.capabilities.length > 0" class="caps">
-            {{ m.capabilities.join(', ') }}
-          </span>
-          <button
-            type="button"
-            class="star-btn"
-            :class="{ starred: isStarred(m.id) }"
-            :title="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"
+          <IconButton
+            size="sm"
+            :label="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"
             @click.stop="emit('toggle-star', m.id)"
-            @mouseenter.stop
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path
-                :fill="isStarred(m.id) ? 'currentColor' : 'none'"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linejoin="round"
-                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"
-              />
-            </svg>
-          </button>
+            <Icon v-if="isStarred(m.id)" name="star" size="md" />
+            <Icon v-else name="star-outline" size="md" />
+          </IconButton>
         </div>
         <div v-if="flat.length === 0 && !loading && !unavailable" class="empty">
           {{ props.models.length === 0 ? t('model.emptyNoModels') : t('model.emptyNoMatch') }}
@@ -252,142 +215,51 @@ function selectTab(tabId: string): void {
       <!-- Footer hint -->
       <div class="footer-hint">{{ t('model.footerHint') }}</div>
     </div>
-  </div>
+  </Dialog>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(20, 23, 28, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-
-.dialog {
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  width: 760px;
-  max-width: calc(100vw - 32px);
-  height: 680px;
-  max-height: calc(100vh - 80px);
-  display: flex;
-  flex-direction: column;
-  font-family: var(--mono);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.14);
-  overflow: hidden;
-}
-
-/* Header */
-.dh {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  gap: 8px;
-}
-.dtitle {
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  font-weight: 700;
-  color: var(--ink);
-  flex: 1;
-  letter-spacing: 0.02em;
-}
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--faint);
-  cursor: pointer;
-  font-size: var(--ui-font-size);
-  padding: 2px 4px;
-  line-height: 1;
-}
-.close-btn:hover { color: var(--ink); }
+.mp { display: flex; flex-direction: column; gap: var(--space-2); }
 
 /* Search */
-.search-wrap {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line2);
-  flex: none;
-}
-.search-input {
-  width: 100%;
-  box-sizing: border-box;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: var(--panel);
-  color: var(--ink);
-  outline: none;
-}
+.search-wrap { padding-bottom: var(--space-1); }
 
 .tab-strip {
-  flex: none;
   display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line2);
-  background: var(--panel);
+  gap: var(--space-1);
   overflow-x: auto;
-}
-.tab-btn {
-  flex: none;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 2px);
-  padding: 4px 9px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.tab-btn:hover {
-  color: var(--ink);
-  background: var(--panel2);
-}
-.tab-btn.on {
-  color: var(--bg);
-  background: var(--blue);
-  border-color: var(--blue);
-  font-weight: 700;
 }
 
 /* Model list */
 .model-list {
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
-  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) 0;
 }
 
 .model-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  color: var(--text);
+  color: var(--color-text);
   min-width: 0;
+  transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 .model-row:hover, .model-row.is-selected {
-  background: var(--soft);
+  background: var(--color-surface-sunken);
 }
 .model-row.is-current {
-  color: var(--ink);
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
 }
 
 .check {
   width: 14px;
   height: 14px;
-  color: var(--blue);
+  color: var(--color-accent);
   flex: none;
   display: flex;
   align-items: center;
@@ -398,111 +270,77 @@ function selectTab(tabId: string): void {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .model-name {
-  font-weight: 500;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .model-id {
-  color: var(--faint);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .model-provider {
-  color: var(--muted);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
   flex: none;
   max-width: 110px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .model-ctx {
-  color: var(--muted);
-  font-size: calc(var(--ui-font-size) - 3px);
   flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 .caps {
-  color: var(--blue);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  border: 1px solid var(--bd);
-  border-radius: 3px;
-  padding: 1px 5px;
-  flex: none;
-}
-.star-btn {
-  flex: none;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  margin: -4px -6px -4px 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  line-height: 1;
-}
-.star-btn:hover {
-  background: var(--panel2);
-  color: var(--star);
-}
-.star-btn.starred {
-  color: var(--star);
-}
-.star-btn.starred:hover {
-  color: var(--faint);
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
 }
 
-.loading-state,
-.unavail-state {
+.state-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 20px 14px;
-  color: var(--dim);
-  font-size: var(--ui-font-size);
-  flex: 1;
-  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-5) 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
 }
-.unavail-state { color: var(--warn); }
+.state-row.unavail { color: var(--color-warning); }
 
 .empty {
-  padding: 20px 14px;
-  color: var(--muted);
-  font-size: var(--ui-font-size);
+  padding: var(--space-5) 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
 }
 
 /* Footer */
 .footer-hint {
-  padding: 6px 14px;
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  color: var(--faint);
-  border-top: 1px solid var(--line2);
-  background: var(--panel);
-  flex: none;
+  padding-top: var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  border-top: 1px solid var(--color-line);
 }
 
 @media (max-width: 640px) {
-  .backdrop {
-    align-items: stretch;
-    padding: 12px;
-  }
-  .dialog {
-    width: 100%;
-    max-width: none;
-    height: 640px;
-    max-height: calc(100dvh - 24px);
-  }
   .model-provider,
   .caps {
     display: none;

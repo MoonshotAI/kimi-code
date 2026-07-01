@@ -1,4 +1,4 @@
-import { Text, truncateToWidth, type Component } from '@earendil-works/pi-tui';
+import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { FAILURE_MARK, STATUS_BULLET } from '#/tui/constant/symbols';

@@ -19,10 +19,13 @@ export interface SwarmGroup {
 
 const PHASES: readonly AppSubagentPhase[] = ['queued', 'working', 'suspended', 'completed', 'failed'];
 
-function phaseForTask(task: AppTask): AppSubagentPhase {
-  if (task.subagentPhase) return task.subagentPhase;
+export function phaseForTask(task: AppTask): AppSubagentPhase {
+  // Terminal statuses are authoritative over a possibly-stale subagentPhase: a
+  // cancelled task keeps whatever phase it last had (e.g. 'working'), which
+  // would otherwise keep it "live" and suppress the finished swarm card forever.
   if (task.status === 'completed') return 'completed';
-  if (task.status === 'failed') return 'failed';
+  if (task.status === 'failed' || task.status === 'cancelled') return 'failed';
+  if (task.subagentPhase) return task.subagentPhase;
   return 'working';
 }
 

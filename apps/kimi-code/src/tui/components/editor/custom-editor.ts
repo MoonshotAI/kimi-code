@@ -11,7 +11,7 @@ import {
   visibleWidth,
   type SelectItem,
   type TUI,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';

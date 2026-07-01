@@ -1113,7 +1113,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
       thinking: 'thinking',
       planMode: 'plan_mode',
       yolo: 'yolo',
-      defaultThinking: 'default_thinking',
       defaultPermissionMode: 'default_permission_mode',
       defaultPlanMode: 'default_plan_mode',
       permission: 'permission',

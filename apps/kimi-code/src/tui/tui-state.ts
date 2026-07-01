@@ -2,7 +2,7 @@ import {
   Container,
   ProcessTerminal,
   TUI,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 
 import { FooterComponent } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';

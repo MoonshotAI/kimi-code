@@ -19,7 +19,7 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
   type Component,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import type { GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';

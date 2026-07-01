@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>kimi-web · Composer 左下角按钮设计方案 v2</title>
+<style>
+  :root {
+    --page: #fafafa;
+    --surface: #ffffff;
+    --border: #ebebed;
+    --border-strong: #dedee2;
+    --text: #18181b;
+    --muted: #71717a;
+    --faint: #a1a1aa;
+    --hover: #f4f4f5;
+    --active: #eeeeef;
+    --accent: #18181b;
+    --dot-manual: #a1a1aa;
+    --dot-yolo: #f59e0b;
+    --dot-auto: #ef4444;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(0,0,0,.06);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  [data-theme="dark"] {
+    --page: #0c0c0e;
+    --surface: #141417;
+    --border: #25252a;
+    --border-strong: #303037;
+    --text: #e4e4e7;
+    --muted: #a1a1aa;
+    --faint: #71717a;
+    --hover: #1d1d22;
+    --active: #26262c;
+    --accent: #e4e4e7;
+    --dot-manual: #71717a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 16px 40px rgba(0,0,0,.45);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 36px 24px 90px;
+    background: var(--page); color: var(--text);
+    font-family: var(--sans); font-size: 14px; line-height: 1.5;
+    transition: background .25s, color .25s;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  h1 { font-size: 21px; font-weight: 650; margin: 0; letter-spacing: -.01em; }
+  .theme-toggle {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 12.5px; color: var(--muted); user-select: none;
+  }
+  .theme-toggle .track {
+    width: 38px; height: 22px; border-radius: 999px; background: var(--border-strong); position: relative;
+    transition: background .2s;
+  }
+  .theme-toggle .track::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s;
+  }
+  [data-theme="dark"] .theme-toggle .track { background: #3f3f46; }
+  [data-theme="dark"] .theme-toggle .track::after { transform: translateX(16px); }
+
+  .lead { color: var(--muted); margin: 6px 0 34px; font-size: 13.5px; }
+
+  .section { margin: 0 0 46px; }
+  .sh { display: flex; align-items: center; gap: 9px; margin: 0 0 6px; }
+  .sh h2 { font-size: 14.5px; font-weight: 650; margin: 0; letter-spacing: -.01em; }
+  .num { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .rec { font-size: 10.5px; font-weight: 600; color: #fff; background: var(--text); border-radius: 999px; padding: 1.5px 8px; }
+  [data-theme="dark"] .rec { background: var(--text); color: #111; }
+  .desc { color: var(--muted); font-size: 13px; margin: 0 0 15px; }
+
+  /* ===== composer shell ===== */
+  .composer { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+  .input { padding: 15px 17px 6px; min-height: 54px; color: var(--faint); font-size: 14.5px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 10px; gap: 8px; }
+  .left { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+
+  .ic { width: 15px; height: 15px; display: inline-block; vertical-align: -2.5px; flex: none;
+        fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .ic.sm { width: 12.5px; height: 12.5px; }
+  .send { width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--accent); color: var(--surface);
+          display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+
+  /* model pill (right, contextual) */
+  .model { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border-radius: 9px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .model:hover { background: var(--hover); color: var(--text); }
+
+  /* ============================================================
+     方向 A：静谧线性（Quiet Linear）
+     ============================================================ */
+  .a-strip {
+    display: inline-flex; align-items: center; height: 32px;
+    border: 1px solid var(--border); border-radius: 10px; padding: 0 3px;
+    background: var(--surface);
+  }
+  .a-strip .it {
+    display: inline-flex; align-items: center; gap: 6.5px; height: 26px; padding: 0 9px;
+    border-radius: 7px; font-size: 13px; color: var(--muted); cursor: pointer; border: none; background: none; font: inherit;
+  }
+  .a-strip .it:hover { background: var(--hover); color: var(--text); }
+  .a-strip .sep { width: 1px; height: 14px; background: var(--border); }
+  .sd { width: 6.5px; height: 6.5px; border-radius: 50%; flex: none; }
+  .sd.auto { background: var(--dot-auto); }
+  .sd.yolo { background: var(--dot-yolo); }
+  .sd.manual { background: var(--dot-manual); }
+
+  /* ============================================================
+     方向 B：浮动胶囊 Dock（Floating Pill）
+     ============================================================ */
+  .b-composer { border-radius: 22px; }
+  .b-dock {
+    display: inline-flex; align-items: center; height: 34px; padding: 0 5px; gap: 1px;
+    border: 1px solid var(--border); border-radius: 999px;
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    backdrop-filter: blur(14px) saturate(1.4);
+    box-shadow: 0 4px 16px rgba(0,0,0,.05);
+  }
+  [data-theme="dark"] .b-dock { box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+  .b-dock .it {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+    border-radius: 999px; font-size: 12.5px; color: var(--muted); cursor: pointer; border: none; background: none; font: inherit;
+  }
+  .b-dock .it:hover { background: var(--hover); color: var(--text); }
+  .b-dock .it.on { background: var(--text); color: var(--surface); }
+  [data-theme="dark"] .b-dock .it.on { background: var(--text); color: #111; }
+
+  /* ============================================================
+     方向 C：毛玻璃浮层（Frosted Glass）
+     ============================================================ */
+  .c-composer {
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, transparent), var(--surface));
+  }
+  .c-glass {
+    display: inline-flex; align-items: center; height: 32px; padding: 0 4px; gap: 2px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent); border-radius: 11px;
+    background: color-mix(in srgb, var(--surface) 55%, transparent);
+    backdrop-filter: blur(18px) saturate(1.6);
+  }
+  .c-glass .it {
+    display: inline-flex; align-items: center; gap: 6.5px; height: 25px; padding: 0 9px;
+    border-radius: 8px; font-size: 12.5px; color: var(--muted); cursor: pointer; border: none; background: none; font: inherit;
+  }
+  .c-glass .it:hover { background: color-mix(in srgb, var(--hover) 80%, transparent); color: var(--text); }
+  .c-pip { width: 7px; height: 7px; border-radius: 50%; flex: none; box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--dot-auto) 22%, transparent); }
+  .c-pip.auto { background: var(--dot-auto); }
+
+  /* ============================================================
+     方向 D：编辑式纯文字（Editorial）
+     ============================================================ */
+  .d-composer { border: none; box-shadow: none; background: transparent; }
+  .d-input { padding: 4px 2px 10px; }
+  .d-toolbar { padding: 6px 2px 0; border-top: 1px solid var(--border); }
+  .d-left { gap: 2px; }
+  .d-left .it {
+    display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 4px;
+    border: none; background: none; border-radius: 6px; font-size: 13px; color: var(--muted); cursor: pointer; font: inherit;
+  }
+  .d-left .it:hover { color: var(--text); }
+  .d-left .it .ic { opacity: .7; }
+  .d-left .it:hover .ic { opacity: 1; }
+  .d-left .it b { font-weight: 500; color: var(--text); }
+  .d-sep { color: var(--border-strong); padding: 0 2px; }
+
+  .note { margin-top: 11px; font-size: 12.5px; color: var(--faint); display: flex; gap: 7px; align-items: flex-start; }
+  .note .d { width: 4px; height: 4px; border-radius: 50%; background: var(--muted); margin-top: 7px; flex: none; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-image" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5" cy="6" r="1.2"/><path d="M2 10.5l3-2.5L8 11l2.5-2L14 11"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="8" x2="20" y2="8"/><circle cx="10" cy="8" r="2.5" fill="currentColor" stroke="none"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.5 12.5 3v4.2c0 3-2 5.2-4.5 6.3C5.5 12.4 3.5 10.2 3.5 7.2V3L8 1.5z"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 16 16"><path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+  <symbol id="i-send" viewBox="0 0 16 16"><path d="M8 3l6 5.5M8 3L2 8.5M8 3v10"/></symbol>
+</svg>
+
+<div class="wrap">
+  <div class="topbar">
+    <h1>Composer 左下角 · v2</h1>
+    <label class="theme-toggle" id="themeToggle"><span>深色</span><span class="track"></span></label>
+  </div>
+  <p class="lead">统一目标：减少噪点（去掉彩色胶囊、合并视觉块），并用完全不同的设计语言。右上角可切换深色预览。</p>
+
+  <!-- ===== 方向 A ===== -->
+  <div class="section">
+    <div class="sh"><span class="num">A</span><h2>静谧线性（Quiet Linear）</h2><span class="rec">推荐</span></div>
+    <p class="desc">参考 Linear / Vercel。三个控件收进一条发丝边框的容器，黑白灰 + 精致留白；权限仅用一个 6px 状态点表达，去掉所有彩色胶囊。</p>
+    <div class="composer">
+      <div class="input">给 Kimi 发送消息…</div>
+      <div class="toolbar">
+        <div class="left">
+          <div class="a-strip">
+            <button class="it"><svg class="ic"><use href="#i-image"/></svg>附件</button>
+            <span class="sep"></span>
+            <button class="it"><span class="sd auto"></span>自动<svg class="ic sm" style="opacity:.5"><use href="#i-chevron"/></svg></button>
+            <span class="sep"></span>
+            <button class="it"><svg class="ic"><use href="#i-sliders"/></svg>模式</button>
+          </div>
+        </div>
+        <div class="right">
+          <span class="model">kimi-k2 · thinking<svg class="ic sm"><use href="#i-chevron"/></svg></span>
+          <button class="send"><svg class="ic" style="stroke:currentColor"><use href="#i-send"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div class="note"><span class="d"></span><span>整条读作"一个对象"而非 3~5 个碎片；权限颜色从大字红/橙降级为一个小点，安静但仍有语义。</span></div>
+  </div>
+
+  <!-- ===== 方向 B ===== -->
+  <div class="section">
+    <div class="sh"><span class="num">B</span><h2>浮动胶囊 Dock（Floating Pill）</h2></div>
+    <p class="desc">参考 iOS / Arc 浏览器。所有控件放进一枚圆角 999px 的"药丸"，半透明 + 背景模糊，像悬浮在输入框底部的工具条。激活项用反色胶囊。</p>
+    <div class="composer b-composer">
+      <div class="input">给 Kimi 发送消息…</div>
+      <div class="toolbar">
+        <div class="left">
+          <div class="b-dock">
+            <button class="it"><svg class="ic"><use href="#i-plus"/></svg></button>
+            <button class="it"><span class="sd auto"></span>自动</button>
+            <button class="it on"><svg class="ic"><use href="#i-sparkles"/></svg>Plan</button>
+          </div>
+        </div>
+        <div class="right">
+          <span class="model">kimi-k2<svg class="ic sm"><use href="#i-chevron"/></svg></span>
+          <button class="send"><svg class="ic" style="stroke:currentColor"><use href="#i-send"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div class="note"><span class="d"></span><span>把"当前启用的模式"直接做成反色胶囊（这里是 Plan），状态一目了然；附件退化为单个 +，节省空间。</span></div>
+  </div>
+
+  <!-- ===== 方向 C ===== -->
+  <div class="section">
+    <div class="sh"><span class="num">C</span><h2>毛玻璃浮层（Frosted Glass）</h2></div>
+    <p class="desc">半透明磨砂 + 柔和阴影，工具条轻飘飘地浮在输入区上方，整体更"现代、通透"。权限点带一圈柔光 halo。</p>
+    <div class="composer c-composer">
+      <div class="input">给 Kimi 发送消息…</div>
+      <div class="toolbar">
+        <div class="left">
+          <div class="c-glass">
+            <button class="it"><svg class="ic"><use href="#i-image"/></svg>附件</button>
+            <button class="it"><span class="c-pip auto"></span>自动<svg class="ic sm" style="opacity:.5"><use href="#i-chevron"/></svg></button>
+            <button class="it"><svg class="ic"><use href="#i-sliders"/></svg>模式</button>
+          </div>
+        </div>
+        <div class="right">
+          <span class="model">kimi-k2 · thinking<svg class="ic sm"><use href="#i-chevron"/></svg></span>
+          <button class="send"><svg class="ic" style="stroke:currentColor"><use href="#i-send"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div class="note"><span class="d"></span><span>通透感最强，适合配浅色/渐变背景；代价是 <code>backdrop-filter</code> 在低端机上略耗性能。</span></div>
+  </div>
+
+  <!-- ===== 方向 D ===== -->
+  <div class="section">
+    <div class="sh"><span class="num">D</span><h2>编辑式纯文字（Editorial）</h2></div>
+    <p class="desc">参考 Notion / 写作应用。彻底去掉边框、填充、胶囊，只剩一条分隔线 + 精心排版的文字和小图标，hover 才显出交互。最克制、最"轻"。</p>
+    <div class="composer d-composer">
+      <div class="input d-input">给 Kimi 发送消息…</div>
+      <div class="toolbar d-toolbar">
+        <div class="left d-left">
+          <button class="it"><svg class="ic"><use href="#i-image"/></svg><b>图片</b></button>
+          <span class="d-sep">/</span>
+          <button class="it"><span class="sd auto"></span><b>自动</b></button>
+          <span class="d-sep">/</span>
+          <button class="it"><svg class="ic"><use href="#i-sliders"/></svg><b>模式</b></button>
+        </div>
+        <div class="right">
+          <span class="model">kimi-k2 · thinking<svg class="ic sm"><use href="#i-chevron"/></svg></span>
+          <button class="send"><svg class="ic" style="stroke:currentColor"><use href="#i-send"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <div class="note"><span class="d"></span><span>信息密度最低，几乎"隐形"；适合强调输入本身、不想被工具条抢戏的场景。</span></div>
+  </div>
+
+</div>
+
+<script>
+  const toggle = document.getElementById('themeToggle');
+  toggle.addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    document.documentElement.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+  });
+</script>
+</body>
+</html>
