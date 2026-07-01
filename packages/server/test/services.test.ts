@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { InstantiationService, ServiceCollection, EventService, FsWatcherService, IApprovalService, IEventService, ILogService, IQuestionService, type ApprovalResponse, type QuestionResult, type FsWatcherServiceOptions, type IEnvironmentService, type ILogService as ILoggerT, type ISessionService } from '@moonshot-ai/agent-core';
+import { Emitter, InstantiationService, ServiceCollection, EventService, FsWatcherService, IApprovalService, IEventService, ILogService, IQuestionService, type ApprovalResponse, type QuestionResult, type FsWatcherServiceOptions, type IEnvironmentService, type ILogService as ILoggerT, type ISessionService } from '@moonshot-ai/agent-core';
 import type { Event } from '@moonshot-ai/protocol';
 
 import { ApprovalService } from '#/services/approval/approvalService';
@@ -134,6 +134,29 @@ class FakeWatcher {
 }
 
 type TestFsWatcher = ReturnType<NonNullable<FsWatcherServiceOptions['watcherFactory']>>;
+
+function makeSessionService(
+  closeEmitter = new Emitter<{ sessionId: string }>(),
+): ISessionService {
+  const createEmitter = new Emitter<never>();
+  return {
+    _serviceBrand: undefined,
+    create: async () => { throw new Error('not implemented'); },
+    list: async () => ({ items: [], has_more: false }),
+    get: async () => { throw new Error('not implemented'); },
+    update: async () => { throw new Error('not implemented'); },
+    fork: async () => { throw new Error('not implemented'); },
+    listChildren: async () => ({ items: [], has_more: false }),
+    createChild: async () => { throw new Error('not implemented'); },
+    getStatus: async () => { throw new Error('not implemented'); },
+    getSessionWarnings: async () => [],
+    compact: async () => { throw new Error('not implemented'); },
+    undo: async () => { throw new Error('not implemented'); },
+    archive: async () => { throw new Error('not implemented'); },
+    onDidCreate: createEmitter.event,
+    onDidClose: closeEmitter.event,
+  };
+}
 
 let ix: InstantiationService;
 let testLogger: TestLogger;
@@ -463,7 +486,7 @@ describe('FsWatcherService', () => {
       { resolve: () => undefined },
       { watcherFactory: () => watcher as unknown as TestFsWatcher },
       testLogger,
-      {} as ISessionService,
+      makeSessionService(),
     );
     const path = '/workspace/src';
 
@@ -496,7 +519,7 @@ describe('FsWatcherService', () => {
       { resolve: () => undefined },
       { watcherFactory: () => watcher as unknown as TestFsWatcher },
       testLogger,
-      {} as ISessionService,
+      makeSessionService(),
     );
     const paths = ['/workspace/src', '/workspace/docs', '/workspace/notes'];
     watcher.unwatchErrors.set(paths[0]!, new Error('unwatch-src'));
@@ -515,6 +538,29 @@ describe('FsWatcherService', () => {
     expect(watcher.unwatched).toEqual([[paths[0]!], [paths[1]!]]);
     expect(service.watchedPaths('conn', 'sid')).toEqual([paths[2]!]);
     expect(watcher.closeCalls).toBe(0);
+    service.dispose();
+  });
+
+  it('releases a session watcher when the session closes', () => {
+    const watcher = new FakeWatcher();
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const service = new FsWatcherService(
+      { resolve: () => undefined },
+      { watcherFactory: () => watcher as unknown as TestFsWatcher },
+      testLogger,
+      makeSessionService(closeEmitter),
+    );
+    const path = '/workspace/src';
+
+    service.addPaths('sid', 'conn-a', [path]);
+    service.addPaths('sid', 'conn-b', [path]);
+    closeEmitter.fire({ sessionId: 'sid' });
+
+    expect(watcher.closeCalls).toBe(1);
+    expect(service.watchedPaths('conn-a', 'sid')).toEqual([]);
+    expect(service.watchedPaths('conn-b', 'sid')).toEqual([]);
+    expect(service.countForConnection('conn-a')).toBe(0);
+    expect(service.countForConnection('conn-b')).toBe(0);
     service.dispose();
   });
 });
