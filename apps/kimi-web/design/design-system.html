@@ -823,6 +823,7 @@
       <a href="#themes"><span class="num">05</span>主题系统</a>
       <a href="#rules"><span class="num">06</span>样式规则</a>
       <a href="#shell"><span class="num">07</span>应用壳与侧栏</a>
+      <a href="#a11y"><span class="num">08</span>可访问性</a>
     </nav>
 
     <div class="nav-group">配套产出</div>
@@ -1223,6 +1224,10 @@
           每个基元只暴露 <code>variant</code> / <code>size</code> 两个维度的变体，外观由 token 驱动，
           从而天然支持亮 / 暗模式与可定制主题色。
         </p>
+
+        <div class="callout info"><span class="ico">i</span><div>
+          每个交互基元的<b>键盘行为、焦点与 ARIA 契约见 §08 可访问性</b>。新增基元须一并给出键盘模型，不能只实现鼠标交互。
+        </div></div>
 
         <!-- ===== 组件选型指南 ===== -->
         <h3 class="sub">组件选型指南</h3>
@@ -2076,7 +2081,7 @@ export function auth(token: string) {
         </table>
 
         <h3 class="sub">状态矩阵 State matrix </h3>
-        <p>每个可交互基元都应在适用处定义以下状态，缺失即按样式规则告警。<code>focus-visible</code> 一律走 <code>--p-focus-ring</code>，<code>disabled</code> 统一 <code>opacity:.5</code>。</p>
+        <p>每个可交互基元都应在适用处定义以下状态，缺失即按样式规则告警。<code>focus-visible</code> 一律走 <code>--p-focus-ring</code>（只在键盘聚焦时出现，详见 §08），<code>disabled</code> 统一 <code>opacity:.5</code>。</p>
         <table class="dt">
           <thead><tr><th>状态 State</th><th>Button</th><th>Input</th><th>Card</th><th>Menu item</th><th>Switch</th></tr></thead>
           <tbody>
@@ -2216,6 +2221,69 @@ export function auth(token: string) {
 
         <div class="callout info"><span class="ico">i</span><div>
           <b>一句话原则：</b>侧栏 / 壳是「列表 + 网格」骨架，复用 §02 token 与 §03 基元（Button / IconButton / Badge / Menu / Spinner / PanelHeader）；凡是不 fit 基元的紧凑列表控件（search、New chat、行间改名、show-more）保留定制，并以本节为规范。
+        </div></div>
+      </section>
+
+      <!-- ===== 08 可访问性 A11y ===== -->
+      <section id="a11y">
+        <div class="sec-head">
+          <span class="sec-num">08</span>
+          <h2 class="sec-title">可访问性 A11y（务实版）</h2>
+        </div>
+        <p class="sec-desc">
+          Kimi Web 是本地开发者工具，<b>不以 WCAG 某一 conformance 级别为目标</b>，也不维护完整的读屏 QA 矩阵。
+          本节只收「低成本、不损观感、对键盘重度用户也有直接好处」的规则，作为各基元的底线契约；
+          其余昂贵且 ROI 偏低的部分（如对流式输出的实时播报编排）暂不作为强制要求。
+        </p>
+
+        <div class="callout info"><span class="ico">i</span><div>
+          <b>关于焦点环「丑」：</b>下面要求的焦点可见性一律用 <code>:focus-visible</code>（而非 <code>:focus</code>）。
+          它<b>只在键盘聚焦时</b>出现，鼠标点击不会触发，因此不会污染鼠标驱动的视觉；环的强弱用 <code>--p-focus-ring</code> 统一调，不逐处覆盖。
+        </div></div>
+
+        <h4 class="mini">1. 对比度与颜色 Contrast &amp; color</h4>
+        <ul class="clean">
+          <li>正文文本与背景对比度 <b>≥ 4.5:1</b>；控件边框、图标、关键图形 <b>≥ 3:1</b>。换主题色 / 暗色模式时按 §05 一起核对。</li>
+          <li><b>状态不只靠颜色传达。</b>错误、选中、禁用等状态要同时有文字、图标或形态变化（例如错误态不只红，还带文案或图标）。</li>
+        </ul>
+
+        <h4 class="mini">2. 键盘可操作 Keyboard operable</h4>
+        <p>鼠标能完成的操作，键盘必须也能完成；Tab 顺序跟随 DOM，不另造跳序。复合控件按下表定义键盘模型，缺失即视为不完整：</p>
+        <table class="dt">
+          <thead><tr><th>控件</th><th>键盘行为</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">Dialog</td><td><code>Tab</code> 在弹窗内循环（焦点锁）；<code>Esc</code> 关闭；关闭后焦点回到触发元素。</td></tr>
+            <tr><td class="tk">Menu</td><td><code>↑</code> / <code>↓</code> 移动高亮，<code>Enter</code> 选中，<code>Esc</code> 关闭。</td></tr>
+            <tr><td class="tk">Tabs</td><td><code>←</code> / <code>→</code> 切换标签（roving tabindex），只有当前标签在 Tab 序列里。</td></tr>
+            <tr><td class="tk">Switch / Segmented</td><td><code>←</code> / <code>→</code> 或 <code>Space</code> / <code>Enter</code> 切换。</td></tr>
+          </tbody>
+        </table>
+
+        <h4 class="mini">3. 焦点可见 Focus visibility</h4>
+        <ul class="clean">
+          <li>每个可交互元素在键盘聚焦时必须有可见焦点指示，统一走 <code>:focus-visible</code> + <code>--p-focus-ring</code>（主操作可用 <code>--p-focus-ring-strong</code>）。</li>
+          <li>禁止裸 <code>outline: none</code>。要去掉默认轮廓，必须同时给出等价的替代样式。</li>
+        </ul>
+
+        <h4 class="mini">4. 命名与语义 Labels &amp; semantics</h4>
+        <ul class="clean">
+          <li><b>语义 HTML 优先</b>（button / a / input / dialog…），ARIA 只在原生语义不够时补。</li>
+          <li>只有图标的按钮必须有 <code>aria-label</code>——<code>IconButton</code> 已用必填的 <code>label</code> prop 强制。</li>
+          <li>弹窗：<code>role="dialog"</code> + <code>aria-modal="true"</code>，标题作为对话框的可访问名称。</li>
+          <li>纯装饰性 SVG / 图标加 <code>aria-hidden="true"</code>，避免被读屏念出。</li>
+        </ul>
+
+        <h4 class="mini">5. 目标尺寸 Target size</h4>
+        <p>桌面可点击目标 <b>≥ 32px</b>；触摸设备 <b>≥ 44px</b>（与 §01 原则、IconButton 的 <code>lg</code> 档一致）。</p>
+
+        <h4 class="mini">6. 减少动态效果 Reduced motion</h4>
+        <p>统一在全局样式按 §02 的 <code>@media (prefers-reduced-motion: reduce)</code> 处理，组件不各自判断；MoonSpinner 月相在当前帧暂停。</p>
+
+        <h4 class="mini">7. 动态内容播报 Live announcements（非强制）</h4>
+        <p>读屏播报在本产品里<b>不做强制契约</b>。Toast 这类短提示用 <code>role="status"</code> / <code>aria-live</code> 即可；聊天流式输出当前不做逐字播报，属可接受取舍，后续如有真实需求再补。</p>
+
+        <div class="callout good"><span class="ico">✓</span><div>
+          <b>明确暂不强制：</b>WCAG conformance 级别声明、完整 ARIA 模式表、逐款读屏软件的 QA 矩阵、以及对流式输出的实时播报编排——这些不写入基元契约，避免成为无人维护的口号。
         </div></div>
       </section>
 
