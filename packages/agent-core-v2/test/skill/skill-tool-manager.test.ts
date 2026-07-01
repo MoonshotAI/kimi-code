@@ -73,11 +73,13 @@ describe('ToolManager SkillTool registration', () => {
     }
   });
 
-  it('does not expose Skill when the agent has no skill registry', () => {
+  it('exposes Skill even when the agent has no registered skills', () => {
     profile.update({ activeToolNames: ['Skill'] });
 
-    expect(ctx.toolsData().find((tool) => tool.name === 'Skill')).toBeUndefined();
-    expect(tools.resolve('Skill')).toBeUndefined();
+    expect(ctx.toolsData().find((tool) => tool.name === 'Skill')).toMatchObject({
+      name: 'Skill',
+    });
+    expect(tools.resolve('Skill')).toMatchObject({ name: 'Skill' });
   });
 });
 
@@ -103,11 +105,13 @@ describe('ToolManager SkillTool registration with an empty model skill catalog',
     }
   });
 
-  it('does not expose Skill when there are no model-invocable skills', () => {
+  it('exposes Skill even when there are no model-invocable skills', () => {
     profile.update({ activeToolNames: ['Skill'] });
 
-    expect(ctx.toolsData().find((tool) => tool.name === 'Skill')).toBeUndefined();
-    expect(tools.resolve('Skill')).toBeUndefined();
+    expect(ctx.toolsData().find((tool) => tool.name === 'Skill')).toMatchObject({
+      name: 'Skill',
+    });
+    expect(tools.resolve('Skill')).toMatchObject({ name: 'Skill' });
   });
 });
 
