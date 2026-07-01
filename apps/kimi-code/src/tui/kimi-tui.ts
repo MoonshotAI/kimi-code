@@ -137,7 +137,7 @@ import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
-import { getTranscriptComponentEntry, markTranscriptComponent } from './utils/transcript-component-metadata';
+import { isTurnBoundaryComponent, markTranscriptComponent } from './utils/transcript-component-metadata';
 import {
   TRANSCRIPT_EXPAND_TURNS,
   TRANSCRIPT_HYSTERESIS,
@@ -1818,16 +1818,6 @@ export class KimiTUI {
     this.renderWelcome();
   }
 
-  private isTurnBoundaryComponent(child: Component): boolean {
-    if (!(child instanceof UserMessageComponent)) return false;
-    const entry = getTranscriptComponentEntry(child);
-    if (entry === undefined) return false;
-    // Live user messages have an undefined turnId; replayed user messages get a
-    // `replay:N` turnId. Both start a new turn. Steer messages carry a defined
-    // non-replay turnId and are not boundaries.
-    return entry.turnId === undefined || entry.turnId.startsWith('replay:');
-  }
-
   private trimTranscriptWindow(): boolean {
     if (!TRANSCRIPT_WINDOW_ENABLED || TRANSCRIPT_MAX_TURNS <= 0) return false;
     // Session replay already caps history to its own turn limit; trimming during
@@ -1841,7 +1831,7 @@ export class KimiTUI {
     // the rest of the turn would be left behind.
     const boundaries: number[] = [];
     for (let i = 0; i < children.length; i++) {
-      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
+      if (isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
     }
 
     const turns = groupTurns(this.state.transcriptEntries);
@@ -1861,7 +1851,7 @@ export class KimiTUI {
     let boundariesSeen = 0;
     let cutoff = 0;
     for (let i = 0; i < children.length; i++) {
-      if (this.isTurnBoundaryComponent(children[i]!)) {
+      if (isTurnBoundaryComponent(children[i]!)) {
         if (boundariesSeen === boundariesToRemove) {
           cutoff = i;
           break;
@@ -1894,7 +1884,7 @@ export class KimiTUI {
     // Find the start of the current turn (last turn-starting user message).
     let turnStart = -1;
     for (let i = children.length - 1; i >= 0; i--) {
-      if (this.isTurnBoundaryComponent(children[i]!)) {
+      if (isTurnBoundaryComponent(children[i]!)) {
         turnStart = i;
         break;
       }
@@ -1963,7 +1953,7 @@ export class KimiTUI {
 
     const boundaries: number[] = [];
     for (let i = 0; i < children.length; i++) {
-      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
+      if (isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
     }
     if (boundaries.length === 0) return;
 
@@ -2221,7 +2211,7 @@ export class KimiTUI {
     // components that have no entry in the metadata map.
     const boundaries: number[] = [];
     for (let i = 0; i < children.length; i++) {
-      if (this.isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
+      if (isTurnBoundaryComponent(children[i]!)) boundaries.push(i);
     }
     const expandCutoff =
       TRANSCRIPT_EXPAND_TURNS <= 0

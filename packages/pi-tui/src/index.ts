@@ -112,3 +112,9 @@ export {
 } from "./tui.ts";
 // Utilities
 export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";
+// Ledger scrollback seam types
+export type {
+	NativeScrollbackCommittedRows,
+	NativeScrollbackLiveRegion,
+	RenderStablePrefix,
+} from "./ledger/seam.ts";
