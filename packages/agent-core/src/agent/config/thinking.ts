@@ -1,5 +1,6 @@
 import type { ThinkingEffort } from '@moonshot-ai/kosong';
 
+import { effectiveModelAlias } from '../../config';
 import type { ModelAlias, ThinkingConfig } from '../../config/schema';
 
 export type { ThinkingEffort };
@@ -29,10 +30,11 @@ function middleOf(efforts: readonly string[]): string {
  * effort is always one the model can actually accept.
  */
 export function defaultThinkingEffortFor(model: ModelAlias | undefined): ThinkingEffort {
-  if (!supportsThinking(model)) return 'off';
-  const efforts = model?.supportEfforts;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  if (!supportsThinking(effective)) return 'off';
+  const efforts = effective?.supportEfforts;
   if (efforts !== undefined && efforts.length > 0) {
-    return model?.defaultEffort ?? middleOf(efforts);
+    return effective?.defaultEffort ?? middleOf(efforts);
   }
   return 'on';
 }

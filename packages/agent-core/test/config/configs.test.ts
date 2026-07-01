@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   KimiConfigSchema,
+  configToTomlData,
   ensureConfigFile,
   loadRuntimeConfig,
   loadRuntimeConfigSafe,
@@ -867,5 +868,44 @@ ${VALID_TOML}`);
     expect(result.config.providers['kimi']).toBeDefined();
     expect(result.fileWarnings).toHaveLength(1);
     expect(result.fileWarnings[0]).toContain('default_permission_mode');
+  });
+});
+
+describe('model overrides TOML', () => {
+  it('parses nested model overrides from snake_case TOML', () => {
+    const config = parseConfigString(`
+[models."kimi-code/kimi-k2"]
+provider = "managed:kimi-code"
+model = "kimi-k2"
+max_context_size = 262144
+support_efforts = ["low", "high", "max"]
+
+[models."kimi-code/kimi-k2".overrides]
+support_efforts = ["low", "high"]
+default_effort = "high"
+`);
+
+    expect(config.models?.['kimi-code/kimi-k2']?.overrides).toEqual({
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('writes nested model overrides back as snake_case TOML data', () => {
+    const config = parseConfigString(`
+[models."kimi-code/kimi-k2"]
+provider = "managed:kimi-code"
+model = "kimi-k2"
+max_context_size = 262144
+
+[models."kimi-code/kimi-k2".overrides]
+support_efforts = ["low", "high"]
+`);
+
+    const data = configToTomlData(config);
+    const models = data['models'] as Record<string, Record<string, unknown>>;
+    const overrides = models['kimi-code/kimi-k2']?.['overrides'] as Record<string, unknown>;
+
+    expect(overrides['support_efforts']).toEqual(['low', 'high']);
   });
 });

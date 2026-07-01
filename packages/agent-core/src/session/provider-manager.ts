@@ -2,7 +2,14 @@ import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
-import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig, ProviderType } from '../config';
+import {
+  effectiveModelAlias,
+  type KimiConfig,
+  type ModelAlias,
+  type OAuthRef,
+  type ProviderConfig,
+  type ProviderType,
+} from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 export interface BearerTokenProvider {
@@ -90,6 +97,7 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
+    const effectiveAlias = effectiveModelAlias(alias);
     const providerName = alias.provider ?? this.config.defaultProvider;
     if (providerName === undefined) {
       throw new KimiError(
@@ -106,7 +114,7 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
-    if (!Number.isInteger(alias.maxContextSize) || alias.maxContextSize <= 0) {
+    if (!Number.isInteger(effectiveAlias.maxContextSize) || effectiveAlias.maxContextSize <= 0) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" must define a positive max_context_size in config.toml.`,
@@ -115,28 +123,28 @@ export class ProviderManager implements ModelProvider {
 
     // remove before commit
     const adaptiveThinkingOverride = this.options.adaptiveThinkingOverride?.();
-    const effectiveAdaptiveThinking = adaptiveThinkingOverride ?? alias.adaptiveThinking;
+    const effectiveAdaptiveThinking = adaptiveThinkingOverride ?? effectiveAlias.adaptiveThinking;
     const provider = toKosongProviderConfig(
       providerConfig,
       alias.model,
       alias.protocol,
       this.options.kimiRequestHeaders,
-      alias.maxOutputSize,
-      alias.reasoningKey,
+      effectiveAlias.maxOutputSize,
+      effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
       effectiveAdaptiveThinking,
       alias.betaApi,
-      alias.supportEfforts,
+      effectiveAlias.supportEfforts,
     );
 
     return {
       providerName,
       provider,
-      modelCapabilities: resolveModelCapabilities(alias, provider),
-      alwaysThinking: (alias.capabilities ?? []).some(
+      modelCapabilities: resolveModelCapabilities(effectiveAlias, provider),
+      alwaysThinking: (effectiveAlias.capabilities ?? []).some(
         (c) => c.trim().toLowerCase() === 'always_thinking',
       ),
-      maxOutputSize: alias.maxOutputSize,
+      maxOutputSize: effectiveAlias.maxOutputSize,
       type: providerConfig.type,
       protocol: alias.protocol,
     };

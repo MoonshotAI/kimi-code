@@ -905,3 +905,25 @@ describe('per-model protocol routing', () => {
     });
   });
 });
+
+describe('resolveRuntimeProvider model overrides', () => {
+  it('passes overridden supportEfforts to the kimi provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        models: {
+          'kimi-code/kimi-for-coding': {
+            ...BASE_CONFIG.models!['kimi-code/kimi-for-coding']!,
+            supportEfforts: ['low', 'high', 'max'],
+            overrides: { supportEfforts: ['low', 'high'] },
+          },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'kimi',
+      supportEfforts: ['low', 'high'],
+    });
+  });
+});

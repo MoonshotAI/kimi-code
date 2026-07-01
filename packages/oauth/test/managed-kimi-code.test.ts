@@ -1193,7 +1193,7 @@ describe('selective merge', () => {
     oauthKey: 'test-key',
   };
 
-  it('preserves hand-edited fields that upstream does not declare', () => {
+  it('preserves non-managed user fields but drops stale managed fields', () => {
     const config: ManagedKimiConfigShape = {
       providers: {},
       models: {
@@ -1224,11 +1224,11 @@ describe('selective merge', () => {
 
     const alias = config.models?.['kimi-code/kimi-k2'];
     expect(alias?.['maxOutputSize']).toBe(4096);
-    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias?.['supportEfforts']).toBeUndefined();
     expect(alias?.['maxContextSize']).toBe(262144);
   });
 
-  it('overwrites hand-edited fields when upstream declares them', () => {
+  it('preserves overrides when upstream declares managed fields', () => {
     const config: ManagedKimiConfigShape = {
       providers: {},
       models: {
@@ -1236,7 +1236,7 @@ describe('selective merge', () => {
           provider: 'kimi-code',
           model: 'kimi-k2',
           maxContextSize: 262144,
-          supportEfforts: ['low'],
+          overrides: { supportEfforts: ['low'] },
         } as Record<string, unknown>,
       },
     };
@@ -1259,6 +1259,7 @@ describe('selective merge', () => {
     const alias = config.models?.['kimi-code/kimi-k2'];
     expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
     expect(alias?.['defaultEffort']).toBe('high');
+    expect(alias?.['overrides']).toEqual({ supportEfforts: ['low'] });
   });
 
   it('removes managed models that upstream no longer lists', () => {

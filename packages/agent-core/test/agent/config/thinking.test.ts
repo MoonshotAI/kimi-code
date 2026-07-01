@@ -110,3 +110,18 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
   });
 });
+
+describe('defaultThinkingEffortFor overrides', () => {
+  it('uses overridden supportEfforts for the default effort', () => {
+    expect(
+      defaultThinkingEffortFor(
+        model({
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high', 'max'],
+          defaultEffort: 'max',
+          overrides: { supportEfforts: ['low', 'high'] },
+        }),
+      ),
+    ).toBe('high');
+  });
+});
