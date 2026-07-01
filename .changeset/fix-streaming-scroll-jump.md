@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Reduce unexpected viewport jumps when scrolling up through history during streaming output.
+Fix the transcript jumping to the top when scrolling up through history during streaming output.
