@@ -41,7 +41,11 @@ import {
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
-import { TRANSCRIPT_HYSTERESIS, TRANSCRIPT_MAX_TURNS } from '#/tui/utils/transcript-window';
+import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
+import { ThinkingComponent } from '#/tui/components/messages/thinking';
+import { UserMessageComponent } from '#/tui/components/messages/user-message';
+import { markTranscriptComponent } from '#/tui/utils/transcript-component-metadata';
+import { TRANSCRIPT_HYSTERESIS, TRANSCRIPT_KEEP_RECENT_STEPS, TRANSCRIPT_MAX_TURNS } from '#/tui/utils/transcript-window';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
@@ -91,6 +95,8 @@ interface MessageDriver {
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   getCurrentSessionId(): string;
+  mergeCurrentTurnSteps(): boolean;
+  mergeAllTurnSteps(): void;
 }
 
 interface FeedbackDriver extends MessageDriver {
@@ -413,6 +419,103 @@ describe('KimiTUI message flow', () => {
     expect(harness.track).toHaveBeenCalledWith('shortcut_editor', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_expand', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_paste', { kind: 'text' });
+  });
+
+  it('mergeCurrentTurnSteps keeps completed steps and appends one summary at the turn end', async () => {
+    const { driver } = await makeDriver();
+    const container = driver.state.transcriptContainer;
+
+    const user = new UserMessageComponent('do work');
+    markTranscriptComponent(user, { id: 'u1', kind: 'user', renderMode: 'plain', content: 'do work' });
+    container.addChild(user);
+
+    const steps: ThinkingComponent[] = [];
+    const stepCount = TRANSCRIPT_KEEP_RECENT_STEPS + 2;
+    for (let i = 0; i < stepCount; i++) {
+      const step = new ThinkingComponent(`step ${i}`);
+      steps.push(step);
+      container.addChild(step);
+    }
+
+    expect(driver.mergeCurrentTurnSteps()).toBe(true);
+
+    // Append-only: the original completed steps remain in the tree.
+    for (const step of steps) {
+      expect(container.children).toContain(step);
+    }
+
+    // Exactly one summary is appended, and it sits at the end of the turn.
+    const summaries = container.children.filter(
+      (child): child is StepSummaryComponent => child instanceof StepSummaryComponent,
+    );
+    expect(summaries).toHaveLength(1);
+    expect(container.children.at(-1)).toBe(summaries[0]);
+
+    // Counts reflect only the steps beyond the keep-recent threshold (2 here).
+    expect(stripSgr(summaries[0]!.render(120).join('\n'))).toContain('thinking 2 times');
+  });
+
+  it('mergeCurrentTurnSteps does not append a duplicate summary on repeat calls', async () => {
+    const { driver } = await makeDriver();
+    const container = driver.state.transcriptContainer;
+
+    const user = new UserMessageComponent('do work');
+    markTranscriptComponent(user, { id: 'u1', kind: 'user', renderMode: 'plain', content: 'do work' });
+    container.addChild(user);
+
+    const steps: ThinkingComponent[] = [];
+    for (let i = 0; i < TRANSCRIPT_KEEP_RECENT_STEPS + 2; i++) {
+      const step = new ThinkingComponent(`step ${i}`);
+      steps.push(step);
+      container.addChild(step);
+    }
+
+    expect(driver.mergeCurrentTurnSteps()).toBe(true);
+    // Second call without new steps accumulates into the existing summary
+    // instead of appending a second one, and leaves the steps untouched.
+    expect(driver.mergeCurrentTurnSteps()).toBe(true);
+
+    const summaries = container.children.filter(
+      (child): child is StepSummaryComponent => child instanceof StepSummaryComponent,
+    );
+    expect(summaries).toHaveLength(1);
+    for (const step of steps) {
+      expect(container.children).toContain(step);
+    }
+  });
+
+  it('mergeAllTurnSteps appends one summary per turn without removing steps', async () => {
+    const { driver } = await makeDriver();
+    const container = driver.state.transcriptContainer;
+
+    const steps: ThinkingComponent[] = [];
+    for (let turn = 0; turn < 2; turn++) {
+      const user = new UserMessageComponent(`turn ${turn}`);
+      markTranscriptComponent(user, {
+        id: `u${turn}`,
+        kind: 'user',
+        renderMode: 'plain',
+        content: `turn ${turn}`,
+      });
+      container.addChild(user);
+      for (let i = 0; i < TRANSCRIPT_KEEP_RECENT_STEPS + 1; i++) {
+        const step = new ThinkingComponent(`turn ${turn} step ${i}`);
+        steps.push(step);
+        container.addChild(step);
+      }
+    }
+
+    driver.mergeAllTurnSteps();
+
+    // Append-only: every original step is still in the tree.
+    for (const step of steps) {
+      expect(container.children).toContain(step);
+    }
+    // One summary per turn that exceeded the threshold.
+    const summaries = container.children.filter(
+      (child): child is StepSummaryComponent => child instanceof StepSummaryComponent,
+    );
+    expect(summaries).toHaveLength(2);
   });
 
   it('tracks /clear as the clear alias for /new', async () => {

@@ -1851,23 +1851,25 @@ export class KimiTUI {
     }
     if (turnStart < 0) return false;
 
-    // Locate an existing summary, the assistant message, and the mergeable steps.
-    let summaryIndex = -1;
+    // Collect mergeable steps and any existing summary within the current turn.
+    // Completed steps stay in the tree (append-only — they commit into native
+    // scrollback); the summary is a pure render artifact appended as a new row
+    // at the end of the turn. It never goes into transcriptEntries.
+    let existingSummary: StepSummaryComponent | undefined;
     const stepIndices: number[] = [];
     for (let i = turnStart + 1; i < children.length; i++) {
       const child = children[i]!;
+      if (child instanceof AssistantMessageComponent) continue;
       if (child instanceof StepSummaryComponent) {
-        summaryIndex = i;
+        existingSummary = child;
         continue;
       }
-      if (child instanceof AssistantMessageComponent) continue;
       stepIndices.push(i);
     }
-
     if (stepIndices.length <= TRANSCRIPT_KEEP_RECENT_STEPS) return false;
+
     const mergeCount = stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS;
     const toMergeIndices = stepIndices.slice(0, mergeCount);
-
     let thinkingCount = 0;
     let toolCount = 0;
     for (const idx of toMergeIndices) {
@@ -1877,33 +1879,13 @@ export class KimiTUI {
     }
     if (thinkingCount === 0 && toolCount === 0) return false;
 
-    let summary: StepSummaryComponent;
-    if (summaryIndex >= 0) {
-      summary = children[summaryIndex] as StepSummaryComponent;
-      summary.addCounts(thinkingCount, toolCount);
+    if (existingSummary) {
+      existingSummary.addCounts(thinkingCount, toolCount);
     } else {
-      summary = new StepSummaryComponent();
+      const summary = new StepSummaryComponent();
       summary.addCounts(thinkingCount, toolCount);
+      this.state.transcriptContainer.addChild(summary);
     }
-
-    // Rebuild children: keep everything except the merged steps, with the summary
-    // sitting right after the user message.
-    const toMergeSet = new Set(toMergeIndices);
-    const newChildren: Component[] = [];
-    for (let i = 0; i <= turnStart; i++) newChildren.push(children[i]!);
-    newChildren.push(summary);
-    for (let i = turnStart + 1; i < children.length; i++) {
-      if (i === summaryIndex) continue;
-      if (toMergeSet.has(i)) continue;
-      newChildren.push(children[i]!);
-    }
-
-    for (const idx of toMergeIndices) {
-      const child = children[idx]!;
-      if (hasDispose(child)) child.dispose();
-    }
-
-    children.splice(0, children.length, ...newChildren);
     return true;
   }
 
@@ -1917,8 +1899,11 @@ export class KimiTUI {
     }
     if (boundaries.length === 0) return;
 
+    // Rebuild the child list without dropping any step: every original component
+    // stays in the tree (append-only — old steps commit into native scrollback),
+    // and a StepSummaryComponent is appended at the end of each turn whose step
+    // count exceeds the keep-recent threshold.
     const newChildren: Component[] = [];
-    const toDispose: Component[] = [];
     for (let i = 0; i < boundaries[0]!; i++) newChildren.push(children[i]!);
 
     for (let t = 0; t < boundaries.length; t++) {
@@ -1926,49 +1911,38 @@ export class KimiTUI {
       const turnEnd = t + 1 < boundaries.length ? boundaries[t + 1]! : children.length;
       newChildren.push(children[turnStart]!);
 
-      let summaryIndex = -1;
+      let existingSummary: StepSummaryComponent | undefined;
       const stepIndices: number[] = [];
       for (let i = turnStart + 1; i < turnEnd; i++) {
         const child = children[i]!;
-        if (child instanceof StepSummaryComponent) summaryIndex = i;
+        if (child instanceof StepSummaryComponent) existingSummary = child;
         else if (child instanceof AssistantMessageComponent) continue;
         else stepIndices.push(i);
       }
 
-      if (stepIndices.length > TRANSCRIPT_KEEP_RECENT_STEPS) {
-        const mergeCount = stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS;
-        const toMergeIndices = stepIndices.slice(0, mergeCount);
-        let thinkingCount = 0;
-        let toolCount = 0;
-        for (const idx of toMergeIndices) {
-          const child = children[idx]!;
-          if (child instanceof ThinkingComponent) thinkingCount++;
-          else if (child instanceof ToolCallComponent) toolCount++;
-        }
-        let summary: StepSummaryComponent;
-        if (summaryIndex >= 0) {
-          summary = children[summaryIndex] as StepSummaryComponent;
-          summary.addCounts(thinkingCount, toolCount);
-        } else {
-          summary = new StepSummaryComponent();
-          summary.addCounts(thinkingCount, toolCount);
-        }
-        newChildren.push(summary);
-        for (const idx of toMergeIndices) toDispose.push(children[idx]!);
-        const toMergeSet = new Set(toMergeIndices);
-        for (let i = turnStart + 1; i < turnEnd; i++) {
-          if (i === summaryIndex) continue;
-          if (toMergeSet.has(i)) continue;
-          newChildren.push(children[i]!);
-        }
+      // Keep the turn's original children in place (append-only).
+      for (let i = turnStart + 1; i < turnEnd; i++) newChildren.push(children[i]!);
+
+      if (stepIndices.length <= TRANSCRIPT_KEEP_RECENT_STEPS) continue;
+      const mergeCount = stepIndices.length - TRANSCRIPT_KEEP_RECENT_STEPS;
+      const toMergeIndices = stepIndices.slice(0, mergeCount);
+      let thinkingCount = 0;
+      let toolCount = 0;
+      for (const idx of toMergeIndices) {
+        const child = children[idx]!;
+        if (child instanceof ThinkingComponent) thinkingCount++;
+        else if (child instanceof ToolCallComponent) toolCount++;
+      }
+      if (thinkingCount === 0 && toolCount === 0) continue;
+      if (existingSummary) {
+        existingSummary.addCounts(thinkingCount, toolCount);
       } else {
-        for (let i = turnStart + 1; i < turnEnd; i++) newChildren.push(children[i]!);
+        const summary = new StepSummaryComponent();
+        summary.addCounts(thinkingCount, toolCount);
+        newChildren.push(summary);
       }
     }
 
-    for (const child of toDispose) {
-      if (hasDispose(child)) child.dispose();
-    }
     children.splice(0, children.length, ...newChildren);
   }
 
