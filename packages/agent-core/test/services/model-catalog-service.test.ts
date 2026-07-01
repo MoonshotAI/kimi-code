@@ -84,6 +84,7 @@ function makeCore(configRef: { current: KimiConfig }): {
       _serviceBrand: undefined,
       rpc: rpc as CoreRPC,
       ready: async () => undefined,
+      closeAllSessions: async () => undefined,
       dispose: () => undefined,
     },
     getCalls,

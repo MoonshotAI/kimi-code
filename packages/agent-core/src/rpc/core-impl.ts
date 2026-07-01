@@ -352,6 +352,24 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
   }
 
+  async closeAllSessions(): Promise<void> {
+    const results = await Promise.allSettled(
+      Array.from(this.sessions.entries(), async ([sessionId, session]) => {
+        try {
+          await session.close();
+        } finally {
+          this.sessions.delete(sessionId);
+        }
+      }),
+    );
+    const failures = results
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason);
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'failed to close all sessions');
+    }
+  }
+
   async archiveSession({ sessionId }: ArchiveSessionPayload): Promise<void> {
     await this.closeSession({ sessionId });
     await this.sessionStore.archive(sessionId);

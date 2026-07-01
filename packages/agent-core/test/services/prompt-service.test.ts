@@ -246,6 +246,7 @@ function makeBridge(
   const bridge: ICoreProcessService = {
     rpc: rpc as CoreRPC,
     ready: vi.fn().mockResolvedValue(undefined),
+    closeAllSessions: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
     _serviceBrand: undefined,
   };
