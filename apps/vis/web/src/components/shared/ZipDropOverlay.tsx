@@ -68,6 +68,9 @@ export function ZipDropOverlay() {
       if (depth.current === 0) setDragging(false);
     }
     function onDrop(e: DragEvent) {
+      // Gate on file drags first so non-file drops (e.g. selected text or a
+      // URL into the search input) keep their native behavior.
+      if (!isFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       depth.current = 0;
       setDragging(false);
