@@ -754,6 +754,11 @@ export class Session {
           { additionalDirs: agent.getAdditionalDirs() },
         ),
     });
+    if (type === 'sub') {
+      agent.background.onIdle(() => {
+        void this.releaseIdleSubagent(id);
+      });
+    }
     return agent;
   }
 
@@ -798,21 +803,25 @@ export class Session {
   }
 
   private async pruneReadySubagents(): Promise<void> {
-    const parentIds = this.readySubagentParentIds();
-    const candidates: Array<{ readonly id: string; readonly agent: Agent }> = [];
-    for (const [id, entry] of this.agents) {
-      if (!(entry instanceof Agent)) continue;
-      if (!this.isPrunableReadySubagent(id, entry, parentIds)) continue;
-      candidates.push({ id, agent: entry });
-    }
-    while (candidates.length > DEFAULT_MAX_READY_SUBAGENTS) {
+    // Loop until the ready subagent count is within the cap. Deleting a
+    // child can make its parent prunable (it was protected only because a
+    // live child referenced it), so recompute candidates each iteration.
+    for (;;) {
+      const parentIds = this.readySubagentParentIds();
+      const candidates: Array<{ readonly id: string; readonly agent: Agent }> = [];
+      for (const [id, entry] of this.agents) {
+        if (!(entry instanceof Agent)) continue;
+        if (!this.isPrunableReadySubagent(id, entry, parentIds)) continue;
+        candidates.push({ id, agent: entry });
+      }
+      if (candidates.length <= DEFAULT_MAX_READY_SUBAGENTS) break;
       const candidate = candidates.shift();
       if (candidate === undefined) break;
-      // Dispose before deleting so the agent's MCP status subscription and
-      // tool tables are released; otherwise the evicted agent stays
-      // referenced by the MCP listener set and keeps processing status changes.
-      await candidate.agent.dispose();
+      // Remove from the live map before awaiting disposal so a concurrent
+      // ensureAgentResumed / RPC path cannot grab the same idle subagent
+      // and start a new turn while disposal is clearing its tools.
       this.agents.delete(candidate.id);
+      await candidate.agent.dispose();
     }
   }
 

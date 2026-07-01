@@ -215,11 +215,23 @@ export class BackgroundManager {
 
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
+  private onIdleCallback?: () => void;
 
   constructor(
     private readonly agent: Agent,
     private readonly persistence?: BackgroundTaskPersistence,
   ) { }
+
+  /**
+   * Set a callback invoked after a detached task settles and eviction
+   * runs, when the manager transitions from having active background
+   * tasks to having none. Used by the session to trigger subagent
+   * pruning for agents whose only reason for staying resident was a
+   * lingering background task.
+   */
+  onIdle(callback: (() => void) | undefined): void {
+    this.onIdleCallback = callback;
+  }
 
   private fireTerminalEffects(entry: ManagedTask): void {
     if (!this.isDetached(entry)) return;
@@ -891,6 +903,13 @@ export class BackgroundManager {
     entry.foregroundRelease?.resolve('terminal');
     entry.terminal.resolve();
     await this.evictOldTerminalTasks();
+    this.maybeNotifyIdle();
+  }
+
+  private maybeNotifyIdle(): void {
+    if (this.onIdleCallback === undefined) return;
+    if (this.list(true).length > 0) return;
+    this.onIdleCallback();
   }
 
   private async evictOldTerminalTasks(): Promise<void> {
