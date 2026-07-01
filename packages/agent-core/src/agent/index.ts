@@ -344,6 +344,7 @@ export class Agent {
       },
       undoHistory: (payload) => {
         this.context.undo(payload.count);
+        this.telemetry.track('conversation_undo', { count: payload.count });
       },
       setThinking: (payload) => {
         const previousEffort = this.config.thinkingEffort;
