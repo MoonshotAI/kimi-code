@@ -29,13 +29,13 @@ export function readEnvInt(name: string, fallback: number): number {
 export const TRANSCRIPT_WINDOW_ENABLED = true;
 
 /** Keep the most recent N turns. `0` disables trimming. */
-export const TRANSCRIPT_MAX_TURNS = readEnvInt('KIMI_CODE_TUI_MAX_TURNS', 50);
+export const TRANSCRIPT_MAX_TURNS = readEnvInt('KIMI_CODE_TUI_MAX_TURNS', 15);
 
 /** Only the most recent E turns are allowed to expand (Ctrl+O). `0` disables expanding. */
 export const TRANSCRIPT_EXPAND_TURNS = readEnvInt('KIMI_CODE_TUI_EXPAND_TURNS', 3);
 
 /** Only trim once the window exceeds maxTurns by this much (avoids churn). */
-export const TRANSCRIPT_HYSTERESIS = readEnvInt('KIMI_CODE_TUI_HYSTERESIS', 10);
+export const TRANSCRIPT_HYSTERESIS = readEnvInt('KIMI_CODE_TUI_HYSTERESIS', 5);
 
 /** Keep this many recent steps untouched inside a turn; older steps are merged into a summary. `0` disables merging. */
 export const TRANSCRIPT_KEEP_RECENT_STEPS = readEnvInt('KIMI_CODE_TUI_KEEP_RECENT_STEPS', 30);

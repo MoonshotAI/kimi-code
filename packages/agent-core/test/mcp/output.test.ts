@@ -1,9 +1,11 @@
 import { ContentBlockSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { ContentPart } from '@moonshot-ai/kosong';
+import { Jimp } from 'jimp';
 import { describe, expect, test } from 'vitest';
 
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '../../src/mcp/output';
 import type { MCPContentBlock, MCPToolResult } from '../../src/mcp/types';
+import { sniffImageDimensions } from '../../src/tools/support/file-type';
 
 const MCP_OUTPUT_TRUNCATED_TEXT =
   '\n\n[Output truncated: exceeded 100000 character limit. ' +
@@ -205,29 +207,32 @@ describe('mcpResultToExecutableOutput', () => {
     return { content, isError };
   }
 
-  test('collapses a single text part into a plain string', () => {
-    const out = mcpResultToExecutableOutput(result([{ type: 'text', text: 'hello' }]), 'mcp__s__t');
+  test('collapses a single text part into a plain string', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'text', text: 'hello' }]),
+      'mcp__s__t',
+    );
     expect(out).toEqual({ output: 'hello', isError: false });
   });
 
-  test('propagates isError=true on the success-shape return', () => {
-    const out = mcpResultToExecutableOutput(
+  test('propagates isError=true on the success-shape return', async () => {
+    const out = await mcpResultToExecutableOutput(
       result([{ type: 'text', text: 'oops' }], true),
       'mcp__s__t',
     );
     expect(out).toEqual({ output: 'oops', isError: true });
   });
 
-  test('returns an empty string when the content array is empty', () => {
-    const out = mcpResultToExecutableOutput(result([]), 'mcp__s__t');
+  test('returns an empty string when the content array is empty', async () => {
+    const out = await mcpResultToExecutableOutput(result([]), 'mcp__s__t');
     // No parts survive; collapseSingleText has nothing to collapse so the
     // ContentPart[] branch wins. An empty array is the model-visible signal
     // that the tool returned no content.
     expect(out).toEqual({ output: [], isError: false });
   });
 
-  test('drops unconvertible blocks and keeps the rest', () => {
-    const out = mcpResultToExecutableOutput(
+  test('drops unconvertible blocks and keeps the rest', async () => {
+    const out = await mcpResultToExecutableOutput(
       result([
         { type: 'text', text: 'kept' },
         { type: 'fancy_new_type', text: 'dropped' },
@@ -237,8 +242,8 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out).toEqual({ output: 'kept', isError: false });
   });
 
-  test('wraps media-only output in mcp_tool_result tags using the qualified name', () => {
-    const out = mcpResultToExecutableOutput(
+  test('wraps media-only output in mcp_tool_result tags using the qualified name', async () => {
+    const out = await mcpResultToExecutableOutput(
       result([{ type: 'image', data: 'AAA', mimeType: 'image/png' }]),
       'mcp__github__create_pr',
     );
@@ -250,8 +255,8 @@ describe('mcpResultToExecutableOutput', () => {
     ]);
   });
 
-  test('does NOT wrap when a non-empty text part accompanies the media', () => {
-    const out = mcpResultToExecutableOutput(
+  test('does NOT wrap when a non-empty text part accompanies the media', async () => {
+    const out = await mcpResultToExecutableOutput(
       result([
         { type: 'text', text: 'caption' },
         { type: 'image', data: 'AAA', mimeType: 'image/png' },
@@ -264,8 +269,8 @@ describe('mcpResultToExecutableOutput', () => {
     ]);
   });
 
-  test('an empty-text companion still triggers the wrap', () => {
-    const out = mcpResultToExecutableOutput(
+  test('an empty-text companion still triggers the wrap', async () => {
+    const out = await mcpResultToExecutableOutput(
       result([
         { type: 'text', text: '' },
         { type: 'image', data: 'AAA', mimeType: 'image/png' },
@@ -277,8 +282,8 @@ describe('mcpResultToExecutableOutput', () => {
     expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
   });
 
-  test('truncates oversized text and merges the notice into the surviving text part', () => {
-    const out = mcpResultToExecutableOutput(
+  test('truncates oversized text and merges the notice into the surviving text part', async () => {
+    const out = await mcpResultToExecutableOutput(
       result([{ type: 'text', text: 'x'.repeat(100_001) }]),
       'mcp__s__t',
     );
@@ -288,10 +293,12 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out.truncated).toBe(true);
   });
 
-  test('drops oversized binary parts in favor of a per-part notice without touching the text budget', () => {
-    // 14 MiB base64 ≈ 10.5 MiB raw — just above the 10 MiB per-part cap.
+  test('drops oversized binary parts in favor of a per-part notice without touching the text budget', async () => {
+    // 14 MiB base64 ≈ 10.5 MiB raw — just above the 10 MiB per-part cap. The
+    // bytes are not a real image, so compression fails over and the drop path
+    // still applies.
     const huge = 'x'.repeat(14 * 1024 * 1024);
-    const out = mcpResultToExecutableOutput(
+    const out = await mcpResultToExecutableOutput(
       result([{ type: 'image', data: huge, mimeType: 'image/png' }]),
       'mcp__s__big',
     );
@@ -308,8 +315,8 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out.truncated).toBe(true);
   });
 
-  test('binary part within the per-part cap survives intact alongside oversized text', () => {
-    const out = mcpResultToExecutableOutput(
+  test('binary part within the per-part cap survives intact alongside oversized text', async () => {
+    const out = await mcpResultToExecutableOutput(
       result([
         { type: 'text', text: 'A'.repeat(100_000) },
         { type: 'image', data: 'B'.repeat(500_000), mimeType: 'image/png' },
@@ -323,5 +330,29 @@ describe('mcpResultToExecutableOutput', () => {
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,' + 'B'.repeat(500_000) } },
     ]);
     expect(out).not.toHaveProperty('truncated');
+  });
+
+  test('downsamples an oversized real image instead of leaving it full-size', async () => {
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: big, mimeType: 'image/png' }]),
+      'mcp__s__shot',
+    );
+
+    const parts = out.output as ContentPart[];
+    const imagePart = parts.find((p) => p.type === 'image_url');
+    expect(imagePart).toBeDefined();
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(
+      (imagePart as { imageUrl: { url: string } }).imageUrl.url,
+    );
+    expect(match).not.toBeNull();
+    const dims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
+    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(2000);
+    // The image was compressed and kept, not dropped to a notice.
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).not.toContain('image_url dropped');
   });
 });

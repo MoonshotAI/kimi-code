@@ -75,6 +75,14 @@ function normalizeGoogleGenAIFinishReason(raw: unknown): {
 export interface GoogleGenAIOptions {
   apiKey?: string | undefined;
   model: string;
+  /**
+   * Override the endpoint the SDK talks to (forwarded as
+   * `httpOptions.baseUrl`). When unset, the SDK falls back to its default
+   * (`generativelanguage.googleapis.com` for Gemini, the regional
+   * `*-aiplatform.googleapis.com` for Vertex). Set this to route through a
+   * Gemini-compatible proxy/gateway.
+   */
+  baseUrl?: string | undefined;
   vertexai?: boolean | undefined;
   project?: string | undefined;
   location?: string | undefined;
@@ -682,6 +690,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   private _vertexai: boolean;
   private _stream: boolean;
   private _apiKey: string | undefined;
+  private _baseUrl: string | undefined;
   private _project: string | undefined;
   private _location: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
@@ -695,6 +704,8 @@ export class GoogleGenAIChatProvider implements ChatProvider {
 
     const apiKey = options.apiKey ?? process.env['GOOGLE_API_KEY'];
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
+    this._baseUrl =
+      options.baseUrl === undefined || options.baseUrl.length === 0 ? undefined : options.baseUrl;
     this._project = options.project;
     this._location = options.location;
     this._defaultHeaders = options.defaultHeaders;
@@ -704,6 +715,19 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   }
 
   private _buildClient(apiKey: string | undefined): GenAIClient {
+    // The Google GenAI SDK reads the endpoint and headers from `httpOptions`,
+    // deep-merging them over its defaults: a `baseUrl` here overrides the
+    // default host (`generativelanguage.googleapis.com` / Vertex regional),
+    // and a `User-Agent` overrides the SDK default (`google-genai-sdk/<ver> …`)
+    // while preserving the other default headers (`x-goog-api-client`,
+    // `Content-Type`). Build the object once so both can coexist.
+    const httpOptions: { headers?: Record<string, string>; baseUrl?: string } = {};
+    if (this._defaultHeaders !== undefined) {
+      httpOptions.headers = this._defaultHeaders;
+    }
+    if (this._baseUrl !== undefined) {
+      httpOptions.baseUrl = this._baseUrl;
+    }
     return new GenAIClient({
       apiKey,
       ...(this._vertexai
@@ -713,13 +737,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
             location: this._location,
           }
         : {}),
-      // The Google GenAI SDK deep-merges `httpOptions.headers` into its
-      // default request headers, so a `User-Agent` here overrides the SDK
-      // default (`google-genai-sdk/<ver> …`) while preserving the other
-      // defaults (`x-goog-api-client`, `Content-Type`).
-      ...(this._defaultHeaders !== undefined
-        ? { httpOptions: { headers: this._defaultHeaders } }
-        : {}),
+      ...(Object.keys(httpOptions).length > 0 ? { httpOptions } : {}),
     });
   }
 

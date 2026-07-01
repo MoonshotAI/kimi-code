@@ -1,4 +1,4 @@
-import type { ModelAlias, ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
+import { effectiveModelAlias, type ModelAlias, type ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
   Key,
@@ -37,7 +37,8 @@ export interface ModelSelection {
 }
 
 export function modelDisplayName(alias: string, model: ModelAlias | undefined): string {
-  return model?.displayName ?? model?.model ?? alias;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.displayName ?? effective?.model ?? alias;
 }
 
 export function providerDisplayName(provider: string): string {
@@ -49,10 +50,13 @@ export function providerDisplayName(provider: string): string {
 export function createModelChoiceOptions(
   models: Record<string, ModelAlias>,
 ): readonly ChoiceOption[] {
-  return Object.entries(models).map(([alias, cfg]) => ({
-    value: alias,
-    label: `${modelDisplayName(alias, cfg)} (${providerDisplayName(cfg.provider)})`,
-  }));
+  return Object.entries(models).map(([alias, cfg]) => {
+    const effective = effectiveModelAlias(cfg);
+    return {
+      value: alias,
+      label: `${modelDisplayName(alias, effective)} (${providerDisplayName(effective.provider)})`,
+    };
+  });
 }
 
 export interface ModelSelectorOptions {
@@ -78,9 +82,10 @@ export interface ModelSelectorOptions {
 
 function createModelChoices(models: Record<string, ModelAlias>): readonly ModelChoice[] {
   return Object.entries(models).map(([alias, cfg]) => {
-    const name = modelDisplayName(alias, cfg);
-    const provider = providerDisplayName(cfg.provider);
-    return { alias, model: cfg, name, provider, label: `${name} (${provider})` };
+    const effective = effectiveModelAlias(cfg);
+    const name = modelDisplayName(alias, effective);
+    const provider = providerDisplayName(effective.provider);
+    return { alias, model: effective, name, provider, label: `${name} (${provider})` };
   });
 }
 

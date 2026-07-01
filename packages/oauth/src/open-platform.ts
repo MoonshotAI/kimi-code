@@ -2,9 +2,11 @@ import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
 import { parseKimiCodeCustomHeaders } from './identity';
 import { parseSupportsThinkingType, parseThinkEfforts } from './managed-kimi-code';
+import { MANAGED_KIMI_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
 import type {
   ManagedKimiCodeModelInfo,
   ManagedKimiConfigShape,
+  ManagedKimiModelAlias,
 } from './managed-kimi-code';
 
 export type { ManagedKimiConfigShape };
@@ -188,8 +190,7 @@ export function applyOpenPlatformConfig(
   for (const model of options.models) {
     const aliasKey = `${providerKey}/${model.id}`;
     const existing = isRecord(existingModels[aliasKey]) ? existingModels[aliasKey] : {};
-    existingModels[aliasKey] = {
-      ...existing,
+    const remoteAlias: ManagedKimiModelAlias = {
       provider: providerKey,
       model: model.id,
       maxContextSize: model.contextLength,
@@ -198,6 +199,11 @@ export function applyOpenPlatformConfig(
       ...(model.supportEfforts !== undefined ? { supportEfforts: model.supportEfforts } : {}),
       ...(model.defaultEffort !== undefined ? { defaultEffort: model.defaultEffort } : {}),
     };
+    existingModels[aliasKey] = mergeRefreshedModelAlias(
+      existing,
+      remoteAlias,
+      MANAGED_KIMI_MODEL_FIELDS,
+    );
   }
 
   config.models = existingModels;

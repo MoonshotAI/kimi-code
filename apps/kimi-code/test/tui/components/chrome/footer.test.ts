@@ -144,3 +144,46 @@ describe('FooterComponent', () => {
     expect(rendered).not.toContain('thinking:high');
   });
 });
+
+describe('FooterComponent overrides', () => {
+  it('shows the overridden effort list', () => {
+    const effortModelWithOverride: ModelAlias = {
+      provider: 'managed:kimi-code',
+      model: 'kimi-k2',
+      maxContextSize: 262144,
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+      overrides: { supportEfforts: ['low', 'high'], defaultEffort: 'high' },
+    };
+    const state: AppState = {
+      ...appState,
+      thinkingEffort: 'high',
+      availableModels: { 'kimi-k2': effortModelWithOverride },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(footer.render(120).join('\n')).toContain('thinking: high');
+  });
+});
+
+describe('FooterComponent displayName override', () => {
+  it('renders the overridden display name', () => {
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k2',
+      availableModels: {
+        'kimi-k2': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+          displayName: 'Remote Name',
+          overrides: { displayName: 'Custom Name' },
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+
+    expect(footer.render(120).join('\n')).toContain('Custom Name');
+    expect(footer.render(120).join('\n')).not.toContain('Remote Name');
+  });
+});

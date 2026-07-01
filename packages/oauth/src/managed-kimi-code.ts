@@ -5,6 +5,7 @@ import { DEFAULT_KIMI_CODE_OAUTH_HOST } from './constants';
 import { OAuthUnauthorizedError } from './errors';
 import { parseKimiCodeCustomHeaders } from './identity';
 import { DEFAULT_KIMI_CODE_BASE_URL, kimiCodeBaseUrl } from './managed-usage';
+import { MANAGED_KIMI_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
 import { isRecord } from './utils';
 
 export const KIMI_CODE_PLATFORM_ID = 'kimi-code';
@@ -124,6 +125,18 @@ export interface ManagedKimiProviderConfig {
   readonly [key: string]: unknown;
 }
 
+export interface ManagedKimiModelAliasOverrides {
+  maxContextSize?: number | undefined;
+  maxOutputSize?: number | undefined;
+  capabilities?: string[] | undefined;
+  displayName?: string | undefined;
+  reasoningKey?: string | undefined;
+  adaptiveThinking?: boolean | undefined;
+  supportEfforts?: readonly string[] | undefined;
+  defaultEffort?: string | undefined;
+  readonly [key: string]: unknown;
+}
+
 export interface ManagedKimiModelAlias {
   provider: string;
   model: string;
@@ -134,6 +147,8 @@ export interface ManagedKimiModelAlias {
   displayName?: string | undefined;
   protocol?: ManagedKimiCodeProtocol;
   betaApi?: boolean;
+  adaptiveThinking?: boolean | undefined;
+  overrides?: ManagedKimiModelAliasOverrides | undefined;
   readonly [key: string]: unknown;
 }
 
@@ -558,8 +573,7 @@ export function applyManagedKimiCodeConfig(
       model.protocol === 'anthropic' &&
       (capabilities?.includes('thinking') === true ||
         capabilities?.includes('always_thinking') === true);
-    existingModels[key] = {
-      ...existing,
+    const remoteAlias: ManagedKimiModelAlias = {
       provider: KIMI_CODE_PROVIDER_NAME,
       model: model.id,
       maxContextSize: model.contextLength,
@@ -575,6 +589,7 @@ export function applyManagedKimiCodeConfig(
       betaApi: model.protocol === 'anthropic' ? true : undefined,
       adaptiveThinking: supportsAdaptiveThinking ? true : undefined,
     };
+    existingModels[key] = mergeRefreshedModelAlias(existing, remoteAlias, MANAGED_KIMI_MODEL_FIELDS);
   }
 
   config.models = existingModels;
