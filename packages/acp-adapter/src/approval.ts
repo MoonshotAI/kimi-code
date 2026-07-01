@@ -224,6 +224,37 @@ function mapPlanReviewOptionId(
   return { decision: 'rejected' };
 }
 
+type CommandDisplay = Extract<ApprovalRequest['display'], { kind: 'command' }>;
+
+interface CommandRawInput {
+  command: string;
+  cwd?: string;
+  description?: string;
+  language?: 'bash';
+}
+
+function commandDisplayToAcpContent(display: CommandDisplay): ToolCallContent {
+  return {
+    type: 'content',
+    content: { type: 'text', text: display.command },
+  };
+}
+
+function commandDisplayToRawInput(display: CommandDisplay): CommandRawInput {
+  const rawInput: CommandRawInput = { command: display.command };
+  if (display.cwd !== undefined) rawInput.cwd = display.cwd;
+  if (display.description !== undefined) rawInput.description = display.description;
+  if (display.language !== undefined) rawInput.language = display.language;
+  return rawInput;
+}
+
+function permissionTitle(req: ApprovalRequest): string {
+  if (req.display.kind === 'command' && req.display.command.length > 0) {
+    return req.display.command;
+  }
+  return req.toolName;
+}
+
 /**
  * Build the ACP {@link ToolCallUpdate} that scopes a permission request
  * to a specific in-flight tool call.
@@ -241,9 +272,10 @@ function mapPlanReviewOptionId(
  *  - If `req.display` produces a diff-bearing entry via
  *    {@link displayBlockToAcpContent} (diff kind, or file_io with
  *    before+after), prepend it so the diff card is the headline of
- *    the approval prompt. Non-diff display kinds (command, search, …)
- *    contribute no structured content here — their information is
- *    already conveyed by the action text below.
+ *    the approval prompt.
+ *  - If `req.display.kind === 'command'`, prepend the concrete shell
+ *    command so ACP clients can display or policy-match the command
+ *    being authorized, not just the Bash tool name.
  *  - Phase 13.2 adds a `plan_review` entry so the full plan markdown
  *    (and the optional `Plan saved to:` path prefix) lands at the top
  *    of the approval card — the previous Phase-5 fallback truncated
@@ -260,24 +292,28 @@ export function buildPermissionToolCallUpdate(
   const toolCallId =
     turnId !== undefined ? acpToolCallId(turnId, req.toolCallId) : req.toolCallId;
   const content: ToolCallContent[] = [];
-  // Diff entry first — diffs and file-io previews carry the most
-  // context and should land at the top of the approval card. Phase 13.2
-  // adds plan_review to the same path so plan markdown surfaces in the
-  // headline too.
+
   const headlineEntry = displayBlockToAcpContent(req.display);
   if (headlineEntry !== null) {
     content.push(headlineEntry);
+  } else if (req.display.kind === 'command') {
+    content.push(commandDisplayToAcpContent(req.display));
   }
   // Always include the action summary so the prompt is never empty.
   content.push({
     type: 'content',
     content: { type: 'text', text: `Requesting approval to ${req.action}` },
   });
-  return {
+  const update: ToolCallUpdate = {
     toolCallId,
-    title: req.toolName,
+    title: permissionTitle(req),
     content,
   };
+  if (req.display.kind === 'command') {
+    update.kind = 'execute';
+    update.rawInput = commandDisplayToRawInput(req.display);
+  }
+  return update;
 }
 
 /**
