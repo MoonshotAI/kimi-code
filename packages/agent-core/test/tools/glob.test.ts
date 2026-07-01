@@ -538,6 +538,23 @@ describe('GlobTool', () => {
     expect(result.output).not.toContain('other/b.ts');
   });
 
+  it('rooted basename pattern only matches at the search root', async () => {
+    const exec = execReturning(
+      '/workspace/foo.ts\n/workspace/sub/foo.ts\n/workspace/deep/nested/foo.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '/foo.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('foo.ts');
+    expect(result.output).not.toContain('sub/foo.ts');
+    expect(result.output).not.toContain('deep/nested/foo.ts');
+  });
+
   it('decodes multibyte filenames split across stream chunks', async () => {
     // Split a multibyte filename across two chunks so naive buf.toString
     // would produce a replacement character.

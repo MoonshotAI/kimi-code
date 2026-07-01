@@ -383,8 +383,12 @@ function isBroadPattern(pattern: string): boolean {
  */
 function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
   const opts = { dot: true };
-  const normalizedPattern = pattern.startsWith('/') ? pattern.slice(1) : pattern;
-  if (!normalizedPattern.includes('/')) {
+  const rooted = pattern.startsWith('/');
+  const normalizedPattern = rooted ? pattern.slice(1) : pattern;
+  // A pattern without `/` matches the basename at any depth — unless the
+  // original pattern was rooted with a leading `/`, in which case it
+  // matches only at the search root (gitignore-style rooted globs).
+  if (!normalizedPattern.includes('/') && !rooted) {
     const matcher = picomatch(normalizedPattern, opts);
     return (relPath: string) => matcher(relPath.split('/').pop()!);
   }
