@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { isoDateTimeSchema } from './time';
 
-export const backgroundTaskKindSchema = z.enum(['subagent', 'bash', 'tool']);
+export const backgroundTaskKindSchema = z.enum(['subagent', 'bash', 'tool', 'monitor']);
 export type BackgroundTaskKind = z.infer<typeof backgroundTaskKindSchema>;
 
 export const backgroundTaskStatusSchema = z.enum([
