@@ -475,6 +475,10 @@ function handleEditQueued(index: number): void {
   client.unqueue(index);
 }
 
+function handleReorderQueue(payload: { from: number; to: number }): void {
+  client.reorderQueue(payload.from, payload.to);
+}
+
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
   const wsId = client.activeWorkspaceId.value;
   if (!client.activeSessionId.value && wsId) {
@@ -702,6 +706,7 @@ function openPr(url: string): void {
       @interrupt="client.abortCurrentPrompt()"
       @unqueue="handleUnqueue"
       @edit-queued="handleEditQueued"
+      @reorder-queue="handleReorderQueue"
       @set-permission="client.setPermission($event)"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"

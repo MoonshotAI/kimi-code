@@ -34,6 +34,11 @@ const props = defineProps<{
   swarmMode?: boolean;
   goalMode?: boolean;
   questions?: UIQuestion[];
+  /** Question ids with an in-flight respond/dismiss (drives the card loading
+   *  state). Keyed by questionId with the action kind. */
+  pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
+  /** Approval ids with an in-flight respond (drives the card loading state). */
+  pendingApprovalActions?: Record<string, true>;
   running?: boolean;
   queued?: QueuedPromptView[];
   searchFiles?: (q: string) => Promise<FileItem[]>;
@@ -93,6 +98,7 @@ const emit = defineEmits<{
   interrupt: [];
   unqueue: [index: number];
   editQueued: [index: number];
+  reorderQueue: [payload: { from: number; to: number }];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
   togglePlan: [];
@@ -244,10 +250,10 @@ const hasDockWork = computed(() =>
   (props.todos?.length ?? 0) > 0 ||
   (props.queued?.length ?? 0) > 0,
 );
-const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'queue' | null>(null);
+const dockPanel = ref<'bash' | 'subagent' | 'todos' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
 
-function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'queue'): void {
+function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
 }
 
@@ -323,6 +329,15 @@ const pendingQuestion = computed<UIQuestion | undefined>(() =>
   props.questions && props.questions.length > 0 ? props.questions[0] : undefined,
 );
 
+// Action kind currently in flight for the visible question card, if any. Drives
+// the submit/dismiss loading state and disables the buttons while the daemon
+// processes the response.
+const questionBusyKind = computed<'answer' | 'dismiss' | undefined>(() => {
+  const q = pendingQuestion.value;
+  if (!q) return undefined;
+  return props.pendingQuestionActions?.[q.questionId];
+});
+
 // The first pending approval (if any). Rendered in the SAME bottom-dock slot as
 // the question (replacing the composer) so both "agent is blocked on you"
 // prompts live in one consistent place instead of approvals scrolling away at
@@ -330,6 +345,14 @@ const pendingQuestion = computed<UIQuestion | undefined>(() =>
 const pendingApproval = computed(() =>
   props.approvals && props.approvals.length > 0 ? props.approvals[0] : undefined,
 );
+
+// True while the visible approval card has a respond in flight. Drives the
+// action buttons' loading/disabled state and blocks duplicate decisions.
+const approvalBusy = computed<boolean>(() => {
+  const a = pendingApproval.value;
+  if (!a) return false;
+  return !!props.pendingApprovalActions?.[a.approvalId];
+});
 
 // ---------------------------------------------------------------------------
 // Auto-scroll: "following" state machine + "new messages" pill
@@ -743,6 +766,18 @@ function handleEditMessage(text: string): void {
   emit('editMessage', text);
 }
 
+// A queued message was clicked for editing: load its text back into the active
+// composer, then let the parent dequeue it (mirrors the old dock-queue flow).
+function handleEditQueued(index: number): void {
+  const text = props.queued?.[index]?.text ?? '';
+  if (text) loadComposerForEdit(text);
+  emit('editQueued', index);
+}
+
+function handleReorderQueue(payload: { from: number; to: number }): void {
+  emit('reorderQueue', payload);
+}
+
 function handleQuestionAnswer(qid: string, resp: QuestionResponse): void {
   followAfterUserAction();
   emit('answer', qid, resp);
@@ -1056,6 +1091,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :loading-more-error="loadingMoreError"
               :is-following="following"
               :tool-diff-panel="true"
+              :queued="queued"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
@@ -1065,6 +1101,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @open-tool-diff="emit('openToolDiff', $event)"
               @edit-message="handleEditMessage"
               @load-older-messages="handleLoadOlderMessages"
+              @unqueue="emit('unqueue', $event)"
+              @edit-queued="handleEditQueued"
+              @reorder-queue="handleReorderQueue"
             />
             <div v-if="activeSwarms.length > 0" class="swarm-stack">
               <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
@@ -1101,7 +1140,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :has-dock-work="hasDockWork"
         :todos="todos"
         :pending-question="pendingQuestion"
+        :question-busy-kind="questionBusyKind"
         :pending-approval="pendingApproval"
+        :approval-busy="approvalBusy"
         :mobile="mobile"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
@@ -1115,8 +1156,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
         @steer="emit('steer', $event)"
         @command="emit('command', $event)"
         @interrupt="handleInterrupt"
-        @unqueue="emit('unqueue', $event)"
-        @edit-queued="emit('editQueued', $event)"
         @set-permission="emit('setPermission', $event)"
         @set-thinking="emit('setThinking', $event)"
         @toggle-plan="emit('togglePlan')"

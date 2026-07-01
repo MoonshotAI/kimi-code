@@ -296,11 +296,13 @@ export interface ActivationBadges {
   swarm: { done: number; total: number } | null;
 }
 
-/** A queued prompt as shown in the composer's queue strip. */
+/** A queued prompt as shown inline at the tail of the transcript. */
 export interface QueuedPromptView {
   text: string;
   /** Number of image attachments waiting with this prompt. */
   attachmentCount: number;
+  /** Image/video attachments waiting with this prompt, with resolved URLs for thumbnails. */
+  attachments?: { fileId: string; kind: 'image' | 'video'; url: string }[];
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */

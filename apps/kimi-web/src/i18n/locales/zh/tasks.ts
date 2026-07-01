@@ -7,7 +7,6 @@ export default {
   dockBash: '后台 Bash',
   dockSubagent: '子 Agent',
   dockTodos: '待办',
-  dockQueue: '队列',
   running: '运行中',
   closePanel: '关闭面板',
   timingRunning: '运行中 · {time}',
@@ -20,4 +19,4 @@ export default {
   openDetail: '查看',
   collapse: '折叠',
   expand: '展开',
-};
+} as const;

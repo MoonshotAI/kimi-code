@@ -58,7 +58,11 @@ const props = withDefaults(defineProps<{
 });
 
 const placeholder = computed(() =>
-  props.goalMode ? t('status.goalPlaceholder') : t('composer.placeholder')
+  props.running
+    ? t('composer.placeholderRunning')
+    : props.goalMode
+      ? t('status.goalPlaceholder')
+      : t('composer.placeholder')
 );
 
 const emit = defineEmits<{
@@ -133,7 +137,7 @@ function collapseAndRefit(): void {
 //
 // The resting height equals the textarea's computed `min-height` (set in
 // style.css). We read it from the element instead of hard-coding.
-const RESTING_HEIGHT_FALLBACK_PX = 56;
+const RESTING_HEIGHT_FALLBACK_PX = 36;
 function restingHeightPx(el: HTMLTextAreaElement): number {
   if (typeof getComputedStyle === 'undefined') return RESTING_HEIGHT_FALLBACK_PX;
   const min = Number.parseFloat(getComputedStyle(el).minHeight);
@@ -454,17 +458,23 @@ function handleKeydown(e: KeyboardEvent): void {
 
   // History recall (shell-style ↑/↓) — see useInputHistory for the machinery.
   //
-  // ENTERING history: a plain ArrowUp only recalls when the caret is on the
-  // first line, so editing a multi-line draft with the arrows still works.
+  // Disabled entirely in the expanded editor: that mode is for composing long
+  // multi-line text, so the arrows always move the caret within the draft and
+  // never jump to a previous message.
+  //
+  // ENTERING history: a plain ArrowUp only recalls when the caret is at the
+  // very start of the text, so editing a multi-line draft with the arrows
+  // still works — ArrowUp moves the caret within the draft until it reaches
+  // the top, instead of jumping to a previous message mid-navigation.
   // ONCE BROWSING, the arrows walk history directly, regardless of where the
   // caret landed — a recalled multi-line entry leaves the caret at its end, and
-  // the old "must be on the first line" gate then trapped it there, so further
+  // the old "must be at the start" gate then trapped it there, so further
   // ArrowUp did nothing ("only one step back"). Walking freely while browsing
   // fixes that; typing exits history (handleInput resets browsing), after which
   // the arrows move the caret normally again.
-  if (!slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+  if (!expanded.value && !slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
     const browsing = history.isBrowsing();
-    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtFirstLine())) {
+    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtTextStart())) {
       e.preventDefault();
       history.recallOlder();
       return;
@@ -493,7 +503,10 @@ function handleKeydown(e: KeyboardEvent): void {
 // Computed
 // ---------------------------------------------------------------------------
 
-const sendLabel = computed(() => props.running ? t('composer.interrupt') : t('composer.send'));
+// Send is always "send" — while running it enqueues (handled upstream by
+// sendPrompt). Interrupt lives on a separate Stop button so the two can never
+// be confused.
+const sendLabel = computed(() => t('composer.send'));
 const hasUpload = computed(() => !!props.uploadImage);
 
 // ---------------------------------------------------------------------------
@@ -928,15 +941,22 @@ function selectModel(modelId: string): void {
               <Icon class="cv" name="chevron-down" size="sm" />
             </span>
           </Tooltip>
-          <Tooltip :text="running ? t('composer.interruptTitle') : sendLabel">
+          <Tooltip v-if="running" :text="t('composer.interruptTitle')">
+            <button
+              class="stop"
+              :aria-label="t('composer.interrupt')"
+              @click="emit('interrupt')"
+            >
+              <Icon name="stop" size="sm" />
+            </button>
+          </Tooltip>
+          <Tooltip :text="sendLabel">
             <button
               class="send"
-              :class="{ aborting: running }"
               :aria-label="sendLabel"
-              @click="running ? emit('interrupt') : handleSubmit()"
+              @click="handleSubmit()"
             >
-              <Icon class="send-icon" :class="{ hidden: running }" name="send" size="sm" />
-              <Icon class="send-icon" :class="{ hidden: !running }" name="stop" size="sm" />
+              <Icon name="send" size="sm" />
             </button>
           </Tooltip>
         </div>
@@ -1235,7 +1255,7 @@ function selectModel(modelId: string): void {
   font-family: var(--font-ui);
   font-size: 15px;
   background: transparent;
-  min-height: 56px;
+  min-height: 36px;
   max-height: calc(100vh / 4);
   overflow-y: auto;
   line-height: 1.5;
@@ -1275,7 +1295,9 @@ function selectModel(modelId: string): void {
 }
 .compact-chip:hover { background: var(--panel2); }
 
-/* Send button — circular icon (morphs into the abort square while running) */
+/* Send button — circular accent icon. Always "send"; while running it enqueues
+   (handled upstream). Interrupt is a separate Stop button so the two are never
+   confused. */
 .send {
   width: 32px;
   height: 32px;
@@ -1307,22 +1329,36 @@ function selectModel(modelId: string): void {
   flex: none;
 }
 
-.send-icon {
-  position: absolute;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+/* Stop button — sibling of Send, shown only while running. Red at rest so the
+   destructive action is easy to spot; fills solid danger on hover. Kept softer
+   than the accent Send so Send stays the primary action. */
+.stop {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-bd);
+  box-shadow: var(--shadow-xs);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
 }
-
-.send-icon.hidden {
-  opacity: 0;
-  transform: scale(0.7);
-  pointer-events: none;
-}
-
-.send.aborting {
+.stop:hover {
   background: var(--color-danger);
+  color: var(--color-text-on-accent);
+  border-color: var(--color-danger);
 }
-.send.aborting:hover {
-  background: color-mix(in srgb, var(--color-danger) 85%, var(--color-text));
+.stop:active {
+  transform: scale(0.92);
+}
+.stop svg {
+  flex: none;
 }
 
 /* Bottom toolbar */
@@ -1778,10 +1814,25 @@ function selectModel(modelId: string): void {
     line-height: 1;
     color: var(--bg);
   }
-  .send.aborting::after {
+  /* Stop → 36px round "■" glyph to match the mobile Send sizing. */
+  .stop {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0;
+    align-self: flex-end;
+    position: relative;
+  }
+  .stop svg {
+    display: none;
+  }
+  .stop::after {
     content: "■";
     /* Fixed icon glyph size — not part of the UI font scale. */
     font-size: 14px;
+    line-height: 1;
   }
 
   /* Mobile toolbar: hide secondary controls; only attach + model stay visible.
@@ -1803,7 +1854,7 @@ function selectModel(modelId: string): void {
   }
 
   /* Bump mobile font sizes +2px and pin input at 16px to prevent iOS zoom.
-     Height (min 56px / max one quarter of the viewport) is inherited from the
+     Height (min 36px / max one quarter of the viewport) is inherited from the
      base .ph rule so the box auto-grows the same way on touch and desktop. */
   .ph {
     /* Pinned at 16px to prevent iOS auto-zoom on focus (not part of UI font scale). */

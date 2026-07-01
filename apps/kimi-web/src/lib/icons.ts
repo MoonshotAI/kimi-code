@@ -41,6 +41,10 @@ export const ICONS = {
   'chevron-down': { body: '<path d="M4 6l4 4 4-4"/>' },
   send: { body: '<path d="M8 3l6 5.5M8 3L2 8.5M8 3v10"/>' },
   sort: { body: '<path d="M3 4h10M3 8h7M3 12h4"/>' },
+  grip: {
+    body: '<circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/>',
+    fill: true,
+  },
 
   // --- Tool glyphs (16-grid, line) ----------------------------------------
   'file-text': {
@@ -169,6 +173,7 @@ export const ICONS = {
     viewBox: '0 0 24 24',
     body: '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>',
   },
+
 
   // --- Mixed / solid ------------------------------------------------------
   'alert-triangle': {

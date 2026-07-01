@@ -1651,15 +1651,21 @@ const activationBadges = computed<ActivationBadges>(() => {
   };
 });
 
-/** Queued messages for the active session (text + attachment count for the
-    composer strip — an image-only prompt would otherwise render as an empty
-    string). */
+/** Queued messages for the active session, rendered inline at the tail of the
+    transcript. Carries attachment thumbnails (resolved via getFileUrl) so image
+    prompts don't render as empty bubbles. */
 const queued = computed<QueuedPromptView[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
+  const api = getKimiWebApi();
   return (rawState.queuedBySession[sid] ?? []).map((q) => ({
     text: q.text,
     attachmentCount: q.attachments?.length ?? 0,
+    attachments: q.attachments?.map((a) => ({
+      fileId: a.fileId,
+      kind: a.kind,
+      url: api.getFileUrl(a.fileId),
+    })),
   }));
 });
 
@@ -2363,6 +2369,8 @@ export function useKimiWebClient() {
     respondApproval: workspaceState.respondApproval,
     respondQuestion: workspaceState.respondQuestion,
     dismissQuestion: workspaceState.dismissQuestion,
+    pendingQuestionActions: workspaceState.pendingQuestionActions,
+    pendingApprovalActions: workspaceState.pendingApprovalActions,
     cancelTask: workspaceState.cancelTask,
 
     // New Phase 1 actions
@@ -2390,6 +2398,7 @@ export function useKimiWebClient() {
 
     // New Phase 4 actions
     unqueue: workspaceState.unqueue,
+    reorderQueue: workspaceState.reorderQueue,
     searchFiles: workspaceState.searchFiles,
     loadGitStatus: workspaceState.loadGitStatus,
     loadFileDiff: workspaceState.loadFileDiff,

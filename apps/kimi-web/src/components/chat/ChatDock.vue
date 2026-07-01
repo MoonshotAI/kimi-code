@@ -14,11 +14,8 @@ import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
 import TodoCard from './TodoCard.vue';
-import QueuePane from './QueuePane.vue';
-import Button from '../ui/Button.vue';
 import Icon from '../ui/Icon.vue';
 import Pill from '../ui/Pill.vue';
-import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
   sessionId?: string;
@@ -37,7 +34,7 @@ const props = defineProps<{
   skills?: AppSkill[];
   goal?: AppGoal | null;
   goalExpandSignal?: number;
-  dockPanel: 'bash' | 'subagent' | 'todos' | 'queue' | null;
+  dockPanel: 'bash' | 'subagent' | 'todos' | null;
   bashTasks: TaskItem[];
   subagentTasks: TaskItem[];
   bashRunning: number;
@@ -46,7 +43,11 @@ const props = defineProps<{
   hasDockWork: boolean;
   todos?: TodoView[];
   pendingQuestion?: UIQuestion;
+  /** Action kind in flight for the visible question (drives loading state). */
+  questionBusyKind?: 'answer' | 'dismiss';
   pendingApproval?: { approvalId: string; block: ApprovalBlock; agentName?: string };
+  /** True while the visible approval has a respond in flight. */
+  approvalBusy?: boolean;
   mobile?: boolean;
 }>();
 
@@ -55,8 +56,6 @@ const emit = defineEmits<{
   steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
   command: [cmd: string];
   interrupt: [];
-  unqueue: [index: number];
-  editQueued: [index: number];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
   togglePlan: [];
@@ -74,7 +73,7 @@ const emit = defineEmits<{
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
   cancelTask: [taskId: string];
-  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'queue'];
+  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos'];
   'close-dock-panel': [];
   /** A background subagent chip was clicked — open its live detail panel. */
   openAgent: [taskId: string];
@@ -91,12 +90,6 @@ function loadForEdit(value: string): void {
 
 function focus(): void {
   composerRef.value?.focus();
-}
-
-function handleEditQueued(index: number): void {
-  const text = props.queued?.[index]?.text ?? '';
-  if (text) loadForEdit(text);
-  emit('editQueued', index);
 }
 
 function onDocumentMouseDown(event: MouseEvent): void {
@@ -155,21 +148,6 @@ defineExpose({ loadForEdit, focus });
           >
             {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
           </span>
-          <span
-            v-else-if="dockPanel === 'queue'"
-            class="dock-work-tab static"
-          >
-            {{ t('tasks.dockQueue') }} · {{ queued?.length ?? 0 }}
-          </span>
-          <Tooltip :text="t('composer.steerTitle')">
-            <Button
-              v-if="dockPanel === 'queue' && running"
-              class="dock-queue-steer"
-              size="sm"
-              variant="secondary"
-              @click="emit('steer', { text: '', attachments: [] })"
-            >{{ t('composer.steerNow') }}</Button>
-          </Tooltip>
         </div>
         <div class="dock-work-body">
           <TasksPane
@@ -186,15 +164,6 @@ defineExpose({ loadForEdit, focus });
           <TodoCard
             v-else-if="dockPanel === 'todos'"
             :todos="todos ?? []"
-          />
-          <QueuePane
-            v-else
-            :queued="queued ?? []"
-            :running="running"
-            inline
-            @steer="emit('steer', { text: '', attachments: [] })"
-            @unqueue="emit('unqueue', $event)"
-            @edit-queued="handleEditQueued"
           />
         </div>
       </div>
@@ -237,22 +206,13 @@ defineExpose({ loadForEdit, focus });
         <span>{{ t('tasks.dockTodos') }}</span>
         <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
       </Pill>
-      <Pill
-        v-if="(queued?.length ?? 0) > 0"
-        :active="dockPanel === 'queue'"
-        :aria-pressed="dockPanel === 'queue'"
-        @click="emit('toggle-dock-panel', 'queue')"
-      >
-        <Icon name="mail" size="md" />
-        <span>{{ t('tasks.dockQueue') }}</span>
-        <span class="dw-count">(<b>{{ queued?.length ?? 0 }}</b>)</span>
-      </Pill>
     </div>
 
     <QuestionCard
       v-if="pendingQuestion"
       :key="pendingQuestion.questionId"
       :question="pendingQuestion"
+      :busy-kind="questionBusyKind"
       @answer="(qid, resp) => emit('answer', qid, resp)"
       @dismiss="emit('dismiss', $event)"
     />
@@ -262,6 +222,7 @@ defineExpose({ loadForEdit, focus });
       class="dock-approval"
       :block="pendingApproval.block"
       :agent-name="pendingApproval.agentName"
+      :busy="approvalBusy"
       @decide="emit('approval', pendingApproval!.approvalId, $event)"
     />
     <Composer
@@ -354,7 +315,6 @@ defineExpose({ loadForEdit, focus });
   border-color: transparent;
   padding-left: 2px;
 }
-.dock-queue-steer { margin-left: auto; }
 .dock-work-body {
   padding: 8px 10px;
   overflow-y: auto;
@@ -367,12 +327,6 @@ defineExpose({ loadForEdit, focus });
 }
 .dock-work-body :deep(.taskspane .tp-head) {
   display: none;
-}
-.dock-work-body :deep(.queue-pane) {
-  padding: 0;
-}
-.dock-work-body :deep(.queue-pane.tab-mode .queue-list) {
-  max-height: none;
 }
 
 .dock-workbar {
