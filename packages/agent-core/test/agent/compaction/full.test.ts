@@ -1874,10 +1874,10 @@ describe('FullCompaction', () => {
 
     expect(callCount).toBe(3);
     // The catalogued model declares no supportEfforts, so the kimi provider
-    // passes the requested effort through verbatim. The agent's stored
-    // thinkingEffort ('high') is also carried across the compaction (see the
-    // record assertion below).
-    expect(providerThinkingEfforts).toEqual(['high', 'high', 'high']);
+    // normalizes to boolean thinking and reports 'on' rather than the
+    // requested 'high'. The agent's stored thinkingEffort ('high') is still
+    // carried across the compaction (see the record assertion below).
+    expect(providerThinkingEfforts).toEqual(['on', 'on', 'on']);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({

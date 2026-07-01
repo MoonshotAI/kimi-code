@@ -149,7 +149,7 @@ describe('e2e: kimi adapter', () => {
         model: 'kimi-k2-turbo-preview',
         stream: true,
         stream_options: { include_usage: true },
-        thinking: { type: 'enabled', effort: 'high' },
+        thinking: { type: 'enabled' },
         messages: [
           { role: 'system', content: 'You are helpful.' },
           { role: 'user', content: 'Check the weather.' },
