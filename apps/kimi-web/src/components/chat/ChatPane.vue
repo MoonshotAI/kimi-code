@@ -35,10 +35,6 @@ onUnmounted(() => {
     clearTimeout(copiedConversationTimer);
     copiedConversationTimer = null;
   }
-  if (undoTimer !== null) {
-    clearTimeout(undoTimer);
-    undoTimer = null;
-  }
   if (undoFallbackTimer !== null) {
     clearTimeout(undoFallbackTimer);
     undoFallbackTimer = null;
@@ -243,10 +239,9 @@ const copiedTurn = ref<string | null>(null);
 // Undo/edit-and-resend confirmation state (keyed by turn id)
 const confirmingEditTurnId = ref<string | null>(null);
 const undoingTurnId = ref<string | null>(null);
-let undoTimer: ReturnType<typeof setTimeout> | null = null;
 // Fallback that releases the undoing state if the server rewind never removes
-// the turn (e.g. the undo failed). Without it the bubble would stay hidden and
-// the guard in confirmEditMessage would block any further undo.
+// the turn (e.g. the undo failed). Without it the guard in confirmEditMessage
+// would block any further undo.
 let undoFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 const UNDO_FALLBACK_MS = 2500;
 
@@ -275,22 +270,17 @@ function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   confirmingEditTurnId.value = null;
   undoingTurnId.value = turn.id;
-  undoTimer = setTimeout(() => {
-    undoTimer = null;
-    emit('editMessage', turn.text);
-    // Keep `undoingTurnId` set so the bubble stays in its exited (opacity-0)
-    // state until the server rewind actually removes this turn; clearing it here
-    // would remove the `.undoing` class and snap the bubble back into view.
-    undoFallbackTimer = setTimeout(() => {
-      undoFallbackTimer = null;
-      undoingTurnId.value = null;
-    }, UNDO_FALLBACK_MS);
-  }, 240);
+  emit('editMessage', turn.text);
+  // Fallback: if the server rewind never removes the turn (e.g. it failed),
+  // release the guard so the user can retry.
+  undoFallbackTimer = setTimeout(() => {
+    undoFallbackTimer = null;
+    undoingTurnId.value = null;
+  }, UNDO_FALLBACK_MS);
 }
 
-// Release the undoing state once the server rewind has actually removed the
-// turn from the list. Runs post-render so the element is already gone — clearing
-// the class then can't snap anything back into view.
+// Release the undoing guard once the server rewind has actually removed the turn
+// from the list (post-render, so the element is already gone).
 watch(
   () => props.turns,
   (turns) => {
@@ -765,17 +755,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   transition: max-width 0.15s ease;
 }
 .u-meta .u-edit:hover .u-edit-text { max-width: 120px; }
-/* Undo exit: plain fade-out. The `.undoing` class stays applied until the server
-   rewind actually removes the turn (see confirmEditMessage), so `forwards`
-   keeps the bubble hidden until then — no snap-back flicker. */
-.u-bub.undoing {
-  pointer-events: none;
-  animation: undo-bubble-fade 0.24s var(--ease-out) forwards;
-}
-@keyframes undo-bubble-fade {
-  0%   { opacity: 1; }
-  100% { opacity: 0; }
-}
 /* User input is shown verbatim — preserve newlines, break long tokens. */
 .u-text {
   white-space: pre-wrap;
@@ -829,12 +808,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 /* Mobile bubble layout: right-align the undo button below the bubble. */
 .u-edit-wrap { display: flex; justify-content: flex-end; }
-.u-edit-wrap.undoing {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(12px) scale(0.95);
-  transition: opacity 120ms ease, transform 160ms ease;
-}
 .chat > .u-edit-wrap { margin-top: 4px; }
 .chat > .u-edit-wrap + .a-msg { margin-top: 8px; }
 /* Inline confirm state shown after the user clicks the undo affordance. */
