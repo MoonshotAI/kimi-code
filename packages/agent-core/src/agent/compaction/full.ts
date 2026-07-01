@@ -390,13 +390,9 @@ export class FullCompaction {
         maxContextTokens > 0
           ? Math.min(maxContextTokens, DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS)
           : undefined;
-      const provider = applyCompletionBudget({
-        provider: this.agent.config.provider,
-        budget: resolveCompletionBudget({
-          maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
-          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
-        }),
-        capability,
+      const completionBudget = resolveCompletionBudget({
+        maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
+        reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
       });
       const instruction = this.buildInstruction(data.instruction);
 
@@ -416,6 +412,12 @@ export class FullCompaction {
           createUserMessage(instruction),
         ];
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
+        const provider = applyCompletionBudget({
+          provider: this.agent.config.provider,
+          budget: completionBudget,
+          capability,
+          usedContextTokens: estimatedCompactionRequestTokens,
+        });
         try {
           const response = await this.agent.generate(
             provider,

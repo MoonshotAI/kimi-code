@@ -100,9 +100,7 @@ describe('applyCompletionBudget', () => {
       thinkingEffort: null,
       generate: vi.fn() as unknown as ChatProvider['generate'],
       withThinking: vi.fn() as unknown as ChatProvider['withThinking'],
-      withMaxCompletionTokens: withMaxCompletionTokens as unknown as (
-        n: number,
-      ) => ChatProvider,
+      withMaxCompletionTokens: withMaxCompletionTokens as unknown as ChatProvider['withMaxCompletionTokens'],
     };
   });
 
@@ -149,6 +147,20 @@ describe('applyCompletionBudget', () => {
     expect(withMaxCompletionTokens).toHaveBeenCalledOnce();
     expect(withMaxCompletionTokens.mock.calls[0]?.[0]).toBe(8192);
     expect(result).not.toBe(original);
+  });
+
+  it('forwards used context tokens and model context size to provider clamps', () => {
+    applyCompletionBudget({
+      provider: original,
+      budget: { hardCap: 128000 },
+      capability: makeCapability(128000),
+      usedContextTokens: 120000,
+    });
+
+    expect(withMaxCompletionTokens).toHaveBeenCalledWith(128000, {
+      usedContextTokens: 120000,
+      maxContextTokens: 128000,
+    });
   });
 });
 

@@ -2058,7 +2058,10 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
-    expect(compactionMaxCompletionTokens).toEqual([384000]);
+    const maxCompletionTokens = compactionMaxCompletionTokens[0];
+    expect(typeof maxCompletionTokens).toBe('number');
+    expect(maxCompletionTokens).toBeGreaterThan(0);
+    expect(maxCompletionTokens).toBeLessThan(384000);
   });
 
   it('uses default 128k hardCap when maxOutputSize is not configured', async () => {
@@ -2092,6 +2095,31 @@ describe('FullCompaction', () => {
 
     expect(callCount).toBe(3);
     expect(compactionMaxCompletionTokens).toEqual([128 * 1024]);
+  });
+
+  it('clamps compaction completion budget to the remaining context window', async () => {
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider) => {
+      compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+      return textResult('Remaining window compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 1000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one '.repeat(120), 'old assistant one '.repeat(120), 20);
+
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const maxCompletionTokens = compactionMaxCompletionTokens[0];
+    expect(typeof maxCompletionTokens).toBe('number');
+    expect(maxCompletionTokens).toBeGreaterThan(0);
+    expect(maxCompletionTokens).toBeLessThan(1000);
   });
 
   it('ignores filtered assistant placeholders when checking the retained overflow suffix', async () => {
