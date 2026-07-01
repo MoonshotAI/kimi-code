@@ -98,6 +98,33 @@ export function isRetryableGenerateError(error: unknown): boolean {
   return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
 }
 
+// `terminated` is the undici signature for an SSE/HTTP body stream that is
+// dropped mid-flight (common with Node's native fetch on long reasoning
+// streams). It surfaces as a raw `TypeError: terminated`, so it must be
+// recognized here as a transport-layer connection failure. Shared by the
+// Anthropic and OpenAI providers so a raw, non-SDK transport error classifies
+// the same way regardless of which provider was streaming.
+const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
+const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
+
+/**
+ * Classify a raw (non-SDK) error message into the right transport-layer
+ * `ChatProviderError` subclass: a timeout becomes a retryable `APITimeoutError`,
+ * a dropped connection / undici `terminated` becomes a retryable
+ * `APIConnectionError`, and anything else stays a non-retryable base
+ * `ChatProviderError`. Timeout is checked first so "connection timed out"
+ * classifies as a timeout rather than a bare connection error.
+ */
+export function classifyBaseApiError(message: string): ChatProviderError {
+  if (TIMEOUT_RE.test(message)) {
+    return new APITimeoutError(message);
+  }
+  if (NETWORK_RE.test(message)) {
+    return new APIConnectionError(message);
+  }
+  return new ChatProviderError(`Error: ${message}`);
+}
+
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /context[ _-]?length/,
   /(?:context[ _-]?window.*exceed|exceed.*context[ _-]?window)/,

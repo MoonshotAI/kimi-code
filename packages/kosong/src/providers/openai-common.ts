@@ -2,6 +2,7 @@ import {
   APIConnectionError,
   APITimeoutError,
   ChatProviderError,
+  classifyBaseApiError,
   normalizeAPIStatusError,
 } from '#/errors';
 import { extractText } from '#/message';
@@ -83,22 +84,6 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
       parameters: tool.parameters,
     },
   };
-}
-// `terminated` is the undici signature for an SSE/HTTP body stream that is
-// dropped mid-flight (common with Node's native fetch on long reasoning
-// streams). It surfaces as a raw `TypeError: terminated`, so it must be
-// recognized here as a transport-layer connection failure.
-const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
-const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
-
-function classifyBaseApiError(message: string): ChatProviderError {
-  if (TIMEOUT_RE.test(message)) {
-    return new APITimeoutError(message);
-  }
-  if (NETWORK_RE.test(message)) {
-    return new APIConnectionError(message);
-  }
-  return new ChatProviderError(`Error: ${message}`);
 }
 
 /**

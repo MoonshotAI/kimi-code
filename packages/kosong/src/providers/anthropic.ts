@@ -2,6 +2,7 @@ import {
   APIConnectionError,
   APITimeoutError,
   ChatProviderError,
+  classifyBaseApiError,
   normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
@@ -652,8 +653,13 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
   if (error instanceof AnthropicError) {
     return new ChatProviderError(`Anthropic error: ${error.message}`);
   }
+  // Raw, non-SDK errors (e.g. undici's `TypeError: terminated` raised when a
+  // streaming response body is dropped mid-flight) are never wrapped by the
+  // Anthropic SDK during stream iteration. Route them through the shared
+  // transport-layer heuristic so genuine connection failures become retryable
+  // instead of fatal generic errors.
   if (error instanceof Error) {
-    return new ChatProviderError(`Error: ${error.message}`);
+    return classifyBaseApiError(error.message);
   }
   return new ChatProviderError(`Error: ${String(error)}`);
 }
