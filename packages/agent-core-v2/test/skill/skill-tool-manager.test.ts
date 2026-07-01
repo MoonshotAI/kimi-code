@@ -14,14 +14,13 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import {
   InMemoryWireRecordPersistence,
   createTestAgent,
-  kaosServices,
+  execEnvServices,
   skillServices,
   telemetryServices,
   wireRecordPersistenceServices,
   type TestAgentContext,
 } from '../harness';
 import { recordingTelemetry } from '../telemetry/stubs';
-import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { stubSkill } from './stubs';
 
 function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): SkillDefinition {
@@ -395,7 +394,7 @@ describe('ToolManager SkillTool workspace refresh', () => {
     skills.register(skill);
 
     ctx = createTestAgent(
-      kaosServices(createFakeKaos().withCwd(workDir)),
+      execEnvServices({ execContext: { cwd: workDir } }),
       skillServices(skills),
     );
     profile = ctx.get(IAgentProfileService);

@@ -3,7 +3,8 @@
  *
  * Registers the built-in file tools (Read / Write / Edit / Grep / Glob) into
  * the agent `IAgentToolRegistryService` on construction, wiring each to the session
- * `ISessionAgentFileSystem` (file IO), `ISessionFsService` (workspace search/grep), `IKaos`
+ * `ISessionAgentFileSystem` (file IO), `ISessionFsService` (workspace search/grep),
+ * `ISessionProcessRunner` (rg subprocess for Glob), `IHostEnvironment`
  * (path semantics) and the session workspace. Bound at Agent scope.
  */
 
@@ -11,7 +12,8 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
 import { ISessionAgentFileSystem, ISessionFsService } from '#/session/agentFs';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { ISessionProcessRunner } from '#/session/process';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
@@ -29,20 +31,21 @@ export class AgentFileToolsService implements IAgentFileToolsService {
   constructor(
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
     @ISessionAgentFileSystem fs: ISessionAgentFileSystem,
-    @IKaos kaos: IKaos,
+    @IHostEnvironment env: IHostEnvironment,
     @ISessionWorkspaceContext workspace: ISessionWorkspaceContext,
     @ISessionFsService fsService: ISessionFsService,
+    @ISessionProcessRunner runner: ISessionProcessRunner,
     @ITelemetryService telemetry: ITelemetryService,
   ) {
     const workspaceConfig: WorkspaceConfig = {
       workspaceDir: workspace.workDir,
       additionalDirs: workspace.additionalDirs,
     };
-    toolRegistry.register(new ReadTool(fs, kaos, workspaceConfig));
-    toolRegistry.register(new WriteTool(fs, kaos, workspaceConfig));
-    toolRegistry.register(new EditTool(fs, kaos, workspaceConfig));
-    toolRegistry.register(new GrepTool(fsService, kaos, workspaceConfig));
-    toolRegistry.register(new GlobTool(fs, kaos, workspaceConfig, telemetry));
+    toolRegistry.register(new ReadTool(fs, env, workspaceConfig));
+    toolRegistry.register(new WriteTool(fs, env, workspaceConfig));
+    toolRegistry.register(new EditTool(fs, env, workspaceConfig));
+    toolRegistry.register(new GrepTool(fsService, env, workspaceConfig));
+    toolRegistry.register(new GlobTool(fs, env, runner, workspaceConfig, telemetry));
   }
 }
 

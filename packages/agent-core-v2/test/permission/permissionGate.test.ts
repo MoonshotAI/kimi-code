@@ -10,7 +10,7 @@ import type { ApprovalResponse } from '#/session/approval/approval';
 import type { ApprovalRequest } from '#/session/approval/approval';
 import { ISessionApprovalService } from '#/session/approval/approval';
 import { IAgentExternalHooksService } from '#/agent/externalHooks';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import type { LLM } from '#/agent/loop/llm';
 import type { ResolvedToolExecutionHookContext } from '#/agent/tool';
 import { IAgentPermissionGate, AgentPermissionGate } from '#/agent/permissionGate';
@@ -119,8 +119,8 @@ describe('AgentPermissionGate', () => {
         reg.definePartialInstance(IAgentSwarmService, {
           isActive: false,
         });
-        reg.definePartialInstance(IKaos, {
-          pathClass: () => 'posix',
+        reg.definePartialInstance(IHostEnvironment, {
+          pathClass: 'posix',
         });
         reg.definePartialInstance(ISessionWorkspaceContext, {
           workDir: '/workspace',

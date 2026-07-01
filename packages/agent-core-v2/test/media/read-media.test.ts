@@ -9,7 +9,7 @@ import type { ContentPart, ModelCapability } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ISessionAgentFileSystem } from '#/session/agentFs';
-import type { IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
 import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
@@ -81,11 +81,18 @@ function createTestFs(files: Record<string, FakeFile>): ISessionAgentFileSystem 
   } as unknown as ISessionAgentFileSystem;
 }
 
-function createTestKaos(): IKaos {
+function createTestEnv(): IHostEnvironment {
   return {
-    pathClass: () => 'posix',
-    gethome: () => '/home',
-  } as unknown as IKaos;
+    _serviceBrand: undefined,
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass: 'posix',
+    homeDir: '/home',
+    ready: Promise.resolve(),
+  };
 }
 
 function makeTool(
@@ -93,7 +100,7 @@ function makeTool(
   caps: ModelCapability = capabilities(),
   videoUploader?: VideoUploader,
 ): ReadMediaFileTool {
-  return new ReadMediaFileTool(createTestFs(files), createTestKaos(), WORKSPACE, caps, videoUploader);
+  return new ReadMediaFileTool(createTestFs(files), createTestEnv(), WORKSPACE, caps, videoUploader);
 }
 
 async function execute(
@@ -261,13 +268,13 @@ describe('ReadMediaFileTool', () => {
 
 describe('registerMediaTools', () => {
   const fs = createTestFs({});
-  const kaos = createTestKaos();
+  const env = createTestEnv();
 
   it('registers ReadMediaFile when the model supports image input', () => {
     const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
       fs,
-      kaos,
+      env,
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: true, video_in: false }),
     });
@@ -280,7 +287,7 @@ describe('registerMediaTools', () => {
     const registry = new AgentToolRegistryService();
     registerMediaTools(registry, {
       fs,
-      kaos,
+      env,
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: false, video_in: true }),
     });
@@ -291,7 +298,7 @@ describe('registerMediaTools', () => {
     const registry = new AgentToolRegistryService();
     const disposable = registerMediaTools(registry, {
       fs,
-      kaos,
+      env,
       workspace: WORKSPACE,
       capabilities: capabilities({ image_in: false, video_in: false }),
     });

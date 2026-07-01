@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { IProcess } from '#/session/process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentBackgroundService, ProcessBackgroundTask } from '#/agent/background';
 import { createBackgroundTaskPersistence, type BackgroundServiceTestManager } from './stubs';
@@ -28,7 +28,7 @@ function createBackgroundService(homedir: string): BackgroundServiceFixture {
 
 function registerProcess(
   manager: IAgentBackgroundService,
-  proc: KaosProcess,
+  proc: IProcess,
   command: string,
   description: string,
 ): string {
@@ -48,16 +48,16 @@ async function waitForOutput(
   throw new Error(`Timed out waiting for output: ${expected}`);
 }
 
-function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
+function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
   return {
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from(stdoutText ? [stdoutText] : []),
     stderr: Readable.from([]),
     pid: 50000 + exitCode,
     exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as KaosProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
+    wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
   };
 }
 

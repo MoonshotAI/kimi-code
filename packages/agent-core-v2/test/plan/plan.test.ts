@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
-import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,41 +10,61 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentPlanService, type PlanData } from '#/agent/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules';
 import { IAgentProfileService } from '#/agent/profile';
-import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import type { ISessionAgentFileSystem } from '#/session/agentFs';
+import type { ISessionProcessRunner } from '#/session/process';
+import { createFakeAgentFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
-  createCommandKaos,
+  createCommandRunner,
   createTestAgent,
-  kaosServices,
+  execEnvServices,
   type TestAgentContext,
 } from '../harness';
 
-function createPlanKaos(overrides: Parameters<typeof createFakeKaos>[0] = {}) {
-  return createFakeKaos({
+interface PlanFakes {
+  readonly fs: ISessionAgentFileSystem;
+  readonly runner: ISessionProcessRunner;
+}
+
+/**
+ * Minimal fs + runner pair with sensible plan-service defaults (mkdir /
+ * readText no-op, runner throws). Individual tests override the specific
+ * methods they need.
+ */
+function createPlanFakes(overrides: Partial<ISessionAgentFileSystem> = {}): PlanFakes {
+  const fs = createFakeAgentFs({
     mkdir: vi.fn().mockResolvedValue(undefined),
     readText: vi.fn().mockResolvedValue(''),
     ...overrides,
   });
+  const runner = createFakeProcessRunner();
+  return { fs, runner };
 }
 
-function createPlanCommandKaos(stdout: string): Kaos {
-  const commandKaos = createCommandKaos(stdout);
-  return createPlanKaos({ execWithEnv: commandKaos.execWithEnv });
+function createPlanCommandFakes(stdout: string): PlanFakes {
+  return {
+    fs: createPlanFakes().fs,
+    runner: createCommandRunner(stdout),
+  };
 }
 
-function createPlanFileKaos(
+function createPlanFileFakes(
   files = new Map<string, string>(),
-  overrides: Parameters<typeof createFakeKaos>[0] = {},
-) {
+  overrides: Partial<ISessionAgentFileSystem> = {},
+): {
+  readonly files: Map<string, string>;
+  readonly readText: ReturnType<typeof vi.fn>;
+  readonly writeText: ReturnType<typeof vi.fn>;
+  readonly fakes: PlanFakes;
+} {
   const readText = vi.fn(async (path: string) => files.get(path) ?? '');
   const writeText = vi.fn(async (path: string, content: string) => {
     files.set(path, content);
-    return content.length;
   });
   return {
     files,
     readText,
     writeText,
-    kaos: createPlanKaos({
+    fakes: createPlanFakes({
       readText,
       writeText,
       ...overrides,
@@ -58,7 +77,7 @@ type InjectableDynamicInjector = {
 };
 
 describe('Plan service', () => {
-  let activeKaos: Kaos;
+  let activeFakes: PlanFakes;
   let context: IAgentContextMemoryService;
   let ctx: TestAgentContext;
   let injector: InjectableDynamicInjector;
@@ -68,9 +87,14 @@ describe('Plan service', () => {
   let tempDirs: string[];
 
   beforeEach(() => {
-    activeKaos = createPlanKaos();
+    activeFakes = createPlanFakes();
     tempDirs = [];
-    ctx = createTestAgent(kaosServices(delegatingKaos()));
+    ctx = createTestAgent(
+      execEnvServices({
+        agentFs: delegatingFs(),
+        processRunner: delegatingRunner(),
+      }),
+    );
     context = ctx.get(IAgentContextMemoryService);
     injector = ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector;
     permissionRules = ctx.get(IAgentPermissionRulesService);
@@ -87,17 +111,30 @@ describe('Plan service', () => {
     }
   });
 
-  function delegatingKaos(): Kaos {
-    return new Proxy(createPlanKaos(), {
+  /**
+   * A fs whose methods delegate to whichever `activeFakes.fs` is set at call
+   * time. Lets a test swap fakes mid-flight by reassigning `activeFakes`.
+   */
+  function delegatingFs(): ISessionAgentFileSystem {
+    return new Proxy(createPlanFakes().fs, {
       get(_target, prop, receiver) {
-        const value = Reflect.get(activeKaos, prop, receiver);
-        return typeof value === 'function' ? value.bind(activeKaos) : value;
+        const value = Reflect.get(activeFakes.fs, prop, receiver);
+        return typeof value === 'function' ? value.bind(activeFakes.fs) : value;
       },
-    }) as Kaos;
+    }) as ISessionAgentFileSystem;
   }
 
-  function useKaos(kaos: Kaos): void {
-    activeKaos = kaos;
+  function delegatingRunner(): ISessionProcessRunner {
+    return new Proxy(createPlanFakes().runner, {
+      get(_target, prop, receiver) {
+        const value = Reflect.get(activeFakes.runner, prop, receiver);
+        return typeof value === 'function' ? value.bind(activeFakes.runner) : value;
+      },
+    }) as ISessionProcessRunner;
+  }
+
+  function useFakes(fakes: PlanFakes): void {
+    activeFakes = fakes;
   }
 
   function useTools(tools: readonly string[]): void {
@@ -138,7 +175,7 @@ describe('Plan service', () => {
       const mkdir = vi.fn().mockResolvedValue(undefined);
       const writeText = vi.fn().mockResolvedValue(0);
       const cwd = await makeTempDir('kimi-plan-entry-');
-      useKaos(createPlanKaos({ mkdir, writeText }));
+      useFakes(createPlanFakes({ mkdir, writeText }));
       profile.update({ cwd });
 
       await ctx.rpc.enterPlan({});
@@ -147,7 +184,7 @@ describe('Plan service', () => {
       const status = await expectActivePlan();
       expect(status.path.startsWith(`${join(cwd, 'plan')}/`)).toBe(true);
       expect(status.path.endsWith('.md')).toBe(true);
-      expect(mkdir).toHaveBeenCalledWith(join(cwd, 'plan'), { parents: true, existOk: true });
+      expect(mkdir).toHaveBeenCalledWith(join(cwd, 'plan'));
       expect(writeText).not.toHaveBeenCalled();
       expect(ctx.allEvents.some((event) => event.event === 'turn.started')).toBe(false);
       expect(ctx.llmCalls).toHaveLength(0);
@@ -155,8 +192,8 @@ describe('Plan service', () => {
 
     it('derives the no-homedir plan path from cwd on enter and restore', async () => {
       const cwd = await makeTempDir('kimi-plan-path-');
-      useKaos(createPlanKaos({
-        writeText: vi.fn(async (_path: string, content: string) => content.length),
+      useFakes(createPlanFakes({
+        writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
       }));
       profile.update({ cwd });
       await plan.enter('stable-plan');
@@ -183,8 +220,8 @@ describe('Plan service', () => {
 
     it('enters plan mode through the EnterPlanMode tool and reminds the next step', async () => {
       const cwd = await makeTempDir('kimi-plan-tool-entry-');
-      const { kaos } = createPlanFileKaos();
-      useKaos(kaos);
+      const { fakes } = createPlanFileFakes();
+      useFakes(fakes);
       useTools(['EnterPlanMode']);
       profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'yolo' });
@@ -210,8 +247,8 @@ describe('Plan service', () => {
   describe('plan clear', () => {
     it('empties the current plan file without leaving plan mode', async () => {
       const cwd = await makeTempDir('kimi-plan-clear-');
-      const { files, writeText, kaos } = createPlanFileKaos();
-      useKaos(kaos);
+      const { files, writeText, fakes } = createPlanFileFakes();
+      useFakes(fakes);
       profile.update({ cwd });
       await plan.enter('test-plan', false);
 
@@ -234,8 +271,8 @@ describe('Plan service', () => {
   describe('plan exit tool', () => {
     it('reads the current plan file and exits plan mode directly in auto mode', async () => {
       const cwd = await makeTempDir('kimi-plan-exit-');
-      const { files, kaos } = createPlanFileKaos();
-      useKaos(kaos);
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
       useTools(['ExitPlanMode']);
       profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'auto' });
@@ -266,8 +303,8 @@ describe('Plan service', () => {
 
     it('stops the turn and stays in plan mode when the user rejects the plan', async () => {
       const cwd = await makeTempDir('kimi-plan-reject-exit-');
-      const { files, kaos } = createPlanFileKaos();
-      useKaos(kaos);
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
       useTools(['ExitPlanMode']);
       profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'manual' });
@@ -296,12 +333,16 @@ describe('Plan service', () => {
     });
 
     it('does not execute later tool calls in the same batch after plan rejection', async () => {
-      const execWithEnv = vi.fn(() => {
+      const exec = vi.fn(() => {
         throw new Error('Bash should not execute after plan rejection');
       });
       const cwd = await makeTempDir('kimi-plan-reject-skip-tool-');
-      const { files, kaos } = createPlanFileKaos(undefined, { execWithEnv });
-      useKaos(kaos);
+      const { files, fakes: baseFakes } = createPlanFileFakes(undefined);
+      const fakes: PlanFakes = {
+        fs: baseFakes.fs,
+        runner: createFakeProcessRunner({ exec }),
+      };
+      useFakes(fakes);
       useTools(['ExitPlanMode', 'Bash']);
       profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'yolo' });
@@ -334,7 +375,7 @@ describe('Plan service', () => {
 
       await ctx.untilTurnEnd();
       await expectPlanActive(true);
-      expect(execWithEnv).not.toHaveBeenCalled();
+      expect(exec).not.toHaveBeenCalled();
       expect(ctx.llmCalls).toHaveLength(1);
       expect(toolResultText(context.get())).toContain('Plan rejected by user');
       expect(toolResultText(context.get())).toContain(
@@ -344,8 +385,8 @@ describe('Plan service', () => {
 
     it('refuses to exit when the current plan file is empty', async () => {
       const cwd = await makeTempDir('kimi-plan-empty-exit-');
-      const { files, kaos } = createPlanFileKaos();
-      useKaos(kaos);
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
       useTools(['ExitPlanMode']);
       profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'yolo' });
@@ -376,8 +417,8 @@ describe('Plan service', () => {
   describe('plan exit tool options', () => {
     it('keeps options for approval when an option omits the optional description', async () => {
       const cwd = await makeTempDir('kimi-plan-options-exit-');
-      const { files, kaos } = createPlanFileKaos();
-      useKaos(kaos);
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
       useTools(['ExitPlanMode']);
       profile.update({ cwd });
       await ctx.rpc.setPermission({ mode: 'manual' });
@@ -424,11 +465,10 @@ describe('Plan service', () => {
       async (toolName) => {
         const files = new Map<string, string>();
         const readText = vi.fn(async (path: string) => files.get(path) ?? '');
-        const writeText = vi.fn(async (path: string, content: string) => {
+        const writeText = vi.fn(async (path: string, content: string): Promise<void> => {
           files.set(path, content);
-          return content.length;
         });
-        useKaos(createPlanKaos({ readText, writeText }));
+        useFakes(createPlanFakes({ readText, writeText }));
         const cwd = await makeTempDir('kimi-plan-write-tool-');
         useTools([toolName]);
         profile.update({ cwd });
@@ -466,11 +506,10 @@ describe('Plan service', () => {
 
     it('keeps explicit deny rules above active plan file writes', async () => {
       const files = new Map<string, string>();
-      const writeText = vi.fn(async (path: string, content: string) => {
+      const writeText = vi.fn(async (path: string, content: string): Promise<void> => {
         files.set(path, content);
-        return content.length;
       });
-      useKaos(createPlanKaos({ writeText }));
+      useFakes(createPlanFakes({ writeText }));
       const cwd = await makeTempDir('kimi-plan-deny-write-');
       useTools(['Write']);
       profile.update({ cwd });
@@ -516,7 +555,7 @@ describe('Plan service', () => {
         name: 'Bash',
         arguments: '{"command":"printf plan-safe","timeout":60}',
       };
-      useKaos(createPlanCommandKaos('plan-safe'));
+      useFakes(createPlanCommandFakes('plan-safe'));
       useTools(['Bash']);
       await ctx.rpc.setPermission({ mode: 'yolo' });
       await plan.enter('test-plan', false);
@@ -580,7 +619,7 @@ describe('Plan service', () => {
         name: 'Bash',
         arguments: '{"command":"rm forbidden.txt","timeout":60}',
       };
-      useKaos(createPlanCommandKaos('removed'));
+      useFakes(createPlanCommandFakes('removed'));
       useTools(['Bash']);
       await ctx.rpc.setPermission({ mode: 'yolo' });
       await plan.enter('test-plan', false);
@@ -651,7 +690,7 @@ describe('Plan service', () => {
     });
 
     it('emits a reentry reminder when restored plan mode already has plan content', async () => {
-      useKaos(createPlanKaos({
+      useFakes(createPlanFakes({
         readText: vi.fn(async () => '# Existing Plan\n\n- Keep this context'),
       }));
       await ctx.dispatch({

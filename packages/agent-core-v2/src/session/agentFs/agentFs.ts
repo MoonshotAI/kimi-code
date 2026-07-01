@@ -1,12 +1,14 @@
 /**
  * `agentFs` domain (L1) — the Agent's filesystem.
  *
- * Defines the `ISessionAgentFileSystem` that business code injects to read and write
- * files inside the Agent's execution environment. Session-scoped and backed by
- * the session `IKaos`; business code depends on `ISessionAgentFileSystem` only.
+ * Defines the `ISessionAgentFileSystem` that business code injects to read and
+ * write files inside the Agent's execution environment. Session-scoped; the
+ * implementation resolves relative paths against `IExecContext.cwd` and talks
+ * to Node's `fs/promises` directly.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import type { TextDecodeErrors } from '#/_base/execEnv';
 
 export interface AgentFileStat {
   readonly isFile: boolean;
@@ -23,12 +25,19 @@ export interface ISessionAgentFileSystem {
 
   readonly cwd: string;
 
-  readText(path: string): Promise<string>;
-  writeText(path: string, data: string): Promise<void>;
+  readText(
+    path: string,
+    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
+  ): Promise<string>;
+  writeText(
+    path: string,
+    data: string,
+    options?: { mode?: 'w' | 'a'; encoding?: BufferEncoding },
+  ): Promise<void>;
   readBytes(path: string, n?: number): Promise<Uint8Array>;
   readLines(
     path: string,
-    options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
+    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): AsyncGenerator<string>;
   writeBytes(path: string, data: Uint8Array): Promise<void>;
   stat(path: string): Promise<AgentFileStat>;

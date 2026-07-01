@@ -11,7 +11,7 @@
  * missing file as empty) and writes the concatenation back.
  *
  * Write access flows through the `agentFs` domain; path semantics (home
- * expansion, path class) come from the `kaos` domain.
+ * expansion, path class) come from the `hostEnvironment` domain.
  *
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/write.ts`).
  */
@@ -20,7 +20,7 @@ import { dirname } from 'pathe';
 import { z } from 'zod';
 
 import type { AgentFileStat, ISessionAgentFileSystem } from '#/session/agentFs';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { ToolAccesses } from '#/agent/tool';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
@@ -63,13 +63,13 @@ export class WriteTool implements BuiltinTool<WriteInput> {
 
   constructor(
     private readonly fs: ISessionAgentFileSystem,
-    private readonly kaos: IKaos,
+    private readonly env: IHostEnvironment,
     private readonly workspace: WorkspaceConfig,
   ) {}
 
   resolveExecution(args: WriteInput): ToolExecution {
     const path = resolvePathAccessPath(args.path, {
-      kaos: this.kaos,
+      env: this.env,
       workspace: this.workspace,
       operation: 'write',
     });
@@ -81,8 +81,8 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
           cwd: this.workspace.workspaceDir,
-          pathClass: this.kaos.pathClass(),
-          homeDir: this.kaos.gethome(),
+          pathClass: this.env.pathClass,
+          homeDir: this.env.homeDir,
         }),
       execute: () => this.execution(args, path),
     };

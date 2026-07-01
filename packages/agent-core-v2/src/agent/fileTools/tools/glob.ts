@@ -3,30 +3,29 @@
  *
  * Finds files matching a glob pattern, returned sorted by modification time
  * (most recent first). Implemented by shelling out to `rg --files` through the
- * session `IKaos` backend (`withCwd(root).backend.exec(rgPath, ...)`) — sharing
- * the ripgrep subprocess plumbing, gitignore handling, and sensitive-file
- * filtering with the Grep domain.
+ * session `ISessionProcessRunner` — sharing the ripgrep subprocess plumbing,
+ * gitignore handling, and sensitive-file filtering with the Grep domain.
  *
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/glob.ts`) onto
  * the v2 domains:
  *   - Search: v1 `kaos.exec(rgPath, ...)` maps to
- *     `this.kaos.withCwd(searchRoot).backend.exec(rgPath, ...)`. v2 `IKaos`
- *     exposes process spawning through `backend.exec`; `withCwd` pins the
+ *     `this.runner.exec([rgPath, ...], { cwd: searchRoot })`. Pinning the
  *     subprocess cwd to the search root so `--glob` patterns match paths
  *     relative to that root.
- *   - Binary resolution: `ensureRgPath` (`#/agentFs/rgLocator`) probes the
- *     execution environment for a working `rg` (system PATH, then the cached
+ *   - Binary resolution: `ensureRgPath` (`#/session/agentFs/rgLocator`) probes
+ *     the execution environment for a working `rg` (system PATH, then the cached
  *     bootstrap binary) so a missing `rg` surfaces an actionable message
  *     instead of a naked `spawn rg ENOENT`.
  *   - Subprocess plumbing: `runRgOnce` / `shouldRetryRipgrepEagain`
- *     (`#/agentFs/runRg`) own spawn, capped draining, abort/timeout, two-phase
- *     kill, and the single-threaded EAGAIN retry shared with v1's run-rg.
+ *     (`#/session/agentFs/runRg`) own spawn, capped draining, abort/timeout,
+ *     two-phase kill, and the single-threaded EAGAIN retry shared with v1's
+ *     run-rg.
  *   - Directory pre-check: `fs.readdir(searchRoot)` surfaces a missing or
  *     non-directory root as "does not exist" / "is not a directory" instead of
  *     a misleading "No matches found" (or, for a file root, rg listing the
  *     file itself as its own match).
  *   - Path safety / home expansion / path class: `resolvePathAccessPath` over
- *     the `kaos` domain, identical to Read/Write/Edit/Grep.
+ *     the `hostEnvironment` domain, identical to Read/Write/Edit/Grep.
  *
  * Behaviour:
  *   - `.gitignore` / `.ignore` / `.rgignore` are respected by default
@@ -57,7 +56,8 @@ import {
   runRgOnce,
   shouldRetryRipgrepEagain,
 } from '#/session/agentFs/runRg';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { ISessionProcessRunner } from '#/session/process';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry';
 import { ToolAccesses } from '#/agent/tool';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool';
@@ -147,20 +147,21 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   private readonly telemetry: ITelemetryService;
   constructor(
     private readonly fs: ISessionAgentFileSystem,
-    private readonly kaos: IKaos,
+    private readonly env: IHostEnvironment,
+    private readonly runner: ISessionProcessRunner,
     private readonly workspace: WorkspaceConfig,
     telemetry: ITelemetryService = noopTelemetryService,
   ) {
     this.telemetry = telemetry;
     this.description =
-      this.kaos.pathClass() === 'win32' ? globDescription + WINDOWS_PATH_HINT : globDescription;
+      this.env.pathClass === 'win32' ? globDescription + WINDOWS_PATH_HINT : globDescription;
   }
 
   resolveExecution(args: GlobInput): ToolExecution {
     let path: string | undefined;
     if (args.path !== undefined) {
       path = resolvePathAccessPath(args.path, {
-        kaos: this.kaos,
+        env: this.env,
         workspace: this.workspace,
         operation: 'search',
         policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
@@ -226,7 +227,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // telemetry — instead of a confusing `spawn rg ENOENT`.
     let rgPath: string;
     try {
-      const resolution = await ensureRgPath(createRgProbe(this.kaos), {
+      const resolution = await ensureRgPath(createRgProbe(this.runner), {
         signal,
         allowCachedFallback: true,
       });
@@ -250,11 +251,9 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // rg*, so with an absolute search path a pattern containing a `/` (e.g.
     // `src/**/*.ts`) is matched against the absolute path and never matches.
     // Running from the search root makes glob matching relative to it.
-    const execKaos = this.kaos.withCwd(searchRoot);
-
     let run;
     try {
-      run = await runRgOnce(execKaos, buildRgArgs(rgPath, args), signal);
+      run = await runRgOnce(this.runner, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
     } catch (error) {
       return {
         isError: true,
@@ -270,7 +269,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // pool and usually succeeds.
     if (shouldRetryRipgrepEagain(run)) {
       try {
-        run = await runRgOnce(execKaos, buildRgArgs(rgPath, args, true), signal);
+        run = await runRgOnce(this.runner, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
       } catch (error) {
         return {
           isError: true,
@@ -340,7 +339,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // save tokens, but only for the primary workspace. Relative paths are
     // later resolved against workspaceDir, so additionalDir matches stay
     // absolute to keep follow-up Read/Edit calls on the same file.
-    const pathClass = this.kaos.pathClass();
+    const pathClass = this.env.pathClass;
     const shouldRelativize = isWithinDirectory(searchRoot, this.workspace.workspaceDir, pathClass);
     const displayLines = limited.map((p) =>
       shouldRelativize ? relativizeIfUnder(p, searchRoot, pathClass) : p,
@@ -376,16 +375,15 @@ export class GlobTool implements BuiltinTool<GlobInput> {
 }
 
 /**
- * Adapt an `IKaos` execution environment to the locator's {@link RgProbe}. The
- * probe runs `rg --version` (or the cached binary with `--version`) through the
- * environment's backend and reports the exit code. stdout/stderr are drained
- * (flowing mode) so a chatty probe can never block the pipe; the bytes are
- * discarded.
+ * Adapt an `ISessionProcessRunner` to the locator's {@link RgProbe}. The
+ * probe runs `rg --version` (or the cached binary with `--version`) through
+ * the runner and reports the exit code. stdout/stderr are drained (flowing
+ * mode) so a chatty probe can never block the pipe; the bytes are discarded.
  */
-function createRgProbe(kaos: IKaos): RgProbe {
+function createRgProbe(runner: ISessionProcessRunner): RgProbe {
   return {
     exec: async (args) => {
-      const proc = await kaos.backend.exec(...args);
+      const proc = await runner.exec(args);
       try {
         proc.stdin.end();
       } catch {

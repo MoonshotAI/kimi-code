@@ -12,12 +12,12 @@
  *
  * Path access policy is resolved before any filesystem I/O. Edit access flows
  * through the `agentFs` domain; path semantics (home expansion, path class)
- * come from the `kaos` domain.
+ * come from the `hostEnvironment` domain.
  *
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/edit.ts`): the
  * `kaos.readText` / `kaos.writeText` calls become `fs.readText` /
- * `fs.writeText` against `ISessionAgentFileSystem`, and `kaos.pathClass()` /
- * `kaos.gethome()` come from `IKaos`.
+ * `fs.writeText` against `ISessionAgentFileSystem`, and the path-class /
+ * home-directory facts come from `IHostEnvironment`.
  */
 
 import { z } from 'zod';
@@ -28,7 +28,7 @@ import { literalRulePattern, matchesPathRuleSubject } from '#/_base/tools/suppor
 import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { ISessionAgentFileSystem } from '#/session/agentFs';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { ToolAccesses } from '#/agent/tool';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 
@@ -78,13 +78,13 @@ export class EditTool implements BuiltinTool<EditInput> {
 
   constructor(
     private readonly fs: ISessionAgentFileSystem,
-    private readonly kaos: IKaos,
+    private readonly env: IHostEnvironment,
     private readonly workspace: WorkspaceConfig,
   ) {}
 
   resolveExecution(args: EditInput): ToolExecution {
     const path = resolvePathAccessPath(args.path, {
-      kaos: this.kaos,
+      env: this.env,
       workspace: this.workspace,
       operation: 'write',
     });
@@ -102,8 +102,8 @@ export class EditTool implements BuiltinTool<EditInput> {
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
           cwd: this.workspace.workspaceDir,
-          pathClass: this.kaos.pathClass(),
-          homeDir: this.kaos.gethome(),
+          pathClass: this.env.pathClass,
+          homeDir: this.env.homeDir,
         }),
       execute: () => this.execution(args, path),
     };

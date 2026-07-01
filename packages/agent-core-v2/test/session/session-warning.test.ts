@@ -2,8 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { LocalKaos, type Environment, type Kaos } from '@moonshot-ai/kaos';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import {
@@ -14,45 +13,24 @@ import {
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { IBootstrapService } from '#/app/bootstrap';
-import { IKaos, type IKaos as IKaosType, type PathClass } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { SessionAgentFileSystem, ISessionAgentFileSystem } from '#/session/agentFs';
+import { createExecContext, IExecContext } from '#/session/execContext';
 import { IAgentProfileService } from '#/agent/profile';
 import { ISessionWarningService, SessionWarningService } from '#/session/session';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 
-const TEST_OS_ENV: Environment = {
-  osKind: 'Linux',
-  osArch: 'x86_64',
-  osVersion: 'test',
-  shellName: 'bash',
-  shellPath: '/bin/bash',
-};
-
-type LocalKaosCtor = new (osEnv: Environment) => LocalKaos;
-
-function realIKaos(cwd: string): IKaosType {
-  const backend: Kaos = new (LocalKaos as unknown as LocalKaosCtor)(TEST_OS_ENV);
-  return wrapKaos(backend.withCwd(cwd));
-}
-
-function wrapKaos(backend: Kaos): IKaosType {
+function hostEnvironment(homeDir: string): IHostEnvironment {
   return {
     _serviceBrand: undefined,
-    get name() {
-      return backend.name;
-    },
-    get cwd() {
-      return backend.getcwd();
-    },
-    get osEnv() {
-      return backend.osEnv;
-    },
-    backend,
-    pathClass: (): PathClass => backend.pathClass(),
-    normpath: (path) => backend.normpath(path),
-    gethome: () => backend.gethome(),
-    getcwd: () => backend.getcwd(),
-    withCwd: (cwd) => wrapKaos(backend.withCwd(cwd)),
-    withEnv: (env) => wrapKaos(backend.withEnv(env)),
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass: 'posix',
+    homeDir,
+    ready: Promise.resolve(),
   };
 }
 
@@ -80,14 +58,20 @@ function bootstrapStub(homeDir: string): IBootstrapService {
  * the service exercises the on-demand recompute path.
  */
 function build(args: {
-  kaos: IKaosType;
+  workDir: string;
   homeDir: string;
   additionalDirs?: readonly string[];
   agentLifecycle?: IAgentLifecycleService;
 }): { host: ScopedTestHost; service: ISessionWarningService } {
-  const host = createScopedTestHost([stubPair(IBootstrapService, bootstrapStub(args.homeDir))]);
+  const host = createScopedTestHost([
+    stubPair(IBootstrapService, bootstrapStub(args.homeDir)),
+    stubPair(IHostEnvironment, hostEnvironment(args.homeDir)),
+  ]);
+  const ctx = createExecContext(args.workDir);
+  const fs: ISessionAgentFileSystem = new SessionAgentFileSystem(ctx);
   const session = host.child(LifecycleScope.Session, 's1', [
-    stubPair(IKaos, args.kaos),
+    stubPair(IExecContext, ctx),
+    stubPair(ISessionAgentFileSystem, fs),
     stubPair(ISessionWorkspaceContext, workspaceStub(args.additionalDirs ?? [])),
     stubPair(
       IAgentLifecycleService,
@@ -105,7 +89,6 @@ describe('SessionWarningService.getSessionWarnings', () => {
   let host: ScopedTestHost | undefined;
   let homeDir: string;
   let workDir: string;
-  let kaos: IKaosType;
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -118,13 +101,9 @@ describe('SessionWarningService.getSessionWarnings', () => {
     );
     homeDir = await mkdtemp(join(tmpdir(), 'kimi-warn-home-'));
     workDir = await mkdtemp(join(tmpdir(), 'kimi-warn-work-'));
-    kaos = realIKaos(workDir);
-    // Keep user-level discovery hermetic.
-    vi.spyOn(kaos, 'gethome').mockReturnValue(homeDir);
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
     host?.dispose();
     host = undefined;
     await rm(homeDir, { recursive: true, force: true });
@@ -133,7 +112,7 @@ describe('SessionWarningService.getSessionWarnings', () => {
 
   it('returns an agents-md-oversized warning when AGENTS.md exceeds the 32 KB budget', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'x'.repeat(40 * 1024), 'utf-8');
-    const built = build({ kaos, homeDir });
+    const built = build({ workDir, homeDir });
     host = built.host;
 
     const warnings = await built.service.getSessionWarnings();
@@ -149,7 +128,7 @@ describe('SessionWarningService.getSessionWarnings', () => {
 
   it('returns no warnings when AGENTS.md is within the budget', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'small instructions', 'utf-8');
-    const built = build({ kaos, homeDir });
+    const built = build({ workDir, homeDir });
     host = built.host;
 
     const warnings = await built.service.getSessionWarnings();
@@ -172,7 +151,7 @@ describe('SessionWarningService.getSessionWarnings', () => {
           : undefined,
     } as unknown as IAgentLifecycleService;
 
-    const built = build({ kaos, homeDir, agentLifecycle });
+    const built = build({ workDir, homeDir, agentLifecycle });
     host = built.host;
 
     const warnings = await built.service.getSessionWarnings();

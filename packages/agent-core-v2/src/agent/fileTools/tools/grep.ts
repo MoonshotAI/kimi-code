@@ -29,7 +29,7 @@ import { z } from 'zod';
 
 import { ISessionFsService } from '#/session/agentFs';
 import { ErrorCodes, isKimiError } from '#/errors';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { ToolAccesses } from '#/agent/tool';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
@@ -148,7 +148,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
     private readonly fs: ISessionFsService,
-    private readonly kaos: IKaos,
+    private readonly env: IHostEnvironment,
     private readonly workspace: WorkspaceConfig,
   ) {}
 
@@ -156,7 +156,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     let searchPath: string | undefined;
     if (args.path !== undefined) {
       searchPath = resolvePathAccessPath(args.path, {
-        kaos: this.kaos,
+        env: this.env,
         workspace: this.workspace,
         operation: 'search',
         policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },

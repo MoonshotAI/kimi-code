@@ -16,7 +16,7 @@ import {
   matchesPathRuleSubject,
 } from '#/_base/tools/support/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/tool';
-import { IKaos, type IKaos as KaosService } from '#/app/kaos';
+import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/app/hostEnvironment';
 import { IAgentPermissionModeService } from '#/agent/permissionMode';
 import {
   DenyAllPermissionPolicyService,
@@ -68,7 +68,7 @@ describe('AgentPermissionPolicyService chain', () => {
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace);
-        reg.defineInstance(IKaos, kaosStub());
+        reg.defineInstance(IHostEnvironment, kaosStub());
         reg.definePartialInstance(IAgentPlanService, planServiceStub(() => plan, () => {
           plan = null;
         }));
@@ -238,7 +238,7 @@ describe('AgentPermissionPolicyService plan-mode policies', () => {
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspaceStub('/workspace'));
-        reg.defineInstance(IKaos, kaosStub());
+        reg.defineInstance(IHostEnvironment, kaosStub());
         reg.definePartialInstance(IAgentPlanService, planServiceStub(() => plan, () => {
           plan = null;
         }));
@@ -430,7 +430,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace);
-        reg.defineInstance(IKaos, kaosStub());
+        reg.defineInstance(IHostEnvironment, kaosStub());
         reg.definePartialInstance(IAgentPlanService, planServiceStub(() => null));
         reg.definePartialInstance(IAgentSwarmService, swarmServiceStub(() => false));
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
@@ -751,22 +751,18 @@ function workspaceStub(initialWorkDir: string): ISessionWorkspaceContext {
   };
 }
 
-function kaosStub(pathClass: ReturnType<KaosService['pathClass']> = 'posix'): KaosService {
-  let kaos!: KaosService;
-  kaos = {
+function kaosStub(pathClass: HostEnvironmentService['pathClass'] = 'posix'): HostEnvironmentService {
+  return {
     _serviceBrand: undefined,
-    name: 'test',
-    cwd: '/workspace',
-    osEnv: {} as KaosService['osEnv'],
-    backend: {} as KaosService['backend'],
-    pathClass: () => pathClass,
-    normpath: (path: string) => path,
-    gethome: () => '/home/test',
-    getcwd: () => '/workspace',
-    withCwd: () => kaos,
-    withEnv: () => kaos,
-  } satisfies KaosService;
-  return kaos;
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass,
+    homeDir: '/home/test',
+    ready: Promise.resolve(),
+  };
 }
 
 function planServiceStub(

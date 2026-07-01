@@ -2,13 +2,10 @@
  * `bootstrap` domain (L1) — `IBootstrapService` implementation.
  *
  * Holds the resolved startup snapshot from the seeded `IBootstrapOptions` and
- * exposes the host facts and app path layout; `detect()` probes the host through
- * `kaos` on demand. Bound at App scope.
+ * exposes the host facts and app path layout. Bound at App scope.
  */
 
 import { join } from 'pathe';
-
-import { type Environment, detectEnvironmentFromNode } from '#/app/kaos';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -30,7 +27,6 @@ export class BootstrapService implements IBootstrapService {
   readonly cacheDir: string;
   readonly logsDir: string;
   private readonly env: NodeJS.ProcessEnv;
-  private detected?: Promise<Environment>;
 
   constructor(@IBootstrapOptions options: IBootstrapOptions) {
     this.platform = options.platform;
@@ -49,11 +45,6 @@ export class BootstrapService implements IBootstrapService {
 
   getEnv(name: string): string | undefined {
     return this.env[name];
-  }
-
-  detect(): Promise<Environment> {
-    this.detected ??= detectEnvironmentFromNode();
-    return this.detected;
   }
 }
 

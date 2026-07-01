@@ -11,7 +11,7 @@ import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { IProcess } from '#/session/process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -33,22 +33,22 @@ const MAX_OUTPUT_BYTES = 1024 * 1024;
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
 
-function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
+function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
   return {
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from(stdoutText ? [stdoutText] : []),
     stderr: Readable.from([]),
     pid: 60000 + exitCode,
     exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as KaosProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
+    wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
   };
 }
 
 /** A process whose stdout and exit are driven by the test, for timing control. */
 function controllableProcess(): {
-  proc: KaosProcess;
+  proc: IProcess;
   pushStdout: (text: string) => void;
   finish: (exitCode: number) => void;
 } {
@@ -57,15 +57,15 @@ function controllableProcess(): {
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
   });
-  const proc: KaosProcess = {
+  const proc: IProcess = {
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout,
     stderr: Readable.from([]),
     pid: 61000,
     exitCode: null,
-    wait: vi.fn(() => waitPromise) as KaosProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
+    wait: vi.fn(() => waitPromise) as IProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
   };
   return {
     proc,
@@ -80,7 +80,7 @@ function controllableProcess(): {
 
 function registerForeground(
   background: IAgentBackgroundService,
-  proc: KaosProcess,
+  proc: IProcess,
   command: string,
   description: string,
 ): string {

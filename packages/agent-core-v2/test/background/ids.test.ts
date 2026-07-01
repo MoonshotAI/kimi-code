@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { IProcess } from '#/session/process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,7 +16,7 @@ import { createBackgroundTaskPersistence } from './stubs';
 
 function registerProcess(
   manager: IAgentBackgroundService,
-  proc: KaosProcess,
+  proc: IProcess,
   command: string,
   description: string,
 ): string {
@@ -44,7 +44,7 @@ function agentTask(
   );
 }
 
-function pendingProcess(): KaosProcess & { resolve(code: number): void } {
+function pendingProcess(): IProcess & { resolve(code: number): void } {
   let resolveWait: (code: number) => void = () => {};
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
@@ -59,8 +59,8 @@ function pendingProcess(): KaosProcess & { resolve(code: number): void } {
       return currentExitCode;
     },
     wait: () => waitPromise,
-    kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
+    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
     resolve(code: number): void {
       currentExitCode = code;
       resolveWait(code);

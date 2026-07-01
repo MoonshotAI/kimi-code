@@ -26,7 +26,9 @@ import { IConfigRegistry, IConfigService } from '#/app/config';
 import { resolveThinkingEffort } from './thinking';
 import { applyKimiModelOverrides, IChatProviderFactory, type KimiModelOverrides } from '#/app/chatProvider';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { ISessionAgentFileSystem } from '#/session/agentFs';
+import { IExecContext } from '#/session/execContext';
 import { isMcpToolName } from '#/agent/tool';
 import { ISessionModelResolver, type ResolvedModel } from '#/session/modelRuntime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
@@ -86,7 +88,9 @@ export class AgentProfileService implements IAgentProfileService {
     @IConfigService private readonly config: IConfigService,
     @ISessionModelResolver private readonly modelResolver: ISessionModelResolver,
     @IChatProviderFactory private readonly chatProviders: IChatProviderFactory,
-    @IKaos private readonly kaos: IKaos,
+    @IHostEnvironment private readonly env: IHostEnvironment,
+    @ISessionAgentFileSystem private readonly fs: ISessionAgentFileSystem,
+    @IExecContext private readonly execCtx: IExecContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
   ) {
@@ -168,9 +172,14 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
-    const context = await prepareSystemPromptContext(this.kaos, this.bootstrap.homeDir, {
-      additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
-    });
+    const context = await prepareSystemPromptContext(
+      { fs: this.fs, homeDir: this.env.homeDir },
+      this.execCtx.cwd,
+      this.bootstrap.homeDir,
+      {
+        additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
+      },
+    );
     this.useProfile(profile, context);
     const { agentsMdWarning } = context;
     this.agentsMdWarning = agentsMdWarning;

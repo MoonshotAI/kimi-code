@@ -11,8 +11,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 
 /**
  * An `IBootstrapService` rooted at the given home dir with the given env bag.
- * `detect()` rejects with "unused in test" so accidental calls surface loudly
- * rather than silently hitting the real OS probe.
  */
 export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv = {}): IBootstrapService {
   return {
@@ -29,7 +27,6 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     cacheDir: `${homeDir}/cache`,
     logsDir: `${homeDir}/logs`,
     getEnv: (name) => env[name],
-    detect: () => Promise.reject(new Error('unused in test')),
   };
 }
 

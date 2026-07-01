@@ -25,14 +25,8 @@ import { IHostEnvironment } from '#/app/hostEnvironment';
 import { IExecContext } from '#/session/execContext';
 import { ISessionProcessRunner } from '#/session/process';
 import { IAgentToolService } from '#/agent/agentTool';
-import {
-  DenyAllPermissionPolicyService,
-  IAgentPermissionPolicyService,
-} from '#/agent/permissionPolicy';
-import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IAgentSwarmService } from '#/agent/swarm';
 import { ITelemetryService } from '#/app/telemetry';
-import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { ToolUpdate } from '#/agent/tool';
 import { IAgentTurnService } from '#/agent/turn';
@@ -74,23 +68,6 @@ import {
 
 const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 
-const TOOL_CALL_DISABLED_MESSAGE =
-  'Tool calls are disabled for side questions. Answer with text only.';
-const SIDE_QUESTION_SYSTEM_REMINDER = `
-This is a side-channel conversation with the user. You should answer user questions directly based on what you already know.
-
-IMPORTANT:
-- You are a separate, lightweight instance.
-- The main agent continues independently; do not reference being interrupted.
-- Do not call any tools. All tool calls are disabled and will be rejected.
-  Even though tool definitions are visible in this request, they exist only
-  for technical reasons (prompt cache). You must not use them.
-- Respond only with text based on what you already know from the conversation
-  and this side-channel conversation.
-- Follow-up turns may happen in this side-channel conversation.
-- If you do not know the answer, say so directly.
-`;
-
 export class AgentRPCService implements IAgentRPCService {
   declare readonly _serviceBrand: undefined;
   private readonly shellCommandControllers = new Map<string, AbortController>();
@@ -115,7 +92,6 @@ export class AgentRPCService implements IAgentRPCService {
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
     @IAgentSkillService private readonly skills: IAgentSkillService,
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @IAgentToolService private readonly agentTool: IAgentToolService,
     @IAgentUsageService private readonly usage: IAgentUsageService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -371,20 +347,6 @@ export class AgentRPCService implements IAgentRPCService {
       patch.isCustomTitle = false;
     }
     await this.metadata.update(patch satisfies SessionMetaPatch);
-  }
-
-  async startBtw(_payload: EmptyPayload): Promise<string> {
-    const child = await this.lifecycle.fork('main');
-    child.accessor
-      .get(IAgentSystemReminderService)
-      ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER.trim(), {
-        kind: 'system_trigger',
-        name: 'btw',
-      });
-    child.accessor
-      .get(IAgentPermissionPolicyService)
-      ?.registerPolicy(new DenyAllPermissionPolicyService(TOOL_CALL_DISABLED_MESSAGE));
-    return child.id;
   }
 
   createGoal(payload: CreateGoalPayload) {

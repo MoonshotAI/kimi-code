@@ -26,7 +26,8 @@ import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { IBootstrapService } from '#/app/bootstrap';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { ErrorCodes, KimiError } from '#/errors';
-import { IKaos, IKaosFactory } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { createExecContext, execContextSeed } from '#/session/execContext';
 import { ISessionActivity } from '#/session/session-activity';
 import { ISessionIndex } from '#/app/session-index';
 import { IAtomicDocumentStore, IAppendLogStore } from '#/app/storage';
@@ -71,7 +72,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IKaosFactory private readonly kaosFactory: IKaosFactory,
+    @IHostEnvironment private readonly hostEnv: IHostEnvironment,
     @ISessionIndex private readonly index: ISessionIndex,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
@@ -94,7 +95,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionDir,
       metaScope,
     };
-    const kaos = await this.kaosFactory.createLocal(opts.workDir);
+    // Wait for the host-environment probe to complete before creating any
+    // Session scope — Session/Agent-scope services (bash, permission policies,
+    // path-access) read `IHostEnvironment.osKind` / `pathClass` / `homeDir`
+    // synchronously in their constructors, so the probe must have landed by
+    // the time the first Session-scoped service is resolved.
+    await this.hostEnv.ready;
+    const execCtx = createExecContext(opts.workDir);
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
@@ -102,7 +109,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       {
         extra: [
           ...sessionContextSeed(ctx),
-          [IKaos, kaos] as const,
+          ...execContextSeed(execCtx),
         ],
       },
     );

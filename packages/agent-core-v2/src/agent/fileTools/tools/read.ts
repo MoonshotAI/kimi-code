@@ -14,7 +14,8 @@
  *
  * Path safety goes through the shared path access resolver used by
  * Read/Write/Edit. Read access flows through the `agentFs` domain; path
- * semantics (home expansion, path class) come from the `kaos` domain.
+ * semantics (home expansion, path class) come from the `hostEnvironment`
+ * domain.
  *
  * Ported from v1 (`packages/agent-core/src/tools/builtin/file/read.ts`). The
  * optional `scanTextFile` / `readLineRange` / `readTailLines` fast-paths are
@@ -24,7 +25,7 @@
 import { z } from 'zod';
 
 import { ISessionAgentFileSystem } from '#/session/agentFs';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { ToolAccesses } from '#/agent/tool';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
@@ -224,13 +225,13 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     private readonly fs: ISessionAgentFileSystem,
-    private readonly kaos: IKaos,
+    private readonly env: IHostEnvironment,
     private readonly workspace: WorkspaceConfig,
   ) {}
 
   resolveExecution(args: ReadInput): ToolExecution {
     const path = resolvePathAccessPath(args.path, {
-      kaos: this.kaos,
+      env: this.env,
       workspace: this.workspace,
       operation: 'read',
     });
@@ -242,8 +243,8 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
           cwd: this.workspace.workspaceDir,
-          pathClass: this.kaos.pathClass(),
-          homeDir: this.kaos.gethome(),
+          pathClass: this.env.pathClass,
+          homeDir: this.env.homeDir,
         }),
       execute: () => this.execution(args, path),
     };

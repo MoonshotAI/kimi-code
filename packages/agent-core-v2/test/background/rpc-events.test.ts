@@ -8,7 +8,7 @@ import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { IProcess } from '#/session/process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -40,20 +40,20 @@ import {
 
 type FireAndForgetTrigger = HookEngine['fireAndForgetTrigger'];
 
-function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
+function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
   return {
     stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
     stdout: Readable.from(stdoutText ? [stdoutText] : []),
     stderr: Readable.from([]),
     pid: 30000 + exitCode,
     exitCode,
-    wait: vi.fn().mockResolvedValue(exitCode) as KaosProcess['wait'],
-    kill: vi.fn().mockResolvedValue(undefined) as KaosProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
+    wait: vi.fn().mockResolvedValue(exitCode) as IProcess['wait'],
+    kill: vi.fn().mockResolvedValue(undefined) as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
   };
 }
 
-function pendingProcess(): KaosProcess {
+function pendingProcess(): IProcess {
   let resolveWait: (code: number) => void = () => {};
   const waitPromise = new Promise<number>((resolve) => {
     resolveWait = resolve;
@@ -72,8 +72,8 @@ function pendingProcess(): KaosProcess {
       if (currentExitCode !== null) return;
       currentExitCode = 143;
       resolveWait(143);
-    }) as unknown as KaosProcess['kill'],
-    dispose: vi.fn().mockResolvedValue(undefined) as KaosProcess['dispose'],
+    }) as unknown as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
   };
 }
 
@@ -251,7 +251,7 @@ function firstAppendedContextMessage(agent: FakeBackgroundAgent): TestContextMes
 
 function registerProcess(
   manager: IAgentBackgroundService,
-  proc: KaosProcess,
+  proc: IProcess,
   command: string,
   description: string,
 ): string {

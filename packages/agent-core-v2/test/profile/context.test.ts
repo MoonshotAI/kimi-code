@@ -2,69 +2,35 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { LocalKaos, type Environment, type Kaos } from '@moonshot-ai/kaos';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { IKaos, PathClass } from '#/app/kaos';
+import { SessionAgentFileSystem } from '#/session/agentFs/agentFsService';
+import type { ISessionAgentFileSystem } from '#/session/agentFs';
+import { createExecContext } from '#/session/execContext';
 import { loadAgentsMd, prepareSystemPromptContext } from '#/agent/profile';
 
-const TEST_OS_ENV: Environment = {
-  osKind: 'Linux',
-  osArch: 'x86_64',
-  osVersion: 'test',
-  shellName: 'bash',
-  shellPath: '/bin/bash',
-};
-
-// `LocalKaos`'s constructor is `private` at the TS level only — at runtime it's
-// just a function. Skip the singleton/async detection path and build a fresh
-// instance with a stub `osEnv` so tests can hand a real IKaos directly to the
-// profile context loaders (mirrors v1's `testKaos` fixture).
-type LocalKaosCtor = new (osEnv: Environment) => LocalKaos;
-
-function createTestKaos(): IKaos {
-  const backend: Kaos = new (LocalKaos as unknown as LocalKaosCtor)(TEST_OS_ENV);
-  return wrapKaos(backend);
+/**
+ * Build a `SessionAgentFileSystem` rooted at `workDir` — the v2 profile
+ * context loaders take `{ fs, homeDir }` and read every AGENTS.md through the
+ * fs's `readText` / `readdir` / `stat`.
+ */
+function createFs(workDir: string): ISessionAgentFileSystem {
+  return new SessionAgentFileSystem(createExecContext(workDir));
 }
 
-function wrapKaos(backend: Kaos): IKaos {
-  return {
-    _serviceBrand: undefined,
-    get name() {
-      return backend.name;
-    },
-    get cwd() {
-      return backend.getcwd();
-    },
-    get osEnv() {
-      return backend.osEnv;
-    },
-    backend,
-    pathClass: (): PathClass => backend.pathClass(),
-    normpath: (path) => backend.normpath(path),
-    gethome: () => backend.gethome(),
-    getcwd: () => backend.getcwd(),
-    withCwd: (cwd) => wrapKaos(backend.withCwd(cwd)),
-    withEnv: (env) => wrapKaos(backend.withEnv(env)),
-  };
-}
-
-let kaos: IKaos;
+let fs: ISessionAgentFileSystem;
 let homeDir: string;
 let workDir: string;
 let extraDirs: string[];
 
 beforeEach(async () => {
-  kaos = createTestKaos();
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-agents-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-agents-work-'));
   extraDirs = [];
-  vi.spyOn(kaos, 'gethome').mockReturnValue(homeDir);
-  vi.spyOn(kaos, 'getcwd').mockReturnValue(workDir);
+  fs = createFs(workDir);
 });
 
 afterEach(async () => {
-  vi.restoreAllMocks();
   await rm(homeDir, { recursive: true, force: true });
   await rm(workDir, { recursive: true, force: true });
   await Promise.all(extraDirs.map((dir) => rm(dir, { recursive: true, force: true })));
@@ -78,7 +44,7 @@ describe('loadAgentsMd user-level discovery', () => {
     await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'user generic', 'utf-8');
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
 
-    const result = await loadAgentsMd(kaos);
+    const result = await loadAgentsMd({ fs, homeDir }, workDir);
 
     expect(result).toContain('user branded');
     expect(result).toContain('user generic');
@@ -91,7 +57,7 @@ describe('loadAgentsMd user-level discovery', () => {
     await mkdir(join(homeDir, '.agents'), { recursive: true });
     await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'dot-agents generic', 'utf-8');
 
-    const result = await loadAgentsMd(kaos);
+    const result = await loadAgentsMd({ fs, homeDir }, workDir);
 
     expect(result).toContain('dot-agents generic');
   });
@@ -99,18 +65,17 @@ describe('loadAgentsMd user-level discovery', () => {
   it('falls back to project-level only when no user-level files exist', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project only', 'utf-8');
 
-    const result = await loadAgentsMd(kaos);
+    const result = await loadAgentsMd({ fs, homeDir }, workDir);
 
     expect(result).toContain('project only');
     expect(result).not.toContain(homeDir);
   });
 
   it('does not load the same file twice when the work dir is the home dir', async () => {
-    vi.spyOn(kaos, 'getcwd').mockReturnValue(homeDir);
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'home branded', 'utf-8');
 
-    const result = await loadAgentsMd(kaos);
+    const result = await loadAgentsMd({ fs, homeDir }, homeDir);
 
     expect(result.split('home branded').length - 1).toBe(1);
   });
@@ -132,7 +97,7 @@ describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
     await mkdir(join(homeDir, '.agents'), { recursive: true });
     await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'real home generic', 'utf-8');
 
-    const result = await loadAgentsMd(kaos, brandHome);
+    const result = await loadAgentsMd({ fs, homeDir }, workDir, brandHome);
 
     expect(result).toContain('brand home instructions');
     expect(result).toContain('real home generic');
@@ -143,7 +108,7 @@ describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'stale real-home brand', 'utf-8');
 
-    const result = await loadAgentsMd(kaos, brandHome);
+    const result = await loadAgentsMd({ fs, homeDir }, workDir, brandHome);
 
     expect(result).toContain('brand wins');
     expect(result).not.toContain('stale real-home brand');
@@ -153,7 +118,7 @@ describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'fallback branded', 'utf-8');
 
-    const result = await loadAgentsMd(kaos);
+    const result = await loadAgentsMd({ fs, homeDir }, workDir);
 
     expect(result).toContain('fallback branded');
   });
@@ -170,9 +135,8 @@ describe('loadAgentsMd nested project hierarchy', () => {
     await writeFile(join(projectRoot, 'AGENTS.md'), 'root instructions', 'utf-8');
     await writeFile(join(projectRoot, 'packages', 'AGENTS.md'), 'packages instructions', 'utf-8');
     await writeFile(join(leaf, 'AGENTS.md'), 'leaf instructions', 'utf-8');
-    vi.spyOn(kaos, 'getcwd').mockReturnValue(leaf);
 
-    const result = await loadAgentsMd(kaos);
+    const result = await loadAgentsMd({ fs, homeDir }, leaf);
 
     expect(result).toContain('root instructions');
     expect(result).toContain('packages instructions');
@@ -187,7 +151,7 @@ describe('loadAgentsMd oversized content', () => {
     const largeContent = 'x'.repeat(40 * 1024);
     await writeFile(join(workDir, 'AGENTS.md'), largeContent, 'utf-8');
 
-    const result = await loadAgentsMd(kaos);
+    const result = await loadAgentsMd({ fs, homeDir }, workDir);
 
     expect(result).toContain(largeContent);
     expect(result).not.toContain('truncated or omitted');
@@ -201,7 +165,7 @@ describe('prepareSystemPromptContext AGENTS.md size warning', () => {
     const largeContent = 'x'.repeat(40 * 1024);
     await writeFile(join(workDir, 'AGENTS.md'), largeContent, 'utf-8');
 
-    const result = await prepareSystemPromptContext(kaos, brandHome);
+    const result = await prepareSystemPromptContext({ fs, homeDir }, workDir, brandHome);
 
     expect(result.agentsMd).toContain(largeContent);
     expect(result.agentsMdWarning).toBeDefined();
@@ -213,7 +177,7 @@ describe('prepareSystemPromptContext AGENTS.md size warning', () => {
     extraDirs.push(brandHome);
     await writeFile(join(workDir, 'AGENTS.md'), 'small instructions', 'utf-8');
 
-    const result = await prepareSystemPromptContext(kaos, brandHome);
+    const result = await prepareSystemPromptContext({ fs, homeDir }, workDir, brandHome);
 
     expect(result.agentsMdWarning).toBeUndefined();
   });
@@ -230,7 +194,7 @@ describe('prepareSystemPromptContext additional directories', () => {
     await writeFile(join(extraDir, 'AGENTS.md'), 'extra project instructions', 'utf-8');
     await writeFile(join(extraDir, 'extra-file.txt'), 'extra listing entry', 'utf-8');
 
-    const result = await prepareSystemPromptContext(kaos, brandHome, {
+    const result = await prepareSystemPromptContext({ fs, homeDir }, workDir, brandHome, {
       additionalDirs: [extraDir],
     });
 
@@ -256,7 +220,7 @@ describe('prepareSystemPromptContext additional directories', () => {
     await writeFile(join(extraDirA, 'AGENTS.md'), 'extra A instructions', 'utf-8');
     await writeFile(join(extraDirB, 'AGENTS.md'), 'extra B instructions', 'utf-8');
 
-    const result = await prepareSystemPromptContext(kaos, brandHome, {
+    const result = await prepareSystemPromptContext({ fs, homeDir }, workDir, brandHome, {
       additionalDirs: [extraDirA, extraDirB],
     });
 

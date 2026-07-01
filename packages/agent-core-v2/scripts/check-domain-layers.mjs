@@ -89,6 +89,7 @@ const DOMAIN_LAYER = new Map([
   ['permissionPolicy', 3],
   ['permissionRules', 3],
   ['plugin', 3],
+  ['record', 3],
   ['modelRuntime', 3],
   ['modelCatalog', 3],
   // L4 — agent behaviour
@@ -239,6 +240,7 @@ const ALLOWED_EXCEPTIONS = new Set([
   'permissionPolicy>externalHooks',
   'permissionPolicy>profile',
   'permissionRules>replayBuilder',
+  'record>replayBuilder',
   'plugin>externalHooks',
   'plugin>mcp',
   'profile>session',

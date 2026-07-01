@@ -12,20 +12,13 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { SessionAgentFileSystem, ISessionAgentFileSystem } from '#/session/agentFs';
-import { IKaos, IKaosFactory, KaosFactory } from '#/app/kaos';
+import { IExecContext, createExecContext } from '#/session/execContext';
 
-describe('SessionAgentFileSystem (backed by IKaos)', () => {
+describe('SessionAgentFileSystem (backed by IExecContext)', () => {
   let dir: string;
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
-    registerScopedService(
-      LifecycleScope.App,
-      IKaosFactory,
-      KaosFactory,
-      InstantiationType.Delayed,
-      'kaos',
-    );
     registerScopedService(
       LifecycleScope.Session,
       ISessionAgentFileSystem,
@@ -42,9 +35,11 @@ describe('SessionAgentFileSystem (backed by IKaos)', () => {
 
   async function makeFs(): Promise<ISessionAgentFileSystem> {
     const host = createScopedTestHost();
-    const factory = host.app.accessor.get(IKaosFactory);
-    const kaos = await factory.createLocal(dir);
-    const session = host.child(LifecycleScope.Session, 's', [stubPair(IKaos, kaos)]);
+    const session = host.child(
+      LifecycleScope.Session,
+      's',
+      [stubPair(IExecContext, createExecContext(dir))],
+    );
     return session.accessor.get(ISessionAgentFileSystem);
   }
 

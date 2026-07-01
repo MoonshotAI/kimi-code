@@ -1,7 +1,7 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/tool';
 import { isWithinWorkspace } from '#/_base/tools/policies/path-access';
-import { IKaos } from '#/app/kaos';
-import type { IKaos as KaosService } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import type { IHostEnvironment as HostEnvironment } from '#/app/hostEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext';
 import type {
@@ -17,7 +17,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   readonly name = 'git-cwd-write-approve';
 
   constructor(
-    @IKaos private readonly kaos: KaosService,
+    @IHostEnvironment private readonly env: HostEnvironment,
     @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
   ) {}
 
@@ -26,7 +26,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   ): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
-    if (this.kaos.pathClass() !== 'posix') return undefined;
+    if (this.env.pathClass !== 'posix') return undefined;
 
     const cwd = this.workspace.workDir;
     if (cwd.length === 0) return undefined;

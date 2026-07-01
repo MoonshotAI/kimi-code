@@ -8,7 +8,7 @@ import {
 } from '#/_base/di/scope';
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap';
-import { IKaosFactory, type IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { ISessionService } from '#/session/session';
 import { ISessionLifecycleService } from '#/app/session-lifecycle/sessionLifecycle';
 import { SessionLifecycleService } from '#/app/session-lifecycle/sessionLifecycleService';
@@ -38,23 +38,17 @@ function metadataStub(): ISessionMetadata {
   };
 }
 
-function kaosFactoryStub(): IKaosFactory {
-  const kaos: IKaos = {
-    _serviceBrand: undefined,
-    name: 'local',
-    cwd: '/tmp/proj',
-    osEnv: { osKind: 'test', osArch: 'x64', osVersion: '', shellName: 'sh', shellPath: '/bin/sh' },
-    backend: undefined as never,
-    pathClass: () => 'posix',
-    normpath: (p) => p,
-    gethome: () => '/home',
-    getcwd: () => '/tmp/proj',
-    withCwd: (cwd) => ({ ...kaos, cwd, getcwd: () => cwd }),
-    withEnv: () => kaos,
-  };
+function hostEnvironmentStub(): IHostEnvironment {
   return {
     _serviceBrand: undefined,
-    createLocal: (cwd) => Promise.resolve({ ...kaos, cwd, getcwd: () => cwd }),
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass: 'posix',
+    homeDir: '/home',
+    ready: Promise.resolve(),
   };
 }
 
@@ -150,7 +144,7 @@ describe('SessionLifecycleService', () => {
     host = createScopedTestHost([
       stubPair(IBootstrapService, bootstrapStub()),
       stubPair(ISessionMetadata, metadataStub()),
-      stubPair(IKaosFactory, kaosFactoryStub()),
+      stubPair(IHostEnvironment, hostEnvironmentStub()),
       stubPair(ISessionSkillCatalog, skillCatalogStub()),
       stubPair(IWorkspaceRegistry, workspaceRegistryStub()),
       stubPair(ISessionIndex, sessionIndexStub()),

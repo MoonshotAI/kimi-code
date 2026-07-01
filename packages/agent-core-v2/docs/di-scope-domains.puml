@@ -31,7 +31,7 @@ package "App scope (process-wide)" #EAF3FB {
   rectangle "<b>hostFs</b>\n<size:9><i>App</i></size>\n  IHostFileSystem" as hostFs #D6EAF8
   rectangle "<b>workspaceRegistry</b>\n<size:9><i>App</i></size>\n  IWorkspaceRegistry" as workspaceRegistry #D6EAF8
   rectangle "<b>hostFolderBrowser</b>\n<size:9><i>App</i></size>\n  IHostFolderBrowser" as hostFolderBrowser #D6EAF8
-  rectangle "<b>kaos</b>\n<size:9><i>App</i></size>\n  IKaosFactory" as kaos_core #D6EAF8
+  rectangle "<b>hostEnvironment</b>\n<size:9><i>App</i></size>\n  IHostEnvironment" as hostEnvironment #D6EAF8
   rectangle "<b>auth</b>\n<size:9><i>App</i></size>\n  IOAuthService\n  IAuthSummaryService" as auth #D6EAF8
   rectangle "<b>provider</b>\n<size:9><i>App</i></size>\n  IProviderService" as provider #D6EAF8
   rectangle "<b>flag</b>\n<size:9><i>App</i></size>\n  IFlagService\n  IFlagRegistry" as flag #D6EAF8
@@ -52,7 +52,7 @@ package "Session scope (per session)" #EAFAF1 {
   rectangle "<b>workspaceContext</b>\n<size:9><i>Session</i></size>\n  IWorkspaceContext" as workspaceContext #D5F5E3
   rectangle "<b>sessionLog</b>\n<size:9><i>Session</i></size>\n  ISessionLogService\n  ILogWriterService" as sessionLog #D5F5E3
   rectangle "<b>sessionSkillCatalog</b>\n<size:9><i>Session</i></size>\n  ISessionSkillCatalog" as sessionSkillCatalog #D5F5E3
-  rectangle "<b>kaos</b>\n<size:9><i>Session</i></size>\n  IKaos (seed)" as kaos #D5F5E3
+  rectangle "<b>execContext</b>\n<size:9><i>Session</i></size>\n  IExecContext (seed)" as execContext #D5F5E3
   rectangle "<b>agentFs</b>\n<size:9><i>Session</i></size>\n  IAgentFileSystem\n  IFsService" as agentFs #D5F5E3
   rectangle "<b>approval</b>\n<size:9><i>Session</i></size>\n  IApprovalService" as approval #D5F5E3
   rectangle "<b>question</b>\n<size:9><i>Session</i></size>\n  IQuestionService" as question #D5F5E3
@@ -113,7 +113,7 @@ gateway --> eventSink #34495E
 sessionIndex --> bootstrap #34495E
 sessionIndex --> storage #34495E
 session_lifecycle --> bootstrap #34495E
-session_lifecycle --> kaos_core #34495E
+session_lifecycle --> hostEnvironment #34495E
 hostFolderBrowser --> hostFs #34495E
 auth --> provider #34495E
 auth --> config #34495E
@@ -131,15 +131,15 @@ modelCatalog --> provider #34495E
 modelCatalog --> model #34495E
 modelCatalog --> config #34495E
 modelCatalog --> auth #34495E
-workspaceContext --> kaos #34495E
+workspaceContext --> execContext #34495E
 sessionLog --> session_context #34495E
 sessionSkillCatalog --> globalSkillCatalog #34495E
 sessionSkillCatalog --> workspaceContext #34495E
 globalSkillCatalog --> bootstrap #34495E
 agentFs --> workspaceContext #34495E
-agentFs --> kaos #34495E
+agentFs --> execContext #34495E
 agentFs --> process #34495E
-process --> kaos #34495E
+process --> execContext #34495E
 terminal --> workspaceContext #34495E
 terminal --> session_context #34495E
 approval --> interaction #34495E
@@ -334,11 +334,13 @@ rpc --> fileTools #34495E
 rpc --> shellTools #34495E
 fileTools --> toolRegistry #34495E
 fileTools --> agentFs #34495E
-fileTools --> kaos #34495E
+fileTools --> hostEnvironment
+fileTools --> execContext #34495E
 fileTools --> workspaceContext #34495E
 shellTools --> toolRegistry #34495E
 shellTools --> process #34495E
-shellTools --> kaos #34495E
+shellTools --> hostEnvironment
+shellTools --> execContext #34495E
 shellTools --> background #34495E
 
 ' ---- event-driven (dashed) ----

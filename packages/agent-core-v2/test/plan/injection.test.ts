@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { createFakeAgentFs } from '../tools/fixtures/fake-exec';
 import { IAgentContextInjectorService } from '#/agent/contextInjector';
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
 import { IAgentPlanService } from '#/agent/plan';
 import {
   createTestAgent,
-  kaosServices,
+  execEnvServices,
   type TestAgentContext,
 } from '../harness';
 
@@ -61,11 +61,13 @@ describe('PlanModeService dynamic injection content', () => {
 
   beforeEach(() => {
     readText = async () => '';
-    ctx = createTestAgent(kaosServices(createFakeKaos({
-      mkdir: vi.fn().mockResolvedValue(undefined),
-      readText: (path: string) => readText(path),
-      writeText: vi.fn(async (_path: string, content: string) => content.length),
-    })));
+    ctx = createTestAgent(execEnvServices({
+      agentFs: createFakeAgentFs({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        readText: (path: string) => readText(path),
+        writeText: vi.fn(async () => undefined),
+      }),
+    }));
     context = ctx.get(IAgentContextMemoryService);
     injector = ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector;
     plan = ctx.get(IAgentPlanService);
@@ -141,11 +143,13 @@ describe('PlanModeService dynamic injection cadence', () => {
   let plan: IAgentPlanService;
 
   beforeEach(() => {
-    ctx = createTestAgent(kaosServices(createFakeKaos({
-      mkdir: vi.fn().mockResolvedValue(undefined),
-      readText: async () => '',
-      writeText: vi.fn(async (_path: string, content: string) => content.length),
-    })));
+    ctx = createTestAgent(execEnvServices({
+      agentFs: createFakeAgentFs({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        readText: async () => '',
+        writeText: vi.fn(async () => undefined),
+      }),
+    }));
     context = ctx.get(IAgentContextMemoryService);
     injector = ctx.get(IAgentContextInjectorService) as unknown as InjectableDynamicInjector;
     plan = ctx.get(IAgentPlanService);
