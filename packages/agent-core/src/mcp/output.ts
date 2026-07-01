@@ -21,6 +21,7 @@
 
 import type { ContentPart } from '@moonshot-ai/kosong';
 
+import { compressImageContentParts } from '../tools/support/image-compress';
 import type { MCPContentBlock, MCPToolResult } from './types';
 
 // MCP servers can produce arbitrarily large outputs; cap what we feed back to
@@ -130,10 +131,10 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
  * `mcp__github__create_pr`) — embedded into the `<mcp_tool_result name="…">`
  * wrap when the result is media-only, so the model can attribute binary parts.
  */
-export function mcpResultToExecutableOutput(
+export async function mcpResultToExecutableOutput(
   result: MCPToolResult,
   qualifiedToolName: string,
-): { output: string | ContentPart[]; isError: boolean; truncated?: true } {
+): Promise<{ output: string | ContentPart[]; isError: boolean; truncated?: true }> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
     const part = convertMCPContentBlock(block);
@@ -143,7 +144,11 @@ export function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  const limited = applyOutputLimits(wrapped);
+  // Shrink oversized images BEFORE the per-part byte cap, so a large but
+  // compressible screenshot is downsampled and kept rather than dropped to a
+  // text notice. Best effort: parts that cannot be compressed pass through.
+  const compressed = await compressImageContentParts(wrapped);
+  const limited = applyOutputLimits(compressed);
   const output = collapseSingleText(limited.parts);
   return limited.truncated
     ? { output, isError: result.isError, truncated: true }

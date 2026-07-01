@@ -363,7 +363,7 @@ describe('ModelSelectorComponent', () => {
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'off' });
   });
 
-  it('always-on effort models show an unsupported Off that cannot be selected', () => {
+  it('always-on effort models hide Off and clamp selection at the last effort', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
       models: {
@@ -376,8 +376,8 @@ describe('ModelSelectorComponent', () => {
     });
 
     const raw = picker.render(120).join('\n');
-    // Off is rendered muted as unavailable, not as a selectable segment.
-    expect(raw).toContain(currentTheme.fg('textMuted', '  Off (Unsupported)  '));
+    // Off is not surfaced at all — the selectable segments are effort-only.
+    expect(raw).not.toContain('Off (Unsupported)');
     // The active effort is still highlighted.
     expect(strip(raw)).toContain('[ High ]');
 

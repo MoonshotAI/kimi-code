@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ContentBlock } from '@agentclientprotocol/sdk';
+import { Jimp } from 'jimp';
 
 import { log, type ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
 
-import { acpBlocksToPromptParts, displayBlockToAcpContent } from '../src/convert';
+import {
+  acpBlocksToPromptParts,
+  compressPromptImageParts,
+  displayBlockToAcpContent,
+} from '../src/convert';
 
 const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 const imageBlock = (data: string, mimeType: string): ContentBlock => ({
@@ -318,5 +323,33 @@ describe('displayBlockToAcpContent — plan_review branch (Phase 13.2)', () => {
   it('still returns null for an unmapped kind (Phase 5 invariant)', () => {
     const cmd: ToolInputDisplay = { kind: 'command', command: 'ls' };
     expect(displayBlockToAcpContent(cmd)).toBeNull();
+  });
+});
+
+describe('compressPromptImageParts', () => {
+  async function pngBase64(width: number, height: number): Promise<string> {
+    const buf = await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/png');
+    return Buffer.from(buf).toString('base64');
+  }
+
+  it('downsamples an oversized inline image part', async () => {
+    const parts = acpBlocksToPromptParts([imageBlock(await pngBase64(2600, 2600), 'image/png')]);
+    const compressed = await compressPromptImageParts(parts);
+
+    const part = compressed[0];
+    if (part?.type !== 'image_url') throw new Error('expected an image_url part');
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(part.imageUrl.url);
+    expect(match).not.toBeNull();
+    const decoded = await Jimp.fromBuffer(Buffer.from(match![2]!, 'base64'));
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+  });
+
+  it('passes a within-budget image and text through unchanged', async () => {
+    const parts = acpBlocksToPromptParts([
+      imageBlock(await pngBase64(32, 32), 'image/png'),
+      textBlock('hi'),
+    ]);
+    const compressed = await compressPromptImageParts(parts);
+    expect(compressed).toEqual(parts);
   });
 });

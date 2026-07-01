@@ -845,6 +845,139 @@ describe('resolveThinkingEffort', () => {
   });
 });
 
+describe('google base URL forwarding', () => {
+  it('forwards base_url to the google-genai provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          gemini: {
+            type: 'google-genai',
+            apiKey: 'g-key',
+            baseUrl: 'https://qianxun.example/v1beta',
+          },
+        },
+        models: {
+          gemini: { provider: 'gemini', model: 'gemini-2.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'google-genai',
+      model: 'gemini-2.5-pro',
+      baseUrl: 'https://qianxun.example/v1beta',
+    });
+  });
+
+  it('reads GOOGLE_GEMINI_BASE_URL from provider env as a fallback', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          gemini: {
+            type: 'google-genai',
+            apiKey: 'g-key',
+            env: { GOOGLE_GEMINI_BASE_URL: 'https://env.example/v1beta' },
+          },
+        },
+        models: {
+          gemini: { provider: 'gemini', model: 'gemini-2.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'google-genai',
+      baseUrl: 'https://env.example/v1beta',
+    });
+  });
+
+  it('forwards a custom proxy base_url to the vertexai provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: {
+            type: 'vertexai',
+            apiKey: 'v-key',
+            baseUrl: 'https://qianxun.example/vertex',
+          },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'vertexai',
+      model: 'gemini-1.5-pro',
+      baseUrl: 'https://qianxun.example/vertex',
+    });
+  });
+
+  it('forwards base_url to vertexai while still deriving location from an aiplatform host', () => {
+    // Backward compatibility: an aiplatform host must keep populating `location`
+    // (existing GCP behavior) while the base URL is now also forwarded so the
+    // SDK targets the configured endpoint verbatim.
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: {
+            type: 'vertexai',
+            apiKey: 'v-key',
+            baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+          },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'vertexai',
+      baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+      location: 'us-central1',
+    });
+  });
+
+  it('derives vertex location from the GOOGLE_VERTEX_BASE_URL env fallback so ADC mode is selected', () => {
+    // The env fallback must behave exactly like config `base_url`: when the
+    // regional endpoint is supplied via GOOGLE_VERTEX_BASE_URL (with a project
+    // but no explicit GOOGLE_CLOUD_LOCATION), location derivation must still see
+    // it, so the provider resolves to service-account (ADC) mode rather than
+    // silently downgrading to API-key Gemini routing.
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: {
+            type: 'vertexai',
+            env: {
+              GOOGLE_CLOUD_PROJECT: 'my-proj',
+              GOOGLE_VERTEX_BASE_URL: 'https://us-central1-aiplatform.googleapis.com',
+            },
+          },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'vertexai',
+      vertexai: true,
+      baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+      project: 'my-proj',
+      location: 'us-central1',
+    });
+  });
+});
+
 describe('per-model protocol routing', () => {
   it('routes a protocol:anthropic model on a kimi provider through the anthropic transport with the REST base stripped of /v1', () => {
     const resolved = resolveRuntimeProvider({

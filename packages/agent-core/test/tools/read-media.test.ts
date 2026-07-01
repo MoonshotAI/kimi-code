@@ -4,6 +4,7 @@
 
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ContentPart, ModelCapability } from '@moonshot-ai/kosong';
+import { Jimp } from 'jimp';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
@@ -12,7 +13,7 @@ import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
-import { MEDIA_SNIFF_BYTES } from '../../src/tools/support/file-type';
+import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -650,5 +651,38 @@ describe('ReadMediaFileTool', () => {
     expect(result.output).toBe(
       '"/workspace/fake.png" is not a supported image or video file. Use Read for text files, or Bash or an MCP tool for other binary formats.',
     );
+  });
+
+  it('downsamples an oversized image but reports original dimensions', async () => {
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    expect(sniffImageDimensions(big)).toEqual({ width: 2600, height: 2600 });
+
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(big),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_big',
+      args: { path: '/workspace/big.png' },
+      signal,
+    });
+
+    const parts = outputParts(result);
+    const url = (parts[2] as { imageUrl: { url: string } }).imageUrl.url;
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
+    expect(match).not.toBeNull();
+    // The image actually sent to the model is downsampled to the edge cap.
+    const sentBytes = Buffer.from(match![2]!, 'base64');
+    const sentDims = sniffImageDimensions(sentBytes);
+    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
+
+    // The <system> summary keeps the ORIGINAL size so coordinate mapping holds.
+    const systemText = (parts[0] as { text: string }).text;
+    expect(systemText).toContain('2600x2600');
+    expect(systemText).toContain(`${String(big.length)} bytes`);
   });
 });

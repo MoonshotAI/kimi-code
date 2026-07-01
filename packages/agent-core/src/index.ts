@@ -44,6 +44,23 @@ export type {
   QuestionBackgroundTaskInfo,
 } from './agent/background';
 export type { ToolServices } from './tools/support/services';
+
+// Image compression — the input-stage helper each ingestion site (CLI paste,
+// server upload resolution, ACP, ReadMediaFile, MCP) calls to shrink oversized
+// images while constructing the content part. Re-exported from the package root
+// so consumers (node-sdk, server) import it without a deep subpath.
+export {
+  compressImageForModel,
+  compressBase64ForModel,
+  compressImageContentParts,
+  IMAGE_BYTE_BUDGET,
+  MAX_IMAGE_EDGE_PX,
+} from './tools/support/image-compress';
+export type {
+  CompressImageOptions,
+  CompressImageResult,
+  CompressBase64Result,
+} from './tools/support/image-compress';
 export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,

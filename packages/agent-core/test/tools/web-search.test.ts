@@ -41,24 +41,10 @@ describe('WebSearchTool', () => {
     });
   });
 
-  it('limit description guides toward refining the query instead of raising limit', () => {
+  it('parameters expose only the query field', () => {
     const tool = new WebSearchTool(fakeProvider());
-    const limit = (tool.parameters as { properties: Record<string, { description?: string }> })
-      .properties['limit'];
-    expect(limit?.description).toContain('Typically you do not need to set this value');
-    expect(limit?.description).toContain('more concrete query');
-  });
-
-  it('include_content description warns about token cost at large limits', () => {
-    const tool = new WebSearchTool(fakeProvider());
-    const includeContent = (
-      tool.parameters as { properties: Record<string, { description?: string }> }
-    ).properties['include_content'];
-    expect(includeContent?.description).toContain('consume a large amount of tokens');
-    expect(includeContent?.description).toContain('avoid enabling this when `limit` is set');
-    // Use the TS/JSON boolean literal, not Python's capitalized `True`.
-    expect(includeContent?.description).toContain('set to true');
-    expect(includeContent?.description).not.toContain('True');
+    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(properties)).toEqual(['query']);
   });
 
   it('returns formatted results from provider', async () => {
@@ -97,23 +83,25 @@ describe('WebSearchTool', () => {
     expect(content).not.toContain('Summary:');
   });
 
-  it('describes every returned field (date and content) in the tool description', () => {
+  it('describes the returned fields and points to FetchURL for full pages', () => {
     const tool = new WebSearchTool(fakeProvider());
     const description = tool.description.toLowerCase();
     expect(description).toContain('title');
     expect(description).toContain('url');
     expect(description).toContain('snippet');
     expect(description).toContain('date');
-    expect(description).toContain('content');
+    expect(description).toContain('site');
+    expect(description).toContain('fetchurl');
   });
 
-  it('does not promise page content unconditionally for every result', () => {
-    // Page content is rendered only when the provider returns it (`include_content`
-    // is merely forwarded to the provider). The description must not claim it is
-    // appended for every result, or it repeats the overpromise this PR fixes.
+  it('frames results as summaries rather than inlined full pages', () => {
+    // Search results no longer carry page content; full content is fetched on
+    // demand via FetchURL. The description must not claim full content is
+    // inlined for every result.
     const tool = new WebSearchTool(fakeProvider());
     const description = tool.description.toLowerCase();
     expect(description).not.toContain('for each result');
+    expect(description).toContain('summaries');
   });
 
   it('instructs the model to cite source URLs in its description', () => {
@@ -121,6 +109,47 @@ describe('WebSearchTool', () => {
     const description = tool.description.toLowerCase();
     expect(description).toContain('cite');
     expect(description).toContain('source');
+  });
+
+  it('renders the source site when the provider returns it', async () => {
+    const provider = fakeProvider([
+      { title: 'Result 1', url: 'https://example.com/1', snippet: 'Snippet 1', siteName: 'Example Co' },
+    ]);
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-site',
+      args: { query: 'test query' },
+      signal,
+    });
+    expect(toolContentString(result)).toContain('Site: Example Co');
+  });
+
+  it('appends a citation reminder after the results', async () => {
+    const provider = fakeProvider([
+      { title: 'Result 1', url: 'https://example.com/1', snippet: 'Snippet 1' },
+    ]);
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-cite',
+      args: { query: 'test query' },
+      signal,
+    });
+    const content = toolContentString(result);
+    expect(content).toContain('cite');
+    expect(content).toContain('[title](url)');
+  });
+
+  it('does not append the citation reminder when there are no results', async () => {
+    const tool = new WebSearchTool(fakeProvider([]));
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-cite-empty',
+      args: { query: 'nothing' },
+      signal,
+    });
+    expect(toolContentString(result)).not.toContain('[title](url)');
   });
 
   it('returns no results message when provider returns empty', async () => {
@@ -141,8 +170,7 @@ describe('WebSearchTool', () => {
         {
           title: 'Large result',
           url: 'https://example.com/large',
-          snippet: 'Large snippet',
-          content: 'x'.repeat(60_000),
+          snippet: 'x'.repeat(60_000),
         },
       ]),
     );
@@ -150,7 +178,7 @@ describe('WebSearchTool', () => {
     const result = await executeTool(tool, {
       turnId: 't1',
       toolCallId: 'c-large',
-      args: { query: 'large', include_content: true },
+      args: { query: 'large' },
       signal,
     });
 
@@ -238,18 +266,16 @@ describe('WebSearchTool', () => {
     expect(content).toContain('The operation was aborted');
   });
 
-  it('passes limit and includeContent to provider', async () => {
+  it('passes only the query and toolCallId to the provider', async () => {
     const provider = fakeProvider([]);
     const tool = new WebSearchTool(provider);
     await executeTool(tool, {
       turnId: 't1',
       toolCallId: 'c4',
-      args: { query: 'test', limit: 10, include_content: true },
+      args: { query: 'test' },
       signal,
     });
     expect(provider.search).toHaveBeenCalledWith('test', {
-      limit: 10,
-      includeContent: true,
       toolCallId: 'c4',
     });
   });
@@ -273,6 +299,60 @@ describe('WebSearchTool', () => {
 });
 
 describe('MoonshotWebSearchProvider', () => {
+  it('maps site_name to siteName and does not forward page content', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          search_results: [
+            {
+              title: 'T',
+              url: 'https://e.com',
+              snippet: 'S',
+              site_name: 'E Co',
+              date: '2026-01-01',
+              content: 'FULL PAGE BODY',
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = new MoonshotWebSearchProvider({
+      apiKey: 'k',
+      baseUrl: 'https://search.example/v1',
+      fetchImpl,
+    });
+
+    const [r] = await provider.search('q');
+
+    expect(r).toEqual({
+      title: 'T',
+      url: 'https://e.com',
+      snippet: 'S',
+      siteName: 'E Co',
+      date: '2026-01-01',
+    });
+    expect(r).not.toHaveProperty('content');
+  });
+
+  it('sends only text_query in the request body (no limit/crawling/timeout)', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ search_results: [] }), { status: 200 }),
+      );
+    const provider = new MoonshotWebSearchProvider({
+      apiKey: 'k',
+      baseUrl: 'https://search.example/v1',
+      fetchImpl,
+    });
+
+    await provider.search('hello');
+
+    const sent = fetchImpl.mock.calls[0]?.[1]?.body;
+    expect(sent).toBe(JSON.stringify({ text_query: 'hello' }));
+  });
+
   it('does not force-refresh request auth after a 401 response', async () => {
     const getAccessToken = vi.fn().mockResolvedValue('fresh-token');
     const fetchImpl = vi
