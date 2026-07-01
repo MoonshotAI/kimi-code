@@ -9,6 +9,11 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
+import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
+import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
+import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
+import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
+import type { ToolCall } from '../src/types';
 
 describe('parseDiff', () => {
   it('parses multiple files and keeps hunk line numbers', () => {
@@ -143,6 +148,39 @@ describe('toolMeta', () => {
     expect(
       toolSummary('WebFetch', JSON.stringify({ url: 'https://example.com/path/to' })),
     ).toBe('example.com/path');
+  });
+});
+
+describe('resolveToolRenderer', () => {
+  // Minimal ToolCall factory — resolveToolRenderer only reads `name`, `status`
+  // and `media`, so the rest is filled with placeholders.
+  const tool = (name: string, status: ToolCall['status'] = 'running'): ToolCall => ({
+    id: 't1',
+    name,
+    arg: '',
+    status,
+  });
+
+  // Regression: normalizeToolName() folds `agent`/`subagent` into the canonical
+  // `task` kind, so the renderer must match on `task`. If it matched on the raw
+  // `agent` string these calls would fall through to GenericTool and lose the
+  // inline "Open" button for the subagent detail panel.
+  it('routes Agent / subagent calls to the Agent renderer', () => {
+    expect(resolveToolRenderer(tool('agent'))).toBe(AgentTool);
+    expect(resolveToolRenderer(tool('Agent'))).toBe(AgentTool);
+    expect(resolveToolRenderer(tool('subagent'))).toBe(AgentTool);
+    expect(resolveToolRenderer(tool('task'))).toBe(AgentTool);
+  });
+
+  it('routes edit-like calls to the Edit renderer', () => {
+    expect(resolveToolRenderer(tool('edit'))).toBe(EditTool);
+    expect(resolveToolRenderer(tool('write'))).toBe(EditTool);
+    expect(resolveToolRenderer(tool('multi_edit'))).toBe(EditTool);
+  });
+
+  it('falls back to the Generic renderer for unknown tools', () => {
+    expect(resolveToolRenderer(tool('bash'))).toBe(GenericTool);
+    expect(resolveToolRenderer(tool('read'))).toBe(GenericTool);
   });
 });
 

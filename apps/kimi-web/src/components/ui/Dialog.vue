@@ -92,6 +92,11 @@ watch(
       previouslyFocused = null;
     }
   },
+  // Run immediately so callers that mount with `open` already true (Login,
+  // AddWorkspace, Settings, …) still get initial focus moved into the dialog
+  // and a saved `previouslyFocused` for restore-on-close. Without this, the
+  // watcher only fires on change and focus stays behind the overlay.
+  { immediate: true },
 );
 
 if (typeof window !== 'undefined') {
