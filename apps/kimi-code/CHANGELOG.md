@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 0.21.1
+
+### Patch Changes
+
+- [#1256](https://github.com/MoonshotAI/kimi-code/pull/1256) [`0cc02ac`](https://github.com/MoonshotAI/kimi-code/commit/0cc02ac67d465d1d4d7fe070422bab17053cdaa3) - Keep the waiting spinner visible while encrypted reasoning streams, fixing a blank spinner-less gap before the first response text appears.
+
 ## 0.21.0
 
 ### Minor Changes
