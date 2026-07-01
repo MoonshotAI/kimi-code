@@ -232,7 +232,8 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
 provide('resolveAgentTaskId', resolveAgentTaskId);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 const hasDockWork = computed(() =>
-  props.tasks.length > 0 ||
+  bashTasks.value.length > 0 ||
+  subagentTasks.value.length > 0 ||
   (props.todos?.length ?? 0) > 0 ||
   (props.queued?.length ?? 0) > 0,
 );
