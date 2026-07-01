@@ -1,6 +1,7 @@
 import type { ContentBlock, ToolCallContent } from '@agentclientprotocol/sdk';
 import {
   log,
+  compressBase64ForModel,
   type PromptPart,
   type ToolInputDisplay,
   type ToolResultEvent,
@@ -69,6 +70,41 @@ export function acpBlocksToPromptParts(
     });
   }
   return out;
+}
+
+/**
+ * Shrink oversized inline images in a prompt-part list — the ACP ingestion
+ * point's input-stage compression, mirroring the CLI's paste-time and the
+ * server's upload-time step. Best effort: a part that cannot be compressed is
+ * passed through unchanged.
+ */
+export async function compressPromptImageParts(
+  parts: readonly PromptPart[],
+): Promise<PromptPart[]> {
+  const out: PromptPart[] = [];
+  for (const part of parts) {
+    if (part.type === 'image_url') {
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed !== null) {
+        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType);
+        if (result.changed) {
+          out.push({
+            type: 'image_url',
+            imageUrl: { ...part.imageUrl, url: `data:${result.mimeType};base64,${result.base64}` },
+          });
+          continue;
+        }
+      }
+    }
+    out.push(part);
+  }
+  return out;
+}
+
+function parseImageDataUrl(url: string): { mimeType: string; base64: string } | null {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
+  if (match === null) return null;
+  return { mimeType: match[1]!, base64: match[2]! };
 }
 
 /**

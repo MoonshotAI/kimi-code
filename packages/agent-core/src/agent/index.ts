@@ -18,7 +18,6 @@ import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profi
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import { compressImageContentParts } from '../tools/support/image-compress';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
 import {
@@ -92,12 +91,6 @@ export interface AgentOptions {
 export class Agent {
   readonly type: AgentType;
   private _kaos: Kaos;
-
-  // Serializes turn-claiming RPCs (prompt/steer). Their handlers `await` image
-  // compression before turn.launch() synchronously claims `activeTurn`; without
-  // this chain two overlapping calls could both compress first, letting the
-  // faster-to-compress one win the turn and strand the other on `agent_busy`.
-  private turnRpcTail: Promise<void> = Promise.resolve();
 
   get kaos(): Kaos {
     return this._kaos;
@@ -290,38 +283,17 @@ export class Agent {
     return result;
   }
 
-  /**
-   * Run a turn-claiming RPC (`prompt` / `steer`) after any already-queued one,
-   * in invocation order, so the async compression step never interleaves with
-   * the synchronous turn-claim. Returns a promise for *this* call's completion
-   * (not the whole tail), and keeps the chain alive if an item rejects. Only
-   * `prompt`/`steer` join this queue — `cancel` and the rest stay immediate.
-   */
-  private enqueueTurnRpc(work: () => Promise<void>): Promise<void> {
-    const run = this.turnRpcTail.then(work);
-    this.turnRpcTail = run.catch(() => undefined);
-    return run;
-  }
-
   get rpcMethods(): PromisableMethods<AgentAPI> {
     return {
-      prompt: (payload) =>
-        // Single ingestion chokepoint: every client transport (CLI, web,
-        // desktop, ACP, SDK) submits prompts through this RPC, so compressing
-        // oversized images here — before the turn records or sends them —
-        // covers them all with one hook. Best effort: originals pass through on
-        // failure. Serialized via enqueueTurnRpc so the compression `await`
-        // cannot race the turn-claim.
-        this.enqueueTurnRpc(async () => {
-          this.turn.prompt(await compressImageContentParts(payload.input));
-        }),
+      prompt: (payload) => {
+        this.turn.prompt(payload.input);
+      },
       runShellCommand: (payload) => this.tools.runShellCommand(payload.command, payload.commandId),
       cancelShellCommand: (payload) => this.tools.cancelShellCommand(payload.commandId),
-      steer: (payload) =>
-        this.enqueueTurnRpc(async () => {
-          this.telemetry.track('input_steer', { parts: payload.input.length });
-          this.turn.steer(await compressImageContentParts(payload.input));
-        }),
+      steer: (payload) => {
+        this.telemetry.track('input_steer', { parts: payload.input.length });
+        this.turn.steer(payload.input);
+      },
       cancel: (payload) => {
         if (this.turn.hasActiveTurn) {
           this.telemetry.track('cancel', { from: 'streaming' });

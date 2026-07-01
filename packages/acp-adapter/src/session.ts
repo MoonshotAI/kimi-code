@@ -38,7 +38,7 @@ import {
 } from './builtin-commands';
 import { buildSessionConfigOptions } from './config-options';
 import { listModelsFromHarness } from './model-catalog';
-import { acpBlocksToPromptParts } from './convert';
+import { acpBlocksToPromptParts, compressPromptImageParts } from './convert';
 import {
   acpToolCallId,
   assistantDeltaToSessionUpdate,
@@ -715,7 +715,7 @@ export class AcpSession {
    *    sees a JSON-RPC error rather than a hung request.
    */
   async prompt(blocks: readonly ContentBlock[]): Promise<PromptResponse> {
-    const parts = acpBlocksToPromptParts(blocks);
+    const parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks));
     const sessionId = this.id;
     const conn = this.conn;
 
