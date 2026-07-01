@@ -29,6 +29,7 @@
 | `/new` | `/clear` | 开启全新会话，丢弃当前上下文 | 否 |
 | `/sessions` | `/resume` | 浏览历史会话并切换/恢复 | 否 |
 | `/tasks` | `/task` | 浏览后台任务列表 | 是 |
+| `/agents [status]` | `/agent` | 查看后台子 Agent 状态，包括 Agent ID、子 Agent 类型、结束状态，以及失败 Agent 的恢复提示 | 是 |
 | `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |

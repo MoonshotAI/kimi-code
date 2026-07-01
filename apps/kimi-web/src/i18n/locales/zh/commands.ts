@@ -8,6 +8,7 @@ export default {
   permission: { desc: '切换审批模式 (manual/auto/yolo)' },
   plan: { desc: '切换计划模式 开/关' },
   swarm: { desc: '切换 swarm 模式；/swarm <任务> 直接在 swarm 下执行' },
+  agents: { desc: '查看后台子 Agent 状态' },
   goal: { desc: '创建/控制目标：/goal <目标>、/goal pause|resume|cancel' },
   btw: { desc: '侧边聊天：/btw <问题> 向 fork 的侧边会话提问' },
   yolo: { desc: '自动批准一切 (yolo 模式)' },

@@ -8,6 +8,7 @@ export default {
   permission: { desc: 'Switch approval mode (manual / auto / yolo)' },
   plan: { desc: 'Toggle plan mode on/off' },
   swarm: { desc: 'Toggle swarm mode; /swarm <task> runs a task in swarm' },
+  agents: { desc: 'Show background subagent status' },
   goal: { desc: 'Create/control a goal: /goal <objective>, /goal pause|resume|cancel' },
   btw: { desc: 'Side chat: /btw <question> asks a forked side session' },
   yolo: { desc: 'Auto-approve everything (yolo mode)' },
