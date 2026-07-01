@@ -81,6 +81,22 @@ export class ToolManager {
     });
   }
 
+  /**
+   * Release resources held by this manager (MCP status subscription, tool
+   * tables). Called when an agent is evicted from the live session map so it
+   * does not keep receiving MCP status changes or stay referenced by the MCP
+   * listener set.
+   */
+  dispose(): void {
+    this.mcpToolStatusUnsubscribe?.();
+    this.mcpToolStatusUnsubscribe = undefined;
+    this.mcpTools.clear();
+    this.mcpToolsByServer.clear();
+    this.builtinTools.clear();
+    this.userTools.clear();
+    this.shellCommandControllers.clear();
+  }
+
   updateStore<K extends ToolStoreKey>(key: K, value: ToolStoreData[K]): void {
     this.agent.records.logRecord({
       type: 'tools.update_store',

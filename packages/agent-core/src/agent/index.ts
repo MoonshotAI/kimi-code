@@ -202,6 +202,18 @@ export class Agent {
     this._kaos = kaos;
   }
 
+  /**
+   * Release resources held by this agent (MCP status subscription via the tool
+   * manager, cron). Called when the agent is evicted from the live session map
+   * so it does not keep receiving MCP status changes or stay referenced by the
+   * MCP listener set. Persisted metadata is preserved so the agent can be
+   * resumed later.
+   */
+  async dispose(): Promise<void> {
+    this.tools.dispose();
+    await this.cron?.stop();
+  }
+
   getAdditionalDirs(): readonly string[] {
     return this.additionalDirs;
   }

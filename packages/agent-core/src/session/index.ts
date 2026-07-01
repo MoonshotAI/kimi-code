@@ -808,8 +808,11 @@ export class Session {
     while (candidates.length > DEFAULT_MAX_READY_SUBAGENTS) {
       const candidate = candidates.shift();
       if (candidate === undefined) break;
+      // Dispose before deleting so the agent's MCP status subscription and
+      // tool tables are released; otherwise the evicted agent stays
+      // referenced by the MCP listener set and keeps processing status changes.
+      await candidate.agent.dispose();
       this.agents.delete(candidate.id);
-      await candidate.agent.cron?.stop();
     }
   }
 
