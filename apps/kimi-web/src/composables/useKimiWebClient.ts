@@ -889,6 +889,9 @@ function warningDetail(labelKey: string, value: unknown): AppNoticeDetail | unde
 
 function formatDetailValue(value: unknown): string {
   if (value instanceof Error) {
+    // A stack already starts with "Name: message" and carries the frames the
+    // plain name/message would throw away, so prefer it when present.
+    if (typeof value.stack === 'string' && value.stack) return value.stack;
     return value.message ? `${value.name}: ${value.message}` : value.name;
   }
   if (typeof value === 'string') return value;
@@ -918,14 +921,40 @@ function errorMessage(err: unknown): string | undefined {
       : undefined;
 }
 
+function errorStack(err: unknown): string | undefined {
+  return err instanceof Error && typeof err.stack === 'string' && err.stack ? err.stack : undefined;
+}
+
+function formatTimestamp(ms: number | undefined): string | undefined {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return undefined;
+  return new Date(ms).toISOString();
+}
+
+function formatDuration(ms: number | undefined): string | undefined {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return undefined;
+  return `${Math.round(ms)}ms`;
+}
+
 function errorDetails(operation: string, err: unknown, sessionId?: string): AppNoticeDetail[] {
+  const network = isDaemonNetworkError(err);
+  const api = isDaemonApiError(err);
+  // Daemon errors carry the failure moment + round-trip time captured in the
+  // HTTP layer; fall back to "now" for client-side errors that have neither.
+  const timestamp = network || api ? err.timestamp : undefined;
+  const durationMs = network || api ? err.durationMs : undefined;
+
   const details: Array<AppNoticeDetail | undefined> = [
     warningDetail('operation', operation),
-    warningDetail('sessionId', sessionId),
+    // Many call sites don't pass a session id; the active session is the best
+    // guess and is what the user was looking at when the failure happened.
+    warningDetail('sessionId', sessionId ?? rawState.activeSessionId),
+    warningDetail('connection', rawState.connection),
+    warningDetail('timestamp', formatTimestamp(timestamp ?? Date.now())),
   ];
 
-  if (isDaemonNetworkError(err)) {
+  if (network) {
     details.push(
+      warningDetail('duration', formatDuration(durationMs)),
       warningDetail('request', `${err.method} ${err.path}`),
       warningDetail('endpoint', err.url),
       warningDetail('requestId', err.requestId),
@@ -936,8 +965,9 @@ function errorDetails(operation: string, err: unknown, sessionId?: string): AppN
       warningDetail('responsePreview', err.bodyPreview),
       warningDetail('cause', err.cause),
     );
-  } else if (isDaemonApiError(err)) {
+  } else if (api) {
     details.push(
+      warningDetail('duration', formatDuration(durationMs)),
       warningDetail('code', err.code),
       warningDetail('requestId', err.requestId),
       warningDetail('message', err.message),
@@ -947,6 +977,7 @@ function errorDetails(operation: string, err: unknown, sessionId?: string): AppN
     details.push(
       warningDetail('errorName', errorName(err)),
       warningDetail('message', errorMessage(err) ?? formatDetailValue(err)),
+      warningDetail('stack', errorStack(err)),
     );
   }
 

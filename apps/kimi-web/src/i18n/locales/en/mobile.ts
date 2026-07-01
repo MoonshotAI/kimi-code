@@ -2,6 +2,8 @@ export default {
   openSwitcher: 'Switch session / workspace',
   openSettings: 'Session settings',
   settingsTitle: 'Session settings',
+  groupSession: 'Current session',
+  groupApp: 'App preferences',
   sheetLabel: 'Sheet',
   closeSheet: 'Close',
   tapToCycle: 'tap to cycle',

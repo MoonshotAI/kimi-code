@@ -4,6 +4,7 @@ export default {
   tabs: {
     general: '通用',
     agent: 'Agent',
+    account: '账户',
     advanced: '高级',
   },
   appearance: '外观',
@@ -26,11 +27,6 @@ export default {
   noDefaultModel: '未设置默认模型',
   defaultPermission: '默认权限',
   defaultPermissionHint: '只影响之后新建的会话',
-  permission: {
-    manual: '手动',
-    auto: '自动',
-    yolo: '全自动',
-  },
   defaultThinking: '默认开启思考',
   defaultThinkingHint: '新会话默认是否开启 thinking',
   defaultPlanMode: '默认计划模式',

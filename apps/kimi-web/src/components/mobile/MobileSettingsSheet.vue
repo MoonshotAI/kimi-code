@@ -115,6 +115,8 @@ function onLogout(): void {
     :title="t('mobile.settingsTitle')"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <div class="group-title">{{ t('mobile.groupSession') }}</div>
+
     <!-- Model → opens ModelPicker -->
     <button type="button" class="srow" @click="onPickModel">
       <span class="srow-main">
@@ -170,6 +172,8 @@ function onLogout(): void {
         <i :style="{ width: ctxPct + '%' }" />
       </span>
     </div>
+
+    <div class="group-title">{{ t('mobile.groupApp') }}</div>
 
     <!-- App preferences (the desktop settings-popover controls) -->
     <div class="srow read-only pref">
@@ -244,6 +248,16 @@ function onLogout(): void {
 </template>
 
 <style scoped>
+.group-title {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
 .srow {
   display: flex;
   align-items: center;
@@ -379,6 +393,10 @@ function onLogout(): void {
     gap: 10px;
     min-width: 0;
     padding: 14px max(14px, env(safe-area-inset-right)) 14px max(14px, env(safe-area-inset-left));
+  }
+  .group-title {
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
   }
   .srow-main {
     flex: 1 1 auto;

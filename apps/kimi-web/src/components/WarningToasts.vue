@@ -189,7 +189,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="toasts.length" class="toasts" role="status" aria-live="polite">
+  <TransitionGroup name="toast" tag="div" class="toasts" role="status" aria-live="polite">
     <Toast
       v-for="toast in toasts"
       :key="toast.id"
@@ -216,7 +216,7 @@ onUnmounted(() => {
         </div>
       </dl>
     </Toast>
-  </div>
+  </TransitionGroup>
 </template>
 
 <style scoped>
@@ -231,6 +231,24 @@ onUnmounted(() => {
   width: min(440px, calc(100vw - 32px));
   max-height: 56vh;
   overflow-y: auto;
+}
+
+/* Toast enter/leave/move: new toasts slide in from the right and fade; dismissed
+   toasts fade + slide out in place, then the remaining stack glides up via
+   `.toast-move` (no absolute positioning, so a middle toast never jumps to the
+   top of the stack as it leaves). */
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(16px);
+}
+.toast-move {
+  transition: transform var(--duration-base) var(--ease-out);
 }
 .actions {
   display: flex;

@@ -5,6 +5,5 @@ export default {
   authPageMessage: 'Connect your Kimi Code account before starting or continuing conversations.',
   authPageLogin: 'Sign in',
   connecting: 'Connecting…',
-  comingSoon: 'Coming soon…',
   internalBuildBanner: 'Internal testing only',
 } as const;

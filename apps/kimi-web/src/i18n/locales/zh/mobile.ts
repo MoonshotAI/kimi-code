@@ -2,6 +2,8 @@ export default {
   openSwitcher: '切换会话 / 工作区',
   openSettings: '会话设置',
   settingsTitle: '会话设置',
+  groupSession: '当前会话',
+  groupApp: '应用偏好',
   sheetLabel: '面板',
   closeSheet: '关闭',
   tapToCycle: '点击切换',

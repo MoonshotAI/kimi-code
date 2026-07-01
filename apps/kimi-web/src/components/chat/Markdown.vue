@@ -701,27 +701,37 @@ function copyDiff(code: string, idx: number) {
 }
 
 /* Markdown tables. markstream-vue pins these to the message width
-   (`width:100%` + `table-layout:fixed`) and wraps cell text, which squeezes wide
-   content into narrow columns. Size tables to their content instead and let
-   markstream's own `.table-node-wrapper` (overflow-x:auto) scroll them within the
-   message column when they're too wide — the same pattern as code blocks / diffs.
-   `!important` beats markstream's scoped `.table-node[data-v-…]` rules regardless
-   of injection order. */
+   (`width:100%` + `table-layout:fixed`), squeezing wide content into narrow
+   columns. Instead we size columns to their content (`width:auto` +
+   `table-layout:auto`) and let cells WRAP, so a wide table fills the reading
+   column and wraps its text rather than being crushed or scrolling. (An earlier
+   attempt to break the table out into a *wider* column than the prose — via
+   container units and then fixed @container caps — is parked; see the handover
+   doc.) `!important` beats markstream's scoped `.table-node[data-v-…]` rules
+   regardless of injection order. */
 .md :deep(.table-node) {
   --table-border: var(--color-line);
   --table-header-bg: var(--color-surface);
   font-size: var(--text-lg);
   margin: 0.5em 0;
   width: auto !important;
+  max-width: 100% !important;
   table-layout: auto !important;
+}
+/* Default: the table stays inside the reading column and its cells wrap to fit
+   — markstream's own cell default is already `white-space:normal`, so a wide
+   table simply wraps into the column instead of forcing a horizontal scroll.
+   `max-content` + `max-width:100%` sizes columns to their content up to the
+   column width; `overflow-x:auto` is a safety net for an unbreakable cell. */
+.md :deep(.table-node-wrapper) {
+  width: max-content;
+  max-width: 100% !important;
+  overflow-x: auto !important;
 }
 .md :deep(.table-node th),
 .md :deep(.table-node td) {
   text-align: left;
   vertical-align: top;
-  white-space: nowrap !important;
-  overflow-wrap: normal !important;
-  word-break: normal !important;
 }
 
 /* Drop markstream-vue's default table-row hover background — the conversation

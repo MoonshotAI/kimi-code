@@ -136,7 +136,11 @@ function onHeaderDragStart(event: DragEvent): void {
         <div class="gh-path">{{ group.workspace.shortPath || group.workspace.root }}</div>
       </Tooltip>
     </div>
-    <div v-show="!isCollapsed(group.workspace.id)" class="group-sessions">
+    <div
+      class="group-sessions"
+      :class="{ collapsed: isCollapsed(group.workspace.id) }"
+      :inert="isCollapsed(group.workspace.id)"
+    >
       <SessionRow
         v-for="s in group.sessions"
         :key="s.id"
@@ -172,6 +176,19 @@ function onHeaderDragStart(event: DragEvent): void {
    Sidebar.vue, so they don't need to be redeclared here. */
 .group { padding-bottom: var(--space-2); }
 .group.dragging { opacity: 0.45; }
+
+/* Session list: collapses/expands via a height transition. `interpolate-size:
+   allow-keywords` (set on :root) lets `height: auto` interpolate instead of
+   snap. `inert` (set in the template when collapsed) keeps the hidden rows out
+   of the tab order / a11y tree, matching the old `v-show` behavior. */
+.group-sessions {
+  height: auto;
+  overflow: hidden;
+  transition: height var(--duration-base) var(--ease-out);
+}
+.group-sessions.collapsed {
+  height: 0;
+}
 
 /* Workspace header — an inset rounded row that mirrors the session-row inset
    (6px margin + 10px padding), so the folder icon lands at --sb-pad-x and the

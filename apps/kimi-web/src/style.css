@@ -145,6 +145,17 @@ summary {
   display: none;
 }
 
+/* Opt in to animating between a length and an intrinsic sizing keyword
+   (e.g. `height: 0` → `height: auto`, `width` → `max-content`). Inherited, so
+   setting it once on :root enables it everywhere. Progressive enhancement:
+   unsupported browsers (non-Chromium today) simply keep snapping with no
+   transition. */
+@supports (interpolate-size: allow-keywords) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+}
+
 :root {
   --dim: #595959;
   --muted: #8a8a8a;

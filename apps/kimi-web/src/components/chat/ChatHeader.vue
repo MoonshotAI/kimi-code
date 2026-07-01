@@ -343,12 +343,12 @@ function startArchive(): void {
   -webkit-app-region: no-drag;
 }
 .ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
-.ch-ws { color: var(--color-text); font-size: 15px; font-weight: 500; flex: none; }
+.ch-ws { color: var(--color-text-muted); font-size: var(--text-base); font-weight: var(--weight-medium); flex: none; }
 .ch-sep { color: var(--color-text-faint); flex: none; }
 .ch-ses {
   color: var(--color-text);
-  font-size: 15px;
-  font-weight: 500;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -356,8 +356,8 @@ function startArchive(): void {
 .ch-rename {
   flex: 1;
   min-width: 0;
-  font-size: 15px;
-  font-weight: 500;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   color: var(--color-text);
   background: var(--color-bg);
   border: 1px solid var(--color-accent);

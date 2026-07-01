@@ -39,6 +39,10 @@ onUnmounted(() => {
     clearTimeout(undoTimer);
     undoTimer = null;
   }
+  if (undoFallbackTimer !== null) {
+    clearTimeout(undoFallbackTimer);
+    undoFallbackTimer = null;
+  }
 });
 
 const props = withDefaults(
@@ -240,6 +244,11 @@ const copiedTurn = ref<string | null>(null);
 const confirmingEditTurnId = ref<string | null>(null);
 const undoingTurnId = ref<string | null>(null);
 let undoTimer: ReturnType<typeof setTimeout> | null = null;
+// Fallback that releases the undoing state if the server rewind never removes
+// the turn (e.g. the undo failed). Without it the bubble would stay hidden and
+// the guard in confirmEditMessage would block any further undo.
+let undoFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+const UNDO_FALLBACK_MS = 2500;
 
 // Expanded timestamp state (keyed by turn id)
 const expandedTimeTurnIds = ref<Set<string>>(new Set());
@@ -269,9 +278,32 @@ function confirmEditMessage(turn: ChatTurn): void {
   undoTimer = setTimeout(() => {
     undoTimer = null;
     emit('editMessage', turn.text);
-    undoingTurnId.value = null;
+    // Keep `undoingTurnId` set so the bubble stays in its exited (opacity-0)
+    // state until the server rewind actually removes this turn; clearing it here
+    // would remove the `.undoing` class and snap the bubble back into view.
+    undoFallbackTimer = setTimeout(() => {
+      undoFallbackTimer = null;
+      undoingTurnId.value = null;
+    }, UNDO_FALLBACK_MS);
   }, 240);
 }
+
+// Release the undoing state once the server rewind has actually removed the
+// turn from the list. Runs post-render so the element is already gone — clearing
+// the class then can't snap anything back into view.
+watch(
+  () => props.turns,
+  (turns) => {
+    if (undoingTurnId.value === null) return;
+    if (turns.some((t) => t.id === undoingTurnId.value)) return;
+    undoingTurnId.value = null;
+    if (undoFallbackTimer !== null) {
+      clearTimeout(undoFallbackTimer);
+      undoFallbackTimer = null;
+    }
+  },
+  { flush: 'post' },
+);
 
 // Copy-whole-conversation state
 const copiedConversation = ref(false);
@@ -733,27 +765,16 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   transition: max-width 0.15s ease;
 }
 .u-meta .u-edit:hover .u-edit-text { max-width: 120px; }
-@keyframes undo-bubble-exit {
-  0% {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-    filter: blur(0);
-  }
-  55% {
-    opacity: 0.45;
-    transform: translateX(10px) scale(0.985);
-    filter: blur(0.4px);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(28px) scale(0.92);
-    filter: blur(2px);
-  }
-}
+/* Undo exit: plain fade-out. The `.undoing` class stays applied until the server
+   rewind actually removes the turn (see confirmEditMessage), so `forwards`
+   keeps the bubble hidden until then — no snap-back flicker. */
 .u-bub.undoing {
   pointer-events: none;
-  transform-origin: right center;
-  animation: undo-bubble-exit 240ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation: undo-bubble-fade 0.24s var(--ease-out) forwards;
+}
+@keyframes undo-bubble-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
 }
 /* User input is shown verbatim — preserve newlines, break long tokens. */
 .u-text {
@@ -789,6 +810,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .u-copy {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   padding: 2px 5px;
   background: none;
   border: none;
@@ -803,7 +825,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   min-height: 22px;
   box-sizing: border-box;
 }
-.u-copy svg { display: block; flex: none; }
+.u-copy svg { display: block; flex: none; transform: translateY(1.3px); }
 .u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 /* Mobile bubble layout: right-align the undo button below the bubble. */
 .u-edit-wrap { display: flex; justify-content: flex-end; }

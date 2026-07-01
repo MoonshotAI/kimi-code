@@ -294,6 +294,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   const SESSIONS_INITIAL_PAGE_SIZE = 5;
   // Sessions fetched per "load more" click within a workspace.
   const SESSIONS_LOAD_MORE_SIZE = 30;
+  // On initial load, if the oldest session of the first page is still within
+  // this window, keep fetching older pages until the oldest loaded session falls
+  // outside it. Avoids clipping an active workspace's history at an arbitrary
+  // 5-session boundary when it has a run of recently-updated sessions.
+  const SESSIONS_RECENT_WINDOW_MS = 12 * 60 * 60 * 1000;
 
   /** Drain every page of sessions, newest first. A single global walk (instead of
    *  per-workspace) so sessions whose cwd is not a registered workspace root are
@@ -315,10 +320,59 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     return items;
   }
 
+  /** Load the initial page of sessions for one workspace, then keep fetching
+   *  older pages while the oldest loaded session is still within
+   *  SESSIONS_RECENT_WINDOW_MS. Every page (including continuations) uses the
+   *  small initial page size so a sparse page cannot pull in days of history at
+   *  once. Continuation pages are also trimmed at the recent-window boundary,
+   *  keeping only up to the first session that falls outside the window. */
+  async function loadInitialSessionsForWorkspace(
+    workspaceId: string,
+  ): Promise<{ workspaceId: string; page: { items: AppSession[]; hasMore: boolean } }> {
+    const api = getKimiWebApi();
+    const items: AppSession[] = [];
+    const now = Date.now();
+    const ageOf = (s: AppSession): number => now - new Date(s.updatedAt).getTime();
+    let beforeId: string | undefined;
+    let hasMore = false;
+    let isFirstPage = true;
+    for (;;) {
+      const page = await api.listSessions({
+        workspaceId,
+        pageSize: SESSIONS_INITIAL_PAGE_SIZE,
+        beforeId,
+        excludeEmpty: true,
+      });
+      hasMore = page.hasMore;
+      if (page.items.length === 0) break;
+      const oldest = page.items[page.items.length - 1]!;
+      const oldestBeyondWindow = ageOf(oldest) >= SESSIONS_RECENT_WINDOW_MS;
+
+      if (!isFirstPage && oldestBeyondWindow) {
+        // This continuation page crosses the recent-window boundary. Keep only
+        // up to and including the first session that falls outside the window
+        // (so the oldest loaded is the first one older than the window) and
+        // drop the older tail instead of loading the whole page.
+        const boundaryIndex = page.items.findIndex(
+          (s) => ageOf(s) >= SESSIONS_RECENT_WINDOW_MS,
+        );
+        const keep = boundaryIndex >= 0 ? boundaryIndex + 1 : page.items.length;
+        items.push(...page.items.slice(0, keep));
+        hasMore = page.hasMore || keep < page.items.length;
+        break;
+      }
+
+      items.push(...page.items);
+      isFirstPage = false;
+      if (!page.hasMore || oldestBeyondWindow) break;
+      beforeId = oldest.id;
+    }
+    return { workspaceId, page: { items, hasMore } };
+  }
+
   /** Fetch the first page of sessions for every known workspace concurrently.
    *  Returns the merged, recency-sorted list and seeds per-workspace hasMore. */
   async function loadInitialSessionsByWorkspace(): Promise<AppSession[]> {
-    const api = getKimiWebApi();
     const workspaces = rawState.workspaces;
     if (workspaces.length === 0) {
       // /workspaces may be unavailable or empty on older / partially-failing
@@ -333,17 +387,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     const pages = await Promise.all(
       workspaces.map((w) =>
-        api
-          .listSessions({
-            workspaceId: w.id,
-            pageSize: SESSIONS_INITIAL_PAGE_SIZE,
-            excludeEmpty: true,
-          })
-          .then((page) => ({ workspaceId: w.id, page }))
-          .catch(() => ({
-            workspaceId: w.id,
-            page: { items: [] as AppSession[], hasMore: false },
-          })),
+        loadInitialSessionsForWorkspace(w.id).catch(() => ({
+          workspaceId: w.id,
+          page: { items: [] as AppSession[], hasMore: false },
+        })),
       ),
     );
     const loaded: AppSession[] = [];

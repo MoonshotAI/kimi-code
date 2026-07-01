@@ -383,6 +383,11 @@ function distanceFromBottom(): number {
 let lastScrollTop = 0;
 let userActionFollowUntil = 0;
 let lastSmoothScroll = 0;
+// While a smooth scroll is in flight, instant `scrollToBottom(false)` calls
+// (e.g. from the streaming follow) are skipped so they don't cancel the
+// animation — see scrollToBottom().
+let smoothScrollUntil = 0;
+const SMOOTH_SCROLL_GUARD_MS = 420;
 let stableFollowRaf = 0;
 let stableFollowToken = 0;
 
@@ -419,16 +424,21 @@ function onPanesScroll(): void {
 
 function scrollToBottom(smooth = false): void {
   const el = panesRef.value;
+  following.value = true;
+  showPill.value = false;
   if (!el) return;
+  // A smooth scroll (e.g. right after sending a message) needs time to play;
+  // skip instant jumps during the guard window so the streaming follow doesn't
+  // immediately snap to the bottom and cancel the animation.
+  if (!smooth && performance.now() < smoothScrollUntil) return;
   if (smooth && typeof el.scrollTo === 'function') {
     lastSmoothScroll = performance.now();
+    smoothScrollUntil = performance.now() + SMOOTH_SCROLL_GUARD_MS;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   } else {
     el.scrollTop = el.scrollHeight;
   }
   lastScrollTop = el.scrollTop;
-  following.value = true;
-  showPill.value = false;
 }
 
 function findTopAnchor(
@@ -610,8 +620,12 @@ watch(scrollKey, async (next, prev) => {
     return;
   }
   await nextTick();
-  if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
-  else showPill.value = true;
+  if (following.value || hasUserActionFollowLock()) {
+    // A rewind (undo / compaction) shortens the transcript — glide to the new
+    // bottom smoothly; growth (new turns / streaming) snaps instantly so the
+    // follow keeps up with the tail.
+    scrollToBottom(next.length < prev.length);
+  } else showPill.value = true;
   updateActiveTocQuery();
 });
 
@@ -688,7 +702,7 @@ function followAfterUserAction(): void {
   showPill.value = false;
   userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
   void nextTick(() => {
-    scrollToBottom(false);
+    scrollToBottom(true);
     scheduleStableFollow(16);
   });
 }
@@ -696,6 +710,18 @@ function followAfterUserAction(): void {
 function handleComposerSubmit(payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }): void {
   followAfterUserAction();
   emit('submit', payload);
+}
+
+// Undo ("edit & resend") rewinds the transcript asynchronously — the server
+// round-trip in App.vue's handleEditMessage truncates the turns after this emit
+// returns. Scrolling here would target the pre-rewind bottom and fight the
+// bubble-exit animation, so we only arm the follow state; the scrollKey watcher
+// smooth-scrolls once the truncated turns actually land.
+function handleEditMessage(text: string): void {
+  following.value = true;
+  showPill.value = false;
+  userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
+  emit('editMessage', text);
 }
 
 function handleQuestionAnswer(qid: string, resp: QuestionResponse): void {
@@ -1018,7 +1044,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
               @open-tool-diff="emit('openToolDiff', $event)"
-              @edit-message="emit('editMessage', $event)"
+              @edit-message="handleEditMessage"
               @load-older-messages="handleLoadOlderMessages"
             />
             <div v-if="activeSwarms.length > 0" class="swarm-stack">

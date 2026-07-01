@@ -10,11 +10,10 @@ import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
-import type { AppConfig, AppConfigProvider, AppModel } from '../../api/types';
+import type { AppConfig, AppModel } from '../../api/types';
 import Dialog from '../ui/Dialog.vue';
 import Switch from '../ui/Switch.vue';
 import Button from '../ui/Button.vue';
-import Badge from '../ui/Badge.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 import Select from '../ui/Select.vue';
 import Tooltip from '../ui/Tooltip.vue';
@@ -63,18 +62,26 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-type SettingsTab = 'general' | 'agent' | 'advanced';
+type SettingsTab = 'general' | 'agent' | 'account' | 'advanced';
 
 const activeTab = ref<SettingsTab>('general');
 
 const tabs: { id: SettingsTab; labelKey: string }[] = [
   { id: 'general', labelKey: 'settings.tabs.general' },
   { id: 'agent', labelKey: 'settings.tabs.agent' },
+  { id: 'account', labelKey: 'settings.tabs.account' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced' },
 ];
 
 const daemonEndpoint = serverEndpointLabel();
 const permissionModes = ['manual', 'auto', 'yolo'] as const;
+// Reuse the Composer's permission labels (status.permission*) so the
+// default-permission names stay in sync with the toolbar.
+const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {
+  manual: 'status.permissionManual',
+  auto: 'status.permissionAuto',
+  yolo: 'status.permissionYolo',
+};
 
 // Modal focus: move focus into the dialog on open, restore it to the opener on
 // close (Escape-to-close is handled below).
@@ -129,12 +136,6 @@ const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>
     .map(([provider, options]) => ({ provider, options }));
 });
 
-const providerEntries = computed<Array<{ id: string; provider: AppConfigProvider }>>(() =>
-  Object.entries(props.config?.providers ?? {})
-    .map(([id, provider]) => ({ id, provider }))
-    .sort((a, b) => a.id.localeCompare(b.id)),
-);
-
 const defaultPermissionMode = computed(() => {
   const mode = props.config?.defaultPermissionMode;
   return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
@@ -171,9 +172,22 @@ function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   emit('updateConfig', { defaultPermissionMode: mode });
 }
 
-function toggleConfigBoolean(key: 'defaultThinking' | 'defaultPlanMode' | 'mergeAllAvailableSkills'): void {
+function toggleConfigBoolean(key: 'defaultPlanMode' | 'mergeAllAvailableSkills'): void {
   const current = props.config?.[key];
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
+}
+
+// "Default thinking" lives at config.thinking.enabled on the daemon — the legacy
+// top-level defaultThinking field was removed. Read/write it there so the toggle
+// actually persists (the old field was silently stripped by the server).
+function thinkingEnabled(): boolean {
+  const thinking = props.config?.thinking;
+  if (!thinking || typeof thinking !== 'object') return false;
+  return (thinking as { enabled?: boolean }).enabled === true;
+}
+
+function toggleDefaultThinking(): void {
+  emit('updateConfig', { thinking: { enabled: !thinkingEnabled() } } as Partial<AppConfig>);
 }
 
 // Telemetry is opt-out: undefined and `true` both mean enabled, only explicit
@@ -208,7 +222,7 @@ function setTab(tab: SettingsTab): void {
       </nav>
 
       <div class="body">
-        <!-- General: Appearance + Notifications + Account -->
+        <!-- General: Appearance + Notifications -->
         <section v-show="activeTab === 'general'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.appearance') }}</h3>
@@ -303,7 +317,10 @@ function setTab(tab: SettingsTab): void {
               />
             </div>
           </section>
+        </section>
 
+        <!-- Account -->
+        <section v-show="activeTab === 'account'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.account') }}</h3>
             <div class="row">
@@ -316,14 +333,6 @@ function setTab(tab: SettingsTab): void {
               <Button variant="secondary" size="sm" @click="emit('openOnboarding'); emit('close')">{{ t('onboarding.reopen') }}</Button>
               <Button v-if="authReady" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
               <Button v-else variant="primary" size="sm" @click="emit('login')">{{ t('sidebar.signIn') }}</Button>
-            </div>
-          </section>
-
-          <section class="sec">
-            <h3 class="sec-title">{{ t('settings.build') }}</h3>
-            <div class="row">
-              <span class="rlabel">{{ t('settings.serverVersion') }}</span>
-              <span class="rvalue mono">{{ serverVersion || '-' }}</span>
             </div>
           </section>
         </section>
@@ -367,7 +376,7 @@ function setTab(tab: SettingsTab): void {
                 </span>
                 <SegmentedControl
                   :model-value="defaultPermissionMode"
-                  :options="permissionModes.map((m) => ({ value: m, label: t(`settings.permission.${m}`) }))"
+                  :options="permissionModes.map((m) => ({ value: m, label: t(permissionLabelKey[m]) }))"
                   @update:model-value="setDefaultPermissionMode($event as 'manual' | 'auto' | 'yolo')"
                 />
               </div>
@@ -378,10 +387,10 @@ function setTab(tab: SettingsTab): void {
                   <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
                 </span>
                 <Switch
-                  :model-value="configBool(config.defaultThinking)"
+                  :model-value="thinkingEnabled()"
                   :disabled="configSaving"
                   :label="t('settings.defaultThinking')"
-                  @update:model-value="toggleConfigBoolean('defaultThinking')"
+                  @update:model-value="toggleDefaultThinking()"
                 />
               </div>
 
@@ -410,43 +419,6 @@ function setTab(tab: SettingsTab): void {
                   @update:model-value="toggleConfigBoolean('mergeAllAvailableSkills')"
                 />
               </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.telemetry') }}
-                  <span class="hint">{{ t('settings.telemetryHint') }}</span>
-                  <span class="hint">{{ t('settings.telemetryRestartHint') }}</span>
-                </span>
-                <Switch
-                  :model-value="config.telemetry !== false"
-                  :disabled="configSaving"
-                  :label="t('settings.telemetry')"
-                  @update:model-value="toggleTelemetry()"
-                />
-              </div>
-
-              <div v-if="providerEntries.length > 0" class="provider-list">
-                <div v-for="{ id, provider } in providerEntries" :key="id" class="provider-row">
-                  <div class="provider-main">
-                    <span class="provider-id">{{ id }}</span>
-                    <span class="provider-type">{{ provider.type }}</span>
-                  </div>
-                  <div class="provider-meta">
-                    <Badge :variant="provider.hasApiKey ? 'success' : 'neutral'" size="sm">
-                      {{ provider.hasApiKey ? t('settings.credentialReady') : t('settings.credentialMissing') }}
-                    </Badge>
-                    <span v-if="provider.defaultModel" class="provider-model">{{ provider.defaultModel }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.providers') }}
-                  <span class="hint">{{ t('settings.providersHint') }}</span>
-                </span>
-                <Button variant="secondary" size="sm" @click="emit('openProviders'); emit('close')">{{ t('settings.manageProviders') }}</Button>
-              </div>
             </template>
 
             <div v-else class="empty-config">
@@ -455,13 +427,30 @@ function setTab(tab: SettingsTab): void {
           </section>
         </section>
 
-        <!-- Advanced -->
+        <!-- Advanced: diagnostics + data/privacy -->
         <section v-show="activeTab === 'advanced'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.advanced') }}</h3>
             <div class="row">
               <span class="rlabel">{{ t('sidebar.daemon') }}</span>
               <span class="rvalue mono">{{ daemonEndpoint }}</span>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.serverVersion') }}</span>
+              <span class="rvalue mono">{{ serverVersion || '-' }}</span>
+            </div>
+            <div v-if="config" class="row">
+              <span class="rlabel">
+                {{ t('settings.telemetry') }}
+                <span class="hint">{{ t('settings.telemetryHint') }}</span>
+                <span class="hint">{{ t('settings.telemetryRestartHint') }}</span>
+              </span>
+              <Switch
+                :model-value="config.telemetry !== false"
+                :disabled="configSaving"
+                :label="t('settings.telemetry')"
+                @update:model-value="toggleTelemetry()"
+              />
             </div>
             <div class="row">
               <span class="rlabel">
@@ -600,55 +589,6 @@ function setTab(tab: SettingsTab): void {
   padding: var(--space-1) 0;
 }
 
-.provider-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-.provider-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: var(--space-3);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface-raised);
-}
-.provider-main,
-.provider-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.provider-main { flex: 1; }
-.provider-meta { flex: none; max-width: 45%; }
-.provider-id,
-.provider-model {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.provider-id {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text);
-}
-.provider-type {
-  flex: none;
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-.provider-model {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 
 @media (max-width: 640px) {
@@ -668,14 +608,6 @@ function setTab(tab: SettingsTab): void {
   .select-wrap {
     width: 100%;
     max-width: none;
-  }
-  .provider-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .provider-meta {
-    max-width: 100%;
-    flex-wrap: wrap;
   }
 }
 </style>

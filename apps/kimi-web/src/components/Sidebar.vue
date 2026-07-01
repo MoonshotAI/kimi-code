@@ -884,7 +884,7 @@ function blinkOnce(): void {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: var(--space-2) var(--space-3) var(--space-1) var(--space-2);
+  padding: 0 var(--space-3) var(--space-1) var(--space-2);
   font-size: var(--text-sm);
   font-weight: 500;
   letter-spacing: .08em;

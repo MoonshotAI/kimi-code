@@ -4,6 +4,7 @@ export default {
   tabs: {
     general: 'General',
     agent: 'Agent',
+    account: 'Account',
     advanced: 'Advanced',
   },
   appearance: 'Appearance',
@@ -26,11 +27,6 @@ export default {
   noDefaultModel: 'No default model',
   defaultPermission: 'Default permission',
   defaultPermissionHint: 'Only affects newly-created sessions',
-  permission: {
-    manual: 'Manual',
-    auto: 'Auto',
-    yolo: 'YOLO',
-  },
   defaultThinking: 'Thinking by default',
   defaultThinkingHint: 'Whether new sessions start with thinking enabled',
   defaultPlanMode: 'Plan mode by default',

@@ -141,6 +141,11 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: var(--space-6);
   background: rgba(13, 17, 23, 0.45);
+  animation: kimi-dialog-overlay-in var(--duration-base) var(--ease-out);
+}
+@keyframes kimi-dialog-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .ui-dialog {
   max-height: calc(100vh - var(--space-8) * 2);
@@ -152,6 +157,7 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-xl);
   outline: none;
   overflow: hidden;
+  animation: kimi-card-in var(--duration-slow) var(--ease-out);
 }
 .ui-dialog--md { width: min(440px, 100%); }
 .ui-dialog--lg { width: min(640px, 100%); }

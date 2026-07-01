@@ -592,10 +592,9 @@ export interface AppConfig {
   defaultProvider?: string;
   defaultModel?: string;
   models?: Record<string, unknown>;
-  thinking?: unknown;
+  thinking?: { enabled?: boolean; effort?: string };
   planMode?: boolean;
   yolo?: boolean;
-  defaultThinking?: boolean;
   defaultPermissionMode?: string;
   defaultPlanMode?: boolean;
   permission?: unknown;

@@ -61,8 +61,10 @@ defineEmits<{ toggle: [] }>();
       </span>
       <Icon v-if="expandable" class="car" :name="open ? 'chevron-down' : 'chevron-right'" size="sm" />
     </div>
-    <div v-if="open" class="bb">
-      <slot />
+    <div class="bb" :class="{ open }" :inert="!open">
+      <div class="bb-pad">
+        <slot />
+      </div>
     </div>
   </div>
 </template>
@@ -166,8 +168,19 @@ defineEmits<{ toggle: [] }>();
   color: var(--color-danger);
 }
 
-/* Expanded detail: sunken panel under the row, indented to align with the name. */
+/* Expanded detail: sunken panel under the row, indented to align with the name.
+   Collapses/expands via a height transition; `interpolate-size: allow-keywords`
+   (set on :root) lets `height: auto` interpolate instead of snap. The visual
+   styles live on `.bb-pad` so they clip cleanly inside the 0-height clip box. */
 .bb {
+  height: 0;
+  overflow: hidden;
+  transition: height var(--duration-base) var(--ease-out);
+}
+.bb.open {
+  height: auto;
+}
+.bb-pad {
   padding: 0 11px 11px 36px;
   background: var(--color-surface-sunken);
   border-top: 1px solid var(--color-line);

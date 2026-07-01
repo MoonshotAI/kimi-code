@@ -72,7 +72,9 @@ const visible = computed(
 }
 /* Invisible hover bridge: the collapsed rail is only a few px wide, so this
    extends the hover target on both sides to make the outline easy to open and
-   forgiving to stay within. */
+   forgiving to stay within. Kept at z-index 0 so it sits behind the rows
+   (which are raised to z-index 1) — otherwise the bridge, as a positioned
+   pseudo-element, paints above the in-flow rows and swallows their clicks. */
 .conversation-toc::before {
   content: "";
   position: absolute;
@@ -80,11 +82,14 @@ const visible = computed(
   bottom: 0;
   left: -48px;
   right: -48px;
+  z-index: 0;
 }
 .conversation-toc:hover,
 .conversation-toc:focus-within { opacity: 1; }
 
 .toc-scroll {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 7px;

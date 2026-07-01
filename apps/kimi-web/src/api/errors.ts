@@ -5,13 +5,26 @@ export class DaemonApiError extends Error {
   readonly code: number;
   readonly requestId: string;
   readonly details: unknown;
+  /** Epoch ms when the failure was surfaced. */
+  readonly timestamp?: number;
+  /** Round-trip time from request start to the error envelope, in ms. */
+  readonly durationMs?: number;
 
-  constructor(input: { code: number; msg: string; requestId: string; details?: unknown }) {
+  constructor(input: {
+    code: number;
+    msg: string;
+    requestId: string;
+    details?: unknown;
+    timestamp?: number;
+    durationMs?: number;
+  }) {
     super(input.msg);
     this.name = 'DaemonApiError';
     this.code = input.code;
     this.requestId = input.requestId;
     this.details = input.details;
+    this.timestamp = input.timestamp;
+    this.durationMs = input.durationMs;
   }
 }
 
@@ -27,6 +40,10 @@ export class DaemonNetworkError extends Error {
   readonly statusText?: string;
   readonly contentType?: string;
   readonly bodyPreview?: string;
+  /** Epoch ms when the failure was surfaced. */
+  readonly timestamp?: number;
+  /** Round-trip time from request start to failure, in ms. */
+  readonly durationMs?: number;
 
   constructor(input: {
     message: string;
@@ -41,6 +58,8 @@ export class DaemonNetworkError extends Error {
     statusText?: string;
     contentType?: string;
     bodyPreview?: string;
+    timestamp?: number;
+    durationMs?: number;
   }) {
     super(input.message);
     this.name = 'DaemonNetworkError';
@@ -55,6 +74,8 @@ export class DaemonNetworkError extends Error {
     this.statusText = input.statusText;
     this.contentType = input.contentType;
     this.bodyPreview = input.bodyPreview;
+    this.timestamp = input.timestamp;
+    this.durationMs = input.durationMs;
   }
 }
 
