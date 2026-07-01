@@ -3,6 +3,7 @@ import {
   Input,
   Key,
   matchesKey,
+  ProcessTerminal,
   truncateToWidth,
   visibleWidth,
   type Focusable,
@@ -312,6 +313,8 @@ export interface PluginsPanelOptions {
   readonly initialTab?: PluginsPanelTabId;
   readonly selectedId?: string;
   readonly pluginHint?: { readonly id: string; readonly text: string };
+  /** Terminal used to compute viewport size for long plugin lists. */
+  readonly terminal?: ProcessTerminal;
   readonly onSelect: (selection: PluginsPanelSelection) => void;
   readonly onCancel: () => void;
   /** Called the first time the Official or Third-party tab needs its catalog.
@@ -336,15 +339,19 @@ export class PluginsPanelComponent extends Container implements Focusable {
   focused = false;
 
   private readonly opts: PluginsPanelOptions;
+  private readonly terminal?: ProcessTerminal;
   private readonly customInput = new Input();
   private activeTabIndex: number;
   private selectedIndex = 0;
+  /** Line offset of the topmost visible item line (used for long lists). */
+  private scrollOffset = 0;
   private market: MarketState = { status: 'idle' };
   private installing: string | undefined;
 
   constructor(opts: PluginsPanelOptions) {
     super();
     this.opts = opts;
+    this.terminal = opts.terminal;
     this.activeTabIndex = Math.max(
       0,
       PLUGINS_PANEL_TABS.findIndex((tab) => tab.id === (opts.initialTab ?? 'installed')),
@@ -383,6 +390,59 @@ export class PluginsPanelComponent extends Container implements Focusable {
   clearInstalling(): void {
     this.installing = undefined;
     this.invalidate();
+  }
+
+  /** Number of rows the terminal reports, with a sane minimum fallback. */
+  private get terminalRows(): number {
+    return Math.max(10, this.terminal?.rows ?? 24);
+  }
+
+  /**
+   * Rows available for the plugin list after accounting for the panel chrome:
+   * top border, title, hint, tab strip, bottom border, and the footer lines
+   * rendered by each tab.
+   */
+  private listAvailableRows(): number {
+    return Math.max(1, this.terminalRows - 10);
+  }
+
+  /**
+   * Given the fully-rendered lines for all items and the index of the first
+   * line of each item, return the slice that should be visible and update
+   * `scrollOffset` so the selected item stays in view.
+   */
+  private visibleItemLines(
+    allItemLines: readonly string[],
+    itemStartIndices: readonly number[],
+    selectedIndex: number,
+  ): string[] {
+    const availableRows = this.listAvailableRows();
+    const totalLines = allItemLines.length;
+    if (totalLines <= availableRows) {
+      this.scrollOffset = 0;
+      return [...allItemLines];
+    }
+
+    const selectedStart = itemStartIndices[selectedIndex] ?? 0;
+    const selectedEnd = (itemStartIndices[selectedIndex + 1] ?? totalLines) - 1;
+    const selectedHeight = selectedEnd - selectedStart + 1;
+
+    if (selectedStart < this.scrollOffset) {
+      // Scrolling up: keep the top of the selected item (pointer line) visible.
+      this.scrollOffset = selectedStart;
+    } else if (selectedEnd >= this.scrollOffset + availableRows) {
+      // Scrolling down. If the selected item is taller than the viewport,
+      // prioritize its first line so the pointer/name is never scrolled away.
+      this.scrollOffset =
+        selectedHeight > availableRows
+          ? selectedStart
+          : selectedEnd - availableRows + 1;
+    }
+
+    const maxOffset = Math.max(0, totalLines - availableRows);
+    this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxOffset));
+
+    return allItemLines.slice(this.scrollOffset, this.scrollOffset + availableRows);
   }
 
   private get activeTab(): (typeof PLUGINS_PANEL_TABS)[number] {
@@ -429,6 +489,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     if (matchesKey(data, Key.tab)) {
       this.activeTabIndex = (this.activeTabIndex + 1) % PLUGINS_PANEL_TABS.length;
       this.selectedIndex = 0;
+      this.scrollOffset = 0;
       this.requestMarketplaceIfNeeded();
       return;
     }
@@ -436,6 +497,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
       this.activeTabIndex =
         (this.activeTabIndex - 1 + PLUGINS_PANEL_TABS.length) % PLUGINS_PANEL_TABS.length;
       this.selectedIndex = 0;
+      this.scrollOffset = 0;
       this.requestMarketplaceIfNeeded();
       return;
     }
@@ -566,9 +628,13 @@ export class PluginsPanelComponent extends Container implements Focusable {
     if (installed.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No plugins installed.'));
     } else {
+      const allItemLines: string[] = [];
+      const itemStartIndices: number[] = [];
       for (let i = 0; i < installed.length; i++) {
-        lines.push(...this.renderInstalledRow(installed[i]!, i, width));
+        itemStartIndices.push(allItemLines.length);
+        allItemLines.push(...this.renderInstalledRow(installed[i]!, i, width));
       }
+      lines.push(...this.visibleItemLines(allItemLines, itemStartIndices, this.selectedIndex));
     }
     lines.push('');
     lines.push(mutedHintLine(` ${installed.length} installed`, colors));
@@ -636,9 +702,13 @@ export class PluginsPanelComponent extends Container implements Focusable {
     if (entries.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No plugins found.'));
     } else {
+      const allItemLines: string[] = [];
+      const itemStartIndices: number[] = [];
       for (let i = 0; i < entries.length; i++) {
-        lines.push(...this.renderMarketplaceRow(entries[i]!, i, width));
+        itemStartIndices.push(allItemLines.length);
+        allItemLines.push(...this.renderMarketplaceRow(entries[i]!, i, width));
       }
+      lines.push(...this.visibleItemLines(allItemLines, itemStartIndices, this.selectedIndex));
     }
     const installedCount = entries.filter((e) => this.opts.installedIds.has(e.id)).length;
     lines.push('');
