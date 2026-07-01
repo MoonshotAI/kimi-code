@@ -235,11 +235,11 @@ describe('SnapshotService.read', () => {
     ]);
 
     const snap = await f.service.read(sid);
-    // Reduce keeps the prefix and inserts the summary at the fold; final
-    // entry list is older-1, older-2, <summary>, after-compaction.
+    // Reduce keeps the prefix and appends a user-role summary; final entry
+    // list is older-1, older-2, <summary>, after-compaction.
     expect(snap.messages.items).toHaveLength(4);
     const summaryMsg = snap.messages.items[2]!;
-    expect(summaryMsg.role).toBe('assistant');
+    expect(summaryMsg.role).toBe('user');
     expect((summaryMsg.content[0] as { text: string }).text).toBe('compacted prefix');
     expect(snap.messages.items[3]!.role).toBe('user');
   });

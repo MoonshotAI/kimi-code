@@ -17,6 +17,7 @@ import type {
   Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
+  PluginCommandActivatedEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -134,6 +135,7 @@ export class SessionEventHandler {
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
 
   renderedSkillActivationIds: Set<string> = new Set();
+  renderedPluginCommandActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
@@ -150,6 +152,7 @@ export class SessionEventHandler {
     this.backgroundTaskTranscriptedTerminal.clear();
     this.subAgentEventHandler.resetRuntimeState();
     this.renderedSkillActivationIds.clear();
+    this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
@@ -256,6 +259,7 @@ export class SessionEventHandler {
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
       case 'skill.activated': this.handleSkillActivated(event); break;
+      case 'plugin_command.activated': this.handlePluginCommandActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
       case 'compaction.started': this.handleCompactionBegin(event); break;
@@ -434,6 +438,14 @@ export class SessionEventHandler {
 
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    // Encrypted / redacted reasoning (e.g. Kimi over the Anthropic-compatible
+    // protocol) streams thinking deltas whose visible text is empty — only an
+    // opaque signature rides along. Such deltas carry nothing to render, so
+    // switching into the `thinking` pane mode here would stop the "waiting"
+    // moon spinner while no ThinkingComponent is ever created (it needs visible
+    // text), leaving a blank, spinner-less gap until the first real text/tool
+    // token arrives. Keep the moon up until actual thinking text shows up.
+    if (event.delta.length === 0 && !streamingUI.hasThinkingDraft()) return;
     streamingUI.appendThinkingDelta(event.delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
@@ -936,6 +948,25 @@ export class SessionEventHandler {
       skillName: event.skillName,
       skillArgs: event.skillArgs,
       skillTrigger: event.trigger,
+    });
+  }
+
+  private handlePluginCommandActivated(event: PluginCommandActivatedEvent): void {
+    if (this.renderedPluginCommandActivationIds.has(event.activationId)) return;
+    this.renderedPluginCommandActivationIds.add(event.activationId);
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'plugin_command',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: `/${event.pluginId}:${event.commandName}`,
+      pluginCommandData: {
+        activationId: event.activationId,
+        pluginId: event.pluginId,
+        commandName: event.commandName,
+        args: event.commandArgs,
+        trigger: event.trigger,
+      },
     });
   }
 

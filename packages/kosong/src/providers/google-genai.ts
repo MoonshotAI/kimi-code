@@ -16,6 +16,7 @@ import type {
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import { ApiError as GoogleApiError, GoogleGenAI as GenAIClient } from '@google/genai';
+import { mergeConsecutiveUserMessages } from './merge-user-messages';
 
 import { requireProviderApiKey, resolveAuthBackedClient } from './request-auth';
 
@@ -447,7 +448,16 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     i += 1;
   }
 
-  return contents;
+  // Gemini/Vertex require strictly alternating user/model turns. Consecutive
+  // user Contents arise after compaction (`[prompts, summary, reminders]`) and
+  // when a user turn follows a tool result; collapse them into one user turn.
+  return mergeConsecutiveUserMessages(contents, {
+    isUser: (content) => content.role === 'user',
+    isToolResultOnly: (content) =>
+      content.parts.length > 0 &&
+      content.parts.every((part) => part.function_response !== undefined),
+    merge: (last, next) => ({ ...last, parts: [...last.parts, ...next.parts] }),
+  });
 }
 export class GoogleGenAIStreamedMessage implements StreamedMessage {
   private _id: string | null = null;
@@ -790,6 +800,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       // the initial SDK request against the caller's abort signal ourselves.
       // Once we have a response/stream object, the wrapper below continues to
       // check the signal at each chunk boundary.
+      options?.onRequestSent?.();
       if (this._stream) {
         const stream = await Promise.race([
           models.generateContentStream(params),

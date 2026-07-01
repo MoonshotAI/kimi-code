@@ -17,7 +17,7 @@ export const FLAG_DEFINITIONS = [
     title: 'Micro compaction',
     description: 'Trim older large tool results from context while keeping recent conversation intact.',
     env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    default: true,
+    default: false,
     surface: 'core',
   },
 ] as const satisfies readonly FlagDefinitionInput[];

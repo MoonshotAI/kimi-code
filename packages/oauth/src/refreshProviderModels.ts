@@ -274,14 +274,17 @@ function restoreProviderAliases(
 function restoreDefaultSelection(
   config: ManagedKimiConfigShape,
   defaultModel: string | undefined,
-  defaultThinking: boolean | undefined,
+  defaultEnabled: boolean | undefined,
 ): void {
   if (defaultModel === undefined || readModel(config, defaultModel) === undefined) return;
   config.defaultModel = defaultModel;
   // A refresh may have just learned that the default model cannot disable
   // thinking — never restore a stale thinking-off selection onto it.
   const capabilities = readModel(config, defaultModel)?.capabilities ?? [];
-  config.defaultThinking = capabilities.includes('always_thinking') ? true : defaultThinking;
+  const enabled = capabilities.includes('always_thinking') ? true : defaultEnabled;
+  if (enabled !== undefined) {
+    config.thinking = { ...config.thinking, enabled };
+  }
 }
 
 // `apply*` may leave `defaultModel` pointing at an alias that no longer exists
@@ -291,7 +294,7 @@ function restoreDefaultSelection(
 function clampDanglingDefault(config: ManagedKimiConfigShape): void {
   if (config.defaultModel !== undefined && readModel(config, config.defaultModel) === undefined) {
     config.defaultModel = undefined;
-    config.defaultThinking = undefined;
+    config.thinking = undefined;
   }
 }
 
@@ -300,7 +303,7 @@ function clearDefaultThinkingWhenDefaultRemoved(
   previousDefaultModel: string | undefined,
 ): void {
   if (previousDefaultModel !== undefined && config.defaultModel === undefined) {
-    config.defaultThinking = undefined;
+    config.thinking = undefined;
   }
 }
 
@@ -390,7 +393,7 @@ export async function refreshProviderModels(
           next,
           preserveUserProviderAliases(config, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
         );
-        restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
+        restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
         clampDanglingDefault(next);
         clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
 
@@ -406,7 +409,7 @@ export async function refreshProviderModels(
             providers: next.providers,
             models: next.models,
             defaultModel: next.defaultModel,
-            defaultThinking: next.defaultThinking,
+            thinking: next.thinking,
           });
           changed.push({
             providerId: KIMI_CODE_PROVIDER_NAME,
@@ -465,7 +468,7 @@ export async function refreshProviderModels(
         `${providerId}/`,
       );
       restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
-      restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
+      restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
       clampDanglingDefault(next);
       clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
 
@@ -481,7 +484,7 @@ export async function refreshProviderModels(
           providers: next.providers,
           models: next.models,
           defaultModel: next.defaultModel,
-          defaultThinking: next.defaultThinking,
+          thinking: next.thinking,
         });
         changed.push({
           providerId,
@@ -613,7 +616,7 @@ export async function refreshProviderModels(
       }
 
       if (changedProviders.length > 0 || hasUnreportedConfigChange) {
-        restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
+        restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
         clampDanglingDefault(next);
         clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
         for (const providerId of providersToRemoveBeforeSet) {
@@ -623,7 +626,7 @@ export async function refreshProviderModels(
           providers: next.providers,
           models: next.models,
           defaultModel: next.defaultModel,
-          defaultThinking: next.defaultThinking,
+          thinking: next.thinking,
         });
         for (const change of changedProviders) {
           changed.push({

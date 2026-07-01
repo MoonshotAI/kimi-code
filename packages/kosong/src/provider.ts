@@ -3,15 +3,20 @@ import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
 /**
- * Normalized thinking effort level used across providers.
+ * Thinking effort passed to {@link ChatProvider.withThinking}.
  *
- * Values above `high` are provider/model-specific and may be clamped by the
- * adapter when the native API has no matching level. OpenAI maps `max` to its
- * `xhigh` ceiling; Kimi and Gemini cap `xhigh`/`max` at `high`; Anthropic
- * supports `xhigh`/`max` only on selected models and otherwise clamps to
- * `high`.
+ * `'off'` and `'on'` are the only reserved values: `'off'` disables thinking,
+ * and `'on'` is the on-signal for boolean models (models that do not declare
+ * `support_efforts`). Everything else is a model-declared effort (e.g.
+ * `"low"`, `"high"`, `"max"`) carried as an open string. The type collapses to
+ * `string` at runtime; it exists purely as a semantic marker that a value is
+ * expected to be `'off'`, `'on'`, or a model-declared effort.
+ *
+ * The model's `support_efforts` is the single source of truth for which
+ * efforts are valid — providers normalize any unrecognized effort by omitting
+ * the effort on the wire rather than rejecting it.
  */
-export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ThinkingEffort = 'off' | 'on' | (string & {});
 
 /**
  * Optional context passed to {@link ChatProvider.withMaxCompletionTokens} so a
@@ -119,10 +124,40 @@ export interface GenerateOptions {
    */
   onRequestStart?: () => void;
   /**
-   * Host-side instrumentation hook fired after the provider stream is fully
-   * drained, before post-processing the assembled response.
+   * Host-side instrumentation hook fired by the provider adapter immediately
+   * before it dispatches the network request to the upstream API. The window
+   * between {@link onRequestStart} and this hook is in-process request-building
+   * time (message serialization, param assembly) spent by the client; the
+   * window between this hook and the first streamed part is network + server
+   * time. Splitting time-to-first-token across this boundary lets hosts
+   * attribute latency to the client vs. the API server.
    */
-  onStreamEnd?: () => void;
+  onRequestSent?: () => void;
+  /**
+   * Host-side instrumentation hook fired after the provider stream is fully
+   * drained, before post-processing the assembled response. Receives the
+   * {@link StreamDecodeStats} accounting accumulated across the stream when at
+   * least one part was streamed, or `undefined` for an empty stream.
+   */
+  onStreamEnd?: (stats?: StreamDecodeStats) => void;
+}
+
+/**
+ * Decode-phase accounting for a single streamed generation. Splits the window
+ * from the first streamed part to stream end into the time spent waiting on the
+ * provider for the next part (server + network) versus the time spent
+ * processing each part in-process (deep copy, host callbacks, part merging).
+ *
+ * Because both buckets are wall-clock measured on the single JS thread, a
+ * stop-the-world GC pause that lands while awaiting the next part is counted in
+ * {@link serverDecodeMs}; a non-trivial {@link clientConsumeMs} share is the
+ * unambiguous signal that the host's per-part processing is throttling decode.
+ */
+export interface StreamDecodeStats {
+  /** Cumulative time spent awaiting the next streamed part (server + network). */
+  readonly serverDecodeMs: number;
+  /** Cumulative time spent processing streamed parts in-process (client). */
+  readonly clientConsumeMs: number;
 }
 
 /**
@@ -148,7 +183,7 @@ export interface ChatProvider {
   readonly name: string;
   /** Model name passed to the upstream API (e.g. `"moonshot-v1-auto"`). */
   readonly modelName: string;
-  /** Current thinking-effort level, or `null` if thinking is not configured. */
+  /** Current thinking effort, or `null` if thinking is not configured. */
   readonly thinkingEffort: ThinkingEffort | null;
   /**
    * Send a conversation to the LLM and return a streamed response.

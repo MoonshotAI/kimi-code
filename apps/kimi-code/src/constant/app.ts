@@ -14,6 +14,26 @@ export const WEB_UI_MODE = 'web';
 // Give telemetry a short flush window without making CLI exit feel stuck.
 export const CLI_SHUTDOWN_TIMEOUT_MS = 3000;
 
+// Upper bound on headless (`kimi -p`) shutdown. A wedged cleanup step (e.g. a
+// SessionEnd hook, an MCP shutdown, or a connection blackholed by a restrictive
+// firewall) must not keep a completed run alive indefinitely — once this elapses
+// we stop waiting on cleanup and let the run return.
+export const PROMPT_CLEANUP_TIMEOUT_MS = 8000;
+
+// Grace after a headless run has fully completed (turn done, cleanup attempted)
+// before force-exiting. `kimi -p` otherwise relies on the event loop draining to
+// exit; a stray ref'd handle (socket/timer/child) left over from the run would
+// wedge it. The guard timer is unref'd, so a healthy run still exits naturally
+// well before this fires.
+export const HEADLESS_FORCE_EXIT_GRACE_MS = 2000;
+
+// Max time to wait for buffered stdout/stderr to flush before arming the
+// force-exit fallback. A slow/piped consumer's still-draining stdio is a
+// legitimate ref'd handle — flushing first prevents the fallback from
+// truncating completed output. Bounded so a permanently-stuck consumer can't
+// re-introduce the hang.
+export const HEADLESS_STDIO_DRAIN_TIMEOUT_MS = 10000;
+
 // Published npm package name; this can differ from the executable command.
 export const NPM_PACKAGE_NAME = '@moonshot-ai/kimi-code';
 

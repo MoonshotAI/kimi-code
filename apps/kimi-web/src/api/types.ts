@@ -94,7 +94,7 @@ export interface AppSession {
 export interface AppSessionRuntimeStatus {
   /** Current model alias, or null if the daemon couldn't resolve it. */
   model: string | null;
-  thinkingLevel: string;
+  thinkingEffort: string;
   permission: string;
   planMode: boolean;
   swarmMode: boolean;
@@ -666,6 +666,7 @@ export interface KimiWebApi {
   // derived workspaces (cwds with sessions that were never explicitly registered).
   listWorkspaces(): Promise<AppWorkspace[]>;
   addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace>;
+  updateWorkspace(id: string, input: { name: string }): Promise<AppWorkspace>;
   deleteWorkspace(id: string): Promise<void>;
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;

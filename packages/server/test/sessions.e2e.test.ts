@@ -580,7 +580,7 @@ describe('POST /api/v1/sessions/{session_id}:compact — begin compaction', () =
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(ErrorCode.COMPACTION_UNABLE);
     expect(env.data).toBeNull();
-    expect(env.msg).toMatch(/No prefix/);
+    expect(env.msg).toMatch(/No messages to compact/);
   });
 });
 

@@ -54,6 +54,12 @@ export interface StepNode {
   contextTokens?: number;
   llmFirstTokenLatencyMs?: number;
   llmStreamDurationMs?: number;
+  /** TTFT split: client-side request-build vs. network + API-server time. */
+  llmRequestBuildMs?: number;
+  llmServerFirstTokenMs?: number;
+  /** Decode split: server time awaiting parts vs. client time processing them. */
+  llmServerDecodeMs?: number;
+  llmClientConsumeMs?: number;
   content: ContentSummary;
   toolCalls: ToolCallNode[];
 }
@@ -286,7 +292,7 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
         const changed: { field: string; value: string }[] = [];
         if (rec.profileName !== undefined) changed.push({ field: 'profile', value: rec.profileName });
         if (rec.modelAlias !== undefined) changed.push({ field: 'model', value: rec.modelAlias });
-        if (rec.thinkingLevel !== undefined) changed.push({ field: 'thinking', value: rec.thinkingLevel });
+        if (rec.thinkingEffort !== undefined) changed.push({ field: 'thinking', value: rec.thinkingEffort });
         if (rec.cwd !== undefined) changed.push({ field: 'cwd', value: rec.cwd });
         if (rec.systemPrompt !== undefined) changed.push({ field: 'systemPrompt', value: `${rec.systemPrompt.length} chars` });
         if (changed.length > 0) configChanges.push({ lineNo: entry.lineNo, time: t, changed });
@@ -317,6 +323,10 @@ export function analyzeWire(entries: readonly WireEntry[]): Analysis {
             step.finishReason = ev.finishReason;
             step.llmFirstTokenLatencyMs = ev.llmFirstTokenLatencyMs;
             step.llmStreamDurationMs = ev.llmStreamDurationMs;
+            step.llmRequestBuildMs = ev.llmRequestBuildMs;
+            step.llmServerFirstTokenMs = ev.llmServerFirstTokenMs;
+            step.llmServerDecodeMs = ev.llmServerDecodeMs;
+            step.llmClientConsumeMs = ev.llmClientConsumeMs;
             if (step.beginTime !== undefined && t !== undefined) step.durationMs = t - step.beginTime;
             // Steps don't carry a generic 'error' finish reason (errors are
             // thrown, not recorded). 'filtered' means the provider blocked the

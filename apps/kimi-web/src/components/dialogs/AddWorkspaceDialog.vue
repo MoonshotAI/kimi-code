@@ -16,6 +16,8 @@ const props = defineProps<{
   getFsHome: () => Promise<{ home: string; recentRoots: string[] }>;
   /** Where the browser opens by default — the path kimi-web is working in. */
   defaultPath?: string;
+  /** Inline error from a failed add attempt (e.g. daemon rejected the path). */
+  error?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -336,6 +338,10 @@ onUnmounted(() => {
         </template>
       </div>
 
+      <!-- Inline error from a failed add attempt. Shown inside the dialog so it
+           is visible above the backdrop and persists until the next attempt. -->
+      <div v-if="error" class="add-error" role="alert">{{ error }}</div>
+
       <!-- Actions -->
       <div class="actions">
         <button
@@ -591,6 +597,16 @@ onUnmounted(() => {
 .paste-add:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Actions */
+.add-error {
+  margin: 0 14px 8px;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: var(--ui-font-size-xs);
+  color: #b3261e;
+  background: rgba(179, 38, 30, 0.08);
+  border: 1px solid rgba(179, 38, 30, 0.25);
+  border-radius: 3px;
+}
 .actions {
   display: flex;
   gap: 8px;

@@ -6,6 +6,7 @@
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { isMacosDesktop } from '../../lib/desktopFlag';
 
 const { t } = useI18n();
 
@@ -202,7 +203,7 @@ function startArchive(): void {
 </script>
 
 <template>
-  <header class="chat-header">
+  <header class="chat-header" :class="{ 'macos-desktop': isMacosDesktop }">
     <!-- Workspace / session breadcrumb -->
     <div class="ch-id">
       <span v-if="workspaceName" class="ch-ws">{{ workspaceName }}</span>
@@ -334,6 +335,15 @@ function startArchive(): void {
   background: var(--bg);
   font-family: var(--sans);
   min-width: 0;
+}
+/* macOS desktop: the window has a hidden title bar, so the conversation header
+   doubles as a window-drag region. Interactive controls opt out with no-drag. */
+.chat-header.macos-desktop {
+  -webkit-app-region: drag;
+}
+.chat-header.macos-desktop button,
+.chat-header.macos-desktop input {
+  -webkit-app-region: no-drag;
 }
 .ch-id { display: flex; align-items: center; gap: 6px; min-width: 0; flex: none; max-width: 46%; }
 .ch-ws { color: var(--muted); font-size: var(--ui-font-size-sm); flex: none; }

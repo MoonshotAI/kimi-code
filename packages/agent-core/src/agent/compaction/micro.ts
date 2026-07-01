@@ -96,7 +96,7 @@ export class MicroCompaction {
         cutoff: nextCutoff,
         message_count: history.length,
         cache_age_ms: cacheAgeMs,
-        thinking_level: this.agent.config.thinkingLevel,
+        thinking_effort: this.agent.config.thinkingEffort,
       });
     }
   }
