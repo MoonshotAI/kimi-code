@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ApprovalCard.vue -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
@@ -15,6 +15,9 @@ import Tooltip from '../ui/Tooltip.vue';
 const props = defineProps<{
   block: ApprovalBlock;
   agentName?: string;
+  /** True while a decision for this approval is in flight. Drives the action
+   *  buttons' loading/disabled state and blocks duplicate decisions. */
+  busy?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -59,6 +62,7 @@ const feedbackText = ref('');
 const feedbackRef = ref<HTMLTextAreaElement | null>(null);
 
 function openFeedback(): void {
+  if (props.busy) return;
   feedbackOpen.value = true;
   feedbackText.value = '';
   // Focus textarea next tick
@@ -66,12 +70,13 @@ function openFeedback(): void {
 }
 
 function submitFeedback(): void {
+  if (props.busy) return;
   const fb = feedbackText.value.trim();
   if (planReview.value) {
     // Revise: keep plan mode active and pass optional feedback to the agent.
-    emit('decide', { decision: 'rejected', selectedLabel: 'Revise', feedback: fb || undefined });
+    act('feedback', { decision: 'rejected', selectedLabel: 'Revise', feedback: fb || undefined });
   } else {
-    emit('decide', { decision: 'rejected', feedback: fb || undefined });
+    act('feedback', { decision: 'rejected', feedback: fb || undefined });
   }
   feedbackOpen.value = false;
   feedbackText.value = '';
@@ -96,15 +101,40 @@ function onFeedbackKeydown(e: KeyboardEvent): void {
 // Action handlers
 // ---------------------------------------------------------------------------
 
-function approve(): void { emit('decide', { decision: 'approved' }); }
-function approveSession(): void { emit('decide', { decision: 'approved', scope: 'session' }); }
-function reject(): void { emit('decide', { decision: 'rejected' }); }
+// The action the user just triggered, kept locally so its button can show a
+// spinner. The card unmounts on a successful decide; on failure `busy` flips
+// back to false and we clear this so the buttons re-enable for retry.
+const pendingAction = ref<string | null>(null);
+watch(
+  () => props.busy,
+  (b) => {
+    if (!b) pendingAction.value = null;
+  },
+);
+
+function act(
+  action: string,
+  response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
+): void {
+  // A second click (or number key) while the first decide is in flight must
+  // not fire a duplicate request.
+  if (props.busy) return;
+  pendingAction.value = action;
+  emit('decide', response);
+}
+
+function approve(): void { act('approve', { decision: 'approved' }); }
+function approveSession(): void { act('approveSession', { decision: 'approved', scope: 'session' }); }
+function reject(): void { act('reject', { decision: 'rejected' }); }
 
 // plan_review actions
-function approvePlan(): void { emit('decide', { decision: 'approved' }); }
-function approveOption(label: string): void { emit('decide', { decision: 'approved', selectedLabel: label }); }
-function revisePlan(): void { openFeedback(); }
-function rejectAndExitPlan(): void { emit('decide', { decision: 'rejected', selectedLabel: 'Reject and Exit' }); }
+function approvePlan(): void { act('approvePlan', { decision: 'approved' }); }
+function approveOption(label: string): void { act(`option:${label}`, { decision: 'approved', selectedLabel: label }); }
+function revisePlan(): void {
+  if (props.busy) return;
+  openFeedback();
+}
+function rejectAndExitPlan(): void { act('rejectAndExit', { decision: 'rejected', selectedLabel: 'Reject and Exit' }); }
 
 // ---------------------------------------------------------------------------
 // Number key shortcuts. Generic cards: 1=approve, 2=session, 3=reject,
@@ -116,6 +146,9 @@ function rejectAndExitPlan(): void { emit('decide', { decision: 'rejected', sele
 function handleKeydown(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName ?? '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
+  // While a decision is in flight, ignore number-key shortcuts so a stray key
+  // can't fire a duplicate decide.
+  if (props.busy) return;
   // Hidden actions shouldn't fire from number keys while minimized.
   if (minimized.value) return;
   const pr = planReview.value;
@@ -280,21 +313,23 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
               class="kbtn"
               size="sm"
               variant="primary"
+              :loading="pendingAction === `option:${opt.label}`"
+              :disabled="busy"
               @click="approveOption(opt.label)"
             >{{ opt.label }}<span class="k">[{{ i + 1 }}]</span></Button>
           </Tooltip>
         </template>
-        <Button v-else class="kbtn" size="sm" variant="primary" @click="approvePlan">{{ t('approval.approvePlan') }}<span class="k">[1]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" @click="revisePlan">{{ t('approval.revise') }}<span v-if="planReview.options.length === 0" class="k">[2]</span></Button>
-        <Button class="kbtn" size="sm" variant="danger-soft" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<span v-if="planReview.options.length === 0" class="k">[3]</span></Button>
+        <Button v-else class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan">{{ t('approval.approvePlan') }}<span class="k">[1]</span></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="revisePlan">{{ t('approval.revise') }}<span v-if="planReview.options.length === 0" class="k">[2]</span></Button>
+        <Button class="kbtn" size="sm" variant="danger-soft" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<span v-if="planReview.options.length === 0" class="k">[3]</span></Button>
       </div>
 
       <!-- default actions row -->
       <div v-else class="abtn">
-        <Button class="kbtn" size="sm" variant="primary" @click="approve">{{ t('approval.approve') }}<span class="k">[1]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" @click="approveSession">{{ t('approval.approveSession') }}<span class="k">[2]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" @click="reject">{{ t('approval.reject') }}<span class="k">[3]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" @click="openFeedback">{{ t('approval.feedback') }}<span class="k">[4]</span></Button>
+        <Button class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve">{{ t('approval.approve') }}<span class="k">[1]</span></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession">{{ t('approval.approveSession') }}<span class="k">[2]</span></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject">{{ t('approval.reject') }}<span class="k">[3]</span></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="openFeedback">{{ t('approval.feedback') }}<span class="k">[4]</span></Button>
       </div>
     </template>
   </Card>

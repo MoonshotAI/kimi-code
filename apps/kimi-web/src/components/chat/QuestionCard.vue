@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/QuestionCard.vue -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { UIQuestion } from '../../types';
 import type { QuestionAnswer, QuestionResponse } from '../../api/types';
@@ -12,7 +12,13 @@ import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
-const props = defineProps<{ question: UIQuestion }>();
+const props = defineProps<{
+  question: UIQuestion;
+  /** Action kind currently in flight for this question. Drives the
+   *  submit/dismiss loading state and blocks duplicate actions while the
+   *  daemon processes the response. */
+  busyKind?: 'answer' | 'dismiss';
+}>();
 
 const { t } = useI18n();
 
@@ -138,6 +144,11 @@ function toggleMulti(qid: string, optionId: string): void {
 // "Other" text input (single)
 const otherTexts = ref<Record<string, string>>({});
 
+// Ref to the current question's "Other" input so clicking the option row can
+// focus it. Only the visible step's input is rendered at a time, so a single
+// ref suffices.
+const otherInputEl = ref<HTMLInputElement | null>(null);
+
 function pickOther(qid: string): void {
   const q = props.question.questions.find((qi) => qi.id === qid)!;
   const text = otherTexts.value[qid] ?? '';
@@ -150,6 +161,14 @@ function pickOther(qid: string): void {
   } else {
     answers.value = { ...answers.value, [qid]: { kind: 'other', text } };
   }
+}
+
+// Select the "Other" option (so its radio/checkbox turns on) and focus the
+// text input so the user can type immediately. Triggered by clicking anywhere
+// on the option row, not just the input.
+function selectOther(qid: string): void {
+  pickOther(qid);
+  nextTick(() => otherInputEl.value?.focus());
 }
 
 function isSelected(qid: string, optionId: string): boolean {
@@ -175,8 +194,15 @@ function canSubmit(): boolean {
 // Submit / dismiss
 // ---------------------------------------------------------------------------
 
+// An action is in flight for this card (the daemon is processing our answer or
+// dismiss). While busy, the triggered button shows a spinner and the rest are
+// disabled so a second click can't fire a duplicate request.
+const submitting = computed(() => props.busyKind === 'answer');
+const dismissing = computed(() => props.busyKind === 'dismiss');
+const busy = computed(() => !!props.busyKind);
+
 function submit(): void {
-  if (!canSubmit()) return;
+  if (busy.value || !canSubmit()) return;
   const response: QuestionResponse = {
     answers: answers.value,
     method: 'click',
@@ -185,6 +211,7 @@ function submit(): void {
 }
 
 function dismiss(): void {
+  if (busy.value) return;
   emit('dismiss', props.question.questionId);
 }
 
@@ -194,14 +221,17 @@ function dismiss(): void {
 
 function handleKeydown(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName ?? '').toLowerCase();
-  if (tag === 'input' || tag === 'textarea') return;
-  // While minimized the options aren't visible, so don't let number keys pick
-  // an unseen answer; only Escape (dismiss) stays live.
-  if (minimized.value && e.key !== 'Escape') return;
+  const inField = tag === 'input' || tag === 'textarea';
+  // While an answer/dismiss is in flight, ignore shortcuts so a stray Enter
+  // can't fire a duplicate submit.
+  if (busy.value) return;
 
-  if (e.key === 'Escape') { e.preventDefault(); dismiss(); return; }
+  // Enter advances to the next question (or submits when all are answered).
+  // Allowed even while focus is in the "Other" text input, but not while the
+  // card is minimized — the options aren't visible, so don't submit blindly.
   if (e.key === 'Enter') {
     e.preventDefault();
+    if (minimized.value) return;
     if (step.value < total.value - 1 && isCurrentAnswered()) {
       goNext();
     } else if (canSubmit()) {
@@ -209,6 +239,14 @@ function handleKeydown(e: KeyboardEvent): void {
     }
     return;
   }
+
+  // Escape dismisses; number keys pick options. Both are suppressed while
+  // typing in a field so the keystrokes go to the input instead.
+  if (inField) return;
+  if (e.key === 'Escape') { e.preventDefault(); dismiss(); return; }
+  // While minimized the options aren't visible, so don't let number keys pick
+  // an unseen answer.
+  if (minimized.value) return;
 
   const num = parseInt(e.key, 10);
   if (!isNaN(num) && num >= 1 && num <= 9) {
@@ -313,7 +351,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
             v-if="current.allowOther"
             class="qopt"
             :class="{ selected: isOtherSelected(current.id) }"
-            @click.prevent="() => {}"
+            @click.prevent="selectOther(current.id)"
           >
             <span class="qopt-key"></span>
             <span class="qopt-glyph">
@@ -326,6 +364,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
             </span>
             <span class="qopt-label">{{ current.otherLabel ?? t('question.otherDefault') }}</span>
             <input
+              ref="otherInputEl"
               v-model="otherTexts[current.id]"
               class="other-input"
               type="text"
@@ -356,6 +395,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
           size="sm"
           variant="primary"
           :disabled="!canSubmit()"
+          :loading="submitting"
           @click="submit"
         >{{ t('question.submit') }}</Button>
         <Button
@@ -363,10 +403,10 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
           class="qfoot-btn"
           size="sm"
           variant="secondary"
-          :disabled="step === 0"
+          :disabled="step === 0 || busy"
           @click="goBack"
         >{{ t('question.back') }}</Button>
-        <Button class="qfoot-btn" size="sm" variant="ghost" @click="dismiss">{{ t('question.dismiss') }}</Button>
+        <Button class="qfoot-btn" size="sm" variant="ghost" :loading="dismissing" :disabled="busy" @click="dismiss">{{ t('question.dismiss') }}</Button>
       </div>
     </template>
   </Card>

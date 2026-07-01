@@ -394,30 +394,32 @@ async function deleteWs(ws: WorkspaceView): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace sort menu (triggered from the WORKSPACES section header). Anchored
-// to the sort button via position:fixed so the scrolling list can't clip it.
+// Workspace section overflow menu (the ⋯ in the WORKSPACES header). Holds the
+// sort mode and the "show paths" toggle as text items with a check mark for the
+// active one. Anchored to the trigger via position:fixed so the scrolling list
+// can't clip it.
 // ---------------------------------------------------------------------------
-const sortMenuOpen = ref(false);
-const sortMenuStyle = ref<Record<string, string>>({});
-const sortMenuRef = ref<InstanceType<typeof Menu> | null>(null);
+const sectionMenuOpen = ref(false);
+const sectionMenuStyle = ref<Record<string, string>>({});
+const sectionMenuRef = ref<InstanceType<typeof Menu> | null>(null);
 
-function onSortMenuDocClick(e: MouseEvent): void {
+function onSectionMenuDocClick(e: MouseEvent): void {
   const target = e.target as Element;
-  if (target.closest('.side-section-sort') || target.closest('.sort-menu')) return;
-  closeSortMenu();
+  if (target.closest('.side-section-kebab') || target.closest('.section-menu')) return;
+  closeSectionMenu();
 }
 
-async function toggleSortMenu(e: MouseEvent): Promise<void> {
-  if (sortMenuOpen.value) {
-    closeSortMenu();
+async function toggleSectionMenu(e: MouseEvent): Promise<void> {
+  if (sectionMenuOpen.value) {
+    closeSectionMenu();
     return;
   }
   const btn = e.currentTarget as HTMLElement;
-  sortMenuOpen.value = true;
-  document.addEventListener('mousedown', onSortMenuDocClick);
-  window.addEventListener('resize', closeSortMenu);
+  sectionMenuOpen.value = true;
+  document.addEventListener('mousedown', onSectionMenuDocClick);
+  window.addEventListener('resize', closeSectionMenu);
   await nextTick();
-  const menu = sortMenuRef.value?.el;
+  const menu = sectionMenuRef.value?.el;
   const r = btn.getBoundingClientRect();
   const gap = 4;
   const margin = 8;
@@ -429,29 +431,34 @@ async function toggleSortMenu(e: MouseEvent): Promise<void> {
   }
   let left = r.right - menuW;
   if (left < margin) left = margin;
-  sortMenuStyle.value = {
+  sectionMenuStyle.value = {
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
   };
 }
 
-function closeSortMenu(): void {
-  sortMenuOpen.value = false;
-  document.removeEventListener('mousedown', onSortMenuDocClick);
-  window.removeEventListener('resize', closeSortMenu);
+function closeSectionMenu(): void {
+  sectionMenuOpen.value = false;
+  document.removeEventListener('mousedown', onSectionMenuDocClick);
+  window.removeEventListener('resize', closeSectionMenu);
 }
 
 function chooseSortMode(mode: WorkspaceSortMode): void {
   emit('setWorkspaceSortMode', mode);
-  closeSortMenu();
+  closeSectionMenu();
+}
+
+function toggleShowWorkspacePathsFromMenu(): void {
+  toggleShowWorkspacePaths();
+  closeSectionMenu();
 }
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('mousedown', onSortMenuDocClick);
+  document.removeEventListener('mousedown', onSectionMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
-  window.removeEventListener('resize', closeSortMenu);
+  window.removeEventListener('resize', closeSectionMenu);
 });
 
 // Logo easter-egg: clicking the Kimi mark plays one quick blink. It's a one-shot
@@ -602,18 +609,6 @@ onBeforeUnmount(() => {
           <div class="side-section-label">
             <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
             <div class="side-section-actions">
-              <Tooltip :text="t('sidebar.sortWorkspaces')">
-                <IconButton
-                  class="side-section-toggle side-section-sort"
-                  size="sm"
-                  :label="t('sidebar.sortWorkspaces')"
-                  aria-haspopup="menu"
-                  :aria-expanded="sortMenuOpen"
-                  @click.stop="toggleSortMenu($event)"
-                >
-                  <Icon :name="workspaceSortMode === 'recent' ? 'clock' : 'sort'" />
-                </IconButton>
-              </Tooltip>
               <Tooltip :text="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')">
                 <IconButton
                   class="side-section-toggle"
@@ -625,18 +620,16 @@ onBeforeUnmount(() => {
                   <Icon v-else name="collapse" />
                 </IconButton>
               </Tooltip>
-              <Tooltip
-                :text="showWorkspacePaths ? t('sidebar.hideWorkspacePaths') : t('sidebar.showWorkspacePaths')"
-              >
+              <Tooltip :text="t('sidebar.options')">
                 <IconButton
-                  class="side-section-toggle"
-                  :class="{ active: showWorkspacePaths }"
+                  class="side-section-toggle side-section-kebab"
                   size="sm"
-                  :label="showWorkspacePaths ? t('sidebar.hideWorkspacePaths') : t('sidebar.showWorkspacePaths')"
-                  :aria-pressed="showWorkspacePaths"
-                  @click.stop="toggleShowWorkspacePaths()"
+                  :label="t('sidebar.options')"
+                  aria-haspopup="menu"
+                  :aria-expanded="sectionMenuOpen"
+                  @click.stop="toggleSectionMenu($event)"
                 >
-                  <Icon name="list" />
+                  <Icon name="dots-horizontal" />
                 </IconButton>
               </Tooltip>
             </div>
@@ -715,17 +708,30 @@ onBeforeUnmount(() => {
     </Menu>
     <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
     <Menu
-      v-if="sortMenuOpen"
-      ref="sortMenuRef"
-      class="sort-menu"
-      :style="sortMenuStyle"
+      v-if="sectionMenuOpen"
+      ref="sectionMenuRef"
+      class="section-menu"
+      :style="sectionMenuStyle"
       @click.stop
     >
-      <MenuItem :active="workspaceSortMode === 'manual'" @click="chooseSortMode('manual')">
+      <MenuItem @click="chooseSortMode('manual')">
+        <span class="section-menu-check">
+          <Icon v-if="workspaceSortMode === 'manual'" name="check" size="sm" />
+        </span>
         {{ t('sidebar.sortManual') }}
       </MenuItem>
-      <MenuItem :active="workspaceSortMode === 'recent'" @click="chooseSortMode('recent')">
+      <MenuItem @click="chooseSortMode('recent')">
+        <span class="section-menu-check">
+          <Icon v-if="workspaceSortMode === 'recent'" name="check" size="sm" />
+        </span>
         {{ t('sidebar.sortRecent') }}
+      </MenuItem>
+      <MenuItem separator />
+      <MenuItem @click="toggleShowWorkspacePathsFromMenu()">
+        <span class="section-menu-check">
+          <Icon v-if="showWorkspacePaths" name="check" size="sm" />
+        </span>
+        {{ t('sidebar.showWorkspacePaths') }}
       </MenuItem>
     </Menu>
     <!-- Session search dialog (Cmd/Ctrl+K) -->
@@ -994,12 +1000,6 @@ onBeforeUnmount(() => {
 .side-section-toggle:hover {
   color: var(--dim);
 }
-/* Active toggle (e.g. "show paths" is on): keep it visible and accent-colored
-   even when the section label isn't hovered, so the on state is readable. */
-.side-section-toggle.active {
-  color: var(--color-accent);
-  opacity: 1;
-}
 .side-section-toggle svg {
   width: 13px;
   height: 13px;
@@ -1028,11 +1028,19 @@ onBeforeUnmount(() => {
    fixed positioning stays here (anchored to the ⋯ trigger / cursor). */
 .ws-menu,
 .gh-menu,
-.sort-menu {
+.section-menu {
   position: fixed;
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+
+/* Check slot for the section overflow menu — fixed width so unchecked items
+   keep their text aligned with the checked one. */
+.section-menu-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
 }
 
 /* Logo long-press easter-egg: a dialog showing the design system page. */

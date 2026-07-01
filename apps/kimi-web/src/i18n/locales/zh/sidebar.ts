@@ -8,7 +8,6 @@ export default {
   collapseAll: '折叠全部工作区',
   expandAll: '展开全部工作区',
   showWorkspacePaths: '显示工作区路径',
-  hideWorkspacePaths: '隐藏工作区路径',
   newSession: '新建会话',
   newChat: '新建对话',
   newWorkspace: '新建工作区',

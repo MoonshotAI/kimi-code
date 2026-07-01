@@ -462,12 +462,12 @@ function copyDiff(code: string, idx: number) {
 
 /* Base prose — assistant message text. */
 .md {
-  font: 500 15px/1.8 var(--font-ui);
+  font: 500 15px/1.6 var(--font-ui);
   color: var(--color-text);
   word-break: break-word;
 }
 .md :deep(.markdown-renderer) {
-  font: 500 15px/1.8 var(--font-ui);
+  font: 500 15px/1.6 var(--font-ui);
   color: var(--color-text);
 }
 .md :deep(.markstream-vue),
@@ -533,16 +533,16 @@ function copyDiff(code: string, idx: number) {
 
 /* Paragraphs */
 .md :deep(p) {
-  margin: 1em 0;
+  margin: 0.8rem 0;
 }
 
 /* Spacing between top-level content blocks — markstream wraps each one
    (paragraph, list, heading, code block, …) in a `.node-slot`. Set to the
-   largest inner block margin (1em) so it collapses evenly into a uniform gap
+   largest inner block margin (0.8rem) so it collapses evenly into a uniform gap
    regardless of block type; going lower would let the inner margins take over
    and make spacing uneven. */
 .md :deep(.node-slot + .node-slot) {
-  margin-top: 1em;
+  margin-top: 0.8rem;
 }
 
 /* Lists */

@@ -671,6 +671,8 @@ function openPr(url: string): void {
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
       :questions="client.questions.value"
+      :pending-question-actions="client.pendingQuestionActions"
+      :pending-approval-actions="client.pendingApprovalActions"
       :running="running"
       :queued="client.queued.value"
       :search-files="client.searchFiles"

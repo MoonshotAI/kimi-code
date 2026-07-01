@@ -1,10 +1,11 @@
 // apps/kimi-web/src/composables/useInputHistory.ts
 // Shell-style ↑/↓ recall of previously sent messages, scoped per session.
 //
-// `ArrowUp` on the first line steps back through older entries sent in the
-// current session; `ArrowDown` walks forward again and ultimately restores the
-// draft the user had before they started browsing. Any manual edit drops out of
-// browsing mode (see `resetBrowsing`, called from the composer's input handler).
+// `ArrowUp` at the very start of the text steps back through older entries
+// sent in the current session; `ArrowDown` walks forward again and ultimately
+// restores the draft the user had before they started browsing. Any manual edit
+// drops out of browsing mode (see `resetBrowsing`, called from the composer's
+// input handler).
 //
 // The history is persisted to localStorage as a `Record<sessionId, string[]>`.
 // A draft session (no id yet — the empty-session composer before its first
@@ -82,12 +83,13 @@ export function useInputHistory(deps: InputHistoryDeps) {
     safeSetJson(STORAGE_KEYS.inputHistory, historyMap.value);
   }
 
-  function caretAtFirstLine(): boolean {
+  function caretAtTextStart(): boolean {
     const el = textareaRef.value;
     if (!el) return false;
-    const pos = el.selectionStart ?? 0;
-    // No newline before the caret → it sits on the first visual line.
-    return el.value.lastIndexOf('\n', pos - 1) === -1;
+    // Only recall when the caret sits at the very start of the text. Otherwise
+    // ArrowUp while navigating a multi-line draft would hijack the caret and
+    // jump to a previous message instead of moving within the draft.
+    return (el.selectionStart ?? 0) === 0;
   }
 
   function applyHistoryText(value: string): void {
@@ -147,7 +149,7 @@ export function useInputHistory(deps: InputHistoryDeps) {
 
   return {
     push,
-    caretAtFirstLine,
+    caretAtTextStart,
     recallOlder,
     recallNewer,
     resetBrowsing,
