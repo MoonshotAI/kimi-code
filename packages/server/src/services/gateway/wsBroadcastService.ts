@@ -113,6 +113,9 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
     // ran will still execute here.
     if (this._closedSessions.has(sid)) return;
     const journal = await state.ready;
+    // Recheck after the async journal-open gap: the session may have been
+    // archived while we were awaiting state.ready.
+    if (this._closedSessions.has(sid)) return;
     const evType = (event as { type?: string }).type ?? 'event.unknown';
 
     // Track in-flight turn state inside the dispatch queue so accumulated
@@ -141,6 +144,9 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
     }
 
     if (this._store.isDisposed) return;
+    // Final recheck before fan-out: the session may have been archived
+    // during the append/tail-push work above.
+    if (this._closedSessions.has(sid)) return;
     const targets = isGlobalSessionEvent(evType)
       ? this.connectionRegistry.values()
       : this.sessionClients.getConnections(sid);
@@ -151,6 +157,14 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
 
   async getBufferedSince(sid: string, cursor: SessionCursor): Promise<BufferedSinceResult> {
     if (this._closedSessions.has(sid)) {
+      // The snapshot/cursor path for a closed session reports {seq: 0,
+      // epoch: ''}. If the client subscribes with that exact cursor, return
+      // no events and no resync so the client doesn't loop forever on
+      // epoch_changed for the same cursor. Any other cursor for a closed
+      // session is stale — return epoch_changed to force a snapshot rebuild.
+      if (cursor.seq === 0 && (cursor.epoch === undefined || cursor.epoch === '')) {
+        return { events: [], resyncRequired: false, currentSeq: 0, epoch: '' };
+      }
       return { events: [], resyncRequired: 'epoch_changed', currentSeq: 0, epoch: '' };
     }
     const state = this._getOrCreateSession(sid);

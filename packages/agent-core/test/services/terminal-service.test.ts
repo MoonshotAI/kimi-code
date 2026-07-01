@@ -399,7 +399,7 @@ describe('TerminalService streams', () => {
     expect(await svc.list('sess_k')).toEqual([]);
   });
 
-  it('registers the terminal when kill fails during spawn-time cleanup', async () => {
+  it('retries cleanup immediately when kill fails during spawn-time cleanup', async () => {
     const root = join(tmpDir, 'workspace-l');
     mkdirSync(root, { recursive: true });
     const closeEmitter = new Emitter<{ sessionId: string }>();
@@ -410,9 +410,9 @@ describe('TerminalService streams', () => {
     backend.spawn = async (opts) => {
       await Promise.resolve();
       await Promise.resolve();
-      const proc = await origSpawn(opts);
-      // The spawned process's kill will throw — simulate a backend that
-      // cannot kill the just-spawned child.
+      const proc = (await origSpawn(opts)) as FakeTerminalProcess;
+      // The spawned process's first kill will throw — simulate a backend
+      // that cannot kill the just-spawned child on the first attempt.
       proc.killShouldThrow = true;
       return proc;
     };
@@ -427,14 +427,16 @@ describe('TerminalService streams', () => {
     await Promise.resolve();
     closeEmitter.fire({ sessionId: 'sess_l' });
 
-    // kill() threw, so the process is registered as a record instead of
-    // being forgotten. create() succeeds (no TerminalNotFoundError) and
-    // the record stays managed for a later closeSessionRecords retry.
-    const terminal = await createPromise;
+    // kill() threw on the first attempt. The record is registered so
+    // closeSessionRecords can retry immediately. The first retry still
+    // throws (killShouldThrow is true), so the record stays with
+    // closed=false. create() throws TerminalNotFoundError — the caller
+    // never gets a usable terminal for the closed session.
+    await expect(createPromise).rejects.toBeInstanceOf(TerminalNotFoundError);
+
+    // The record is still present because the retry kill also failed.
+    // It stays managed for a future dispose() or service teardown.
     expect(backend.processes[0]!.killed).toBe(false);
-    const listed = await svc.list('sess_l');
-    expect(listed.map((t) => t.id)).toEqual([terminal.id]);
-    expect((await svc.get('sess_l', terminal.id)).status).toBe('running');
 
     // A second close event retries the kill (killShouldThrow is now
     // false) and tears down the record.
@@ -442,5 +444,50 @@ describe('TerminalService streams', () => {
     closeEmitter.fire({ sessionId: 'sess_l' });
     expect(backend.processes[0]!.killed).toBe(true);
     expect(await svc.list('sess_l')).toEqual([]);
+  });
+
+  it('cleans up immediately when kill succeeds on retry after spawn-time cleanup', async () => {
+    const root = join(tmpDir, 'workspace-m');
+    mkdirSync(root, { recursive: true });
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const sessions = new Map([['sess_m', session('sess_m', root)]]);
+
+    const backend = new FakeTerminalBackend();
+    const origSpawn = backend.spawn.bind(backend);
+    backend.spawn = async (opts) => {
+      await Promise.resolve();
+      await Promise.resolve();
+      const proc = await origSpawn(opts) as FakeTerminalProcess;
+      // First kill (during the closed-session check) throws, but the
+      // immediate retry via closeSessionRecords succeeds because we
+      // clear killShouldThrow inside the kill override.
+      let firstKill = true;
+      const origKill = proc.kill.bind(proc);
+      proc.kill = (): void => {
+        if (firstKill) {
+          firstKill = false;
+          throw new Error('kill failed');
+        }
+        origKill();
+      };
+      return proc;
+    };
+
+    const svc = new TerminalService(
+      { backend },
+      makeSessionService(sessions, closeEmitter),
+    );
+
+    const createPromise = svc.create('sess_m', {});
+    await Promise.resolve();
+    await Promise.resolve();
+    closeEmitter.fire({ sessionId: 'sess_m' });
+
+    // First kill threw, but the immediate retry via closeSessionRecords
+    // succeeded. create() throws TerminalNotFoundError and the process
+    // is killed and cleaned up — no orphaned record.
+    await expect(createPromise).rejects.toBeInstanceOf(TerminalNotFoundError);
+    expect(backend.processes[0]!.killed).toBe(true);
+    expect(await svc.list('sess_m')).toEqual([]);
   });
 });

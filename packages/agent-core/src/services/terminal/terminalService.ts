@@ -83,9 +83,10 @@ export class TerminalService extends Disposable implements ITerminalService {
     // Try to kill the just-spawned process and bail so we never store a
     // running process for a session whose close listener already ran.
     // If kill() throws, the child may still be running — register it as a
-    // record (with listeners) so it stays managed and a later
-    // closeSessionRecords retry can attempt the kill again, instead of
-    // leaking as a zombie with no owner.
+    // record (with listeners) and immediately retry session cleanup so the
+    // record is not orphaned: the onDidClose listener already fired, and
+    // requireRecord() calls sessionService.get() which will reject for the
+    // archived session, so no later API path can reach this record.
     if (this.closedSessions.has(sessionId)) {
       let killed = true;
       try {
@@ -96,7 +97,36 @@ export class TerminalService extends Disposable implements ITerminalService {
       if (killed) {
         throw new TerminalNotFoundError(sessionId, '');
       }
-      // Fall through: register the record so closeSessionRecords can retry.
+      // kill() failed — register the record so it has listeners, then
+      // immediately retry cleanup. closeSessionRecords will attempt the
+      // kill again; if it still fails, the record stays with closed=false
+      // and a future dispose() or service teardown will handle it.
+      const terminal: Terminal = {
+        id: `term_${ulid()}`,
+        session_id: sessionId,
+        cwd,
+        shell,
+        cols,
+        rows,
+        status: 'running',
+        created_at: new Date().toISOString(),
+      };
+      const record: TerminalRecord = {
+        terminal,
+        process,
+        sinks: new Map(),
+        buffer: [],
+        nextSeq: 0,
+        disposables: [],
+        closed: false,
+      };
+      record.disposables.push(
+        process.onData((data) => this.onData(record, data)),
+        process.onExit((event) => this.onExit(record, event.exitCode)),
+      );
+      this.records.set(recordKey(sessionId, terminal.id), record);
+      this.closeSessionRecords(sessionId);
+      throw new TerminalNotFoundError(sessionId, '');
     }
     const terminal: Terminal = {
       id: `term_${ulid()}`,
