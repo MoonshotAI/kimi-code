@@ -15,8 +15,6 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 - **Run `pnpm --filter @moonshot-ai/kimi-web check:style`** (`scripts/check-style.mjs`) — it enforces the §06 anti-pattern rules (no-gradient, no-glassmorphism except TopBar `frost`, no-emoji-icon except moon, no-hardcoded-hex/font, radius/z/weight from scale). Do not add new violations.
 - **Verify visually.** For any UI change, render it in the browser (light + dark, plus hover/focus states) and confirm it matches `design-system.html` and introduces no regression before considering it done. Build/typecheck/check-style are necessary but not sufficient.
 
-See `apps/kimi-web/design/README.md` for the full index of design documents.
-
 ## Layout (`src/`)
 
 - `main.ts` — bootstrap (creates the app, installs i18n, mounts `#app`). `App.vue` — root component, holds most app state.
