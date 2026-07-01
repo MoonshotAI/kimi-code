@@ -139,12 +139,15 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     return this._ready;
   }
 
+  async closeAllSessions(): Promise<void> {
+    await this._core.closeAllSessions();
+  }
+
   override dispose(): void {
     if (this._store.isDisposed) return;
-    // KimiCore does not currently expose a dispose() — when it does, we'll
-    // await/call it here BEFORE super.dispose(). For now, disposing the
-    // service flips _disposed, which makes future rpc.* invocations reject
-    // before they reach KimiCore.
+    // Session shutdown is async and is owned by `closeAllSessions()` so callers
+    // can await it before tearing down the DI graph. `dispose()` remains the
+    // synchronous guard that rejects future rpc.* invocations.
     super.dispose();
   }
 

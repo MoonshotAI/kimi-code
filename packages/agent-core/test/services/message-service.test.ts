@@ -53,6 +53,7 @@ function makeFakeBridge(
   return {
     rpc: rpc as CoreRPC,
     ready: vi.fn().mockResolvedValue(undefined),
+    closeAllSessions: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
     _serviceBrand: undefined,
   };
@@ -349,6 +350,7 @@ describe('MessageService', () => {
     const failingBridge: ICoreProcessService = {
       rpc: rpc as CoreRPC,
       ready: vi.fn().mockResolvedValue(undefined),
+      closeAllSessions: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn(),
       _serviceBrand: undefined,
     };

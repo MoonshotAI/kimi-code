@@ -67,6 +67,15 @@ export interface ICoreProcessService {
   ready(): Promise<void>;
 
   /**
+   * Gracefully close every live in-process session owned by KimiCore.
+   *
+   * Used by daemon shutdown before the DI graph is disposed so session-owned
+   * resources (MCP transports, background tasks, cron jobs, log handles, active
+   * turns) run their normal `Session.close()` cleanup.
+   */
+  closeAllSessions(): Promise<void>;
+
+  /**
    * Tear down the adapter. After dispose, `rpc.<method>(...)` rejects with a
    * "core process disposed" error before reaching `KimiCore`. Idempotent.
    */
