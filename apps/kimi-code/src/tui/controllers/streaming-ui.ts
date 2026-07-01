@@ -536,6 +536,7 @@ export class StreamingUIController {
     this.disposeAndClearPendingToolComponents();
     this._pendingAgentGroup = null;
     this._pendingReadGroup = null;
+    this.resetToolCallState();
   }
 
   resetToolCallState(): void {

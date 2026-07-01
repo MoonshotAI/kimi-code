@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +25,7 @@ import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { combineStartupNotice } from '#/tui/utils/startup';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
+import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
@@ -133,6 +134,57 @@ export async function runShell(
     trackLifecycleForSession(tui.getCurrentSessionId(), event, properties);
   };
 
+  let savedStty: string | undefined;
+  try {
+    const saved = execSync('stty -g', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    savedStty = typeof saved === 'string' ? saved.trim() : undefined;
+    execSync('stty -ixon', { stdio: 'ignore' });
+  } catch {
+    /* ignore */
+  }
+  const restoreStty = (): void => {
+    if (savedStty === undefined) return;
+    const args = savedStty.split(/\s+/).filter((arg) => arg.length > 0);
+    if (args.length === 0) return;
+    spawnSync('stty', args, { stdio: 'ignore' });
+  };
+
+  // If we crash without going through KimiTUI.stop(), the terminal is left in
+  // raw mode with a hidden cursor and XON/XOFF flow control disabled. Restore
+  // both before exiting so the user's shell is usable afterwards.
+  const emergencyExit = (exitCode: number): void => {
+    restoreTerminalModes();
+    restoreStty();
+    process.exit(exitCode);
+  };
+  const onUncaughtException = (error: unknown): void => {
+    try {
+      log.error('uncaughtException, restoring terminal and exiting', { error: String(error) });
+    } catch {
+      /* ignore */
+    }
+    emergencyExit(1);
+  };
+  const onUnhandledRejection = (reason: unknown): void => {
+    try {
+      log.error('unhandledRejection, restoring terminal and exiting', { reason: String(reason) });
+    } catch {
+      /* ignore */
+    }
+    emergencyExit(1);
+  };
+  process.on('uncaughtException', onUncaughtException);
+  process.on('unhandledRejection', onUnhandledRejection);
+  // Remove the crash handlers once the TUI exits cleanly so repeated runShell()
+  // calls in the same process (e.g. tests) don't accumulate process listeners.
+  const removeCrashHandlers = (): void => {
+    process.off('uncaughtException', onUncaughtException);
+    process.off('unhandledRejection', onUnhandledRejection);
+  };
+
   tui.onExit = async (exitCode = 0) => {
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasSessionContent();
@@ -151,16 +203,13 @@ export async function runShell(
     if (hints.length > 0) {
       process.stderr.write(`\n${hints.join('\n')}\n`);
     }
+    restoreStty();
     process.exit(exitCode);
   };
   try {
-    execSync('stty -ixon', { stdio: 'ignore' });
-  } catch {
-    /* ignore */
-  }
-  try {
     const initStartedAt = Date.now();
     await tui.start();
+    removeCrashHandlers();
     const initMs = Date.now() - initStartedAt;
     const startupSessionId = tui.getCurrentSessionId();
     const mcpMs = await tui.getStartupMcpMs();
@@ -171,6 +220,7 @@ export async function runShell(
       mcp_ms: mcpMs,
     });
   } catch (error) {
+    removeCrashHandlers();
     setCrashPhase('shutdown');
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });

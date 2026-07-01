@@ -284,6 +284,11 @@ export class EditorKeyboardController {
     this.pendingExit = null;
   }
 
+  dispose(): void {
+    this.clearPendingExit();
+    this.clearPendingUndoEsc();
+  }
+
   private armPendingUndoEsc(): void {
     this.clearPendingUndoEsc();
     const timer = setTimeout(() => {

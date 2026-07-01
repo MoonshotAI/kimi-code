@@ -88,6 +88,19 @@ export class ImageAttachmentStore {
     this.nextId = 1;
   }
 
+  /**
+   * Drop a single attachment, releasing its bytes. Used to reclaim image
+   * memory once the transcript entry that references it is trimmed.
+   */
+  remove(id: number): void {
+    this.byId.delete(id);
+  }
+
+  /** Drop many attachments at once. See {@link remove}. */
+  removeMany(ids: Iterable<number>): void {
+    for (const id of ids) this.byId.delete(id);
+  }
+
   size(): number {
     return this.byId.size;
   }
