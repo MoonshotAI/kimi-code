@@ -943,6 +943,39 @@ describe('google base URL forwarding', () => {
       location: 'us-central1',
     });
   });
+
+  it('derives vertex location from the GOOGLE_VERTEX_BASE_URL env fallback so ADC mode is selected', () => {
+    // The env fallback must behave exactly like config `base_url`: when the
+    // regional endpoint is supplied via GOOGLE_VERTEX_BASE_URL (with a project
+    // but no explicit GOOGLE_CLOUD_LOCATION), location derivation must still see
+    // it, so the provider resolves to service-account (ADC) mode rather than
+    // silently downgrading to API-key Gemini routing.
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: {
+            type: 'vertexai',
+            env: {
+              GOOGLE_CLOUD_PROJECT: 'my-proj',
+              GOOGLE_VERTEX_BASE_URL: 'https://us-central1-aiplatform.googleapis.com',
+            },
+          },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'vertexai',
+      vertexai: true,
+      baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+      project: 'my-proj',
+      location: 'us-central1',
+    });
+  });
 });
 
 describe('per-model protocol routing', () => {
