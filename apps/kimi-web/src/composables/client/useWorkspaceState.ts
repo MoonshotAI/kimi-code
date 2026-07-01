@@ -96,9 +96,12 @@ export interface UseWorkspaceStateDeps {
   status: ComputedRef<ConversationStatus>;
   workspaceIdForSession: (s: { workspaceId?: string; cwd: string }) => string;
   savePermissionToStorage: (mode: PermissionMode) => void;
-  savePlanModeToStorage: (v: boolean) => void;
-  saveSwarmModeToStorage: (v: boolean) => void;
-  saveGoalModeToStorage: (v: boolean) => void;
+  /** Persist the current per-session mode maps (read off rawState). */
+  savePlanModeToStorage: () => void;
+  saveSwarmModeToStorage: () => void;
+  saveGoalModeToStorage: () => void;
+  /** Staged mode toggles for the not-yet-created draft session. */
+  draftModes: { planMode: boolean; swarmMode: boolean; goalMode: boolean };
   saveUnread: (changes: Record<string, boolean>) => void;
   saveActiveWorkspaceToStorage: (id: string) => void;
   saveHiddenWorkspacesToStorage: (roots: string[]) => void;
@@ -141,6 +144,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     savePlanModeToStorage,
     saveSwarmModeToStorage,
     saveGoalModeToStorage,
+    draftModes,
     saveUnread,
     saveActiveWorkspaceToStorage,
     saveHiddenWorkspacesToStorage,
@@ -731,6 +735,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // then submitPromptInternal adds the user turn synchronously (no await in
       // between), so the view goes loading → message with no empty-composer frame.
       await selectSession(session.id);
+      // Carry any mode toggles the user staged in the empty composer into the
+      // newly-created session, so the first prompt honors them. Reuse the normal
+      // setters (activeSessionId is now the new session) so they persist + post
+      // to the session profile exactly like an interactive toggle.
+      if (draftModes.planMode) setPlanMode(true);
+      if (draftModes.swarmMode) setSwarmMode(true);
+      if (draftModes.goalMode) setGoalMode(true);
+      draftModes.planMode = false;
+      draftModes.swarmMode = false;
+      draftModes.goalMode = false;
       await submitPromptInternal(session.id, text, attachments);
     } catch (err) {
       pushOperationFailure('startSessionAndSendPrompt', err);
@@ -960,7 +974,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
 
-      if (rawState.goalMode && text) {
+      // Modes are per-session: read this session's own toggles (not the global
+      // active-session value), so a prompt enqueued for a background session uses
+      // that session's settings.
+      const planMode = rawState.planModeBySession[sid] ?? false;
+      const swarmMode = rawState.swarmModeBySession[sid] ?? false;
+      const goalMode = rawState.goalModeBySession[sid] ?? false;
+
+      if (goalMode && text) {
         try {
           await api.updateSession(sid, { goalObjective: text.trim() });
         } catch (err) {
@@ -979,13 +1000,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         model,
         thinking: rawState.thinking,
         permissionMode: rawState.permission,
-        planMode: rawState.planMode,
-        swarmMode: rawState.swarmMode,
+        planMode,
+        swarmMode,
       });
 
-      if (rawState.goalMode) {
-        rawState.goalMode = false;
-        saveGoalModeToStorage(false);
+      // Goal mode is a one-shot flag: consumed by this send, then cleared.
+      if (goalMode) {
+        rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: false };
+        saveGoalModeToStorage();
       }
 
       // Authoritative prompt_id for :abort — race-free (the projector binding can
@@ -1112,8 +1134,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         model,
         thinking: rawState.thinking,
         permissionMode: rawState.permission,
-        planMode: rawState.planMode,
-        swarmMode: rawState.swarmMode,
+        planMode: rawState.planModeBySession[sid] ?? false,
+        swarmMode: rawState.swarmModeBySession[sid] ?? false,
       });
 
       // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
@@ -1307,28 +1329,45 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /** Persist and apply plan mode (pushed to the session profile + sent per-prompt). */
+  /** Persist and apply plan mode for the active session (pushed to its profile
+   *  + sent per-prompt). With no active session the toggle is staged on the
+   *  draft and transferred when the first prompt creates the session. */
   function setPlanMode(on: boolean): void {
-    rawState.planMode = on;
-    savePlanModeToStorage(on);
-    persistSessionProfile({ planMode: on });
+    const sid = rawState.activeSessionId;
+    if (sid) {
+      rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: on };
+      savePlanModeToStorage();
+      persistSessionProfile({ planMode: on });
+    } else {
+      draftModes.planMode = on;
+    }
   }
 
-  /** Flip plan mode on/off. */
+  /** Flip plan mode on/off for the active session (or the draft). */
   function togglePlanMode(): void {
-    setPlanMode(!rawState.planMode);
+    const sid = rawState.activeSessionId;
+    const current = sid ? (rawState.planModeBySession[sid] ?? false) : draftModes.planMode;
+    setPlanMode(!current);
   }
 
-  /** Persist and apply swarm mode (pushed to the session profile + sent per-prompt). */
+  /** Persist and apply swarm mode for the active session (pushed to its profile
+   *  + sent per-prompt). With no active session the toggle is staged on the draft. */
   function setSwarmMode(on: boolean): void {
-    rawState.swarmMode = on;
-    saveSwarmModeToStorage(on);
-    persistSessionProfile({ swarmMode: on });
+    const sid = rawState.activeSessionId;
+    if (sid) {
+      rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: on };
+      saveSwarmModeToStorage();
+      persistSessionProfile({ swarmMode: on });
+    } else {
+      draftModes.swarmMode = on;
+    }
   }
 
   /** Flip swarm mode on/off. In manual permission mode, ask before enabling. */
   function toggleSwarmMode(): void {
-    const on = !rawState.swarmMode;
+    const sid = rawState.activeSessionId;
+    const current = sid ? (rawState.swarmModeBySession[sid] ?? false) : draftModes.swarmMode;
+    const on = !current;
     if (on && rawState.permission === 'manual') {
       const ok = confirm('Enable swarm mode? The agent will run multiple sub agents in parallel.');
       if (!ok) return;
@@ -1336,15 +1375,23 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     setSwarmMode(on);
   }
 
-  /** Persist goal mode locally. Unlike plan/swarm, this is a one-shot flag consumed on send. */
+  /** Persist goal mode for the active session. Unlike plan/swarm, this is a
+   *  one-shot flag consumed on send (not pushed to the session profile). */
   function setGoalMode(on: boolean): void {
-    rawState.goalMode = on;
-    saveGoalModeToStorage(on);
+    const sid = rawState.activeSessionId;
+    if (sid) {
+      rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: on };
+      saveGoalModeToStorage();
+    } else {
+      draftModes.goalMode = on;
+    }
   }
 
-  /** Flip goal mode on/off. */
+  /** Flip goal mode on/off for the active session (or the draft). */
   function toggleGoalMode(): void {
-    setGoalMode(!rawState.goalMode);
+    const sid = rawState.activeSessionId;
+    const current = sid ? (rawState.goalModeBySession[sid] ?? false) : draftModes.goalMode;
+    setGoalMode(!current);
   }
 
   /** Create a goal by sending its objective to the session profile, then submit it as a prompt. */
