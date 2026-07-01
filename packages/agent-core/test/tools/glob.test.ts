@@ -773,6 +773,144 @@ describe('GlobTool', () => {
     expect(lines).not.toContain('abc');
   });
 
+  it('escapes POSIX bracket classes, matching rg --glob behavior', async () => {
+    // rg treats `[:` inside `[]` as literal characters, not a POSIX class.
+    // So `[[:digit:]].ts` matches `d].ts` and `:].ts` (char class `[ : d i g i t ]`
+    // then literal `]`), but NOT `1.ts`. picomatch would interpret `[:digit:]`
+    // as a POSIX digit class, so the `:` after `[` is escaped.
+    const exec = execReturning(
+      '/workspace/1.ts\n/workspace/a.ts\n/workspace/d].ts\n/workspace/:].ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '[[:digit:]].ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('d].ts');
+    expect(lines).toContain(':].ts');
+    expect(lines).not.toContain('1.ts');
+  });
+
+  it('skips extglob rewrites inside character classes, matching rg', async () => {
+    // `[@(a)].ts` — rg treats `@`, `(`, `a`, `)` as literal class members.
+    // The extglob rewrite must not fire inside `[]`.
+    const exec = execReturning(
+      '/workspace/@.ts\n/workspace/(.ts\n/workspace/a.ts\n/workspace/).ts\n/workspace/@(a).ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '[@(a)].ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('@.ts');
+    expect(lines).toContain('(.ts');
+    expect(lines).toContain('a.ts');
+    expect(lines).toContain(').ts');
+    expect(lines).not.toContain('@(a).ts');
+  });
+
+  it('escapes range arms inside brace alternatives, matching rg', async () => {
+    // `{1..2,3}.ts` — rg matches `1..2.ts` and `3.ts`, treating `1..2` as
+    // a literal arm. picomatch would expand `1..2` as a range (1, 2), so
+    // the dots are replaced with `[.]` to prevent range expansion.
+    const exec = execReturning(
+      '/workspace/1.ts\n/workspace/2.ts\n/workspace/3.ts\n/workspace/1..2.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '{1..2,3}.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('1..2.ts');
+    expect(lines).toContain('3.ts');
+    expect(lines).not.toContain('1.ts');
+    expect(lines).not.toContain('2.ts');
+  });
+
+  it('converts [! to [^ for negated character classes, matching rg', async () => {
+    // rg (gitignore semantics) uses `[!` for negation; picomatch uses `[^`.
+    // `[!a].ts` should match `b.ts`, `c.ts`, etc. but NOT `a.ts`.
+    const exec = execReturning(
+      '/workspace/a.ts\n/workspace/b.ts\n/workspace/c.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '[!a].ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('b.ts');
+    expect(lines).toContain('c.ts');
+    expect(lines).not.toContain('a.ts');
+  });
+
+  it('rejects unmatched closing braces, matching rg', async () => {
+    // rg errors on `a}.ts` — unopened alternate group.
+    const exec = execReturning('/workspace/a.ts\n/workspace/a}.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'a}.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('unopened');
+  });
+
+  it('strips ./ prefix from glob patterns, matching rg --glob behavior', async () => {
+    // rg treats `./src/*.ts` as not matching `src/a.ts` because the glob
+    // subject is `src/a.ts` (no `./` prefix). Stripping `./` from the
+    // pattern and matching against the un-prefixed relative path keeps
+    // the in-process filter consistent with rg.
+    const exec = execReturning('/workspace/src/a.ts\n/workspace/other/b.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: './src/*.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('src/a.ts');
+    expect(result.output).not.toContain('other/b.ts');
+  });
+
+  it('escapes bare parenthesis alternation, matching rg --glob behavior', async () => {
+    // rg treats `(`, `|`, `)` as literal characters. `(a|b).ts` matches
+    // only the literal filename `(a|b).ts`, not `a.ts` or `b.ts`.
+    const exec = execReturning(
+      '/workspace/(a|b).ts\n/workspace/a.ts\n/workspace/b.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '(a|b).ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('(a|b).ts');
+    expect(lines).not.toContain('a.ts');
+    expect(lines).not.toContain('b.ts');
+  });
+
   it('always searches from `.` so derived paths cannot override ignore rules', async () => {
     const exec = execReturning('/workspace/src/a.ts\n/workspace/other/b.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);

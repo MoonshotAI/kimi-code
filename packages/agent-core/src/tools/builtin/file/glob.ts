@@ -393,14 +393,16 @@ function isBroadPattern(pattern: string): boolean {
 function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
   const opts = { dot: true };
   const rooted = pattern.startsWith('/');
-  const normalizedPattern = rooted ? pattern.slice(1) : pattern;
-  // Escape picomatch-only extensions that rg --glob does not support:
-  //   - extglob: @(a|b), !(a), +(a), ?(a), *(a) — rg treats these as
-  //     literal characters, not extended glob patterns.
-  //   - range braces: {1..2} — rg treats {1..2} as a literal, not a range.
-  // Brace alternatives like {ts,tsx} are still supported by both rg and
-  // picomatch, so they are left intact.
-  const escapedPattern = escapePicomatchExtensions(normalizedPattern);
+  let normalizedPattern = rooted ? pattern.slice(1) : pattern;
+  // Strip a leading `./` — rg's glob subject never has it, and picomatch
+  // treats `./` as optional, which would broaden matches. Normalizing both
+  // sides to the un-prefixed form keeps the in-process filter consistent.
+  if (normalizedPattern.startsWith('./')) {
+    normalizedPattern = normalizedPattern.slice(2);
+  }
+  // Escape picomatch-only extensions that rg --glob does not support,
+  // so the in-process matcher matches the same files rg would.
+  const escapedPattern = escapeForPicomatch(normalizedPattern);
   // A pattern without `/` matches the basename at any depth — unless the
   // original pattern was rooted with a leading `/`, in which case it
   // matches only at the search root (gitignore-style rooted globs).
@@ -416,61 +418,36 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
  * Escape picomatch-only glob extensions that rg --glob does not support,
  * so the in-process matcher matches the same files rg would.
  *
- * - extglob constructs like @(a|b), !(a), +(a) are escaped so picomatch
- *   treats the prefix character and parentheses as literal. `@`, `!`, `+`
- *   are literal characters in rg's glob engine.
- * - `*` and `?` before `(` are NOT extglob prefixes in rg — they are
- *   regular wildcards, and `(` is a literal character. Only the
- *   parentheses are escaped so picomatch doesn't interpret `*(...)` or
- *   `?(...)` as extglobs, but the wildcard semantics of `*` and `?` are
- *   preserved.
- * - range braces like {1..2} are reduced to `1..2` (braces removed) to
- *   match rg, which treats a brace group with a single alternative (no
- *   comma) as that alternative with the braces stripped.
- * - brace alternatives like {ts,tsx} are left intact (supported by both),
- *   but empty alternatives ({,c} or {a,,b}) are dropped to match rg, which
- *   ignores them.
- * - braces inside character classes ([{a}]) are left intact — inside `[]`
- *   `{` and `}` are literal class members, not brace-group delimiters.
+ * This is a single-pass, character-class-aware scanner that handles:
+ *
+ * - **Extglob** (`[@!+](...)`): rg treats `@`, `!`, `+` as literal chars
+ *   and `(`, `)` as literal. The prefix is wrapped in `[...]` and the
+ *   parens/pipe are escaped. `*` and `?` before `(` are wildcards in rg,
+ *   so only the parens/pipe are escaped.
+ * - **Bare parenthesis alternation** (`(a|b)`): rg treats `(`, `|`, `)` as
+ *   literal. All three are escaped so picomatch does too.
+ * - **Range braces** (`{1..2}`): rg treats a single-alternative brace as
+ *   the inner text with braces removed. Reduced to `1..2`.
+ * - **Brace alternatives** (`{ts,tsx}`): left intact (supported by both).
+ *   Empty alternatives (`{,c}`, `{a,,b}`) are dropped to match rg.
+ *   Range-like arms (`{1..2,3}`) have their dots escaped so picomatch
+ *   treats them as literal, not as a range expansion.
+ * - **Nested braces** (`{a,{b,c}}`): left intact (both expand them).
+ * - **Character classes**: inside `[]`, braces and extglob constructs are
+ *   literal class members and are never rewritten. `[!` is converted to
+ *   `[^` (picomatch's negation syntax). `[:` is escaped to `[\:` to
+ *   prevent picomatch from interpreting POSIX classes like `[:digit:]`.
+ * - **Escaped chars** (`\x`): passed through unchanged.
  */
-function escapePicomatchExtensions(pattern: string): string {
-  let result = pattern;
-  // Escape extglob: [@!+](...) → literal prefix + literal parens.
-  // `*` and `?` are wildcards in rg, so only the parens are escaped.
-  result = result.replaceAll(/([@!?+*])\(([^)]*)\)/g, (_match, prefix: string, inner: string) => {
-    const escapedInner = inner.replaceAll('|', '\\|');
-    if (prefix === '*' || prefix === '?') {
-      return `${prefix}\\(${escapedInner}\\)`;
-    }
-    return `[${prefix}]\\(${escapedInner}\\)`;
-  });
-  // Rewrite brace groups outside character classes. Inside `[]`, braces
-  // are literal class members and must be preserved. rg also drops empty
-  // alternatives (e.g. `ab{,c}` matches `abc` only, not `ab`), so they are
-  // filtered out here to prevent picomatch from expanding them.
-  result = rewriteBraces(result);
-  return result;
-}
-
-/**
- * Rewrite brace groups in `pattern` to match rg's semantics:
- *   - Single-alternative braces `{foo}` → `foo` (braces stripped).
- *   - Comma alternatives with empty arms `{a,,b}` → `{a,b}` (empty arms
- *     dropped; if only one non-empty arm remains, braces are removed).
- *   - All-empty `{,,}` → empty string (braces removed, no content).
- *   - Nested brace groups `{a,{b,c}}` are left intact (both rg and
- *     picomatch expand them).
- *   - Escaped braces `\{...\}` are left intact.
- *   - Braces inside character classes `[{a}]` are left intact — inside
- *     `[]` they are literal class members, not group delimiters.
- */
-function rewriteBraces(pattern: string): string {
+function escapeForPicomatch(pattern: string): string {
   let result = '';
   let i = 0;
   let inBracket = false;
   let bracketContentStart = -1;
   while (i < pattern.length) {
     const ch = pattern[i]!;
+
+    // --- Inside a character class ---
     if (inBracket) {
       result += ch;
       if (ch === '\\' && i + 1 < pattern.length) {
@@ -483,22 +460,78 @@ function rewriteBraces(pattern: string): string {
         // terminator (mirrors validateGlobPattern logic).
         if (i !== bracketContentStart) inBracket = false;
       }
+      // Escape `:` after `[` inside a char class to prevent picomatch
+      // from interpreting `[:class:]` as a POSIX character class.
+      if (ch === ':' && result.length >= 2 && result.at(-2) === '[') {
+        // Replace the just-added `:` with `\:`
+        result = result.slice(0, -1) + '\\:';
+      }
       i++;
       continue;
     }
-    if (ch === '[') {
-      inBracket = true;
-      const next = pattern[i + 1];
-      bracketContentStart = next === '!' || next === '^' ? i + 2 : i + 1;
-      result += ch;
-      i++;
-      continue;
-    }
+
+    // --- Escaped character (outside char class) ---
     if (ch === '\\' && i + 1 < pattern.length) {
       result += ch + (pattern[i + 1] ?? '');
       i += 2;
       continue;
     }
+
+    // --- Character class opening ---
+    if (ch === '[') {
+      inBracket = true;
+      const next = pattern[i + 1];
+      bracketContentStart = next === '!' || next === '^' ? i + 2 : i + 1;
+      // Convert `[!` to `[^` — picomatch uses `[^` for negation, while rg
+      // (gitignore semantics) uses `[!`.
+      if (next === '!') {
+        result += '[^';
+        i += 2;
+        continue;
+      }
+      result += ch;
+      i++;
+      continue;
+    }
+
+    // --- Opening parenthesis (extglob or bare alternation) ---
+    if (ch === '(') {
+      // Find the matching `)`, respecting escaped chars.
+      let depth = 1;
+      let j = i + 1;
+      while (j < pattern.length && depth > 0) {
+        const cj = pattern[j]!;
+        if (cj === '\\' && j + 1 < pattern.length) {
+          j += 2;
+          continue;
+        }
+        if (cj === '(') depth++;
+        else if (cj === ')') depth--;
+        if (depth > 0) j++;
+      }
+      if (depth !== 0) {
+        // Unclosed — treat `(` as literal (validator will catch it).
+        result += '\\(';
+        i++;
+        continue;
+      }
+      const inner = pattern.slice(i + 1, j);
+      const escapedInner = inner.replaceAll('|', '\\|');
+      // Check if the previous char in result is an extglob prefix.
+      const prev = result.length > 0 ? result.at(-1) : '';
+      if (prev === '@' || prev === '!' || prev === '+') {
+        // Extglob: replace the prefix with [prefix] and escape parens.
+        result = result.slice(0, -1) + `[${prev}]`;
+      }
+      // For `*` and `?` prefixes, the wildcard is preserved and only
+      // the parens/pipe are escaped. For bare parens (no extglob prefix),
+      // also just escape the parens/pipe.
+      result += `\\(${escapedInner}\\)`;
+      i = j + 1;
+      continue;
+    }
+
+    // --- Brace group ---
     if (ch === '{') {
       // Scan forward to the matching `}`, respecting escaped chars.
       let depth = 1;
@@ -532,9 +565,13 @@ function rewriteBraces(pattern: string): string {
         if (nonEmpty.length === 0) {
           // All alternatives empty — rg strips to empty string.
         } else if (nonEmpty.length === 1) {
-          result += nonEmpty[0]!;
+          // Single non-empty arm — braces removed.
+          result += escapeRangeArms(nonEmpty[0]!);
         } else {
-          result += `{${nonEmpty.join(',')}}`;
+          // Multiple arms — escape range-like arms (containing `..`) so
+          // picomatch treats them as literal, not as a range expansion.
+          const escaped = nonEmpty.map(escapeRangeArms);
+          result += `{${escaped.join(',')}}`;
         }
       } else {
         // Single alternative — rg strips the braces.
@@ -543,10 +580,24 @@ function rewriteBraces(pattern: string): string {
       i = j + 1;
       continue;
     }
+
     result += ch;
     i++;
   }
   return result;
+}
+
+/**
+ * Escape dots in a range-like brace arm (e.g. `1..2`) so picomatch treats
+ * them as literal characters, not as a range expansion. rg treats `{1..2}`
+ * as the literal string `1..2`, so inside a comma brace group each arm
+ * that contains `..` must have its dots escaped. Uses `[.]` instead of
+ * `\.` because picomatch's brace expansion strips backslashes before
+ * matching, but preserves bracket classes.
+ */
+function escapeRangeArms(arm: string): string {
+  if (!arm.includes('..')) return arm;
+  return arm.replaceAll('.', '[.]');
 }
 
 /**
@@ -702,8 +753,12 @@ function validateGlobPattern(pattern: string): string | undefined {
       bracketPrevChar = '';
     } else if (ch === '{') {
       braceDepth++;
-    } else if (ch === '}' && braceDepth > 0) {
-      braceDepth--;
+    } else if (ch === '}') {
+      if (braceDepth > 0) {
+        braceDepth--;
+      } else {
+        return `Invalid glob pattern: unopened '}' in "${pattern}"`;
+      }
     }
   }
   if (bracketDepth > 0) return `Invalid glob pattern: unclosed '[' in "${pattern}"`;
