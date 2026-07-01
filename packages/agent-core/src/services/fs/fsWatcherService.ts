@@ -254,6 +254,11 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
   }
 
   bindSessionCwd(sessionId: string, cwd: string): void {
+    if (this._store.isDisposed) return;
+    // The session may have been archived while the WS handler was awaiting
+    // session lookup / realpath before reaching here. Don't create a fresh
+    // watcher entry for a session whose close listener already ran.
+    if (this.closedSessions.has(sessionId)) return;
     let entry = this.sessions.get(sessionId);
     if (!entry) {
       entry = this.createSessionEntry(sessionId, cwd);

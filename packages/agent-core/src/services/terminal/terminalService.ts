@@ -80,14 +80,23 @@ export class TerminalService extends Disposable implements ITerminalService {
     const rows = input.rows ?? this.defaultRows;
     const process = await this.backend.spawn({ cwd, shell, cols, rows });
     // The session may have been archived while we were awaiting spawn().
-    // Kill the just-spawned process and bail so we never store a running
-    // process for a session whose close listener already ran.
+    // Try to kill the just-spawned process and bail so we never store a
+    // running process for a session whose close listener already ran.
+    // If kill() throws, the child may still be running — register it as a
+    // record (with listeners) so it stays managed and a later
+    // closeSessionRecords retry can attempt the kill again, instead of
+    // leaking as a zombie with no owner.
     if (this.closedSessions.has(sessionId)) {
+      let killed = true;
       try {
         process.kill();
       } catch {
+        killed = false;
       }
-      throw new TerminalNotFoundError(sessionId, '');
+      if (killed) {
+        throw new TerminalNotFoundError(sessionId, '');
+      }
+      // Fall through: register the record so closeSessionRecords can retry.
     }
     const terminal: Terminal = {
       id: `term_${ulid()}`,

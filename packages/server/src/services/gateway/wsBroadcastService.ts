@@ -107,6 +107,11 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
 
   private async _dispatch(sid: string, state: SessionState, event: Event): Promise<void> {
     if (this._store.isDisposed) return;
+    // A session that was closed after this dispatch was queued should not
+    // repopulate the in-flight turn tracker — the tombstone prevents new
+    // dispatches, but a dispatch already in the queue when _deleteSession
+    // ran will still execute here.
+    if (this._closedSessions.has(sid)) return;
     const journal = await state.ready;
     const evType = (event as { type?: string }).type ?? 'event.unknown';
 
@@ -258,10 +263,21 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
     this._closedSessions.add(sid);
     const state = this._sessions.get(sid);
     this._sessions.delete(sid);
-    this._turnTracker.clear(sid);
-    if (state === undefined) return;
+    if (state === undefined) {
+      // No state to drain — clear the tracker immediately.
+      this._turnTracker.clear(sid);
+      return;
+    }
+    // Clear the in-flight tracker only after queued dispatches finish.
+    // _dispatch checks the tombstone and skips for closed sessions, so any
+    // dispatch still in the queue when the tombstone was set will not
+    // repopulate the tracker. Clearing after the drain ensures no race
+    // between a late _dispatch.apply and the clear.
     void state.queue
-      .then(() => state.ready)
+      .then(() => {
+        this._turnTracker.clear(sid);
+        return state.ready;
+      })
       .then((journal) => journal.close())
       .catch((error: unknown) => {
         this.logger.warn({ sid, err: String(error) }, 'wsBroadcast session cleanup failed');

@@ -398,4 +398,49 @@ describe('TerminalService streams', () => {
     expect(backend.processes[0]!.killed).toBe(true);
     expect(await svc.list('sess_k')).toEqual([]);
   });
+
+  it('registers the terminal when kill fails during spawn-time cleanup', async () => {
+    const root = join(tmpDir, 'workspace-l');
+    mkdirSync(root, { recursive: true });
+    const closeEmitter = new Emitter<{ sessionId: string }>();
+    const sessions = new Map([['sess_l', session('sess_l', root)]]);
+
+    const backend = new FakeTerminalBackend();
+    const origSpawn = backend.spawn.bind(backend);
+    backend.spawn = async (opts) => {
+      await Promise.resolve();
+      await Promise.resolve();
+      const proc = await origSpawn(opts);
+      // The spawned process's kill will throw — simulate a backend that
+      // cannot kill the just-spawned child.
+      proc.killShouldThrow = true;
+      return proc;
+    };
+
+    const svc = new TerminalService(
+      { backend },
+      makeSessionService(sessions, closeEmitter),
+    );
+
+    const createPromise = svc.create('sess_l', {});
+    await Promise.resolve();
+    await Promise.resolve();
+    closeEmitter.fire({ sessionId: 'sess_l' });
+
+    // kill() threw, so the process is registered as a record instead of
+    // being forgotten. create() succeeds (no TerminalNotFoundError) and
+    // the record stays managed for a later closeSessionRecords retry.
+    const terminal = await createPromise;
+    expect(backend.processes[0]!.killed).toBe(false);
+    const listed = await svc.list('sess_l');
+    expect(listed.map((t) => t.id)).toEqual([terminal.id]);
+    expect((await svc.get('sess_l', terminal.id)).status).toBe('running');
+
+    // A second close event retries the kill (killShouldThrow is now
+    // false) and tears down the record.
+    backend.processes[0]!.killShouldThrow = false;
+    closeEmitter.fire({ sessionId: 'sess_l' });
+    expect(backend.processes[0]!.killed).toBe(true);
+    expect(await svc.list('sess_l')).toEqual([]);
+  });
 });
