@@ -2,6 +2,8 @@
 
 import { execFile } from 'node:child_process';
 
+export const DEFAULT_EXEC_FILE_TIMEOUT_MS = 30_000;
+
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -9,14 +11,10 @@ export interface ExecResult {
 }
 
 export interface ExecOptions {
-
   windowsHide?: boolean;
-
   timeoutMs?: number;
-
   env?: NodeJS.ProcessEnv;
 }
-
 
 export function execFileUtf8(
   file: string,
@@ -30,7 +28,7 @@ export function execFileUtf8(
       {
         encoding: 'utf8',
         windowsHide: options.windowsHide === true,
-        ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+        timeout: options.timeoutMs ?? DEFAULT_EXEC_FILE_TIMEOUT_MS,
         env: options.env ?? process.env,
       },
       (err, stdout, stderr) => {
@@ -39,8 +37,8 @@ export function execFileUtf8(
           return;
         }
 
-
-        const code = typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : -1;
+        const errorCode = (err as { code?: unknown }).code;
+        const code = typeof errorCode === 'number' ? errorCode : -1;
         const message = err instanceof Error ? err.message : JSON.stringify(err);
         resolve({
           stdout: typeof stdout === 'string' ? stdout : '',
