@@ -1,6 +1,7 @@
 import { Disposable, IInstantiationService, InstantiationType, registerSingleton } from '../../di';
 import { Emitter } from '../../base/common/event';
 import { ErrorCodes, KimiError } from '../../errors';
+import { isRealUserInput } from '../../agent/compaction';
 import type { AgentContextData, ContextMessage } from '../../agent/context';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '../../rpc';
 import type { SessionMeta } from '../../session';
@@ -59,23 +60,10 @@ function canUndoHistory(history: readonly ContextMessage[], count: number): bool
     if (message === undefined) continue;
     if (message.origin?.kind === 'injection') continue;
     if (message.origin?.kind === 'compaction_summary') return false;
-    if (isRealUserPrompt(message)) {
+    if (isRealUserInput(message)) {
       found++;
       if (found >= count) return true;
     }
-  }
-  return false;
-}
-
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash';
-  }
-  if (origin.kind === 'plugin_command') {
-    return origin.trigger === 'user-slash';
   }
   return false;
 }
@@ -475,7 +463,7 @@ export class SessionService extends Disposable implements ISessionService {
     return {
       status: this._computeStatus(id),
       model: config.modelAlias ?? config.provider?.model,
-      thinking_level: config.thinkingLevel,
+      thinking_level: config.thinkingEffort,
       permission: permission.mode,
       plan_mode: plan !== null,
       swarm_mode: agentState?.swarmMode ?? false,

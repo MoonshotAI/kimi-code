@@ -22,8 +22,8 @@ const SRC = join(import.meta.dirname, '..', 'src');
 // `.md` files rendered through `renderPrompt`. Keep in sync when a new
 // templated prompt file is introduced.
 const TEMPLATED = new Set([
-  'profile/default/system.md',
   'agent/compaction/compaction-instruction.md',
+  'profile/default/system.md',
   'tools/builtin/file/read.md',
   'tools/builtin/file/read-media.md',
   'tools/builtin/shell/bash.md',

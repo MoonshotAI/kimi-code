@@ -969,11 +969,12 @@ describe('AnthropicChatProvider', () => {
       expect(trailing.every((b) => b.type === 'tool_result')).toBe(true);
     });
 
-    // Edge case: parallel tool results followed by a plain user text turn —
-    // only the tool_result-only user messages merge; the text message stays
-    // in its own message (proving the predicate is content-shape-aware, not
-    // just role-based).
-    it('text turn after parallel tool_results stays separate', async () => {
+    // Edge case: parallel tool results followed by a plain user text turn.
+    // The tool_result-only user messages merge with each other AND absorb the
+    // following text turn, producing a single `[tool_result, tool_result, text]`
+    // user message. Strict Anthropic-compatible backends reject consecutive
+    // user messages, so the follow-up text must not be left in its own turn.
+    it('merges a follow-up text turn into the preceding tool_results', async () => {
       const provider = createProvider();
       const tcAdd: ToolCall = {
         type: 'function',
@@ -1014,14 +1015,74 @@ describe('AnthropicChatProvider', () => {
       };
       const msgs = body['messages'] as MsgParam[];
 
-      // 4 messages: user prompt, assistant tool_use, merged tool_result user, final text user.
-      expect(msgs).toHaveLength(4);
+      // 3 messages: user prompt, assistant tool_use, and a single merged user
+      // turn holding both tool_results followed by the follow-up text.
+      expect(msgs).toHaveLength(3);
+      expect(msgs[2]!.role).toBe('user');
+      expect(msgs[2]!.content).toHaveLength(3);
+      expect(msgs[2]!.content.slice(0, 2).every((b) => b.type === 'tool_result')).toBe(true);
+      expect(msgs[2]!.content[2]!.type).toBe('text');
+      expect(msgs[2]!.content[2]!.text).toBe('Now summarize');
+    });
+
+    // Single tool call answered, then a follow-up text turn (e.g. an injected
+    // reminder/notification after the tool result). The tool_result and the
+    // text must collapse into one user message so no two user turns are adjacent.
+    it('merges a single tool_result with a following injected text turn', async () => {
+      const provider = createProvider();
+      const tcRead: ToolCall = {
+        type: 'function',
+        id: 'call_read',
+        name: 'read',
+        arguments: '{"path": "a.ts"}',
+      };
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Read it' }], toolCalls: [] },
+        { role: 'assistant', content: [], toolCalls: [tcRead] },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'file body' }],
+          toolCallId: 'call_read',
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'system reminder' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const msgs = body['messages'] as Array<{
+        role: string;
+        content: Array<{ type: string; text?: string }>;
+      }>;
+
+      // No two adjacent user messages: tool_result + reminder share one turn.
+      const roles = msgs.map((m) => m.role);
+      expect(roles).toEqual(['user', 'assistant', 'user']);
       expect(msgs[2]!.content).toHaveLength(2);
-      expect(msgs[2]!.content.every((b) => b.type === 'tool_result')).toBe(true);
-      expect(msgs[3]!.role).toBe('user');
-      expect(msgs[3]!.content).toHaveLength(1);
-      expect(msgs[3]!.content[0]!.type).toBe('text');
-      expect(msgs[3]!.content[0]!.text).toBe('Now summarize');
+      expect(msgs[2]!.content[0]!.type).toBe('tool_result');
+      expect(msgs[2]!.content[1]!.type).toBe('text');
+      expect(msgs[2]!.content[1]!.text).toBe('system reminder');
+    });
+
+    it('merges consecutive plain-text user messages into one', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'First' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Second' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Third' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const msgs = body['messages'] as Array<{
+        role: string;
+        content: Array<{ type: string; text?: string }>;
+      }>;
+
+      // Strict Anthropic-compatible backends reject consecutive user messages,
+      // so back-to-back plain-text user turns (e.g. the post-compaction shape
+      // of kept prompts + user-role summary + reminders) must be collapsed.
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]!.role).toBe('user');
+      expect(msgs[0]!.content.map((block) => block.text)).toEqual(['First', 'Second', 'Third']);
     });
 
     it('assistant with thinking (has encrypted -> ThinkingBlockParam)', async () => {
@@ -1827,7 +1888,7 @@ describe('AnthropicChatProvider', () => {
       expect(provider.thinkingEffort).toBe('high');
     });
 
-    it('pre-4.6 budget-based levels', () => {
+    it('pre-4.6 budget-based efforts', () => {
       const low = createProvider().withThinking('low');
       expect(low.thinkingEffort).toBe('low');
 

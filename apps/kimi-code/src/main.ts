@@ -23,6 +23,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { createProgram } from './cli/commands';
+import { finalizeHeadlessRun } from './cli/headless-exit';
 import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
@@ -44,7 +45,22 @@ import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 
-export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
+/**
+ * Outcome of a CLI command run, reported back to the process entrypoint.
+ *
+ * `handleMainCommand` is a reusable, unit-tested handler — it must not terminate
+ * the process itself. It reports here whether a headless (`kimi -p`) run
+ * completed so the entrypoint (the only place that owns the process) can arm the
+ * force-exit fallback.
+ */
+export interface MainCommandOutcome {
+  readonly headlessCompleted: boolean;
+}
+
+export async function handleMainCommand(
+  opts: CLIOptions,
+  version: string,
+): Promise<MainCommandOutcome> {
   let validated: ReturnType<typeof validateOptions>;
   try {
     validated = validateOptions(opts);
@@ -86,10 +102,11 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
           promptSessionCreated = true;
         },
       });
-      return;
+      return { headlessCompleted: true };
     }
 
     await runShell(validated.options, version, { worktree });
+    return { headlessCompleted: false };
   } catch (error) {
     // Clean up a worktree that never carried a session so failed startups do
     // not leak empty worktrees. The shell runner only fails before a session
@@ -177,17 +194,32 @@ export function main(): void {
   const program = createProgram(
     version,
     (opts) => {
-      void handleMainCommand(opts, version).catch(async (error: unknown) => {
-        const operation = opts.prompt !== undefined ? 'run prompt' : 'start shell';
-        await logStartupFailure(operation, error);
-        process.stderr.write(
-          formatStartupError(error, {
-            operation,
-          }),
-        );
-        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
-        process.exit(1);
-      });
+      void handleMainCommand(opts, version)
+        .then(async (outcome) => {
+          // Only the process entrypoint disposes of the process. Print mode
+          // relies on the event loop draining to exit; flush any buffered output
+          // and then arm an unref'd fallback so a stray ref'd handle left over
+          // from the run can't wedge a completed `kimi -p` until an external
+          // timeout. A healthy run drains and exits before the fallback fires.
+          if (outcome.headlessCompleted) {
+            await finalizeHeadlessRun(
+              process,
+              [process.stdout, process.stderr],
+              () => Number(process.exitCode) || 0,
+            );
+          }
+        })
+        .catch(async (error: unknown) => {
+          const operation = opts.prompt !== undefined ? 'run prompt' : 'start shell';
+          await logStartupFailure(operation, error);
+          process.stderr.write(
+            formatStartupError(error, {
+              operation,
+            }),
+          );
+          process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+          process.exit(1);
+        });
     },
     () => {
       void handleMigrateCommand(version).catch(async (error: unknown) => {

@@ -99,7 +99,7 @@ async function setupSession(
     { type: 'main', generate: generate ?? scripted.generate },
     { profile: goalProfile(tools) },
   );
-  agent.config.update({ modelAlias: 'mock-model', thinkingLevel: 'off' });
+  agent.config.update({ modelAlias: 'mock-model', thinkingEffort: 'off' });
   agent.permission.setMode('yolo');
   return { session, agent, scripted };
 }

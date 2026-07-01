@@ -1,3 +1,9 @@
+import {
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  collectCompactableUserMessages,
+  isRealUserInput,
+  selectRecentUserMessages,
+} from '@moonshot-ai/agent-core';
 import type {
   ContentPart,
   ContextMessage,
@@ -29,7 +35,7 @@ export interface ConfigSnapshot {
   cwd?: string;
   modelAlias?: string;
   profileName?: string;
-  thinkingLevel?: string;
+  thinkingEffort?: string;
   systemPrompt?: string;
 }
 
@@ -238,19 +244,21 @@ export function projectContext(
         break;
       case 'context.apply_compaction': {
         openSteps = new Map();
-        // Mirror agent-core's actual `applyCompaction` behaviour
-        // (`packages/agent-core/src/agent/context/index.ts`): history becomes
-        // `[summaryBubble, ...history.slice(compactedCount)]`. The summary is
-        // an *assistant* message tagged `origin.kind = 'compaction_summary'`
-        // (using 'system' would skew role counts and any downstream diff
-        // against agent-core history). The post-compaction tail is preserved
-        // rather than dropped, so messages still in context stay visible.
+        // Mirror agent-core's `applyCompaction`
+        // (`packages/agent-core/src/agent/context/index.ts`): the live history
+        // becomes the most recent real user messages (verbatim, within a token
+        // budget) followed by a single user-role summary tagged
+        // `origin.kind = 'compaction_summary'`. Assistant messages, tool calls,
+        // and tool results are dropped. The selection rule
+        // (`selectRecentUserMessages` / `collectCompactableUserMessages`) is the
+        // same helper agent-core's `ContextMemory` and the web transcript
+        // reducer apply, so all three views stay in sync.
         const summaryBubble: ProjectedMessage = {
           lineNo: entry.lineNo,
           time: rec.time,
           source: 'compaction_summary',
           message: {
-            role: 'assistant',
+            role: 'user',
             content: [{ type: 'text', text: rec.summary }],
             toolCalls: [],
             origin: { kind: 'compaction_summary' },
@@ -262,34 +270,62 @@ export function projectContext(
             tokensAfter: rec.tokensAfter,
           },
         };
+        const modelSummaryBubble: ProjectedMessage =
+          rec.contextSummary === undefined
+            ? summaryBubble
+            : {
+                ...summaryBubble,
+                message: {
+                  ...summaryBubble.message,
+                  content: [{ type: 'text', text: rec.contextSummary }],
+                } as ContextMessage,
+              };
         if (mode === 'model') {
-          // Drop the first `rec.compactedCount` HISTORY entries (NOT array
-          // entries): agent-core's `compactedCount` indexes into `_history`,
-          // which never contains our synthetic 'undo'/'clear' markers. Walk the
-          // array counting only history entries (`isHistoryEntry`) until
-          // `compactedCount` are passed, then slice there — any UI-only markers
-          // in the dropped region go with it (correct: they precede the
-          // compaction). With no markers this is exactly `slice(compactedCount)`.
-          let sliceAt = messages.length;
-          let passed = 0;
-          for (let i = 0; i < messages.length; i++) {
-            if (passed >= rec.compactedCount) {
-              sliceAt = i;
-              break;
-            }
-            if (isHistoryEntry(messages[i]!)) passed++;
+          // Rebuild the model's-eye view. New records carry `keptUserMessageCount`
+          // and use the kept-user selection below; legacy records fall back to the
+          // old verbatim-tail shape (handled first).
+          const historyEntries = messages.filter(isHistoryEntry);
+          if (rec.keptUserMessageCount === undefined && rec.compactedCount < historyEntries.length) {
+            // Legacy (pre-rework) record: it has no `keptUserMessageCount`, so
+            // agent-core's ContextMemory restore reproduces the old
+            // `[summary, ...history.slice(compactedCount)]` semantics — a verbatim
+            // recent tail (assistant/tool included), not the new kept-user
+            // selection. Mirror that exact shape so opening an older compacted
+            // session in model mode shows the same tail the resumed agent still
+            // holds, instead of hiding it behind the new selection.
+            messages = [modelSummaryBubble, ...historyEntries.slice(rec.compactedCount)];
+          } else {
+            // `realUserEntries` is filtered with the exact
+            // `collectCompactableUserMessages` predicate so it stays aligned with
+            // the selection below (genuine user input only — no injections, system
+            // triggers, or prior summaries). `selectRecentUserMessages` keeps a
+            // contiguous suffix of that subsequence, with only the oldest kept
+            // message possibly truncated, so each kept message maps back onto its
+            // original ProjectedMessage wrapper (preserving line/time); we swap in
+            // the (possibly truncated) message object.
+            const realUserEntries = historyEntries.filter(
+              (pm) => collectCompactableUserMessages([pm.message]).length === 1,
+            );
+            const keptUserMessages = selectRecentUserMessages(
+              realUserEntries.map((pm) => pm.message),
+              COMPACT_USER_MESSAGE_MAX_TOKENS,
+            );
+            const suffixStart = realUserEntries.length - keptUserMessages.length;
+            const keptEntries: ProjectedMessage[] = keptUserMessages.map((message, i) => {
+              const original = realUserEntries[suffixStart + i]!;
+              return original.message === message ? original : { ...original, message };
+            });
+            messages = [...keptEntries, modelSummaryBubble];
           }
-          if (passed < rec.compactedCount) sliceAt = messages.length;
-          messages = [summaryBubble, ...messages.slice(sliceAt)];
         } else {
           // Full history: keep ALL preceding messages, just append the summary
           // marker inline so the compacted prefix stays visible.
           messages.push(summaryBubble);
         }
         // Mirror agent-core applyCompaction() → microCompaction.reset() (cutoff
-        // → 0): the message list is rebuilt as [summary, ...tail], so the old
-        // index-based cutoff no longer points at the same messages. (In full
-        // mode the blanking pass does not run, so this is a no-op there.)
+        // → 0): the message list is rebuilt, so the old index-based cutoff no
+        // longer points at the same messages. (In full mode the blanking pass
+        // does not run, so this is a no-op there.)
         microCutoff = 0;
         // Mirror agent-core applyCompaction() → _tokenCount = result.tokensAfter:
         // the live context-window fill is now the post-compaction count. Derived
@@ -312,7 +348,7 @@ export function projectContext(
         if (upd.cwd !== undefined) config.cwd = upd.cwd;
         if (upd.modelAlias !== undefined) config.modelAlias = upd.modelAlias;
         if (upd.profileName !== undefined) config.profileName = upd.profileName;
-        if (upd.thinkingLevel !== undefined) config.thinkingLevel = upd.thinkingLevel;
+        if (upd.thinkingEffort !== undefined) config.thinkingEffort = upd.thinkingEffort;
         if (upd.systemPrompt !== undefined) config.systemPrompt = upd.systemPrompt;
         break;
       }
@@ -328,7 +364,7 @@ export function projectContext(
         // Mirror agent-core `undo` (`agent/context/index.ts`): walk from the
         // end, skip `origin.kind === 'injection'`, stop at
         // `origin.kind === 'compaction_summary'`, remove others, counting real
-        // user prompts via `isRealUserPrompt` until `count` is reached. Then
+        // user prompts via `isRealUserInput` until `count` is reached. Then
         // leave an undo marker.
         //
         // `computeUndoCutoff` is the single source of truth for that skip/stop
@@ -581,22 +617,11 @@ function isHistoryEntry(pm: ProjectedMessage): boolean {
   return pm.source !== 'undo' && pm.source !== 'clear';
 }
 
-/** Mirrors agent-core `isRealUserPrompt` (`agent/context/index.ts`): a message
- *  counts toward an undo only if it is a genuine user prompt. */
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') return origin.trigger === 'user-slash';
-  if (origin.kind === 'plugin_command') return origin.trigger === 'user-slash';
-  return false;
-}
-
 /** Single source of truth for the `context.undo` backward walk, shared by both
  *  projection modes. Mirrors agent-core `undo` (`agent/context/index.ts`): walk
  *  from the end, skip `origin.kind === 'injection'` (those are KEPT even when
  *  they sit inside the undo window), stop at `origin.kind === 'compaction_summary'`,
- *  and count real user prompts via `isRealUserPrompt` until `count` is reached.
+ *  and count real user prompts via `isRealUserInput` until `count` is reached.
  *
  *  Returns the `cutoff` (lowest index to remove from, inclusive) plus the
  *  `removedMessageCount` (number of non-skipped messages in the window). In
@@ -617,7 +642,7 @@ function computeUndoCutoff(
     if (origin?.kind === 'compaction_summary') break; // stop
     removedMessageCount++;
     cutoff = i;
-    if (isRealUserPrompt(messages[i]!.message) && ++removedUserCount >= count) break;
+    if (isRealUserInput(messages[i]!.message) && ++removedUserCount >= count) break;
   }
   return { cutoff, removedMessageCount };
 }

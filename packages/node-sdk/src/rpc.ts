@@ -81,7 +81,7 @@ export interface SetSessionModelRpcResult {
 }
 
 export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
-  readonly level: string;
+  readonly effort: string;
 }
 
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
@@ -326,7 +326,7 @@ export abstract class SDKRpcClientBase {
     return rpc.setThinking({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
-      level: input.level,
+      effort: input.effort,
     });
   }
 
@@ -474,7 +474,7 @@ export abstract class SDKRpcClientBase {
       usage.byModel !== undefined || usage.total !== undefined || usage.currentTurn !== undefined;
     return {
       model: config.modelAlias ?? config.provider?.model,
-      thinkingLevel: config.thinkingLevel,
+      thinkingEffort: config.thinkingEffort,
       permission: permission.mode,
       planMode: plan !== null,
       swarmMode,

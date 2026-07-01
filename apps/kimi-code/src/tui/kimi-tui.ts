@@ -212,7 +212,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     planMode: input.cliOptions.plan,
     inputMode: 'prompt',
     swarmMode: false,
-    thinking: false,
+    thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
@@ -1416,8 +1416,7 @@ export class KimiTUI {
     const options: MutableCreateSessionOptions = {
       workDir: this.state.appState.workDir,
       model,
-      thinking:
-        this.session === undefined ? undefined : this.state.appState.thinking ? 'on' : 'off',
+      thinking: this.session === undefined ? undefined : this.state.appState.thinkingEffort,
       permission: this.state.appState.permissionMode,
       planMode: this.state.appState.planMode ? true : undefined,
       metadata: resolveSessionMetadata(this.options.startup.metadata, this.session),
@@ -1442,7 +1441,7 @@ export class KimiTUI {
     this.setAppState({
       sessionId: session.id,
       model: status.model ?? '',
-      thinking: status.thinkingLevel !== 'off',
+      thinkingEffort: status.thinkingEffort,
       permissionMode: status.permission,
       planMode: status.planMode,
       swarmMode: status.swarmMode ?? false,

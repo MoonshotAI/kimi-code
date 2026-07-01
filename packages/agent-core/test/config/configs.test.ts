@@ -50,7 +50,6 @@ function expectKimiErrorCode(fn: () => unknown, code: string): void {
 
 const COMPLETE_TOML = `
 default_model = "kimi-code/kimi-for-coding"
-default_thinking = true
 default_permission_mode = "auto"
 default_plan_mode = false
 merge_all_available_skills = true
@@ -75,7 +74,7 @@ capabilities = ["image_in", "thinking", "video_in"]
 display_name = "Kimi for Coding"
 
 [thinking]
-mode = "auto"
+enabled = true
 effort = "medium"
 
 [permission]
@@ -132,7 +131,7 @@ describe('harness config TOML loader', () => {
     const config = parseConfigString(COMPLETE_TOML, 'config.toml');
 
     expect(config.defaultModel).toBe('kimi-code/kimi-for-coding');
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
     expect(config.defaultPermissionMode).toBe('auto');
     expect(config.defaultPlanMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
@@ -152,7 +151,7 @@ describe('harness config TOML loader', () => {
       capabilities: ['image_in', 'thinking', 'video_in'],
       displayName: 'Kimi for Coding',
     });
-    expect(config.thinking).toEqual({ mode: 'auto', effort: 'medium' });
+    expect(config.thinking).toEqual({ enabled: true, effort: 'medium' });
     expect(config.permission).toEqual({
       rules: [
         {
@@ -361,7 +360,7 @@ removed_flag = true
     const config = readConfigFile(configPath);
     expect(config.providers).toEqual({});
     expect(config.defaultModel).toBeUndefined();
-    expect(config.defaultThinking).toBeUndefined();
+    expect(config.thinking?.enabled).toBeUndefined();
   });
 
   it('does not overwrite an existing config file', async () => {
@@ -501,7 +500,7 @@ describe('harness config schema and patch merge', () => {
       maxContextSize: 262144,
       capabilities: ['tool_use'],
     });
-    expect(merged.thinking).toEqual({ mode: 'auto', effort: 'high' });
+    expect(merged.thinking).toEqual({ enabled: true, effort: 'high' });
     expect(merged.hooks).toEqual(base.hooks);
     expect(merged.raw?.['theme']).toBe('dark');
   });
@@ -861,12 +860,12 @@ max_steps_per_turn = "nope"
   });
 
   it('drops invalid top-level scalars and keeps the rest', async () => {
-    const configPath = await writeTempConfig(`default_thinking = "not-a-boolean"
+    const configPath = await writeTempConfig(`default_permission_mode = "not-a-mode"
 ${VALID_TOML}`);
     const result = loadRuntimeConfigSafe(configPath, {});
-    expect(result.config.defaultThinking).toBeUndefined();
+    expect(result.config.defaultPermissionMode).toBeUndefined();
     expect(result.config.providers['kimi']).toBeDefined();
     expect(result.fileWarnings).toHaveLength(1);
-    expect(result.fileWarnings[0]).toContain('default_thinking');
+    expect(result.fileWarnings[0]).toContain('default_permission_mode');
   });
 });

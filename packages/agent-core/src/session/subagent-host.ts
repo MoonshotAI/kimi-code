@@ -224,7 +224,7 @@ export class SessionSubagentHost {
 
     child.config.update({
       modelAlias: parent.config.modelAlias,
-      thinkingLevel: parent.config.thinkingLevel,
+      thinkingEffort: parent.config.thinkingEffort,
       systemPrompt: parent.config.systemPrompt,
     });
     child.tools.copyLoopToolsFrom(parent.tools);
@@ -367,7 +367,7 @@ export class SessionSubagentHost {
     child.config.update({
       cwd: parent.config.cwd,
       modelAlias: parent.config.modelAlias,
-      thinkingLevel: parent.config.thinkingLevel,
+      thinkingEffort: parent.config.thinkingEffort,
     });
 
     const context = await prepareSystemPromptContext(
@@ -375,10 +375,7 @@ export class SessionSubagentHost {
       this.session.options.kimiHomeDir,
       { additionalDirs: child.getAdditionalDirs() },
     );
-    child.useProfile(profile, {
-      ...context,
-      worktreeInfo: getWorktreeInfoFromSessionMetadata(this.session.metadata),
-    });
+    child.useProfile(profile, { ...context, worktreeInfo: getWorktreeInfoFromSessionMetadata(this.session.metadata) }, this.session.options.kimiHomeDir);
     child.tools.inheritUserTools(parent.tools);
   }
 

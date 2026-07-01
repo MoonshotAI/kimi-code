@@ -26,7 +26,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     sessionId: 'sess_1',
     permissionMode: 'manual',
     planMode: false,
-    thinking: false,
+    thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
@@ -95,8 +95,8 @@ describe('FooterComponent — context NaN resilience', () => {
   });
 
   it('shows "thinking" label when thinking is enabled, hides it when disabled', () => {
-    const on = new FooterComponent(baseState({ model: 'k2', thinking: true }));
-    const off = new FooterComponent(baseState({ model: 'k2', thinking: false }));
+    const on = new FooterComponent(baseState({ model: 'k2', thinkingEffort: 'on' }));
+    const off = new FooterComponent(baseState({ model: 'k2', thinkingEffort: 'off' }));
 
     expect(strip(on.render(120)[0]!)).toContain('thinking');
     expect(strip(off.render(120)[0]!)).not.toContain('thinking');

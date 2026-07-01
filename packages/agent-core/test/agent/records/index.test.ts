@@ -337,7 +337,7 @@ describe('agent replay range build', () => {
       {
         type: 'config.update',
         cwd: process.cwd(),
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       },
       {
         type: 'usage.record',
@@ -425,9 +425,11 @@ describe('agent replay range build', () => {
         instruction: 'keep facts',
         result: {
           summary: 'Compacted summary.',
+          contextSummary: 'Compacted summary.',
           compactedCount: 0,
           tokensBefore: 10,
           tokensAfter: 3,
+          keptUserMessageCount: 0,
         },
       }),
     ]);

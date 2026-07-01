@@ -22,9 +22,14 @@ import {
   retryBackoffDelays,
   sleepForRetry,
 } from '../../loop/retry';
-import { renderPrompt } from '../../utils/render-prompt';
+import {
+  renderTodoList,
+  TODO_STORE_KEY,
+  type TodoItem,
+} from '../../tools/builtin/state/todo-list';
 import {
   estimateTokens,
+  estimateTokensForMessage,
   estimateTokensForMessages,
   estimateTokensForTools,
 } from '../../utils/tokens';
@@ -32,14 +37,15 @@ import {
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
+import { renderPrompt } from '../../utils/render-prompt';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
-import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
   DEFAULT_COMPACTION_CONFIG,
   DefaultCompactionStrategy,
   type CompactionStrategy,
 } from './strategy';
+import { buildCompactionSummaryText, isRealUserInput } from './handoff';
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
@@ -62,6 +68,18 @@ export class FullCompaction {
     blockedByTurn: boolean;
   } | null = null;
   private readonly observedMaxContextTokensByModel = new Map<string, number>();
+  // Token count right after the last successful compaction. While no new
+  // content has been appended (tokenCountWithPending <= this value), the
+  // history is already in its minimal compacted form ([kept user prompts,
+  // summary]); re-compacting would only nest summaries, so
+  // checkAutoCompaction skips in that case even if an observed overflow
+  // limit still flags the context as oversized.
+  private lastCompactedTokenCount: number | null = null;
+  // Counts provider-overflow recoveries in this turn that have not yet been
+  // followed by a successful step. Trips MAX_OVERFLOW_COMPACTION_ATTEMPTS to
+  // stop an overflow -> compact -> overflow loop when compaction can no
+  // longer shrink the request below the model window.
+  private consecutiveOverflowCompactions = 0;
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -77,7 +95,7 @@ export class FullCompaction {
           reservedContextSize:
             agent.kimiConfig?.loopControl?.reservedContextSize ??
             DEFAULT_COMPACTION_CONFIG.reservedContextSize,
-        }
+        },
       );
   }
 
@@ -139,9 +157,21 @@ export class FullCompaction {
       });
       return;
     }
-    const compactedCount = this.strategy.computeCompactCount(this.agent.context.history, data.source);
-    if (compactedCount === 0) {
-      throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No prefix that can be compacted in current history.');
+    if (this.agent.context.history.length === 0) {
+      throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
+    }
+    // Manual (SDK/REST) compaction must not start while a turn is running: the
+    // turn keeps mutating the context (streaming content, appending messages)
+    // while the summarizer is in flight, and that output is then neither
+    // summarized nor preserved by the rebuild. Auto compaction is exempt — it is
+    // triggered from within the turn at a step boundary, which blocks the turn
+    // for the duration. Refuse manual compaction here so it only runs at a clean
+    // boundary; the caller can retry once the turn finishes.
+    if (data.source === 'manual' && this.agent.turn.hasActiveTurn) {
+      throw new KimiError(
+        ErrorCodes.COMPACTION_UNABLE,
+        'Cannot compact while a turn is active. Wait for it to finish, then retry.',
+      );
     }
     this.agent.records.logRecord({
       type: 'full_compaction.begin',
@@ -155,7 +185,7 @@ export class FullCompaction {
     const abortController = new AbortController();
     this.compacting = {
       abortController,
-      promise: this.compactionWorker(abortController.signal, data, compactedCount),
+      promise: this.compactionWorker(abortController.signal, data),
       blockedByTurn: false,
     };
   }
@@ -194,9 +224,20 @@ export class FullCompaction {
 
   resetForTurn(): void {
     this.compactionCountInTurn = 0;
+    this.lastCompactedTokenCount = null;
+    this.consecutiveOverflowCompactions = 0;
   }
 
   async handleOverflowError(signal: AbortSignal, error: unknown) {
+    this.consecutiveOverflowCompactions += 1;
+    const maxAttempts = this.strategy.maxOverflowCompactionAttempts;
+    if (this.consecutiveOverflowCompactions > maxAttempts) {
+      throw new KimiError(
+        ErrorCodes.CONTEXT_OVERFLOW,
+        `Compaction failed to bring the context under the model window after ${String(maxAttempts)} attempts.`,
+        { cause: error instanceof Error ? error : undefined },
+      );
+    }
     const didStartCompaction = this.beginAutoCompaction();
     if (!didStartCompaction && !this.compacting) throw error;
     // Always block on overflow errors
@@ -211,6 +252,10 @@ export class FullCompaction {
   }
 
   async afterStep(): Promise<void> {
+    // A completed step means a generate() succeeded, so any prior
+    // overflow -> compact cycle produced a request that now fits; clear the
+    // loop guard.
+    this.consecutiveOverflowCompactions = 0;
     if (this.strategy.checkAfterStep) {
       this.checkAutoCompaction(false);
     }
@@ -219,6 +264,12 @@ export class FullCompaction {
 
   private checkAutoCompaction(throwOnLimit: boolean = true): boolean {
     if (this.compacting) return true;
+    if (
+      this.lastCompactedTokenCount !== null &&
+      this.tokenCountWithPending <= this.lastCompactedTokenCount
+    ) {
+      return false;
+    }
     if (!this.strategy.shouldCompact(this.tokenCountWithPending)) return false;
     return this.beginAutoCompaction(throwOnLimit);
   }
@@ -258,34 +309,26 @@ export class FullCompaction {
   private async compactionWorker(
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
-    compactedCount: number,
   ): Promise<void> {
     try {
-      const finalResult = {
-        summary: '',
-        compactedCount: 1,
-        tokensBefore: 0,
-        tokensAfter: 0,
-      };
-
-      for (let round = 1; ; round++) {
-        const result = await this.compactionRound(round, signal, data, compactedCount);
-        if (!result) return;
-
-        finalResult.summary = result.summary;
-        finalResult.compactedCount += result.compactedCount - 1;
-        finalResult.tokensBefore += result.tokensBefore - finalResult.tokensAfter;
-        finalResult.tokensAfter = result.tokensAfter;
-
-        if (result.tokensBefore - result.tokensAfter < 1024) break;
-        if (!this.strategy.shouldBlock(result.tokensAfter)) break;
-        compactedCount = this.strategy.computeCompactCount(this.agent.context.history, data.source);
-        if (compactedCount === 0) break;
+      const result = await this.compactionRound(signal, data);
+      if (!result) return;
+      // Stay "compacting" through reinjection: a follow-up prompt/steer that lands
+      // now is buffered (TurnFlow defers on `isCompacting`) until the
+      // post-compaction reminders are back, so the first post-compaction turn
+      // never builds a request before they are reinjected. Only after reinjection
+      // do we clear the flag, announce completion, and replay deferred input.
+      try {
+        await this.agent.refreshSystemPrompt();
+      } catch (error) {
+        this.agent.log.error('failed to refresh system prompt after compaction', { error });
       }
+      await this.agent.injection.injectAfterCompaction();
       this.markCompleted();
-      this.agent.emitEvent({ type: 'compaction.completed', result: finalResult });
-      await this.agent.injection.injectGoal();
-      this.triggerPostCompactHook(data, finalResult);
+      const { contextSummary: _contextSummary, ...eventResult } = result;
+      void _contextSummary;
+      this.agent.emitEvent({ type: 'compaction.completed', result: eventResult });
+      this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (isAbortError(error)) return;
       const blockedByTurn = this.compacting?.blockedByTurn === true;
@@ -298,22 +341,40 @@ export class FullCompaction {
         type: 'error',
         ...toKimiErrorPayload(error),
       });
+    } finally {
+      // Replay prompts/steers deferred while compaction held the context — on the
+      // success path (after reinjection above), on an A1 prefix/tail cancel
+      // (`!result`), and on failure/abort. `compacting` is null by now in every
+      // path, so the replay's launch actually starts a turn instead of re-buffering.
+      this.agent.turn.onCompactionFinished();
     }
   }
 
+  private buildInstruction(customInstruction: string | undefined): string {
+    return renderPrompt(compactionInstructionTemplate, {
+      customInstruction: customInstruction?.trim() ?? '',
+    }).trimEnd();
+  }
+
+  private postProcessSummary(summary: string): string {
+    const storeData = this.agent.tools.storeData();
+    const todos = (storeData[TODO_STORE_KEY] as readonly TodoItem[] | undefined) ?? [];
+    if (todos.length === 0) {
+      return summary;
+    }
+    const todoMarkdown = renderTodoList(todos, '## TODO List');
+    return `${summary.trim()}\n\n${todoMarkdown}`;
+  }
+
   private async compactionRound(
-    round: number,
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
-    initialCompactedCount: number,
-  ) {
+  ): Promise<CompactionResult | undefined> {
     const startedAt = Date.now();
     const originalHistory = [...this.agent.context.history];
     const tokensBefore = estimateTokensForMessages(originalHistory);
     let retryCount = 0;
     try {
-      let compactedCount = initialCompactedCount;
-
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
@@ -337,15 +398,22 @@ export class FullCompaction {
         }),
         capability,
       });
+      const instruction = this.buildInstruction(data.instruction);
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
-      let usage: TokenUsage | null;
-      let summary: string;
+      let usage: TokenUsage | null = null;
+      let summary: string | undefined;
+      // Compact the whole history, trimming old messages only when the
+      // summarizer request itself cannot fit. Any trimmed messages are not
+      // covered by the produced summary; `droppedCount` reports that blind spot.
+      let historyForModel = originalHistory;
+      let droppedCount = 0;
+      let overflowShrinkCount = 0;
+      let emptyOrTruncatedShrinkCount = 0;
       while (true) {
-        const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
-          ...this.agent.context.project(messagesToCompact),
-          createUserMessage(renderPrompt(compactionInstructionTemplate, { customInstruction: data.instruction ?? '' })),
+          ...this.agent.context.project(historyForModel, { synthesizeMissing: true }),
+          createUserMessage(instruction),
         ];
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
         try {
@@ -371,14 +439,40 @@ export class FullCompaction {
           if (isContextOverflow) {
             this.observeContextOverflow(estimatedCompactionRequestTokens);
           }
-          if (
-            isContextOverflow ||
-            error instanceof CompactionTruncatedError ||
-            error instanceof APIEmptyResponseError // e.g. think-only
-          ) {
-            compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
+          if (isContextOverflow && historyForModel.length > 1) {
+            overflowShrinkCount += 1;
+            if (overflowShrinkCount > MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS) {
+              throw error;
+            }
+            const before = historyForModel.length;
+            historyForModel = shrinkCompactionHistoryAfterOverflow(
+              historyForModel,
+              overflowShrinkCount,
+            );
+            droppedCount += before - historyForModel.length;
+            retryCount = 0;
+            continue;
           }
-          else if (!isRetryableGenerateError(error)) {
+          const shouldShrinkAfterEmptyOrTruncated =
+            error instanceof CompactionTruncatedError ||
+            error instanceof APIEmptyResponseError;
+          if (shouldShrinkAfterEmptyOrTruncated && historyForModel.length > 1) {
+            // Each empty/truncated summary drops the oldest message and retries,
+            // but without its own bound this would issue ~one request per message
+            // (resetting retryCount sidesteps the transient-error budget). Cap the
+            // shrink attempts by the same retry budget so a model that keeps
+            // returning empty cannot fan out into a request per history entry.
+            emptyOrTruncatedShrinkCount += 1;
+            if (emptyOrTruncatedShrinkCount > MAX_COMPACTION_RETRY_ATTEMPTS) {
+              throw error;
+            }
+            const before = historyForModel.length;
+            historyForModel = dropOldestMessageAndLeadingToolResults(historyForModel);
+            droppedCount += before - historyForModel.length;
+            retryCount = 0;
+            continue;
+          }
+          if (!isRetryableGenerateError(error)) {
             throw error;
           }
           if (retryCount + 1 >= MAX_COMPACTION_RETRY_ATTEMPTS) {
@@ -396,23 +490,33 @@ export class FullCompaction {
       const newHistory = this.agent.context.history;
       for (let i = 0; i < originalHistory.length; i++) {
         if (newHistory[i] !== originalHistory[i]) {
-          // History changed during compaction, likely due to undo
+          // The compacted prefix changed under us (e.g. undo). Bail.
           this.cancel();
           return undefined;
         }
       }
+      // The prefix is intact, but the tail grew while the summarizer was in
+      // flight (a live step racing a manual/SDK compaction). A real user message
+      // is safe — the all-user rebuild picks recent user input back up from the
+      // grown history — but anything compaction would drop (an assistant/tool
+      // turn, or a user-role message like a background-task notification, hook/
+      // cron reminder, or shell output) was neither summarized (the summary only
+      // covers originalHistory) nor kept, so it would silently vanish. Cancel and
+      // let a later clean-boundary compaction handle it.
+      if (newHistory.slice(originalHistory.length).some((message) => !isRealUserInput(message))) {
+        this.cancel();
+        return undefined;
+      }
 
-      summary = this.postProcessSummary(summary);
-
-      const recent = originalHistory.slice(compactedCount);
-      const tokensAfter = estimateTokens(summary) + estimateTokensForMessages(recent);
-
-      const result: CompactionResult = {
-        summary,
-        compactedCount,
+      const rawSummary = this.postProcessSummary(summary ?? '');
+      const contextSummary = buildCompactionSummaryText(rawSummary);
+      const result = this.agent.context.applyCompaction({
+        summary: rawSummary,
+        contextSummary,
+        compactedCount: originalHistory.length,
         tokensBefore,
-        tokensAfter,
-      };
+        droppedCount: droppedCount === 0 ? undefined : droppedCount,
+      });
 
       // Telemetry keys are snake_case, but the `context.apply_compaction`
       // record written below keeps its persisted camelCase field names
@@ -424,24 +528,25 @@ export class FullCompaction {
         tokens_after: result.tokensAfter,
         duration_ms: Date.now() - startedAt,
         compacted_count: result.compactedCount,
+        dropped_count: result.droppedCount,
         retry_count: retryCount,
-        round,
-        thinking_level: this.agent.config.thinkingLevel,
+        round: 1,
+        thinking_effort: this.agent.config.thinkingEffort,
         ...(usage === null
           ? {}
           : { input_tokens: inputTotal(usage), output_tokens: usage.output }),
       });
-      this.agent.context.applyCompaction(result);
+      this.lastCompactedTokenCount = result.tokensAfter;
       return result;
     } catch (error) {
-      if (isAbortError(error)) return;
+      if (isAbortError(error)) return undefined;
       this.agent.telemetry.track('compaction_failed', {
         source: data.source,
         tokens_before: tokensBefore,
         duration_ms: Date.now() - startedAt,
-        round,
+        round: 1,
         retry_count: retryCount,
-        thinking_level: this.agent.config.thinkingLevel,
+        thinking_effort: this.agent.config.thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
       });
       if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
@@ -478,16 +583,52 @@ export class FullCompaction {
       },
     });
   }
+}
 
-  private postProcessSummary(summary: string): string {
-    const storeData = this.agent.tools.storeData();
-    const todos = (storeData['todo'] as readonly TodoItem[] | undefined) ?? [];
-    if (todos.length === 0) {
-      return summary;
-    }
-    const todoMarkdown = renderTodoList(todos, '## TODO List');
-    return `${summary.trim()}\n\n${todoMarkdown}`;
+const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
+const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+
+function shrinkCompactionHistoryAfterOverflow<T extends Message>(
+  messages: readonly T[],
+  attempt: number,
+): T[] {
+  if (messages.length <= 1) return messages.slice();
+  const ratio = COMPACTION_OVERFLOW_SHRINK_RATIOS[
+    Math.min(attempt - 1, COMPACTION_OVERFLOW_SHRINK_RATIOS.length - 1)
+  ]!;
+  const tokenBudget = Math.floor(estimateTokensForMessages(messages) * ratio);
+  return takeRecentMessagesWithinTokenBudget(messages, tokenBudget);
+}
+
+function takeRecentMessagesWithinTokenBudget<T extends Message>(
+  messages: readonly T[],
+  tokenBudget: number,
+): T[] {
+  let start = messages.length;
+  let tokens = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const messageTokens = estimateTokensForMessage(messages[i]!);
+    if (tokens + messageTokens > tokenBudget) break;
+    tokens += messageTokens;
+    start = i;
   }
+  if (start === 0) start = 1;
+  return dropLeadingToolResults(messages.slice(start));
+}
+
+function dropOldestMessageAndLeadingToolResults<T extends { readonly role: string }>(
+  messages: readonly T[],
+): T[] {
+  if (messages.length <= 1) return messages.slice();
+  return dropLeadingToolResults(messages.slice(1));
+}
+
+function dropLeadingToolResults<T extends { readonly role: string }>(messages: readonly T[]): T[] {
+  let start = 0;
+  while (start < messages.length && messages[start]!.role === 'tool') {
+    start += 1;
+  }
+  return messages.slice(start);
 }
 
 function extractCompactionSummary(response: GenerateResult): string {

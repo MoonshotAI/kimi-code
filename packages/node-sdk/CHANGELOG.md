@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.11.0
+
+### Minor Changes
+
+- [#1132](https://github.com/MoonshotAI/kimi-code/pull/1132) [`108299b`](https://github.com/MoonshotAI/kimi-code/commit/108299be3cdffc31a23f64efd3ff5ba50976b412) - Refactor the thinking effort system
+
 ## 0.10.1
 
 ### Patch Changes

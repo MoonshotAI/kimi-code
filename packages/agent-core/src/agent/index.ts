@@ -14,7 +14,11 @@ import type { PluginCommandOrigin } from './context';
 
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
-import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
+import {
+  prepareSystemPromptContext,
+  type PreparedSystemPromptContext,
+  type ResolvedAgentProfile,
+} from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -86,6 +90,7 @@ export interface AgentOptions {
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly replay?: ReplayBuilderOptions;
   readonly additionalDirs?: readonly string[];
+  readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 }
 
 export class Agent {
@@ -132,6 +137,9 @@ export class Agent {
   readonly replayBuilder: ReplayBuilder;
 
   private additionalDirs: readonly string[];
+  private activeProfile?: ResolvedAgentProfile;
+  private brandHome?: string;
+  private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
@@ -151,6 +159,7 @@ export class Agent {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
+    this.systemPromptContextProvider = options.systemPromptContextProvider;
 
     this.llmRequestLogger = new LlmRequestLogger(this.log);
     this.blobStore = options.homedir
@@ -254,7 +263,41 @@ export class Agent {
     });
   }
 
-  useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
+  useProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+    brandHome?: string,
+  ): void {
+    this.setActiveProfile(profile, brandHome);
+    this.updateSystemPromptFromProfile(profile, context);
+    this.tools.setActiveTools(profile.tools);
+  }
+
+  setActiveProfile(profile: ResolvedAgentProfile, brandHome?: string): void {
+    this.activeProfile = profile;
+    this.brandHome = brandHome;
+  }
+
+  /**
+   * Re-render the system prompt with freshly gathered runtime context (cwd
+   * listing, AGENTS.md, additional-dirs info, skill list). Called after
+   * compaction so the post-compaction turns do not keep a snapshot captured
+   * at session bootstrap. Invalidates the prompt-cache prefix by design.
+   */
+  async refreshSystemPrompt(): Promise<void> {
+    if (this.activeProfile === undefined) return;
+    const context = this.systemPromptContextProvider === undefined
+      ? await prepareSystemPromptContext(this.kaos, this.brandHome, {
+          additionalDirs: this.additionalDirs,
+        })
+      : await this.systemPromptContextProvider();
+    this.updateSystemPromptFromProfile(this.activeProfile, context);
+  }
+
+  private updateSystemPromptFromProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+  ): void {
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
@@ -265,7 +308,6 @@ export class Agent {
       additionalDirsInfo: context?.additionalDirsInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
-    this.tools.setActiveTools(profile.tools);
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
@@ -305,9 +347,9 @@ export class Agent {
         this.context.undo(payload.count);
       },
       setThinking: (payload) => {
-        const wasEnabled = this.config.thinkingLevel !== 'off';
-        this.config.update({ thinkingLevel: payload.level });
-        const enabled = this.config.thinkingLevel !== 'off';
+        const wasEnabled = this.config.thinkingEffort !== 'off';
+        this.config.update({ thinkingEffort: payload.effort });
+        const enabled = this.config.thinkingEffort !== 'off';
         if (enabled !== wasEnabled) {
           this.telemetry.track('thinking_toggle', { enabled });
         }
