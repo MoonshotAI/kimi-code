@@ -102,7 +102,7 @@ const DOMAIN_LAYER = new Map([
   ['swarm', 4],
   ['scopeContext', 4],
   ['usage', 4],
-  ['tooldedup', 4],
+  ['toolDedupe', 4],
   ['contextMemory', 4],
   ['contextInjector', 4],
   ['systemReminder', 4],

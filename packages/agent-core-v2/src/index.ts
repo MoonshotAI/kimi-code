@@ -36,7 +36,7 @@ export * from '#/agent/plan';
 export * from '#/agent/goal';
 export * from '#/agent/swarm';
 export * from '#/agent/usage';
-export * from '#/agent/tooldedup';
+export * from '#/agent/toolDedupe';
 
 export * from '#/agent/background';
 import '#/agent/cron';

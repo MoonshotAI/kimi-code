@@ -7,8 +7,8 @@ import {
   IAgentToolDedupeService,
   AgentToolDedupeService,
   __testing as toolDedupTesting,
-} from '#/agent/tooldedup';
-import type { ToolDedupResult } from '#/agent/tooldedup';
+} from '#/agent/toolDedupe';
+import type { ToolDedupResult } from '#/agent/toolDedupe';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { IAgentTurnService } from '#/agent/turn';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
