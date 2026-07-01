@@ -1,3 +1,4 @@
+import { ProcessTerminal } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
 
@@ -73,6 +74,7 @@ function makePanel(opts: {
   initialTab?: 'installed' | 'official' | 'third-party' | 'custom';
   selectedId?: string;
   pluginHint?: { id: string; text: string };
+  terminal?: { rows: number };
 }) {
   const installed = opts.installed ?? [];
   const onSelect = vi.fn<(s: PluginsPanelSelection) => void>();
@@ -83,6 +85,7 @@ function makePanel(opts: {
     initialTab: opts.initialTab,
     selectedId: opts.selectedId,
     pluginHint: opts.pluginHint,
+    terminal: opts.terminal as unknown as ProcessTerminal,
     onSelect,
     onCancel: vi.fn(),
     onRequestMarketplace,
@@ -549,5 +552,57 @@ describe('plugins selector dialogs', () => {
     picker.handleInput('\r');
 
     expect(results).toEqual([{ kind: 'confirm' }]);
+  });
+
+  it('scrolls the marketplace viewport so the selected item stays visible', () => {
+    // 30 marketplace entries; terminal is only 12 rows high, so the list area
+    // is about 2 rows. We verify the viewport follows the cursor rather than
+    // dumping the entire list and clipping from the top.
+    const entries = Array.from({ length: 30 }, (_, i) => ({
+      id: `plugin-${i}`,
+      displayName: `Plugin ${i}`,
+      source: `https://example.test/plugin-${i}.zip`,
+    }));
+    const { panel } = makePanel({ initialTab: 'third-party', terminal: { rows: 12 } });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    const renderHeight = () => panel.render(80).length;
+
+    // The full rendered list would be far taller than 12 rows.
+    expect(renderHeight()).toBeLessThanOrEqual(12);
+
+    // Initially the first item is visible and selected.
+    let out = strip(renderRaw(panel));
+    expect(out).toContain('Plugin 0');
+    expect(out).toContain('? Plugin 0');
+
+    // Move the selection down to the last item.
+    for (let i = 0; i < 29; i++) {
+      panel.handleInput('\u001B[B'); // ↓
+    }
+
+    // The rendered output must still fit the terminal and show the selected
+    // last item with the selection pointer.
+    expect(renderHeight()).toBeLessThanOrEqual(12);
+    out = strip(renderRaw(panel));
+    expect(out).toContain('? Plugin 29');
+    expect(out).toContain('Plugin 29');
+  });
+
+  it('keeps the pointer line visible when the selected item is taller than the viewport', () => {
+    const longDescription =
+      'This plugin has a very long description that wraps to multiple lines even at a reasonable terminal width, so the selected item is taller than the computed viewport. The pointer line must remain visible.';
+    const entries = [
+      { id: 'short', displayName: 'Short plugin', source: 'https://example.test/short.zip' },
+      { id: 'tall', displayName: 'Tall plugin', source: 'https://example.test/tall.zip', description: longDescription },
+    ];
+    // 12 rows => available list rows is 2, so the tall item exceeds the viewport.
+    const { panel } = makePanel({ initialTab: 'third-party', terminal: { rows: 12 } });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    panel.handleInput('\u001B[B'); // move to the tall item
+
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('? Tall plugin');
   });
 });
