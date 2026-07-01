@@ -387,7 +387,26 @@ export class BackgroundManager {
     }
 
     const entry = this.tasks.get(taskId);
-    if (entry === undefined) return emptyOutputSnapshot();
+    if (entry === undefined) {
+      // Ghost with an in-memory preview (no persistence backend): return
+      // the preserved ring-buffer tail so readOutput is not empty for tasks
+      // that had output before eviction.
+      const ghost = this.ghosts.get(taskId);
+      if (ghost?.evictedOutputPreview !== undefined) {
+        const available = Buffer.from(ghost.evictedOutputPreview, 'utf-8');
+        const totalBytes = ghost.evictedOutputSizeBytes ?? available.byteLength;
+        const previewBytes = Math.min(previewLimit, available.byteLength);
+        const previewOffset = available.byteLength - previewBytes;
+        return {
+          outputSizeBytes: totalBytes,
+          previewBytes,
+          truncated: totalBytes > previewBytes,
+          fullOutputAvailable: false,
+          preview: available.subarray(previewOffset).toString('utf-8'),
+        };
+      }
+      return emptyOutputSnapshot();
+    }
 
     const available = Buffer.from(entry.outputChunks.join(''), 'utf-8');
     const previewBytes = Math.min(previewLimit, available.byteLength, entry.outputSizeBytes);
@@ -899,13 +918,33 @@ export class BackgroundManager {
     // Preserve a lightweight ghost so the task stays addressable via
     // getTask/list/getOutputSnapshot (which read persisted logs for ghosts)
     // instead of reporting "Task not found" until a restart reloads the
-    // on-disk record.
-    this.ghosts.set(taskId, this.toInfo(entry));
+    // on-disk record. When there is no persistence backend, carry the
+    // in-memory ring-buffer preview onto the ghost so readOutput still
+    // returns the tail instead of an empty string.
+    const info = this.toInfo(entry);
+    if (this.persistence === undefined && entry.outputChunks.length > 0) {
+      const preview = entry.outputChunks.join('');
+      this.ghosts.set(taskId, {
+        ...info,
+        evictedOutputPreview: preview,
+        evictedOutputSizeBytes: entry.outputSizeBytes,
+      });
+    } else {
+      this.ghosts.set(taskId, info);
+    }
     entry.outputChunks.length = 0;
     entry.pendingOutput = [];
     entry.pendingOutputBytes = 0;
     this.deleteNotificationKeysForTask(taskId);
     this.tasks.delete(taskId);
+    // Bound the ghost set so long-lived sessions don't retain one record per
+    // completed task forever. Evict oldest ghosts (by insertion order, which
+    // mirrors completion order since terminal tasks are evicted in order).
+    while (this.ghosts.size > DEFAULT_MAX_RETAINED_TERMINAL_TASKS) {
+      const oldestId = this.ghosts.keys().next().value;
+      if (oldestId === undefined) break;
+      this.ghosts.delete(oldestId);
+    }
   }
 
   private deleteNotificationKeysForTask(taskId: string): void {

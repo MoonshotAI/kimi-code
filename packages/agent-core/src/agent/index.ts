@@ -208,8 +208,13 @@ export class Agent {
    * so it does not keep receiving MCP status changes or stay referenced by the
    * MCP listener set. Persisted metadata is preserved so the agent can be
    * resumed later.
+   *
+   * Records are flushed before tools/cron teardown because `flushMetadata()`
+   * only iterates agents still in the live map — once the caller deletes this
+   * agent from that map, any pending wire.jsonl appends would be lost.
    */
   async dispose(): Promise<void> {
+    await this.records.flush();
     this.tools.dispose();
     await this.cron?.stop();
   }

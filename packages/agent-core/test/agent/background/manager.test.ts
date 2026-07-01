@@ -929,6 +929,66 @@ describe('BackgroundManager', () => {
     }
   });
 
+  it('bounds the ghost set so old evicted tasks are eventually dropped', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-mgr-ghost-cap-'));
+    try {
+      const { manager } = createBackgroundManager({ sessionDir });
+
+      // Complete 205 terminal tasks. The first 100 fill the live tasks map;
+      // tasks 101-200 each evict one live task into the ghost map (100
+      // ghosts). Task 201+ would push ghosts past 100 without the cap.
+      // Without bounding, the ghost set would grow to 105; with the cap it
+      // stays at 100. Total list(false) = 100 live + 100 ghosts = 200 max.
+      for (let i = 0; i < 205; i++) {
+        const id = registerProcess(
+          manager,
+          immediateProcess(0, `output ${String(i)}\n`),
+          `echo ${String(i)}`,
+          `task ${String(i)}`,
+        );
+        await waitForTerminal(manager, id);
+      }
+
+      const all = manager.list(false);
+      // 100 live terminal tasks + at most 100 ghosts.
+      expect(all.length).toBeLessThanOrEqual(200);
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('preserves output preview on ghosts when there is no persistence backend', async () => {
+    // Without a sessionDir, the manager has no persistence — evicted tasks
+    // would lose all output. The fix carries the ring-buffer preview onto
+    // the ghost so readOutput still returns the tail.
+    const { manager } = createBackgroundManager();
+
+    // Register 101 tasks to trigger eviction of the first. The first task
+    // has identifiable output.
+    const firstTaskId = registerProcess(
+      manager,
+      immediateProcess(0, 'preserved tail output\n'),
+      'echo preserved',
+      'non-persistent eviction test',
+    );
+    await waitForTerminal(manager, firstTaskId);
+
+    for (let i = 1; i < 101; i++) {
+      const id = registerProcess(
+        manager,
+        immediateProcess(0, `filler ${String(i)}\n`),
+        `echo filler-${String(i)}`,
+        `filler ${String(i)}`,
+      );
+      await waitForTerminal(manager, id);
+    }
+
+    // The first task is now a ghost. Without the fix, readOutput returns
+    // empty. With the fix, the ring-buffer preview is preserved on the ghost.
+    const output = await manager.readOutput(firstTaskId);
+    expect(output).toContain('preserved tail output');
+  });
+
   it('launches a real process and waits to completion', async () => {
     const { spawn } = await import('node:child_process');
     const { manager } = createBackgroundManager();
