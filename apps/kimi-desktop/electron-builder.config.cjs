@@ -19,7 +19,7 @@
 const notarize = process.env.KIMI_DESKTOP_NOTARIZE === 'true';
 
 // Internal-testing artifact name:
-//   kcd-beta-alpha-crazy-internal-v50-<arch>-<MMDD>.<ext>
+//   KCD-beta-alpha-crazy-internal-v50-<arch>-<MMDD>.<ext>
 // The date is MMDD in UTC+8, computed at build time. `v50` is a fixed label
 // (not a version number) — edit it here to bump the internal build label.
 function mmddUTC8() {
@@ -28,7 +28,7 @@ function mmddUTC8() {
   const dd = String(utc8.getUTCDate()).padStart(2, '0');
   return mm + dd;
 }
-const artifactName = 'kcd-beta-alpha-crazy-internal-v50-${arch}-' + mmddUTC8() + '.${ext}';
+const artifactName = 'KCD-beta-alpha-crazy-internal-v50-${arch}-' + mmddUTC8() + '.${ext}';
 
 module.exports = {
   appId: 'ai.moonshot.kimi.desktop',
