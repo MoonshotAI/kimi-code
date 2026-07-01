@@ -404,6 +404,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       const built = a.get(ICoreProcessService);
 
       const sessionService = a.get(ISessionService);
+      // Wire the broadcast session-close listener after both WSBroadcast
+      // (resolved above) and SessionService are constructed, so DI does not
+      // instantiate SessionService first — that would subscribe it to the
+      // event bus before WSBroadcast and let status_changed events overtake
+      // the turn boundaries that caused them.
+      wsBroadcast.bindSessionCloseListener(sessionService);
       a.get(IMessageService);
 
       a.get(IAuthSummaryService);

@@ -33,6 +33,7 @@
  */
 
 import { createDecorator } from '@moonshot-ai/agent-core';
+import type { ISessionService as ISessionServiceT } from '@moonshot-ai/agent-core';
 import type { InFlightTurn, SessionCursor } from '@moonshot-ai/protocol';
 
 import type { EventEnvelope } from '#/ws/protocol';
@@ -90,6 +91,17 @@ export interface IWSBroadcastService {
    * touched this run). Used by the WS abort ack `at_seq` path.
    */
   currentSeq(sessionId: string): number;
+
+  /**
+   * Wire the session-close listener that drops per-session buffers, journal
+   * state, and in-flight turn tracking when a session closes. Must be called
+   * after this service's event-bus subscription is in place and after the
+   * caller has resolved SessionService, so DI does not instantiate
+   * SessionService before this service — that would flip bus subscription
+   * order and let status_changed events overtake the turn boundaries that
+   * caused them.
+   */
+  bindSessionCloseListener(sessionService: ISessionServiceT): void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare

@@ -487,8 +487,8 @@ describe('WSBroadcastService (WS transport pump)', () => {
       new FakeSessionClients(),
       new FakeConnectionRegistry(),
       makeEnv(),
-      makeSessionService(closeEmitter),
     );
+    broadcast.bindSessionCloseListener(makeSessionService(closeEmitter));
     bus.publish({
       type: 'turn.started',
       sessionId: 'sid_close',
@@ -512,6 +512,56 @@ describe('WSBroadcastService (WS transport pump)', () => {
     expect(broadcast.currentSeq('sid_close')).toBe(0);
     expect(broadcast._bufferLengthForTest('sid_close')).toBe(0);
     expect((await broadcast.getSnapshotState('sid_close')).inFlightTurn).toBeNull();
+    broadcast.dispose();
+    bus.dispose();
+  });
+
+  it('preserves turn-before-status_changed ordering when wired after SessionService', async () => {
+    // SessionService subscribes to the event bus and synchronously
+    // re-publishes status_changed when it sees turn.started/turn.ended.
+    // WSBroadcast must subscribe to the bus before SessionService so the
+    // turn boundary is journaled with a lower seq than the status change
+    // it caused. bindSessionCloseListener must not force DI to instantiate
+    // SessionService first.
+    const clients = new FakeSessionClients();
+    const conn = fakeConn('conn_order');
+    clients.subscribe(conn, 'sid_order');
+    const registry = new FakeConnectionRegistry([conn]);
+    const bus = new EventService();
+    const broadcast = new WSBroadcastService(
+      bus,
+      testLogger,
+      clients,
+      registry,
+      makeEnv(),
+    );
+    // Simulate SessionService subscribing after WSBroadcast: a listener
+    // that re-publishes status_changed when it sees turn.started.
+    bus.onDidPublish((event) => {
+      if ((event as { type?: string }).type === 'turn.started') {
+        bus.publish({
+          type: 'event.session.status_changed',
+          sessionId: 'sid_order',
+          agentId: 'main',
+          status: 'running',
+          previous_status: 'idle',
+        } as unknown as Event);
+      }
+    });
+    broadcast.bindSessionCloseListener(makeSessionService());
+    bus.publish({
+      type: 'turn.started',
+      sessionId: 'sid_order',
+      agentId: 'main',
+      turnId: 1,
+      origin: { kind: 'user' },
+    } as unknown as Event);
+    await broadcast._drainForTest('sid_order');
+
+    const types = conn.sent.map((m) => (m as { type: string }).type);
+    const seqs = conn.sent.map((m) => (m as { seq: number }).seq);
+    expect(types).toEqual(['turn.started', 'event.session.status_changed']);
+    expect(seqs).toEqual([1, 2]);
     broadcast.dispose();
     bus.dispose();
   });

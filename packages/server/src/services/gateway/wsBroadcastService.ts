@@ -7,7 +7,6 @@ import {
   IEnvironmentService,
   IEventService,
   ILogService,
-  ISessionService,
   type ISessionService as ISessionServiceT,
 } from '@moonshot-ai/agent-core';
 import { isVolatileEventType, type Event, type SessionCursor } from '@moonshot-ai/protocol';
@@ -54,7 +53,6 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
     @ISessionClientsService private readonly sessionClients: ISessionClientsService,
     @IConnectionRegistry private readonly connectionRegistry: IConnectionRegistry,
     @IEnvironmentService env: IEnvironmentService,
-    @ISessionService sessionService?: ISessionServiceT,
   ) {
     super();
     this._maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
@@ -65,13 +63,21 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
         this._onEvent(event);
       }),
     );
-    if (sessionService !== undefined) {
-      this._register(
-        sessionService.onDidClose(({ sessionId }) => {
-          this._deleteSession(sessionId);
-        }),
-      );
-    }
+  }
+
+  /**
+   * Wire the session-close listener. Must be called after this service's
+   * event-bus subscription is in place and after the caller has resolved
+   * SessionService, so DI does not instantiate SessionService before this
+   * service — that would flip bus subscription order and let
+   * status_changed events overtake the turn boundaries that caused them.
+   */
+  bindSessionCloseListener(sessionService: ISessionServiceT): void {
+    this._register(
+      sessionService.onDidClose(({ sessionId }) => {
+        this._deleteSession(sessionId);
+      }),
+    );
   }
 
   private _onEvent(event: Event): void {

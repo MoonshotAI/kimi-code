@@ -80,6 +80,7 @@ class StubBroadcast implements IWSBroadcastServiceT {
   currentSeq(): number {
     return this.seq;
   }
+  bindSessionCloseListener(): void {}
 }
 
 class StubApprovals {
