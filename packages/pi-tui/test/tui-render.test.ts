@@ -765,3 +765,31 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 });
+
+
+describe("TUI scrollback preservation", () => {
+	it("does not emit full redraw when changes are above the viewport", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		// Render 8 lines into a height-5 terminal so previousViewportTop > 0
+		// (viewport shows lines 3..7, lines 0..2 are above the viewport).
+		component.lines = ["line0", "line1", "line2", "line3", "line4", "line5", "line6", "line7"];
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		// Change a line above the viewport (line0); this must not trigger fullRender.
+		component.lines[0] = "line0-changed";
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[3J"), "should not clear scrollback (no ESC[3J)");
+		assert.ok(!writes.includes("\x1b[2J"), "should not full redraw (no ESC[2J)");
+
+		tui.stop();
+	});
+});

@@ -1451,11 +1451,43 @@ export class TUI extends Container {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the previous viewport, we need a full redraw.
+		// If the first changed line is above the viewport, a destructive full
+		// redraw would clear scrollback and yank the user's viewport (on Windows
+		// Terminal, ESC[3J while scrolled into scrollback jumps to the absolute
+		// top — microsoft/Terminal#20370). Clamp the diff to the visible viewport
+		// and skip above-viewport changes: scrollback keeps stale bytes, but the
+		// user's scroll position is preserved.
 		if (firstChanged < prevViewportTop) {
-			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
-			fullRender(true);
-			return;
+			// If content length changed (shrink/grow), fall back to a full redraw
+			// so the viewport is reset to the new content bounds. Only clamp when
+			// length is unchanged (e.g. a spinner tick or markdown reflow above the
+			// viewport during streaming).
+			if (newLines.length !== this.previousLines.length) {
+				logRedraw(`firstChanged < viewportTop with length change (${firstChanged} < ${prevViewportTop}, len ${this.previousLines.length} -> ${newLines.length})`);
+				fullRender(true);
+				return;
+			}
+			let visibleFirstChanged = -1;
+			for (let i = prevViewportTop; i <= lastChanged; i++) {
+				const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
+				const newLine = i < newLines.length ? newLines[i] : "";
+				if (oldLine !== newLine) {
+					visibleFirstChanged = i;
+					break;
+				}
+			}
+			if (visibleFirstChanged === -1) {
+				logRedraw(`all changes above viewport (firstChanged=${firstChanged} < ${prevViewportTop})`);
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousLines = newLines;
+				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+				this.previousWidth = width;
+				this.previousHeight = height;
+				this.previousViewportTop = prevViewportTop;
+				return;
+			}
+			logRedraw(`clamped firstChanged ${firstChanged} -> ${visibleFirstChanged} (viewportTop=${prevViewportTop})`);
+			firstChanged = visibleFirstChanged;
 		}
 
 		// Render from first changed line to end
