@@ -679,7 +679,7 @@ describe('KimiChatProvider', () => {
 
       expect(getGenerationState(provider)).toEqual({
         extra_body: {
-          thinking: { type: 'enabled', effort: 'high' },
+          thinking: { type: 'enabled' },
         },
         max_tokens: 512,
       });
@@ -716,7 +716,7 @@ describe('KimiChatProvider', () => {
   });
 
   describe('with thinking', () => {
-    it('model without support_efforts passes the requested effort through', async () => {
+    it('model without support_efforts omits effort', async () => {
       const provider = createProvider().withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
@@ -724,7 +724,7 @@ describe('KimiChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['reasoning_effort']).toBeUndefined();
-      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
+      expect(body['thinking']).toEqual({ type: 'enabled' });
       expect(body['extra_body']).toBeUndefined();
     });
 
@@ -785,10 +785,13 @@ describe('KimiChatProvider', () => {
       expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 
-    it('thinkingEffort reflects the requested effort when support_efforts is absent', () => {
+    it("thinkingEffort falls back to 'on' when support_efforts is absent", () => {
       const provider = createProvider();
-      expect(provider.withThinking('high').thinkingEffort).toBe('high');
+      // Without declared efforts the wire object carries no `effort`, so the
+      // getter reports boolean-thinking ("on") for any non-off effort.
+      expect(provider.withThinking('high').thinkingEffort).toBe('on');
       expect(provider.withThinking('on').thinkingEffort).toBe('on');
+      expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 
     it('replaces the previous thinking effort when called again', () => {
@@ -1338,7 +1341,7 @@ describe('KimiChatProvider', () => {
         .withThinking('high');
 
       expect(getGenerationState(provider).extra_body).toEqual({
-        thinking: { type: 'enabled', effort: 'high', keep: 'all' },
+        thinking: { type: 'enabled', keep: 'all' },
       });
     });
 
@@ -1351,7 +1354,7 @@ describe('KimiChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
+      expect(body['thinking']).toEqual({ type: 'enabled' });
     });
 
     it('treats empty thinking patch as noop, preserving prior withThinking', async () => {
@@ -1361,7 +1364,7 @@ describe('KimiChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
+      expect(body['thinking']).toEqual({ type: 'enabled' });
     });
   });
 

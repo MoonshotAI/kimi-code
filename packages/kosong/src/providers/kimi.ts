@@ -513,17 +513,12 @@ export class KimiChatProvider implements ChatProvider {
     if (effort === 'off') {
       thinking = { type: 'disabled' };
     } else {
-      // When `support_efforts` is present, it is the source of truth: only
-      // declared values are sent as effort. When it is absent, pass the
-      // requested effort through verbatim.
-      const hasDeclaredEfforts = this._supportEfforts.length > 0;
-      const declared = hasDeclaredEfforts
-        ? this._supportEfforts.includes(effort)
-          ? effort
-          : undefined
-        : effort;
-      thinking =
-        declared !== undefined ? { type: 'enabled', effort: declared } : { type: 'enabled' };
+      // Only efforts the model explicitly declares via `support_efforts` are
+      // sent on the wire. When `support_efforts` is absent/empty, or the
+      // requested effort is not declared, only thinking.type is sent.
+      thinking = this._supportEfforts.includes(effort)
+        ? { type: 'enabled', effort }
+        : { type: 'enabled' };
     }
     // Replace extra_body.thinking wholesale so a stale `effort` from a previous
     // withThinking call can never linger on a disabled or non-effort thinking

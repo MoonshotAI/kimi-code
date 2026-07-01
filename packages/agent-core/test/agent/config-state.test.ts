@@ -289,4 +289,36 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       vi.unstubAllEnvs();
     }
   });
+
+  it('injects KIMI_MODEL_THINKING_EFFORT into config.provider when thinking is on', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const ctx = kimiAgent();
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { type?: string; effort?: string } };
+      };
+      expect(gen.extra_body?.thinking).toEqual({ type: 'enabled', effort: 'max' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does NOT inject KIMI_MODEL_THINKING_EFFORT into config.provider when thinking is off', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const ctx = kimiAgent();
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'off' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { effort?: string } };
+      };
+      expect(gen.extra_body?.thinking?.effort).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
