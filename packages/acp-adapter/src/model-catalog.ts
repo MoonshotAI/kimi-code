@@ -22,6 +22,7 @@
  *      allow-list (mirrors `kimi-cli/src/kimi_cli/llm.py:derive_model_capabilities`).
  */
 
+import { effectiveModelAlias } from '@moonshot-ai/agent-core';
 import type { KimiHarness, ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 /**
@@ -55,11 +56,12 @@ export interface AcpModelEntry {
 const TOGGLEABLE_THINKING_MODELS = new Set(['kimi-for-coding', 'kimi-code']);
 
 export function deriveThinkingSupported(alias: ModelAlias): boolean {
-  const declared = alias.capabilities ?? [];
+  const effective = effectiveModelAlias(alias);
+  const declared = effective.capabilities ?? [];
   if (declared.includes('thinking') || declared.includes('always_thinking')) return true;
-  const lower = alias.model.toLowerCase();
+  const lower = effective.model.toLowerCase();
   if (lower.includes('thinking') || lower.includes('reason')) return true;
-  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return true;
+  if (TOGGLEABLE_THINKING_MODELS.has(effective.model)) return true;
   return false;
 }
 
@@ -71,7 +73,7 @@ export function deriveThinkingSupported(alias: ModelAlias): boolean {
  * may remove the off option from the client.
  */
 export function deriveAlwaysThinking(alias: ModelAlias): boolean {
-  return (alias.capabilities ?? []).includes('always_thinking');
+  return (effectiveModelAlias(alias).capabilities ?? []).includes('always_thinking');
 }
 
 /**
@@ -80,9 +82,10 @@ export function deriveAlwaysThinking(alias: ModelAlias): boolean {
  * boolean models (no `support_efforts`).
  */
 export function deriveDefaultThinkingEffort(alias: ModelAlias): string {
-  const efforts = alias.supportEfforts;
+  const effective = effectiveModelAlias(alias);
+  const efforts = effective.supportEfforts;
   if (efforts !== undefined && efforts.length > 0) {
-    return alias.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+    return effective.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
   }
   return 'on';
 }
@@ -109,9 +112,10 @@ export async function listModelsFromHarness(
   if (models === undefined) return [];
   const out: AcpModelEntry[] = [];
   for (const [id, alias] of Object.entries(models)) {
+    const effective = effectiveModelAlias(alias);
     out.push({
       id,
-      name: alias.displayName ?? alias.model ?? id,
+      name: effective.displayName ?? effective.model ?? id,
       thinkingSupported: deriveThinkingSupported(alias),
       alwaysThinking: deriveAlwaysThinking(alias),
       defaultThinkingEffort: deriveDefaultThinkingEffort(alias),

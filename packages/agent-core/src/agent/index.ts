@@ -344,13 +344,18 @@ export class Agent {
       },
       undoHistory: (payload) => {
         this.context.undo(payload.count);
+        this.telemetry.track('conversation_undo', { count: payload.count });
       },
       setThinking: (payload) => {
-        const wasEnabled = this.config.thinkingEffort !== 'off';
+        const previousEffort = this.config.thinkingEffort;
         this.config.update({ thinkingEffort: payload.effort });
-        const enabled = this.config.thinkingEffort !== 'off';
-        if (enabled !== wasEnabled) {
-          this.telemetry.track('thinking_toggle', { enabled });
+        const effort = this.config.thinkingEffort;
+        if (effort !== previousEffort) {
+          this.telemetry.track('thinking_toggle', {
+            enabled: effort !== 'off',
+            effort,
+            from: previousEffort,
+          });
         }
       },
       setPermission: (payload) => {

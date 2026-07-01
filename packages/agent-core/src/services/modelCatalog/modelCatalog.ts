@@ -1,5 +1,5 @@
 import { createDecorator } from '../../di';
-import type { KimiConfig, ModelAlias, ProviderConfig } from '../../config';
+import { effectiveModelAlias, type KimiConfig, type ModelAlias, type ProviderConfig } from '../../config';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
@@ -58,14 +58,15 @@ export function toProtocolModel(
   modelId: string,
   alias: ModelAlias,
 ): ModelCatalogItem {
+  const effective = effectiveModelAlias(alias);
   return {
-    provider: alias.provider,
+    provider: effective.provider,
     model: modelId,
-    display_name: alias.displayName ?? alias.model,
-    max_context_size: alias.maxContextSize,
-    capabilities: alias.capabilities,
-    support_efforts: alias.supportEfforts,
-    default_effort: alias.defaultEffort,
+    display_name: effective.displayName ?? effective.model,
+    max_context_size: effective.maxContextSize,
+    capabilities: effective.capabilities,
+    support_efforts: effective.supportEfforts,
+    default_effort: effective.defaultEffort,
   };
 }
 

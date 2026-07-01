@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
-import { deriveAlwaysThinking, deriveThinkingSupported } from '../src/model-catalog';
+import {
+  deriveAlwaysThinking,
+  deriveDefaultThinkingEffort,
+  deriveThinkingSupported,
+} from '../src/model-catalog';
 
 function alias(model: string, capabilities?: readonly string[]): ModelAlias {
   return {
@@ -33,5 +37,18 @@ describe('deriveAlwaysThinking', () => {
     // Name heuristics keep working for thinkingSupported, but only the
     // server-declared capability may lock the toggle to on.
     expect(deriveAlwaysThinking(alias('some-thinking-model'))).toBe(false);
+  });
+});
+
+describe('deriveDefaultThinkingEffort', () => {
+  it('uses overridden supportEfforts and defaultEffort', () => {
+    expect(
+      deriveDefaultThinkingEffort({
+        ...alias('custom-model', ['thinking']),
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'max',
+        overrides: { supportEfforts: ['low', 'high'], defaultEffort: 'high' },
+      }),
+    ).toBe('high');
   });
 });

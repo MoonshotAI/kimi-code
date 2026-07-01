@@ -1,6 +1,7 @@
 import { readApiErrorMessage } from './api-error';
+import { CUSTOM_REGISTRY_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
 import { isRecord } from './utils';
-import type { ManagedKimiConfigShape } from './managed-kimi-code';
+import type { ManagedKimiConfigShape, ManagedKimiModelAlias } from './managed-kimi-code';
 
 export type { ManagedKimiConfigShape };
 
@@ -316,14 +317,18 @@ export function applyCustomRegistryProvider(
       typeof model.name === 'string' && model.name.length > 0 ? model.name : model.id;
     const existing = isRecord(existingModels[aliasKey]) ? existingModels[aliasKey] : {};
 
-    existingModels[aliasKey] = {
-      ...existing,
+    const remoteAlias: ManagedKimiModelAlias = {
       provider: providerKey,
       model: model.id,
       maxContextSize,
       capabilities,
       displayName,
     };
+    existingModels[aliasKey] = mergeRefreshedModelAlias(
+      existing,
+      remoteAlias,
+      CUSTOM_REGISTRY_MODEL_FIELDS,
+    );
   }
 
   config.models = existingModels;

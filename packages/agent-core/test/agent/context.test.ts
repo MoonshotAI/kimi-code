@@ -9,6 +9,7 @@ import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { testAgent } from './harness/agent';
 
 describe('Agent context', () => {
@@ -56,6 +57,21 @@ describe('Agent context', () => {
       { role: 'tool', origin: undefined },
     ]);
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it('tracks conversation_undo when undoHistory reverts a user message', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'hello' }]);
+
+    await ctx.agent.rpcMethods.undoHistory({ count: 1 });
+
+    expect(records).toContainEqual({
+      event: 'conversation_undo',
+      properties: { count: 1 },
+    });
   });
 
   it('records bash input/output as shell_command origin with tagged content', () => {

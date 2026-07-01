@@ -37,7 +37,7 @@ export const ProviderConfigSchema = z.object({
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
-export const ModelAliasSchema = z.object({
+const ModelAliasBaseSchema = z.object({
   provider: z.string(),
   model: z.string(),
   maxContextSize: z.number().int().min(1),
@@ -60,6 +60,21 @@ export const ModelAliasSchema = z.object({
   // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
   // managed Kimi Code models that declare `protocol: 'anthropic'`.
   betaApi: z.boolean().optional(),
+});
+
+export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
+  provider: true,
+  model: true,
+  protocol: true,
+  betaApi: true,
+}).partial();
+
+export type ModelAliasOverrides = z.infer<typeof ModelAliasOverrideSchema>;
+
+export const ModelAliasSchema = ModelAliasBaseSchema.extend({
+  // User overrides for a model alias. These win over the top-level fields at
+  // runtime and are preserved by provider-model refreshes.
+  overrides: ModelAliasOverrideSchema.optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;

@@ -363,7 +363,7 @@ describe('ModelSelectorComponent', () => {
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'off' });
   });
 
-  it('always-on effort models show an unsupported Off that cannot be selected', () => {
+  it('always-on effort models hide Off and clamp selection at the last effort', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
       models: {
@@ -376,8 +376,8 @@ describe('ModelSelectorComponent', () => {
     });
 
     const raw = picker.render(120).join('\n');
-    // Off is rendered muted as unavailable, not as a selectable segment.
-    expect(raw).toContain(currentTheme.fg('textMuted', '  Off (Unsupported)  '));
+    // Off is not surfaced at all — the selectable segments are effort-only.
+    expect(raw).not.toContain('Off (Unsupported)');
     // The active effort is still highlighted.
     expect(strip(raw)).toContain('[ High ]');
 
@@ -420,5 +420,27 @@ describe('ModelSelectorComponent', () => {
     // support_efforts present but default_effort absent -> default to the
     // middle entry (medium), not a hardcoded level.
     expect(text(picker)).toContain('[ Medium ]');
+  });
+});
+
+describe('ModelSelectorComponent overrides', () => {
+  it('uses overridden support_efforts for selectable efforts', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        kimi: {
+          ...effortModel('Kimi K2', ['low', 'high', 'max'], 'max'),
+          overrides: { supportEfforts: ['low', 'high'] },
+        },
+      },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'max',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = text(picker);
+    expect(out).toContain('Low');
+    expect(out).toContain('High');
+    expect(out).not.toContain('Max');
   });
 });
