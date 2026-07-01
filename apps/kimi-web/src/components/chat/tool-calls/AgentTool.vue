@@ -68,7 +68,7 @@ const summary = computed(() => input.value.description || input.value.subagentTy
 const resolveAgentTaskId = inject<(toolCallId: string) => string | undefined>('resolveAgentTaskId');
 const canOpenAgent = computed(() => {
   if (!resolveAgentTaskId) return true;
-  return resolveAgentTaskId(props.tool.id) != null;
+  return resolveAgentTaskId(props.tool.id) !== undefined;
 });
 
 function toggle(): void {
