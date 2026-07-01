@@ -72,4 +72,29 @@ describe('external-editor helpers', () => {
 
     await expect(editInExternalEditor('seed', 'false')).resolves.toBeUndefined();
   });
+
+  it('kills the editor process when cancelled', async () => {
+    const controller = new AbortController();
+    const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> };
+    child.kill = vi.fn(() => {
+      queueMicrotask(() => child.emit('exit', null));
+      return true;
+    });
+    mocks.spawn.mockReturnValue(child as never);
+
+    const editing = editInExternalEditor('seed', 'code --wait', {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(mocks.spawn).toHaveBeenCalled();
+    });
+    controller.abort();
+
+    await expect(editing).resolves.toBeUndefined();
+    expect(child.kill).toHaveBeenCalled();
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      expect.stringContaining('code --wait'),
+      { stdio: 'inherit', shell: true, signal: controller.signal },
+    );
+  });
 });

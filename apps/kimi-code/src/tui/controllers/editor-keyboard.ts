@@ -377,19 +377,28 @@ export class EditorKeyboardController {
     }
     this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
+    const controller = new AbortController();
+    const cancel = (): void => {
+      controller.abort();
+    };
+    this.host.cancelInFlight = cancel;
     state.ui.stop();
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
     try {
-      const result = await editInExternalEditor(seed, cmd);
+      const result = await editInExternalEditor(seed, cmd, { signal: controller.signal });
       if (result !== undefined) {
         state.editor.setText(result.replaceAll('\r\n', '\n').replace(/\n$/, ''));
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       const msg = formatErrorMessage(error);
       this.host.showError(`External editor failed: ${msg}`);
     } finally {
+      if (this.host.cancelInFlight === cancel) {
+        this.host.cancelInFlight = undefined;
+      }
       if (typeof process.stdin.pause === 'function') {
         process.stdin.pause();
       }

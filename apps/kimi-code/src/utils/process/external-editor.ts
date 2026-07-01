@@ -15,6 +15,10 @@ import { join } from 'node:path';
 
 import { quoteShellArg } from '#/utils/shell-quote';
 
+export interface ExternalEditorOptions {
+  readonly signal?: AbortSignal;
+}
+
 export function resolveEditorCommand(configured?: string | null): string | undefined {
   const candidates = [configured, process.env['VISUAL'], process.env['EDITOR']];
   for (const c of candidates) {
@@ -36,21 +40,38 @@ export function resolveEditorCommand(configured?: string | null): string | undef
 export async function editInExternalEditor(
   initialText: string,
   command: string,
+  options: ExternalEditorOptions = {},
 ): Promise<string | undefined> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-edit-'));
   const file = join(dir, 'prompt.md');
   await writeFile(file, initialText, 'utf-8');
   try {
+    if (options.signal?.aborted === true) return undefined;
     const shellCmd = `${command} ${quoteShellArg(file)}`;
-    const code = await new Promise<number>((resolve, reject) => {
+    const result = await new Promise<number | 'aborted'>((resolve, reject) => {
       const child = spawn(shellCmd, {
         stdio: 'inherit',
         shell: true,
+        signal: options.signal,
       });
-      child.on('exit', (c) => { resolve(c ?? 0); });
-      child.on('error', reject);
+      const onAbort = (): void => {
+        child.kill();
+      };
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+      child.on('exit', (c) => {
+        options.signal?.removeEventListener('abort', onAbort);
+        resolve(options.signal?.aborted === true ? 'aborted' : c ?? 0);
+      });
+      child.on('error', (error: unknown) => {
+        options.signal?.removeEventListener('abort', onAbort);
+        if (options.signal?.aborted === true) {
+          resolve('aborted');
+          return;
+        }
+        reject(error);
+      });
     });
-    if (code !== 0) return undefined;
+    if (result === 'aborted' || result !== 0) return undefined;
     return await readFile(file, 'utf-8');
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {
@@ -58,4 +79,3 @@ export async function editInExternalEditor(
     });
   }
 }
-
