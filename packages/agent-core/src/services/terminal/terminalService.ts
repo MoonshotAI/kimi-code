@@ -60,6 +60,11 @@ export class TerminalService extends Disposable implements ITerminalService {
     this.defaultCols = options.defaultCols ?? DEFAULT_COLS;
     this.defaultRows = options.defaultRows ?? DEFAULT_ROWS;
     this.maxBufferedFrames = options.maxBufferedFrames ?? DEFAULT_MAX_BUFFERED_FRAMES;
+    this._register(
+      this.sessionService.onDidClose(({ sessionId }) => {
+        this.closeSessionRecords(sessionId);
+      }),
+    );
   }
 
   async create(sessionId: string, input: CreateTerminalRequest): Promise<Terminal> {
@@ -172,6 +177,27 @@ export class TerminalService extends Disposable implements ITerminalService {
     }
     this.records.clear();
     super.dispose();
+  }
+
+  private closeSessionRecords(sessionId: string): void {
+    const prefix = `${sessionId}\0`;
+    for (const [key, record] of Array.from(this.records.entries())) {
+      if (!key.startsWith(prefix)) continue;
+      if (!record.closed) {
+        record.closed = true;
+        try {
+          record.process.kill();
+        } catch {
+        }
+        this.markExited(record, null);
+      } else {
+        disposeAll(record.disposables);
+        record.disposables = [];
+      }
+      record.sinks.clear();
+      record.buffer = [];
+      this.records.delete(key);
+    }
   }
 
   private async requireRecord(
