@@ -354,48 +354,17 @@ function buildRgArgs(
     cmd.push('--glob', `!${glob}`);
   }
   if (args.include_ignored) cmd.push('--no-ignore');
-  // Derive a safe literal search path from the pattern so rg only walks
-  // the relevant subtree instead of the entire root. For example,
-  // `src/**/*.ts` → search path `src` instead of `.`. This prevents
-  // anchored searches from collecting and sorting unrelated files before
-  // the streaming filter can see anything.
-  const searchPath = deriveSearchPath(args.pattern);
-  cmd.push(searchPath);
+  // Search path is `.` because the process cwd is pinned to the search root
+  // (see execution()). Passing a derived subdirectory as the rg PATH would
+  // override ignore rules — rg treats command-line paths as authoritative,
+  // so `rg --files dist` traverses a gitignored `dist/` even with `--glob
+  // !dist`. It would also allow patterns like `../outside/**` to escape the
+  // authorized search tree, and error out on non-existent prefixes. The
+  // streaming line filter (makeLineFilter) already prevents the output cap
+  // from being exhausted by non-matching paths, so narrowing the traversal
+  // is not needed for correctness.
+  cmd.push('.');
   return cmd;
-}
-
-/**
- * Extract the leading literal path component(s) from a glob pattern,
- * before any glob metacharacter. Returns the path relative to the search
- * root, or '.' if no literal prefix can be derived.
- *
- * Examples:
- *   src/.../.ts     -> src        (double-star in the middle)
- *   /src/.ts        -> src        (leading slash stripped, rooted)
- *   src/a/b.ts      -> src/a      (no metacharacters, strip trailing file)
- *   star.ts         -> .          (starts with a metacharacter)
- *   src/{a,b}.ts    -> src        (brace is a metacharacter)
- */
-function deriveSearchPath(pattern: string): string {
-  const rooted = pattern.startsWith('/');
-  const normalized = rooted ? pattern.slice(1) : pattern;
-  // Find the first glob metacharacter: *, ?, [, {, or a ** segment.
-  const metaIndex = normalized.search(/[*?\[{]/);
-  if (metaIndex === -1) {
-    // No metacharacters — the whole pattern is a literal path. But if it
-    // contains no `/`, it's a basename pattern that could match at any
-    // depth, so we can't narrow the search path.
-    if (!normalized.includes('/')) return '.';
-    // Strip a trailing filename (last path component) since the parent
-    // directory is the narrowest safe search path for a single file.
-    const lastSlash = normalized.lastIndexOf('/');
-    return lastSlash > 0 ? normalized.slice(0, lastSlash) : '.';
-  }
-  // Narrow to the literal prefix before the first metacharacter.
-  const prefix = normalized.slice(0, metaIndex);
-  const lastSlash = prefix.lastIndexOf('/');
-  if (lastSlash <= 0) return '.';
-  return prefix.slice(0, lastSlash);
 }
 
 function isBroadPattern(pattern: string): boolean {
@@ -445,20 +414,41 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
  * Escape picomatch-only glob extensions that rg --glob does not support,
  * so the in-process matcher matches the same files rg would.
  *
- * - extglob constructs like @(a|b), !(a), +(a), ?(a), *(a) are escaped
- *   so picomatch treats them as literal characters.
- * - range braces like {1..2} are escaped so picomatch treats them as
- *   literal strings instead of expanding to 1, 2.
+ * - extglob constructs like @(a|b), !(a), +(a) are escaped so picomatch
+ *   treats the prefix character and parentheses as literal. `@`, `!`, `+`
+ *   are literal characters in rg's glob engine.
+ * - `*` and `?` before `(` are NOT extglob prefixes in rg — they are
+ *   regular wildcards, and `(` is a literal character. Only the
+ *   parentheses are escaped so picomatch doesn't interpret `*(...)` or
+ *   `?(...)` as extglobs, but the wildcard semantics of `*` and `?` are
+ *   preserved.
+ * - range braces like {1..2} are reduced to `1..2` (braces removed) to
+ *   match rg, which treats a brace group with a single alternative (no
+ *   comma) as that alternative with the braces stripped.
  * - brace alternatives like {ts,tsx} are left intact (supported by both).
  */
 function escapePicomatchExtensions(pattern: string): string {
   let result = pattern;
-  // Escape extglob: [@!?+*](...) → literal
-  result = result.replace(/([@!?+*])\(([^)]*)\)/g, (_match, prefix: string, inner: string) => {
-    return `[${prefix}]\\(${inner.replace(/\|/g, '\\|')}\\)`;
+  // Escape extglob: [@!+](...) → literal prefix + literal parens.
+  // `*` and `?` are wildcards in rg, so only the parens are escaped.
+  result = result.replaceAll(/([@!?+*])\(([^)]*)\)/g, (_match, prefix: string, inner: string) => {
+    const escapedInner = inner.replaceAll('|', '\\|');
+    if (prefix === '*' || prefix === '?') {
+      return `${prefix}\\(${escapedInner}\\)`;
+    }
+    return `[${prefix}]\\(${escapedInner}\\)`;
   });
-  // Escape range braces: {N..M} → literal
-  result = result.replace(/\{(\d+)\.\.(\d+)\}/g, '\\{$1..$2\\}');
+  // Range braces and single-alternative braces: rg treats `{N..M}` and
+  // `{foo}` as a single brace alternative, removing the braces (matching
+  // `N..M` or `foo`, not `{N..M}` or `{foo}`). picomatch 4.x either expands
+  // `{a..z}` as a range or treats `{foo}` as a literal — neither matches
+  // rg. Reduce to the inner text so picomatch matches the same literal.
+  // Escaped braces (`\{...\}`) are left intact via the lookbehind.
+  result = result.replaceAll(/(?<!\\)\{([^{}]*)\}/g, (_match, inner: string) => {
+    // Brace alternatives with commas are expanded by both rg and picomatch.
+    if (inner.includes(',')) return _match;
+    return inner;
+  });
   return result;
 }
 
@@ -499,7 +489,11 @@ function relativePath(searchRoot: string, absPath: string, pathClass: PathClass)
   const normRoot = normalize(searchRoot);
   if (pathClass !== 'win32') {
     const rel = relative(normRoot, normAbs);
-    return rel.startsWith('..') ? undefined : rel;
+    // Only reject paths that actually escape the root: `..` (the parent
+    // itself) or `../…` (something inside the parent). A file whose name
+    // starts with two dots — e.g. `..config/a.ts` — is under the root and
+    // must be kept.
+    return rel === '..' || rel.startsWith('../') ? undefined : rel;
   }
   const lowerAbs = normAbs.toLowerCase();
   const lowerRoot = normRoot.toLowerCase();
@@ -531,7 +525,7 @@ function makeLineFilter(
   const matches = compileGlobMatcher(pattern);
   return (line: string): boolean => {
     let relPath = line;
-    if (pathClass === 'win32') relPath = relPath.replace(/\\/g, '/');
+    if (pathClass === 'win32') relPath = relPath.replaceAll('\\', '/');
     if (relPath.startsWith('./') || relPath.startsWith('.\\')) {
       relPath = relPath.slice(2);
     } else if (isAbsolute(relPath)) {
@@ -544,34 +538,71 @@ function makeLineFilter(
 }
 
 /**
- * Validate a glob pattern for common malformed syntax (unclosed `[` or `{`).
- * Returns an error message if the pattern is invalid, or `undefined` if it
- * is well-formed. This mirrors ripgrep's globset parser, which rejects
- * unclosed character classes and brace expansions with a hard error —
- * picomatch would silently treat them as literals and report "No matches
- * found" instead. Braces inside a character class (`[{]foo`) are literal
- * characters and do not count toward brace depth.
+ * Validate a glob pattern for common malformed syntax. Returns an error
+ * message if the pattern is invalid, or `undefined` if it is well-formed.
+ * This mirrors ripgrep's globset parser, which rejects these with a hard
+ * error — picomatch would silently treat them as literals and report "No
+ * matches found" instead.
+ *
+ * Detected errors:
+ *   - Unclosed `[` or `{` (balanced tracking).
+ *   - Empty character class: `[]`, `[!]`, `[^]` — a `]` right after the
+ *     opening bracket prefix (`[`, `[!`, `[^`) is a literal `]`, not the
+ *     terminator, so the class is unclosed.
+ *   - Invalid range: `[z-a]` where the start character is greater than the
+ *     end character.
+ *   - Dangling backslash: a trailing `\` with no character to escape.
+ *
+ * Braces inside a character class (`[{]foo`) are literal characters and do
+ * not count toward brace depth.
  */
 function validateGlobPattern(pattern: string): string | undefined {
   let inBracket = false;
   let bracketDepth = 0;
   let braceDepth = 0;
+  // Position of the first content character inside the current bracket
+  // (after `[`, `[!`, or `[^`). A `]` at this position is a literal, not
+  // the class terminator.
+  let bracketContentStart = -1;
+  // Last unescaped character seen inside the current bracket, for range
+  // validation. Reset to '' on bracket open or after an escape.
+  let bracketPrevChar = '';
   for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
+    const ch = pattern[i]!;
     if (ch === '\\') {
+      if (i === pattern.length - 1) {
+        return `Invalid glob pattern: dangling '\\' in "${pattern}"`;
+      }
       i++;
+      bracketPrevChar = '';
       continue;
     }
     if (inBracket) {
-      // Inside a character class, [ is a literal (e.g. [[] matches a
-      // literal [). Only ] closes the class.
       if (ch === ']') {
+        if (i === bracketContentStart) {
+          // Literal ] — the class is still open.
+          bracketPrevChar = ']';
+          continue;
+        }
         inBracket = false;
         bracketDepth--;
+        bracketPrevChar = '';
+      } else if (ch === '-' && bracketPrevChar !== '' && bracketPrevChar !== '-') {
+        const nextCh = pattern[i + 1];
+        if (nextCh !== undefined && nextCh !== ']' && nextCh !== '\\') {
+          if (bracketPrevChar > nextCh) {
+            return `Invalid glob pattern: invalid range '${bracketPrevChar}-${nextCh}' in "${pattern}"`;
+          }
+        }
+      } else {
+        bracketPrevChar = ch;
       }
     } else if (ch === '[') {
       inBracket = true;
       bracketDepth++;
+      const next = pattern[i + 1];
+      bracketContentStart = next === '!' || next === '^' ? i + 2 : i + 1;
+      bracketPrevChar = '';
     } else if (ch === '{') {
       braceDepth++;
     } else if (ch === '}' && braceDepth > 0) {

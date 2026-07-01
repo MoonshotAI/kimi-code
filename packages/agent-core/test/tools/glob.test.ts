@@ -235,8 +235,9 @@ describe('GlobTool', () => {
     const result = await executeTool(tool, context({ pattern: 'pkg/**/*.ts', path: '/extra' }));
 
     expect(result.output).toBe('/extra/pkg/a.ts');
-    // The search path is derived from the pattern prefix: pkg/**/*.ts -> pkg
-    expect(execArgs(exec).at(-1)).toBe('pkg');
+    // The search path is always `.` (pinned to the search root via cwd).
+    // A derived subdirectory path would override ignore rules in rg.
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('adds --no-ignore when include_ignored is true', async () => {
@@ -512,6 +513,66 @@ describe('GlobTool', () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it('rejects empty character classes like []', async () => {
+    const exec = vi.fn();
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '[]', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Invalid glob pattern');
+    expect(result.output).toContain('unclosed');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('rejects negated empty character classes like [!]', async () => {
+    const exec = vi.fn();
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '[!]', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Invalid glob pattern');
+    expect(result.output).toContain('unclosed');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('rejects caret empty character classes like [^]', async () => {
+    const exec = vi.fn();
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '[^]', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Invalid glob pattern');
+    expect(result.output).toContain('unclosed');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid character ranges like [z-a]', async () => {
+    const exec = vi.fn();
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '[z-a]', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Invalid glob pattern');
+    expect(result.output).toContain('invalid range');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('rejects a dangling trailing backslash', async () => {
+    const exec = vi.fn();
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: 'foo\\', path: '/workspace' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Invalid glob pattern');
+    expect(result.output).toContain('dangling');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it('accepts brace-in-bracket patterns like [{]foo.ts', async () => {
     const exec = execReturning('/workspace/{foo.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
@@ -553,8 +614,60 @@ describe('GlobTool', () => {
     expect(result.output).not.toContain('b.ts');
   });
 
-  it('treats range braces as literal, matching rg --glob behavior', async () => {
-    const exec = execReturning('/workspace/{1..2}.ts\n/workspace/1.ts\n/workspace/2.ts\n');
+  it('preserves * and ? wildcards before literal parentheses, matching rg --glob', async () => {
+    // rg treats `*` and `?` as regular wildcards and `(` as a literal
+    // character — NOT as extglob prefixes. So `*(bar).ts` matches any file
+    // ending in `(bar).ts` (the `*` matches any prefix), including
+    // `foo123(bar).ts` which the old `[*]\(bar\).ts` escape would NOT match.
+    const exec = execReturning(
+      '/workspace/foo*(bar).ts\n/workspace/foo123(bar).ts\n/workspace/x(bar).ts\n/workspace/(bar).ts\n/workspace/other.ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '*(bar).ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('foo*(bar).ts');
+    expect(lines).toContain('foo123(bar).ts');
+    expect(lines).toContain('x(bar).ts');
+    expect(lines).toContain('(bar).ts');
+    expect(lines).not.toContain('other.ts');
+  });
+
+  it('preserves ? wildcard before literal parentheses, matching rg --glob', async () => {
+    // `?(bar).ts` — `?` is a single-char wildcard, `(` is literal. Matches
+    // `x(bar).ts` (one char) and `?(bar).ts` (literal ?), but not
+    // `yz(bar).ts` (two chars) or `(bar).ts` (zero chars).
+    const exec = execReturning(
+      '/workspace/x(bar).ts\n/workspace/?(bar).ts\n/workspace/yz(bar).ts\n/workspace/(bar).ts\n',
+    );
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '?(bar).ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('x(bar).ts');
+    expect(lines).toContain('?(bar).ts');
+    expect(lines).not.toContain('yz(bar).ts');
+    expect(lines).not.toContain('(bar).ts');
+  });
+
+  it('treats range braces as a single alternative, matching rg --glob behavior', async () => {
+    // rg treats `{1..2}` as a single brace alternative, removing the braces
+    // (matching `1..2`, not `{1..2}` and not the range 1..2). picomatch 4.x
+    // would either expand the range or treat the braces as literal, so the
+    // in-process matcher collapses single-alternative braces to match rg.
+    const exec = execReturning(
+      '/workspace/1..2.ts\n/workspace/{1..2}.ts\n/workspace/1.ts\n/workspace/2.ts\n',
+    );
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
     const result = await executeTool(
@@ -563,12 +676,18 @@ describe('GlobTool', () => {
     );
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('{1..2}.ts');
-    expect(result.output).not.toContain('1.ts');
-    expect(result.output).not.toContain('2.ts');
+    expect(result.output).toContain('1..2.ts');
+    expect(result.output).not.toContain('{1..2}.ts');
+    // `1.ts` and `2.ts` (standalone) should not match — only `1..2.ts`.
+    // Use line-level checks to avoid substring false positives.
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('1..2.ts');
+    expect(lines).not.toContain('1.ts');
+    expect(lines).not.toContain('2.ts');
+    expect(lines).not.toContain('{1..2}.ts');
   });
 
-  it('derives a search path from anchored patterns to narrow rg traversal', async () => {
+  it('always searches from `.` so derived paths cannot override ignore rules', async () => {
     const exec = execReturning('/workspace/src/a.ts\n/workspace/other/b.ts\n');
     const tool = new GlobTool(kaosWithExec(exec), workspace);
 
@@ -579,8 +698,9 @@ describe('GlobTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('src/a.ts');
-    // The search path should be 'src', not '.'
-    expect(execArgs(exec).at(-1)).toBe('src');
+    // The search path is always `.` — a derived subdirectory path would
+    // override rg's ignore rules (command-line paths are authoritative).
+    expect(execArgs(exec).at(-1)).toBe('.');
   });
 
   it('matches rooted patterns with a leading slash', async () => {
@@ -695,6 +815,21 @@ describe('GlobTool', () => {
 
     expect(result.output).toContain('.gitlab-ci.yml');
     expect(result.output).toContain('config.yml');
+  });
+
+  it('keeps files whose names start with two dots under the search root', async () => {
+    // A file like `..config/a.ts` is under the root — its relative path
+    // starts with `..` but is not `..` or `../`. The old `startsWith('..')`
+    // check would drop it; the fixed check only rejects actual escapes.
+    const exec = execReturning('/workspace/..config/a.ts\n/workspace/..foo.ts\n/workspace/src/b.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '**/*.ts', path: '/workspace' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('..config/a.ts');
+    expect(result.output).toContain('..foo.ts');
+    expect(result.output).toContain('src/b.ts');
   });
 
   it('descends into hidden directories under a recursive pattern', async () => {
@@ -1003,5 +1138,83 @@ describe('GlobTool integration (real ripgrep)', () => {
     expect(result.output).toContain('No matches');
     expect(result.output).not.toContain('kept.ts');
     expect(result.output).not.toContain('ignored.ts');
+  });
+
+  it('respects .gitignore for anchored patterns pointing at an ignored dir', async () => {
+    // A pattern like `dist/**/*.js` must not surface files from a gitignored
+    // `dist/`. Passing the derived prefix `dist` as the rg PATH would override
+    // ignore rules (command-line paths are authoritative in rg), so the tool
+    // always searches from `.` and lets the in-process filter narrow results.
+    await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('dist/bundle.js', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), 'dist/\n');
+    await fs.mkdir(path.join(tmpDir!, '.git'), { recursive: true });
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: 'dist/**/*.js', path: tmpDir! }));
+
+    expect(result.output).toContain('No matches');
+    expect(result.output).not.toContain('dist/bundle.js');
+  });
+
+  it('respects .gitignore for anchored patterns pointing at an ignored dir (include_ignored surfaces them)', async () => {
+    await touch('src/a.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('dist/bundle.js', new Date('2024-01-01T00:00:00Z'));
+    await fs.writeFile(path.join(tmpDir!, '.gitignore'), 'dist/\n');
+    await fs.mkdir(path.join(tmpDir!, '.git'), { recursive: true });
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'dist/**/*.js', path: tmpDir!, include_ignored: true }),
+    );
+
+    expect(result.output).toContain('dist/bundle.js');
+  });
+
+  it('returns no matches for an anchored pattern whose prefix does not exist', async () => {
+    // `src/**/*.ts` in a repo with no `src` must return "No matches", not
+    // error out with "does not exist" (which happened when the missing
+    // prefix was passed as the rg PATH).
+    await touch('other/a.ts', new Date('2024-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: 'src/**/*.ts', path: tmpDir! }));
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('No matches');
+  });
+
+  it('matches wildcard-before-paren patterns like rg --glob (integration)', async () => {
+    // rg treats `*` as a wildcard and `(` as a literal — `*(bar).ts` matches
+    // any file ending in `(bar).ts` (the `*` matches any prefix).
+    await touch('foo*(bar).ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('foo123(bar).ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('x(bar).ts', new Date('2022-01-01T00:00:00Z'));
+    await touch('other.ts', new Date('2021-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '*(bar).ts', path: tmpDir! }));
+
+    expect(result.output).toContain('foo*(bar).ts');
+    expect(result.output).toContain('foo123(bar).ts');
+    expect(result.output).toContain('x(bar).ts');
+    expect(result.output).not.toContain('other.ts');
+  });
+
+  it('matches range-brace patterns as a single alternative like rg --glob (integration)', async () => {
+    // rg treats `{1..2}` as a single brace alternative, matching `1..2`
+    // (braces removed), not `{1..2}` and not the range 1..2.
+    await touch('1..2.ts', new Date('2024-01-01T00:00:00Z'));
+    await touch('{1..2}.ts', new Date('2023-01-01T00:00:00Z'));
+    await touch('1.ts', new Date('2022-01-01T00:00:00Z'));
+    const tool = new GlobTool(kaos, ws());
+
+    const result = await executeTool(tool, context({ pattern: '{1..2}.ts', path: tmpDir! }));
+
+    const lines = (result.output as string).split('\n');
+    expect(lines).toContain('1..2.ts');
+    expect(lines).not.toContain('{1..2}.ts');
+    expect(lines).not.toContain('1.ts');
   });
 });
