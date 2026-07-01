@@ -205,6 +205,14 @@ describe('compressImageForModel — fallback', () => {
     expect(result.changed).toBe(false);
     expect(result.data).toBe(bomb); // identity → Jimp was never called
   });
+
+  it('skips compression for payloads over the byte cap without decoding', async () => {
+    // Over the edge (so not the fast path), but capped by maxDecodeBytes.
+    const png = await solidPng(3000, 100);
+    const result = await compressImageForModel(png, 'image/png', { maxDecodeBytes: 64 });
+    expect(result.changed).toBe(false);
+    expect(result.data).toBe(png); // passthrough → Jimp was never called
+  });
 });
 
 // ── invariants ───────────────────────────────────────────────────────
@@ -254,6 +262,14 @@ describe('compressBase64ForModel', () => {
     const result = await compressBase64ForModel(base64, 'image/png');
     expect(result.changed).toBe(false);
     expect(result.base64).toBe(base64);
+  });
+
+  it('skips a base64 payload over the byte cap without decoding', async () => {
+    const png = await solidPng(3000, 100); // over edge, would otherwise compress
+    const base64 = Buffer.from(png).toString('base64');
+    const result = await compressBase64ForModel(base64, 'image/png', { maxDecodeBytes: 64 });
+    expect(result.changed).toBe(false);
+    expect(result.base64).toBe(base64); // unchanged → not decoded
   });
 });
 

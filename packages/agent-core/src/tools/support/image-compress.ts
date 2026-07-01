@@ -50,6 +50,17 @@ const FALLBACK_EDGE_PX = 1000;
  */
 const MAX_DECODE_PIXELS = 100_000_000;
 
+/**
+ * Raw-byte ceiling above which compression is skipped rather than decoded. The
+ * byte budget bounds the *output*, but the compressor still has to load the
+ * *input* first: a huge base64 payload (e.g. an oversized or invalid image from
+ * an MCP tool) would be `Buffer.from`-decoded — and possibly handed to Jimp —
+ * before any downstream cap (like the 10 MB MCP per-part limit) can drop it.
+ * This bounds that input allocation. Set well above legitimate
+ * screenshots/photos; larger images pass through uncompressed.
+ */
+const MAX_DECODE_BYTES = 64 * 1024 * 1024;
+
 /** Formats we can both decode and re-encode with the default jimp build. */
 const RECODABLE_MIME = new Set(['image/png', 'image/jpeg']);
 
@@ -58,6 +69,8 @@ export interface CompressImageOptions {
   readonly maxEdge?: number;
   /** Override the raw-byte budget. */
   readonly byteBudget?: number;
+  /** Override the raw-byte ceiling above which compression is skipped. */
+  readonly maxDecodeBytes?: number;
 }
 
 export interface CompressImageResult {
@@ -89,6 +102,7 @@ export async function compressImageForModel(
 ): Promise<CompressImageResult> {
   const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const normalizedMime = normalizeMime(mimeType);
   const dims = sniffImageDimensions(bytes);
 
@@ -115,6 +129,9 @@ export async function compressImageForModel(
   // Decompression-bomb guard: refuse to decode absurd pixel counts. The sniff
   // above gave us the dimensions without decoding, so this costs nothing.
   if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) return passthrough();
+  // Refuse to decode very large byte payloads (e.g. a huge or invalid image
+  // from an MCP tool) that would be loaded just to be dropped downstream.
+  if (bytes.length > maxDecodeBytes) return passthrough();
 
   try {
     const { Jimp } = await import('jimp');
@@ -173,6 +190,20 @@ export async function compressBase64ForModel(
   mimeType: string,
   options: CompressImageOptions = {},
 ): Promise<CompressBase64Result> {
+  // Skip very large payloads before allocating: base64 decodes to ~3/4 its
+  // length, so a payload whose decoded size would exceed the cap is passed
+  // through without the Buffer.from allocation (and without touching Jimp).
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const approxBytes = Math.floor((base64.length * 3) / 4);
+  if (approxBytes > maxDecodeBytes) {
+    return {
+      base64,
+      mimeType,
+      changed: false,
+      originalByteLength: approxBytes,
+      finalByteLength: approxBytes,
+    };
+  }
   let bytes: Buffer;
   try {
     bytes = Buffer.from(base64, 'base64');
