@@ -814,9 +814,16 @@ export class Session {
   }
 
   private readySubagentParentIds(): Set<string> {
+    // Only protect parents of agents that are still live (or being resumed)
+    // in memory. metadata.agents persists forever, so scanning it would keep
+    // a parent id protected even after its child completed or was evicted,
+    // defeating the ready-subagent cap in nested workflows.
     const parentIds = new Set<string>();
-    for (const meta of Object.values(this.metadata.agents)) {
-      if (meta.parentAgentId !== null) parentIds.add(meta.parentAgentId);
+    for (const id of this.agents.keys()) {
+      const meta = this.metadata.agents[id];
+      if (meta?.parentAgentId !== null && meta?.parentAgentId !== undefined) {
+        parentIds.add(meta.parentAgentId);
+      }
     }
     return parentIds;
   }
