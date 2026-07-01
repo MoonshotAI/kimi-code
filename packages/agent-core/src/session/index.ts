@@ -481,7 +481,12 @@ export class Session {
         } catch {
           // dispose() failed — fall through to replay persisted wire.
         }
-        this.agents.delete(id);
+        // Only delete if the map still holds this exact disposing
+        // promise. A concurrent resumeAgent() may have already replaced
+        // it with an in-flight resume promise or a resumed Agent.
+        if (this.agents.get(id) === entry) {
+          this.agents.delete(id);
+        }
       } else {
         return (await this.resolveAgentEntry(entry)).agent;
       }
@@ -817,8 +822,7 @@ export class Session {
 
   async releaseIdleSubagent(id: string): Promise<void> {
     const entry = this.agents.get(id);
-    const meta = this.metadata.agents[id];
-    if (!(entry instanceof Agent) || meta?.type !== 'sub') return;
+    if (!(entry instanceof Agent) || entry.type !== 'sub') return;
     if (!this.isPrunableReadySubagent(id, entry, this.readySubagentParentIds())) return;
     await this.pruneReadySubagents();
   }
@@ -872,7 +876,14 @@ export class Session {
         // through to resumeAgent instead of rethrowing the cleanup
         // failure forever.
       }
-      this.agents.delete(candidate.id);
+      // Only delete if the map still holds this exact disposing promise.
+      // resumeAgent() may have replaced it with an in-flight resume
+      // promise (or a fully resumed Agent) while we were awaiting
+      // disposal — deleting that newer entry would drop the resumed
+      // subagent from the live map.
+      if (this.agents.get(candidate.id) === disposing) {
+        this.agents.delete(candidate.id);
+      }
     }
   }
 
@@ -896,8 +907,7 @@ export class Session {
     agent: Agent,
     parentIds: ReadonlySet<string>,
   ): boolean {
-    const meta = this.metadata.agents[id];
-    if (meta?.type !== 'sub') return false;
+    if (agent.type !== 'sub') return false;
     if (parentIds.has(id)) return false;
     if (agent.turn.hasActiveTurn) return false;
     return agent.background.list(true).length === 0;

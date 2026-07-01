@@ -581,6 +581,16 @@ export class BackgroundManager {
       if (this.tasks.has(t.taskId)) continue;
       this.ghosts.set(t.taskId, t);
     }
+    // Bound the ghost set so a session that completed thousands of
+    // detached tasks before a restart doesn't rebuild thousands of
+    // retained task records. Keep the newest entries (end of insertion
+    // order) and drop the oldest, mirroring the live eviction bound.
+    while (this.ghosts.size > DEFAULT_MAX_RETAINED_TERMINAL_TASKS) {
+      const oldestId = this.ghosts.keys().next().value;
+      if (oldestId === undefined) break;
+      this.ghosts.delete(oldestId);
+      this.evictedPreviews.delete(oldestId);
+    }
   }
 
   /**
