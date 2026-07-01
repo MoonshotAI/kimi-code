@@ -60,6 +60,7 @@ import {
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { formatHookResultMarkdown } from '../utils/hook-result-format';
 import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
+import { notifyTerminalOnce } from '../utils/terminal-notification';
 import {
   formatMcpStartupStatusSummary,
   mcpServerStatusKey,
@@ -146,6 +147,10 @@ export class SessionEventHandler {
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
+  /** True when the active goal has left the `active` state and we are waiting
+   *  for the current turn to end before emitting the terminal notification. */
+  private goalStoppedAwaitingNotification = false;
+  private goalStoppedNotificationTurnId: string | undefined = undefined;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -163,6 +168,8 @@ export class SessionEventHandler {
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
+    this.goalStoppedAwaitingNotification = false;
+    this.goalStoppedNotificationTurnId = undefined;
   }
 
   clearAgentSwarmProgress(): void {
@@ -299,6 +306,8 @@ export class SessionEventHandler {
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.setStep(0);
+    this.goalStoppedAwaitingNotification = false;
+    this.goalStoppedNotificationTurnId = undefined;
     this.host.patchLivePane({
       mode: 'waiting',
       pendingApproval: null,
@@ -341,11 +350,41 @@ export class SessionEventHandler {
       this.host.streamingUI.setTodoList([]);
     }
     this.host.streamingUI.resetToolUi();
-    this.host.streamingUI.finalizeTurn(sendQueued);
+    const queued = this.host.streamingUI.finalizeTurn(sendQueued);
+    if (!queued) {
+      this.maybeNotifyTurnComplete(event.turnId);
+    }
     this.renderPendingModelBlockedFallback();
     this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
     this.scheduleQueuedGoalPromotion();
+  }
+
+  private maybeNotifyTurnComplete(turnId: number): void {
+    const { state } = this.host;
+    const goal = state.appState.goal;
+
+    // Goal mode: the goal may stop (complete/paused/blocked) before or after
+    // turn.ended is emitted. If it stopped earlier in this turn and we have
+    // been waiting for the turn to end, notify now.
+    if (this.goalStoppedAwaitingNotification) {
+      this.goalStoppedAwaitingNotification = false;
+      this.goalStoppedNotificationTurnId = undefined;
+      notifyTerminalOnce(state, `turn-complete:${turnId}`, {
+        title: 'Kimi Code task complete',
+        body: state.appState.sessionTitle ?? undefined,
+      });
+      return;
+    }
+
+    // No active goal at turn end: either there never was one, or it was already
+    // paused/blocked/cleared by the time the turn finished. Notify normally.
+    if (goal === null || goal === undefined || goal.status !== 'active') {
+      notifyTerminalOnce(state, `turn-complete:${turnId}`, {
+        title: 'Kimi Code task complete',
+        body: state.appState.sessionTitle ?? undefined,
+      });
+    }
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -617,7 +656,30 @@ export class SessionEventHandler {
   }
 
   private handleGoalUpdated(event: GoalUpdatedEvent): void {
+    const previousGoal = this.host.state.appState.goal;
     this.host.setAppState({ goal: event.snapshot });
+
+    // Detect when the active goal leaves the `active` state (complete / paused /
+    // blocked / cancelled). If the turn has already ended, notify immediately;
+    // otherwise wait for turn.ended to fire the notification.
+    if (
+      previousGoal?.status === 'active' &&
+      (event.snapshot === null || event.snapshot.status !== 'active')
+    ) {
+      if (
+        this.host.state.appState.streamingPhase === 'idle' &&
+        this.host.state.queuedMessages.length === 0
+      ) {
+        notifyTerminalOnce(this.host.state, `goal-stopped:${previousGoal.goalId}`, {
+          title: 'Kimi Code task complete',
+          body: this.host.state.appState.sessionTitle ?? undefined,
+        });
+      } else {
+        this.goalStoppedAwaitingNotification = true;
+        this.goalStoppedNotificationTurnId = previousGoal.goalId;
+      }
+    }
+
     if (event.snapshot === null && this.goalCompletionAwaitingClear) {
       this.goalCompletionAwaitingClear = false;
       this.queuedGoalPromotionPending = true;

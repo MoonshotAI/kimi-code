@@ -11,6 +11,7 @@ import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
+import { notifyTerminalOnce } from '../utils/terminal-notification';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -169,9 +170,15 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
   try {
     await session.init();
     host.track('init_complete');
-    host.streamingUI.finalizeTurn((item) => {
+    const queued = host.streamingUI.finalizeTurn((item) => {
       host.sendQueuedMessage(session, item);
     });
+    if (!queued && host.state.appState.goal?.status !== 'active') {
+      notifyTerminalOnce(host.state, `init-complete:${host.state.appState.sessionId}`, {
+        title: 'Kimi Code task complete',
+        body: host.state.appState.sessionTitle ?? undefined,
+      });
+    }
   } catch (error) {
     if (isAbortError(error)) {
       host.setAppState({ streamingPhase: 'idle' });
