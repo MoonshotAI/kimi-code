@@ -12,6 +12,12 @@ Kimi Code CLI includes three built-in sub-agents, ready to use out of the box, e
 - **`explore`**: Dedicated to codebase exploration; performs read-only operations only and does not modify any files. Ideal for quickly searching, reading, and summarizing a repository without touching files.
 - **`plan`**: Dedicated to implementation planning and architecture design; even shell commands are not available, keeping the focus on "figuring out how to do something" rather than "actually doing it."
 
+## Runtime boundary
+
+Sub-agents are Kimi Code runtime agents. They use the current session's configured model/provider and the selected Kimi sub-agent profile; they are not separate Claude Code, Codex, or IDE-agent processes.
+
+If a sub-agent profile exposes MCP tools, those tools still run as tool calls inside that sub-agent. For example, an MCP server may wrap another local CLI, but that does not give the wrapped process the `Agent` / `AgentSwarm` lifecycle, resume ID, or TUI progress semantics unless Kimi Code implements that integration explicitly.
+
 ## How to Invoke
 
 Sub-agents are scheduled automatically by the main Agent — based on task complexity, context consumption, and sub-task independence, they are dispatched at the right moment without the user having to specify one.
