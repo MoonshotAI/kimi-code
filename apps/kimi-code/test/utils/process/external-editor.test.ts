@@ -97,4 +97,37 @@ describe('external-editor helpers', () => {
       { stdio: 'inherit', shell: true, signal: controller.signal },
     );
   });
+
+  it('waits for the editor process to close after an abort error', async () => {
+    const controller = new AbortController();
+    const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> };
+    // Mirror real spawn(..., { signal }) behavior: aborting emits the
+    // AbortError on `error` before the process has emitted exit/close.
+    child.kill = vi.fn(() => {
+      queueMicrotask(() => child.emit('error', new Error('The operation was aborted')));
+      return true;
+    });
+    mocks.spawn.mockReturnValue(child as never);
+
+    const editing = editInExternalEditor('seed', 'code --wait', {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(mocks.spawn).toHaveBeenCalled();
+    });
+    controller.abort();
+
+    // The abort error has fired, but the editor has not closed yet — the
+    // call must still be pending so the TUI is not restarted while the
+    // editor may still own the terminal.
+    const raced = await Promise.race([
+      editing.then(() => 'resolved'),
+      new Promise<'pending'>((r) => setTimeout(() => r('pending'), 20)),
+    ]);
+    expect(raced).toBe('pending');
+
+    child.emit('close');
+    await expect(editing).resolves.toBeUndefined();
+    expect(child.kill).toHaveBeenCalled();
+  });
 });

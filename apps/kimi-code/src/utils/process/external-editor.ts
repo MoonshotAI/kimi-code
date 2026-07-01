@@ -63,11 +63,22 @@ export async function editInExternalEditor(
         resolve(options.signal?.aborted === true ? 'aborted' : c ?? 0);
       });
       child.on('error', (error: unknown) => {
-        options.signal?.removeEventListener('abort', onAbort);
         if (options.signal?.aborted === true) {
-          resolve('aborted');
+          // With spawn(..., { signal }), Node emits the AbortError on
+          // `error` as soon as the signal fires, before the inherited-stdio
+          // editor process has necessarily emitted exit/close (and with
+          // shell: true, descendants may keep running). Resolving here would
+          // let the finally block delete the temp file and restart the TUI
+          // while the editor may still own the terminal. Treat the abort
+          // error as expected, but wait for the process to close before
+          // reporting the abort.
+          child.once('close', () => {
+            options.signal?.removeEventListener('abort', onAbort);
+            resolve('aborted');
+          });
           return;
         }
+        options.signal?.removeEventListener('abort', onAbort);
         reject(error);
       });
     });
