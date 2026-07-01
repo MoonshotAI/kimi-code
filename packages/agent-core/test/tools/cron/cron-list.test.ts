@@ -279,7 +279,7 @@ describe('CronListTool', () => {
   });
 
   it('one-shot nextFireAt is anchored at createdAt, not nowMs (pending today’s slot)', async () => {
-    // Scenario from the Codex review: a daily one-shot scheduled for
+    // Scenario from a review: a daily one-shot scheduled for
     // 12:00 that the agent could not yet deliver (busy turn, manual
     // tick mode) and is listed 5 minutes after the ideal slot. The
     // scheduler will still fire today's 12:00 slot from createdAt, so

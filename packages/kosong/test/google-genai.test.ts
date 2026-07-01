@@ -153,21 +153,20 @@ describe('GoogleGenAIChatProvider', () => {
 
       const contents = messagesToGoogleGenAIContents(messages);
 
-      expect(contents).toHaveLength(2);
-      const first = contents[0] as unknown as {
+      // The system turn is wrapped as a user turn, then merged with the
+      // following real user turn — Gemini/Vertex would reject the two
+      // consecutive user Contents the wrap would otherwise produce. The
+      // <system>…</system> tags keep the boundary legible within the merged
+      // turn.
+      expect(contents).toHaveLength(1);
+      const merged = contents[0] as unknown as {
         role: string;
         parts: Array<{ text?: string }>;
       };
-      expect(first.role).toBe('user');
-      expect(first.parts).toHaveLength(1);
-      expect(first.parts[0]!.text).toBe('<system>You are helpful.</system>');
-      // Original user turn is untouched.
-      const second = contents[1] as unknown as {
-        role: string;
-        parts: Array<{ text?: string }>;
-      };
-      expect(second.role).toBe('user');
-      expect(second.parts[0]!.text).toBe('Hi');
+      expect(merged.role).toBe('user');
+      expect(merged.parts).toHaveLength(2);
+      expect(merged.parts[0]!.text).toBe('<system>You are helpful.</system>');
+      expect(merged.parts[1]!.text).toBe('Hi');
       // No emitted content carries the unsupported "system" role.
       for (const c of contents) {
         expect((c as unknown as { role: string }).role).not.toBe('system');
@@ -210,6 +209,52 @@ describe('GoogleGenAIChatProvider', () => {
         { parts: [{ text: '2+2 equals 4.' }], role: 'model' },
         { parts: [{ text: 'And 3+3?' }], role: 'user' },
       ]);
+    });
+
+    it('merges consecutive user messages into one Content (post-compaction shape)', () => {
+      // After compaction the history is `[kept user prompts, user-role summary,
+      // injected reminders]` — all role 'user'. Gemini/Vertex require strictly
+      // alternating user/model turns and reject consecutive user Contents, so
+      // the converter must collapse them into a single user Content.
+      const contents = messagesToGoogleGenAIContents([
+        { role: 'user', content: [{ type: 'text', text: 'Earlier prompt' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Conversation summary' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'A reminder' }], toolCalls: [] },
+      ]);
+
+      expect(contents).toEqual([
+        {
+          role: 'user',
+          parts: [
+            { text: 'Earlier prompt' },
+            { text: 'Conversation summary' },
+            { text: 'A reminder' },
+          ],
+        },
+      ]);
+    });
+
+    it('merges a trailing user turn into the preceding tool-result Content', () => {
+      // A user turn arriving right after a tool result (e.g. steering) would
+      // otherwise produce two consecutive user Contents (the function-response
+      // turn and the steer text), which Gemini/Vertex rejects.
+      const toolCall: ToolCall = {
+        type: 'function',
+        id: 'call_1',
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
+      };
+      const contents = messagesToGoogleGenAIContents([
+        { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
+        { role: 'assistant', content: [], toolCalls: [toolCall] },
+        { role: 'tool', content: [{ type: 'text', text: '5' }], toolCallId: 'call_1', toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Now multiply' }], toolCalls: [] },
+      ]);
+
+      expect(contents.map((c) => c.role)).toEqual(['user', 'model', 'user']);
+      const last = contents.at(-1)!;
+      expect(last.parts.some((p) => p.function_response !== undefined)).toBe(true);
+      expect(last.parts.some((p) => p.text === 'Now multiply')).toBe(true);
     });
 
     it('multi-turn conversation with system prompt sets system_instruction', async () => {

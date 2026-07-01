@@ -94,7 +94,7 @@ export interface AppSession {
 export interface AppSessionRuntimeStatus {
   /** Current model alias, or null if the daemon couldn't resolve it. */
   model: string | null;
-  thinkingLevel: string;
+  thinkingEffort: string;
   permission: string;
   planMode: boolean;
   swarmMode: boolean;
@@ -419,6 +419,12 @@ export type AppEvent =
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
   | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
+  | {
+      type: 'modelCatalogChanged';
+      changed: { providerId: string; providerName: string; added: number; removed: number }[];
+      unchanged: string[];
+      failed: { provider: string; reason: string }[];
+    }
   | { type: 'unknown'; raw: unknown };
 
 // ---------------------------------------------------------------------------
@@ -660,6 +666,7 @@ export interface KimiWebApi {
   // derived workspaces (cwds with sessions that were never explicitly registered).
   listWorkspaces(): Promise<AppWorkspace[]>;
   addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace>;
+  updateWorkspace(id: string, input: { name: string }): Promise<AppWorkspace>;
   deleteWorkspace(id: string): Promise<void>;
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
@@ -669,7 +676,8 @@ export interface KimiWebApi {
   listProviders(): Promise<AppProvider[]>;
   addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
   deleteProvider(id: string): Promise<{ deleted: true }>;
-  refreshProvider(id: string): Promise<AppProvider>;
+  refreshProvider(id: string): Promise<ProviderRefreshResult>;
+  refreshAllProviders(): Promise<ProviderRefreshResult>;
   refreshOAuthProviderModels(): Promise<ProviderRefreshResult>;
 
   // File upload / download

@@ -35,7 +35,7 @@ function make(): {
       gpt: model('GPT-5', 'openai'),
     },
     currentValue: 'k2',
-    currentThinking: false,
+    currentThinkingEffort: 'off',
     onSelect,
     onCancel: vi.fn(),
   });
@@ -110,7 +110,7 @@ describe('TabbedModelSelectorComponent', () => {
     const { component, onSelect } = make();
     component.handleInput(RIGHT); // toggle thinking on for k2
     component.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith({ alias: 'k2', thinking: true });
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'k2', thinking: 'on' });
   });
 
   it('frames the tab strip with a blank line above and below it', () => {

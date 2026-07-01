@@ -1,69 +1,42 @@
+You are about to run out of context. Write a first-person handoff note to
+yourself so you can seamlessly continue this task after the earlier
+conversation is cleared.
 
 --- This message is a direct task, not part of the above conversation ---
 
-You are now given a task to compact this conversation context according to specific priorities and output requirements.
+Write the note as your own continuing train of thought — first person, present
+tense, the way you would reason through the next move. Do not write a
+third-party report about someone else's work, and do not impose rigid section
+headings; let the shape follow the task.
 
-Output text only. DO NOT CALL ANY TOOLS. Calling tools will be rejected and fails the task. You already have all the information you need in the conversation history. You have only one chance.
+Make the note self-sufficient: the next turn will see only your most recent user
+messages and this note — every assistant message, tool call, and tool result
+above will be gone. In your own words, preserve what you genuinely need to
+continue:
 
-The goal of compaction is to keep essential code patterns, technical details, and architectural decisions for continuing development without losing context after the above messages are cleared work.
+- The latest user request, quoted verbatim, and what it is actually asking for.
+- The instructions and constraints currently in force (user preferences,
+  project rules, environment and tooling limits) — condensed to what still
+  matters.
+- What has actually been done, at high fidelity: keep the exact commands that
+  were run, the exact file paths touched, and whether each succeeded or failed.
+  Keep only the final working version of any code; drop intermediate attempts
+  and already-resolved errors.
+- The precise next action — including the exact next command or tool call you
+  intend to make — and any required format for the final answer.
 
+Be honest about uncertainty. If an earlier step claimed something was done but
+was never verified (tests "passing", a fix "working", a file "created"), say so
+plainly and treat it as unverified rather than fact — re-check before relying
+on it.
+
+Be concise. Include the critical data, identifiers, and references needed to
+continue, and omit anything that does not change the next move.
+
+Respond with text only. Do not call any tools — you already have everything you
+need in the conversation history.
+
+{% if customInstruction %}
+Optional user instruction:
 {{ customInstruction }}
-
-<!-- Compression Priorities (in order) -->
-
-1. **Current Task State**: What is being worked on RIGHT NOW
-2. **Errors & Solutions**: All encountered errors and their resolutions
-3. **Code Evolution**: Final working versions only (remove intermediate attempts)
-4. **System Context**: Project structure, dependencies, environment setup
-5. **Design Decisions**: Architectural choices and their rationale
-6. **TODO Items**: Unfinished tasks and known issues
-
-<!-- Required Output Structure -->
-
-## Current Focus
-
-[What we're working on now]
-
-## Environment
-
-- [Key setup/config points]
-- ...
-
-## Completed Tasks
-
-- [Task]: [Brief outcome]
-- ...
-
-## Active Issues
-
-- [Issue]: [Status/Next steps]
-- ...
-
-## Code State
-
-### [Critical file name]
-
-[Brief description of the file's purpose and current state]
-
-```
-[The latest version of critical code snippets in this file, <20 lines]
-```
-
-### [Critical file name]
-
-- [Useful classes/methods/functions]: [Brief description/usage]
-- ...
-
-<!-- Omit non-critical code, intermediate attempts, and resolved errors -->
-
-## Important Context
-
-- [Any crucial information not covered above]
-- ...
-
-## All User Messages
-
-- [Detailed non tool use user message]
-- ...
-
-<!-- Must output a summary matching the above template in the **final answer**, not in thinking. -->
+{% endif %}

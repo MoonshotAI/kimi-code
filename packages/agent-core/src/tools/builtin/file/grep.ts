@@ -17,9 +17,7 @@
  *     backend path class.
  */
 
-import type { Readable } from 'node:stream';
-
-import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import type { Kaos } from '@moonshot-ai/kaos';
 import { normalize } from 'pathe';
 import { z } from 'zod';
 
@@ -27,14 +25,22 @@ import type { BuiltinTool } from '../../../agent/tool';
 import { isAbortError } from '../../../loop/errors';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import { noopTelemetryClient, type TelemetryClient } from '../../../telemetry';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import type { PathClass } from '../../policies/path-access';
-import { isSensitiveFile, SENSITIVE_DOT_VARIANT_SUFFIXES } from '../../policies/sensitive';
+import { isSensitiveFile } from '../../policies/sensitive';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { ensureRgPath, rgUnavailableMessage } from '../../support/rg-locator';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
-import { isPrematureCloseError } from '../../support/stream';
+import {
+  DEFAULT_TIMEOUT_MS,
+  MAX_OUTPUT_BYTES,
+  SENSITIVE_GLOBS_TO_EXCLUDE,
+  VCS_DIRECTORIES_TO_EXCLUDE,
+  runRipgrepOnce,
+  shouldRetryRipgrepEagain,
+} from '../../support/run-rg';
 import type { WorkspaceConfig } from '../../support/workspace';
 import GREP_DESCRIPTION from './grep.md?raw';
 
@@ -133,39 +139,11 @@ export const GrepOutputSchema = z.object({
 export type GrepInput = z.Infer<typeof GrepInputSchema>;
 export type GrepOutput = z.Infer<typeof GrepOutputSchema>;
 
-const DEFAULT_TIMEOUT_MS = 20_000;
-const SIGTERM_GRACE_MS = 5_000;
-const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
-
-async function disposeProcess(proc: KaosProcess): Promise<void> {
-  try {
-    await proc.dispose();
-  } catch {
-    /* best-effort cleanup */
-  }
-}
 // Column cap applied to non-content output modes only; `content` mode returns
 // matching lines in full so the cap is intentionally skipped there.
 const RG_MAX_COLUMNS = 500;
 const DEFAULT_HEAD_LIMIT = 250;
 const MTIME_STAT_CONCURRENCY = 32;
-const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
-// This is a conservative prefilter. The authoritative sensitive-file check
-// still happens on parsed rg records after execution.
-const SENSITIVE_KEY_BASENAMES = ['id_rsa', 'id_ed25519', 'id_ecdsa'] as const;
-const SENSITIVE_KEY_GLOBS_TO_EXCLUDE = SENSITIVE_KEY_BASENAMES.flatMap((name) => [
-  `**/${name}`,
-  `**/${name}[-_]*`,
-  ...SENSITIVE_DOT_VARIANT_SUFFIXES.map((suffix) => `**/${name}${suffix}`),
-]);
-const SENSITIVE_GLOBS_TO_EXCLUDE = [
-  '**/.env',
-  ...SENSITIVE_KEY_GLOBS_TO_EXCLUDE,
-  '**/.aws/credentials',
-  '**/.aws/credentials/**',
-  '**/.gcp/credentials',
-  '**/.gcp/credentials/**',
-] as const;
 
 // Line formats produced by ripgrep:
 //   content match with --null:   "file.py<NUL>10:matched text"
@@ -181,10 +159,14 @@ export class GrepTool implements BuiltinTool<GrepInput> {
   readonly name = 'Grep' as const;
   readonly description = GREP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
+  private readonly telemetry: TelemetryClient;
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
-  ) {}
+    telemetry: TelemetryClient = noopTelemetryClient,
+  ) {
+    this.telemetry = telemetry;
+  }
 
   resolveExecution(args: GrepInput): ToolExecution {
     let path: string | undefined;
@@ -222,20 +204,33 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     try {
       const resolution = await ensureRgPath({ signal });
       rgPath = resolution.path;
+      if (resolution.source !== 'system-path') {
+        this.telemetry.track('grep_tool_rg_fallback', {
+          source: resolution.source,
+          outcome: 'resolved',
+        });
+      }
     } catch (error) {
       if (isAbortError(error)) {
         return { isError: true, output: 'Grep aborted' };
       }
+      this.telemetry.track('grep_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 
-    let runResult = await runRipgrepOnce(this.kaos, buildRgArgs(rgPath, args, searchPaths), signal);
+    let runResult = await runRipgrepOnce(
+      this.kaos,
+      buildRgArgs(rgPath, args, searchPaths),
+      signal,
+      { abortedMessage: 'Grep aborted' },
+    );
     if (runResult.kind === 'tool-error') return runResult.result;
     if (shouldRetryRipgrepEagain(runResult)) {
       runResult = await runRipgrepOnce(
         this.kaos,
         buildRgArgs(rgPath, args, searchPaths, true),
         signal,
+        { abortedMessage: 'Grep aborted' },
       );
       if (runResult.kind === 'tool-error') return runResult.result;
     }
@@ -360,20 +355,6 @@ export class GrepTool implements BuiltinTool<GrepInput> {
 
 }
 
-interface RipgrepRunResult {
-  readonly kind: 'result';
-  readonly exitCode: number;
-  readonly stdoutText: string;
-  readonly stderrText: string;
-  readonly bufferTruncated: boolean;
-  readonly stderrTruncated: boolean;
-  readonly timedOut: boolean;
-}
-
-type RipgrepRunOutcome =
-  | RipgrepRunResult
-  | { readonly kind: 'tool-error'; readonly result: ExecutableToolResult };
-
 type GrepMode = 'content' | 'files_with_matches' | 'count_matches';
 
 type ParsedGrepLine =
@@ -395,159 +376,6 @@ class GrepAbortedError extends Error {
     super('Grep aborted');
     this.name = 'GrepAbortedError';
   }
-}
-
-async function runRipgrepOnce(
-  kaos: Kaos,
-  rgArgs: readonly string[],
-  signal: AbortSignal,
-): Promise<RipgrepRunOutcome> {
-  if (signal.aborted) {
-    return { kind: 'tool-error', result: { isError: true, output: 'Grep aborted' } };
-  }
-
-  let proc: KaosProcess;
-  try {
-    proc = await kaos.exec(...rgArgs);
-  } catch (error) {
-    // Spawn can still fail after path resolution, e.g. permissions or a
-    // corrupt binary. ENOENT gets the same actionable hint as locator failures.
-    const isEnoent =
-      error instanceof Error &&
-      'code' in error &&
-      (error as NodeJS.ErrnoException).code === 'ENOENT';
-    return {
-      kind: 'tool-error',
-      result: {
-        isError: true,
-        output: isEnoent
-          ? rgUnavailableMessage(error)
-          : error instanceof Error
-            ? error.message
-            : String(error),
-      },
-    };
-  }
-
-  try {
-    proc.stdin.end();
-  } catch {
-    /* already gone */
-  }
-
-  let timedOut = false;
-  let aborted = false;
-  let killed = false;
-
-  const killProc = async (): Promise<void> => {
-    if (killed) return;
-    killed = true;
-    try {
-      await proc.kill('SIGTERM');
-    } catch {
-      /* process already gone */
-    }
-    const exited = proc
-      .wait()
-      .then(() => true)
-      .catch(() => true);
-    const raced = await Promise.race([
-      exited,
-      new Promise<false>((resolve) => {
-        setTimeout(() => {
-          resolve(false);
-        }, SIGTERM_GRACE_MS);
-      }),
-    ]);
-    if (!raced && proc.exitCode === null) {
-      try {
-        await proc.kill('SIGKILL');
-      } catch {
-        /* ignore */
-      }
-    }
-    await disposeProcess(proc);
-  };
-
-  const onAbort = (): void => {
-    aborted = true;
-    void killProc();
-  };
-  signal.addEventListener('abort', onAbort);
-  // AbortSignal does not replay past abort events; check once after registering
-  // the listener so already-aborted calls still run the cleanup path.
-  if (signal.aborted) onAbort();
-
-  const timeoutHandle = setTimeout(() => {
-    timedOut = true;
-    void killProc();
-  }, DEFAULT_TIMEOUT_MS);
-
-  let exitCode = 0;
-  let stdoutText = '';
-  let stderrText = '';
-  let bufferTruncated = false;
-  let stderrTruncated = false;
-
-  try {
-    const isTerminating = (): boolean => timedOut || aborted || killed;
-    const [stdoutResult, stderrResult, code] = await Promise.all([
-      readStreamWithCap(proc.stdout, MAX_OUTPUT_BYTES, isTerminating),
-      readStreamWithCap(proc.stderr, MAX_OUTPUT_BYTES, isTerminating),
-      proc.wait(),
-    ]);
-    stdoutText = stdoutResult.text;
-    stderrText = stderrResult.text;
-    bufferTruncated = stdoutResult.truncated;
-    stderrTruncated = stderrResult.truncated;
-    exitCode = code;
-  } catch (error) {
-    if (isPrematureCloseError(error) && (timedOut || aborted || killed)) {
-      // The disposer intentionally closes streams after a terminating signal.
-    } else {
-      return {
-        kind: 'tool-error',
-        result: {
-          isError: true,
-          output: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  } finally {
-    clearTimeout(timeoutHandle);
-    signal.removeEventListener('abort', onAbort);
-    await disposeProcess(proc);
-  }
-
-  if (aborted) {
-    return {
-      kind: 'tool-error',
-      result: { isError: true, output: 'Grep aborted' },
-    };
-  }
-
-  return {
-    kind: 'result',
-    exitCode,
-    stdoutText,
-    stderrText,
-    bufferTruncated,
-    stderrTruncated,
-    timedOut,
-  };
-}
-
-function shouldRetryRipgrepEagain(result: RipgrepRunResult): boolean {
-  return (
-    result.exitCode !== 0 &&
-    result.exitCode !== 1 &&
-    !result.timedOut &&
-    isEagainRipgrepError(result.stderrText)
-  );
-}
-
-function isEagainRipgrepError(stderr: string): boolean {
-  return stderr.includes('os error 11') || stderr.includes('Resource temporarily unavailable');
 }
 
 async function sortFilesWithMatchesByMtime(
@@ -950,40 +778,4 @@ function formatCountSummary(lines: readonly ParsedGrepLine[], redactedSensitive:
 function countPayloadFromLegacyLine(line: string): string | undefined {
   const idx = line.lastIndexOf(':');
   return idx > 0 ? line.slice(idx + 1) : undefined;
-}
-
-interface CappedStreamResult {
-  readonly text: string;
-  readonly truncated: boolean;
-}
-
-async function readStreamWithCap(
-  stream: Readable,
-  maxBytes: number,
-  suppressPrematureClose?: () => boolean,
-): Promise<CappedStreamResult> {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  let truncated = false;
-  try {
-    for await (const chunk of stream) {
-      const buf: Buffer =
-        typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
-      if (truncated) continue;
-      if (total + buf.length > maxBytes) {
-        const remaining = maxBytes - total;
-        if (remaining > 0) chunks.push(buf.subarray(0, remaining));
-        total = maxBytes;
-        truncated = true;
-        continue;
-      }
-      chunks.push(buf);
-      total += buf.length;
-    }
-  } catch (error) {
-    if (!isPrematureCloseError(error) || suppressPrematureClose?.() !== true) {
-      throw error;
-    }
-  }
-  return { text: Buffer.concat(chunks).toString('utf8'), truncated };
 }

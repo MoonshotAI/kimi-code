@@ -1,13 +1,18 @@
 import { computed, ref } from 'vue';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppSession } from '../src/api/types';
+import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
+import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
+import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 
 const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
   abortSession: vi.fn(),
+  addWorkspace: vi.fn(),
+  updateWorkspace: vi.fn(),
 }));
 
 vi.mock('../src/api', () => ({
@@ -124,6 +129,41 @@ function createDeps(): UseWorkspaceStateDeps {
   } as unknown as UseWorkspaceStateDeps;
 }
 
+function createMemoryStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    get length() {
+      return data.size;
+    },
+    clear() {
+      data.clear();
+    },
+    getItem(key: string) {
+      return data.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(data.keys()).at(index) ?? null;
+    },
+    removeItem(key: string) {
+      data.delete(key);
+    },
+    setItem(key: string, value: string) {
+      data.set(key, String(value));
+    },
+  };
+}
+
+function installStorage(storage: Storage): void {
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: storage,
+  });
+}
+
+function workspace(id: string, root: string, name: string) {
+  return { id, root, name, isGitRepo: false, sessionCount: 0 };
+}
+
 describe('useWorkspaceState — abortCurrentPrompt', () => {
   beforeEach(() => {
     apiMock.abortPrompt.mockReset();
@@ -151,5 +191,180 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_stale');
     expect(apiMock.abortSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('mergeWorkspaces', () => {
+  it('collapses registered workspaces that share a root, keeping the first entry and its sessions', () => {
+    const result = mergeWorkspaces({
+      workspaces: [
+        // Server orders by last_opened_at desc, so the most recently opened
+        // (typically the canonical re-add) comes first.
+        { id: 'wd_current', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
+        { id: 'wd_legacy', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
+      ],
+      // A session whose daemon workspace_id points at the dropped (legacy) entry.
+      sessions: [{ id: 's1', cwd: '/agent/GEO', workspaceId: 'wd_legacy' }],
+      hiddenWorkspaceRoots: [],
+      activeRoot: undefined,
+      activeBranch: null,
+      sessionsHasMoreByWorkspace: { wd_current: false },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.root).toBe('/agent/GEO');
+    // Keeps the first (most recent) entry, matching the sidebar's first-match
+    // session assignment so the rendered workspace is the one sessions land under.
+    expect(result[0]?.id).toBe('wd_current');
+    expect(result[0]?.sessionCount).toBe(1);
+  });
+
+  it('keeps distinct roots separate and appends derived cwds after real ones', () => {
+    const result = mergeWorkspaces({
+      workspaces: [
+        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+      ],
+      sessions: [
+        { id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' },
+        { id: 's2', cwd: '/agent/B', workspaceId: 'wd_b' },
+      ],
+      hiddenWorkspaceRoots: [],
+      activeRoot: undefined,
+      activeBranch: null,
+      sessionsHasMoreByWorkspace: {},
+    });
+
+    expect(result.map((w) => w.root)).toEqual(['/agent/A', '/agent/B']);
+    expect(result.find((w) => w.root === '/agent/B')?.id).toBe('wd_b');
+  });
+
+  it('hides workspaces whose root the user removed', () => {
+    const result = mergeWorkspaces({
+      workspaces: [
+        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+      ],
+      sessions: [{ id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' }],
+      hiddenWorkspaceRoots: ['/agent/A'],
+      activeRoot: undefined,
+      activeBranch: null,
+      sessionsHasMoreByWorkspace: {},
+    });
+
+    expect(result.map((w) => w.root)).not.toContain('/agent/A');
+  });
+});
+
+describe('useWorkspaceState — renameWorkspace', () => {
+  beforeEach(() => {
+    apiMock.updateWorkspace.mockReset();
+    installStorage(createMemoryStorage());
+  });
+
+  afterEach(() => {
+    installStorage(createMemoryStorage());
+  });
+
+  it('renames via the daemon and applies the name locally', async () => {
+    apiMock.updateWorkspace.mockResolvedValue({});
+    const state = createState();
+    state.workspaces = [workspace('wd_1', '/abs/path', 'Old')];
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.renameWorkspace('wd_1', 'New');
+
+    expect(apiMock.updateWorkspace).toHaveBeenCalledWith('wd_1', { name: 'New' });
+    expect(state.workspaces[0]?.name).toBe('New');
+    expect(loadWorkspaceNameOverrides()).toEqual({});
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a local override when the daemon reports not found', async () => {
+    apiMock.updateWorkspace.mockRejectedValue(
+      new DaemonApiError({ code: 40410, msg: 'workspace not found', requestId: 'r' }),
+    );
+    const state = createState();
+    state.workspaces = [workspace('wd_1', '/abs/path', 'Old')];
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.renameWorkspace('wd_1', 'New');
+
+    expect(state.workspaces[0]?.name).toBe('New');
+    expect(loadWorkspaceNameOverrides()).toEqual({ '/abs/path': 'New' });
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('surfaces daemon errors other than not-found', async () => {
+    apiMock.updateWorkspace.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
+    );
+    const state = createState();
+    state.workspaces = [workspace('wd_1', '/abs/path', 'Old')];
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.renameWorkspace('wd_1', 'New');
+
+    expect(state.workspaces[0]?.name).toBe('Old');
+    expect(loadWorkspaceNameOverrides()).toEqual({});
+    expect(deps.pushOperationFailure).toHaveBeenCalled();
+  });
+
+  it('keeps a saved name override when a workspace is upserted (derived → registered)', () => {
+    // Simulates: user renamed a derived workspace, then the daemon registers
+    // the root (e.g. on first chat) and returns the default basename.
+    saveWorkspaceNameOverrides({ '/abs/path': 'Renamed' });
+    const state = createState();
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    ws.upsertWorkspacePreserveOrder(workspace('wd_1', '/abs/path', 'path'));
+
+    expect(state.workspaces[0]?.name).toBe('Renamed');
+  });
+});
+
+describe('useWorkspaceState — addWorkspaceByPath', () => {
+  beforeEach(() => {
+    apiMock.addWorkspace.mockReset();
+  });
+
+  it('registers the workspace with the daemon and selects it', async () => {
+    const registered = {
+      id: 'wd_abc',
+      root: '/abs/path',
+      name: 'path',
+      isGitRepo: false,
+      sessionCount: 0,
+    };
+    apiMock.addWorkspace.mockResolvedValue(registered);
+    const state = createState();
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    const ok = await workspace.addWorkspaceByPath('  /abs/path  ');
+
+    expect(ok).toBe(true);
+    expect(apiMock.addWorkspace).toHaveBeenCalledWith({ root: '/abs/path' });
+    expect(state.workspaces).toContainEqual(registered);
+    expect(state.activeWorkspaceId).toBe('wd_abc');
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('returns false and adds no local workspace on failure', async () => {
+    const err = new Error('path not found');
+    apiMock.addWorkspace.mockRejectedValue(err);
+    const state = createState();
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    const ok = await workspace.addWorkspaceByPath('/abs/missing');
+
+    expect(ok).toBe(false);
+    // The caller (the picker) is responsible for surfacing the failure inline.
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+    expect(state.workspaces).toEqual([]);
+    expect(state.activeWorkspaceId).toBeNull();
   });
 });

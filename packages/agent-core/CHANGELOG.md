@@ -1,5 +1,22 @@
 # @moonshot-ai/agent-core
 
+## 0.14.3
+
+### Patch Changes
+
+- [#1221](https://github.com/MoonshotAI/kimi-code/pull/1221) [`a3f9cec`](https://github.com/MoonshotAI/kimi-code/commit/a3f9cec8a975f11e37e992e42f954789ed394207) - Fix duplicate workspaces showing in the web sidebar when the same folder is registered more than once.
+
+- Updated dependencies [[`ceb27f5`](https://github.com/MoonshotAI/kimi-code/commit/ceb27f5e449e177493f320d90e292487a8fc3410)]:
+  - @moonshot-ai/protocol@0.3.1
+
+## 0.14.2
+
+### Patch Changes
+
+- [#1068](https://github.com/MoonshotAI/kimi-code/pull/1068) [`c82dcf9`](https://github.com/MoonshotAI/kimi-code/commit/c82dcf9cd8276eddf6acbf1030d1712b83a38083) - Glob now uses ripgrep, so it respects .gitignore by default, supports brace patterns, returns only files, and keeps partial results with a warning when some directories are unreadable.
+
+- [#1209](https://github.com/MoonshotAI/kimi-code/pull/1209) [`0635387`](https://github.com/MoonshotAI/kimi-code/commit/063538744f64a1bd3da6f37ebd0643d10bfc068f) - Align malformed tool call argument handling with schema validation fallback.
+
 ## 0.14.1
 
 ### Patch Changes

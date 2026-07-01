@@ -150,7 +150,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
       model: 'k2',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       permission: 'manual',
       planMode: false,
       contextTokens: 0,
@@ -174,7 +174,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
         main: {
           status: {
             model: 'k2',
-            thinkingLevel: 'off',
+            thinkingEffort: 'off',
             permission: 'manual',
             planMode: false,
             contextTokens: 0,
@@ -912,7 +912,7 @@ command = "vim"
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: true,
         contextTokens: 0,
@@ -3484,7 +3484,7 @@ command = "vim"
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'high',
+        thinkingEffort: 'high',
         permission: 'auto',
         planMode: true,
         contextTokens: 25,
@@ -3504,7 +3504,7 @@ command = "vim"
       expect(output).toContain(' Status ');
       expect(output).toContain('>_ Kimi Code');
       expect(output).toContain('Model');
-      expect(output).toContain('thinking on');
+      expect(output).toContain('thinking high');
       expect(output).toContain('Permissions  auto');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');
@@ -4164,7 +4164,7 @@ command = "vim"
           },
         },
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       })),
       setConfig,
     });
@@ -4193,11 +4193,11 @@ command = "vim"
       expect(session.setThinking).toHaveBeenCalledWith('on');
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'turbo',
-        defaultThinking: true,
+        thinking: { enabled: true },
       });
     });
     expect(driver.state.appState.model).toBe('turbo');
-    expect(driver.state.appState.thinking).toBe(true);
+    expect(driver.state.appState.thinkingEffort).toBe('on');
   });
 
   it('applies /model selection to the session only on Alt+S without persisting', async () => {
@@ -4222,7 +4222,7 @@ command = "vim"
           },
         },
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       })),
       setConfig,
     });
@@ -4242,7 +4242,7 @@ command = "vim"
     });
     expect(setConfig).not.toHaveBeenCalled();
     expect(driver.state.appState.model).toBe('turbo');
-    expect(driver.state.appState.thinking).toBe(true);
+    expect(driver.state.appState.thinkingEffort).toBe('on');
   });
 
   it('persists /model selection even when runtime state is unchanged', async () => {
@@ -4260,7 +4260,7 @@ command = "vim"
           },
         },
         defaultModel: 'old-default',
-        defaultThinking: true,
+        thinking: { enabled: true },
       })),
       setConfig,
     });
@@ -4276,7 +4276,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       });
     });
     expect(session.setModel).not.toHaveBeenCalled();

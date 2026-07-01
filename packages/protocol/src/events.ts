@@ -5,6 +5,12 @@ import { messageContentSchema, type MessageContent } from './message';
 import { sessionSchema, sessionStatusSchema, type Session, type SessionStatus } from './session';
 import { isoDateTimeSchema } from './time';
 import { configResponseSchema, type ConfigResponse } from './rest/config';
+import {
+  providerRefreshChangeSchema,
+  providerRefreshFailureSchema,
+  type ProviderRefreshChange,
+  type ProviderRefreshFailure,
+} from './modelCatalog';
 import { workspaceSchema, type Workspace } from './workspace';
 
 export interface TokenUsage {
@@ -45,6 +51,15 @@ export interface SkillActivationOrigin {
   readonly skillType?: string;
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
+}
+
+export interface PluginCommandOrigin {
+  readonly kind: 'plugin_command';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
 }
 
 export interface InjectionOrigin {
@@ -112,6 +127,7 @@ export interface RetryOrigin {
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
+  | PluginCommandOrigin
   | InjectionOrigin
   | ShellCommandOrigin
   | CompactionSummaryOrigin
@@ -284,6 +300,22 @@ export interface CompactionResult {
   readonly compactedCount: number;
   readonly tokensBefore: number;
   readonly tokensAfter: number;
+  /**
+   * Number of real user messages kept verbatim ahead of the summary in the
+   * post-compaction live context. Recorded so the wire-transcript reducer can
+   * reproduce the live folded length without re-deriving it from the full
+   * transcript (which still holds the untruncated originals of messages the
+   * live context may have truncated, so the two would otherwise diverge).
+   * Optional for backward compatibility with older wire records.
+   */
+  readonly keptUserMessageCount?: number;
+  /**
+   * Oldest messages trimmed from the summarizer input when the compaction
+   * request overflowed the model window; not covered by the produced summary.
+   * Mirrors agent-core's `CompactionResult.droppedCount`; optional for backward
+   * compatibility.
+   */
+  readonly droppedCount?: number;
 }
 
 export interface ToolUpdate {
@@ -355,6 +387,19 @@ export interface ConfigChangedEvent {
   readonly config: ConfigResponse;
 }
 
+/**
+ * Pushed when the daemon refreshes provider model metadata (manual or
+ * scheduled) and the effective catalog changed. Carries the per-provider
+ * diff so clients can both refresh their model/provider caches and surface a
+ * summary ("3 models added") without re-diffing the whole config.
+ */
+export interface ModelCatalogChangedEvent {
+  readonly type: 'event.model_catalog.changed';
+  readonly changed: readonly ProviderRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly ProviderRefreshFailure[];
+}
+
 export interface GoalUpdatedEvent {
   readonly type: 'goal.updated';
   readonly snapshot: GoalSnapshot | null;
@@ -369,6 +414,15 @@ export interface SkillActivatedEvent {
   readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
   readonly skillPath?: string;
   readonly skillSource?: SkillSource;
+}
+
+export interface PluginCommandActivatedEvent {
+  readonly type: 'plugin_command.activated';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
 }
 
 export interface ErrorEvent extends KimiErrorPayload {
@@ -411,6 +465,20 @@ export interface TurnStepCompletedEvent {
   readonly finishReason?: string;
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;
+  /**
+   * Split of `llmFirstTokenLatencyMs`: in-process request-building time on the
+   * client vs. network + API-server time to the first token. Both omitted when
+   * the provider does not report the client/server boundary.
+   */
+  readonly llmRequestBuildMs?: number;
+  readonly llmServerFirstTokenMs?: number;
+  /**
+   * Split of `llmStreamDurationMs` (the decode window): time awaiting parts from
+   * the provider vs. time processing parts in-process. Both omitted when the
+   * provider stream did not report decode accounting.
+   */
+  readonly llmServerDecodeMs?: number;
+  readonly llmClientConsumeMs?: number;
   readonly providerFinishReason?: FinishReason;
   readonly rawFinishReason?: string;
 }
@@ -628,8 +696,10 @@ export type AgentEvent =
   | WorkspaceDeletedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
+  | ModelCatalogChangedEvent
   | GoalUpdatedEvent
   | SkillActivatedEvent
+  | PluginCommandActivatedEvent
   | TurnStartedEvent
   | TurnEndedEvent
   | TurnStepStartedEvent
@@ -704,6 +774,15 @@ export const skillActivationOriginSchema = z.object({
   skillSource: skillSourceSchema.optional(),
 }) satisfies z.ZodType<SkillActivationOrigin>;
 
+export const pluginCommandOriginSchema = z.object({
+  kind: z.literal('plugin_command'),
+  activationId: z.string(),
+  pluginId: z.string(),
+  commandName: z.string(),
+  commandArgs: z.string().optional(),
+  trigger: z.literal('user-slash'),
+}) satisfies z.ZodType<PluginCommandOrigin>;
+
 export const injectionOriginSchema = z.object({
   kind: z.literal('injection'),
   variant: z.string(),
@@ -768,6 +847,7 @@ export const retryOriginSchema = z.object({
 export const promptOriginSchema = z.discriminatedUnion('kind', [
   userPromptOriginSchema,
   skillActivationOriginSchema,
+  pluginCommandOriginSchema,
   injectionOriginSchema,
   shellCommandOriginSchema,
   compactionSummaryOriginSchema,
@@ -944,6 +1024,8 @@ export const compactionResultSchema = z.object({
   compactedCount: z.number(),
   tokensBefore: z.number(),
   tokensAfter: z.number(),
+  keptUserMessageCount: z.number().optional(),
+  droppedCount: z.number().optional(),
 }) satisfies z.ZodType<CompactionResult>;
 
 export const toolUpdateSchema = z.object({
@@ -1013,6 +1095,13 @@ export const configChangedEventSchema = z.object({
   config: configResponseSchema,
 }) satisfies z.ZodType<ConfigChangedEvent>;
 
+export const modelCatalogChangedEventSchema = z.object({
+  type: z.literal('event.model_catalog.changed'),
+  changed: z.array(providerRefreshChangeSchema),
+  unchanged: z.array(z.string().min(1)),
+  failed: z.array(providerRefreshFailureSchema),
+}) satisfies z.ZodType<ModelCatalogChangedEvent>;
+
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -1028,6 +1117,15 @@ export const skillActivatedEventSchema = z.object({
   skillPath: z.string().optional(),
   skillSource: skillSourceSchema.optional(),
 }) satisfies z.ZodType<SkillActivatedEvent>;
+
+export const pluginCommandActivatedEventSchema = z.object({
+  type: z.literal('plugin_command.activated'),
+  activationId: z.string(),
+  pluginId: z.string(),
+  commandName: z.string(),
+  commandArgs: z.string().optional(),
+  trigger: z.literal('user-slash'),
+}) satisfies z.ZodType<PluginCommandActivatedEvent>;
 
 export const errorEventSchema = kimiErrorPayloadSchema.extend({
   type: z.literal('error'),
@@ -1069,6 +1167,10 @@ export const turnStepCompletedEventSchema = z.object({
   finishReason: z.string().optional(),
   llmFirstTokenLatencyMs: z.number().optional(),
   llmStreamDurationMs: z.number().optional(),
+  llmRequestBuildMs: z.number().optional(),
+  llmServerFirstTokenMs: z.number().optional(),
+  llmServerDecodeMs: z.number().optional(),
+  llmClientConsumeMs: z.number().optional(),
   providerFinishReason: finishReasonSchema.optional(),
   rawFinishReason: z.string().optional(),
 }) satisfies z.ZodType<TurnStepCompletedEvent>;
@@ -1279,8 +1381,10 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
   sessionStatusChangedEventSchema,
+  modelCatalogChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
+  pluginCommandActivatedEventSchema,
   turnStartedEventSchema,
   turnEndedEventSchema,
   turnStepStartedEventSchema,

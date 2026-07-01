@@ -6,6 +6,54 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.21.0 (2026-07-01)
+
+### Features
+
+- Plugins can now provide slash commands via a `commands` field in their manifest, registered as `<plugin>:<command>` and invoked with `$ARGUMENTS` expansion.
+- Add Mermaid diagram rendering to the web chat. Fenced `mermaid` blocks in assistant responses now render as diagrams. KaTeX math and Mermaid diagram parsing also run in Web Workers to keep the UI responsive during live streaming.
+
+### Bug Fixes
+
+- Stop a malformed message history from permanently bricking a session on strict providers (Anthropic). The request is repaired before sending — orphaned tool calls are closed and empty/whitespace-only text blocks dropped — and if the provider still rejects its structure, it is resent once with a wire-compliant rebuild.
+- Force-exit headless runs (`kimi -p`) so a stray ref'd handle left over from the run can't keep a completed run alive until an external timeout, and bound prompt cleanup so a wedged shutdown step can't hang shutdown.
+- Fix @ file mentions not opening when typed inside a slash command argument.
+- Fix adding a workspace by path in the web UI failing silently when the daemon rejects the path; it now shows an error instead of a broken workspace.
+- Fix duplicate workspaces showing in the web sidebar when the same folder is registered more than once.
+- Fix the web workspace rename not persisting after a page refresh.
+
+### Polish
+
+- Add a double-Esc shortcut to open the undo selector. Press Esc twice while idle to undo.
+- Show file path completions when typing `/` in shell mode (`!`).
+- Always show the usage-data opt-out toggle in the web settings with a clearer label and description.
+
+### Refactors
+
+- Rework conversation compaction:
+  - Keep only recent user prompts plus a single user-role summary; drop assistant and tool messages.
+  - Repair tool_use/tool_result adjacency before sending, fixing a strict-provider HTTP 400 when a tool call and its result became non-adjacent.
+  - Merge consecutive user turns for strict providers (Gemini/Vertex), fixing an HTTP 400 ("roles must alternate") after compaction or when a turn is steered in right after a tool result.
+  - Micro-compaction now defaults off.
+- Refactor the thinking effort system
+- Add a server-side key-value store API for persisting web UI preferences to the user's data directory.
+
+## 0.20.3 (2026-06-30)
+
+### Bug Fixes
+
+- Fix provider error messages rendering as blank lines in the TUI when the server returns an HTML error page.
+- Fix the web composer being hidden behind the mobile Safari toolbar and the page auto-zooming when the composer is focused.
+
+### Polish
+
+- Refresh provider model lists automatically in the background instead of only at startup, so newly available models appear without restarting.
+- Glob now uses ripgrep, so it respects .gitignore by default, supports brace patterns, returns only files, and keeps partial results with a warning when some directories are unreadable.
+
+### Refactors
+
+- Align malformed tool call argument handling with schema validation fallback.
+
 ## 0.20.2 (2026-06-29)
 
 ### Features

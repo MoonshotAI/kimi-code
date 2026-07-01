@@ -143,6 +143,51 @@ export function isContextOverflowStatusError(statusCode: number, message: string
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
+// Strict providers (Anthropic) reject a request whose assistant `tool_use` and
+// `tool_result` blocks are not correctly paired and adjacent — a missing result,
+// a stray result with no matching call, or a result that does not immediately
+// follow its call. The validation runs before any generation, so the error is a
+// non-retryable 4xx. A caller can react by resending a re-projected, strictly
+// wire-compliant request rather than leaving the session permanently stuck.
+const TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS = [
+  /tool_use[\s\S]*tool_result/,
+  /tool_result[\s\S]*tool_use/,
+  /unexpected\s+`?tool_result/,
+] as const;
+
+export function isToolExchangeAdjacencyError(error: unknown): boolean {
+  if (!(error instanceof APIStatusError)) return false;
+  if (error instanceof APIContextOverflowError) return false;
+  if (error.statusCode !== 400 && error.statusCode !== 422) return false;
+  const lowerMessage = error.message.toLowerCase();
+  return TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
+// The broader family of structural request rejections a strict provider returns
+// when the message array itself is malformed — tool_use/tool_result pairing,
+// empty or whitespace-only text blocks, a non-user first message, or
+// non-alternating roles. All are deterministic 4xx validation failures (no
+// generation happened) on a history that is re-sent every turn, so the only
+// recovery is to resend a re-projected, strictly wire-compliant request rather
+// than leave the session permanently stuck. Context-overflow 400s are excluded —
+// they are handled by compaction, not by re-projection.
+const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
+  /text content blocks must be non-empty/,
+  /text content blocks must contain non-whitespace/,
+  /first message must use the .*user.* role/,
+  /roles must alternate/,
+  /multiple .*(?:user|assistant).* roles in a row/,
+] as const;
+
+export function isRecoverableRequestStructureError(error: unknown): boolean {
+  if (isToolExchangeAdjacencyError(error)) return true;
+  if (!(error instanceof APIStatusError)) return false;
+  if (error instanceof APIContextOverflowError) return false;
+  if (error.statusCode !== 400 && error.statusCode !== 422) return false;
+  const lowerMessage = error.message.toLowerCase();
+  return STRUCTURAL_REQUEST_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
 export function isProviderRateLimitError(error: unknown): boolean {
   if (error instanceof APIProviderRateLimitError) return true;
 

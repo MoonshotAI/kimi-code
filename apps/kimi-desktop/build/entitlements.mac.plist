@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Electron/V8 and the bundled Node SEA both need JIT pages. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- V8 writes to executable memory during codegen. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- The bundled server dlopen's koffi.node / clipboard.node at runtime;
+       they are third-party and not signed by our Team. Without this the
+       hardened runtime rejects them. (Same as the TUI's native build.) -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- Some users set NODE_OPTIONS / DYLD_* envs; allow them. -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>

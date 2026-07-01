@@ -241,6 +241,7 @@ function tocTitle(turn: ChatTurn): string {
   if (turn.role === 'compaction') return t('conversation.compactedPlain');
   if (turn.role === 'user') {
     if (turn.skillActivation) return `/${turn.skillActivation.name}`;
+    if (turn.pluginCommand) return `/${turn.pluginCommand.pluginId}:${turn.pluginCommand.commandName}`;
     const text = turn.text.trim().replaceAll(/\s+/g, ' ');
     return text.length > 0 ? text : 'user';
   }

@@ -5,7 +5,7 @@ import {
   getProviderResponseSchema,
   listModelsResponseSchema,
   listProvidersResponseSchema,
-  refreshOAuthProviderModelsResponseSchema,
+  refreshProviderModelsResponseSchema,
   setDefaultModelResponseSchema,
 } from '@moonshot-ai/protocol';
 import { IModelCatalogService, ModelNotFoundError, ProviderNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
@@ -39,6 +39,14 @@ const providerIdParamSchema = z.object({
 
 const modelActionTailParamSchema = z.object({
   tail: z.string().min(1),
+});
+
+const providerActionTailParamSchema = z.object({
+  tail: z.string().min(1),
+});
+
+const providerCollectionActionParamSchema = z.object({
+  action: z.string().min(1),
 });
 
 export function registerModelCatalogRoutes(
@@ -131,26 +139,94 @@ export function registerModelCatalogRoutes(
     listProvidersRoute.handler as Parameters<ModelCatalogRouteHost['get']>[2],
   );
 
-  const refreshOAuthProvidersRoute = defineRoute(
+  // Collection-level refresh actions share a single `/providers:<action>` route
+  // because Fastify's router collapses every one-segment `/providers:xxx` path
+  // onto one parameter slot (so `/providers:refresh` and `/providers:refresh_oauth`
+  // cannot be registered separately). We dispatch on the captured action instead.
+  const refreshProvidersRoute = defineRoute(
     {
       method: 'POST',
-      path: '/providers:refresh_oauth',
-      success: { data: refreshOAuthProviderModelsResponseSchema },
-      description: 'Refresh OAuth-backed provider model metadata',
+      path: '/providers:action',
+      params: providerCollectionActionParamSchema,
+      success: { data: refreshProviderModelsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+      },
+      description:
+        'Refresh provider model metadata. Use `:refresh` for all providers or `:refresh_oauth` for OAuth-backed providers only.',
       tags: ['providers'],
-      operationId: 'refreshOAuthProviderModels',
+      operationId: 'refreshProviders',
     },
     async (req, reply) => {
-      const result = await ix.invokeFunction((a) =>
-        a.get(IModelCatalogService).refreshOAuthProviderModels(),
+      const raw = req.params.action;
+      const action = raw.startsWith(':') ? raw.slice(1) : raw;
+      if (action === 'refresh_oauth') {
+        const result = await ix.invokeFunction((a) =>
+          a.get(IModelCatalogService).refreshOAuthProviderModels(),
+        );
+        reply.send(okEnvelope(result, req.id));
+        return;
+      }
+      if (action === 'refresh') {
+        const result = await ix.invokeFunction((a) =>
+          a.get(IModelCatalogService).refreshProviderModels({ scope: 'all' }),
+        );
+        reply.send(okEnvelope(result, req.id));
+        return;
+      }
+      reply.send(
+        errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${raw}`, req.id),
       );
-      reply.send(okEnvelope(result, req.id));
     },
   );
   app.post(
-    refreshOAuthProvidersRoute.path,
-    refreshOAuthProvidersRoute.options,
-    refreshOAuthProvidersRoute.handler as Parameters<ModelCatalogRouteHost['post']>[2],
+    refreshProvidersRoute.path,
+    refreshProvidersRoute.options,
+    refreshProvidersRoute.handler as Parameters<ModelCatalogRouteHost['post']>[2],
+  );
+
+  const refreshProviderRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/providers/{tail}',
+      params: providerActionTailParamSchema,
+      success: { data: refreshProviderModelsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.PROVIDER_NOT_FOUND]: {},
+      },
+      description: 'Refresh model metadata for a single provider',
+      tags: ['providers'],
+      operationId: 'refreshProvider',
+    },
+    async (req, reply) => {
+      try {
+        const { tail } = req.params;
+        const parsed = parseActionSuffix({
+          tail,
+          allowedActions: ['refresh'] as const,
+          resourceLabel: 'provider',
+        });
+        if (parsed.kind !== 'action') {
+          const message = parsed.kind === 'invalid'
+            ? parsed.reason
+            : `unsupported action: ${tail}`;
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
+          return;
+        }
+        const result = await ix.invokeFunction((a) =>
+          a.get(IModelCatalogService).refreshProviderModels({ providerId: parsed.id }),
+        );
+        reply.send(okEnvelope(result, req.id));
+      } catch (err) {
+        sendMappedError(reply, req.id, err);
+      }
+    },
+  );
+  app.post(
+    refreshProviderRoute.path,
+    refreshProviderRoute.options,
+    refreshProviderRoute.handler as Parameters<ModelCatalogRouteHost['post']>[2],
   );
 
   const getProviderRoute = defineRoute(

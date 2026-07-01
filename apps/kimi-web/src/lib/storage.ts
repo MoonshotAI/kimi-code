@@ -24,6 +24,7 @@ export const STORAGE_KEYS = {
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
   workspaceOrder: 'kimi-web.workspace-order',
+  workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   betaToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
   notifyOnQuestion: 'kimi-web.notify-on-question',
@@ -157,4 +158,26 @@ export function loadWorkspaceOrder(): string[] {
 
 export function saveWorkspaceOrder(ids: Iterable<string>): void {
   safeSetJson(STORAGE_KEYS.workspaceOrder, Array.from(ids));
+}
+
+/**
+ * Local display-name overrides for workspaces the daemon cannot rename — today
+ * that is derived workspaces (a cwd with sessions that was never explicitly
+ * registered), which `PATCH /workspaces/:id` rejects with 404. Keyed by
+ * workspace root (stable across the derived → registered transition) and
+ * applied on top of the daemon list so the rename survives a refresh. Cleared
+ * once the daemon accepts a rename for that root.
+ */
+export function loadWorkspaceNameOverrides(): Record<string, string> {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.workspaceNameOverrides);
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [root, name] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof name === 'string') out[root] = name;
+  }
+  return out;
+}
+
+export function saveWorkspaceNameOverrides(overrides: Record<string, string>): void {
+  safeSetJson(STORAGE_KEYS.workspaceNameOverrides, overrides);
 }

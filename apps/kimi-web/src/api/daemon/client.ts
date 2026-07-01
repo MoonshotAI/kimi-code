@@ -392,7 +392,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
     return {
       model: data.model && data.model.length > 0 ? data.model : null,
-      thinkingLevel: data.thinking_level,
+      thinkingEffort: data.thinking_level,
       permission: data.permission,
       planMode: data.plan_mode === true,
       swarmMode: data.swarm_mode === true,
@@ -973,8 +973,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   /**
    * Register a workspace by folder path.
-   * PRESUMED — POST /api/v1/workspaces { root, name? }. On error this throws so
-   * the composable can fall back to a locally-derived workspace from the path.
+   * PRESUMED — POST /api/v1/workspaces { root, name? }. Throws on error (e.g.
+   * path not found) so the caller can surface it to the user.
    */
   async addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace> {
     const body: Record<string, unknown> = { root: input.root };
@@ -989,6 +989,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
    */
   async deleteWorkspace(id: string): Promise<void> {
     await this.http.delete(`/workspaces/${encodeURIComponent(id)}`);
+  }
+
+  /**
+   * Rename a workspace (display name only).
+   * PATCH /api/v1/workspaces/:id { name }. On error this throws.
+   */
+  async updateWorkspace(id: string, input: { name: string }): Promise<AppWorkspace> {
+    const data = await this.http.patch<WireWorkspace>(
+      `/workspaces/${encodeURIComponent(id)}`,
+      { name: input.name },
+    );
+    return toAppWorkspace(data);
   }
 
   /**
@@ -1065,26 +1077,21 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.delete<{ deleted: true }>(`/providers/${encodeURIComponent(id)}`);
   }
 
-  async refreshProvider(id: string): Promise<AppProvider> {
-    // PRESUMED endpoint: POST /v1/providers/{id}:refresh → WireProvider
-    const data = await this.http.post<WireProvider>(
+  async refreshProvider(id: string): Promise<ProviderRefreshResult> {
+    const data = await this.http.post<WireProviderRefreshResult>(
       `/providers/${encodeURIComponent(id)}:refresh`,
     );
-    return toAppProvider(data);
+    return toProviderRefreshResult(data);
+  }
+
+  async refreshAllProviders(): Promise<ProviderRefreshResult> {
+    const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh');
+    return toProviderRefreshResult(data);
   }
 
   async refreshOAuthProviderModels(): Promise<ProviderRefreshResult> {
     const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh_oauth');
-    return {
-      changed: data.changed.map((item) => ({
-        providerId: item.provider_id,
-        providerName: item.provider_name,
-        added: item.added,
-        removed: item.removed,
-      })),
-      unchanged: data.unchanged,
-      failed: data.failed,
-    };
+    return toProviderRefreshResult(data);
   }
 
   // -------------------------------------------------------------------------
@@ -1362,4 +1369,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
     };
   }
+}
+
+function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefreshResult {
+  return {
+    changed: data.changed.map((item) => ({
+      providerId: item.provider_id,
+      providerName: item.provider_name,
+      added: item.added,
+      removed: item.removed,
+    })),
+    unchanged: data.unchanged,
+    failed: data.failed,
+  };
 }

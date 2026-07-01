@@ -386,6 +386,7 @@ function isDisplayableUserMessage(msg: AppMessage): boolean {
   const kind = origin?.kind;
   if (kind === undefined || kind === 'user') return true;
   if (kind === 'skill_activation') return origin?.trigger === 'user-slash';
+  if (kind === 'plugin_command') return origin?.trigger === 'user-slash';
   return false;
 }
 
@@ -659,10 +660,20 @@ export function messagesToTurns(
       if (!isDisplayableUserMessage(msg)) continue;
 
       const origin = msg.metadata?.['origin'] as
-        | { kind?: string; skillName?: string; skillArgs?: string; trigger?: string }
+        | {
+            kind?: string;
+            skillName?: string;
+            skillArgs?: string;
+            pluginId?: string;
+            commandName?: string;
+            commandArgs?: string;
+            trigger?: string;
+          }
         | undefined;
       const isSkillActivation =
         origin?.kind === 'skill_activation' && origin?.trigger === 'user-slash';
+      const isPluginCommand =
+        origin?.kind === 'plugin_command' && origin?.trigger === 'user-slash';
 
       const textParts: string[] = [];
       const images: { url: string; alt?: string; kind: 'image' | 'video' }[] = [];
@@ -672,6 +683,10 @@ export function messagesToTurns(
             // Skill activation messages carry the raw XML block; we strip it and
             // surface only the user-provided args as the "user input" text.
             textParts.push(origin.skillArgs ?? '');
+          } else if (isPluginCommand) {
+            // Plugin command turns carry the expanded body; surface only the
+            // user-provided args, mirroring skill activations.
+            textParts.push(origin.commandArgs ?? '');
           } else {
             textParts.push(c.text);
           }
@@ -687,6 +702,9 @@ export function messagesToTurns(
         images: images.length > 0 ? images : undefined,
         skillActivation: isSkillActivation
           ? { name: origin.skillName!, args: origin.skillArgs }
+          : undefined,
+        pluginCommand: isPluginCommand
+          ? { pluginId: origin.pluginId!, commandName: origin.commandName!, args: origin.commandArgs }
           : undefined,
         createdAt: msg.createdAt,
       });

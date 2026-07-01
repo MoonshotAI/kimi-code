@@ -35,8 +35,8 @@ describe('MicroCompaction', () => {
     vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '1');
   });
 
-  it('defaults the micro_compaction flag on', () => {
-    expect(new FlagResolver({}, FLAG_DEFINITIONS).enabled('micro_compaction')).toBe(true);
+  it('defaults the micro_compaction flag off', () => {
+    expect(new FlagResolver({}, FLAG_DEFINITIONS).enabled('micro_compaction')).toBe(false);
   });
 
   it('truncates old tool results after cache miss', () => {
@@ -471,24 +471,27 @@ describe('MicroCompaction', () => {
 
     const event = singleTelemetryEvent(records, 'micro_compaction_finished');
     expect(event.properties).toMatchObject({
-      ...microCompaction,
-      truncatedMarker: DEFAULT_MARKER,
+      keep_recent_messages: microCompaction.keepRecentMessages,
+      min_content_tokens: microCompaction.minContentTokens,
+      cache_missed_threshold_ms: microCompaction.cacheMissedThresholdMs,
+      truncated_marker: DEFAULT_MARKER,
+      min_context_usage_ratio: microCompaction.minContextUsageRatio,
       previous_cutoff: 0,
       cutoff: 7,
       message_count: 9,
       cache_age_ms: 61 * MINUTE,
-      truncatedToolResultCount: 2,
-      truncatedToolResultTokensBefore: expect.any(Number),
-      truncatedToolResultTokensAfter: expect.any(Number),
-      tokensBefore: expect.any(Number),
-      tokensAfter: expect.any(Number),
-      thinkingLevel: 'off',
+      truncated_tool_result_count: 2,
+      truncated_tool_result_tokens_before: expect.any(Number),
+      truncated_tool_result_tokens_after: expect.any(Number),
+      tokens_before: expect.any(Number),
+      tokens_after: expect.any(Number),
+      thinking_effort: 'off',
     });
-    expect(numberProperty(event, 'truncatedToolResultTokensBefore')).toBeGreaterThan(
-      numberProperty(event, 'truncatedToolResultTokensAfter'),
+    expect(numberProperty(event, 'truncated_tool_result_tokens_before')).toBeGreaterThan(
+      numberProperty(event, 'truncated_tool_result_tokens_after'),
     );
-    expect(numberProperty(event, 'tokensBefore')).toBeGreaterThan(
-      numberProperty(event, 'tokensAfter'),
+    expect(numberProperty(event, 'tokens_before')).toBeGreaterThan(
+      numberProperty(event, 'tokens_after'),
     );
 
     expect(ctx.agent.context.messages).toHaveLength(9);
@@ -533,9 +536,9 @@ describe('MicroCompaction', () => {
     expect(secondEvent.properties).toMatchObject({
       previous_cutoff: 4,
       cutoff: 7,
-      truncatedToolResultCount: 2,
-      tokensBefore: expectedContextTokensBefore,
-      tokensAfter: estimateTokensForMessages(ctx.agent.context.messages),
+      truncated_tool_result_count: 2,
+      tokens_before: expectedContextTokensBefore,
+      tokens_after: estimateTokensForMessages(ctx.agent.context.messages),
     });
   });
 
@@ -697,10 +700,10 @@ describe('MicroCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await compacted;
 
-    expect(ctx.agent.context.messages).toHaveLength(1);
-    expect(ctx.agent.context.messages[0]).toMatchObject({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Summary.' }],
+    expect(ctx.agent.context.messages).toHaveLength(2);
+    expect(ctx.agent.context.messages[1]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: expect.stringContaining('Summary.') }],
     });
   });
 

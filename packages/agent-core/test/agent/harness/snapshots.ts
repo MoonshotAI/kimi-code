@@ -314,7 +314,15 @@ function isUuid(value: string): boolean {
 }
 
 function isVolatileDurationKey(key: string): boolean {
-  return key === 'llmFirstTokenLatencyMs' || key === 'llmStreamDurationMs' || key === 'durationMs';
+  return (
+    key === 'llmFirstTokenLatencyMs' ||
+    key === 'llmStreamDurationMs' ||
+    key === 'llmRequestBuildMs' ||
+    key === 'llmServerFirstTokenMs' ||
+    key === 'llmServerDecodeMs' ||
+    key === 'llmClientConsumeMs' ||
+    key === 'durationMs'
+  );
 }
 
 function isPlanModeReminder(value: string): boolean {

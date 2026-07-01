@@ -24,6 +24,7 @@ export default {
   add: 'Add',
   cancel: 'Cancel',
   addHint: 'Paste an absolute folder path, or pick a recent one.',
+  addFailed: "Couldn't open this folder. Check the path and try again.",
   // Folder browser
   openThisFolder: 'Open this folder',
   up: 'Up',

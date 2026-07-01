@@ -9,7 +9,7 @@ import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
-import { resolveThinkingLevel } from '../agent/config/thinking';
+import { resolveThinkingEffort } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import {
   ensureKimiHome,
@@ -51,6 +51,7 @@ import {
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
+  ActivatePluginCommandPayload,
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
   ArchiveSessionPayload,
@@ -103,6 +104,7 @@ import type {
   SetPluginMcpServerEnabledPayload,
   SetThinkingPayload,
   SkillSummary,
+  PluginCommandDef,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -222,7 +224,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const workDir = requiredWorkDir('createSession', options.workDir);
     const config = this.reloadProviderManager();
     const id = options.id ?? createSessionId();
-    const thinkingLevel = resolveThinkingLevel(options.thinking, config);
+    const modelAlias = options.model ?? config.defaultModel;
+    const model = modelAlias !== undefined ? config.models?.[modelAlias] : undefined;
+    const thinkingEffort = resolveThinkingEffort(options.thinking, config.thinking, model);
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
@@ -265,6 +269,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
+    const pluginCommands = await this.plugins.enabledCommands();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
@@ -288,6 +293,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       experimentalFlags: this.experimentalFlags,
       telemetry: sessionTelemetry,
       pluginSessionStarts,
+      pluginCommands,
       appVersion: this.appVersion,
       additionalDirs,
     });
@@ -307,7 +313,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       const mainAgent = await session.createMain();
       mainAgent.config.update({
         modelAlias: options.model ?? config.defaultModel,
-        thinkingLevel,
+        thinkingEffort,
       });
       if (permissionMode !== undefined) {
         mainAgent.permission.setMode(permissionMode);
@@ -397,6 +403,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, input.mcpServers);
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
+    const pluginCommands = await this.plugins.enabledCommands();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
     const runtime = await this.resolveRuntime(config);
     const parentKaos = parentKaosForRead;
@@ -420,6 +427,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
       pluginSessionStarts,
+      pluginCommands,
       appVersion: this.appVersion,
       additionalDirs,
     });
@@ -693,6 +701,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).activateSkill(payload);
   }
 
+  activatePluginCommand({
+    sessionId,
+    ...payload
+  }: SessionAgentPayload<ActivatePluginCommandPayload>): Promise<void> {
+    return this.sessionApi(sessionId).activatePluginCommand(payload);
+  }
+
   getBackgroundOutput({ sessionId, ...payload }: SessionAgentPayload<GetBackgroundOutputPayload>) {
     return this.sessionApi(sessionId).getBackgroundOutput(payload);
   }
@@ -738,6 +753,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionScopedPayload<EmptyPayload>): Promise<readonly SkillSummary[]> {
     return this.sessionApi(sessionId).listSkills(payload);
+  }
+
+  listPluginCommands({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): readonly PluginCommandDef[] {
+    return this.sessionApi(sessionId).listPluginCommands(payload);
   }
 
   listMcpServers({
@@ -1141,19 +1163,16 @@ function telemetryErrorReason(error: unknown): string {
 
 function clientTelemetryProperties(client: ClientTelemetryInfo | undefined): TelemetryProperties {
   if (client === undefined) return {};
-  const properties: Record<string, string> = {};
-  addNonEmpty(properties, 'client_id', client.id);
-  addNonEmpty(properties, 'client_name', client.name);
-  addNonEmpty(properties, 'client_version', client.version);
-  addNonEmpty(properties, 'ui_mode', client.uiMode);
-  return properties;
-}
-
-function addNonEmpty(target: Record<string, string>, key: string, value: string | undefined): void {
-  const trimmed = value?.trim();
-  if (trimmed !== undefined && trimmed.length > 0) {
-    target[key] = trimmed;
-  }
+  // Emit a fixed key set (null when the client did not provide a field) so
+  // `session_started` has a stable schema across clients, matching the harness
+  // producer in `kimi-harness.ts`. Other session events also inherit these as
+  // context properties, so they share the same stable client-attribution shape.
+  return {
+    client_id: client.id ?? null,
+    client_name: client.name ?? null,
+    client_version: client.version ?? null,
+    ui_mode: client.uiMode ?? null,
+  };
 }
 
 async function resumeSessionResult(

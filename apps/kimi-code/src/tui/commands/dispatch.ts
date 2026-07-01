@@ -25,6 +25,7 @@ import {
   handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
+  handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -65,6 +66,7 @@ export {
   handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
+  handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -138,7 +140,14 @@ export interface SlashCommandHost {
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  activatePluginCommand(
+    session: Session,
+    pluginId: string,
+    commandName: string,
+    args: string,
+  ): void;
   readonly skillCommandMap: Map<string, string>;
+  readonly pluginCommandMap: Map<string, string>;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -164,6 +173,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
   const intent = resolveSlashCommandInput({
     input,
     skillCommandMap: host.skillCommandMap,
+    pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
   });
@@ -193,6 +203,20 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
         skill_name: intent.skillName,
       });
       host.sendSkillActivation(session, intent.skillName, intent.args);
+      return;
+    }
+    case 'plugin-command': {
+      if (host.state.appState.model.trim().length === 0) {
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      const session = host.session;
+      if (session === undefined) {
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      host.track('input_command', { command: `${intent.pluginId}:${intent.commandName}` });
+      host.activatePluginCommand(session, intent.pluginId, intent.commandName, intent.args);
       return;
     }
     case 'message':
@@ -269,6 +293,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'model':
       await handleModelCommand(host, args);
+      return;
+    case 'effort':
+      await handleEffortCommand(host, args);
       return;
     case 'provider':
       await handleProviderCommand(host);

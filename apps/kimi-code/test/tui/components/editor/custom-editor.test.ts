@@ -29,6 +29,22 @@ function providerReturning(items: AutocompleteItem[]): AutocompleteProvider {
   };
 }
 
+function providerRecordingForce(items: AutocompleteItem[]): {
+  provider: AutocompleteProvider;
+  calls: Array<{ force: boolean | undefined; text: string }>;
+} {
+  const calls: Array<{ force: boolean | undefined; text: string }> = [];
+  const provider: AutocompleteProvider = {
+    getSuggestions: vi.fn(async (lines, cursorLine, cursorCol, options) => {
+      const text = (lines[cursorLine] ?? '').slice(0, cursorCol);
+      calls.push({ force: options?.force, text });
+      return { items, prefix: text };
+    }),
+    applyCompletion: vi.fn((lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol })),
+  };
+  return { provider, calls };
+}
+
 describe('CustomEditor autocomplete Escape handling', () => {
   it('escape closes a visible slash command menu without firing app-level escape', async () => {
     const editor = makeEditor();
@@ -71,6 +87,29 @@ describe('CustomEditor autocomplete Escape handling', () => {
 
     expect(editor.isShowingAutocomplete()).toBe(false);
     expect(onEscape).not.toHaveBeenCalled();
+  });
+});
+
+describe('CustomEditor onNonEscapeInput', () => {
+  it('fires for a printable key and not for a lone Escape', () => {
+    const editor = makeEditor();
+    const onNonEscapeInput = vi.fn();
+    editor.onNonEscapeInput = onNonEscapeInput;
+
+    editor.handleInput('a');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
+
+    editor.handleInput('\u001B');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
+  });
+
+  it('fires for control keys so they break a pending double-Esc', () => {
+    const editor = makeEditor();
+    const onNonEscapeInput = vi.fn();
+    editor.onNonEscapeInput = onNonEscapeInput;
+
+    editor.handleInput('\u0003');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
   });
 });
 
@@ -332,6 +371,35 @@ describe('CustomEditor slash argument hint', () => {
 
     const plain = editor.render(90).map(stripAnsi).join('\n');
     expect(plain).not.toContain('[list] | <path>');
+  });
+
+  it('does not render the argument hint in bash mode', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+    editor.inputMode = 'bash';
+
+    for (const char of '/add-dir') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+
+  it('does not highlight the slash token in bash mode', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+
+    for (const char of '/add-dir') {
+      editor.handleInput(char);
+    }
+
+    const contentLine = editor.render(90)[1] ?? '';
+    const tokenIdx = contentLine.indexOf('/add-dir');
+    expect(tokenIdx).toBeGreaterThan(-1);
+    // Prompt mode wraps `/add-dir` in a primary-colour ANSI sequence; in bash
+    // mode the token is plain text, so the byte right before it is a space.
+    expect(contentLine[tokenIdx - 1]).toBe(' ');
   });
 });
 
@@ -637,5 +705,67 @@ describe('CustomEditor bash mode via paste', () => {
 
     expect(editor.inputMode).toBe('bash');
     expect(editor.getText()).toBe('');
+  });
+});
+
+describe('CustomEditor bash mode file completion', () => {
+  it('triggers file completion (force:true) for a leading / in bash mode, not the slash menu', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'auto', label: 'auto' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: true, text: '/' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('triggers file completion (force:true) for an inline / in bash mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'etc', label: 'etc' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    for (const char of 'ls /') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: true, text: 'ls /' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('keeps force:false (slash menu) for a leading / in prompt mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'help', label: 'help' }]);
+    editor.setAutocompleteProvider(provider);
+    // inputMode defaults to 'prompt'
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: false, text: '/' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('never falls back to force:false for a slash-shaped command in bash mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'list', label: 'list' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    // A force:false request would let pi-tui's own slash-command handling pop
+    // up subcommand completions for `/add-dir `. Bash mode must only ever
+    // request force:true path completion.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.force === true)).toBe(true);
   });
 });

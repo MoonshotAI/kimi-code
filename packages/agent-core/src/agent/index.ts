@@ -1,4 +1,5 @@
 import { join } from 'pathe';
+import { randomUUID } from 'node:crypto';
 
 import { normalizeAdditionalDirs } from '../config';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
@@ -7,11 +8,17 @@ import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
 import { generate } from '@moonshot-ai/kosong';
 
-import type { EnabledPluginSessionStart } from '#/plugin';
+import type { EnabledPluginSessionStart, PluginCommandDef } from '#/plugin';
+import { expandCommandArguments } from '../plugin/commands';
+import type { PluginCommandOrigin } from './context';
 
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
-import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
+import {
+  prepareSystemPromptContext,
+  type PreparedSystemPromptContext,
+  type ResolvedAgentProfile,
+} from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -79,9 +86,11 @@ export interface AgentOptions {
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
+  readonly pluginCommands?: readonly PluginCommandDef[];
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly replay?: ReplayBuilderOptions;
   readonly additionalDirs?: readonly string[];
+  readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 }
 
 export class Agent {
@@ -97,6 +106,7 @@ export class Agent {
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly toolServices?: ToolServices;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
+  readonly pluginCommands: readonly PluginCommandDef[];
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
   readonly subagentHost?: SessionSubagentHost;
@@ -127,6 +137,9 @@ export class Agent {
   readonly replayBuilder: ReplayBuilder;
 
   private additionalDirs: readonly string[];
+  private activeProfile?: ResolvedAgentProfile;
+  private brandHome?: string;
+  private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
@@ -136,6 +149,7 @@ export class Agent {
     this.rpc = options.rpc;
     this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
+    this.pluginCommands = options.pluginCommands ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
@@ -145,6 +159,7 @@ export class Agent {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
+    this.systemPromptContextProvider = options.systemPromptContextProvider;
 
     this.llmRequestLogger = new LlmRequestLogger(this.log);
     this.blobStore = options.homedir
@@ -248,7 +263,41 @@ export class Agent {
     });
   }
 
-  useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
+  useProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+    brandHome?: string,
+  ): void {
+    this.setActiveProfile(profile, brandHome);
+    this.updateSystemPromptFromProfile(profile, context);
+    this.tools.setActiveTools(profile.tools);
+  }
+
+  setActiveProfile(profile: ResolvedAgentProfile, brandHome?: string): void {
+    this.activeProfile = profile;
+    this.brandHome = brandHome;
+  }
+
+  /**
+   * Re-render the system prompt with freshly gathered runtime context (cwd
+   * listing, AGENTS.md, additional-dirs info, skill list). Called after
+   * compaction so the post-compaction turns do not keep a snapshot captured
+   * at session bootstrap. Invalidates the prompt-cache prefix by design.
+   */
+  async refreshSystemPrompt(): Promise<void> {
+    if (this.activeProfile === undefined) return;
+    const context = this.systemPromptContextProvider === undefined
+      ? await prepareSystemPromptContext(this.kaos, this.brandHome, {
+          additionalDirs: this.additionalDirs,
+        })
+      : await this.systemPromptContextProvider();
+    this.updateSystemPromptFromProfile(this.activeProfile, context);
+  }
+
+  private updateSystemPromptFromProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+  ): void {
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
@@ -258,7 +307,6 @@ export class Agent {
       additionalDirsInfo: context?.additionalDirsInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
-    this.tools.setActiveTools(profile.tools);
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
@@ -298,9 +346,9 @@ export class Agent {
         this.context.undo(payload.count);
       },
       setThinking: (payload) => {
-        const wasEnabled = this.config.thinkingLevel !== 'off';
-        this.config.update({ thinkingLevel: payload.level });
-        const enabled = this.config.thinkingLevel !== 'off';
+        const wasEnabled = this.config.thinkingEffort !== 'off';
+        this.config.update({ thinkingEffort: payload.effort });
+        const enabled = this.config.thinkingEffort !== 'off';
         if (enabled !== wasEnabled) {
           this.telemetry.track('thinking_toggle', { enabled });
         }
@@ -381,6 +429,36 @@ export class Agent {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${payload.name}" was not found`);
         }
         this.skills.activate(payload);
+      },
+      activatePluginCommand: (payload) => {
+        const def = this.pluginCommands.find(
+          (d) => d.pluginId === payload.pluginId && d.name === payload.commandName,
+        );
+        if (def === undefined) {
+          throw new KimiError(
+            ErrorCodes.REQUEST_INVALID,
+            `Plugin command "${payload.pluginId}:${payload.commandName}" was not found`,
+          );
+        }
+        const commandArgs = payload.args ?? '';
+        const expanded = expandCommandArguments(def.body, commandArgs);
+        const origin: PluginCommandOrigin = {
+          kind: 'plugin_command',
+          activationId: randomUUID(),
+          pluginId: payload.pluginId,
+          commandName: payload.commandName,
+          commandArgs: payload.args,
+          trigger: 'user-slash',
+        };
+        this.emitEvent({
+          type: 'plugin_command.activated',
+          activationId: origin.activationId,
+          pluginId: origin.pluginId,
+          commandName: origin.commandName,
+          commandArgs: origin.commandArgs,
+          trigger: origin.trigger,
+        });
+        this.turn.prompt([{ type: 'text', text: expanded }], origin);
       },
       startBtw: () => this.subagentHost!.startBtw(),
       createGoal: (payload) => this.goal.createGoal(payload),
