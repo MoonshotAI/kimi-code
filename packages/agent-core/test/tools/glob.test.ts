@@ -235,7 +235,8 @@ describe('GlobTool', () => {
     const result = await executeTool(tool, context({ pattern: 'pkg/**/*.ts', path: '/extra' }));
 
     expect(result.output).toBe('/extra/pkg/a.ts');
-    expect(execArgs(exec).at(-1)).toBe('.');
+    // The search path is derived from the pattern prefix: pkg/**/*.ts -> pkg
+    expect(execArgs(exec).at(-1)).toBe('pkg');
   });
 
   it('adds --no-ignore when include_ignored is true', async () => {
@@ -522,6 +523,64 @@ describe('GlobTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('{foo.ts');
+  });
+
+  it('accepts bracket-in-bracket patterns like [[]foo.ts', async () => {
+    const exec = execReturning('/workspace/[foo.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '[[]foo.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('[foo.ts');
+  });
+
+  it('treats extglob syntax as literal, matching rg --glob behavior', async () => {
+    const exec = execReturning('/workspace/@(a|b).ts\n/workspace/a.ts\n/workspace/b.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '@(a|b).ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('@(a|b).ts');
+    expect(result.output).not.toContain('a.ts');
+    expect(result.output).not.toContain('b.ts');
+  });
+
+  it('treats range braces as literal, matching rg --glob behavior', async () => {
+    const exec = execReturning('/workspace/{1..2}.ts\n/workspace/1.ts\n/workspace/2.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: '{1..2}.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('{1..2}.ts');
+    expect(result.output).not.toContain('1.ts');
+    expect(result.output).not.toContain('2.ts');
+  });
+
+  it('derives a search path from anchored patterns to narrow rg traversal', async () => {
+    const exec = execReturning('/workspace/src/a.ts\n/workspace/other/b.ts\n');
+    const tool = new GlobTool(kaosWithExec(exec), workspace);
+
+    const result = await executeTool(
+      tool,
+      context({ pattern: 'src/**/*.ts', path: '/workspace' }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('src/a.ts');
+    // The search path should be 'src', not '.'
+    expect(execArgs(exec).at(-1)).toBe('src');
   });
 
   it('matches rooted patterns with a leading slash', async () => {

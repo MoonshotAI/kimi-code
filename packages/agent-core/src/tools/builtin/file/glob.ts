@@ -354,10 +354,48 @@ function buildRgArgs(
     cmd.push('--glob', `!${glob}`);
   }
   if (args.include_ignored) cmd.push('--no-ignore');
-  // Search path is `.` because the process cwd is pinned to the search root
-  // (see execution()); this keeps `--glob` matching relative to that root.
-  cmd.push('.');
+  // Derive a safe literal search path from the pattern so rg only walks
+  // the relevant subtree instead of the entire root. For example,
+  // `src/**/*.ts` → search path `src` instead of `.`. This prevents
+  // anchored searches from collecting and sorting unrelated files before
+  // the streaming filter can see anything.
+  const searchPath = deriveSearchPath(args.pattern);
+  cmd.push(searchPath);
   return cmd;
+}
+
+/**
+ * Extract the leading literal path component(s) from a glob pattern,
+ * before any glob metacharacter. Returns the path relative to the search
+ * root, or '.' if no literal prefix can be derived.
+ *
+ * Examples:
+ *   src/.../.ts     -> src        (double-star in the middle)
+ *   /src/.ts        -> src        (leading slash stripped, rooted)
+ *   src/a/b.ts      -> src/a      (no metacharacters, strip trailing file)
+ *   star.ts         -> .          (starts with a metacharacter)
+ *   src/{a,b}.ts    -> src        (brace is a metacharacter)
+ */
+function deriveSearchPath(pattern: string): string {
+  const rooted = pattern.startsWith('/');
+  const normalized = rooted ? pattern.slice(1) : pattern;
+  // Find the first glob metacharacter: *, ?, [, {, or a ** segment.
+  const metaIndex = normalized.search(/[*?\[{]/);
+  if (metaIndex === -1) {
+    // No metacharacters — the whole pattern is a literal path. But if it
+    // contains no `/`, it's a basename pattern that could match at any
+    // depth, so we can't narrow the search path.
+    if (!normalized.includes('/')) return '.';
+    // Strip a trailing filename (last path component) since the parent
+    // directory is the narrowest safe search path for a single file.
+    const lastSlash = normalized.lastIndexOf('/');
+    return lastSlash > 0 ? normalized.slice(0, lastSlash) : '.';
+  }
+  // Narrow to the literal prefix before the first metacharacter.
+  const prefix = normalized.slice(0, metaIndex);
+  const lastSlash = prefix.lastIndexOf('/');
+  if (lastSlash <= 0) return '.';
+  return prefix.slice(0, lastSlash);
 }
 
 function isBroadPattern(pattern: string): boolean {
@@ -385,15 +423,43 @@ function compileGlobMatcher(pattern: string): (relPath: string) => boolean {
   const opts = { dot: true };
   const rooted = pattern.startsWith('/');
   const normalizedPattern = rooted ? pattern.slice(1) : pattern;
+  // Escape picomatch-only extensions that rg --glob does not support:
+  //   - extglob: @(a|b), !(a), +(a), ?(a), *(a) — rg treats these as
+  //     literal characters, not extended glob patterns.
+  //   - range braces: {1..2} — rg treats {1..2} as a literal, not a range.
+  // Brace alternatives like {ts,tsx} are still supported by both rg and
+  // picomatch, so they are left intact.
+  const escapedPattern = escapePicomatchExtensions(normalizedPattern);
   // A pattern without `/` matches the basename at any depth — unless the
   // original pattern was rooted with a leading `/`, in which case it
   // matches only at the search root (gitignore-style rooted globs).
   if (!normalizedPattern.includes('/') && !rooted) {
-    const matcher = picomatch(normalizedPattern, opts);
+    const matcher = picomatch(escapedPattern, opts);
     return (relPath: string) => matcher(relPath.split('/').pop()!);
   }
-  const matcher = picomatch(normalizedPattern, opts);
+  const matcher = picomatch(escapedPattern, opts);
   return (relPath: string) => matcher(relPath);
+}
+
+/**
+ * Escape picomatch-only glob extensions that rg --glob does not support,
+ * so the in-process matcher matches the same files rg would.
+ *
+ * - extglob constructs like @(a|b), !(a), +(a), ?(a), *(a) are escaped
+ *   so picomatch treats them as literal characters.
+ * - range braces like {1..2} are escaped so picomatch treats them as
+ *   literal strings instead of expanding to 1, 2.
+ * - brace alternatives like {ts,tsx} are left intact (supported by both).
+ */
+function escapePicomatchExtensions(pattern: string): string {
+  let result = pattern;
+  // Escape extglob: [@!?+*](...) → literal
+  result = result.replace(/([@!?+*])\(([^)]*)\)/g, (_match, prefix: string, inner: string) => {
+    return `[${prefix}]\\(${inner.replace(/\|/g, '\\|')}\\)`;
+  });
+  // Escape range braces: {N..M} → literal
+  result = result.replace(/\{(\d+)\.\.(\d+)\}/g, '\\{$1..$2\\}');
+  return result;
 }
 
 /**
@@ -496,15 +562,20 @@ function validateGlobPattern(pattern: string): string | undefined {
       i++;
       continue;
     }
-    if (ch === '[') {
+    if (inBracket) {
+      // Inside a character class, [ is a literal (e.g. [[] matches a
+      // literal [). Only ] closes the class.
+      if (ch === ']') {
+        inBracket = false;
+        bracketDepth--;
+      }
+    } else if (ch === '[') {
       inBracket = true;
       bracketDepth++;
-    } else if (ch === ']' && bracketDepth > 0) {
-      inBracket = false;
-      bracketDepth--;
-    } else if (!inBracket) {
-      if (ch === '{') braceDepth++;
-      else if (ch === '}' && braceDepth > 0) braceDepth--;
+    } else if (ch === '{') {
+      braceDepth++;
+    } else if (ch === '}' && braceDepth > 0) {
+      braceDepth--;
     }
   }
   if (bracketDepth > 0) return `Invalid glob pattern: unclosed '[' in "${pattern}"`;
