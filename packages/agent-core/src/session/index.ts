@@ -843,18 +843,25 @@ export class Session {
   }
 
   private async pruneReadySubagents(): Promise<void> {
-    // Loop until the ready subagent count is within the cap. Deleting a
-    // child can make its parent prunable (it was protected only because a
-    // live child referenced it), so recompute candidates each iteration.
+    // Loop until the total ready subagent count is within the cap. The
+    // cap applies to ALL ready subagents, not just prunable leaf
+    // candidates — in a nested workflow with many parent/child pairs,
+    // checking only candidates.length would leave 64 protected parents
+    // plus 64 prunable children (128 total) resident. Deleting a child
+    // can make its parent prunable (it was protected only because a live
+    // child referenced it), so recompute candidates each iteration.
     for (;;) {
       const parentIds = this.readySubagentParentIds();
+      let readySubAgentCount = 0;
       const candidates: Array<{ readonly id: string; readonly agent: Agent }> = [];
       for (const [id, entry] of this.agents) {
         if (!(entry instanceof Agent)) continue;
+        if (entry.type !== 'sub') continue;
+        readySubAgentCount++;
         if (!this.isPrunableReadySubagent(id, entry, parentIds)) continue;
         candidates.push({ id, agent: entry });
       }
-      if (candidates.length <= DEFAULT_MAX_READY_SUBAGENTS) break;
+      if (readySubAgentCount <= DEFAULT_MAX_READY_SUBAGENTS) break;
       const candidate = candidates.shift();
       if (candidate === undefined) break;
       // Replace the live Agent with a tagged disposing promise so a

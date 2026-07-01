@@ -622,14 +622,20 @@ export class BackgroundManager {
     for (const info of lostInfo) {
       this.emitTaskTerminated(info);
     }
-    await this.restoreBackgroundTaskNotifications();
-    // Bound the ghost set AFTER reconcile so that non-terminal ghosts
-    // (running / awaiting_approval) have been reclassified as `lost`
-    // first. This prevents dropping a still-running task before its
-    // lost-task notification is emitted. Only terminal ghosts are
-    // trimmed; the oldest by `startedAt` are dropped first so recent
-    // tasks are retained over ancient ones.
+    // Restore notifications for lost tasks before trimming — these were
+    // just reclassified from running/awaiting_approval and their
+    // terminated events are already emitted. The context notification
+    // must be appended before the task is potentially trimmed.
+    for (const info of lostInfo) {
+      await this.restoreBackgroundTaskNotification(info);
+    }
+    // Bound the ghost set BEFORE restoring ordinary terminal
+    // notifications so that only the retained 100 terminal ghosts get
+    // their notifications restored. Without this, resume with hundreds
+    // of persisted terminal tasks would build and append notifications
+    // for all of them before dropping the excess, flooding the context.
     this.trimTerminalGhosts();
+    await this.restoreBackgroundTaskNotifications();
   }
 
   /**

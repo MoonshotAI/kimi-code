@@ -347,4 +347,36 @@ describe('BackgroundManager — loadFromDisk + reconcile', () => {
     expect(manager.getTask('bash-task0005')).toBeDefined();
     expect(manager.getTask('bash-task0104')).toBeDefined();
   });
+
+  it('trims ghosts before restoring terminal notifications, bounding resume-time work', async () => {
+    // With 200 persisted terminal tasks, restoreBackgroundTaskNotifications
+    // should only process the retained 100 (after trim), not all 200.
+    // The agent's appendUserMessage call count verifies this.
+    for (let i = 0; i < 200; i++) {
+      await persistence.writeTask(
+        persistedProcess({
+          taskId: `bash-task${String(i).padStart(4, '0')}`,
+          command: 'echo',
+          description: 'old',
+          pid: i,
+          startedAt: 1_700_000_000 + i,
+          endedAt: 1_700_000_010 + i,
+          exitCode: 0,
+          status: 'completed',
+        }),
+      );
+    }
+    const { manager, agent } = createBackgroundManager({ sessionDir });
+
+    await manager.loadFromDisk();
+    await manager.reconcile();
+
+    // Only 100 terminal ghosts remain after trim.
+    expect(manager.list(false)).toHaveLength(100);
+    // appendUserMessage is called by restoreBackgroundTaskNotification.
+    // It should be called at most 100 times (for the retained ghosts),
+    // not 200. Some may be suppressed by deliveredNotificationKeys, so
+    // the exact count may be lower, but it must not exceed 100.
+    expect(agent.context.appendUserMessage.mock.calls.length).toBeLessThanOrEqual(100);
+  });
 });

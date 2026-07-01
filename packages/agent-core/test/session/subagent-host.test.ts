@@ -1600,6 +1600,43 @@ describe('Session.createAgent', () => {
     await session.releaseIdleSubagent(extra.id);
     expect(session.getReadyAgent(subagentIds[1]!)).toBeDefined();
   });
+
+  it('caps total ready subagents, not only leaf candidates', async () => {
+    // In a nested workflow with parent/child pairs, the parent is
+    // protected while its child is live. The cap must apply to the
+    // TOTAL ready subagent count, not just prunable leaf candidates —
+    // otherwise 64 protected parents + 64 prunable children (128 total)
+    // would all stay resident.
+    const session = new Session({
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+    const main = await session.createAgent({ type: 'main' });
+    // Create 70 parent/child pairs. Each parent has one child. The
+    // children are prunable leaves; the parents are protected while
+    // their child is live. With the old candidate-only cap, 64 children
+    // + 64 parents = 128 would stay. With the total-count cap, pruning
+    // continues until total ready subagents <= 64.
+    for (let i = 0; i < 70; i++) {
+      const parent = await session.createAgent({ type: 'sub' }, { parentAgentId: main.id });
+      const child = await session.createAgent({ type: 'sub' }, { parentAgentId: parent.id });
+      // Release both — the child is a prunable leaf, the parent is
+      // protected while the child is live.
+      await session.releaseIdleSubagent(child.id);
+      await session.releaseIdleSubagent(parent.id);
+    }
+    // Count total ready subagents using readyAgents().
+    let totalReady = 0;
+    for (const agent of session.readyAgents()) {
+      if (agent.type === 'sub') totalReady++;
+    }
+    expect(totalReady).toBeLessThanOrEqual(64);
+  });
 });
 
 function fakeSession(
