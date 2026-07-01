@@ -383,6 +383,13 @@ export class FooterComponent implements Component {
     }
   }
 
+  dispose(): void {
+    if (this.goalTimer !== null) {
+      clearInterval(this.goalTimer);
+      this.goalTimer = null;
+    }
+  }
+
   private goalWallClockMs(goal: AppState['goal']): number | undefined {
     if (goal === null || goal === undefined) return undefined;
     if (goal.status !== 'active') return goal.wallClockMs;

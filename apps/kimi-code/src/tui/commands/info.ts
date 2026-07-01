@@ -9,6 +9,7 @@ import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
   FEEDBACK_STATUS_FALLBACK,
+  FEEDBACK_STATUS_NETWORK_ERROR,
   FEEDBACK_STATUS_NOT_SIGNED_IN,
   FEEDBACK_STATUS_SUBMITTING,
   FEEDBACK_STATUS_SUCCESS,
@@ -58,29 +59,43 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 
   const version = withFeedbackVersionPrefix(host.state.appState.version);
   const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
-  const res = await host.harness.auth.submitFeedback({
-    content: input.value,
-    sessionId: host.state.appState.sessionId,
-    version,
-    os: `${osType()} ${osRelease()}`,
-    model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
-  });
+  // Guarantee the spinner's underlying setInterval is always cleared, even when
+  // submitFeedback or submitFeedbackWithAttachments throws — otherwise the
+  // interval (and its per-frame requestRender) leaks for the rest of the session.
+  let stopped = false;
+  const stopSpinner = (opts: { ok: boolean; label: string }): void => {
+    if (stopped) return;
+    stopped = true;
+    spinner.stop(opts);
+  };
+  try {
+    const res = await host.harness.auth.submitFeedback({
+      content: input.value,
+      sessionId: host.state.appState.sessionId,
+      version,
+      os: `${osType()} ${osRelease()}`,
+      model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
+    });
 
-  if (res.kind !== 'ok') {
-    spinner.stop({ ok: false, label: res.message });
-    fallback(FEEDBACK_STATUS_FALLBACK);
-    return;
-  }
+    if (res.kind !== 'ok') {
+      stopSpinner({ ok: false, label: res.message });
+      fallback(FEEDBACK_STATUS_FALLBACK);
+      return;
+    }
 
-  // Stage 3: prepare and upload each requested attachment independently.
-  const attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
+    // Stage 3: prepare and upload each requested attachment independently.
+    const attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
 
-  spinner.stop({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
-  host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
-  host.showStatus(feedbackIdLine(res.feedbackId));
-  host.track(FEEDBACK_TELEMETRY_EVENT);
-  if (attachmentFailed) {
-    host.showStatus(FEEDBACK_STATUS_UPLOAD_FAILED);
+    stopSpinner({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
+    host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
+    host.showStatus(feedbackIdLine(res.feedbackId));
+    host.track(FEEDBACK_TELEMETRY_EVENT);
+    if (attachmentFailed) {
+      host.showStatus(FEEDBACK_STATUS_UPLOAD_FAILED);
+    }
+  } catch (error) {
+    stopSpinner({ ok: false, label: FEEDBACK_STATUS_NETWORK_ERROR });
+    throw error;
   }
 }
 
