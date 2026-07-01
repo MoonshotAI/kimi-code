@@ -10,6 +10,18 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
   version: string;
 };
 
+function apiProxyConfig() {
+  return {
+    target: serverTarget,
+    changeOrigin: true,
+    ws: true,
+    // Rewrite the WebSocket Origin header to the upstream target so the
+    // server's same-origin check passes even when the browser opens the dev UI
+    // on `localhost:5175` while the server binds `127.0.0.1`.
+    rewriteWsOrigin: true,
+  };
+}
+
 export default defineConfig({
   plugins: [vue()],
   // Expose the dev proxy's upstream server target to the client so the UI can
@@ -29,7 +41,7 @@ export default defineConfig({
     // Same-origin dev: the browser calls Vite, Vite forwards to the server.
     // No CORS anywhere. The real server serves REST + WS all under /api/v1.
     proxy: {
-      '/api/v1': { target: serverTarget, changeOrigin: true, ws: true },
+      '/api/v1': apiProxyConfig(),
     },
   },
   // `vite preview` (the production build served locally) needs the same proxy —
@@ -38,7 +50,7 @@ export default defineConfig({
   preview: {
     port: Number(process.env.WEB_PREVIEW_PORT) || 4175,
     proxy: {
-      '/api/v1': { target: serverTarget, changeOrigin: true, ws: true },
+      '/api/v1': apiProxyConfig(),
     },
   },
   build: {
