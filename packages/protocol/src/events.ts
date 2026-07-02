@@ -310,6 +310,14 @@ export interface CompactionResult {
    */
   readonly keptUserMessageCount?: number;
   /**
+   * Of `keptUserMessageCount`, how many messages form the head segment (the
+   * oldest user input kept when the pool overflowed the budget). Present iff
+   * the selection split into head + tail, in which case the live context also
+   * holds one elision-marker message between the segments. Optional for
+   * backward compatibility with older wire records.
+   */
+  readonly keptHeadUserMessageCount?: number;
+  /**
    * Oldest messages trimmed from the summarizer input when the compaction
    * request overflowed the model window; not covered by the produced summary.
    * Mirrors agent-core's `CompactionResult.droppedCount`; optional for backward
@@ -1025,6 +1033,7 @@ export const compactionResultSchema = z.object({
   tokensBefore: z.number(),
   tokensAfter: z.number(),
   keptUserMessageCount: z.number().optional(),
+  keptHeadUserMessageCount: z.number().optional(),
   droppedCount: z.number().optional(),
 }) satisfies z.ZodType<CompactionResult>;
 

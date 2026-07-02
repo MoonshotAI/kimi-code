@@ -70,6 +70,13 @@ export interface AgentOptions {
   readonly kaos: Kaos;
   readonly config?: KimiConfig;
   readonly homedir?: string;
+  /**
+   * Session-owned directory for pre-compression image originals
+   * (`sessionMediaOriginalsDir(sessionDir)`), threaded to media-producing
+   * paths (MCP tool results) so readback originals live with the session
+   * rather than in the shared temp-dir fallback.
+   */
+  readonly mediaOriginalsDir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
@@ -103,6 +110,7 @@ export class Agent {
 
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
+  readonly mediaOriginalsDir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly toolServices?: ToolServices;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
@@ -146,6 +154,7 @@ export class Agent {
     this._kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
+    this.mediaOriginalsDir = options.mediaOriginalsDir;
     this.rpc = options.rpc;
     this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];

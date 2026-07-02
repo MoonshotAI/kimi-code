@@ -281,7 +281,9 @@ export class ToolManager {
                 (args ?? {}) as Record<string, unknown>,
                 context.signal,
               );
-              return mcpResultToExecutableOutput(result, qualified);
+              return mcpResultToExecutableOutput(result, qualified, {
+                originalsDir: this.agent.mediaOriginalsDir,
+              });
             },
           };
         },

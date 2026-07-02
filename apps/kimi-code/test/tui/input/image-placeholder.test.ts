@@ -101,4 +101,52 @@ describe('extractMediaAttachments', () => {
     expect(r.videoAttachmentIds).toEqual([1]);
     expect(r.parts).toEqual([{ type: 'text', text: '<video path="/tmp/sample.mp4"></video>' }]);
   });
+
+  it('inserts a compression caption before an image that was compressed at paste time', () => {
+    const store = new ImageAttachmentStore();
+    const att = store.addImage(new Uint8Array([1, 2, 3]), 'image/png', 2000, 2000, {
+      path: '/tmp/kimi-code-original-images/abc.png',
+      width: 2600,
+      height: 2600,
+      byteLength: 123456,
+      mime: 'image/png',
+    });
+
+    const r = extractMediaAttachments(`look ${att.placeholder}`, store);
+
+    expect(r.parts).toHaveLength(2);
+    const caption = r.parts[0];
+    if (caption?.type !== 'text') throw new Error('expected leading text part');
+    expect(caption.text).toContain('Image compressed');
+    expect(caption.text).toContain('2600x2600');
+    expect(caption.text).toContain('/tmp/kimi-code-original-images/abc.png');
+    expect(r.parts[1]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: 'data:image/png;base64,AQID' },
+    });
+  });
+
+  it('notes an unpreserved original when persistence failed at paste time', () => {
+    const store = new ImageAttachmentStore();
+    const att = store.addImage(new Uint8Array([1]), 'image/png', 2000, 2000, {
+      path: null,
+      width: 2600,
+      height: 2600,
+      byteLength: 123456,
+      mime: 'image/png',
+    });
+
+    const r = extractMediaAttachments(att.placeholder, store);
+
+    const caption = r.parts[0];
+    if (caption?.type !== 'text') throw new Error('expected leading text part');
+    expect(caption.text).toMatch(/not preserved/i);
+  });
+
+  it('adds no caption for an uncompressed image attachment', () => {
+    const { store, placeholder } = storeWith(new Uint8Array([0xaa]));
+    const r = extractMediaAttachments(placeholder, store);
+    expect(r.parts).toHaveLength(1);
+    expect(r.parts[0]?.type).toBe('image_url');
+  });
 });

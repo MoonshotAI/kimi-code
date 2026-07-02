@@ -2,12 +2,16 @@ import type { Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import {
+  COMPACT_USER_MESSAGE_HEAD_TOKENS,
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
   COMPACTION_SUMMARY_PREFIX,
+  buildCompactionElisionText,
   buildCompactionSummaryText,
   collectCompactableUserMessages,
   compactionUserMessageDisposition,
   isCompactionSummaryMessage,
   isRealUserInput,
+  selectCompactionUserMessages,
   selectRecentUserMessages,
   type CompactionUserDisposition,
 } from '../../../src/agent/compaction';
@@ -244,6 +248,110 @@ describe('selectRecentUserMessages', () => {
 
   it('returns nothing when the budget is zero', () => {
     expect(selectRecentUserMessages([textMessage('user', 'hi')], 0)).toEqual([]);
+  });
+});
+
+describe('selectCompactionUserMessages', () => {
+  it('keeps every message verbatim when the total fits the budget', () => {
+    const messages = [textMessage('user', 'one'), textMessage('user', 'two')];
+
+    const selection = selectCompactionUserMessages(messages, 1_000, 100);
+
+    expect(selection.elided).toBe(false);
+    expect(selection.head).toEqual([]);
+    expect(selection.tail).toEqual(messages);
+    expect(selection.omittedTokens).toBe(0);
+  });
+
+  it('keeps the oldest messages within the head budget and the newest within the rest', () => {
+    // Five messages of 26 estimated tokens each (100 ASCII chars → 25 text
+    // tokens + 1 role token).
+    const messages = ['a', 'b', 'c', 'd', 'e'].map((c) => textMessage('user', c.repeat(100)));
+    const per = estimateTokensForMessage(messages[0]!);
+
+    const selection = selectCompactionUserMessages(messages, per * 3, per);
+
+    expect(selection.elided).toBe(true);
+    expect(selection.head.map(messageText)).toEqual(['a'.repeat(100)]);
+    expect(selection.tail.map(messageText)).toEqual(['d'.repeat(100), 'e'.repeat(100)]);
+    expect(selection.omittedTokens).toBe(per * 2);
+  });
+
+  it('truncates the tail boundary message keeping its end', () => {
+    const long = `${'p'.repeat(400)}${'s'.repeat(400)}`;
+    const first = textMessage('user', 'x'.repeat(100));
+    const headBudget = estimateTokensForMessage(first);
+
+    const selection = selectCompactionUserMessages([first, textMessage('user', long)], headBudget + 80, headBudget);
+
+    expect(selection.elided).toBe(true);
+    expect(selection.head.map(messageText)).toEqual(['x'.repeat(100)]);
+    expect(selection.tail).toHaveLength(1);
+    const tailText = messageText(selection.tail[0]!);
+    expect(tailText.length).toBeGreaterThan(0);
+    expect(long.endsWith(tailText)).toBe(true);
+    expect(estimateTokens(tailText)).toBeLessThanOrEqual(80);
+  });
+
+  it('extends the head into the beginning of a truncated tail boundary message', () => {
+    const long = `${'h'.repeat(400)}${'m'.repeat(400)}${'t'.repeat(400)}`;
+    const selection = selectCompactionUserMessages([textMessage('user', long)], 100, 20);
+
+    expect(selection.elided).toBe(true);
+    expect(selection.head).toHaveLength(1);
+    expect(selection.tail).toHaveLength(1);
+    const headText = messageText(selection.head[0]!);
+    const tailText = messageText(selection.tail[0]!);
+    expect(headText.length).toBeGreaterThan(0);
+    expect(tailText.length).toBeGreaterThan(0);
+    expect(long.startsWith(headText)).toBe(true);
+    expect(long.endsWith(tailText)).toBe(true);
+    expect(estimateTokens(headText)).toBeLessThanOrEqual(20);
+    expect(estimateTokens(tailText)).toBeLessThanOrEqual(80);
+    // Head and tail must not overlap: together they cover less than the original.
+    expect(headText.length + tailText.length).toBeLessThan(long.length);
+    expect(selection.omittedTokens).toBeGreaterThan(0);
+  });
+
+  it('splits an oversized conversation with the default budgets', () => {
+    const big = textMessage('user', 'x'.repeat(COMPACT_USER_MESSAGE_MAX_TOKENS * 5));
+
+    const selection = selectCompactionUserMessages([big]);
+
+    expect(selection.elided).toBe(true);
+    expect(estimateTokens(messageText(selection.head[0]!))).toBeLessThanOrEqual(
+      COMPACT_USER_MESSAGE_HEAD_TOKENS,
+    );
+    expect(estimateTokens(messageText(selection.tail[0]!))).toBeLessThanOrEqual(
+      COMPACT_USER_MESSAGE_MAX_TOKENS - COMPACT_USER_MESSAGE_HEAD_TOKENS,
+    );
+  });
+
+  it('does not split surrogate pairs when truncating the tail boundary from the end', () => {
+    const emoji = '😀'.repeat(2_000);
+    const first = textMessage('user', 'x'.repeat(100));
+    const headBudget = estimateTokensForMessage(first);
+
+    const selection = selectCompactionUserMessages(
+      [first, textMessage('user', emoji)],
+      headBudget + 333,
+      headBudget,
+    );
+
+    const tailText = messageText(selection.tail[0]!);
+    expect(estimateTokens(tailText)).toBeLessThanOrEqual(333);
+    expect(/^(?:😀)*$/u.test(tailText)).toBe(true);
+    expect(tailText.length % 2).toBe(0);
+  });
+});
+
+describe('buildCompactionElisionText', () => {
+  it('wraps the omitted token estimate in a system-reminder', () => {
+    const text = buildCompactionElisionText(1_234);
+
+    expect(text.startsWith('<system-reminder>')).toBe(true);
+    expect(text.endsWith('</system-reminder>')).toBe(true);
+    expect(text).toContain('1234');
   });
 });
 
