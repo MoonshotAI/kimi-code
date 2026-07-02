@@ -529,6 +529,24 @@ describe('cropImageForModel', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('rejects non-finite region coordinates with a clean error', async () => {
+    // NaN slips past every `<`/`>=` comparison, so without an explicit guard
+    // it reaches jimp and surfaces as a misleading internal validation dump.
+    const png = await solidPng(300, 200);
+    for (const region of [
+      { x: Number.NaN, y: 0, width: 10, height: 10 },
+      { x: 0, y: Number.NaN, width: 10, height: 10 },
+      { x: 0, y: 0, width: Number.NaN, height: 10 },
+      { x: 0, y: 0, width: 10, height: Number.NaN },
+    ]) {
+      const result = await cropImageForModel(png, 'image/png', region);
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.error).toMatch(/finite/i);
+      expect(result.error).not.toMatch(/Failed to decode/);
+    }
+  });
+
   it('refuses to decode a decompression bomb', async () => {
     const header = Buffer.alloc(24);
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);

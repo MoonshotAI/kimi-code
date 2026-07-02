@@ -427,6 +427,18 @@ export async function cropImageForModel(
       error: `Cropping is only supported for PNG and JPEG images; got ${mimeType}.`,
     };
   }
+  // NaN slips past every </>= comparison in the bounds guard below, so gate
+  // on finiteness explicitly rather than surfacing a codec-internal error.
+  if (
+    ![region.x, region.y, region.width, region.height].every((value) => Number.isFinite(value))
+  ) {
+    return {
+      ok: false,
+      error:
+        `Region coordinates must be finite numbers; got x=${String(region.x)}, ` +
+        `y=${String(region.y)}, width=${String(region.width)}, height=${String(region.height)}.`,
+    };
+  }
   const dims = sniffImageDimensions(bytes);
   if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) {
     return {
@@ -471,8 +483,10 @@ export async function cropImageForModel(
         return {
           ok: false,
           error:
-            `The cropped region encodes to ${formatByteSize(buffer.length)}, over the ` +
-            `${formatByteSize(byteBudget)} per-image limit. Choose a smaller region, or allow downscaling.`,
+            `The cropped region encodes to ${String(buffer.length)} bytes ` +
+            `(${formatByteSize(buffer.length)}), over the ${String(byteBudget)}-byte ` +
+            `(${formatByteSize(byteBudget)}) per-image limit. ` +
+            'Choose a smaller region, or allow downscaling.',
         };
       }
       return {

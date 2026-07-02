@@ -350,13 +350,16 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
         } else if (args.full_resolution === true) {
           // Native resolution on request — but the provider's per-image byte
           // ceiling is a hard limit, so refuse explicitly rather than degrade.
+          // Exact byte counts accompany the rounded sizes: a file a hair over
+          // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
           if (data.length > IMAGE_BYTE_BUDGET) {
             return {
               isError: true,
               output:
-                `"${args.path}" is ${formatByteSize(data.length)}, over the ` +
-                `${formatByteSize(IMAGE_BYTE_BUDGET)} per-image limit, so full_resolution cannot ` +
-                'be honored. Use region to view a crop at full fidelity instead.',
+                `"${args.path}" is ${String(data.length)} bytes (${formatByteSize(data.length)}), ` +
+                `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
+                'per-image limit, so full_resolution cannot be honored. ' +
+                'Use region to view a crop at full fidelity instead.',
             };
           }
           const base64 = Buffer.from(data).toString('base64');

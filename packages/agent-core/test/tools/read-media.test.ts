@@ -825,6 +825,10 @@ describe('ReadMediaFileTool', () => {
       expect(result.isError).toBe(true);
       expect(result.output).toMatch(/full_resolution/);
       expect(result.output).toMatch(/region/);
+      // Exact byte counts accompany the rounded sizes: a file a hair over
+      // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
+      expect(result.output).toContain(`${String(data.length)} bytes`);
+      expect(result.output).toContain('3932160-byte');
     });
 
     it('rejects region and full_resolution for video files', async () => {
