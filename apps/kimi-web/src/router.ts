@@ -23,15 +23,12 @@ const router = createRouter({
 // entry (not on in-page hash navigation) so section anchors don't overwrite it.
 export let designSystemReturnPath: string | null = null;
 
-router.beforeEach((to, from) => {
-  if (to.name === 'design-system' && from.name !== 'design-system') {
-    // The session URL is rewritten via the native history API, bypassing
-    // vue-router, so read the actual browser URL instead of from.fullPath
-    // (which can be stale, e.g. still '/' after a session was selected).
-    const { pathname, search, hash } = window.location;
-    const current = `${pathname}${search}${hash}`;
-    designSystemReturnPath = current.startsWith('/design-system') ? '/' : current;
-  }
-});
+// Set by the sidebar logo entry so the Back button can return to the exact
+// session/URL. Captured at the explicit entry action (rather than in a
+// navigation guard) so browser Back/Forward into the design route does not
+// overwrite it with the design-system URL itself.
+export function setDesignSystemReturnPath(path: string): void {
+  designSystemReturnPath = path;
+}
 
 export default router;

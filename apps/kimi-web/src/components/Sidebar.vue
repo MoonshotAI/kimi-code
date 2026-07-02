@@ -6,6 +6,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
+import { setDesignSystemReturnPath } from '../router';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
 import {
@@ -524,6 +525,8 @@ function onLogoPointerDown(event: PointerEvent): void {
   (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
   logoPressTimer = setTimeout(() => {
     logoLongPressed = true;
+    const { pathname, search, hash } = window.location;
+    setDesignSystemReturnPath(`${pathname}${search}${hash}`);
     void router.push('/design-system');
   }, EGG_HOLD_MS);
 }
