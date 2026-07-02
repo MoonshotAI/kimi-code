@@ -456,9 +456,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // out of band cannot shift the cursor and skip intervening sessions.
       cursors[workspaceId] =
         page.items.length > 0 ? page.items[page.items.length - 1]!.id : undefined;
-      // First-page size = how many were loaded on first paint. Used by the
-      // sidebar's in-group "show less" control as the collapse target.
-      counts[workspaceId] = page.items.length;
+      // Collapse target for the sidebar's in-group "show less" control: the
+      // first-page capacity, floored at a full page so a workspace that was
+      // empty or sparse on first paint does not hide sessions created later.
+      // If the initial load pulled more than a page (recent-window
+      // continuations), keep the larger count so collapse returns to what was
+      // first visible.
+      counts[workspaceId] = Math.max(page.items.length, SESSIONS_INITIAL_PAGE_SIZE);
     }
     rawState.sessionsHasMoreByWorkspace = hasMore;
     rawState.sessionsCursorByWorkspace = cursors;

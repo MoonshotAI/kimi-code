@@ -334,8 +334,8 @@ export interface ExtendedState extends KimiClientState {
    *  the end of the last fetched page so a deep-linked older session appended
    *  out of band does not shift the cursor and skip intervening sessions. */
   sessionsCursorByWorkspace: Record<string, string | undefined>;
-  /** Number of sessions loaded on first paint per workspace (the "first page").
-   *  Drives the sidebar's in-group show-less collapse target. */
+  /** First-page capacity per workspace (sessions loaded on first paint, floored
+   *  at one full page). Drives the sidebar's in-group show-less collapse target. */
   sessionsInitialCountByWorkspace: Record<string, number>;
   /** True once every session has been loaded (after a search-triggered full drain). */
   sessionsFullyLoaded: boolean;
