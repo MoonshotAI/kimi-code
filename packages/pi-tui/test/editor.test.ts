@@ -390,6 +390,56 @@ describe("Editor component", () => {
 		});
 	});
 
+	describe("history draft host state", () => {
+		it("saves host state on entering browse and restores it on draft return", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.addToHistory("entry");
+			let restored: unknown;
+			editor.onHistoryDraftSave = () => "prompt-mode";
+			editor.onHistoryDraftRestore = (state) => {
+				restored = state;
+			};
+
+			editor.handleInput("\x1b[A"); // Up - recall "entry", saves host state
+			assert.strictEqual(editor.getText(), "entry");
+			assert.strictEqual(restored, undefined);
+
+			editor.handleInput("\x1b[B"); // Down - restore draft
+			assert.strictEqual(editor.getText(), "");
+			assert.strictEqual(restored, "prompt-mode");
+		});
+
+		it("does not restore host state when leaving browse by typing", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.addToHistory("entry");
+			let restored = false;
+			editor.onHistoryDraftSave = () => "state";
+			editor.onHistoryDraftRestore = () => {
+				restored = true;
+			};
+
+			editor.handleInput("\x1b[A"); // recall "entry"
+			editor.handleInput("x"); // type - exits browse without restoring draft
+			assert.strictEqual(restored, false);
+		});
+
+		it("saves and restores host state across multiple browse sessions", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.addToHistory("entry");
+			let count = 0;
+			editor.onHistoryDraftSave = () => "state";
+			editor.onHistoryDraftRestore = () => {
+				count++;
+			};
+
+			editor.handleInput("\x1b[A"); // recall
+			editor.handleInput("\x1b[B"); // restore draft (count=1)
+			editor.handleInput("\x1b[A"); // recall again
+			editor.handleInput("\x1b[B"); // restore draft again (count=2)
+			assert.strictEqual(count, 2);
+		});
+	});
+
 	describe("public state accessors", () => {
 		it("returns cursor position", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);

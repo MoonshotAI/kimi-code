@@ -299,6 +299,7 @@ export class Editor implements Component, Focusable {
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
 	private historyDraft: EditorState | null = null;
+	private hostHistoryDraft: unknown = undefined;
 	private historyFilter: ((entry: string) => boolean) | null = null;
 
 	// Kill ring for Emacs-style kill/yank operations
@@ -330,6 +331,15 @@ export class Editor implements Component, Focusable {
 	 * switch input mode) without touching editor internals.
 	 */
 	public onRecall?: (entry: string, direction: 1 | -1) => string | undefined;
+	/**
+	 * Called when entering history browsing, to capture host state that should be
+	 * saved alongside the editor draft. The returned value is passed to
+	 * `onHistoryDraftRestore` when the user navigates back to the draft, so the
+	 * host can restore state the editor does not own (e.g. an input mode).
+	 */
+	public onHistoryDraftSave?: () => unknown;
+	/** Called with the value from `onHistoryDraftSave` when the draft is restored. */
+	public onHistoryDraftRestore?: (state: unknown) => void;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -453,6 +463,7 @@ export class Editor implements Component, Focusable {
 		if (this.historyIndex === -1 && newIndex >= 0) {
 			this.pushUndoSnapshot();
 			this.historyDraft = structuredClone(this.state);
+			this.hostHistoryDraft = this.onHistoryDraftSave?.();
 		}
 
 		this.historyIndex = newIndex;
@@ -465,6 +476,10 @@ export class Editor implements Component, Focusable {
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
+				if (this.hostHistoryDraft !== undefined) {
+					this.onHistoryDraftRestore?.(this.hostHistoryDraft);
+					this.hostHistoryDraft = undefined;
+				}
 				if (this.onChange) this.onChange(this.getText());
 			} else {
 				this.setTextInternal("");
@@ -479,6 +494,7 @@ export class Editor implements Component, Focusable {
 	private exitHistoryBrowsing(): void {
 		this.historyIndex = -1;
 		this.historyDraft = null;
+		this.hostHistoryDraft = undefined;
 	}
 
 	/** Internal setText that doesn't reset history state - used by navigateHistory */
