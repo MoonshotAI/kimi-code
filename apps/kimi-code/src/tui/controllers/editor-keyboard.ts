@@ -281,10 +281,6 @@ export class EditorKeyboardController {
       host.track('undo');
     };
 
-    editor.onInsertNewline = () => {
-      host.track('shortcut_newline');
-    };
-
     editor.onTextPaste = () => {
       host.track('shortcut_paste', { kind: 'text' });
     };
