@@ -448,12 +448,30 @@ describe("Editor narrow width rendering", () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认通过**
+- [ ] **Step 2: 在 Task 1 的 `describe("wordWrapLine narrow width")` 组内追加 emoji grapheme 守护用例**
+
+来自 Task 1 质量审查的补充：现有守卫用例全是 BMP 单 code-unit 的 CJK。若守卫被误写成 `grapheme.length <= 1`（code unit 与 grapheme 混淆是最典型的错法），CJK 用例拦不住，而 ZWJ emoji 用户会重新栈溢出。在该 describe 组末尾追加：
+
+```ts
+	it("does not recurse infinitely on a multi-code-unit grapheme at maxWidth 1", () => {
+		// Guards "grapheme count, not code-unit length": a ZWJ family emoji
+		// is 11 code units but 1 grapheme (width 2). A guard mistakenly
+		// written as `grapheme.length <= 1` passes the BMP CJK cases yet
+		// recurses forever on this input.
+		const chunks = wordWrapLine("👨‍👩‍👧‍👦", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["👨‍👩‍👧‍👦"],
+		);
+	});
+```
+
+- [ ] **Step 3: 运行测试确认通过**
 
 Run: `cd packages/pi-tui && node --test test/editor.test.ts`
 Expected: PASS。（可选交叉验证：临时 `git stash` Task 1 的 editor.ts 改动再跑一次，应看到前两个用例栈溢出，验证测试确实盯住了根因；随后 `git stash pop` 恢复。）
 
-- [ ] **Step 3: Commit（需用户授权）**
+- [ ] **Step 4: Commit（需用户授权）**
 
 ```bash
 git add packages/pi-tui/test/editor.test.ts
@@ -580,7 +598,7 @@ git commit -m "fix(pi-tui): guard blank-line padding against negative widths"
 
 从上游同步代码时，绝不能直接整目录覆盖。以下本地修复必须在同步后重新核对，全部有测试守护：
 
-1. **`src/components/editor.ts` — `wordWrapLine` 单 grapheme 递归守卫**：segment 不可再分（单 grapheme）且比 `maxWidth` 宽时不再递归（上游在 maxWidth=1 + CJK 时无限递归栈溢出）。守护测试：`test/editor.test.ts` 的 "wordWrapLine narrow width"。
+1. **`src/components/editor.ts` — `wordWrapLine` 单 grapheme 递归守卫**：segment 不可再分（单 grapheme）且比 `maxWidth` 宽时不再递归（上游在 maxWidth=1 + CJK 时无限递归栈溢出）。守卫必须基于 grapheme 数（`graphemeSegmenter.segment(...)`）而非 code-unit 长度——`grapheme.length` 对 ZWJ emoji 会误判。守护测试：`test/editor.test.ts` 的 "wordWrapLine narrow width"。
 2. **`src/tui.ts` — `Container.render` 宽度钳制**：入口 `width = Math.max(1, width)`。守护测试：`test/tui-render.test.ts` 的 "Container width clamping"。
 3. **`src/tui.ts` — 超宽行截断替代 throw**：`doRender` 在 `applyLineResets` 前对超宽行统一 `sliceByColumn` 截断；上游差分渲染路径的"写崩溃日志 + throw"块已删除，不要在同步时带回来。守护测试：`test/tui-render.test.ts` 的 "TUI overwide line handling"。
 4. **`src/components/text.ts` / `markdown.ts` / `truncated-text.ts` — 负宽度 repeat 防御**：空行/分隔线的 `repeat` 参数钳到 ≥0。守护测试：各自测试文件的 "negative width safety"。
