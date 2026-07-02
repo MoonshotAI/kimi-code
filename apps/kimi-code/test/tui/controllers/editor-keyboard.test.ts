@@ -161,4 +161,24 @@ describe('EditorKeyboardController shell history recall', () => {
     expect(result).toBeUndefined();
     expect(editor['setInputMode'] as unknown as Mock).toHaveBeenCalledWith('prompt');
   });
+
+  it('saves the current input mode as the history draft host state', () => {
+    const { editor } = createHarness();
+    const save = editor['onHistoryDraftSave'] as unknown as () => unknown;
+
+    (editor as unknown as { inputMode: string }).inputMode = 'prompt';
+    expect(save()).toBe('prompt');
+
+    (editor as unknown as { inputMode: string }).inputMode = 'bash';
+    expect(save()).toBe('bash');
+  });
+
+  it('restores the input mode from the saved draft host state', () => {
+    const { editor } = createHarness();
+    const restore = editor['onHistoryDraftRestore'] as unknown as (state: unknown) => void;
+
+    restore('prompt');
+
+    expect(editor['setInputMode'] as unknown as Mock).toHaveBeenCalledWith('prompt');
+  });
 });
