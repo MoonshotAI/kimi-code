@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Add a TUI setting to keep rapid multi-line pastes from submitting line by line when bracketed paste is unavailable. Toggle it in /config under "Paste burst detection".
+Add a TUI preference to keep rapid multi-line pastes from submitting line by line when bracketed paste is unavailable. Set `disable_paste_burst = true` in `tui.toml` to turn it off.

@@ -17,7 +17,6 @@ import {
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
-import { PasteBurstSelectorComponent } from '../components/dialogs/paste-burst-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
@@ -574,49 +573,6 @@ export function showUpdatePreferencePicker(host: SlashCommandHost): void {
   );
 }
 
-export function showPasteBurstPicker(host: SlashCommandHost): void {
-  const currentValue = !(host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst);
-  host.mountEditorReplacement(
-    new PasteBurstSelectorComponent({
-      currentValue,
-      onSelect: (value) => {
-        host.restoreEditor();
-        void applyPasteBurstChoice(host, value);
-      },
-      onCancel: () => {
-        host.restoreEditor();
-      },
-    }),
-  );
-}
-
-async function applyPasteBurstChoice(host: SlashCommandHost, enabled: boolean): Promise<void> {
-  const disablePasteBurst = !enabled;
-  const previous = host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst;
-  if (disablePasteBurst === previous) {
-    host.showStatus(`Paste burst detection already ${enabled ? 'enabled' : 'disabled'}.`);
-    return;
-  }
-
-  try {
-    await saveTuiConfig({
-      ...currentTuiConfig(host),
-      disablePasteBurst,
-    });
-  } catch (error) {
-    host.showStatus(
-      `Failed to save paste burst setting: ${formatErrorMessage(error)}`,
-      'error',
-    );
-    return;
-  }
-
-  host.setAppState({ disablePasteBurst });
-  host.state.editor.setDisablePasteBurst(disablePasteBurst);
-  host.track('paste_burst_changed', { enabled });
-  host.showStatus(`Paste burst detection ${enabled ? 'enabled' : 'disabled'}.`, 'success');
-}
-
 export async function showExperimentsPanel(host: SlashCommandHost): Promise<void> {
   let features: readonly ExperimentalFeatureState[];
   try {
@@ -763,7 +719,6 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'editor': showEditorPicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
-    case 'paste-burst': showPasteBurstPicker(host); return;
     case 'usage': void showUsage(host); return;
   }
 }
