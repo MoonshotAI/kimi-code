@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import Sidebar from './components/Sidebar.vue';
@@ -41,7 +41,10 @@ import type { AppConfig, ThinkingLevel } from './api/types';
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
-import DesignSystemView from './views/DesignSystemView.vue';
+
+const DesignSystemView = defineAsyncComponent(
+  () => import('./views/DesignSystemView.vue'),
+);
 
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
