@@ -1905,6 +1905,11 @@ export class KimiTUI {
     this.state.todoPanelContainer.clear();
     this.imageStore.clear();
     this.renderWelcome();
+    // Session resets (/new, /clear, session switch) want a pristine screen.
+    // Force a destructive full render: the renderer's collapse repaint
+    // intentionally preserves scrollback, which would leave the previous
+    // session's text above the welcome banner.
+    this.state.ui.requestRender(true);
   }
 
   private isTurnBoundaryComponent(child: Component): boolean {
