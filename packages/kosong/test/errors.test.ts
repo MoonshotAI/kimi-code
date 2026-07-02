@@ -246,11 +246,35 @@ describe('isToolExchangeAdjacencyError', () => {
     );
   });
 
+  // The exact OpenAI-compatible (Moonshot / Kimi) message observed in the field
+  // when a `tool` message's `tool_call_id` has no matching `tool_calls` entry in
+  // the preceding assistant message. The doubled space is verbatim from the
+  // provider.
+  const MOONSHOT_TOOL_CALL_ID_NOT_FOUND = '400 tool_call_id  is not found';
+
+  it('matches the OpenAI/Moonshot tool_call_id-not-found 400', () => {
+    expect(
+      isToolExchangeAdjacencyError(new APIStatusError(400, MOONSHOT_TOOL_CALL_ID_NOT_FOUND)),
+    ).toBe(true);
+    expect(
+      isToolExchangeAdjacencyError(new APIStatusError(400, "tool_call_id 'call_abc123' is not found")),
+    ).toBe(true);
+  });
+
+  it('also matches a 422 tool_call_id-not-found', () => {
+    expect(
+      isToolExchangeAdjacencyError(new APIStatusError(422, MOONSHOT_TOOL_CALL_ID_NOT_FOUND)),
+    ).toBe(true);
+  });
+
   it('does not match a context-overflow 400 or unrelated errors', () => {
     expect(
       isToolExchangeAdjacencyError(new APIContextOverflowError(400, 'context length exceeded')),
     ).toBe(false);
     expect(isToolExchangeAdjacencyError(new APIStatusError(400, 'Bad request'))).toBe(false);
+    // A bare "not found" without a tool_call_id anchor must not match, so an
+    // unrelated 404-style body cannot trip the tool-exchange recovery.
+    expect(isToolExchangeAdjacencyError(new APIStatusError(400, 'resource not found'))).toBe(false);
     expect(isToolExchangeAdjacencyError(new APIStatusError(500, ANTHROPIC_MISSING_RESULT))).toBe(
       false,
     );
@@ -265,6 +289,12 @@ describe('isRecoverableRequestStructureError', () => {
       isRecoverableRequestStructureError(
         new APIStatusError(400, '`tool_use` ids were found without `tool_result` blocks'),
       ),
+    ).toBe(true);
+  });
+
+  it('matches the OpenAI/Moonshot tool_call_id-not-found 400', () => {
+    expect(
+      isRecoverableRequestStructureError(new APIStatusError(400, '400 tool_call_id  is not found')),
     ).toBe(true);
   });
 

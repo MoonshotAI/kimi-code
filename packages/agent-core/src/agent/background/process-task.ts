@@ -139,6 +139,12 @@ function observeProcessStream(
   const onData = (chunk: string): void => {
     if (chunk.length === 0) return;
     sink.appendOutput(chunk);
+    // Once the manager has begun terminating the task — an output-limit trip
+    // (see MAX_FOREGROUND_OUTPUT_BYTES), a user interrupt, or a timeout —
+    // `appendOutput` above may synchronously abort the signal. Stop forwarding
+    // live output from that point so the unbounded forward buffer cannot keep
+    // growing while the process is being killed.
+    if (sink.signal.aborted) return;
     onOutput?.(kind, chunk);
   };
   stream.on('data', onData);
