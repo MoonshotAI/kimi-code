@@ -1664,7 +1664,7 @@ command = "vim"
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
-  it('does not persist bash input to input history', async () => {
+  it('persists bash input to input history with a leading !', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
     driver.state.appState.inputMode = 'bash';
@@ -1672,7 +1672,7 @@ command = "vim"
 
     driver.handleUserInput('ls');
 
-    expect(driver.persistInputHistory).not.toHaveBeenCalled();
+    expect(driver.persistInputHistory).toHaveBeenCalledWith('!ls');
   });
 
   it('persists normal input to input history', async () => {

@@ -54,6 +54,15 @@ interface AutocompleteTriggerInternals {
   requestAutocomplete: (options: { force: boolean; explicitTab: boolean }) => void;
 }
 
+interface HistoryNavigationInternals {
+  history: string[];
+  historyIndex: number;
+  lastAction: unknown;
+  navigateHistory(direction: number): void;
+  setTextInternal(text: string): void;
+  pushUndoSnapshot(): void;
+}
+
 // Mirror pi-tui's private SLASH_COMMAND_SELECT_LIST_LAYOUT
 // (dist/components/editor.js); keep in sync when bumping pi-tui.
 const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
@@ -209,6 +218,81 @@ export class CustomEditor extends Editor {
     triggerInternals.tryTriggerAutocomplete = (explicitTab = false) => {
       triggerInternals.requestAutocomplete({ force: this.inputMode === 'bash', explicitTab });
     };
+
+    // pi-tui's built-in history navigation walks every entry and stores only
+    // bare strings, so it can neither keep shell commands out of prompt recall
+    // (and vice versa) nor restore bash mode when a `!cmd` entry is recalled.
+    // Shadow it with a mode-aware version: bash mode only visits `!`-prefixed
+    // entries (shell commands); prompt mode visits everything. Recalling a
+    // `!`-prefixed entry strips the `!` and switches back to bash mode so the
+    // command runs as a shell command again instead of being sent as a prompt.
+    // Mirrors pi-tui internals (dist/components/editor.js navigateHistory);
+    // keep in sync when bumping pi-tui.
+    const navInternals = this as unknown as HistoryNavigationInternals;
+    let browseStartMode: 'prompt' | 'bash' = 'prompt';
+    navInternals.navigateHistory = (direction: number) => {
+      navInternals.lastAction = null;
+      if (navInternals.history.length === 0) return;
+
+      // The filter is fixed for the whole browse session by the mode we were in
+      // when we first pressed ↑: bash → only shell entries, prompt → all.
+      const entering = navInternals.historyIndex === -1;
+      if (entering) browseStartMode = this.inputMode;
+      const wantShell = browseStartMode === 'bash';
+      const matches = (entry: string): boolean =>
+        wantShell ? entry.startsWith('!') : true;
+
+      // Step from the current position in `direction`, skipping entries that
+      // don't match. pi-tui convention: Up passes -1 (older), Down passes 1.
+      let idx = navInternals.historyIndex;
+      let target: number | 'draft' | 'none' = 'none';
+      while (true) {
+        idx = idx - direction;
+        if (idx === -1) {
+          target = 'draft';
+          break;
+        }
+        if (idx < -1 || idx >= navInternals.history.length) {
+          target = 'none';
+          break;
+        }
+        const candidate = navInternals.history[idx];
+        if (candidate !== undefined && matches(candidate)) {
+          target = idx;
+          break;
+        }
+      }
+
+      if (target === 'none') return;
+
+      // First step into history: save the draft so undo can restore it.
+      if (entering && typeof target === 'number') {
+        navInternals.pushUndoSnapshot();
+      }
+
+      if (target === 'draft') {
+        navInternals.historyIndex = -1;
+        navInternals.setTextInternal('');
+        this.setInputMode(browseStartMode);
+        return;
+      }
+
+      navInternals.historyIndex = target;
+      const entry = navInternals.history[target] ?? '';
+      if (entry.startsWith('!')) {
+        this.setInputMode('bash');
+        navInternals.setTextInternal(entry.slice(1));
+      } else {
+        this.setInputMode('prompt');
+        navInternals.setTextInternal(entry);
+      }
+    };
+  }
+
+  private setInputMode(mode: 'prompt' | 'bash'): void {
+    if (this.inputMode === mode) return;
+    this.inputMode = mode;
+    this.onInputModeChange?.(mode);
   }
 
   private expandPasteMarkerAtCursor(): boolean {

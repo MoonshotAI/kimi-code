@@ -3,6 +3,10 @@
  *
  * Semantics:
  * - One JSON object per line (`InputHistoryEntry { content }`)
+ * - `content` is the raw input. Shell commands are stored with a leading `!`
+ *   (e.g. `!ls -la`) so ↑ recall can distinguish them from prompts and restore
+ *   bash mode; the `!` is stripped again when the entry is recalled. Plain
+ *   prompts (and legacy entries without a leading `!`) are normal prompts.
  * - Append-only writes
  * - Skip empty entries
  * - Skip when same as last entry (consecutive deduplication)
