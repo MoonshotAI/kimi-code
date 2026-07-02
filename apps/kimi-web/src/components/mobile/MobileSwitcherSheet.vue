@@ -205,7 +205,7 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
               :label="t('sidebar.options')"
               @click.stop="toggleWsMenu(g.workspace.id)"
             >
-              <Icon name="dots-vertical" size="md" />
+              <Icon name="dots-horizontal" size="md" />
             </IconButton>
           </Tooltip>
 
@@ -250,7 +250,7 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
                 :label="t('sidebar.options')"
                 @click.stop="toggleMenu(s.id)"
               >
-                <Icon name="dots-vertical" size="md" />
+                <Icon name="dots-horizontal" size="md" />
               </IconButton>
             </Tooltip>
 

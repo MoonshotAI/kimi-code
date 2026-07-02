@@ -5,11 +5,11 @@ import { ICONS } from '../src/lib/icons.ts';
 
 // Display order + grouping. Names not listed here are appended under "Other".
 const GROUPS = [
-  ['Actions', ['plus', 'close', 'check', 'search', 'copy', 'link', 'external-link', 'download', 'undo', 'send', 'image', 'settings', 'sliders', 'log-in']],
+  ['Actions', ['plus', 'chat-new', 'close', 'check', 'search', 'copy', 'link', 'external-link', 'download', 'undo', 'send', 'image', 'settings', 'sliders', 'log-in']],
   ['Navigation & layout', ['chevron-down', 'chevron-right', 'arrow-up', 'arrow-down', 'arrow-right', 'minus', 'panel-collapse', 'panel-expand', 'expand', 'collapse', 'list']],
   ['Files & tools', ['folder', 'folder-closed', 'folder-plus', 'folder-solid', 'file', 'file-text', 'file-plus', 'file-off', 'image-off', 'code', 'terminal', 'pencil', 'glob', 'globe', 'check-list', 'bolt', 'git-pull-request']],
   ['Communication', ['message', 'mail', 'user']],
-  ['Status & media', ['info', 'help-circle', 'alert-triangle', 'clock', 'sparkles', 'play', 'stop', 'star', 'star-outline', 'dots-vertical', 'dots-horizontal']],
+  ['Status & media', ['info', 'help-circle', 'alert-triangle', 'clock', 'sparkles', 'play', 'stop', 'star', 'star-outline', 'dots-horizontal']],
 ];
 
 function render(name) {

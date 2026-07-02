@@ -581,7 +581,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
                   class="u-edit"
                   @click="onUndo(turn)"
                 >
-                  <span class="u-edit-text">{{ t('conversation.undo') }}</span>
                   <Icon name="undo" size="sm" />
                 </button>
               </Tooltip>
@@ -649,16 +648,18 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           <Tooltip :text="`${turn.durationMs} ms`">
             <span v-if="turn.durationMs !== undefined" class="a-duration">{{ formatDuration(turn.durationMs) }}</span>
           </Tooltip>
-          <button
+          <Tooltip
             v-if="assistantRunFinalText(ti).trim().length > 0"
-            class="a-cpbtn"
-            tabindex="-1"
-            @click="copyAssistantRun(ti)"
+            :text="t('filePreview.copy')"
           >
-            <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
-            <Icon v-else name="check" size="sm" />
-            <span class="a-cpbtn-text">{{ t('filePreview.copy') }}</span>
-          </button>
+            <button
+              class="a-cpbtn"
+              @click="copyAssistantRun(ti)"
+            >
+              <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
+              <Icon v-else name="check" size="sm" />
+            </button>
+          </Tooltip>
         </div>
       </div>
     </template>
@@ -874,16 +875,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   min-height: 22px;
   box-sizing: border-box;
 }
-.u-meta .u-edit svg {
-  margin-top: -1.5px;
-}
-.u-meta .u-edit-text {
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transition: max-width 0.15s ease;
-}
-.u-meta .u-edit:hover .u-edit-text { max-width: 120px; }
 /* User input is shown verbatim — preserve newlines, break long tokens. */
 .u-text {
   white-space: pre-wrap;
@@ -896,7 +887,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .u-edit {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   padding: 2px 5px;
   background: none;
   border: none;
@@ -904,6 +895,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   color: var(--muted);
   font: inherit;
   font-size: var(--text-base);
+  line-height: 1;
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.12s, color 0.12s, background-color 0.12s;
@@ -912,7 +904,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   display: block;
   flex: none;
 }
-.u-edit span { line-height: 1; }
 .u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 /* Copy button — icon-only, shares the undo button's muted→hover style. */
 .u-copy {
@@ -933,7 +924,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   min-height: 22px;
   box-sizing: border-box;
 }
-.u-copy svg { display: block; flex: none; transform: translateY(1.3px); }
+.u-copy svg { display: block; flex: none; }
 .u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 /* Mobile bubble layout: right-align the undo button below the bubble. */
 .u-edit-wrap { display: flex; justify-content: flex-end; }
@@ -1004,37 +995,34 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   line-height: 1;
 }
 
+/* Copy button — icon-only, shares the undo button's muted→hover style so the
+   message-stream action buttons (copy / undo) all read as one family. */
 .a-cpbtn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  padding: 2px 5px;
   background: none;
   border: none;
-  color: var(--faint);
-  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font: inherit;
   font-size: var(--text-base);
-  padding: 2px 6px 2px 0;
-  border-radius: 4px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
+  min-height: 22px;
+  box-sizing: border-box;
 }
 .a-cpbtn:hover {
-  color: var(--color-text);
-}
-.a-cpbtn svg,
-.a-cpbtn-text {
-  pointer-events: none;
+  opacity: 1;
+  color: var(--color-accent);
+  background: var(--hover);
 }
 .a-cpbtn svg {
+  display: block;
   flex: none;
-}
-.a-cpbtn-text {
-  opacity: 0;
-  max-width: none;
-  overflow: visible;
-  white-space: nowrap;
-  transition: opacity 0.15s ease;
-}
-.a-cpbtn:hover .a-cpbtn-text {
-  opacity: 1;
 }
 /* Touch devices: always show the copy buttons (no hover to reveal them) and
    give the bubble-layout button a comfortable tap size. */
@@ -1173,10 +1161,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     max-width: calc(100% - 48px);
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .a-cpbtn-text {
-    opacity: 1;
-    max-width: 120px;
   }
   .u-edit-confirm {
     flex-wrap: wrap;

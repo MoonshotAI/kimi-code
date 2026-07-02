@@ -10,11 +10,15 @@
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
-    "check:style": "node scripts/check-style.mjs"
+    "check:style": "node scripts/check-style.mjs",
+    "gen:icons": "node scripts/gen-icon-data.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@iconify-json/ri": "^1.2.10",
+    "@iconify/utils": "^3.1.3",
+    "@iconify/vue": "^5.0.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "katex": "^0.17.0",

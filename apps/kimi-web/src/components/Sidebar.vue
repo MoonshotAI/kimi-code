@@ -582,7 +582,7 @@ onBeforeUnmount(() => {
       <!-- New chat + new workspace buttons -->
       <div class="btn-wrap" :class="{ 'btn-wrap--scrolled': sessionsScrolled }">
         <button class="btn-new-chat" type="button" @click.stop="emit('create')">
-          <Icon name="plus" />
+          <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
         <Tooltip :text="t('sidebar.newWorkspace')">
@@ -924,7 +924,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--color-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -942,7 +942,7 @@ onBeforeUnmount(() => {
 .search-input {
   flex: 1;
   min-width: 0;
-  color: var(--faint);
+  color: var(--color-text);
   font-family: var(--mono);
   font-size: var(--ui-font-size);
   overflow: hidden;

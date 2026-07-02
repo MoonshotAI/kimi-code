@@ -129,7 +129,7 @@ function onHeaderDragStart(event: DragEvent): void {
             :label="t('workspace.newInGroup')"
             @click.stop="emit('createInWorkspace', group.workspace.id)"
           >
-            <Icon name="plus" />
+            <Icon name="chat-new" />
           </IconButton>
         </Tooltip>
       </div>
@@ -259,12 +259,16 @@ function onHeaderDragStart(event: DragEvent): void {
   opacity: 1;
 }
 
-/* More button — hidden until hover (or while its menu is open / focused).
-   `.gh .gh-more` out-specificities IconButton's display so the hidden default wins. */
-.gh .gh-more { display: none; }
+/* More + add buttons — hidden until hover (or while the more menu is open /
+   focused). `.gh .gh-more` / `.gh .gh-add` out-specificity IconButton's display
+   so the hidden default wins. */
+.gh .gh-more,
+.gh .gh-add { display: none; }
 .gh:hover .gh-more,
+.gh:hover .gh-add,
 .gh-more.open,
-.gh-more:focus-visible { display: inline-flex; }
+.gh-more:focus-visible,
+.gh-add:focus-visible { display: inline-flex; }
 .gh-more.open { color: var(--color-text); background: var(--color-line); }
 
 .group-empty {
