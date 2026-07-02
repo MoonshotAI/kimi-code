@@ -1195,12 +1195,21 @@ function hasLoadedMessages(sessionId: string): boolean {
 // gets sluggish once I have a lot of sessions".
 //
 // Keep only the most-recently-opened sessions subscribed (MRU order, index 0 =
-// newest). The active session is always retained. Evicting an entry only drops
-// the live WS subscription; `lastSeqBySession` / `epochBySession` are kept so
-// re-opening the session resumes from the tracked cursor — the daemon replays
-// missed durable events, or answers `resync_required` → snapshot.
+// newest). The active session is always retained.
+//
+// Eviction drops the live WS subscription but keeps the session's cursor so a
+// quick re-open can resume cheaply. However, a cursor kept across an eviction
+// can go stale: some session events (`event.session.status_changed`,
+// `session.meta.updated`, ...) are broadcast to EVERY connection (see
+// `isGlobalSessionEvent` on the server) and still advance `lastSeqBySession`
+// for an unsubscribed session. If a session emits per-session durable events
+// while evicted and then a global event, the cursor jumps past the missed
+// events and resuming from it would skip them. Evicted sessions are therefore
+// tracked in `sessionsWithStaleCursor`, and their cursor is reset on the next
+// re-subscribe so the daemon replays (or snapshots) what was missed.
 const MAX_WS_SUBSCRIPTIONS = 4;
 const wsSubscriptionOrder: string[] = [];
+const sessionsWithStaleCursor = new Set<string>();
 
 function retainWsSubscription(sessionId: string): void {
   const idx = wsSubscriptionOrder.indexOf(sessionId);
@@ -1214,12 +1223,14 @@ function retainWsSubscription(sessionId: string): void {
     if (tail === undefined || tail === rawState.activeSessionId) break;
     wsSubscriptionOrder.pop();
     eventConn?.unsubscribe(tail);
+    sessionsWithStaleCursor.add(tail);
   }
 }
 
 function dropWsSubscription(sessionId: string): void {
   const idx = wsSubscriptionOrder.indexOf(sessionId);
   if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
+  sessionsWithStaleCursor.delete(sessionId);
 }
 
 function subscribeToSessionEvents(sessionId: string): void {
@@ -1230,6 +1241,14 @@ function subscribeToSessionEvents(sessionId: string): void {
     // they don't advance lastSeqBySession — but flushing here is cheap and
     // future-proofs the cursor if the batching set ever changes.)
     enqueueEvent.flush();
+    // If this session was evicted from the cap, its cursor may have been
+    // advanced past missed per-session events by global session events. Reset
+    // it so the daemon replays (or snapshots) what was missed while
+    // unsubscribed, instead of resuming from a cursor that skips them.
+    if (sessionsWithStaleCursor.delete(sessionId)) {
+      delete rawState.lastSeqBySession[sessionId];
+      delete epochBySession[sessionId];
+    }
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
