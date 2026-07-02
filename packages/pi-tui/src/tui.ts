@@ -1528,8 +1528,23 @@ export class TUI extends Container {
 				);
 				let repaint = "\x1b[?2026h"; // Begin synchronized output
 				// Delete kitty images placed in the old visible viewport; images
-				// above it live in scrollback and are left alone.
-				repaint += this.deleteChangedKittyImages(prevViewportTop, this.previousLines.length - 1);
+				// above it live in scrollback and are left alone. A multi-row
+				// image can straddle the viewport top: its id lives on the image
+				// line above prevViewportTop while its reserved rows are still
+				// visible, so widen the range to include such blocks — otherwise
+				// the stale overlay would survive the repaint and its id would
+				// drop out of previousKittyImageIds, never to be cleaned up.
+				let deleteFrom = prevViewportTop;
+				for (let k = 0; k < prevViewportTop; k++) {
+					const prevLine = this.previousLines[k] ?? "";
+					if (!isImageLine(prevLine)) continue;
+					const blockEnd = k + this.getKittyImageReservedRows(this.previousLines, k) - 1;
+					if (blockEnd >= prevViewportTop) {
+						deleteFrom = k;
+						break;
+					}
+				}
+				repaint += this.deleteChangedKittyImages(deleteFrom, this.previousLines.length - 1);
 				// Move the cursor to the top of the screen (old anchor still valid).
 				const cursorScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
 				if (cursorScreenRow > 0) {

@@ -21,6 +21,15 @@ class Lines implements Component {
 	invalidate(): void {}
 }
 
+class WriteCapturingTerminal extends VirtualTerminal {
+	writes: string[] = [];
+
+	override write(data: string): void {
+		this.writes.push(data);
+		super.write(data);
+	}
+}
+
 describe("TUI shrinking content", () => {
 	it("clears all rendered lines when content shrinks to zero", async () => {
 		const terminal = new VirtualTerminal(40, 10);
@@ -125,6 +134,47 @@ describe("TUI shrinking content", () => {
 			`input box should be visible at the bottom, got: ${JSON.stringify(viewport)}`,
 		);
 		assert.ok(viewport.some((line) => line.includes("L5-CHANGED")));
+
+		tui.stop();
+	});
+
+	it("deletes a kitty image straddling the viewport top when content collapses", async () => {
+		// A multi-row image can start above the viewport top while its
+		// reserved rows are still visible. The collapse repaint must widen
+		// its image-delete range to that block, or the stale overlay
+		// survives and its id drops out of tracking.
+		const terminal = new WriteCapturingTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const content = new Lines([]);
+		tui.addChild(content);
+
+		// 30 lines, image line at index 18 with 4 reserved rows (18..21),
+		// straddling the viewport top at 20.
+		const imageLine = "\x1b_Ga=T,i=42,r=4;AAAA\x1b\\";
+		const first = [
+			...Array.from({ length: 18 }, (_, i) => `L${i}`),
+			imageLine,
+			"",
+			"",
+			"",
+			...Array.from({ length: 7 }, (_, i) => `L${22 + i}`),
+			"[INPUT-BOX]",
+		];
+		content.setLines(first);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.writes = [];
+		content.setLines(["L0", "L1", "L2", "L3", "L4", "L5-CHANGED", "L6", "[INPUT-BOX]"]);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const written = terminal.writes.join("");
+		assert.ok(
+			written.includes("\x1b_Ga=d,d=I,i=42,q=2\x1b\\"),
+			"the straddling image should be deleted during the collapse repaint",
+		);
+		assert.ok(terminal.getViewport().some((line) => line.includes("[INPUT-BOX]")));
 
 		tui.stop();
 	});
