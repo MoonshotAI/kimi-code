@@ -656,6 +656,13 @@ export class BackgroundManager {
       void this.stop(entry.taskId, foregroundOutputLimitReason());
     }
 
+    // Once the cap has tripped the task is being terminated: keep only the
+    // bounded in-memory ring buffer above and stop feeding the (unbounded) disk
+    // write chain. A producer that ignores SIGTERM could otherwise keep the
+    // chain — and the chunk strings each pending write retains — growing through
+    // the grace window until SIGKILL, re-introducing the OOM this cap prevents.
+    if (entry.outputLimitTripped) return;
+
     if (this.persistence === undefined) return;
 
     // Foreground tasks keep their full output in memory and only touch disk
