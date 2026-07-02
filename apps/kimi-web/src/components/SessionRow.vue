@@ -205,8 +205,6 @@ defineExpose({ closeMenu });
         <span v-else class="t" @dblclick.stop="startRename">{{ session.title }}</span>
       </div>
 
-      <span class="ts">{{ session.time }}</span>
-
       <!-- Pending tags — coloured per kind, shown even when the row isn't
            active. "Answer" = an askUserQuestion is waiting; "Approve" = a
            permission request is waiting. The session's lifecycle status drives
@@ -241,18 +239,24 @@ defineExpose({ closeMenu });
         </Badge>
       </Tooltip>
 
-      <!-- Kebab button (visible on hover) -->
-      <IconButton
-        ref="kebabRef"
-        v-if="!renaming"
-        class="kebab"
-        :class="{ open: menuOpen }"
-        size="sm"
-        :label="t('sidebar.options')"
-        @click.stop="toggleMenu($event)"
-      >
-        <Icon name="dots-horizontal" size="sm" />
-      </IconButton>
+      <!-- Trailing action slot: the relative time and the kebab share one grid
+           cell and swap via `visibility` (never display:none), so the slot
+           width is identical in hover and rest. The badges and title therefore
+           don't reflow on hover — see design-system §07 "Session row". -->
+      <span class="act">
+        <span class="ts">{{ session.time }}</span>
+        <IconButton
+          ref="kebabRef"
+          v-if="!renaming"
+          class="kebab"
+          :class="{ open: menuOpen }"
+          size="sm"
+          :label="t('sidebar.options')"
+          @click.stop="toggleMenu($event)"
+        >
+          <Icon name="dots-horizontal" size="sm" />
+        </IconButton>
+      </span>
     </div>
 
     <!-- Kebab dropdown — teleported to <body> and position:fixed so it escapes
@@ -350,16 +354,27 @@ defineExpose({ closeMenu });
   color: var(--color-text-faint);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
-  flex: none;
 }
-.se:hover .ts { display: none; }
 
-/* Kebab button — hidden until hover. Sits at the RIGHT of the timestamp
-   and attention badge so it is the right-most element. `.se .kebab` out-
-   specificities IconButton's display so the hidden default actually wins. */
-.se .kebab { display: none; }
-.se:hover .kebab,
-.kebab.open { display: inline-flex; }
+/* Trailing action slot: time and kebab share one grid cell (grid-area:1/1).
+   Both stay in the layout and swap via `visibility` (never display:none), so
+   the slot width = max(time width, IconButton sm 26px) is identical in hover
+   and rest — the badges and title don't reflow, eliminating hover jitter.
+   `.act .kebab` out-specificities IconButton's own display so the hidden
+   default wins. */
+.act {
+  display: inline-grid;
+  flex: none;
+  align-items: center;
+  justify-items: center;
+}
+.act .ts,
+.act .kebab { grid-area: 1 / 1; }
+.act .kebab { visibility: hidden; }
+.se:hover .act .kebab,
+.act:has(.kebab.open) .kebab { visibility: visible; }
+.se:hover .act .ts,
+.act:has(.kebab.open) .ts { visibility: hidden; }
 .kebab.open { color: var(--color-text); background: var(--color-surface-sunken); }
 
 /* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu

@@ -2188,19 +2188,34 @@ export function auth(token: string) {
         </div></div>
 
         <h3 class="sub">Session row</h3>
-        <p>A session row is an inset rounded pill, structured as: <code>status slot → title → time → attention Badge → kebab</code>.</p>
+        <p>A session row is an inset rounded pill, structured as: <code>status slot → title → attention Badge → trailing action slot</code>.</p>
         <table class="dt">
           <thead><tr><th>Part</th><th>Rule</th></tr></thead>
           <tbody>
             <tr><td>Container</td><td><code>margin: 1px 6px; padding: 7px 10px; radius-md</code>; hover = <code>surface-sunken</code>; active = <code>accent-soft</code> + <code>inset 0 0 0 1px accent-bd</code></td></tr>
             <tr><td>Status slot (lead)</td><td>fixed <code>--sb-gutter</code> width; running = <code>Spinner</code> sm, otherwise unread = 7px accent dot</td></tr>
             <tr><td>Title</td><td>flex:1 with truncation; double-click enters inline rename (compact input, not Input)</td></tr>
-            <tr><td>Time</td><td>mono xs, <code>fg-faint</code>; yields to the kebab on hover</td></tr>
-            <tr><td>Attention Badge</td><td><code>Badge</code> sm: info (needs answer) / warning (needs approval) / danger (aborted)</td></tr>
-            <tr><td>kebab</td><td><code>IconButton</code> sm, shown on hover; dropdown uses <code>Menu/MenuItem</code></td></tr>
+            <tr><td>Attention Badge</td><td><code>Badge</code> sm: info (needs answer) / warning (needs approval) / danger (aborted); <b>always shown</b>, not toggled on hover</td></tr>
+            <tr><td>Trailing action slot (trail)</td><td>fixed slot shared by the time ↔ kebab (see below)</td></tr>
             <tr><td>Archive confirmation</td><td>replaces the title area, <code>Button</code> sm (danger confirm / secondary cancel)</td></tr>
           </tbody>
         </table>
+
+        <h4 class="mini">Trailing action slot</h4>
+        <p>The session row's rightmost is a <b>fixed-width</b> action slot: at rest it shows the relative time (mono xs, <code>fg-faint</code>); on hover it swaps <b>in place</b> to the kebab (<code>IconButton</code> sm).</p>
+        <ul class="clean">
+          <li>The time and kebab are stacked with <code>display:inline-grid</code> + <code>grid-area:1/1</code> and swapped on hover via <code>visibility</code> — <b>never <code>display:none</code></b>.</li>
+          <li>The slot width is always <code>max(time width, IconButton sm 26px)</code>, so the right region's total width is unchanged across hover — badges don't shift, the title's visible character count doesn't change, <b>no jitter</b>.</li>
+          <li>A session awaiting an answer (info Badge) likewise shows no time on hover: the slot holds only the kebab.</li>
+        </ul>
+        <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">SessionRow.vue</span></div><pre>.act { display: inline-grid; flex: none; align-items: center; justify-items: center; }
+.act .ts, .act .kebab { grid-area: 1 / 1; }
+.act .kebab { visibility: hidden; }
+.se:hover .act .kebab, .act:has(.kebab.open) .kebab { visibility: visible; }
+.se:hover .act .ts,   .act:has(.kebab.open) .ts   { visibility: hidden; }</pre></div>
+        <div class="callout info"><span class="ico">i</span><div>
+          <b>Why the time and kebab share a slot and use <code>visibility</code> rather than <code>display:none</code>:</b> the time is variable-width (<code>2h</code> / <code>5m</code> / <code>just now</code> …), the kebab a fixed 26px. If hover used <code>display:none</code> to drop the time and append the kebab, the right region would reflow — badges shift and the title's truncation changes, causing visible jitter. Sharing one slot and swapping via <code>visibility</code> keeps the slot width constant; this is a hard rule for sidebar list-row stability.
+        </div></div>
 
         <h3 class="sub">Workspace group</h3>
         <p>The group head and session rows share <code>--sb-*</code>: folder icon (open/closed) → name → path subtitle, with the kebab and "+" revealed on hover.</p>
