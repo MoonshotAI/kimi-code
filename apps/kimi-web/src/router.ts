@@ -18,4 +18,15 @@ const router = createRouter({
   routes,
 });
 
+// The URL the user was on before opening the design system, so the Back button
+// can return to the exact session/URL instead of the app root. Recorded on
+// entry (not on in-page hash navigation) so section anchors don't overwrite it.
+export let designSystemReturnPath: string | null = null;
+
+router.beforeEach((to, from) => {
+  if (to.name === 'design-system' && from.name !== 'design-system') {
+    designSystemReturnPath = from.fullPath;
+  }
+});
+
 export default router;

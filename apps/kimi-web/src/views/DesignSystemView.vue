@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { designSystemReturnPath } from '../router';
 
 const router = useRouter();
 
 function close(): void {
-  // In-page nav anchors (#tokens, #primitives, …) push hash history entries, so
-  // router.back() would only step through those hashes instead of leaving the
-  // page. Always return to the app root — the client lives above the route, so
-  // the active session and other state survive the navigation.
-  void router.push('/');
+  // Return to the URL the user was on before opening the design system
+  // (recorded by the router on entry) instead of the app root, so a
+  // /sessions/<id> URL is preserved. This also sidesteps the in-page hash
+  // anchors that would otherwise trap router.back().
+  void router.push(designSystemReturnPath || '/');
 }
 
 let io: IntersectionObserver | null = null;
