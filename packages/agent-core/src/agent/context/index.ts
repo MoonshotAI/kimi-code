@@ -273,20 +273,28 @@ export class ContextMemory {
     };
     // Wire backward-compat: a pre-rework `context.apply_compaction` record (which
     // has no `keptUserMessageCount`) used `[summary, ...history.slice(compactedCount)]`
-    // semantics and kept a verbatim recent tail. Reproduce that exact shape on
-    // restore so resuming a session compacted by an older version does not
-    // silently drop the recent assistant/tool tail beyond `compactedCount`. Gated
-    // on `records.restoring`, so the live/forward path — which always sets
-    // `contextSummary` and `keptUserMessageCount` — is unaffected. The projector's
-    // tool-adjacency repair keeps the restored tail well-formed for strict
-    // providers; compaction only runs at a clean step boundary, so the tail has no
-    // open tool exchange to track.
+    // semantics and kept a verbatim recent tail. Reproduce that shape on restore
+    // so resuming a session compacted by an older version does not silently drop
+    // the recent assistant/tool tail beyond `compactedCount`. Gated on
+    // `records.restoring`, so the live/forward path — which always sets
+    // `contextSummary` and `keptUserMessageCount` — is unaffected.
+    //
+    // The cut can land *inside* a tool exchange (`compactedCount` between an
+    // assistant `tool_call` and its result), leaving the tail starting with an
+    // orphan `tool` result whose assistant is now in the summarized prefix. The
+    // normal projection does NOT drop such a leading orphan (only the post-400
+    // strict resend does), so a strict provider (OpenAI / DeepSeek) would reject
+    // every turn with "role 'tool' must be a response to a preceding message with
+    // 'tool_calls'". Drop the leading tool results here so the restored history is
+    // wire-valid from the first turn. Any later tool result in the tail keeps its
+    // assistant (the original history was well-formed and contiguous), so only the
+    // leading run can be orphaned.
     const isLegacyRestore =
       this.agent.records.restoring !== null &&
       input.keptUserMessageCount === undefined &&
       input.compactedCount < this._history.length;
     this._history = isLegacyRestore
-      ? [summaryMessage, ...this._history.slice(input.compactedCount)]
+      ? [summaryMessage, ...dropLeadingToolResults(this._history.slice(input.compactedCount))]
       : [...keptUserMessages, summaryMessage];
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
@@ -577,6 +585,17 @@ export class ContextMemory {
       });
     }
   }
+}
+
+// Drop any `tool` result messages at the front of a message list. Used by the
+// legacy-restore compaction, whose verbatim tail can begin with an orphan tool
+// result whose assistant `tool_call` was summarized into the compacted prefix.
+function dropLeadingToolResults(messages: readonly ContextMessage[]): ContextMessage[] {
+  let start = 0;
+  while (start < messages.length && messages[start]!.role === 'tool') {
+    start += 1;
+  }
+  return start === 0 ? [...messages] : messages.slice(start);
 }
 
 function toolResultOutputForModel(result: ExecutableToolResult): string | ContentPart[] {
