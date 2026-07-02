@@ -6,6 +6,41 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.22.0 (2026-07-02)
+
+### Features
+
+- Automatically compress oversized images before they reach the model, downsampling and re-encoding them to cut vision-token cost and avoid provider image-size errors.
+- Add model alias overrides, letting you set model metadata under `[models."<alias>".overrides]` to override provider catalog refresh results.
+
+### Bug Fixes
+
+- Fix plan, swarm, and goal modes being shared across sessions in the web UI; each session now keeps its own toggles.
+- Fix the transcript jumping to the top when scrolling up through history during streaming output.
+- Release pasted images and streaming timers once they are no longer shown, so memory stops growing in long sessions.
+- Fix the terminal being left in raw mode with a hidden cursor and disabled flow control after a crash or abrupt exit.
+- Fix an active workspace showing only its five most recent sessions on load, so it now keeps loading older sessions from the last 12 hours.
+- Fix the Thinking-by-default setting not taking effect, so new sessions correctly start with thinking enabled.
+- Fix spurious errors from the web question, approval, and task actions when the action was already complete, and add loading feedback so each click is acknowledged immediately.
+- Show draft pull requests with a distinct draft status instead of displaying them as open.
+- Hide the conversation outline when there is not enough room to expand its labels, so it no longer clips against the window edge.
+- Hide the unsupported Off option in the /model thinking switcher for always-on models that already expose multiple effort levels.
+
+### Polish
+
+- Refresh the web UI with a new design system, including updated colors, typography, spacing, light and dark palettes, restyled tooltips, and subtle enter/exit and expand/collapse animations.
+- Group consecutive tool calls into a collapsible stack with per-tool renderers, including diff line-count chips for edits and inline previews for image, video, and audio results.
+- Improve session search with a Cmd/Ctrl+K palette that filters by title, workspace, and last prompt with highlighted matches. Press Cmd+K or Ctrl+K to open it.
+- Show queued prompts inline below the running turn in the web chat, and split Stop into its own button so Send no longer interrupts.
+- Show the conversation outline as one entry per user query that expands into a labeled list on hover.
+- Replace the Explore and Native theme options with a single chat layout and a Blue or Black accent-color setting.
+- Add workspace sorting by manual order or last-edited time, plus collapse-all and expand-all controls, to the sidebar.
+- Show time, duration, connection, and stack details in web error and warning toasts.
+- Use one consistent modal dialog for confirmations in the web UI (archive session, delete workspace, delete provider, undo message, and mode toggles).
+- Reduce the default TUI transcript window to keep long sessions responsive.
+- Reduce the web composer's default height for a more compact empty state, and fix ArrowUp recalling the previous message while editing a multi-line draft; ArrowUp now recalls only from the very start of the text and is disabled in the expanded editor.
+- Remove the fade-out animation when undoing a message in the web chat.
+
 ## 0.21.1 (2026-07-01)
 
 ### Bug Fixes
