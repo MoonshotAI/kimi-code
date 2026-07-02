@@ -4,7 +4,7 @@
  * Run with: pnpm --filter @moonshot-ai/agent-core test -- turn.test.ts
  */
 
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -1366,6 +1366,46 @@ describe('Agent turn flow', () => {
         origin: { kind: 'user' },
       },
     ]);
+  });
+
+  it('includes recent messages in the Stop hook payload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-stop-hook-messages-'));
+    const payloadPath = join(dir, 'stop-payload.json');
+    const scriptPath = join(dir, 'record-stop-payload.cjs');
+    writeFileSync(
+      scriptPath,
+      [
+        "const fs = require('node:fs');",
+        "let input = '';",
+        "process.stdin.on('data', (d) => { input += d; });",
+        "process.stdin.on('end', () => { fs.writeFileSync(process.argv[2], input); });",
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const hookEngine = new HookEngine([
+      {
+        event: 'Stop',
+        command: `node ${JSON.stringify(scriptPath)} ${JSON.stringify(payloadPath)}`,
+      },
+    ]);
+    const ctx = testAgent({ hookEngine });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'Assistant reply.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+    await ctx.untilTurnEnd();
+
+    const payload = JSON.parse(
+      existsSync(payloadPath) ? readFileSync(payloadPath, 'utf-8') : '{}',
+    );
+    expect(payload.hook_event_name).toBe('Stop');
+    expect(payload.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: 'hello' }),
+        expect.objectContaining({ role: 'assistant', content: 'Assistant reply.' }),
+      ]),
+    );
   });
 
   it('uses a Stop hook block reason as a one-shot turn continuation', async () => {
