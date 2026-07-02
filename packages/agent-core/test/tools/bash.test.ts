@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable, type Writable } from 'node:stream';
@@ -326,6 +326,18 @@ describe('BashTool', () => {
       expect(description, `${name} should have a non-empty description`).toBeTruthy();
       expect((description ?? '').trim().length).toBeGreaterThan(0);
     }
+  });
+
+  it('does not expose sandbox permissions before execution supports them', () => {
+    const tool = bashTool(createFakeKaos({ osEnv: posixEnv }), '/workspace');
+    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+
+    expect(properties).not.toHaveProperty('sandbox_permissions');
+    expect(properties).not.toHaveProperty('additional_permissions');
+    expect(properties).not.toHaveProperty('justification');
+    expect(tool.description).not.toContain('sandbox_permissions');
+    expect(tool.description).not.toContain('additional_permissions');
+    expect(tool.description).not.toContain('require_escalated');
   });
 
   it('exposes a default timeout in the JSON Schema', () => {
@@ -667,6 +679,146 @@ describe('BashTool', () => {
     await expect(manager.wait(task.taskId)).resolves.toMatchObject({
       status: 'completed',
     });
+  });
+
+  it('does not yield a foreground task when background tools are disabled', async () => {
+    vi.useFakeTimers();
+    try {
+      const { proc, finish } = pendingProcess();
+      const manager = createBackgroundManager().manager;
+      const tool = bashTool(
+        createFakeKaos({
+          execWithEnv: vi.fn().mockResolvedValue(proc),
+          osEnv: posixEnv,
+        }),
+        '/workspace',
+        manager,
+        { allowBackground: false },
+      );
+
+      const running = executeTool(
+        tool,
+        context({ command: 'sleep 10', timeout: 60, yield_time_ms: 250 }),
+      );
+      let settled = false;
+      void running.finally(() => {
+        settled = true;
+      });
+
+      await vi.waitFor(() => {
+        expect(manager.list(false)).toHaveLength(1);
+      });
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(settled).toBe(false);
+      const task = manager.list(false)[0]!;
+      expect(task).toMatchObject({ detached: false });
+
+      (proc.stdout as PassThrough).write('done\n');
+      finish();
+      const result = await running;
+
+      expect(result).toMatchObject({
+        isError: false,
+        message: 'Command executed successfully.',
+      });
+      expect(result.output).toContain('done\n');
+      expect(result.output).not.toContain('task_id:');
+      expect(result.output).not.toContain('TaskOutput');
+      expect(result.output).not.toContain('TaskStop');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the yield timer when a foreground task finishes before auto-yield', async () => {
+    vi.useFakeTimers();
+    try {
+      const { proc, finish } = pendingProcess();
+      const manager = createBackgroundManager().manager;
+      const tool = bashTool(
+        createFakeKaos({
+          execWithEnv: vi.fn().mockResolvedValue(proc),
+          osEnv: posixEnv,
+        }),
+        '/workspace',
+        manager,
+      );
+
+      const running = executeTool(
+        tool,
+        context({ command: 'echo done', timeout: 60, yield_time_ms: 10_000 }),
+      );
+
+      await vi.waitFor(() => {
+        expect(manager.list(false)).toHaveLength(1);
+      });
+
+      (proc.stdout as PassThrough).write('done\n');
+      finish();
+      const result = await running;
+
+      expect(result).toMatchObject({
+        isError: false,
+        message: 'Command executed successfully.',
+      });
+      expect(result.output).toContain('done\n');
+      expect(result.output).not.toContain('task_id:');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('persists complete output after yielding a foreground task', async () => {
+    vi.useFakeTimers();
+    const sessionDir = mkdtempSync(join(tmpdir(), 'bash-yield-persist-'));
+    try {
+      const { proc, finish } = pendingProcess();
+      const manager = createBackgroundManager({ sessionDir }).manager;
+      const tool = bashTool(
+        createFakeKaos({
+          execWithEnv: vi.fn().mockResolvedValue(proc),
+          osEnv: posixEnv,
+        }),
+        '/workspace',
+        manager,
+      );
+
+      const running = executeTool(
+        tool,
+        context({ command: 'sleep 10', timeout: 60, yield_time_ms: 250 }),
+      );
+      await vi.waitFor(() => {
+        expect(manager.list(false)).toHaveLength(1);
+      });
+      const task = manager.list(false)[0]!;
+
+      (proc.stdout as PassThrough).write('before yield\n');
+      await vi.advanceTimersByTimeAsync(250);
+      const result = await running;
+
+      expect(result.output).toContain(`task_id: ${task.taskId}`);
+      expect(existsSync(join(sessionDir, 'tasks', `${task.taskId}.json`))).toBe(true);
+
+      (proc.stdout as PassThrough).write('after yield\n');
+      await vi.waitFor(async () => {
+        const snapshot = await manager.getOutputSnapshot(task.taskId, 0);
+        expect(snapshot.fullOutputAvailable).toBe(true);
+        expect(snapshot.outputPath).toBeTruthy();
+      });
+
+      const snapshot = await manager.getOutputSnapshot(task.taskId, 0);
+      expect(readFileSync(snapshot.outputPath!, 'utf8')).toBe('before yield\nafter yield\n');
+
+      finish();
+      await expect(manager.wait(task.taskId)).resolves.toMatchObject({
+        status: 'completed',
+      });
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
   });
 
   it('keeps task metadata independent when noisy foreground output is capped before detach', async () => {
@@ -1300,5 +1452,19 @@ describe('BashTool prompt / runtime consistency', () => {
     // The implementation reports failures as plain text inside the output
     // (`Command failed with exit code: N`), never via a system tag.
     expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
+  });
+
+  it('documents yield_time_ms without task polling when background tools are disabled', () => {
+    const tool = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      { allowBackground: false },
+    );
+
+    expect(tool.description).toContain('**yield_time_ms:**');
+    expect(tool.description).toContain('foreground commands do not yield a `task_id`');
+    expect(tool.description).not.toContain('TaskOutput');
+    expect(tool.description).not.toContain('TaskStop');
   });
 });

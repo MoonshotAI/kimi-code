@@ -216,6 +216,35 @@ describe('ToolScheduler', () => {
     expect(drained).toEqual(['reader', 'exclusive']);
   });
 
+  it('keeps conflicting accesses blocked until a yielded task releases its hold', async () => {
+    const started: string[] = [];
+    const drained: string[] = [];
+    const scheduler = makeScheduler(drained);
+    const exclusive = makeControlledTask('exclusive', ToolAccesses.all(), started, {
+      holdAccess: true,
+    });
+    const reader = makeControlledTask('reader', readPath('/repo/a.ts'), started);
+
+    scheduler.add(exclusive.task);
+    scheduler.add(reader.task);
+    await waitOneMacrotask();
+
+    expect(started).toEqual(['exclusive']);
+
+    exclusive.resolve();
+    await waitOneMacrotask();
+    expect(drained).toEqual([]);
+    expect(started).toEqual(['exclusive']);
+
+    exclusive.releaseHold();
+    await waitOneMacrotask();
+    expect(started).toEqual(['exclusive', 'reader']);
+
+    reader.resolve();
+    await scheduler.collectResults();
+    expect(drained).toEqual(['exclusive', 'reader']);
+  });
+
   it('dispatches submitted results in provider order', async () => {
     const started: string[] = [];
     const drained: string[] = [];
@@ -237,6 +266,7 @@ interface ControlledTask {
   readonly task: ToolCallTask<string>;
   readonly resolve: () => void;
   readonly reject: (error: unknown) => void;
+  readonly releaseHold: () => void;
 }
 
 function makeScheduler(drained: string[]): {
@@ -265,6 +295,7 @@ function makeControlledTask(
   name: string,
   accesses: ToolAccesses,
   startedNames: string[],
+  options: { readonly holdAccess?: boolean } = {},
 ): ControlledTask {
   let resolveResult: (value: string) => void = () => {};
   let rejectResult: (error: unknown) => void = () => {};
@@ -272,13 +303,19 @@ function makeControlledTask(
     resolveResult = resolve;
     rejectResult = reject;
   });
+  let releaseHold: () => void = () => {};
+  const holdAccessUntil = options.holdAccess === true
+    ? new Promise<void>((resolve) => {
+        releaseHold = resolve;
+      })
+    : undefined;
 
   return {
     task: {
       accesses,
       start: async () => {
         startedNames.push(name);
-        return { result };
+        return { result, holdAccessUntil };
       },
     },
     resolve: () => {
@@ -287,6 +324,7 @@ function makeControlledTask(
     reject: (error) => {
       rejectResult(error);
     },
+    releaseHold,
   };
 }
 

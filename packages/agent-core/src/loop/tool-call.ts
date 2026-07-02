@@ -107,6 +107,7 @@ interface PendingToolResult {
   readonly args: unknown;
   readonly result: ExecutableToolResult;
   readonly stopTurn?: boolean | undefined;
+  readonly holdAccessUntil?: Promise<unknown> | undefined;
 }
 
 interface PreparedToolCallTask {
@@ -318,9 +319,13 @@ async function prepareToolCall(
   return {
     task: {
       accesses: execution.accesses ?? ToolAccesses.all(),
-      start: async () => ({
-        result: runRunnableToolCall(step, call, effectiveArgs, executionMetadata, execution),
-      }),
+      start: async () => {
+        const result = runRunnableToolCall(step, call, effectiveArgs, executionMetadata, execution);
+        return {
+          result,
+          holdAccessUntil: result.then((pendingResult) => pendingResult.holdAccessUntil),
+        };
+      },
     },
     stopBatchAfterThis: execution.stopBatchAfterThis,
   };
@@ -676,6 +681,7 @@ function makeToolResult(
     args,
     result,
     stopTurn: toolResultStopsTurn(result),
+    holdAccessUntil: result.holdAccessUntil,
   };
 }
 

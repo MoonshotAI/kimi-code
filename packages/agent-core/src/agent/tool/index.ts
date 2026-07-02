@@ -4,7 +4,7 @@ import picomatch from 'picomatch';
 
 import type { Agent } from '..';
 import { makeErrorPayload } from '../../errors';
-import type { ExecutableTool, ToolUpdate } from '../../loop';
+import type { ExecutableTool, ExecutableToolContext, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
@@ -113,14 +113,7 @@ export class ToolManager {
     const controller = new AbortController();
     if (commandId !== undefined) this.shellCommandControllers.set(commandId, controller);
     try {
-      const execution = await bash.resolveExecution({ command, timeout: SHELL_FOREGROUND_TIMEOUT_S });
-      if (!('execute' in execution)) {
-        const output =
-          typeof execution.output === 'string' ? execution.output : 'Command failed.';
-        this.agent.context.appendBashOutput('', output);
-        return { stdout: '', stderr: output, isError: true };
-      }
-      const result = await execution.execute({
+      const toolContext: ExecutableToolContext = {
         turnId: '',
         toolCallId: 'shell-command',
         signal: controller.signal,
@@ -140,7 +133,13 @@ export class ToolManager {
             this.agent.emitEvent({ type: 'shell.started', commandId, taskId });
           }
         },
-      });
+      };
+      const result = await (bash instanceof b.BashTool
+        ? bash.executeShellCommand(
+            { command, timeout: SHELL_FOREGROUND_TIMEOUT_S },
+            toolContext,
+          )
+        : this.executeShellCommandViaTool(bash, command, toolContext));
       isError = result.isError === true;
 
       // Detached to background (ctrl+b): the BashTool returns the background
@@ -177,6 +176,20 @@ export class ToolManager {
     }
     this.agent.context.appendBashOutput(stdout, stderr, isError);
     return { stdout, stderr, isError };
+  }
+
+  private async executeShellCommandViaTool(
+    bash: BuiltinTool,
+    command: string,
+    context: ExecutableToolContext,
+  ) {
+    const execution = await bash.resolveExecution({ command, timeout: SHELL_FOREGROUND_TIMEOUT_S });
+    if (!('execute' in execution)) {
+      const output =
+        typeof execution.output === 'string' ? execution.output : 'Command failed.';
+      return { output, isError: true as const };
+    }
+    return execution.execute(context);
   }
 
   cancelShellCommand(commandId: string): void {

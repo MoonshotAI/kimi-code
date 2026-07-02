@@ -71,6 +71,12 @@ export interface ExecutableToolSuccessResult {
    */
   readonly stopTurn?: boolean | undefined;
   /**
+   * Internal scheduling hint. The tool result can be returned to the model
+   * immediately, but conflicting queued tools must not start until this promise
+   * settles. Tool result persistence strips this field.
+   */
+  readonly holdAccessUntil?: Promise<unknown> | undefined;
+  /**
    * Optional human-readable side channel for tool-result metadata that
    * should not contaminate the data stream the model sees (e.g. a
    * "Task snapshot retrieved." brief for TaskOutput). Distinct from
@@ -93,6 +99,8 @@ export interface ExecutableToolErrorResult {
   readonly message?: string | undefined;
   /** See {@link ExecutableToolSuccessResult.stopTurn}. */
   readonly stopTurn?: boolean | undefined;
+  /** See {@link ExecutableToolSuccessResult.holdAccessUntil}. */
+  readonly holdAccessUntil?: Promise<unknown> | undefined;
   /** See {@link ExecutableToolSuccessResult.truncated}. */
   readonly truncated?: boolean | undefined;
 }

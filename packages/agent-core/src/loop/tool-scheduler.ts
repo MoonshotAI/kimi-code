@@ -18,11 +18,19 @@ import { ToolAccesses } from './tool-access';
 
 export interface ToolCallTask<Result> {
   readonly accesses: ToolAccesses;
-  readonly start: () => Promise<{ readonly result: Promise<Result> }>;
+  readonly start: () => Promise<{
+    readonly result: Promise<Result>;
+    readonly holdAccessUntil?: Promise<unknown> | undefined;
+  }>;
 }
 
 interface ScheduledToolCallTask<Result> extends ToolCallTask<Result> {
   readonly result: ControlledPromise<Result>;
+}
+
+interface StartedToolCallTask<Result> {
+  readonly result: Promise<Result>;
+  readonly holdAccessUntil?: Promise<unknown> | undefined;
 }
 
 export class ToolScheduler<Result> {
@@ -63,7 +71,7 @@ export class ToolScheduler<Result> {
 
   private start(task: ScheduledToolCallTask<Result>): void {
     this.activeTasks.push(task);
-    let started: Promise<{ readonly result: Promise<Result> }>;
+    let started: Promise<StartedToolCallTask<Result>>;
     try {
       started = task.start();
     } catch (error) {
@@ -73,8 +81,13 @@ export class ToolScheduler<Result> {
     }
 
     void started
-      .then(({ result }) => result)
-      .then(task.result.resolve, task.result.reject)
+      .then(({ result, holdAccessUntil }) => {
+        void result.then(task.result.resolve, task.result.reject);
+        return (holdAccessUntil ?? result).catch(() => undefined);
+      })
+      .catch((error) => {
+        task.result.reject(error);
+      })
       .finally(() => {
         this.finish(task);
       });
