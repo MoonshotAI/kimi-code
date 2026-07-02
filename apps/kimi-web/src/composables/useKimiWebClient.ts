@@ -1263,9 +1263,14 @@ function subscribeToSessionEvents(sessionId: string): void {
  *  cursor would skip the per-session events that arrived while unsubscribed,
  *  and replaying from seq 0 would make the projector regenerate message ids and
  *  duplicate the already-loaded transcript. Otherwise just re-subscribe from the
- *  tracked cursor. */
+ *  tracked cursor.
+ *
+ * The stale marker is only read here; `syncSessionFromSnapshot` clears it once
+ * the snapshot succeeds. If the snapshot fails transiently the marker stays, so
+ * the next re-open retries the snapshot instead of falling back to a cursor
+ * that may have skipped events while unsubscribed. */
 async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
-  if (sessionsWithStaleCursor.delete(sessionId)) {
+  if (sessionsWithStaleCursor.has(sessionId)) {
     return syncSessionFromSnapshot(sessionId);
   }
   subscribeToSessionEvents(sessionId);
