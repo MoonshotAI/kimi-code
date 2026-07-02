@@ -16,7 +16,14 @@ import {
 	type TerminalColorScheme,
 } from "./terminal-colors.ts";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
-import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
+import {
+	asciiVisibleWidth,
+	extractSegments,
+	normalizeTerminalOutput,
+	sliceByColumn,
+	sliceWithWidth,
+	visibleWidth,
+} from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
@@ -1288,7 +1295,9 @@ export class TUI extends Container {
 		// their trailing reset and cannot leak styles.
 		for (let i = 0; i < newLines.length; i++) {
 			const line = newLines[i]!;
-			if (!isImageLine(line) && visibleWidth(line) > width) {
+			if (isImageLine(line)) continue;
+			const lineWidth = asciiVisibleWidth(line, width) ?? visibleWidth(line);
+			if (lineWidth > width) {
 				newLines[i] = sliceByColumn(line, 0, width, true);
 			}
 		}
