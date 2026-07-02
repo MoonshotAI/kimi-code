@@ -4205,3 +4205,124 @@ describe("Editor component", () => {
 		});
 	});
 });
+
+describe("wordWrapLine narrow width", () => {
+	it("does not recurse infinitely on a wide grapheme at maxWidth 1", () => {
+		const chunks = wordWrapLine("中", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["中"],
+		);
+	});
+
+	it("splits CJK text into per-grapheme overflow chunks at maxWidth 1", () => {
+		const chunks = wordWrapLine("中文文本", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["中", "文", "文", "本"],
+		);
+		assert.deepStrictEqual(
+			chunks.map((c) => [c.startIndex, c.endIndex]),
+			[
+				[0, 1],
+				[1, 2],
+				[2, 3],
+				[3, 4],
+			],
+		);
+	});
+
+	it("handles mixed narrow and wide graphemes at maxWidth 1", () => {
+		const chunks = wordWrapLine("ab中cd", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["a", "b", "中", "c", "d"],
+		);
+	});
+
+	it("still re-wraps multi-grapheme atomic segments at narrow widths", () => {
+		// Paste markers arrive as one atomic pre-segmented unit; they can
+		// still be broken down grapheme by grapheme — recursion must keep
+		// that ability.
+		const marker = "[paste #1]";
+		const preSegmented: Intl.SegmentData[] = [{ segment: marker, index: 0, input: marker }];
+		const chunks = wordWrapLine(marker, 3, preSegmented);
+		assert.ok(chunks.length > 1);
+		assert.strictEqual(chunks.map((c) => c.text).join(""), marker);
+	});
+
+	it("does not recurse infinitely on a multi-code-unit grapheme at maxWidth 1", () => {
+		// Guards "grapheme count, not code-unit length": a ZWJ family emoji
+		// is 11 code units but 1 grapheme (width 2). A guard mistakenly
+		// written as `grapheme.length <= 1` passes the BMP CJK cases yet
+		// recurses forever on this input.
+		const chunks = wordWrapLine("👨‍👩‍👧‍👦", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["👨‍👩‍👧‍👦"],
+		);
+	});
+});
+
+describe("Editor narrow width rendering", () => {
+	it("renders CJK text without crashing at widths 1-8 (default padding)", () => {
+		for (let width = 1; width <= 8; width++) {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("你好世界");
+			assert.doesNotThrow(() => editor.render(width), `width ${width}`);
+		}
+	});
+
+	it("renders CJK text without crashing at widths 1-8 (paddingX 4, matches kimi-code)", () => {
+		for (let width = 1; width <= 8; width++) {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { paddingX: 4 });
+			editor.setText("你好，世界！");
+			assert.doesNotThrow(() => editor.render(width), `width ${width}`);
+		}
+	});
+
+	it("recalls history without crashing after rendering at width 1", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.addToHistory("你好世界");
+		editor.render(1); // narrow render pins lastWidth at 1
+		assert.doesNotThrow(() => {
+			(editor as unknown as { navigateHistory(direction: 1 | -1): void }).navigateHistory(-1);
+			// Recalling CJK text re-wraps it at the pinned narrow width —
+			// without the guard this overflows the stack.
+			editor.render(1);
+		});
+		assert.strictEqual(editor.getText(), "你好世界");
+	});
+
+	it("renders inside a TUI at 5 columns without crashing or overflowing", async () => {
+		const terminal = new VirtualTerminal(5, 12);
+		const tui = new TUI(terminal);
+		const editor = new Editor(tui, defaultEditorTheme, { paddingX: 4 });
+		tui.addChild(editor);
+		editor.setText("你好世界");
+		tui.start();
+		await terminal.waitForRender();
+		const viewport = terminal.getViewport();
+		// Assert the exact visible rows: without truncation, xterm
+		// auto-wraps the overwide rows and the structure shifts, turning
+		// these assertions red (a tautological every(visibleWidth <= 5)
+		// check cannot fail on a 5-column terminal and was removed).
+		// Each content row is 6 columns wide (left padding 2 + CJK char 2
+		// + right padding 2) and is truncated to 5, leaving the trailing
+		// space.
+		assert.strictEqual(viewport[0], "─────");
+		assert.strictEqual(viewport[1], "  你 ");
+		assert.strictEqual(viewport[2], "  好 ");
+		assert.strictEqual(viewport[3], "  世 ");
+		assert.strictEqual(viewport[4], "  界 ");
+		assert.strictEqual(viewport[5], "─────");
+		tui.stop();
+	});
+
+	it("does not throw at zero or negative widths", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("你好世界");
+		assert.doesNotThrow(() => editor.render(0));
+		assert.doesNotThrow(() => editor.render(-1));
+	});
+});

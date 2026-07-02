@@ -14,16 +14,22 @@ describe('ICONS registry', () => {
       expect(def.body.toLowerCase(), `${name}`).not.toContain('<svg');
     }
   });
+
+  it('every entry is fill-based on a 24x24 grid (Remix)', () => {
+    for (const [name, def] of Object.entries(ICONS)) {
+      expect(def.fill, `${name} fill`).toBe(true);
+      expect(def.viewBox, `${name} viewBox`).toBe('0 0 24 24');
+    }
+  });
 });
 
 describe('iconSvg', () => {
-  it('renders a line icon with the registry defaults', () => {
+  it('renders a Remix icon with the registry defaults', () => {
     const svg = iconSvg('plus');
     expect(svg.startsWith('<svg class="kw-icon"')).toBe(true);
-    expect(svg).toContain('viewBox="0 0 16 16"');
-    expect(svg).toContain('fill="none"');
-    expect(svg).toContain('stroke="currentColor"');
-    expect(svg).toContain('stroke-width="1.5"');
+    expect(svg).toContain('viewBox="0 0 24 24"');
+    expect(svg).toContain('fill="currentColor"');
+    expect(svg).not.toContain('stroke=');
     expect(svg).toContain(ICONS.plus.body);
   });
 
@@ -33,11 +39,7 @@ describe('iconSvg', () => {
     expect(iconSvg('plus', 'lg')).toContain('width="20" height="20"');
   });
 
-  it('keeps a custom viewBox for off-grid icons', () => {
-    expect(iconSvg('settings')).toContain('viewBox="0 0 24 24"');
-  });
-
-  it('renders filled icons with currentColor and no stroke', () => {
+  it('renders a filled icon with currentColor and no stroke', () => {
     const svg = iconSvg('star');
     expect(svg).toContain('fill="currentColor"');
     expect(svg).not.toContain('stroke=');

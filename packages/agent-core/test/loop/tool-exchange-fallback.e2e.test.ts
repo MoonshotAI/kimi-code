@@ -28,6 +28,10 @@ const ADJACENCY_400 = new APIStatusError(
     '`tool_result` block in the next message.',
 );
 
+// The OpenAI-compatible (Moonshot / Kimi) phrasing of the same tool-exchange
+// structural rejection. Verbatim from the field, doubled space included.
+const MOONSHOT_TOOL_CALL_ID_400 = new APIStatusError(400, '400 tool_call_id  is not found');
+
 function userMessage(text: string): Message {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
 }
@@ -77,6 +81,19 @@ describe('executeLoopStep — tool exchange adjacency fallback', () => {
     expect(llm.callCount).toBe(2);
     expect(strictCalls.count).toBe(1);
     // The first attempt used the normal projection; the resend used the strict one.
+    expect(llm.calls[0]?.messages).toEqual([userMessage('normal projection')]);
+    expect(llm.calls[1]?.messages).toBe(strictMessages);
+  });
+
+  it('resends once and recovers after a Moonshot tool_call_id-not-found 400', async () => {
+    const { input, llm, strictCalls, strictMessages } = makeHarness(MOONSHOT_TOOL_CALL_ID_400);
+
+    const result = await runTurn(input);
+
+    expect(result.stopReason).toBe('end_turn');
+    // Exactly two provider calls: the rejected one and the strict resend.
+    expect(llm.callCount).toBe(2);
+    expect(strictCalls.count).toBe(1);
     expect(llm.calls[0]?.messages).toEqual([userMessage('normal projection')]);
     expect(llm.calls[1]?.messages).toBe(strictMessages);
   });
