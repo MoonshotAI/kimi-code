@@ -34,7 +34,7 @@ const GROUPS = [
     'external-link': 'external-link-line',
     download: 'download-line',
     undo: 'arrow-go-back-line',
-    send: 'send-plane-line',
+    send: 'arrow-up-line',
     image: 'image-line',
     settings: 'settings-3-line',
     sliders: 'equalizer-line',
