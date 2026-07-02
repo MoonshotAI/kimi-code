@@ -1,16 +1,16 @@
 /**
- * `agentTool` domain (L5) — runs a child agent (an ordinary Agent scope) to completion.
+ * `agentTool` domain (L5) — runs a sub agent (an ordinary Agent scope) to completion.
  *
  * Stateless helper module (plain functions, not a class, not a DI service).
- * Each function takes the parent `agent-lifecycle`, `parentAgentId`, and optional
- * `session-metadata` explicitly, creates or resumes a child agent, mirrors the
+ * Each function takes the `agent-lifecycle`, the `callerAgentId`, and optional
+ * `session-metadata` explicitly, creates or resumes a sub agent, mirrors the
  * way the main agent runs a turn (`prompt` → await the turn result → collect the
- * summary + usage), and emits `subagent.*` facts on the parent's event sink.
- * Active-child tracking lives in a module-level map keyed by parent agent id so
- * `cancelAllChildren` / `markChildDetached` can reach every run. Owns no scoped
- * state itself — all durable state lives in the child agent scope. Bound to no
- * scope; borrows `event`, `externalHooks`, `telemetry`, `profile`, `prompt`,
- * `contextMemory`, `usage`, and `agentTool` through the parent/child accessors.
+ * summary + usage), and emits `subagent.*` facts on the caller's event sink.
+ * Owns no scoped state itself — all durable state lives in the sub agent scope,
+ * and cancellation is the caller's responsibility (via the abort signal it
+ * passes in). Bound to no scope; borrows `event`, `externalHooks`, `telemetry`,
+ * `profile`, `prompt`, `contextMemory`, `usage`, and `agentTool` through the
+ * caller/child accessors.
  */
 
 import {
@@ -21,14 +21,14 @@ import {
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle';
-import type { IScopeHandle } from '#/_base/di/scope';
+import type { IAgentScopeHandle } from '#/_base/di/scope';
 import {
   IAgentContextMemoryService,
   type ContextMessage,
   type PromptOrigin,
 } from '#/agent/contextMemory';
 import { ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import { IAgentExternalHooksService } from '#/agent/externalHooks';
 import { isAbortError } from '#/agent/loop/errors';
 import { IAgentProfileService } from '#/agent/profile';
@@ -56,7 +56,7 @@ const HOOK_TEXT_PREVIEW_LENGTH = 500;
 
 export type RunContext = {
   readonly lifecycle: IAgentLifecycleService;
-  readonly parentAgentId: string;
+  readonly callerAgentId: string;
   readonly metadata?: ISessionMetadata;
 };
 
@@ -64,88 +64,66 @@ export type SpawnChildAgentArgs = RunContext & SpawnSubagentOptions;
 export type ResumeChildAgentArgs = RunContext & { readonly agentId: string } & RunSubagentOptions;
 export type RetryChildAgentArgs = RunContext & { readonly agentId: string } & RunSubagentOptions;
 export type GetChildProfileNameArgs = RunContext & { readonly agentId: string };
-export type MarkChildDetachedArgs = { readonly parentAgentId: string; readonly agentId: string };
 
 export type AgentToolRunOverride = {
   spawn(args: SpawnChildAgentArgs): Promise<SubagentHandle>;
   resume(args: ResumeChildAgentArgs): Promise<SubagentHandle>;
   retry(args: RetryChildAgentArgs): Promise<SubagentHandle>;
   getProfileName(args: GetChildProfileNameArgs): Promise<string | undefined>;
-  markDetached(args: MarkChildDetachedArgs): void;
 };
-
-type ActiveChild = {
-  readonly controller: AbortController;
-  runInBackground: boolean;
-};
-
-const activeChildrenByParent = new Map<string, Map<string, ActiveChild>>();
-
-function childrenOf(parentAgentId: string): Map<string, ActiveChild> {
-  let children = activeChildrenByParent.get(parentAgentId);
-  if (children === undefined) {
-    children = new Map();
-    activeChildrenByParent.set(parentAgentId, children);
-  }
-  return children;
-}
 
 export async function spawnChildAgent(args: SpawnChildAgentArgs): Promise<SubagentHandle> {
-  const { lifecycle, parentAgentId, metadata: _metadata, ...options } = args;
+  const { lifecycle, callerAgentId, metadata: _metadata, ...options } = args;
   options.signal.throwIfAborted();
-  const parent = await ensureParent(lifecycle, parentAgentId);
+  const caller = await requireAgent(lifecycle, callerAgentId);
   const child = await lifecycle.create({
-    parentAgentId,
-    cwd: parent.accessor.get(IAgentProfileService).data().cwd,
-    type: 'sub',
+    forkedFrom: callerAgentId,
+    cwd: caller.accessor.get(IAgentProfileService).data().cwd,
     swarmItem: options.swarmItem,
   });
-  configureChild(parent, child, options.profileName);
+  configureChild(caller, child, options.profileName);
   ensureAgentTool(child);
-  emitSpawned(parent, parentAgentId, child.id, options.profileName, options);
+  emitSpawned(caller, callerAgentId, child.id, options.profileName, options);
   const completion = runWithActiveChild(
-    parentAgentId,
     child,
     options,
-    parent,
+    caller,
     options.profileName,
-    (turnRef, controller) => runPromptTurn(child, parent, options, options.profileName, turnRef, controller),
+    (turnRef, controller) => runPromptTurn(child, caller, options, options.profileName, turnRef, controller),
   );
   return { agentId: child.id, profileName: options.profileName, resumed: false, completion };
 }
 
 export async function resumeChildAgent(args: ResumeChildAgentArgs): Promise<SubagentHandle> {
-  const { lifecycle, parentAgentId, metadata, agentId, ...options } = args;
+  const { lifecycle, callerAgentId, metadata: _metadata, agentId, ...options } = args;
   options.signal.throwIfAborted();
-  const parent = await ensureParent(lifecycle, parentAgentId);
-  const child = await requireChild(lifecycle, parentAgentId, metadata, agentId);
+  const caller = await requireAgent(lifecycle, callerAgentId);
+  const child = await requireAgent(lifecycle, agentId);
   const profileName = child.accessor.get(IAgentProfileService).data().profileName ?? 'subagent';
-  emitSpawned(parent, parentAgentId, child.id, profileName, options);
+  emitSpawned(caller, callerAgentId, child.id, profileName, options);
   const completion = runWithActiveChild(
-    parentAgentId,
     child,
     options,
-    parent,
+    caller,
     profileName,
-    (turnRef, controller) => runPromptTurn(child, parent, options, profileName, turnRef, controller),
+    (turnRef, controller) => runPromptTurn(child, caller, options, profileName, turnRef, controller),
   );
   return { agentId, profileName, resumed: true, completion };
 }
 
 export async function retryChildAgent(args: RetryChildAgentArgs): Promise<SubagentHandle> {
-  const { lifecycle, parentAgentId, metadata, agentId, ...options } = args;
+  const { lifecycle, callerAgentId, metadata: _metadata, agentId, ...options } = args;
   options.signal.throwIfAborted();
-  const parent = await ensureParent(lifecycle, parentAgentId);
-  const child = await requireChild(lifecycle, parentAgentId, metadata, agentId);
+  const caller = await requireAgent(lifecycle, callerAgentId);
+  const child = await requireAgent(lifecycle, agentId);
   const profileName = child.accessor.get(IAgentProfileService).data().profileName ?? 'subagent';
-  emitSpawned(parent, parentAgentId, child.id, profileName, options);
+  emitSpawned(caller, callerAgentId, child.id, profileName, options);
   const completion = runWithActiveChild(
-    parentAgentId,
     child,
     options,
-    parent,
+    caller,
     profileName,
-    (turnRef, controller) => runRetryTurn(child, parent, options, profileName, turnRef, controller),
+    (turnRef, controller) => runRetryTurn(child, caller, options, profileName, turnRef, controller),
   );
   return { agentId, profileName, resumed: true, completion };
 }
@@ -153,128 +131,85 @@ export async function retryChildAgent(args: RetryChildAgentArgs): Promise<Subage
 export async function getChildProfileName(
   args: GetChildProfileNameArgs,
 ): Promise<string | undefined> {
-  const { lifecycle, parentAgentId, metadata, agentId } = args;
-  if (metadata !== undefined) {
-    const meta = (await metadata.read()).agents?.[agentId];
-    if (meta?.type !== 'sub' || meta.parentAgentId !== parentAgentId) return undefined;
-  }
+  const { lifecycle, agentId } = args;
   const child = lifecycle.getHandle(agentId);
   if (child === undefined) return undefined;
   return child.accessor.get(IAgentProfileService).data().profileName;
 }
 
-export function markChildDetached({ parentAgentId, agentId }: MarkChildDetachedArgs): void {
-  const child = activeChildrenByParent.get(parentAgentId)?.get(agentId);
-  if (child !== undefined) child.runInBackground = true;
-}
-
-export function cancelAllChildren(
-  parentAgentId: string,
-  reason: unknown = userCancellationReason(),
-): void {
-  const children = activeChildrenByParent.get(parentAgentId);
-  if (children === undefined) return;
-  for (const [, child] of children) {
-    if (child.runInBackground) continue;
-    child.controller.abort(reason);
-  }
-}
-
-async function ensureParent(
+async function requireAgent(
   lifecycle: IAgentLifecycleService,
-  parentAgentId: string,
-): Promise<IScopeHandle> {
-  const existing = lifecycle.getHandle(parentAgentId);
-  if (existing !== undefined) return existing;
-  throw new Error(`Parent agent "${parentAgentId}" does not exist`);
-}
-
-async function requireChild(
-  lifecycle: IAgentLifecycleService,
-  parentAgentId: string,
-  metadata: ISessionMetadata | undefined,
   agentId: string,
-): Promise<IScopeHandle> {
-  if (metadata !== undefined) {
-    const meta = (await metadata.read()).agents?.[agentId];
-    if (meta === undefined) throw new Error(`Agent instance "${agentId}" does not exist`);
-    if (meta.type !== 'sub') throw new Error(`Agent instance "${agentId}" is not a subagent`);
-    if (meta.parentAgentId !== parentAgentId) {
-      throw new Error(`Agent instance "${agentId}" does not belong to this parent agent`);
-    }
-  }
-  const child = lifecycle.getHandle(agentId);
-  if (child === undefined) throw new Error(`Agent instance "${agentId}" does not exist`);
-  if (activeChildrenByParent.get(parentAgentId)?.has(agentId) === true) {
-    throw new Error(`Agent instance "${agentId}" is already running`);
-  }
-  ensureAgentTool(child);
-  return child;
+): Promise<IAgentScopeHandle> {
+  const handle = lifecycle.getHandle(agentId);
+  if (handle === undefined) throw new Error(`Agent instance "${agentId}" does not exist`);
+  ensureAgentTool(handle);
+  return handle;
 }
 
-function ensureAgentTool(child: IScopeHandle): void {
+function ensureAgentTool(child: IAgentScopeHandle): void {
   // Force-instantiate the child agent's `Agent` tool registrar so its `Agent`
   // tool is registered before the child's first turn builds its tool list.
   child.accessor.get(IAgentToolService);
 }
 
-function configureChild(parent: IScopeHandle, child: IScopeHandle, profileName: string): void {
-  const parentProfile = parent.accessor.get(IAgentProfileService);
+function configureChild(source: IAgentScopeHandle, child: IAgentScopeHandle, profileName: string): void {
+  const sourceProfile = source.accessor.get(IAgentProfileService);
   const childProfile = child.accessor.get(IAgentProfileService);
-  const parentData = parentProfile.data();
+  const sourceData = sourceProfile.data();
   const profile = DEFAULT_AGENT_SUBAGENT_PROFILES[profileName];
   const activeToolNames =
     profileName === 'coder'
-      ? (parentData.activeToolNames ?? profile?.tools)
+      ? (sourceData.activeToolNames ?? profile?.tools)
       : profile?.tools;
   childProfile.update({
-    cwd: parentData.cwd,
-    modelAlias: parentData.modelAlias,
-    thinkingLevel: parentData.thinkingLevel,
+    cwd: sourceData.cwd,
+    modelAlias: sourceData.modelAlias,
+    thinkingLevel: sourceData.thinkingLevel,
     profileName,
     systemPrompt:
       profileName === 'explore'
-        ? `${parentData.systemPrompt}\n\n${EXPLORE_ROLE_ADDITIONAL}`
-        : parentData.systemPrompt,
+        ? `${sourceData.systemPrompt}\n\n${EXPLORE_ROLE_ADDITIONAL}`
+        : sourceData.systemPrompt,
     activeToolNames,
   });
 }
 
 function emitSpawned(
-  parent: IScopeHandle,
-  parentAgentId: string,
+  caller: IAgentScopeHandle,
+  callerAgentId: string,
   subagentId: string,
   profileName: string,
   options: RunSubagentOptions,
 ): void {
-  parent.accessor.get(IAgentEventSinkService)?.emit({
+  caller.accessor.get(IAgentRecordService)?.signal({
     type: 'subagent.spawned',
     subagentId,
     subagentName: profileName,
     parentToolCallId: options.parentToolCallId,
     parentToolCallUuid: options.parentToolCallUuid,
-    parentAgentId,
+    callerAgentId,
     description: options.description,
     swarmIndex: options.swarmIndex,
     runInBackground: options.runInBackground,
   });
-  parent.accessor.get(ITelemetryService)?.track('subagent_created', {
+  caller.accessor.get(ITelemetryService)?.track('subagent_created', {
     subagent_name: profileName,
     run_in_background: options.runInBackground,
   });
 }
 
-function emitStarted(parent: IScopeHandle, subagentId: string): void {
-  parent.accessor.get(IAgentEventSinkService)?.emit({ type: 'subagent.started', subagentId });
+function emitStarted(caller: IAgentScopeHandle, subagentId: string): void {
+  caller.accessor.get(IAgentRecordService)?.signal({ type: 'subagent.started', subagentId });
 }
 
 function emitCompleted(
-  parent: IScopeHandle,
+  caller: IAgentScopeHandle,
   subagentId: string,
   resultSummary: string,
   usage?: TokenUsage,
 ): void {
-  parent.accessor.get(IAgentEventSinkService)?.emit({
+  caller.accessor.get(IAgentRecordService)?.signal({
     type: 'subagent.completed',
     subagentId,
     resultSummary,
@@ -283,14 +218,14 @@ function emitCompleted(
 }
 
 function emitFailed(
-  parent: IScopeHandle,
+  caller: IAgentScopeHandle,
   subagentId: string,
   error: unknown,
   options: RunSubagentOptions,
 ): void {
   if (isAbortError(error)) return;
   if (shouldSuppressQueuedAttemptFailureEvent(options, error)) return;
-  parent.accessor.get(IAgentEventSinkService)?.emit({
+  caller.accessor.get(IAgentRecordService)?.signal({
     type: 'subagent.failed',
     subagentId,
     error: errorMessage(error),
@@ -299,12 +234,12 @@ function emitFailed(
 
 
 async function triggerSubagentStart(
-  parent: IScopeHandle,
+  caller: IAgentScopeHandle,
   profileName: string,
   prompt: string,
   signal: AbortSignal,
 ): Promise<void> {
-  await parent.accessor.get(IAgentExternalHooksService)?.triggerSubagentStart(
+  await caller.accessor.get(IAgentExternalHooksService)?.triggerSubagentStart(
     {
       agentName: profileName,
       prompt: prompt.slice(0, HOOK_TEXT_PREVIEW_LENGTH),
@@ -313,8 +248,8 @@ async function triggerSubagentStart(
   );
 }
 
-function triggerSubagentStop(parent: IScopeHandle, profileName: string, result: string): void {
-  parent.accessor.get(IAgentExternalHooksService)?.triggerSubagentStop({
+function triggerSubagentStop(caller: IAgentScopeHandle, profileName: string, result: string): void {
+  caller.accessor.get(IAgentExternalHooksService)?.triggerSubagentStop({
     agentName: profileName,
     response: result.slice(0, HOOK_TEXT_PREVIEW_LENGTH),
   });
@@ -326,10 +261,9 @@ function observeFirstRequest(turn: Turn, options: RunSubagentOptions): void {
 }
 
 async function runWithActiveChild(
-  parentAgentId: string,
-  child: IScopeHandle,
+  child: IAgentScopeHandle,
   options: RunSubagentOptions,
-  parent: IScopeHandle,
+  caller: IAgentScopeHandle,
   profileName: string,
   run: (
     turn: { current?: Turn },
@@ -337,37 +271,35 @@ async function runWithActiveChild(
   ) => Promise<{ result: string; usage?: TokenUsage }>,
 ): Promise<{ result: string; usage?: TokenUsage }> {
   const controller = new AbortController();
-  childrenOf(parentAgentId).set(child.id, { controller, runInBackground: options.runInBackground });
   const unlink = linkAbortSignal(options.signal, controller);
   const turnRef: { current?: Turn } = {};
-  emitStarted(parent, child.id);
+  emitStarted(caller, child.id);
   try {
     const result = await run(turnRef, controller);
-    emitCompleted(parent, child.id, result.result, result.usage);
-    triggerSubagentStop(parent, profileName, result.result);
+    emitCompleted(caller, child.id, result.result, result.usage);
+    triggerSubagentStop(caller, profileName, result.result);
     return result;
   } catch (error) {
-    emitFailed(parent, child.id, error, options);
+    emitFailed(caller, child.id, error, options);
     throw error;
   } finally {
     unlink();
     if (controller.signal.aborted) {
       turnRef.current?.abortController.abort(controller.signal.reason);
     }
-    childrenOf(parentAgentId).delete(child.id);
   }
 }
 
 async function runPromptTurn(
-  child: IScopeHandle,
-  parent: IScopeHandle,
+  child: IAgentScopeHandle,
+  caller: IAgentScopeHandle,
   options: RunSubagentOptions,
   profileName: string,
   turnRef: { current?: Turn },
   controller: AbortController,
 ): Promise<{ result: string; usage?: TokenUsage }> {
   options.signal.throwIfAborted();
-  await triggerSubagentStart(parent, profileName, options.prompt, options.signal);
+  await triggerSubagentStart(caller, profileName, options.prompt, options.signal);
   options.signal.throwIfAborted();
 
   const turn = child.accessor.get(IAgentPromptService).prompt({
@@ -389,15 +321,15 @@ async function runPromptTurn(
 }
 
 async function runRetryTurn(
-  child: IScopeHandle,
-  parent: IScopeHandle,
+  child: IAgentScopeHandle,
+  caller: IAgentScopeHandle,
   options: RunSubagentOptions,
   profileName: string,
   turnRef: { current?: Turn },
   controller: AbortController,
 ): Promise<{ result: string; usage?: TokenUsage }> {
   options.signal.throwIfAborted();
-  await triggerSubagentStart(parent, profileName, options.prompt, options.signal);
+  await triggerSubagentStart(caller, profileName, options.prompt, options.signal);
   options.signal.throwIfAborted();
 
   const turn = child.accessor.get(IAgentPromptService).retry('agent-host');
@@ -429,7 +361,7 @@ async function awaitTurn(
 }
 
 async function completeSummary(
-  child: IScopeHandle,
+  child: IAgentScopeHandle,
   controller: AbortController,
   turnRef: { current?: Turn },
 ): Promise<string> {

@@ -16,9 +16,8 @@ import {
 } from '#/agent/agentTool';
 import { ToolAccesses } from '#/agent/tool';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
-import type { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { runChildAgentQueued, type QueuedSubagentTask, type SubagentResult } from '../subagentBatch';
+import type { ISessionSwarmService, SessionSwarmTask } from '#/session/swarm';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
@@ -99,10 +98,8 @@ interface AgentSwarmMode {
 }
 
 export interface AgentSwarmToolHost {
-  readonly lifecycle: IAgentLifecycleService;
-  readonly parentAgentId: string;
-  readonly runQueued?: typeof runChildAgentQueued;
-  readonly getSwarmItem?: (agentId: string) => string | undefined;
+  readonly swarmService: ISessionSwarmService;
+  readonly callerAgentId: string;
 }
 
 export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
@@ -154,9 +151,8 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
-    const getSwarmItem = this.host.getSwarmItem ?? ((id: string) => swarmItems.get(id));
-    const specs = createAgentSwarmSpecs(args, getSwarmItem);
-    const tasks = specs.map((spec): QueuedSubagentTask<AgentSwarmSpec> => {
+    const specs = createAgentSwarmSpecs(args, (id) => swarmItems.get(id));
+    const tasks: SessionSwarmTask<AgentSwarmSpec>[] = specs.map((spec) => {
       const descriptionName = spec.kind === 'resume' ? 'resume' : profileName;
       const common = {
         data: spec,
@@ -173,21 +169,19 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       if (spec.kind === 'resume') {
         return {
           ...common,
-          kind: 'resume',
+          kind: 'resume' as const,
           resumeAgentId: spec.agentId,
         };
       }
       return {
         ...common,
-        kind: 'spawn',
+        kind: 'spawn' as const,
       };
     });
-    const runQueued = this.host.runQueued ?? runChildAgentQueued;
-    const results = (await runQueued({
-      lifecycle: this.host.lifecycle,
-      parentAgentId: this.host.parentAgentId,
+    const results = await this.host.swarmService.run({
+      callerAgentId: this.host.callerAgentId,
       tasks,
-    })) as Array<SubagentResult<AgentSwarmSpec>>;
+    });
     for (const result of results) {
       if (result.agentId !== undefined && result.task.swarmItem !== undefined) {
         swarmItems.set(result.agentId, result.task.swarmItem);

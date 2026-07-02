@@ -596,7 +596,7 @@ export interface SubagentSpawnedEvent {
   readonly subagentName: string;
   readonly parentToolCallId: string;
   readonly parentToolCallUuid?: string;
-  readonly parentAgentId?: string;
+  readonly callerAgentId?: string;
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
@@ -1287,7 +1287,7 @@ export const subagentSpawnedEventSchema = z.object({
   subagentName: z.string(),
   parentToolCallId: z.string(),
   parentToolCallUuid: z.string().optional(),
-  parentAgentId: z.string().optional(),
+  callerAgentId: z.string().optional(),
   description: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),

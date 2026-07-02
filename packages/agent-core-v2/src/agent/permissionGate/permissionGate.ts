@@ -9,7 +9,6 @@ import type {
 
 export interface PermissionGateOptions {
   readonly agentId?: string;
-  readonly agentType?: 'main' | 'sub';
 }
 
 export interface IAgentPermissionGate {

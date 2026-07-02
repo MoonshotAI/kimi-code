@@ -18,7 +18,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { abortError, abortable } from '#/_base/utils/abort';
 import { ISessionAgentFileSystem } from '#/session/agentFs';
 import type { ContextMessage } from '#/agent/contextMemory';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { IOAuthService } from '#/app/auth';
 import { ErrorCodes, KimiError } from '#/errors';
 import { HookEngine } from '#/agent/externalHooks/engine';
@@ -33,9 +33,9 @@ import { IAgentTurnService } from '#/agent/turn';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { IProcess, ISessionProcessRunner } from '#/session/process';
 import type {
-  QueuedSubagentRunResult,
-  QueuedSubagentTask,
-} from '#/agent/swarm';
+  SessionSwarmRunResult as QueuedSubagentRunResult,
+  SessionSwarmTask as QueuedSubagentTask,
+} from '#/session/swarm';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import { createFakeAgentFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
@@ -1723,7 +1723,7 @@ describe('Agent turn flow', () => {
       });
     const registration = registerMediaTools(ctx.get(IAgentToolRegistryService), {
       fs: ctx.get(ISessionAgentFileSystem),
-      kaos: ctx.get(IKaos),
+      env: ctx.get(IHostEnvironment),
       workspace: { workspaceDir: '/workspace', additionalDirs: [] },
       capabilities: mediaCapabilities(),
       videoUploader,

@@ -19,7 +19,6 @@ import type {
   ForkSessionRequest,
   SessionAbortResponse,
   SessionStatus,
-  StartBtwSessionResponse,
   UndoSessionRequest,
   UndoSessionResponse,
 } from '@moonshot-ai/protocol';
@@ -65,7 +64,6 @@ export interface ISessionLegacyService {
   compact(sessionId: string, body: CompactSessionRequest): Promise<CompactSessionResponse>;
   undo(sessionId: string, body: UndoSessionRequest): Promise<UndoSessionResponse>;
   abort(sessionId: string): Promise<SessionAbortResponse>;
-  startBtw(sessionId: string): Promise<StartBtwSessionResponse>;
   archive(sessionId: string): Promise<ArchiveSessionResponse>;
 }
 

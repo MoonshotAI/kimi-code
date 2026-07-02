@@ -13,6 +13,7 @@
 import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { cloneRecord, isPlainObject, setDefined } from '#/app/config/toml';
 
 import type { FlagId, FlagSurface, IFlagRegistry } from './flagRegistry';
@@ -38,6 +39,11 @@ export const experimentalToToml = (value: unknown, _rawSnake: unknown): unknown 
   }
   return out;
 };
+
+registerConfigSection(EXPERIMENTAL_SECTION, ExperimentalConfigSchema, {
+  fromToml: experimentalFromToml,
+  toToml: experimentalToToml,
+});
 
 export type ExperimentalFlagSource = 'master-env' | 'env' | 'config' | 'default';
 

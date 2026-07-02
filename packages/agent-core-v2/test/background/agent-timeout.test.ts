@@ -21,7 +21,6 @@ function agentTask(
   return new AgentBackgroundTask(
     { agentId: 'agent-child', profileName: 'coder', completion },
     description,
-    { markActiveChildDetached: vi.fn() },
     new AbortController(),
   );
 }

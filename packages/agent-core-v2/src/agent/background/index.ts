@@ -4,5 +4,7 @@
  * barrel registers the `IAgentBackgroundService` binding into the scope registry.
  */
 
+import './configSection';
+
 export * from './background';
 export * from './backgroundService';

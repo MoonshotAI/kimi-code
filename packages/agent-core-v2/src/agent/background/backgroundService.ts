@@ -4,9 +4,9 @@
  * Owns the agent's registry of running and restored background tasks:
  * registers and drives tasks to completion, retains a bounded output ring,
  * persists task state and output through `background` persistence, reads
- * limits through `config`, records lifecycle through `wireRecord`, delivers
- * terminal notifications through `contextMemory`, and broadcasts through
- * `eventSink`. Bound at Agent scope.
+ * limits through `config`, records lifecycle and broadcasts through `record`,
+ * and delivers terminal notifications through `contextMemory`. Bound at Agent
+ * scope.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -26,16 +26,14 @@ import {
 } from './task';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
-import { IConfigRegistry, IConfigService } from '#/app/config';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IConfigService } from '#/app/config';
 import { IAgentExternalHooksService } from '#/agent/externalHooks';
 import { IAgentPromptService } from '#/agent/prompt';
 import { ISessionContext } from '#/session/session-context';
 import { IAtomicDocumentStore, IStorageService } from '#/app/storage';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
-import type { WireRecord } from '#/agent/wireRecord';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService, type AgentRecord } from '#/agent/record';
 import {
   IAgentBackgroundService,
   type BackgroundLoadOptions,
@@ -46,7 +44,7 @@ import {
   type ForegroundTaskReleaseReason,
   type RegisterBackgroundTaskOptions,
 } from './background';
-import { BACKGROUND_SECTION, type BackgroundConfig, BackgroundConfigSchema } from './configSection';
+import { BACKGROUND_SECTION, type BackgroundConfig } from './configSection';
 import { BackgroundTaskPersistence } from './persist';
 import { TaskListTool } from '#/agent/background/tools/task-list';
 import { TaskOutputTool } from '#/agent/background/tools/task-output';
@@ -133,21 +131,18 @@ export class AgentBackgroundService extends Disposable implements IAgentBackgrou
   private readonly persistence: BackgroundTaskPersistence;
 
   constructor(
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentExternalHooksService private readonly externalHooks: IAgentExternalHooksService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
-    @IConfigRegistry configRegistry: IConfigRegistry,
     @IConfigService private readonly config: IConfigService,
     @IAtomicDocumentStore atomicDocs: IAtomicDocumentStore,
     @IStorageService byteStore: IStorageService,
     @ISessionContext session: ISessionContext,
   ) {
     super();
-    configRegistry.registerSection(BACKGROUND_SECTION, BackgroundConfigSchema);
     this.persistence = new BackgroundTaskPersistence(
       session.sessionDir,
       session.metaScope.replace(/\/session-meta$/, ''),
@@ -155,17 +150,21 @@ export class AgentBackgroundService extends Disposable implements IAgentBackgrou
       byteStore,
     );
     this._register(
-      wireRecord.register('background.task.started', (record) => {
-        this.applyRestoredTask(record);
+      record.define('background.task.started', {
+        resume: (r) => {
+          this.applyRestoredTask(r);
+        },
       }),
     );
     this._register(
-      wireRecord.register('background.task.terminated', (record) => {
-        this.applyRestoredTask(record);
+      record.define('background.task.terminated', {
+        resume: (r) => {
+          this.applyRestoredTask(r);
+        },
       }),
     );
     this._register(
-      wireRecord.hooks.onResumeEnded.register(
+      record.hooks.onResumeEnded.register(
         'background-lifecycle-resume',
         async (_ctx, next) => {
           await this.loadFromDisk({ replace: false });
@@ -563,7 +562,7 @@ export class AgentBackgroundService extends Disposable implements IAgentBackgrou
   }
 
   private applyRestoredTask(
-    record: WireRecord<'background.task.started' | 'background.task.terminated'>,
+    record: AgentRecord<'background.task.started' | 'background.task.terminated'>,
   ): void {
     const info = record.info;
     if (this.tasks.has(info.taskId)) return;
@@ -687,16 +686,16 @@ export class AgentBackgroundService extends Disposable implements IAgentBackgrou
   }
 
   private recordTaskStarted(info: BackgroundTaskInfo): void {
-    this.wireRecord.append({ type: 'background.task.started', info });
-    this.events.emit({ type: 'background.task.started', info });
+    this.record.append({ type: 'background.task.started', info });
+    this.record.signal({ type: 'background.task.started', info });
     this.telemetry.track('background_task_created', {
       kind: info.kind === 'process' ? 'bash' : info.kind,
     });
   }
 
   private recordTaskTerminated(info: BackgroundTaskInfo): void {
-    this.wireRecord.append({ type: 'background.task.terminated', info });
-    this.events.emit({ type: 'background.task.terminated', info });
+    this.record.append({ type: 'background.task.terminated', info });
+    this.record.signal({ type: 'background.task.terminated', info });
     this.telemetry.track('background_task_completed', {
       kind: info.kind,
       duration: info.endedAt !== null ? info.endedAt - info.startedAt : null,

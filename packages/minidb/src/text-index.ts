@@ -30,7 +30,9 @@ export function tokenize(str: unknown): string[] {
   const s = String(str).toLowerCase();
   const terms: string[] = [];
   const latin = s.match(LATIN);
-  if (latin) terms.push(...latin);
+  // Loop-push instead of `terms.push(...latin)`: spreading a large match array
+  // (hundreds of thousands of tokens from a big doc) overflows the call stack.
+  if (latin) for (const t of latin) terms.push(t);
   const runs = s.match(CJK) ?? [];
   for (const r of runs) {
     for (let i = 0; i < r.length; i++) {

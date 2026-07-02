@@ -2,28 +2,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { LocalKaos, type Environment } from '@moonshot-ai/kaos';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IKaos } from '#/app/kaos';
+import { SessionAgentFileSystem } from '#/session/agentFs/agentFsService';
+import { createExecContext } from '#/session/execContext';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile';
 
-import { createTestAgent, kaosServices, type TestAgentContext } from '../harness';
-
-const TEST_OS_ENV: Environment = {
-  osKind: 'Linux',
-  osArch: 'x86_64',
-  osVersion: 'test',
-  shellName: 'bash',
-  shellPath: '/bin/bash',
-};
-
-type LocalKaosCtor = new (osEnv: Environment) => LocalKaos;
-
-function createRealKaos(cwd: string): LocalKaos {
-  const base = new (LocalKaos as unknown as LocalKaosCtor)(TEST_OS_ENV);
-  return base.withCwd(cwd) as LocalKaos;
-}
+import { createTestAgent, execEnvServices, type TestAgentContext } from '../harness';
 
 const profile: ResolvedAgentProfile = {
   name: 'agents-profile',
@@ -43,18 +28,24 @@ describe('AgentProfileService.applyProfile', () => {
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
     await ctx?.dispose();
     await rm(homeDir, { recursive: true, force: true });
     await rm(workDir, { recursive: true, force: true });
   });
 
   function buildContext(): { ctx: TestAgentContext; profile: IAgentProfileService } {
-    ctx = createTestAgent(kaosServices(createRealKaos(workDir)));
-    // Keep the user-level AGENTS.md discovery hermetic: point the OS home at an
-    // empty temp dir so a developer's real ~/.kimi-code / ~/.agents files never
-    // leak into the assertions.
-    vi.spyOn(ctx.get(IKaos), 'gethome').mockReturnValue(homeDir);
+    // Real session-scoped fs anchored at workDir, plus a hermetic home dir
+    // (empty temp dir) so a developer's real ~/.kimi-code / ~/.agents files
+    // never leak into the assertions.
+    const execCtx = createExecContext(workDir);
+    const fs = new SessionAgentFileSystem(execCtx);
+    ctx = createTestAgent(
+      execEnvServices({
+        hostEnvironment: { homeDir },
+        execContext: execCtx,
+        agentFs: fs,
+      }),
+    );
     return { ctx, profile: ctx.get(IAgentProfileService) };
   }
 

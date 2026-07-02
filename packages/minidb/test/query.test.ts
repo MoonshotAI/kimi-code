@@ -104,6 +104,76 @@ test('query composes dt range + value filter + sort + limit + project', async ()
   }
 });
 
+test('dt-ordered limit fast path matches a reference (no ties)', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json' });
+    await db.createIndex('byRole', { field: 'role' });
+    const docs: { key: string; role: string; n: number; ts: number }[] = [];
+    for (let i = 1; i <= 20; i++) {
+      const ts = i * 100; // unique
+      const role = i % 2 ? 'user' : 'assistant';
+      await db.set(`d${i}`, { role, n: i }, { dt: { ts } });
+      docs.push({ key: `d${i}`, role, n: i, ts });
+    }
+    const gte = 200;
+    const lte = 1500;
+
+    const refDesc = docs
+      .filter((d) => d.role === 'user' && d.ts >= gte && d.ts <= lte)
+      .sort((a, b) => b.ts - a.ts);
+
+    // sort by dt desc + limit -> fast path
+    assert.deepEqual(
+      db.query({ dt: { ts: { gte, lte } }, filter: { role: 'user' }, sort: { ts: -1 }, limit: 3 }).map((r) => r.key),
+      refDesc.slice(0, 3).map((d) => d.key),
+    );
+    // ascending + skip + limit -> fast path
+    const refAsc = [...refDesc].reverse();
+    assert.deepEqual(
+      db.query({ dt: { ts: { gte, lte } }, filter: { role: 'user' }, sort: { ts: 1 }, skip: 1, limit: 2 }).map((r) => r.key),
+      refAsc.slice(1, 3).map((d) => d.key),
+    );
+    // no sort -> defaults to dt ascending, still fast path
+    assert.deepEqual(
+      db.query({ dt: { ts: { gte, lte } }, filter: { role: 'user' }, limit: 2 }).map((r) => r.key),
+      refAsc.slice(0, 2).map((d) => d.key),
+    );
+    // project still applies on the fast path
+    const proj = db.query({ dt: { ts: { gte, lte } }, filter: { role: 'user' }, sort: { ts: -1 }, limit: 1, project: ['n'] });
+    assert.deepEqual(proj[0], { key: refDesc[0]!.key, value: { n: refDesc[0]!.n }, dt: { ts: refDesc[0]!.ts } });
+    // sort by a non-dt field -> falls back to general path (still correct)
+    assert.deepEqual(
+      db.query({ dt: { ts: { gte, lte } }, filter: { role: 'user' }, sort: { n: -1 }, limit: 3 }).map((r) => r.key),
+      refDesc.slice(0, 3).map((d) => d.key), // n == i order matches ts here
+    );
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('dt-ordered limit fast path orders equal ts by key (tie-break)', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'json' });
+    // several docs share the same ts; SkipList tie-break is by record key
+    for (const k of ['t3', 't1', 't4', 't2']) await db.set(k, { v: k }, { dt: { ts: 1000 } });
+    // descending -> key desc; ascending -> key asc
+    assert.deepEqual(
+      db.query({ dt: { ts: { gte: 1000, lte: 1000 } }, sort: { ts: -1 }, limit: 4 }).map((r) => r.key),
+      ['t4', 't3', 't2', 't1'],
+    );
+    assert.deepEqual(
+      db.query({ dt: { ts: { gte: 1000, lte: 1000 } }, sort: { ts: 1 }, limit: 2 }).map((r) => r.key),
+      ['t1', 't2'],
+    );
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('full-text search: latin + CJK', async () => {
   const dir = await tmpDir();
   try {

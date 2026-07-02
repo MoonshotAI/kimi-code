@@ -6,4 +6,3 @@
 
 export * from './swarm';
 export * from './swarmService';
-export * from './subagentBatch';

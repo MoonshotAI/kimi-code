@@ -7,7 +7,7 @@ import {
   type IDisposable,
 } from "#/_base/di";
 import { ErrorCodes, makeErrorPayload } from "#/errors";
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
@@ -38,7 +38,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   constructor(
     private readonly options: McpServiceOptions = {},
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
@@ -103,7 +103,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   }
 
   private handleMcpServerStatusChange(entry: McpServerEntry): void {
-    this.events.emit({
+    this.record.signal({
       type: 'mcp.server.status',
       server: {
         name: entry.name,
@@ -123,7 +123,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     }
     if (entry.status === 'failed') {
       this.unregisterMcpServer(entry.name);
-      this.events.emit({
+      this.record.signal({
         type: 'tool.list.updated',
         reason: 'mcp.failed',
         serverName: entry.name,
@@ -133,7 +133,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     if (entry.status === 'disabled' || entry.status === 'pending') {
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
-        this.events.emit({
+        this.record.signal({
           type: 'tool.list.updated',
           reason: 'mcp.disconnected',
           serverName: entry.name,
@@ -152,7 +152,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       resolved.enabledNames,
     );
     this.emitMcpToolCollisions(entry.name, result.collisions);
-    this.events.emit({
+    this.record.signal({
       type: 'tool.list.updated',
       reason: 'mcp.connected',
       serverName: entry.name,
@@ -173,7 +173,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
     this.mcpTools.set(tool.name, { disposable, serverName: entry.name });
     this.mcpToolsByServer.set(entry.name, [tool.name]);
-    this.events.emit({
+    this.record.signal({
       type: 'tool.list.updated',
       reason: 'mcp.connected',
       serverName: entry.name,
@@ -251,7 +251,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
           : `"${collision.toolName}" -> ${collision.qualified} (collides with server "${collision.collidesWith.serverName}")`,
       )
       .join('; ');
-    this.events.emit({
+    this.record.signal({
       type: 'error',
       ...makeErrorPayload(
         ErrorCodes.MCP_TOOL_NAME_COLLISION,

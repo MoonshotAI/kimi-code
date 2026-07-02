@@ -1,11 +1,11 @@
 /**
  * `goal` domain (L4) - `IAgentGoalService` implementation.
  *
- * Owns the per-agent goal lifecycle; persists records through `wireRecord`,
- * broadcasts through `eventSink`, injects reminders through `contextInjector`,
- * drives continuation turns through `turn`, participates in steps through
- * `loop`, updates context through `contextMemory`, writes system reminders
- * through `systemReminder`, registers model tools through `toolRegistry`, and reports telemetry through
+ * Owns the per-agent goal lifecycle; persists records and broadcasts through
+ * `record`, injects reminders through `contextInjector`, drives continuation
+ * turns through `turn`, participates in steps through `loop`, updates context
+ * through `contextMemory`, writes system reminders through `systemReminder`,
+ * registers model tools through `toolRegistry`, and reports telemetry through
  * `telemetry`. Bound at Agent scope.
  */
 
@@ -28,7 +28,6 @@ import {
   type ContextMessage,
   type PromptOrigin,
 } from '#/agent/contextMemory';
-import { IAgentEventSinkService } from '#/agent/eventSink';
 import {
   IAgentLoopService,
   type TurnAfterStepContext,
@@ -46,8 +45,7 @@ import {
 import type { TelemetryProperties } from '#/app/telemetry';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
-import type { WireRecord } from '#/agent/wireRecord';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService, type AgentRecord } from '#/agent/record';
 import {
   IAgentGoalService,
   type GoalReasonInput,
@@ -171,8 +169,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   constructor(
     private readonly options: GoalServiceOptions = {},
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentReplayBuilderService private readonly replayBuilder: IAgentReplayBuilderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -194,27 +191,35 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       ),
     );
     this._register(
-      wireRecord.register('forked', (record) => {
-        this.restoreForked(record);
+      record.define('forked', {
+        resume: (r) => {
+          this.restoreForked(r);
+        },
       }),
     );
     this._register(
-      wireRecord.register('goal.create', (record) => {
-        this.restoreCreate(record);
+      record.define('goal.create', {
+        resume: (r) => {
+          this.restoreCreate(r);
+        },
       }),
     );
     this._register(
-      wireRecord.register('goal.update', (record) => {
-        this.restoreUpdate(record);
+      record.define('goal.update', {
+        resume: (r) => {
+          this.restoreUpdate(r);
+        },
       }),
     );
     this._register(
-      wireRecord.register('goal.clear', () => {
-        this.restoreClear();
+      record.define('goal.clear', {
+        resume: () => {
+          this.restoreClear();
+        },
       }),
     );
     this._register(
-      wireRecord.hooks.onResumeEnded.register('goal-normalize-after-replay', async (_ctx, next) => {
+      record.hooks.onResumeEnded.register('goal-normalize-after-replay', async (_ctx, next) => {
         await next();
         this.normalizeAfterReplay();
       }),
@@ -250,7 +255,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this._register(
-      events.on((event) => {
+      this.record.on((event) => {
         if (event.type === 'hook.result' && event.blocked === true) {
           this.promptHookBlockedTurns.add(event.turnId);
         }
@@ -317,7 +322,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     };
 
     this.persistState(state);
-    this.wireRecord.append({
+    this.record.append({
       type: 'goal.create',
       goalId: state.goalId,
       objective: state.objective,
@@ -579,7 +584,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.appendStatusUpdate(state, 'runtime', reason);
   }
 
-  private restoreCreate(record: WireRecord<'goal.create'>): void {
+  private restoreCreate(record: AgentRecord<'goal.create'>): void {
     const state: GoalState = {
       goalId: record.goalId,
       objective: record.objective,
@@ -598,7 +603,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     });
   }
 
-  private restoreUpdate(record: WireRecord<'goal.update'>): void {
+  private restoreUpdate(record: AgentRecord<'goal.update'>): void {
     const state = this.state;
     if (state === undefined) return;
 
@@ -642,7 +647,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.state = undefined;
   }
 
-  private restoreForked(_record: WireRecord<'forked'>): void {
+  private restoreForked(_record: AgentRecord<'forked'>): void {
     const hadGoal = this.state !== undefined;
     this.state = undefined;
     if (!hadGoal) return;
@@ -658,7 +663,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   ): void {
     if (this.state === undefined) return;
     this.persistState(undefined, { silent: opts.emit === false });
-    this.wireRecord.append({ type: 'goal.clear' });
+    this.record.append({ type: 'goal.clear' });
     if (opts.track !== false) this.telemetry.track('goal_cleared', { actor });
   }
 
@@ -680,9 +685,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private appendGoalUpdate(
-    update: Omit<WireRecord<'goal.update'>, 'type' | 'time'>,
+    update: Omit<AgentRecord<'goal.update'>, 'type' | 'time'>,
   ): void {
-    this.wireRecord.append({
+    this.record.append({
       type: 'goal.update',
       ...update,
     });
@@ -719,7 +724,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
-    this.events.emit({ type: 'goal.updated', snapshot, change });
+    this.record.signal({ type: 'goal.updated', snapshot, change });
   }
 
   private statsOf(state: GoalState): GoalChangeStats {

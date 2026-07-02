@@ -13,17 +13,10 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentUsageService } from '#/agent/usage';
-import {
-  cancelAllChildren,
-  markChildDetached,
-  resumeChildAgent,
-  retryChildAgent,
-  spawnChildAgent,
-} from '#/agent/agentTool';
-import { runChildAgentQueued } from '#/agent/swarm';
+import { resumeChildAgent, retryChildAgent, spawnChildAgent } from '#/agent/agentTool';
 
 const CHILD_SUMMARY = 'child summary '.repeat(20);
-const PARENT_AGENT_ID = 'main';
+const CALLER_AGENT_ID = 'main';
 
 interface FakeScopeOptions {
   readonly result?: Promise<{ reason: string; error?: unknown }>;
@@ -150,7 +143,7 @@ function fakeScope(id: string, options: FakeScopeOptions = {}): IScopeHandle {
 function makeAgents(parent: IScopeHandle, children: Record<string, IScopeHandle> | (() => IScopeHandle)) {
   return {
     getHandle: vi.fn((id: string) => {
-      if (id === PARENT_AGENT_ID) return parent;
+      if (id === CALLER_AGENT_ID) return parent;
       if (typeof children === 'function') return undefined;
       return children[id];
     }),
@@ -164,14 +157,14 @@ function makeAgents(parent: IScopeHandle, children: Record<string, IScopeHandle>
 
 describe('runChildAgent', () => {
   it('aborts a running subagent when the caller signal aborts', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child', { result: new Promise(() => {}) });
     const agents = makeAgents(parent, { child });
     const controller = new AbortController();
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Run long task',
@@ -186,13 +179,13 @@ describe('runChildAgent', () => {
 
   it('emits subagent spawned and started events', async () => {
     const events: unknown[] = [];
-    const parent = fakeScope(PARENT_AGENT_ID, { events });
+    const parent = fakeScope(CALLER_AGENT_ID, { events });
     const child = fakeScope('child');
     const agents = makeAgents(parent, { child });
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Explore the repo',
@@ -215,13 +208,13 @@ describe('runChildAgent', () => {
   });
 
   it('asks for a continuation when the first summary is too short', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID, { initialText: 'short' });
+    const parent = fakeScope(CALLER_AGENT_ID, { initialText: 'short' });
     const child = fakeScope('child', { initialText: 'short' });
     const agents = makeAgents(parent, { child });
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement',
@@ -236,13 +229,13 @@ describe('runChildAgent', () => {
   });
 
   it('persists the swarmItem when spawning a subagent', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child');
     const agents = makeAgents(parent, { child });
 
     await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Swarm task',
@@ -253,47 +246,15 @@ describe('runChildAgent', () => {
     });
 
     expect(agents.create).toHaveBeenCalledWith({
-      parentAgentId: PARENT_AGENT_ID,
+      forkedFrom: CALLER_AGENT_ID,
       cwd: '/repo',
-      type: 'sub',
       swarmItem: 'item-1',
     });
   });
 
-  it('rejects resuming a subagent owned by another parent', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
-    const child = fakeScope('child');
-    const agents = {
-      getHandle: vi.fn((id: string) => (id === 'child' ? child : id === PARENT_AGENT_ID ? parent : undefined)),
-      createMain: vi.fn(),
-      create: vi.fn(),
-    };
-    const metadata = {
-      read: vi.fn().mockResolvedValue({
-        agents: {
-          child: { homedir: '/repo/agents/child', type: 'sub', parentAgentId: 'other-parent' },
-        },
-      }),
-    };
-
-    await expect(
-      resumeChildAgent({
-        lifecycle: agents as unknown as IAgentLifecycleService,
-        parentAgentId: PARENT_AGENT_ID,
-        metadata: metadata as never,
-        agentId: 'child',
-        parentToolCallId: 'call_agent',
-        prompt: 'Continue',
-        description: 'Continue',
-        runInBackground: false,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow('does not belong');
-  });
-
   it('emits subagent.failed when the child turn fails', async () => {
     const events: unknown[] = [];
-    const parent = fakeScope(PARENT_AGENT_ID, {
+    const parent = fakeScope(CALLER_AGENT_ID, {
       result: Promise.resolve({ reason: 'failed', error: new Error('boom') }),
       events,
     });
@@ -304,7 +265,7 @@ describe('runChildAgent', () => {
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Do work',
@@ -323,14 +284,14 @@ describe('runChildAgent', () => {
 
   it('treats timeout aborts as subagent failures, not user cancellations', async () => {
     const events: unknown[] = [];
-    const parent = fakeScope(PARENT_AGENT_ID, { result: new Promise(() => {}), events });
+    const parent = fakeScope(CALLER_AGENT_ID, { result: new Promise(() => {}), events });
     const child = fakeScope('child', { result: new Promise(() => {}) });
     const agents = makeAgents(parent, { child });
     const controller = new AbortController();
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Run long task',
@@ -350,17 +311,17 @@ describe('runChildAgent', () => {
 
   it('resumes an existing child agent and returns completion summary', async () => {
     const events: unknown[] = [];
-    const parent = fakeScope(PARENT_AGENT_ID, { events });
+    const parent = fakeScope(CALLER_AGENT_ID, { events });
     const child = fakeScope('child');
     const agents = {
-      getHandle: vi.fn((id: string) => (id === 'child' ? child : id === PARENT_AGENT_ID ? parent : undefined)),
+      getHandle: vi.fn((id: string) => (id === 'child' ? child : id === CALLER_AGENT_ID ? parent : undefined)),
       createMain: vi.fn(),
       create: vi.fn(),
     };
 
     const handle = await resumeChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       agentId: 'child',
       parentToolCallId: 'call_agent',
       prompt: 'Continue',
@@ -381,121 +342,14 @@ describe('runChildAgent', () => {
     ]);
   });
 
-  it('runs queued subagent tasks to completion', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
-    const child = fakeScope('child');
-    const agents = makeAgents(parent, { child });
-
-    const results = await runChildAgentQueued({
-      lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
-      tasks: [
-        {
-          kind: 'spawn',
-          data: {},
-          profileName: 'coder',
-          parentToolCallId: 'call_agent',
-          prompt: 'Queued task',
-          description: 'Queued task',
-          runInBackground: false,
-        },
-      ],
-    });
-
-    expect(results).toEqual([
-      expect.objectContaining({ status: 'completed', agentId: 'child', result: CHILD_SUMMARY }),
-    ]);
-  });
-
-  it('passes the swarm maxConcurrency env cap through to the batch', async () => {
-    const previous = process.env['KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY'];
-    process.env['KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY'] = '2';
-    try {
-      const parent = fakeScope(PARENT_AGENT_ID);
-      const pending: Array<ReturnType<typeof deferred<{ reason: string }>>> = [];
-      const agents = makeAgents(parent, () => {
-        const d = deferred<{ reason: string }>();
-        pending.push(d);
-        return fakeScope(`child-${pending.length}`, { result: d.promise });
-      });
-
-      const tasks = Array.from({ length: 4 }, (_, index) => ({
-        kind: 'spawn' as const,
-        data: {},
-        profileName: 'coder',
-        parentToolCallId: 'call_agent',
-        prompt: `task ${index}`,
-        description: `task ${index}`,
-        runInBackground: false,
-      }));
-      const run = runChildAgentQueued({
-        lifecycle: agents as unknown as IAgentLifecycleService,
-        parentAgentId: PARENT_AGENT_ID,
-        tasks,
-      });
-      void run.catch(() => {});
-      const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-
-      // The cap stops the launch burst at 2 even though 4 tasks are queued.
-      await flush();
-      expect(agents.create).toHaveBeenCalledTimes(2);
-
-      // Completing one task frees a slot so the next queued task launches.
-      pending[0]?.resolve({ reason: 'completed' });
-      await flush();
-      expect(agents.create).toHaveBeenCalledTimes(3);
-
-      // Completing another task launches the final queued task.
-      pending[1]?.resolve({ reason: 'completed' });
-      await flush();
-      expect(agents.create).toHaveBeenCalledTimes(4);
-
-      // Drain the remaining attempts so the batch settles.
-      pending[2]?.resolve({ reason: 'completed' });
-      pending[3]?.resolve({ reason: 'completed' });
-      await run;
-    } finally {
-      if (previous === undefined) delete process.env['KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY'];
-      else process.env['KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY'] = previous;
-    }
-  });
-
-  it('marks an active child as detached so cancelAllChildren skips it', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID, { result: new Promise(() => {}) });
-    const child = fakeScope('child', { result: new Promise(() => {}) });
-    const agents = makeAgents(parent, { child });
-
-    const handle = await spawnChildAgent({
-      lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
-      profileName: 'coder',
-      parentToolCallId: 'call_agent',
-      prompt: 'Run detached task',
-      description: 'Detached task',
-      runInBackground: false,
-      signal: new AbortController().signal,
-    });
-    void handle.completion.catch(() => {});
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const prompt = child.accessor.get(IAgentPromptService);
-    const turn = mockOf(prompt.prompt).mock.results[0]?.value as { abortController: AbortController };
-
-    markChildDetached({ parentAgentId: PARENT_AGENT_ID, agentId: 'child' });
-    cancelAllChildren(PARENT_AGENT_ID, 'user-stop');
-
-    expect(turn.abortController.signal.aborted).toBe(false);
-  });
-
   it('spawns a child agent and returns its completion summary', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child');
     const agents = makeAgents(parent, { child });
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Explore the repo',
@@ -509,21 +363,20 @@ describe('runChildAgent', () => {
       usage: { input: 1, output: 2, cache_read: 0, cache_write: 0 },
     });
     expect(agents.create).toHaveBeenCalledWith({
-      parentAgentId: PARENT_AGENT_ID,
+      forkedFrom: CALLER_AGENT_ID,
       cwd: '/repo',
-      type: 'sub',
       swarmItem: undefined,
     });
   });
 
   it('fires SubagentStart and SubagentStop external hooks around the turn', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child');
     const agents = makeAgents(parent, { child });
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Explore the repo',
@@ -545,13 +398,13 @@ describe('runChildAgent', () => {
   });
 
   it('tracks subagent_created telemetry on spawn', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child');
     const agents = makeAgents(parent, { child });
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Do work',
@@ -570,14 +423,14 @@ describe('runChildAgent', () => {
 
   it('fires onReady on the first turn activity rather than synchronously at launch', async () => {
     const ready = deferred<void>();
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child', { ready: ready.promise });
     const agents = makeAgents(parent, { child });
     const onReady = vi.fn();
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Do work',
@@ -595,17 +448,17 @@ describe('runChildAgent', () => {
   });
 
   it('retries the existing turn in place instead of re-prompting', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child');
     const agents = {
-      getHandle: vi.fn((id: string) => (id === 'child' ? child : id === PARENT_AGENT_ID ? parent : undefined)),
+      getHandle: vi.fn((id: string) => (id === 'child' ? child : id === CALLER_AGENT_ID ? parent : undefined)),
       createMain: vi.fn(),
       create: vi.fn(),
     };
 
     const handle = await retryChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       agentId: 'child',
       parentToolCallId: 'call_agent',
       prompt: 'ignored on retry',
@@ -621,13 +474,13 @@ describe('runChildAgent', () => {
   });
 
   it('classifies a filtered turn as a provider safety policy block', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child', { result: Promise.resolve({ reason: 'filtered' }) });
     const agents = makeAgents(parent, { child });
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Do work',
@@ -640,7 +493,7 @@ describe('runChildAgent', () => {
   });
 
   it('rethrows a provider rate limit as an APIProviderRateLimitError', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child', {
       result: Promise.resolve({
         reason: 'failed',
@@ -651,7 +504,7 @@ describe('runChildAgent', () => {
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Do work',
@@ -663,42 +516,14 @@ describe('runChildAgent', () => {
     await expect(handle.completion).rejects.toSatisfy((error) => error instanceof APIProviderRateLimitError);
   });
 
-  it('cancels every foreground active child with the provided reason', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
-    const child = fakeScope('child', { result: new Promise(() => {}) });
-    const agents = makeAgents(parent, { child });
-
-    const handle = await spawnChildAgent({
-      lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
-      profileName: 'coder',
-      parentToolCallId: 'call_agent',
-      prompt: 'Run long task',
-      description: 'Long task',
-      runInBackground: false,
-      signal: new AbortController().signal,
-    });
-    void handle.completion.catch(() => {});
-    // Let the SubagentStart hook resolve so the turn is launched.
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const prompt = child.accessor.get(IAgentPromptService);
-    const turn = mockOf(prompt.prompt).mock.results[0]?.value as { abortController: AbortController };
-    cancelAllChildren(PARENT_AGENT_ID, 'user-stop');
-
-    expect(turn.abortController.signal.aborted).toBe(true);
-    expect(turn.abortController.signal.reason).toBe('user-stop');
-  });
-
   it('composes the explore system prompt from the parent prompt plus the explore role', async () => {
-    const parent = fakeScope(PARENT_AGENT_ID);
+    const parent = fakeScope(CALLER_AGENT_ID);
     const child = fakeScope('child');
     const agents = makeAgents(parent, { child });
 
     const handle = await spawnChildAgent({
       lifecycle: agents as unknown as IAgentLifecycleService,
-      parentAgentId: PARENT_AGENT_ID,
+      callerAgentId: CALLER_AGENT_ID,
       profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Explore the repo',

@@ -50,6 +50,7 @@ import {
   IConfigService,
 } from './config';
 import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './configPure';
+import { getConfigSectionContributions } from './configSectionContributions';
 import {
   applySectionToToml,
   camelToSnake,
@@ -142,6 +143,16 @@ export class ConfigRegistry implements IConfigRegistry {
   private readonly _onDidRegisterOverlay = new Emitter<ConfigOverlayRegisteredEvent>();
   readonly onDidRegisterOverlay: Event<ConfigOverlayRegisteredEvent> =
     this._onDidRegisterOverlay.event;
+
+  constructor() {
+    // Drain module-level contributions registered at import time by owner
+    // `configSection.ts` modules (see `configSectionContributions.ts`). This
+    // makes every statically-imported section available before `IConfigService`
+    // is first resolved, independent of owning-Service construction.
+    for (const c of getConfigSectionContributions()) {
+      this.registerSection(c.domain, c.schema, c.options);
+    }
+  }
 
   registerSection<T>(
     domain: string,

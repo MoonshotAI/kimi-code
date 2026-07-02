@@ -2,11 +2,13 @@
  * `microCompaction` domain (L4) - micro-compaction config-section schema.
  *
  * Owns the `[micro_compaction]` tuning section consumed by
- * `AgentMicroCompactionService`. Registered into `IConfigRegistry` by the
- * micro-compaction service on construction.
+ * `AgentMicroCompactionService`. Self-registered at module load via
+ * `registerConfigSection`.
  */
 
 import { z } from 'zod';
+
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 
 export const MICRO_COMPACTION_SECTION = 'microCompaction';
 
@@ -19,3 +21,5 @@ export const MicroCompactionConfigSchema = z.object({
 });
 
 export type MicroCompactionConfigPatch = z.infer<typeof MicroCompactionConfigSchema>;
+
+registerConfigSection(MICRO_COMPACTION_SECTION, MicroCompactionConfigSchema);

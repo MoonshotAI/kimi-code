@@ -5,10 +5,9 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Disposable } from '#/_base/di/lifecycle';
 
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import type { UsageRecordContext, UsageStatus } from './usage';
 import { IAgentUsageService } from './usage';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
 
 declare module '#/agent/wireRecord' {
   interface WireRecordMap {
@@ -26,20 +25,19 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
   private currentTurnId: number | undefined;
   private currentTurn: TokenUsage | undefined;
 
-  constructor(
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
-  ) {
+  constructor(@IAgentRecordService private readonly records: IAgentRecordService) {
     super();
     this._register(
-      wireRecord.register('usage.record', (record) => {
-        this.apply(record.model, record.usage, record.context);
+      records.define('usage.record', {
+        resume: (r) => {
+          this.apply(r.model, r.usage, r.context);
+        },
       }),
     );
   }
 
   record(model: string, usage: TokenUsage, context?: UsageRecordContext): void {
-    this.wireRecord.append({
+    this.records.append({
       type: 'usage.record',
       model,
       usage,
@@ -78,7 +76,7 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
   private publishChanged(): void {
     const status = this.status();
     if (status === undefined) return;
-    this.events.emit({ type: 'agent.status.updated', usage: status });
+    this.records.signal({ type: 'agent.status.updated', usage: status });
   }
 
   private byModelSnapshot(): Record<string, TokenUsage> {

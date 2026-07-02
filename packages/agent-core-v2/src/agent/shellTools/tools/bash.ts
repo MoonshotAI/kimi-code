@@ -7,7 +7,8 @@
  *
  * Dependencies injected via constructor:
  *   - `runner`   — `ISessionProcessRunner`, spawns the shell process
- *   - `kaos`     — `IKaos`, the execution environment (cwd / osEnv / shellPath)
+ *   - `env`      — `IHostEnvironment`, host OS / shell probe (osKind / shellName / shellPath)
+ *   - `ctx`      — `IExecContext`, session cwd used to render the shell prompt
  *   - `background` — `IAgentBackgroundService`, owns foreground/background task
  *                  lifecycle (timeouts, detach, user interrupt)
  *
@@ -33,7 +34,8 @@ import { z } from 'zod';
 
 import { ProcessBackgroundTask } from '#/agent/background';
 import type { IAgentBackgroundService } from '#/agent/background';
-import type { IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
+import type { IExecContext } from '#/session/execContext';
 import type { IProcess, ISessionProcessRunner } from '#/session/process';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/agent/tool';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
@@ -166,15 +168,16 @@ export class BashTool implements BuiltinTool<BashInput> {
 
   constructor(
     private readonly runner: ISessionProcessRunner,
-    private readonly kaos: IKaos,
+    private readonly env: IHostEnvironment,
+    private readonly ctx: IExecContext,
     private readonly background: IAgentBackgroundService,
     options?: {
       allowBackground?: () => boolean;
     },
   ) {
-    this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
+    this.isWindowsBash = this.env.osKind === 'Windows';
     this.allowBackground = options?.allowBackground ?? (() => true);
-    this.renderedDescription = renderBashDescription(this.kaos.osEnv.shellName);
+    this.renderedDescription = renderBashDescription(this.env.shellName);
   }
 
   get description(): string {
@@ -192,7 +195,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       display: {
         kind: 'command',
         command: args.command,
-        cwd: args.cwd ?? this.kaos.cwd,
+        cwd: args.cwd ?? this.ctx.cwd,
         description: args.description,
         language: 'bash',
       },
@@ -206,7 +209,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   private spawn(effectiveCwd: string, command: string): Promise<IProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
     const shellArgs = [
-      this.kaos.osEnv.shellPath,
+      this.env.shellPath,
       '-c',
       `cd ${shellQuote(shellCwd)} && ${command}`,
     ];
@@ -218,7 +221,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       // to be inherited; honour an explicit ambient value when the user has
       // set one.
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
-      SHELL: this.kaos.osEnv.shellPath,
+      SHELL: this.env.shellPath,
     };
 
     // v2's ISessionProcessRunner.exec overlays this env on process.env, so we pass
@@ -239,7 +242,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
     const command = this.isWindowsBash ? rewriteWindowsNullRedirect(args.command) : args.command;
-    const effectiveCwd = args.cwd ?? this.kaos.cwd;
+    const effectiveCwd = args.cwd ?? this.ctx.cwd;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
       ? args.disable_timeout

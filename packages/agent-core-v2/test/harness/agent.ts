@@ -3,7 +3,6 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 
 import { createControlledPromise } from '@antfu/utils';
-import type { Kaos } from '@moonshot-ai/kaos';
 import {
   isToolCall,
   isToolCallPart,
@@ -47,7 +46,6 @@ import {
   IAgentExternalHooksService,
   IAgentFileToolsService,
   IAgentFullCompactionService,
-  IKaos,
   IAgentLLMRequesterService,
   ILogService,
   IAgentMcpService,
@@ -94,7 +92,8 @@ import {
   type AgentToolRunOverride,
 } from '#/index';
 import type { IProcess } from '#/session/process';
-import type { AgentSwarmToolHost } from '#/agent/swarm/tools/agent-swarm';
+import { IExecContext, createExecContext } from '#/session/execContext';
+import { ISessionSwarmService } from '#/session/swarm';
 import { Event } from '#/_base/event';
 import { toDisposable } from '#/_base/di';
 import type { PromisifyMethods } from '#/_base/utils/types';
@@ -148,9 +147,9 @@ import type {
   WireRecordRestoreOptions,
   WireRecordRestoreResult,
 } from '#/agent/wireRecord';
+import { IAgentRecordService } from '#/agent/record';
 import type { PathAccessOperation } from '#/session/workspaceContext';
 import { createFakeAgentFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
-import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 
 import { createScriptedGenerate } from './scripted-generate';
 import {
@@ -214,12 +213,11 @@ class TestAgentSkillService extends AgentSkillService {
   constructor(
     @ISessionSkillCatalog skillCatalog: ISessionSkillCatalog,
     @IAgentPromptService prompt: IAgentPromptService,
-    @IAgentEventSinkService events: IAgentEventSinkService,
-    @IAgentWireRecordService wireRecord: IAgentWireRecordService,
+    @IAgentRecordService records: IAgentRecordService,
     @ITelemetryService telemetry: ITelemetryService,
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
   ) {
-    super(skillCatalog, prompt, events, wireRecord, telemetry, toolRegistry);
+    super(skillCatalog, prompt, records, telemetry, toolRegistry);
     if (skillCatalog.catalog.listInvocableSkills().length > 0) {
       this._register(toolRegistry.register(new ModelSkillTool(this)));
     }
@@ -402,31 +400,32 @@ function defineServiceValue<T>(
   }
 }
 
-type KaosOverride =
-  | IKaos
-  | Kaos
-  | { readonly cwd?: string; readonly envLayers?: readonly Record<string, string>[] };
+type ExecContextOverride = {
+  readonly cwd?: string;
+  readonly envLayers?: readonly Record<string, string>[];
+};
 
 /**
  * Session-scope override for the execution environment and derived atoms.
  */
 export interface ExecEnvOverride {
-  readonly kaos?: KaosOverride;
-  readonly execContext?: { readonly cwd?: string; readonly envLayers?: readonly Record<string, string>[] };
+  readonly execContext?: ExecContextOverride;
   readonly agentFs?: ISessionAgentFileSystem | Partial<ISessionAgentFileSystem>;
   readonly processRunner?: ISessionProcessRunner | Partial<ISessionProcessRunner>;
 }
 
 /**
  * Register a fake execution-environment set for a test session. Any
- * unspecified atom keeps the harness default fake `IKaos` and the real
+ * unspecified atom keeps the harness default `IExecContext` and the real
  * services backed by it.
  */
 export function execEnvServices(override: ExecEnvOverride = {}): TestAgentServiceOverride {
   return sessionServices((reg) => {
-    const kaosOverride = override.kaos ?? override.execContext;
-    if (kaosOverride !== undefined) {
-      reg.defineInstance(IKaos, resolveKaosOverride(kaosOverride));
+    if (override.execContext !== undefined) {
+      reg.defineInstance(
+        IExecContext,
+        createExecContext(override.execContext.cwd ?? '/workspace', override.execContext.envLayers),
+      );
     }
     if (override.agentFs !== undefined) {
       reg.defineInstance(ISessionAgentFileSystem, resolveAgentFsOverride(override.agentFs));
@@ -436,46 +435,6 @@ export function execEnvServices(override: ExecEnvOverride = {}): TestAgentServic
     }
     reg.defineDescriptor(ISessionWorkspaceContext, new SyncDescriptor(SessionWorkspaceContextService));
   });
-}
-
-export function kaosServices(input: IKaos | Kaos): TestAgentServiceOverride {
-  return sessionService(IKaos, resolveKaosOverride(input));
-}
-
-function resolveKaosOverride(input: KaosOverride): IKaos {
-  if (isIKaos(input)) return input;
-  if (isKaosBackend(input)) return wrapKaos(input);
-  return wrapKaos(createFakeKaos(undefined, input.envLayers).withCwd(input.cwd ?? '/workspace'));
-}
-
-function isIKaos(input: KaosOverride): input is IKaos {
-  return typeof (input as IKaos).backend === 'object' && typeof (input as IKaos).getcwd === 'function';
-}
-
-function isKaosBackend(input: KaosOverride): input is Kaos {
-  return typeof (input as Kaos).execWithEnv === 'function' && typeof (input as Kaos).getcwd === 'function';
-}
-
-function wrapKaos(backend: Kaos): IKaos {
-  return {
-    _serviceBrand: undefined,
-    get name() {
-      return backend.name;
-    },
-    get cwd() {
-      return backend.getcwd();
-    },
-    get osEnv() {
-      return backend.osEnv;
-    },
-    backend,
-    pathClass: () => backend.pathClass(),
-    normpath: (path) => backend.normpath(path),
-    gethome: () => backend.gethome(),
-    getcwd: () => backend.getcwd(),
-    withCwd: (cwd) => wrapKaos(backend.withCwd(cwd)),
-    withEnv: (env) => wrapKaos(backend.withEnv(env)),
-  };
 }
 
 function resolveAgentFsOverride(
@@ -666,9 +625,12 @@ export function agentToolServices(runOverride: AgentToolRunOverride): TestAgentS
 }
 
 export function swarmServices(
-  runQueued: AgentSwarmToolHost['runQueued'],
+  swarmService: ISessionSwarmService,
 ): TestAgentServiceOverride {
-  return agentService(IAgentSwarmService, new SyncDescriptor(AgentSwarmService, [runQueued]));
+  return [
+    sessionService(ISessionSwarmService, swarmService),
+    agentService(IAgentSwarmService, new SyncDescriptor(AgentSwarmService)),
+  ];
 }
 
 export function goalServices(options: GoalServiceOptions): TestAgentServiceOverride {
@@ -682,7 +644,6 @@ export function replayServices(options: ReplayBuilderServiceOptions = {}): TestA
 /**
  * Build a fake `ISessionProcessRunner` whose `exec` returns a scripted
  * `IProcess` emitting `stdout` on stdout and exiting with `exitCode`.
- * Replaces the v1 `createCommandKaos(stdout)` helper.
  */
 export function createCommandRunner(stdout: string, exitCode = 0): ISessionProcessRunner {
   function createProcess(): IProcess {
@@ -699,13 +660,6 @@ export function createCommandRunner(stdout: string, exitCode = 0): ISessionProce
   }
   return createFakeProcessRunner({
     exec: vi.fn().mockImplementation(async () => createProcess()),
-  });
-}
-
-export function createCommandKaos(stdout: string, exitCode = 0): Kaos {
-  const runner = createCommandRunner(stdout, exitCode);
-  return createFakeKaos({
-    execWithEnv: async (args, env) => runner.exec(args, { env }) as unknown as ReturnType<Kaos['execWithEnv']>,
   });
 }
 
@@ -1036,9 +990,9 @@ export class AgentTestContext {
           reg.defineInstance(ISessionInteractionService, this.createInteractionService());
           reg.defineInstance(ISessionApprovalService, this.createApprovalService());
           reg.defineInstance(ISessionQuestionService, this.createQuestionService());
-          reg.defineInstance(IKaos, wrapKaos(createFakeKaos().withCwd(this.cwd)));
+          reg.defineInstance(IExecContext, createExecContext(this.cwd));
           // Note: `ISessionAgentFileSystem` and `ISessionProcessRunner` are
-          // auto-registered by their service files and backed by `IKaos`.
+          // auto-registered by their service files and backed by `IExecContext`.
           // Tests that need a fake override them via `execEnvServices`.
           reg.defineInstance(ISessionTerminalBackend, createTerminalBackend());
           reg.defineDescriptor(ISessionWorkspaceContext, new SyncDescriptor(SessionWorkspaceContextService));
@@ -1075,7 +1029,6 @@ export class AgentTestContext {
             IAgentPermissionGate,
             new SyncDescriptor(AgentPermissionGate, [{
               agentId,
-              agentType: 'main',
             } satisfies PermissionGateOptions]),
           );
           reg.defineDescriptor(IAgentCronService, new SyncDescriptor(AgentCronService, [{}]));
@@ -1916,7 +1869,6 @@ function unavailableAgentToolRun(): AgentToolRunOverride {
     resume: fail,
     retry: fail,
     getProfileName: async () => undefined,
-    markDetached: () => {},
   };
 }
 

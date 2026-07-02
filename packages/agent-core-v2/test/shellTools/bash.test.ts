@@ -32,25 +32,34 @@ import {
   type RegisterBackgroundTaskOptions,
 } from '#/agent/background';
 import type { BackgroundTaskSettlement } from '#/agent/background/task';
-import type { Environment, IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
+import { createExecContext, type IExecContext } from '#/session/execContext';
 import type { IProcess, ISessionProcessRunner } from '#/session/process';
 import { type BashInput, BashInputSchema, BashTool } from '#/agent/shellTools/tools/bash';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 
-const posixEnv: Environment = {
+const posixEnv: IHostEnvironment = {
+  _serviceBrand: undefined,
   osKind: 'Linux',
   osArch: 'arm64',
   osVersion: 'test',
   shellPath: '/bin/bash',
   shellName: 'bash',
+  pathClass: 'posix',
+  homeDir: '/home/test',
+  ready: Promise.resolve(),
 };
 
-const windowsBashEnv: Environment = {
+const windowsBashEnv: IHostEnvironment = {
+  _serviceBrand: undefined,
   osKind: 'Windows',
   osArch: 'x64',
   osVersion: 'test',
   shellPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
   shellName: 'bash',
+  pathClass: 'win32',
+  homeDir: 'C:\\Users\\test',
+  ready: Promise.resolve(),
 };
 
 // ── Fake IProcess factories ──────────────────────────────────────────
@@ -275,16 +284,14 @@ function processWithOpenStreamsThatExitOnKill(): IProcess {
   };
 }
 
-// ── Fake IKaos ───────────────────────────────────────────────────────
+// ── Fake IHostEnvironment / IExecContext ─────────────────────────────
 
-function createTestKaos(osEnv: Environment = posixEnv, cwd = '/workspace'): IKaos {
-  return {
-    name: 'fake',
-    cwd,
-    osEnv,
-    pathClass: () => 'posix',
-    gethome: () => '/home/test',
-  } as unknown as IKaos;
+function createTestEnv(env: IHostEnvironment = posixEnv): IHostEnvironment {
+  return env;
+}
+
+function createTestCtx(cwd = '/workspace'): IExecContext {
+  return createExecContext(cwd);
 }
 
 // ── Fake ISessionProcessRunner ──────────────────────────────────────────────
@@ -668,11 +675,12 @@ async function executeTool(
 
 function bashTool(
   runner: ISessionProcessRunner,
-  kaos: IKaos = createTestKaos(),
+  env: IHostEnvironment = createTestEnv(),
+  ctx: IExecContext = createTestCtx(),
   background: IAgentBackgroundService = createFakeBackgroundService().service,
-  options?: ConstructorParameters<typeof BashTool>[3],
+  options?: ConstructorParameters<typeof BashTool>[4],
 ): BashTool {
-  return new BashTool(runner, kaos, background, options);
+  return new BashTool(runner, env, ctx, background, options);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -797,7 +805,7 @@ describe('BashTool', () => {
 
   it('uses the kaos cwd as the default working directory', async () => {
     const { runner, exec } = createTestRunner(processWithOutput({ stdout: '' }));
-    const tool = bashTool(runner, createTestKaos(posixEnv, '/var/app'));
+    const tool = bashTool(runner, posixEnv, createTestCtx('/var/app'));
 
     await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
 
@@ -807,7 +815,7 @@ describe('BashTool', () => {
   it('uses Git Bash semantics on Windows', async () => {
     const proc = processWithOutput({ stdout: 'ok\n' });
     const { runner, exec } = createTestRunner(proc);
-    const tool = bashTool(runner, createTestKaos(windowsBashEnv, 'C:\\Users\\me\\project'));
+    const tool = bashTool(runner, windowsBashEnv, createTestCtx('C:\\Users\\me\\project'));
 
     const result = await executeTool(tool, context({ command: 'echo ok 2>nul', timeout: 60 }));
 
@@ -1108,7 +1116,7 @@ describe('BashTool', () => {
 
   it('rewrites nul-redirect on Windows so the spawned argv has /dev/null', async () => {
     const { runner, exec } = createTestRunner(processWithOutput({ stdout: '' }));
-    const tool = bashTool(runner, createTestKaos(windowsBashEnv, 'C:\\Users\\me\\project'));
+    const tool = bashTool(runner, windowsBashEnv, createTestCtx('C:\\Users\\me\\project'));
 
     await executeTool(tool, context({ command: 'ls 2>nul', timeout: 60 }));
 
@@ -1146,7 +1154,7 @@ describe('BashTool background mode', () => {
     const { proc, finish } = pendingProcess();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeBackgroundService();
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const running = executeTool(tool, context({ command: 'sleep 10', timeout: 60 }));
     await vi.waitFor(() => {
@@ -1189,7 +1197,7 @@ describe('BashTool background mode', () => {
     const { proc, finish } = pendingProcess();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeBackgroundService();
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
     const started = vi.fn();
 
     const running = executeTool(tool, context({ command: 'sleep 10', timeout: 60 }, undefined, started));
@@ -1210,7 +1218,7 @@ describe('BashTool background mode', () => {
       const { proc } = pendingProcess();
       const { runner } = createTestRunner(proc);
       const { service } = createFakeBackgroundService();
-      const tool = bashTool(runner, createTestKaos(), service);
+      const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
       const running = executeTool(tool, context({ command: 'sleep 10', timeout: 1 }));
       await vi.waitFor(() => {
@@ -1235,7 +1243,7 @@ describe('BashTool background mode', () => {
     const { proc, finish } = pendingProcess();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeBackgroundService();
-    const tool = bashTool(runner, createTestKaos(), service, { allowBackground: () => false });
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service, { allowBackground: () => false });
 
     const running = executeTool(tool, context({ command: 'sleep 10', timeout: 60 }));
     await vi.waitFor(() => {
@@ -1262,7 +1270,7 @@ describe('BashTool background mode', () => {
     const { proc, finish } = pendingProcess();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeBackgroundService();
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const running = executeTool(tool, context({ command: 'yes noisy', timeout: 60 }));
     await vi.waitFor(() => {
@@ -1304,7 +1312,7 @@ describe('BashTool background mode', () => {
     const { runner, exec } = createTestRunner(proc);
     const backgroundDisabled = bashTool(
       runner,
-      createTestKaos(),
+      createTestEnv(), createTestCtx(),
       createFakeBackgroundService().service,
       { allowBackground: () => false },
     );
@@ -1318,7 +1326,7 @@ describe('BashTool background mode', () => {
     expect(exec).not.toHaveBeenCalled();
 
     const { service } = createFakeBackgroundService();
-    const withService = bashTool(runner, createTestKaos(), service);
+    const withService = bashTool(runner, createTestEnv(), createTestCtx(), service);
     const missingDescription = await executeTool(
       withService,
       context({ command: 'sleep 10', run_in_background: true }),
@@ -1333,7 +1341,7 @@ describe('BashTool background mode', () => {
     const proc = processWithOutput();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeBackgroundService();
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const result = await executeTool(
       tool,
@@ -1350,7 +1358,7 @@ describe('BashTool background mode', () => {
     service.registerTask(new ProcessBackgroundTask(processWithOutput(), 'sleep 10', 'existing task'));
     const rejectedProc = processWithOutput();
     const { runner, exec } = createTestRunner(rejectedProc);
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const result = await executeTool(
       tool,
@@ -1373,7 +1381,7 @@ describe('BashTool background mode', () => {
     const secondProc = processWithOutput();
     const exec = vi.fn().mockResolvedValueOnce(firstProc).mockResolvedValueOnce(secondProc);
     const { runner } = createTestRunner(exec);
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const first = executeTool(
       tool,
@@ -1405,7 +1413,7 @@ describe('BashTool background mode', () => {
     const secondProc = processWithOutput();
     const exec = vi.fn().mockResolvedValueOnce(firstProc).mockResolvedValueOnce(secondProc);
     const { runner } = createTestRunner(exec);
-    const tool = bashTool(runner, createTestKaos(windowsBashEnv, 'C:\\Users\\me\\project'), service);
+    const tool = bashTool(runner, windowsBashEnv, createTestCtx('C:\\Users\\me\\project'), service);
 
     const first = executeTool(
       tool,
@@ -1450,7 +1458,7 @@ describe('BashTool background mode', () => {
       const { proc, finishWait, markExited } = processWithVisibleExitBeforeWait(0);
       const { runner } = createTestRunner(proc);
       const { service } = createFakeBackgroundService();
-      const tool = bashTool(runner, createTestKaos(), service);
+      const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
       const result = await executeTool(
         tool,
@@ -1486,7 +1494,7 @@ describe('BashTool background mode', () => {
       const proc = processThatNeverExits();
       const { runner } = createTestRunner(proc);
       const { service } = createFakeBackgroundService();
-      const tool = bashTool(runner, createTestKaos(), service);
+      const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
       const result = await executeTool(
         tool,
@@ -1512,7 +1520,7 @@ describe('BashTool background mode', () => {
       const proc = processThatNeverExits();
       const { runner } = createTestRunner(proc);
       const { service } = createFakeBackgroundService();
-      const tool = bashTool(runner, createTestKaos(), service);
+      const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
       const result = await executeTool(
         tool,
@@ -1537,7 +1545,7 @@ describe('BashTool background mode', () => {
     const proc = processWithOutput();
     const { runner } = createTestRunner(proc);
     const { service } = createFakeBackgroundService();
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const result = await executeTool(
       tool,
@@ -1556,7 +1564,7 @@ describe('BashTool background mode', () => {
   it('rejects background command without description (description-required guard)', async () => {
     const { service } = createFakeBackgroundService();
     const { runner, exec } = createTestRunner(processWithOutput());
-    const tool = bashTool(runner, createTestKaos(), service);
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
 
     const result = await executeTool(
       tool,
@@ -1581,7 +1589,7 @@ describe('BashTool prompt / runtime consistency', () => {
       [...enabledTool.description.matchAll(/`(Task[A-Za-z]+)`/g)].map((match) => match[1]),
     );
 
-    const tool = bashTool(runner, createTestKaos(), createFakeBackgroundService().service, {
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), createFakeBackgroundService().service, {
       allowBackground: () => false,
     });
     const result = await executeTool(

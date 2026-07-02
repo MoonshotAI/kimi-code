@@ -18,12 +18,12 @@ import {
   createBackgroundTaskPersistence,
   type BackgroundServiceTestManager,
 } from '../background/stubs';
-import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { createFakeAgentFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
   InMemoryWireRecordPersistence,
+  execEnvServices,
   homeDirServices,
-  kaosServices,
   testAgent,
 } from '../harness';
 
@@ -65,7 +65,10 @@ describe('Agent resume', () => {
     const persistence = new RecordingAgentPersistence(resumeHistory() as unknown as PersistedWireRecord[]);
     const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute on resume'));
     const ctx = testAgent(
-      kaosServices(createFakeKaos({ execWithEnv, readText: vi.fn().mockResolvedValue('') })),
+      execEnvServices({
+        agentFs: createFakeAgentFs({ readText: vi.fn().mockResolvedValue('') }),
+        processRunner: createFakeProcessRunner({ exec: execWithEnv }),
+      }),
       { autoConfigure: false, persistence },
     );
 

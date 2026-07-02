@@ -8,11 +8,12 @@ import { IAgentEventSinkService } from '#/agent/eventSink';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
 } from '#/agent/agentTool';
-import {
-  type QueuedSubagentRunResult,
-  type QueuedSubagentTask,
-} from '#/agent/swarm';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle';
+import { ISessionSwarmService } from '#/session/swarm';
+import type {
+  SessionSwarmRunResult,
+  SessionSwarmTask,
+} from '#/session/swarm';
 import { IAgentScopeContext } from '#/agent/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
@@ -38,18 +39,14 @@ function context<Input>(
 }
 
 function mockSwarmHost({
-  getSwarmItem = () => undefined,
-  runQueued = vi.fn().mockResolvedValue([]),
+  run = vi.fn().mockResolvedValue([]),
 }: {
-  readonly getSwarmItem?: (agentId: string) => string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly runQueued?: (...args: any[]) => any;
+  readonly run?: (...args: any[]) => any;
 } = {}) {
   return {
-    lifecycle: {} as never,
-    parentAgentId: 'main',
-    getSwarmItem: vi.fn(getSwarmItem),
-    runQueued,
+    swarmService: { _serviceBrand: undefined, run, cancel: vi.fn() },
+    callerAgentId: 'main',
   };
 }
 
@@ -70,6 +67,7 @@ describe('AgentSwarmService', () => {
     ix.stub(IAgentTurnService, stubTurnWithHooks());
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.stub(IAgentLifecycleService, {});
+    ix.stub(ISessionSwarmService, { run: async () => [], cancel: () => {} });
     ix.stub(IAgentScopeContext, { _serviceBrand: undefined, agentId: 'main' });
     ix.set(IAgentSystemReminderService, new SyncDescriptor(AgentSystemReminderService));
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
@@ -89,7 +87,7 @@ describe('AgentSwarmService', () => {
 describe('AgentSwarmTool', () => {
   it('applies one subagent_type across templated subagents', async () => {
     const host = mockSwarmHost({
-      runQueued: vi.fn().mockResolvedValue([
+      run: vi.fn().mockResolvedValue([
         {
           task: {
             kind: 'spawn',
@@ -165,8 +163,8 @@ describe('AgentSwarmTool', () => {
     const result = await executeTool(tool, context(input));
 
     expect(swarmMode.enter).toHaveBeenCalledWith('tool');
-    expect(host.runQueued).toHaveBeenCalledTimes(1);
-    expect(host.runQueued).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
+    expect(host.swarmService.run).toHaveBeenCalledTimes(1);
+    expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
       {
         kind: 'spawn',
         data: {
@@ -282,30 +280,43 @@ describe('AgentSwarmTool', () => {
 
       expect(result.output).toBe(testCase.output);
       expect(result.isError).toBe(true);
-      expect(host.runQueued).not.toHaveBeenCalled();
+      expect(host.swarmService.run).not.toHaveBeenCalled();
     }
   });
 
   it('resumes mapped agents before spawning item subagents', async () => {
-    const runQueued = vi.fn(
+    let runCallCount = 0;
+    const run = vi.fn(
       async <T>({
         tasks,
       }: {
-        tasks: readonly QueuedSubagentTask<T>[];
-      }): Promise<Array<QueuedSubagentRunResult<T>>> =>
-        tasks.map((task, index) => ({
+        tasks: readonly SessionSwarmTask<T>[];
+      }): Promise<Array<SessionSwarmRunResult<T>>> => {
+        runCallCount++;
+        return tasks.map((task, index) => ({
           task,
-          agentId: task.kind === 'resume' ? task.resumeAgentId : `agent-new-${String(index + 1)}`,
+          agentId:
+            task.kind === 'resume'
+              ? task.resumeAgentId
+              : runCallCount === 1
+                ? `agent-old-${String(index + 1)}`
+                : `agent-new-${String(index + 1)}`,
           status: 'completed' as const,
           result: `result ${String(index + 1)}`,
-        })),
+        }));
+      },
     );
-    const host = mockSwarmHost({
-      getSwarmItem: (agentId) =>
-        ({ 'agent-old-1': 'src/old-a.ts', 'agent-old-2': 'src/old-b.ts' })[agentId],
-      runQueued,
-    });
+    const host = mockSwarmHost({ run });
     const tool = new AgentSwarmTool(host, mockSwarmMode());
+    // Seed the module-level swarm item map so resume_agent_ids can recover the original items.
+    await executeTool(
+      tool,
+      context({
+        description: 'Seed swarm items',
+        prompt_template: 'Review {{item}}',
+        items: ['src/old-a.ts', 'src/old-b.ts'],
+      }),
+    );
     const input = {
       description: 'Finish review',
       subagent_type: 'explore',
@@ -327,7 +338,7 @@ describe('AgentSwarmTool', () => {
 
     const result = await executeTool(tool, context(input));
 
-    expect(host.runQueued).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
+    expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
       {
         kind: 'resume',
         data: {
@@ -401,24 +412,38 @@ describe('AgentSwarmTool', () => {
   });
 
   it('allows a single resumed subagent without item subagents', async () => {
-    const runQueued = vi.fn(
+    let runCallCount = 0;
+    const run = vi.fn(
       async <T>({
         tasks,
       }: {
-        tasks: readonly QueuedSubagentTask<T>[];
-      }): Promise<Array<QueuedSubagentRunResult<T>>> =>
-        tasks.map((task) => ({
+        tasks: readonly SessionSwarmTask<T>[];
+      }): Promise<Array<SessionSwarmRunResult<T>>> => {
+        runCallCount++;
+        return tasks.map((task, index) => ({
           task,
-          agentId: task.kind === 'resume' ? task.resumeAgentId : 'agent-new',
+          agentId:
+            task.kind === 'resume'
+              ? task.resumeAgentId
+              : runCallCount === 1
+                ? `agent-old-${String(index + 1)}`
+                : 'agent-new',
           status: 'completed' as const,
           result: 'resumed result',
-        })),
+        }));
+      },
     );
-    const host = mockSwarmHost({
-      getSwarmItem: (agentId) => (agentId === 'agent-old-1' ? 'src/old-a.ts' : undefined),
-      runQueued,
-    });
+    const host = mockSwarmHost({ run });
     const tool = new AgentSwarmTool(host, mockSwarmMode());
+    // Seed the module-level swarm item map so resume_agent_ids can recover the original item.
+    await executeTool(
+      tool,
+      context({
+        description: 'Seed swarm items',
+        prompt_template: 'Review {{item}}',
+        items: ['src/old-a.ts', 'src/old-b.ts'],
+      }),
+    );
     const input = {
       description: 'Resume review',
       resume_agent_ids: {
@@ -428,7 +453,7 @@ describe('AgentSwarmTool', () => {
 
     const result = await executeTool(tool, context(input));
 
-    expect(host.runQueued).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
+    expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
       {
         kind: 'resume',
         data: {
@@ -462,7 +487,7 @@ describe('AgentSwarmTool', () => {
 
   it('reports failed subagents inside the XML result without failing the tool', async () => {
     const host = mockSwarmHost({
-      runQueued: vi.fn().mockImplementation(async ({ tasks }) => [
+      run: vi.fn().mockImplementation(async ({ tasks }) => [
         {
           task: tasks[0],
           agentId: 'agent-coder-1',
@@ -503,7 +528,7 @@ describe('AgentSwarmTool', () => {
 
   it('omits resume hint when incomplete subagents have no agent ids', async () => {
     const host = mockSwarmHost({
-      runQueued: vi.fn().mockImplementation(async ({ tasks }) => [
+      run: vi.fn().mockImplementation(async ({ tasks }) => [
         {
           task: tasks[0],
           status: 'failed',
@@ -540,7 +565,7 @@ describe('AgentSwarmTool', () => {
 
   it('reports partial aborted subagents inside the XML result', async () => {
     const host = mockSwarmHost({
-      runQueued: vi.fn().mockImplementation(async ({ tasks }) => [
+      run: vi.fn().mockImplementation(async ({ tasks }) => [
         {
           task: tasks[0],
           agentId: 'agent-coder-1',

@@ -5,8 +5,8 @@
  * mirrors v1's `ensureRgPath` intent (bundled-or-system, graceful degradation)
  * but is driven through a caller-supplied {@link RgProbe} so it works against
  * whatever execution environment the caller has — Glob probes through the
- * cwd-bound `IKaos.backend`, Grep through the `ISessionProcessRunner`. Both run
- * `rg --version` and treat exit code 0 as "available".
+ * session `ISessionProcessRunner`, Grep through the shared runner as well.
+ * Both run `rg --version` and treat exit code 0 as "available".
  *
  * Lookup order (first hit wins):
  *   1. System `rg` on the execution-environment PATH (`rg --version`).
@@ -34,8 +34,8 @@ export interface RgResolution {
 
 /**
  * Minimal probe surface the locator runs against. Lets the same locator run
- * over Glob's `IKaos.backend.exec` and Grep's `ISessionProcessRunner` without
- * depending on either directly.
+ * over Glob's and Grep's `ISessionProcessRunner` without depending on either
+ * directly.
  */
 export interface RgProbe {
   /** Run `argv` and resolve with the process exit code. */

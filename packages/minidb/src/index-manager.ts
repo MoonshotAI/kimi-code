@@ -274,6 +274,15 @@ export class IndexManager {
     return set ? [...set] : [];
   }
 
+  /** O(1) membership test: is `pk` indexed under `value` on this equality
+   *  index? Avoids materializing the full posting list like findEq does. */
+  hasEq(name: string, value: unknown, pk: string): boolean {
+    const idx = this.get(name);
+    if (idx.type !== 'equality') throw new Error(`index "${name}" is not an equality index`);
+    const set = idx.map.get(scalarKey(value));
+    return !!set && set.has(pk);
+  }
+
   findRange(
     name: string,
     opts: { min?: number; max?: number; minExclusive?: boolean; maxExclusive?: boolean; offset?: number; count?: number; reverse?: boolean } = {},

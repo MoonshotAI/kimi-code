@@ -1079,10 +1079,102 @@ export class MiniDb<V = unknown> {
     return [...candidates];
   }
 
+  // Extract simple equality predicates (top-level or inside $and) that are
+  // backed by an equality index, for use as a cheap per-candidate pre-filter.
+  // Only direct equality and {$eq: x} qualify; $in / range / non-indexed fields
+  // are left to the full match() after decode.
+  private cheapEqChecks(filter?: Record<string, unknown>): { name: string; value: unknown }[] {
+    const out: { name: string; value: unknown }[] = [];
+    if (!filter || typeof filter !== 'object' || !this.indexes.indexes.size) return out;
+    for (const { field, cond } of this.indexPredicates(filter)) {
+      const idx = this.indexes.list().find((i) => i.field === field && i.type === 'equality');
+      if (!idx) continue;
+      if (cond !== null && typeof cond === 'object' && !(cond instanceof RegExp)) {
+        const ops = cond as Record<string, unknown>;
+        if (Object.keys(ops).length === 1 && '$eq' in ops) out.push({ name: idx.name, value: ops['$eq'] });
+      } else {
+        out.push({ name: idx.name, value: cond });
+      }
+    }
+    return out;
+  }
+
+  // Fast path: a query bounded by a single dt column whose result order is that
+  // dt column can walk the dt skiplist in order and stop as soon as `limit`
+  // qualifying rows are found, instead of materializing + decoding + sorting the
+  // whole candidate set. Returns null when the query is not eligible (caller
+  // falls back to the general path). Kept conservative so results match exactly.
+  private tryDtOrderedLimit(q: QueryOptions): ScanEntry<V>[] | null {
+    if (q.text) return null; // text has its own ranking
+    if (q.key !== undefined) return null;
+    if (q.limit === undefined) return null; // unbounded -> full return, no win
+    if (!q.dt) return null;
+    const dtCols = Object.keys(q.dt);
+    if (dtCols.length !== 1) return null;
+    const col = dtCols[0]!;
+    const cond = q.dt[col]!;
+
+    // Result order must be the dt column's order.
+    let reverse = false;
+    if (q.sort) {
+      const entries = Object.entries(q.sort);
+      if (entries.length !== 1) return null;
+      const [sortKey, dir] = entries[0]!;
+      if (sortKey !== col) return null;
+      reverse = dir < 0;
+    }
+
+    const limit = q.limit;
+    const skip = q.skip ?? 0;
+    // Only the range bounds are honored here; ignore any stray count/offset a
+    // caller put on the dt cond so they cannot truncate the walk prematurely.
+    const iterOpts: RangeOptions<number> = { reverse };
+    if (cond.gte !== undefined) iterOpts.gte = cond.gte;
+    if (cond.gt !== undefined) iterOpts.gt = cond.gt;
+    if (cond.lte !== undefined) iterOpts.lte = cond.lte;
+    if (cond.lt !== undefined) iterOpts.lt = cond.lt;
+
+    // Cheap key-level pre-filter (no decode, no full-set materialization) for
+    // simple equality predicates that have an equality index.
+    const eqChecks = this.cheapEqChecks(q.filter);
+
+    const out: { key: string; value: V; dt: Record<string, number> | undefined }[] = [];
+    let skipped = 0;
+    for (const { key: kstr } of this.dt.iterate(col, iterOpts)) {
+      let rejected = false;
+      for (const c of eqChecks) {
+        if (!this.indexes.hasEq(c.name, c.value, kstr)) {
+          rejected = true;
+          break;
+        }
+      }
+      if (rejected) continue;
+      const buf = this.store.get(kstr);
+      if (buf === undefined) continue;
+      const r = this.store.map.get(kstr);
+      const value = this.decode(buf)!;
+      if (q.filter && !match(value, q.filter)) continue;
+      if (skipped < skip) {
+        skipped++;
+        continue;
+      }
+      out.push({ key: kstr, value, dt: r?.dt ?? undefined });
+      if (out.length >= limit) break;
+    }
+
+    return out.map((d) => ({
+      key: fromKStr(d.key),
+      value: q.project ? (project(d.value, q.project) as V) : d.value,
+      dt: d.dt,
+    }));
+  }
+
   // ---- unified query ------------------------------------------------------
 
   query(q: QueryOptions = {}): ScanEntry<V>[] {
     this.ensureOpen();
+    const fast = this.tryDtOrderedLimit(q);
+    if (fast !== null) return fast;
 
     let keys: string[] | null = null;
     if (typeof q.key === 'string') {

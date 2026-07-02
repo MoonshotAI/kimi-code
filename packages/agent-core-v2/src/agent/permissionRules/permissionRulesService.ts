@@ -6,20 +6,12 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 import { OrderedHookSlot } from '#/hooks';
-import { IConfigRegistry } from '#/app/config';
-import { IAgentReplayBuilderService } from '#/agent/replayBuilder';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService, type AgentRecord } from '#/agent/record';
 import {
   IAgentPermissionRulesService,
   type PermissionApprovalResultRecord,
   type PermissionRule,
 } from './permissionRules';
-import {
-  PERMISSION_SECTION,
-  PermissionConfigSchema,
-  permissionFromToml,
-  permissionToToml,
-} from './configSection';
 
 declare module '#/agent/wireRecord' {
   interface WireRecordMap {
@@ -43,24 +35,22 @@ export class AgentPermissionRulesService extends Disposable implements IAgentPer
   };
 
   constructor(
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-    @IAgentReplayBuilderService private readonly replayBuilder: IAgentReplayBuilderService,
-    @IConfigRegistry configRegistry: IConfigRegistry,
+    @IAgentRecordService private readonly record: IAgentRecordService,
   ) {
     super();
-    configRegistry.registerSection(PERMISSION_SECTION, PermissionConfigSchema, {
-      fromToml: permissionFromToml,
-      toToml: permissionToToml,
-    });
     this._register(
-      wireRecord.register('permission.rules.add', (record) => {
-        this.applyAddRules(record.rules);
+      record.define('permission.rules.add', {
+        resume: (r) => {
+          this.applyAddRules(r.rules);
+        },
       }),
     );
     this._register(
-      wireRecord.register('permission.record_approval_result', (record) => {
-        const { type: _type, time: _time, ...approval } = record;
-        this.applyApprovalResult(approval);
+      record.define('permission.record_approval_result', {
+        resume: (r) => {
+          this.applyApprovalResult(stripRecordMeta(r));
+        },
+        toReplay: (r) => ({ type: 'approval_result', record: stripRecordMeta(r) }),
       }),
     );
   }
@@ -75,12 +65,12 @@ export class AgentPermissionRulesService extends Disposable implements IAgentPer
 
   addRules(rules: readonly PermissionRule[]): void {
     if (rules.length === 0) return;
-    this.wireRecord.append({ type: 'permission.rules.add', rules: [...rules] });
+    this.record.append({ type: 'permission.rules.add', rules: [...rules] });
     this.applyAddRules(rules);
   }
 
   recordApprovalResult(record: PermissionApprovalResultRecord): void {
-    this.wireRecord.append({ type: 'permission.record_approval_result', ...record });
+    this.record.append({ type: 'permission.record_approval_result', ...record });
     this.applyApprovalResult(record);
   }
 
@@ -91,7 +81,6 @@ export class AgentPermissionRulesService extends Disposable implements IAgentPer
   }
 
   private applyApprovalResult(record: PermissionApprovalResultRecord): void {
-    this.replayBuilder.push({ type: 'approval_result', record });
     if (record.result.decision === 'approved' && record.result.scope === 'session') {
       const pattern = record.sessionApprovalRule;
       if (pattern !== undefined) {
@@ -105,6 +94,13 @@ export class AgentPermissionRulesService extends Disposable implements IAgentPer
     const rules = this.rules;
     void this.hooks.onChanged.run({ rules });
   }
+}
+
+function stripRecordMeta(
+  record: AgentRecord<'permission.record_approval_result'>,
+): PermissionApprovalResultRecord {
+  const { type: _type, time: _time, ...approval } = record;
+  return approval;
 }
 
 registerScopedService(

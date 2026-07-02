@@ -8,13 +8,14 @@ import { IAgentContextSizeService } from '#/agent/contextSize';
 import { IAgentFileToolsService } from '#/agent/fileTools';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction';
 import { IAgentGoalService } from '#/agent/goal';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import { ErrorCodes, KimiError } from '#/errors';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentPermissionGate } from '#/agent/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan';
-import { IKaos } from '#/app/kaos';
+import { IExecContext } from '#/session/execContext';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { expandCommandArguments, IPluginService } from '#/app/plugin';
 import { IAgentProfileService } from '#/agent/profile';
 import { IAgentPromptService } from '#/agent/prompt';
@@ -24,14 +25,8 @@ import { BashTool, IAgentShellToolsService } from '#/agent/shellTools';
 import { IAgentSkillService } from '#/agent/skill';
 import { ISessionProcessRunner } from '#/session/process';
 import { IAgentToolService } from '#/agent/agentTool';
-import {
-  DenyAllPermissionPolicyService,
-  IAgentPermissionPolicyService,
-} from '#/agent/permissionPolicy';
-import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IAgentSwarmService } from '#/agent/swarm';
 import { ITelemetryService } from '#/app/telemetry';
-import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { ToolUpdate } from '#/agent/tool';
 import { IAgentTurnService } from '#/agent/turn';
@@ -73,23 +68,6 @@ import {
 
 const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 
-const TOOL_CALL_DISABLED_MESSAGE =
-  'Tool calls are disabled for side questions. Answer with text only.';
-const SIDE_QUESTION_SYSTEM_REMINDER = `
-This is a side-channel conversation with the user. You should answer user questions directly based on what you already know.
-
-IMPORTANT:
-- You are a separate, lightweight instance.
-- The main agent continues independently; do not reference being interrupted.
-- Do not call any tools. All tool calls are disabled and will be rejected.
-  Even though tool definitions are visible in this request, they exist only
-  for technical reasons (prompt cache). You must not use them.
-- Respond only with text based on what you already know from the conversation
-  and this side-channel conversation.
-- Follow-up turns may happen in this side-channel conversation.
-- If you do not know the answer, say so directly.
-`;
-
 export class AgentRPCService implements IAgentRPCService {
   declare readonly _serviceBrand: undefined;
   private readonly shellCommandControllers = new Map<string, AbortController>();
@@ -108,17 +86,17 @@ export class AgentRPCService implements IAgentRPCService {
     @IAgentFileToolsService private readonly fileTools: IAgentFileToolsService,
     @IAgentShellToolsService private readonly shellTools: IAgentShellToolsService,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
-    @IKaos private readonly kaos: IKaos,
+    @IExecContext private readonly execContext: IExecContext,
+    @IHostEnvironment private readonly hostEnv: IHostEnvironment,
     @IAgentBackgroundService private readonly background: IAgentBackgroundService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
     @IAgentSkillService private readonly skills: IAgentSkillService,
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @IAgentToolService private readonly agentTool: IAgentToolService,
     @IAgentUsageService private readonly usage: IAgentUsageService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentGoalService private readonly goal: IAgentGoalService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentQuestionToolsService private readonly questionTools: IAgentQuestionToolsService,
     @IAgentWebService private readonly web: IAgentWebService,
     @IPluginService private readonly plugins: IPluginService,
@@ -137,7 +115,7 @@ export class AgentRPCService implements IAgentRPCService {
   private ensureBashTool() {
     const existing = this.toolRegistry.resolve('Bash');
     if (existing !== undefined) return existing;
-    const bash = new BashTool(this.processRunner, this.kaos, this.background);
+    const bash = new BashTool(this.processRunner, this.hostEnv, this.execContext, this.background);
     this.toolRegistry.register(bash);
     return bash;
   }
@@ -171,12 +149,12 @@ export class AgentRPCService implements IAgentRPCService {
           else if (update.kind === 'stderr') stderr += update.text ?? '';
           else return;
           if (payload.commandId !== undefined) {
-            this.events.emit({ type: 'shell.output', commandId: payload.commandId, update });
+            this.record.signal({ type: 'shell.output', commandId: payload.commandId, update });
           }
         },
         onForegroundTaskStart: (taskId: string) => {
           if (payload.commandId !== undefined) {
-            this.events.emit({ type: 'shell.started', commandId: payload.commandId, taskId });
+            this.record.signal({ type: 'shell.started', commandId: payload.commandId, taskId });
           }
         },
       });
@@ -338,7 +316,7 @@ export class AgentRPCService implements IAgentRPCService {
       commandArgs: payload.args,
       trigger: 'user-slash' as const,
     };
-    this.events.emit({
+    this.record.signal({
       type: 'plugin_command.activated',
       activationId: origin.activationId,
       pluginId: origin.pluginId,
@@ -369,20 +347,6 @@ export class AgentRPCService implements IAgentRPCService {
       patch.isCustomTitle = false;
     }
     await this.metadata.update(patch satisfies SessionMetaPatch);
-  }
-
-  async startBtw(_payload: EmptyPayload): Promise<string> {
-    const child = await this.lifecycle.fork('main');
-    child.accessor
-      .get(IAgentSystemReminderService)
-      ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER.trim(), {
-        kind: 'system_trigger',
-        name: 'btw',
-      });
-    child.accessor
-      .get(IAgentPermissionPolicyService)
-      ?.registerPolicy(new DenyAllPermissionPolicyService(TOOL_CALL_DISABLED_MESSAGE));
-    return child.id;
   }
 
   createGoal(payload: CreateGoalPayload) {

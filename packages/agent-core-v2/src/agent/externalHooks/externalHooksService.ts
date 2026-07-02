@@ -1,6 +1,6 @@
 import { toKimiErrorPayload } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config';
+import { IConfigService } from '#/app/config';
 import { IPluginService } from '#/app/plugin';
 import { Disposable } from '#/_base/di';
 import { HookEngine } from './engine';
@@ -14,9 +14,6 @@ import {
 } from './externalHooks';
 import {
   HOOKS_SECTION,
-  HooksConfigSchema,
-  hooksFromToml,
-  hooksToToml,
   type HookDefConfig,
 } from './configSection';
 import {
@@ -50,16 +47,11 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   constructor(
     private readonly options: ExternalHooksServiceOptions = {},
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IConfigRegistry configRegistry: IConfigRegistry,
     @IConfigService private readonly config: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IPluginService private readonly plugins: IPluginService,
   ) {
     super();
-    configRegistry.registerSection(HOOKS_SECTION, HooksConfigSchema, {
-      fromToml: hooksFromToml,
-      toToml: hooksToToml,
-    });
     if (options.hookEngine === undefined) {
       this.dynamicEngine = new HookEngine([], { cwd: this.bootstrap.cwd });
       void this.loadDynamicHooks();

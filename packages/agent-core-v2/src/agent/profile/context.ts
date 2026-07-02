@@ -5,6 +5,10 @@
  * then project-level files from the project root down to the cwd) and assembles
  * the {@link SystemPromptContext} bag consumed by `IAgentProfileService.useProfile`.
  *
+ * Runs on top of `ISessionAgentFileSystem` (for `readText` / `stat` / `readdir`)
+ * plus the host's `homeDir` — supplied together as a small `ProfileContextDeps`
+ * bag threaded through the helpers.
+ *
  * Port of v1 `packages/agent-core/src/profile/context.ts`. The combined
  * AGENTS.md content is injected in full; when it exceeds the soft
  * {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible `agentsMdWarning`
@@ -12,9 +16,9 @@
  * truncating.
  */
 
-import { basename, dirname, join } from 'pathe';
+import { dirname, join, normalize } from 'pathe';
 
-import type { IKaos } from '#/app/kaos';
+import type { ISessionAgentFileSystem } from '#/session/agentFs';
 
 import type { SystemPromptContext } from './profile';
 
@@ -26,12 +30,17 @@ import type { SystemPromptContext } from './profile';
 // can trim oversized instruction files.
 export const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 
-const S_IFMT = 0o170000;
-const S_IFREG = 0o100000;
-const S_IFDIR = 0o040000;
-
 export const LIST_DIR_ROOT_WIDTH = 30;
 export const LIST_DIR_CHILD_WIDTH = 10;
+
+/**
+ * Small dep bag threaded through the context helpers so they only depend on
+ * the filesystem primitive plus the host home directory, not on `IKaos`.
+ */
+interface ProfileContextDeps {
+  readonly fs: ISessionAgentFileSystem;
+  readonly homeDir: string;
+}
 
 export interface PreparedSystemPromptContext extends SystemPromptContext {
   readonly cwdListing?: string;
@@ -46,15 +55,16 @@ export interface PrepareSystemPromptContextOptions {
 }
 
 export async function prepareSystemPromptContext(
-  kaos: IKaos,
+  deps: ProfileContextDeps,
+  workDir: string,
   brandHome?: string,
   options?: PrepareSystemPromptContextOptions,
 ): Promise<PreparedSystemPromptContext> {
   const additionalDirs = dedupeDirs(options?.additionalDirs ?? []);
   const [cwdListing, agentsMdResult, additionalDirsInfo] = await Promise.all([
-    listDirectory(kaos, undefined, { collapseHiddenDirs: true }),
-    loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]),
-    loadAdditionalDirsInfo(kaos, additionalDirs),
+    listDirectory(deps, workDir, { collapseHiddenDirs: true }),
+    loadAgentsMdForRoots(deps, brandHome, [workDir]),
+    loadAdditionalDirsInfo(deps, additionalDirs),
   ]);
   return {
     cwdListing,
@@ -64,8 +74,12 @@ export async function prepareSystemPromptContext(
   };
 }
 
-export async function loadAgentsMd(kaos: IKaos, brandHome?: string): Promise<string> {
-  const result = await loadAgentsMdForRoots(kaos, brandHome, [kaos.getcwd()]);
+export async function loadAgentsMd(
+  deps: ProfileContextDeps,
+  workDir: string,
+  brandHome?: string,
+): Promise<string> {
+  const result = await loadAgentsMdForRoots(deps, brandHome, [workDir]);
   return result.content;
 }
 
@@ -75,7 +89,7 @@ interface LoadedAgentsMd {
 }
 
 async function loadAgentsMdForRoots(
-  kaos: IKaos,
+  deps: ProfileContextDeps,
   brandHome: string | undefined,
   workDirs: readonly string[],
 ): Promise<LoadedAgentsMd> {
@@ -83,9 +97,9 @@ async function loadAgentsMdForRoots(
   const seen = new Set<string>();
 
   const collect = async (path: string): Promise<boolean> => {
-    const file = await readAgentFile(kaos, path);
+    const file = await readAgentFile(deps, path);
     if (file === undefined) return false;
-    const key = kaos.normpath(file.path);
+    const key = normalize(file.path);
     if (seen.has(key)) return false;
     seen.add(key);
     discovered.push(file);
@@ -95,7 +109,7 @@ async function loadAgentsMdForRoots(
   // User-level files come first so any project-level AGENTS.md overrides them.
   // The brand dir follows KIMI_CODE_HOME (default ~/.kimi-code); the generic
   // .agents dir stays under the real OS home so it can be shared across tools.
-  const realHome = kaos.gethome();
+  const realHome = deps.homeDir;
   const brandDir = brandHome ?? join(realHome, '.kimi-code');
   await collect(join(brandDir, 'AGENTS.md'));
 
@@ -109,10 +123,9 @@ async function loadAgentsMdForRoots(
   }
 
   for (const workDir of workDirs) {
-    const rootKaos = kaos.withCwd(workDir);
-    const rootWorkDir = rootKaos.getcwd();
-    const projectRoot = await findProjectRoot(rootKaos, rootWorkDir);
-    const dirs = dirsRootToLeaf(rootKaos, rootWorkDir, projectRoot);
+    const rootWorkDir = normalize(workDir);
+    const projectRoot = await findProjectRoot(deps, rootWorkDir);
+    const dirs = dirsRootToLeaf(rootWorkDir, projectRoot);
 
     for (const dir of dirs) {
       await collect(join(dir, '.kimi-code', 'AGENTS.md'));
@@ -133,31 +146,34 @@ async function loadAgentsMdForRoots(
   return { content, warning };
 }
 
-async function loadAdditionalDirsInfo(kaos: IKaos, additionalDirs: readonly string[]): Promise<string> {
+async function loadAdditionalDirsInfo(
+  deps: ProfileContextDeps,
+  additionalDirs: readonly string[],
+): Promise<string> {
   const sections = await Promise.all(
     additionalDirs.map(async (dir) => {
-      const listing = await listDirectory(kaos.withCwd(dir));
+      const listing = await listDirectory(deps, dir);
       return `### ${dir}\n${listing}`;
     }),
   );
   return sections.join('\n\n');
 }
 
-async function findProjectRoot(kaos: IKaos, workDir: string): Promise<string> {
-  const initial = kaos.normpath(workDir);
+async function findProjectRoot(deps: ProfileContextDeps, workDir: string): Promise<string> {
+  const initial = normalize(workDir);
   let current = initial;
 
   while (true) {
-    if (await pathExists(kaos, join(current, '.git'))) return current;
+    if (await pathExists(deps, join(current, '.git'))) return current;
     const parent = dirname(current);
     if (parent === current) return initial;
     current = parent;
   }
 }
 
-function dirsRootToLeaf(kaos: IKaos, workDir: string, projectRoot: string): string[] {
+function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
   const dirs: string[] = [];
-  let current = kaos.normpath(workDir);
+  let current = normalize(workDir);
 
   while (true) {
     dirs.push(current);
@@ -175,26 +191,29 @@ interface AgentFile {
   readonly content: string;
 }
 
-async function readAgentFile(kaos: IKaos, path: string): Promise<AgentFile | undefined> {
-  if (!(await isFile(kaos, path))) return undefined;
-  const content = (await kaos.backend.readText(path, { errors: 'ignore' })).trim();
+async function readAgentFile(
+  deps: ProfileContextDeps,
+  path: string,
+): Promise<AgentFile | undefined> {
+  if (!(await isFile(deps, path))) return undefined;
+  const content = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
   if (content.length === 0) return undefined;
   return { path, content };
 }
 
-async function pathExists(kaos: IKaos, path: string): Promise<boolean> {
+async function pathExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
   try {
-    await kaos.backend.stat(path);
+    await deps.fs.stat(path);
     return true;
   } catch {
     return false;
   }
 }
 
-async function isFile(kaos: IKaos, path: string): Promise<boolean> {
+async function isFile(deps: ProfileContextDeps, path: string): Promise<boolean> {
   try {
-    const stat = await kaos.backend.stat(path);
-    return (stat.stMode & S_IFMT) === S_IFREG;
+    const stat = await deps.fs.stat(path);
+    return stat.isFile;
   } catch {
     return false;
   }
@@ -234,7 +253,7 @@ function dedupeDirs(dirs: readonly string[]): string[] {
 // ---------------------------------------------------------------------------
 // listDirectory — compact 2-level directory tree for LLM context.
 // Port of v1 `packages/agent-core/src/tools/support/list-directory.ts`, driven
-// through the v2 `IKaos` backend (`iterdir` + `stat`).
+// through the v2 `ISessionAgentFileSystem` (`readdir` + `stat`).
 // ---------------------------------------------------------------------------
 
 interface ListDirectoryOptions {
@@ -247,18 +266,18 @@ interface Entry {
 }
 
 async function collectEntries(
-  kaos: IKaos,
+  deps: ProfileContextDeps,
   dirPath: string,
   maxWidth: number,
 ): Promise<{ entries: Entry[]; total: number; readable: boolean }> {
   const all: Entry[] = [];
   try {
-    for await (const fullPath of kaos.backend.iterdir(dirPath)) {
-      const name = basename(fullPath);
+    const names = await deps.fs.readdir(dirPath);
+    for (const name of names) {
       let isDir = false;
       try {
-        const st = await kaos.backend.stat(fullPath);
-        isDir = (st.stMode & S_IFMT) === S_IFDIR;
+        const st = await deps.fs.stat(join(dirPath, name));
+        isDir = st.isDirectory;
       } catch {
         // Unreadable entries keep isDir=false; still list the name.
       }
@@ -279,12 +298,12 @@ function shouldCollapseDirectory(entry: Entry, options: ListDirectoryOptions): b
 }
 
 async function listDirectory(
-  kaos: IKaos,
-  workDir: string = kaos.getcwd(),
+  deps: ProfileContextDeps,
+  workDir: string,
   options: ListDirectoryOptions = {},
 ): Promise<string> {
   const lines: string[] = [];
-  const { entries, total, readable } = await collectEntries(kaos, workDir, LIST_DIR_ROOT_WIDTH);
+  const { entries, total, readable } = await collectEntries(deps, workDir, LIST_DIR_ROOT_WIDTH);
   if (!readable) return '[not readable]';
   const remaining = total - entries.length;
 
@@ -300,7 +319,7 @@ async function listDirectory(
       if (shouldCollapseDirectory(entry, options)) continue;
       const childPrefix = isLast ? '    ' : '│   ';
       const childDir = join(workDir, name);
-      const child = await collectEntries(kaos, childDir, LIST_DIR_CHILD_WIDTH);
+      const child = await collectEntries(deps, childDir, LIST_DIR_CHILD_WIDTH);
       if (!child.readable) {
         lines.push(`${childPrefix}└── [not readable]`);
         continue;

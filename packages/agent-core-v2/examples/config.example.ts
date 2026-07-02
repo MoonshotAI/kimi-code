@@ -56,7 +56,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentContextProjectorService } from '#/agent/contextProjector';
 import { IAgentContextSizeService } from '#/agent/contextSize';
 import { AgentCronService } from '#/agent/cron';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import { AgentExternalHooksService, IAgentExternalHooksService } from '#/agent/externalHooks';
 import { IFlagService } from '#/app/flag';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester';
@@ -186,7 +186,7 @@ describe('config slice (every section owner against one shared registry)', () =>
 
         // Collaborators declared but not touched during construction — empty
         // stubs keep the container strict-clean (no "unknown service" warnings).
-        reg.definePartialInstance(IAgentEventSinkService, {});
+        reg.definePartialInstance(IAgentRecordService, {});
         reg.definePartialInstance(ITelemetryService, { track: () => {} });
         reg.definePartialInstance(IAgentPromptService, {});
         reg.definePartialInstance(IAtomicDocumentStore, {});

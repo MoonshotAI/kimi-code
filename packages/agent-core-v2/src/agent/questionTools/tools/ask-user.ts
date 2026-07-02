@@ -130,7 +130,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     { toolCallId, turnId }: Pick<ExecutableToolContext, 'toolCallId' | 'turnId'>,
   ): Promise<ExecutableToolResult> {
     const result = await this.question.request({
-      turnId: numericTurnId(turnId),
+      turnId,
       toolCallId,
       questions: args.questions.map((q) => ({
         question: q.question,
@@ -217,12 +217,6 @@ function dismissedQuestionResult(): ExecutableToolResult {
       note: QUESTION_DISMISSED_MESSAGE,
     }),
   };
-}
-
-function numericTurnId(turnId: string): number | undefined {
-  if (turnId.trim().length === 0) return undefined;
-  const parsed = Number(turnId);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function questionDescription(questions: AskUserQuestionInput['questions']): string {

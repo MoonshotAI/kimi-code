@@ -41,6 +41,8 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/server-v2": "workspace:^",
     "@types/ws": "^8.18.0"
   }
 }

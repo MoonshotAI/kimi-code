@@ -42,6 +42,9 @@
  */
 
 import {
+  ErrorCodes,
+  IAuthSummaryService,
+  ISessionBtwService,
   ISessionActivity,
   ISessionContext,
   ISessionIndex,
@@ -526,8 +529,16 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
 
         if (parsed.action === 'btw') {
-          const result = await legacy.startBtw(parsed.id);
-          reply.send(okEnvelope(result, req.id));
+          const session = core.accessor.get(ISessionLifecycleService).get(parsed.id);
+          if (session === undefined) {
+            throw new KimiError(
+              ErrorCodes.SESSION_NOT_FOUND,
+              `session ${parsed.id} does not exist`,
+            );
+          }
+          await core.accessor.get(IAuthSummaryService).ensureReady();
+          const agentId = await session.accessor.get(ISessionBtwService).start();
+          reply.send(okEnvelope({ agent_id: agentId }, req.id));
           return;
         }
 

@@ -17,10 +17,6 @@ export type SubagentHandle = {
   readonly completion: Promise<SubagentCompletion>;
 };
 
-export interface SubagentDetachHandle {
-  markActiveChildDetached(agentId: string): void;
-}
-
 export interface AgentBackgroundTaskInfo extends BackgroundTaskInfoBase {
   readonly kind: 'agent';
   /** Subagent identifier accepted by Agent(resume=...). */
@@ -46,7 +42,6 @@ export class AgentBackgroundTask implements BackgroundTask {
   constructor(
     private readonly handle: SubagentHandle,
     readonly description: string,
-    private readonly detachHandle: Pick<SubagentDetachHandle, 'markActiveChildDetached'>,
     private readonly abortController: AbortController,
   ) {
     this.agentId = handle.agentId;
@@ -76,10 +71,6 @@ export class AgentBackgroundTask implements BackgroundTask {
     } finally {
       sink.signal.removeEventListener('abort', requestAbort);
     }
-  }
-
-  onDetach(): void {
-    this.detachHandle.markActiveChildDetached(this.agentId);
   }
 
   toInfo(base: BackgroundTaskInfoBase): AgentBackgroundTaskInfo {

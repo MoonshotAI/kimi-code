@@ -4,5 +4,7 @@
  * `IProviderService` binding into the scope registry.
  */
 
+import './configSection';
+
 export * from './provider';
 export * from './providerService';

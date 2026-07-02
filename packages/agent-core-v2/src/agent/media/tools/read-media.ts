@@ -28,7 +28,7 @@ import type {
 import { z } from 'zod';
 
 import { ISessionAgentFileSystem } from '#/session/agentFs';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
 import { ToolAccesses } from '#/agent/tool';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
@@ -137,7 +137,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   constructor(
     private readonly fs: ISessionAgentFileSystem,
-    private readonly kaos: IKaos,
+    private readonly env: IHostEnvironment,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader | undefined,
@@ -153,7 +153,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       return { isError: true, output: 'File path cannot be empty.' };
     }
     const path = resolvePathAccessPath(args.path, {
-      kaos: this.kaos,
+      env: this.env,
       workspace: this.workspace,
       operation: 'read',
     });
@@ -165,8 +165,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
           cwd: this.workspace.workspaceDir,
-          pathClass: this.kaos.pathClass(),
-          homeDir: this.kaos.gethome(),
+          pathClass: this.env.pathClass,
+          homeDir: this.env.homeDir,
         }),
       execute: () => this.execution(args, path),
     };

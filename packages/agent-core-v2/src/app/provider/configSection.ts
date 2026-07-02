@@ -6,12 +6,13 @@
  * `KIMI_MODEL_PROVIDER_TYPE` / `KIMI_MODEL_API_KEY` / `KIMI_MODEL_BASE_URL`
  * environment bindings that synthesize the reserved `__kimi_env__` provider
  * entry, and the snake_case ↔ camelCase TOML transforms (including the nested
- * `oauth` / `env` / `custom_headers` normalization). Registered into
- * `IConfigRegistry` by `ProviderService` on construction, so the `config`
- * domain never imports this domain's types.
+ * `oauth` / `env` / `custom_headers` normalization). Self-registered at module
+ * load via `registerConfigSection`, so the `config` domain never imports this
+ * domain's types.
  */
 
 import { type ConfigStripEnv, envBindings } from '#/app/config/config';
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
   camelToSnake,
   cloneRecord,
@@ -24,6 +25,7 @@ import {
 
 import {
   ENV_MODEL_PROVIDER_KEY,
+  PROVIDERS_SECTION,
   ProviderConfigSchema,
   ProvidersSectionSchema,
 } from './provider';
@@ -96,3 +98,11 @@ function providerEntryToToml(
   }
   return out;
 }
+
+registerConfigSection(PROVIDERS_SECTION, ProvidersSectionSchema, {
+  defaultValue: {},
+  env: providersEnvBindings,
+  stripEnv: stripProvidersEnv,
+  fromToml: providersFromToml,
+  toToml: providersToToml,
+});

@@ -1,14 +1,14 @@
 /**
  * `agentFs` domain — shared ripgrep subprocess plumbing.
  *
- * Single place that knows how Glob spawns `rg` through the session execution
- * environment (`IKaos.backend.exec`): timeout / abort handling, capped stdout /
- * stderr draining, two-phase kill with process disposal, and the EAGAIN retry
+ * Single place that knows how Glob spawns `rg` through the session
+ * `ISessionProcessRunner`: timeout / abort handling, capped stdout / stderr
+ * draining, two-phase kill with process disposal, and the EAGAIN retry
  * predicate. Mode-specific argument building and output parsing stay in the
  * tools themselves.
  *
  * Ported from v1 (`packages/agent-core/src/tools/support/run-rg.ts`) onto the
- * v2 `IKaos` execution environment. Grep keeps its own `runCommand` path in
+ * v2 `ISessionProcessRunner`. Grep keeps its own `runCommand` path in
  * `fsService` (it streams JSON and has a pure-node fallback); this helper is
  * shared in the sense that the previously inline Glob plumbing now lives in one
  * reusable module under the same `agentFs` domain as Grep's search code.
@@ -16,7 +16,7 @@
 
 import type { Readable } from 'node:stream';
 
-import type { KaosProcess, IKaos } from '#/app/kaos';
+import type { IProcess, ISessionProcessRunner } from '#/session/process';
 
 export const DEFAULT_TIMEOUT_MS = 20_000;
 export const SIGTERM_GRACE_MS = 5_000;
@@ -33,7 +33,7 @@ export interface RunRgResult {
 
 export type RunRgOutcome = RunRgResult | { readonly kind: 'aborted' };
 
-async function disposeProcess(proc: KaosProcess): Promise<void> {
+async function disposeProcess(proc: IProcess): Promise<void> {
   try {
     await proc.dispose();
   } catch {
@@ -42,23 +42,24 @@ async function disposeProcess(proc: KaosProcess): Promise<void> {
 }
 
 /**
- * Spawn `rgArgs` through the (already cwd-bound) execution environment and
- * drain its stdout/stderr with a byte cap. Handles abort (via `signal`) and a
- * hard timeout with a two-phase kill (SIGTERM, then SIGKILL after a grace
- * period) and process disposal. Returns `{ kind: 'aborted' }` when the run is
+ * Spawn `rgArgs` through the session `ISessionProcessRunner` and drain its
+ * stdout/stderr with a byte cap. Handles abort (via `signal`) and a hard
+ * timeout with a two-phase kill (SIGTERM, then SIGKILL after a grace period)
+ * and process disposal. Returns `{ kind: 'aborted' }` when the run is
  * cancelled so the caller can surface a stable "aborted" message. Spawn
  * failures (e.g. ENOENT) are thrown to the caller.
  */
 export async function runRgOnce(
-  execKaos: IKaos,
+  runner: ISessionProcessRunner,
   rgArgs: readonly string[],
   signal: AbortSignal,
+  options?: { readonly cwd?: string },
 ): Promise<RunRgOutcome> {
   if (signal.aborted) {
     return { kind: 'aborted' };
   }
 
-  const proc: KaosProcess = await execKaos.backend.exec(...rgArgs);
+  const proc: IProcess = await runner.exec(rgArgs, { cwd: options?.cwd });
 
   try {
     proc.stdin.end();

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ISessionAgentFileSystem, ISessionFsService } from '#/session/agentFs';
 import { AgentFileToolsService } from '#/agent/fileTools';
-import type { IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
+import type { ISessionProcessRunner } from '#/session/process';
 import { noopTelemetryService } from '#/app/telemetry';
 import type { IDisposable } from '#/_base/di';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry';
@@ -23,11 +24,18 @@ function fakeToolRegistry(): { registry: IAgentToolRegistryService; names: () =>
 
 const fakeFs = { cwd: '/workspace' } as unknown as ISessionAgentFileSystem;
 const fakeFsService = {} as unknown as ISessionFsService;
-const fakeKaos = {
-  cwd: '/workspace',
-  pathClass: () => 'posix',
-  gethome: () => '/home',
-} as unknown as IKaos;
+const fakeEnv: IHostEnvironment = {
+  _serviceBrand: undefined,
+  osKind: 'Linux',
+  osArch: 'x86_64',
+  osVersion: 'test',
+  shellName: 'bash',
+  shellPath: '/bin/bash',
+  pathClass: 'posix',
+  homeDir: '/home',
+  ready: Promise.resolve(),
+};
+const fakeRunner = { _serviceBrand: undefined, exec: vi.fn() } as unknown as ISessionProcessRunner;
 const fakeWorkspace = {
   workDir: '/workspace',
   additionalDirs: [],
@@ -39,9 +47,10 @@ describe('AgentFileToolsService', () => {
     new AgentFileToolsService(
       registry,
       fakeFs,
-      fakeKaos,
+      fakeEnv,
       fakeWorkspace,
       fakeFsService,
+      fakeRunner,
       noopTelemetryService,
     );
     expect(names()).toEqual(['Edit', 'Glob', 'Grep', 'Read', 'Write']);

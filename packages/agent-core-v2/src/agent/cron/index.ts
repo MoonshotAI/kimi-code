@@ -4,5 +4,7 @@
  * binding into the scope registry.
  */
 
+import './configSection';
+
 export * from './cron';
 export * from './cronService';

@@ -1,11 +1,12 @@
 /**
  * `InMemoryStorageService` — `IStorageService` backed by in-memory maps.
  *
- * Registered as the default `IStorageService` at App scope so scopes and
- * tests work out of the box. For durable production storage, the composition
- * root seeds a per-token `FileStorageService` descriptor (rooted at
- * `bootstrap.homeDir`) into the App scope via `ScopeOptions.extra`,
- * overriding this default — the same pattern `blobStoreService` uses.
+ * Not auto-registered: the Storage-layer backend is a deployment choice that
+ * the composition root must provide. `bootstrap()` seeds a per-token
+ * `FileStorageService` (rooted at `bootstrap.homeDir`) for production; the
+ * test harness seeds this in-memory backend so tests keep a durable-enough
+ * default. A scope that seeds neither backend will fail to resolve the storage
+ * tokens on first use.
  *
  * `append` concatenates into the same key slot `write` replaces, mirroring the
  * file implementation's single-namespace semantics so the two are
@@ -18,14 +19,9 @@ import {
   toDisposable,
   type IDisposable,
 } from '#/_base/di/lifecycle';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 
 import {
-  IAppendLogStorage,
-  IAtomicDocumentStorage,
-  IBlobStorage,
   IStorageService,
   type StorageAppendOptions,
   type StorageWriteOptions,
@@ -144,35 +140,3 @@ export class InMemoryStorageService implements IStorageService {
     return bucket;
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IStorageService,
-  InMemoryStorageService,
-  InstantiationType.Delayed,
-  'storage',
-);
-
-registerScopedService(
-  LifecycleScope.App,
-  IAppendLogStorage,
-  InMemoryStorageService,
-  InstantiationType.Delayed,
-  'storage',
-);
-
-registerScopedService(
-  LifecycleScope.App,
-  IAtomicDocumentStorage,
-  InMemoryStorageService,
-  InstantiationType.Delayed,
-  'storage',
-);
-
-registerScopedService(
-  LifecycleScope.App,
-  IBlobStorage,
-  InMemoryStorageService,
-  InstantiationType.Delayed,
-  'storage',
-);

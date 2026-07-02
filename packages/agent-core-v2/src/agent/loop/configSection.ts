@@ -4,12 +4,13 @@
  * Owns the `[loop_control]` configuration section (step / retry / context-size
  * limits) consumed by `AgentLoopService` (step + retry budgets) and `AgentProfileService`
  * (context sizing), plus the snake_case ↔ camelCase TOML transforms (including
- * the legacy `max_steps_per_run` → `maxStepsPerTurn` rename). Registered into
- * `IConfigRegistry` by `AgentLoopService` on construction.
+ * the legacy `max_steps_per_run` → `maxStepsPerTurn` rename). Self-registered at
+ * module load via `registerConfigSection`.
  */
 
 import { z } from 'zod';
 
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { plainObjectToToml, transformPlainObject } from '#/app/config/toml';
 
 export const LOOP_CONTROL_SECTION = 'loopControl';
@@ -40,3 +41,8 @@ export const loopControlToToml = (value: unknown, rawSnake: unknown): unknown =>
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
   return plainObjectToToml(value as Record<string, unknown>, rawSnake);
 };
+
+registerConfigSection(LOOP_CONTROL_SECTION, LoopControlSchema, {
+  fromToml: loopControlFromToml,
+  toToml: loopControlToToml,
+});

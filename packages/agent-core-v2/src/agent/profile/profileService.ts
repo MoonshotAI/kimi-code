@@ -22,21 +22,21 @@ import picomatch from 'picomatch';
 
 import { ErrorCodes, KimiError } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config';
+import { IConfigService } from '#/app/config';
 import { resolveThinkingEffort } from './thinking';
 import { applyKimiModelOverrides, IChatProviderFactory, type KimiModelOverrides } from '#/app/chatProvider';
 import type { LoopControl } from '#/agent/loop/configSection';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { ISessionAgentFileSystem } from '#/session/agentFs';
+import { IExecContext } from '#/session/execContext';
 import { isMcpToolName } from '#/agent/tool';
 import { ISessionModelResolver, type ResolvedModel } from '#/session/modelRuntime';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile';
 
-import { IAgentEventSinkService } from '#/agent/eventSink';
-import { IAgentReplayBuilderService } from '#/agent/replayBuilder';
+import { IAgentRecordService, type AgentRecord } from '#/agent/record';
 import { ITelemetryService } from '#/app/telemetry';
 import type { ToolSource } from '#/agent/tool';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
 import { prepareSystemPromptContext } from './context';
 import type {
   ApplyProfileOptions,
@@ -48,12 +48,8 @@ import type {
 } from './profile';
 import { IAgentProfileService } from './profile';
 import {
-  DEFAULT_THINKING_SECTION,
-  defaultThinkingEnvBindings,
   THINKING_SECTION,
-  ThinkingConfigSchema,
   type ThinkingConfig,
-  thinkingEnvBindings,
 } from './configSection';
 
 declare module '#/agent/wireRecord' {
@@ -78,32 +74,29 @@ export class AgentProfileService implements IAgentProfileService {
   private agentsMdWarning: string | undefined;
 
   constructor(
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
-    @IAgentReplayBuilderService private readonly replayBuilder: IAgentReplayBuilderService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IConfigRegistry configRegistry: IConfigRegistry,
     @IConfigService private readonly config: IConfigService,
     @ISessionModelResolver private readonly modelResolver: ISessionModelResolver,
     @IChatProviderFactory private readonly chatProviders: IChatProviderFactory,
-    @IKaos private readonly kaos: IKaos,
+    @IHostEnvironment private readonly env: IHostEnvironment,
+    @ISessionAgentFileSystem private readonly fs: ISessionAgentFileSystem,
+    @IExecContext private readonly execCtx: IExecContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
   ) {
-    configRegistry.registerSection(THINKING_SECTION, ThinkingConfigSchema, {
-      env: thinkingEnvBindings,
-    });
-    configRegistry.registerSection(DEFAULT_THINKING_SECTION, { parse: (v) => v as boolean }, {
-      env: defaultThinkingEnvBindings,
-    });
     this.configure({});
-    wireRecord.register('config.update', (record) => {
-      const { type: _type, time: _time, ...changed } = record;
-      this.apply(changed);
+    record.define('config.update', {
+      resume: (r) => {
+        this.apply(stripConfigMeta(r));
+      },
+      toReplay: (r) => ({ type: 'config_updated', config: stripConfigMeta(r) }),
     });
-    wireRecord.register('tools.set_active_tools', (record) => {
-      this.applyActiveToolNames(record.names);
-      this.initializeBuiltinTools();
+    record.define('tools.set_active_tools', {
+      resume: (r) => {
+        this.applyActiveToolNames(r.names);
+        this.initializeBuiltinTools();
+      },
     });
   }
 
@@ -126,7 +119,7 @@ export class AgentProfileService implements IAgentProfileService {
   update(changed: ProfileUpdateData): void {
     const { activeToolNames, ...configChanged } = changed;
     if (Object.keys(configChanged).length > 0) {
-      this.wireRecord.append({ type: 'config.update', ...configChanged });
+      this.record.append({ type: 'config.update', ...configChanged });
       this.apply(configChanged);
     }
     if (activeToolNames !== undefined) {
@@ -168,14 +161,19 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
-    const context = await prepareSystemPromptContext(this.kaos, this.bootstrap.homeDir, {
-      additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
-    });
+    const context = await prepareSystemPromptContext(
+      { fs: this.fs, homeDir: this.env.homeDir },
+      this.execCtx.cwd,
+      this.bootstrap.homeDir,
+      {
+        additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
+      },
+    );
     this.useProfile(profile, context);
     const { agentsMdWarning } = context;
     this.agentsMdWarning = agentsMdWarning;
     if (agentsMdWarning !== undefined) {
-      this.events.emit({
+      this.record.signal({
         type: 'warning',
         message: agentsMdWarning,
         code: 'agents-md-oversized',
@@ -276,7 +274,6 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   private apply(changed: ProfileUpdateData): void {
-    this.replayBuilder.push({ type: 'config_updated', config: changed });
     if (changed.cwd !== undefined) {
       this.cwdValue = changed.cwd;
       void this.optionsValue.chdir?.(changed.cwd);
@@ -300,7 +297,7 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   private setActiveTools(names: readonly string[]): void {
-    this.wireRecord.append({ type: 'tools.set_active_tools', names: [...names] });
+    this.record.append({ type: 'tools.set_active_tools', names: [...names] });
     this.applyActiveToolNames(names);
     this.initializeBuiltinTools();
   }
@@ -321,7 +318,7 @@ export class AgentProfileService implements IAgentProfileService {
       return;
     }
     if (!this.hasModel()) return;
-    this.events.emit({
+    this.record.signal({
       type: 'agent.status.updated',
       model: this.modelAlias,
       maxContextTokens: this.getModelCapabilities().max_context_tokens,
@@ -381,6 +378,11 @@ export class AgentProfileService implements IAgentProfileService {
     const cwd = this.optionsValue.cwd;
     return typeof cwd === 'function' ? cwd() : cwd;
   }
+}
+
+function stripConfigMeta(record: AgentRecord<'config.update'>): ProfileUpdateData {
+  const { type: _type, time: _time, ...changed } = record;
+  return changed;
 }
 
 registerScopedService(

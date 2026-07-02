@@ -250,6 +250,53 @@ export class SkipList<K = number, V = string> {
     return out;
   }
 
+  /** Lazy range scan. Same bounds/offset/count/reverse semantics as range(),
+   *  but yields entries one by one so a caller can stop early without
+   *  materializing the whole range. */
+  *iterate(opts: RangeOptions<K> = {}): Generator<RangeEntry<K, V>> {
+    let offset = opts.offset ?? 0;
+    let count = opts.count ?? Infinity;
+
+    if (opts.reverse) {
+      let x: SkipNode<K, V> | null;
+      if (opts.lte !== undefined) {
+        const after = this.lowerBound(opts.lte, { strict: true });
+        x = after ? after.backward : this.tail;
+      } else if (opts.lt !== undefined) {
+        const after = this.lowerBound(opts.lt, { strict: false });
+        x = after ? after.backward : this.tail;
+      } else {
+        x = this.tail;
+      }
+      while (x) {
+        if (opts.gte !== undefined && this.cmpK(x.key, opts.gte) < 0) break;
+        if (opts.gt !== undefined && this.cmpK(x.key, opts.gt) <= 0) break;
+        if (offset > 0) offset--;
+        else if (count > 0) {
+          yield { key: x.key, val: x.val };
+          count--;
+        } else break;
+        x = x.backward;
+      }
+      return;
+    }
+
+    const hasLower = opts.gte !== undefined || opts.gt !== undefined;
+    let x = hasLower
+      ? this.lowerBound(opts.gte !== undefined ? opts.gte : (opts.gt as K), { strict: opts.gt !== undefined })
+      : this.header.level[0]!.forward;
+    while (x) {
+      if (opts.lte !== undefined && this.cmpK(x.key, opts.lte) > 0) break;
+      if (opts.lt !== undefined && this.cmpK(x.key, opts.lt) >= 0) break;
+      if (offset > 0) offset--;
+      else if (count > 0) {
+        yield { key: x.key, val: x.val };
+        count--;
+      } else break;
+      x = x.level[0]!.forward;
+    }
+  }
+
   toArray(): RangeEntry<K, V>[] {
     const out: RangeEntry<K, V>[] = [];
     let x = this.header.level[0]!.forward;

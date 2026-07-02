@@ -1,5 +1,6 @@
 import type { EdgeKind, Graph, ServiceScope } from '../../analyzer/types';
 import { EDGE_KINDS, EDGE_STYLE, SCOPE_STYLE } from './style';
+import { tagColor, type TagCount } from './tags';
 
 export interface FilterState {
   scopes: Set<ServiceScope>;
@@ -9,11 +10,18 @@ export interface FilterState {
   hideOrphans: boolean;
   /** When true, dagre runs once per scope and the bands are stacked vertically. */
   groupByScope: boolean;
+  /**
+   * Tags the user is focusing. When non-empty, nodes carrying any of these
+   * tags (and their neighbours) stay bright and everything else dims — the
+   * "group by tag" view. Empty set means tag focus is off.
+   */
+  activeTags: Set<string>;
 }
 
 interface FiltersProps {
   graph: Graph;
   domains: string[];
+  tagCounts: TagCount[];
   state: FilterState;
   onChange: (next: FilterState) => void;
 }
@@ -25,7 +33,13 @@ const SCOPES: ServiceScope[] = ['App', 'Session', 'Agent'];
  * re-derives its nodes/edges from the current filter set. Rendered as a
  * fixed-width column so the graph takes the rest of the viewport.
  */
-export function Filters({ graph, domains, state, onChange }: FiltersProps): JSX.Element {
+export function Filters({
+  graph,
+  domains,
+  tagCounts,
+  state,
+  onChange,
+}: FiltersProps): JSX.Element {
   function toggle<T>(set: Set<T>, key: T): Set<T> {
     const next = new Set(set);
     if (next.has(key)) next.delete(key);
@@ -116,6 +130,48 @@ export function Filters({ graph, domains, state, onChange }: FiltersProps): JSX.
           checked={state.groupByScope}
           onToggle={() => onChange({ ...state, groupByScope: !state.groupByScope })}
         />
+      </Section>
+
+      <Section title={`Tags (${tagCounts.length})`}>
+        {tagCounts.length === 0 ? (
+          <div style={{ color: '#7d8590', fontSize: 11 }}>
+            none yet — click a node to add tags
+          </div>
+        ) : (
+          <>
+            <div style={{ marginBottom: 6, display: 'flex', gap: 6 }}>
+              <button
+                style={btnStyle}
+                onClick={() =>
+                  onChange({
+                    ...state,
+                    activeTags: new Set(tagCounts.map((t) => t.tag)),
+                  })
+                }
+              >
+                all
+              </button>
+              <button
+                style={btnStyle}
+                onClick={() => onChange({ ...state, activeTags: new Set() })}
+              >
+                none
+              </button>
+            </div>
+            {tagCounts.map(({ tag, count }) => (
+              <CheckRow
+                key={tag}
+                label={tag}
+                count={count}
+                checked={state.activeTags.has(tag)}
+                color={tagColor(tag).color}
+                onToggle={() =>
+                  onChange({ ...state, activeTags: toggle(state.activeTags, tag) })
+                }
+              />
+            ))}
+          </>
+        )}
       </Section>
 
       <Section title={`Domain (${domains.length})`}>

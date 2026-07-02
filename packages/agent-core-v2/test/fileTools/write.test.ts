@@ -18,7 +18,7 @@ import { PathSecurityError } from '../../src/_base/tools/policies/path-access';
 import type { AgentFileStat, ISessionAgentFileSystem } from '#/session/agentFs';
 import type { WorkspaceConfig } from '../../src/_base/tools/support/workspace';
 import { type WriteInput, WriteInputSchema, WriteTool } from '#/agent/fileTools/tools/write';
-import type { IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 
 const signal = new AbortController().signal;
@@ -32,11 +32,18 @@ function toolContentString(result: ExecutableToolResult): string {
   return c;
 }
 
-function createTestKaos(home = '/home'): IKaos {
+function createTestEnv(home = '/home'): IHostEnvironment {
   return {
-    pathClass: () => 'posix',
-    gethome: () => home,
-  } as unknown as IKaos;
+    _serviceBrand: undefined,
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass: 'posix',
+    homeDir: home,
+    ready: Promise.resolve(),
+  };
 }
 
 interface WriteFsOptions {
@@ -75,7 +82,7 @@ function createWriteFs(options: WriteFsOptions = {}) {
 
 function makeTool(options: WriteFsOptions = {}, workspace: WorkspaceConfig = PERMISSIVE_WORKSPACE) {
   const fakes = createWriteFs(options);
-  const tool = new WriteTool(fakes.fs, createTestKaos(), workspace);
+  const tool = new WriteTool(fakes.fs, createTestEnv(), workspace);
   return { tool, ...fakes };
 }
 
@@ -203,7 +210,7 @@ describe('WriteTool', () => {
 
   it('expands leading tilde paths using the kaos home directory', async () => {
     const fakes = createWriteFs();
-    const tool = new WriteTool(fakes.fs, createTestKaos('/home/test'), PERMISSIVE_WORKSPACE);
+    const tool = new WriteTool(fakes.fs, createTestEnv('/home/test'), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });
 

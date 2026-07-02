@@ -12,12 +12,18 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useMemo } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 
-import type { Edge, EdgeKind, Graph, ServiceNode } from '../../analyzer/types';
+import type { Edge, EdgeKind, EdgeRef, Graph, ServiceNode } from '../../analyzer/types';
 import type { FilterState } from './Filters';
 import { layoutDagre } from './layout-dagre';
-import { EDGE_STYLE, SCOPE_STYLE } from './style';
+import {
+  EDGE_STYLE,
+  SCOPE_MISMATCH_COLOR,
+  SCOPE_STYLE,
+  UNRESOLVED_COLOR,
+} from './style';
+import { tagColor, type TagMap } from './tags';
 
 /** Fixed node width so port rows have a stable horizontal box. */
 const NODE_WIDTH = 300;
@@ -27,6 +33,8 @@ const HEADER_HEIGHT = 68;
 const PORT_ROW_HEIGHT = 18;
 /** Vertical padding between the header divider and the first port row. */
 const PORTS_PAD_TOP = 4;
+/** Height reserved for the tag chip row when a node carries at least one tag. */
+const TAGS_ROW_HEIGHT = 20;
 
 /**
  * Per-node method port lists. `outPorts` are methods on this service that
@@ -52,6 +60,10 @@ interface GraphViewProps {
   /** Selected `ServiceNode.id`. */
   selectedId?: string;
   onSelect: (id?: string) => void;
+  /** User-authored tags, keyed by `ServiceNode.id`. */
+  tags: TagMap;
+  /** Replace the full tag list for a node (empty list clears the entry). */
+  onEditTags: (nodeId: string, tags: string[]) => void;
 }
 
 interface ServiceNodeData extends Record<string, unknown> {
@@ -65,6 +77,8 @@ interface ServiceNodeData extends Record<string, unknown> {
   matched: boolean;
   dim: boolean;
   ports: ServicePortsInfo;
+  /** Tags attached to this node, in entry order. */
+  tags: string[];
 }
 
 const EVENT_KINDS: Set<EdgeKind> = new Set(['publish', 'subscribe', 'emit', 'on']);
@@ -137,30 +151,35 @@ function computeServicePorts(
   return result;
 }
 
-function nodeHeight(ports: ServicePortsInfo): number {
+function nodeHeight(ports: ServicePortsInfo, hasTags: boolean): number {
   const rows = Math.max(ports.inPorts.length, ports.outPorts.length);
-  if (rows === 0) return HEADER_HEIGHT;
-  return HEADER_HEIGHT + PORTS_PAD_TOP + rows * PORT_ROW_HEIGHT + PORTS_PAD_TOP;
+  const base = rows === 0 ? HEADER_HEIGHT : HEADER_HEIGHT + PORTS_PAD_TOP + rows * PORT_ROW_HEIGHT + PORTS_PAD_TOP;
+  return hasTags ? base + TAGS_ROW_HEIGHT : base;
 }
 
 function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Element {
-  const { service, selected, matched, dim, ports } = data;
+  const { service, selected, matched, dim, ports, tags } = data;
   const bg = SCOPE_STYLE[service.scope].color;
   const rowCount = Math.max(ports.inPorts.length, ports.outPorts.length);
   // Interface-only node: the token is referenced but has no registered impl.
   // Flagged with a dashed warning border so missing bindings stand out from
   // concrete services at a glance. Selection / search-match still win so the
-  // active node stays unambiguous.
+  // active node stays unambiguous. Scope-mismatch nodes (token registered, but
+  // at a scope the caller can't see) get a distinct amber dashed border.
   const isUnresolved = service.unresolved === true;
+  const isScopeMismatch = service.scopeMismatch === true;
+  const specialBorder = isUnresolved || isScopeMismatch;
   const borderColor = selected
     ? '#ffdf5d'
     : matched
       ? '#79c0ff'
       : isUnresolved
-        ? '#f85149'
-        : 'rgba(0,0,0,0.4)';
-  const borderWidth = selected || matched || isUnresolved ? 2 : 1;
-  const borderStyle = isUnresolved && !selected && !matched ? 'dashed' : 'solid';
+        ? UNRESOLVED_COLOR
+        : isScopeMismatch
+          ? SCOPE_MISMATCH_COLOR
+          : 'rgba(0,0,0,0.4)';
+  const borderWidth = selected || matched || specialBorder ? 2 : 1;
+  const borderStyle = specialBorder && !selected && !matched ? 'dashed' : 'solid';
   const glow = selected
     ? '0 0 0 3px rgba(255,223,93,0.25)'
     : matched
@@ -224,10 +243,16 @@ function ServiceNodeView({ data }: NodeProps<Node<ServiceNodeData>>): JSX.Elemen
           </span>
         </div>
         <div style={{ fontSize: 10, opacity: 0.65, marginTop: 2, fontStyle: 'italic' }}>
-          {isUnresolved ? 'no implementation registered' : service.token}
+          {isUnresolved
+            ? 'no implementation registered'
+            : isScopeMismatch
+              ? `registered at ${service.scope} · cross-scope ref`
+              : service.token}
         </div>
         <div style={{ fontSize: 10, opacity: 0.75, marginTop: 2 }}>{service.domain}</div>
       </div>
+
+      {tags.length > 0 && <TagChips tags={tags} />}
 
       {rowCount > 0 && (
         <div
@@ -351,6 +376,187 @@ function BandLabelView({ data }: NodeProps<Node<{ scope: string; width: number }
 
 const nodeTypes = { service: ServiceNodeView, band: BandLabelView };
 
+/** Non-interactive row of tag chips, used inside a graph node. */
+function TagChips({ tags }: { tags: string[] }): JSX.Element {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 3,
+        padding: '0 8px 5px',
+      }}
+    >
+      {tags.map((tag) => (
+        <TagChip key={tag} tag={tag} />
+      ))}
+    </div>
+  );
+}
+
+interface TagChipProps {
+  tag: string;
+  /** When provided, renders a remove affordance. */
+  onRemove?: () => void;
+}
+
+function TagChip({ tag, onRemove }: TagChipProps): JSX.Element {
+  const { color, bg } = tagColor(tag);
+  return (
+    <span
+      title={tag}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+        maxWidth: onRemove ? 150 : 120,
+        padding: '1px 5px',
+        fontSize: 9,
+        lineHeight: '14px',
+        color,
+        background: bg,
+        border: `1px solid ${color}`,
+        borderRadius: 8,
+        overflow: 'hidden',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span
+        style={{
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {tag}
+      </span>
+      {onRemove && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          aria-label={`remove tag ${tag}`}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color,
+            cursor: 'pointer',
+            padding: 0,
+            fontSize: 11,
+            lineHeight: 1,
+            opacity: 0.8,
+          }}
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
+interface TagEditorProps {
+  tags: string[];
+  /** Known tags across the graph, offered as input suggestions. */
+  allTags: string[];
+  onChange: (next: string[]) => void;
+}
+
+/**
+ * Per-node tag editor rendered in the side panel. Chips remove on click; the
+ * input adds on Enter or the add button, normalising whitespace and refusing
+ * duplicates. `allTags` feeds a `<datalist>` so existing tags are one keystroke
+ * away — keeps spelling consistent so grouping actually groups.
+ */
+function TagEditor({ tags, allTags, onChange }: TagEditorProps): JSX.Element {
+  const [draft, setDraft] = useState('');
+  const listId = 'tag-suggestions';
+
+  function commit(raw: string): void {
+    const tag = raw.trim();
+    if (!tag || tags.includes(tag)) {
+      setDraft('');
+      return;
+    }
+    onChange([...tags, tag]);
+    setDraft('');
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          textTransform: 'uppercase',
+          color: '#7d8590',
+          marginBottom: 4,
+          letterSpacing: 0.5,
+        }}
+      >
+        tags
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+        {tags.length === 0 ? (
+          <span style={{ color: '#6e7681', fontSize: 11 }}>no tags</span>
+        ) : (
+          tags.map((tag) => (
+            <TagChip
+              key={tag}
+              tag={tag}
+              onRemove={() => onChange(tags.filter((t) => t !== tag))}
+            />
+          ))
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <input
+          value={draft}
+          list={listId}
+          placeholder="add tag…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit(draft);
+            }
+          }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: '4px 7px',
+            background: '#0e1116',
+            color: '#e6edf3',
+            border: '1px solid #30363d',
+            borderRadius: 4,
+            fontSize: 11,
+          }}
+        />
+        <button
+          onClick={() => commit(draft)}
+          style={{
+            padding: '4px 10px',
+            background: '#21262d',
+            color: '#e6edf3',
+            border: '1px solid #30363d',
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontSize: 11,
+          }}
+        >
+          add
+        </button>
+        <datalist id={listId}>
+          {allTags
+            .filter((t) => !tags.includes(t))
+            .map((t) => (
+              <option key={t} value={t} />
+            ))}
+        </datalist>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Persist the pan/zoom viewport across dev-server reloads so a source-code
  * edit (which triggers a `full-reload` from the `virtual:dep-graph` plugin)
@@ -416,6 +622,8 @@ export function GraphView({
   filters,
   selectedId,
   onSelect,
+  tags,
+  onEditTags,
 }: GraphViewProps): JSX.Element {
   // Compute once at mount so a re-render that adds nodes doesn't yank the
   // viewport back to the stored value while the user is panning.
@@ -451,10 +659,12 @@ export function GraphView({
     // dead weight on the node, so we compute after filter+visibility.
     const ports = computeServicePorts(visibleServices, finalEdges);
 
-    // Compute the two focus drivers:
+    // Compute the three focus drivers:
     //   • `selectedId` — the click-selected node (0 or 1 at a time).
     //   • `matched`    — every node whose identity or public surface hits
     //                     the current search string.
+    //   • `tagMatched` — every node carrying at least one active tag
+    //                     (the "group by tag" view).
     // Their neighbours (nodes touched by any surviving edge) are folded in
     // so the graph keeps enough context around a hit to be readable —
     // this is the "act like a click" behaviour: nothing disappears, just
@@ -464,6 +674,16 @@ export function GraphView({
     if (searchQuery) {
       for (const s of visibleServices) {
         if (matchesSearch(s, searchQuery)) matched.add(s.id);
+      }
+    }
+
+    // Tag focus: every visible node carrying at least one active tag seeds
+    // the focus set, so the graph reads as "the group(s) these tags pick out".
+    const tagMatched = new Set<string>();
+    if (filters.activeTags.size > 0) {
+      for (const s of visibleServices) {
+        const st = tags[s.id];
+        if (st && st.some((t) => filters.activeTags.has(t))) tagMatched.add(s.id);
       }
     }
 
@@ -477,14 +697,21 @@ export function GraphView({
     };
     if (selectedId !== undefined) seedFocus(selectedId);
     for (const id of matched) seedFocus(id);
+    for (const id of tagMatched) seedFocus(id);
 
-    const focusActive = selectedId !== undefined || matched.size > 0;
+    const focusActive =
+      selectedId !== undefined || matched.size > 0 || tagMatched.size > 0;
 
     const layout = layoutDagre(visibleServices, finalEdges, {
       groupByScope: filters.groupByScope,
       nodeSize: (id) => {
-        const p = ports.get(id);
-        return { width: NODE_WIDTH, height: p ? nodeHeight(p) : HEADER_HEIGHT };
+        const p = ports.get(id) ?? {
+          inPorts: [],
+          outPorts: [],
+          connectedIn: new Set<string>(),
+        };
+        const hasTags = (tags[id]?.length ?? 0) > 0;
+        return { width: NODE_WIDTH, height: nodeHeight(p, hasTags) };
       },
     });
     const pos = layout.positions;
@@ -504,6 +731,7 @@ export function GraphView({
             outPorts: [],
             connectedIn: new Set<string>(),
           },
+          tags: tags[service.id] ?? [],
         },
       }),
     );
@@ -574,7 +802,7 @@ export function GraphView({
       : [];
 
     return { nodes: rfNodes, edges: rfEdges, selectedService, selectedEdges };
-  }, [graph, filters, selectedId]);
+  }, [graph, filters, selectedId, tags]);
 
   return (
     <>
@@ -608,7 +836,11 @@ export function GraphView({
             if (n.id.startsWith('band::')) return 'transparent';
             const service = (n.data as ServiceNodeData | undefined)?.service;
             if (!service) return '#7d8590';
-            return service.unresolved ? '#f85149' : SCOPE_STYLE[service.scope].color;
+            return service.unresolved
+              ? UNRESOLVED_COLOR
+              : service.scopeMismatch
+                ? SCOPE_MISMATCH_COLOR
+                : SCOPE_STYLE[service.scope].color;
           }}
         />
         <Controls showInteractive={false} style={{ background: '#151b23' }} />
@@ -619,6 +851,8 @@ export function GraphView({
           graph={graph}
           edges={selectedEdges}
           onClose={() => onSelect(undefined)}
+          tags={tags}
+          onEditTags={onEditTags}
         />
       )}
     </>
@@ -630,19 +864,33 @@ interface ServicePanelProps {
   graph: Graph;
   edges: Edge[];
   onClose: () => void;
+  tags: TagMap;
+  onEditTags: (nodeId: string, tags: string[]) => void;
 }
 
-function ServicePanel({ service, graph, edges, onClose }: ServicePanelProps): JSX.Element {
+function ServicePanel({
+  service,
+  graph,
+  edges,
+  onClose,
+  tags,
+  onEditTags,
+}: ServicePanelProps): JSX.Element {
   const outgoing = edges.filter((e) => e.from === service.id);
   const incoming = edges.filter((e) => e.to === service.id && e.from !== service.id);
   const byId = new Map(graph.services.map((s) => [s.id, s]));
+  const nodeTags = tags[service.id] ?? [];
+  const allTags = useMemo(
+    () => [...new Set(Object.values(tags).flat())].sort(),
+    [tags],
+  );
   return (
     <div
       style={{
         position: 'absolute',
         top: 12,
         right: 12,
-        width: 360,
+        width: 420,
         maxHeight: 'calc(100vh - 24px)',
         overflowY: 'auto',
         background: 'rgba(21,27,35,0.96)',
@@ -657,8 +905,12 @@ function ServicePanel({ service, graph, edges, onClose }: ServicePanelProps): JS
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>{service.impl}</div>
           {service.unresolved ? (
-            <div style={{ color: '#f85149', fontSize: 11, marginTop: 2 }}>
+            <div style={{ color: UNRESOLVED_COLOR, fontSize: 11, marginTop: 2 }}>
               No implementation registered
+            </div>
+          ) : service.scopeMismatch ? (
+            <div style={{ color: SCOPE_MISMATCH_COLOR, fontSize: 11, marginTop: 2 }}>
+              Registered at {service.scope} — not visible from the caller&apos;s scope
             </div>
           ) : (
             <div style={{ color: '#a5b0bc', fontSize: 11 }}>{service.token}</div>
@@ -666,7 +918,7 @@ function ServicePanel({ service, graph, edges, onClose }: ServicePanelProps): JS
           <div style={{ color: '#7d8590', fontSize: 11 }}>
             <b>{service.scope}</b> · {service.domain}
           </div>
-          {!service.unresolved && (
+          {!service.unresolved && !service.scopeMismatch && (
             <div style={{ color: '#7d8590', fontSize: 10, marginTop: 4, wordBreak: 'break-all' }}>
               {service.file}:{service.line}
             </div>
@@ -686,6 +938,14 @@ function ServicePanel({ service, graph, edges, onClose }: ServicePanelProps): JS
           ×
         </button>
       </div>
+
+      <TagEditor
+        tags={nodeTags}
+        allTags={allTags}
+        onChange={(next) => {
+          onEditTags(service.id, next);
+        }}
+      />
 
       <EdgeList
         title={`out (${outgoing.length})`}
@@ -710,7 +970,44 @@ interface EdgeListProps {
   byId: Map<string, ServiceNode>;
 }
 
+interface EdgeGroup {
+  edge: Edge;
+  peerLabel: string;
+  peerToken?: string;
+  /** Refs that have at least one attributed method — one table row each. */
+  methodRefs: EdgeRef[];
+  /** Refs with neither `fromMethod` nor `toMethod` (ctor param decls etc.). */
+  unattributedCount: number;
+}
+
+function buildEdgeGroups(
+  edges: Edge[],
+  direction: 'in' | 'out',
+  byId: Map<string, ServiceNode>,
+): EdgeGroup[] {
+  return edges.map((e) => {
+    const peerId = direction === 'out' ? e.to : e.from;
+    const peer = byId.get(peerId);
+    const peerLabel = peer ? peer.impl : peerId;
+    const peerToken = peer?.token;
+    const methodRefs = e.refs.filter(
+      (r) => r.toMethod !== undefined || r.fromMethod !== undefined,
+    );
+    const unattributedCount = e.refs.length - methodRefs.length;
+    return { edge: e, peerLabel, peerToken, methodRefs, unattributedCount };
+  });
+}
+
+/**
+ * Right-panel table of edges touching the selected service. One row per
+ * attributed call ref; consecutive rows belonging to the same edge share
+ * `kind` / `peer` cells via `rowSpan` so the grouping is visible without
+ * repeating them. The self-side method column is bold so the direction of
+ * each call reads at a glance (out ⇒ `from` bold, in ⇒ `to` bold).
+ */
 function EdgeList({ title, edges, direction, byId }: EdgeListProps): JSX.Element {
+  const groups = buildEdgeGroups(edges, direction, byId);
+  const selfIsFrom = direction === 'out';
   return (
     <div style={{ marginTop: 12 }}>
       <div
@@ -725,84 +1022,163 @@ function EdgeList({ title, edges, direction, byId }: EdgeListProps): JSX.Element
       >
         {title}
       </div>
-      {edges.length === 0 && <div style={{ color: '#7d8590', fontSize: 11 }}>—</div>}
-      {edges.map((e) => {
-        const peerId = direction === 'out' ? e.to : e.from;
-        const peer = byId.get(peerId);
-        const label = peer ? `${peer.impl} (${peer.token})` : peerId;
-        const methodRefs = e.refs.filter((r) => r.toMethod !== undefined || r.fromMethod !== undefined);
-        return (
-          <div key={`${e.from}::${e.kind}::${e.to}`} style={{ padding: '3px 0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 10,
-                  height: 3,
-                  borderTop: `${EDGE_STYLE[e.kind].dashed ? '2px dashed' : '2px solid'} ${
-                    EDGE_STYLE[e.kind].color
-                  }`,
-                }}
-              />
-              <span style={{ color: '#7d8590', fontSize: 10, minWidth: 62 }}>{e.kind}</span>
-              <span
-                style={{
-                  fontFamily: 'ui-monospace, monospace',
-                  fontSize: 11,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  flex: 1,
-                }}
-              >
-                {label}
-              </span>
-              <span style={{ color: '#7d8590', fontSize: 10 }}>×{e.refs.length}</span>
-            </div>
-            {methodRefs.length > 0 && (
-              <details style={{ marginLeft: 20, marginTop: 2 }}>
-                <summary
-                  style={{
-                    fontSize: 10,
-                    color: '#8b949e',
-                    cursor: 'pointer',
-                    listStyle: 'revert',
-                  }}
-                >
-                  {methodRefs.length} call{methodRefs.length === 1 ? '' : 's'}
-                </summary>
-                <div style={{ marginTop: 3 }}>
-                  {methodRefs.map((r, i) => (
-                    <div
-                      key={`${r.file}:${r.line}:${i}`}
+      {groups.length === 0 ? (
+        <div style={{ color: '#7d8590', fontSize: 11 }}>—</div>
+      ) : (
+        <table style={tableStyle}>
+          <colgroup>
+            <col style={{ width: 72 }} />
+            <col style={{ width: 128 }} />
+            <col />
+            <col style={{ width: 40 }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th style={thStyle}>kind</th>
+              <th style={thStyle}>peer</th>
+              <th style={thStyle}>from → to</th>
+              <th style={{ ...thStyle, textAlign: 'right' }}>line</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => {
+              const kindStyle = EDGE_STYLE[g.edge.kind];
+              const kindCell = (
+                <div style={cellClipStyle}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 10,
+                      height: 3,
+                      borderTop: `${kindStyle.dashed ? '2px dashed' : '2px solid'} ${kindStyle.color}`,
+                      marginRight: 4,
+                      verticalAlign: 'middle',
+                    }}
+                  />
+                  <span style={{ color: '#a5b0bc' }}>{g.edge.kind}</span>
+                </div>
+              );
+              const peerCell = (
+                <div style={cellClipStyle} title={g.peerToken}>
+                  {g.peerLabel}
+                </div>
+              );
+              const groupKey = `${g.edge.from}::${g.edge.kind}::${g.edge.to}`;
+              if (g.methodRefs.length === 0) {
+                return (
+                  <tr key={groupKey} style={groupBorderStyle}>
+                    <td style={tdStyle}>{kindCell}</td>
+                    <td style={tdStyle}>{peerCell}</td>
+                    <td
+                      colSpan={2}
                       style={{
-                        fontFamily: 'ui-monospace, monospace',
-                        fontSize: 10,
-                        color: '#a5b0bc',
-                        padding: '1px 0',
+                        ...tdStyle,
+                        color: '#6e7681',
+                        fontStyle: 'italic',
                       }}
                     >
-                      {direction === 'out' ? (
-                        <>
-                          <span>{r.fromMethod ?? '?'}</span>
-                          <span style={{ color: '#6e7681' }}>{' → '}</span>
-                          <span style={{ color: '#e6edf3' }}>{r.toMethod ?? '?'}</span>
-                        </>
-                      ) : (
-                        <>
-                          <span style={{ color: '#e6edf3' }}>{r.fromMethod ?? '?'}</span>
-                          <span style={{ color: '#6e7681' }}>{' → '}</span>
-                          <span>{r.toMethod ?? '?'}</span>
-                        </>
-                      )}
-                      <span style={{ color: '#6e7681' }}>{`  (:${r.line})`}</span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-          </div>
-        );
-      })}
+                      — ×{g.edge.refs.length}
+                    </td>
+                  </tr>
+                );
+              }
+              return (
+                <Fragment key={groupKey}>
+                  {g.methodRefs.map((r, i) => {
+                    const isFirst = i === 0;
+                    return (
+                      <tr
+                        key={`${groupKey}::${r.file}:${r.line}:${i}`}
+                        style={isFirst ? groupBorderStyle : undefined}
+                      >
+                        {isFirst && (
+                          <>
+                            <td rowSpan={g.methodRefs.length} style={tdStyle}>
+                              {kindCell}
+                            </td>
+                            <td rowSpan={g.methodRefs.length} style={tdStyle}>
+                              {peerCell}
+                            </td>
+                          </>
+                        )}
+                        <td style={tdCallStyle} title={`${r.fromMethod ?? '?'} → ${r.toMethod ?? '?'}`}>
+                          <span
+                            style={{
+                              fontWeight: selfIsFrom ? 600 : 400,
+                              color: selfIsFrom ? '#e6edf3' : '#a5b0bc',
+                            }}
+                          >
+                            {r.fromMethod ?? '?'}
+                          </span>
+                          <span style={{ color: '#6e7681', margin: '0 4px' }}>→</span>
+                          <span
+                            style={{
+                              fontWeight: !selfIsFrom ? 600 : 400,
+                              color: !selfIsFrom ? '#e6edf3' : '#a5b0bc',
+                            }}
+                          >
+                            {r.toMethod ?? '?'}
+                          </span>
+                        </td>
+                        <td style={tdLineStyle}>:{r.line}</td>
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
+
+const tableStyle: React.CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  tableLayout: 'fixed',
+  fontFamily:
+    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+  fontSize: 10.5,
+};
+
+const thStyle: React.CSSProperties = {
+  textAlign: 'left',
+  fontWeight: 600,
+  color: '#7d8590',
+  fontSize: 9,
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  padding: '3px 6px',
+  borderBottom: '1px solid #30363d',
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: '3px 6px',
+  verticalAlign: 'top',
+};
+
+const tdCallStyle: React.CSSProperties = {
+  ...tdStyle,
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
+const tdLineStyle: React.CSSProperties = {
+  ...tdStyle,
+  textAlign: 'right',
+  color: '#6e7681',
+  whiteSpace: 'nowrap',
+};
+
+const cellClipStyle: React.CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const groupBorderStyle: React.CSSProperties = {
+  borderTop: '1px solid #21262d',
+};

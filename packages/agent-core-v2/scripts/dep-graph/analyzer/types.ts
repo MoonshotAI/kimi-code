@@ -15,9 +15,9 @@ export type EdgeKind =
   | 'publish'
   /** `<eventBus>.subscribe(...)` — subscribes to `IEventService`. */
   | 'subscribe'
-  /** `<eventSink>.emit(...)` — emits on `IAgentEventSinkService`. */
+  /** `<record>.signal(...)` / `<record>.append(...)` — emits on `IAgentRecordService`. */
   | 'emit'
-  /** `<eventSink>.on(...)` — listens on `IAgentEventSinkService`. */
+  /** `<record>.on(...)` — listens on `IAgentRecordService`. */
   | 'on';
 
 export interface ServiceNode {
@@ -57,6 +57,13 @@ export interface ServiceNode {
    * services rather than being dropped as dangling edges.
    */
   unresolved?: true;
+  /**
+   * True for synthesized scope-mismatch nodes: the token IS registered, but at
+   * a scope invisible to the edge's source. Rendered distinctly (and placed at
+   * the token's real registered scope) so a cross-scope reach reads differently
+   * from a genuinely missing implementation.
+   */
+  scopeMismatch?: true;
 }
 
 export interface EdgeRef {
@@ -90,18 +97,29 @@ export interface Edge {
    * Resolved target `ServiceNode.id` — the concrete registration that the
    * DI container would actually pick when the source is instantiated. For
    * `unresolved: true` edges this is the token that couldn't be resolved,
-   * prefixed with `unresolved::` for visualisation purposes.
+   * prefixed with `unresolved::`; for `scopeMismatch: true` edges it is
+   * prefixed with `scopeMismatch::`.
    */
   to: string;
   /** The interface/decorator name that appears at the source site. */
   token: string;
   kind: EdgeKind;
   /**
-   * True when there is no impl registered for `token` at a scope visible
-   * from the source (walking source scope up to root). A `ctor` edge in
-   * this state would crash the container at instantiation time.
+   * True when there is no impl registered for `token` at ANY scope — the
+   * token is simply unknown to the container. A `ctor` edge in this state
+   * would crash the container at instantiation time.
    */
   unresolved?: true;
+  /**
+   * True when the token IS registered, but only at a scope that is not
+   * visible from the source (e.g. an App-scope service reaching for an
+   * Agent-scope token through an accessor whose scope the analyzer couldn't
+   * pin down). Distinct from `unresolved`: an implementation exists, the
+   * edge just can't be satisfied from where it is requested.
+   */
+  scopeMismatch?: true;
+  /** When `scopeMismatch`, the innermost scope where `token` is registered. */
+  actualScope?: ServiceScope;
   /** One or more locations that produced this edge (deduped). */
   refs: EdgeRef[];
 }

@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import { parseBooleanEnv } from '#/_base/utils';
 import { type EnvBindings, envBindings } from '#/app/config';
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 
 export const THINKING_SECTION = 'thinking';
 export const DEFAULT_THINKING_SECTION = 'defaultThinking';
@@ -39,3 +40,10 @@ export const defaultThinkingEnvBindings: EnvBindings<boolean> = {
   env: 'KIMI_MODEL_DEFAULT_THINKING',
   parse: parseBooleanVar,
 };
+
+registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
+  env: thinkingEnvBindings,
+});
+registerConfigSection(DEFAULT_THINKING_SECTION, { parse: (v) => v as boolean }, {
+  env: defaultThinkingEnvBindings,
+});

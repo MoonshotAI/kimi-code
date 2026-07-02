@@ -35,7 +35,6 @@ import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
 import {
   getChildProfileName,
-  markChildDetached,
   resumeChildAgent,
   retryChildAgent,
   spawnChildAgent,
@@ -126,7 +125,7 @@ export type AgentToolSubagentMap = Readonly<Record<string, AgentToolSubagentProf
 
 export interface AgentToolOptions {
   readonly lifecycle: IAgentLifecycleService;
-  readonly parentAgentId: string;
+  readonly callerAgentId: string;
   readonly metadata?: ISessionMetadata;
   readonly background: IAgentBackgroundService;
   readonly profile: IAgentProfileService;
@@ -143,7 +142,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
 
   private readonly lifecycle: IAgentLifecycleService;
-  private readonly parentAgentId: string;
+  private readonly callerAgentId: string;
   private readonly metadata?: ISessionMetadata;
   private readonly background: IAgentBackgroundService;
   private readonly log?: ILogger;
@@ -153,7 +152,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
 
   constructor(options: AgentToolOptions) {
     this.lifecycle = options.lifecycle;
-    this.parentAgentId = options.parentAgentId;
+    this.callerAgentId = options.callerAgentId;
     this.metadata = options.metadata;
     this.background = options.background;
     this.log = options.log;
@@ -178,7 +177,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         resume: resumeChildAgent,
         retry: retryChildAgent,
         getProfileName: getChildProfileName,
-        markDetached: markChildDetached,
       }
     );
   }
@@ -209,7 +207,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       profileName =
         (await this.run.getProfileName({
           lifecycle: this.lifecycle,
-          parentAgentId: this.parentAgentId,
+          callerAgentId: this.callerAgentId,
           metadata: this.metadata,
           agentId: resumeAgentId,
         })) ?? 'subagent';
@@ -284,14 +282,14 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           operation === 'resume'
             ? await this.run.resume({
                 lifecycle: this.lifecycle,
-                parentAgentId: this.parentAgentId,
+                callerAgentId: this.callerAgentId,
                 metadata: this.metadata,
                 agentId: resumeAgentId!,
                 ...runOptions,
               })
             : await this.run.spawn({
                 lifecycle: this.lifecycle,
-                parentAgentId: this.parentAgentId,
+                callerAgentId: this.callerAgentId,
                 metadata: this.metadata,
                 profileName: requestedProfileName ?? 'coder',
                 ...runOptions,
@@ -317,15 +315,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           signal: runInBackground ? undefined : signal,
         };
         taskId = this.background.registerTask(
-          new AgentBackgroundTask(
-            handle,
-            args.description,
-            {
-              markActiveChildDetached: (agentId) =>
-                this.run.markDetached({ parentAgentId: this.parentAgentId, agentId }),
-            },
-            controller,
-          ),
+          new AgentBackgroundTask(handle, args.description, controller),
           registerOptions,
         );
         signal.removeEventListener('abort', abortBeforeRegister);

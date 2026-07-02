@@ -131,16 +131,14 @@ describe('AgentLifecycleService', () => {
 
     const child = await svc.create({
       agentId: 'child',
-      parentAgentId: 'main',
-      type: 'sub',
+      forkedFrom: 'main',
       swarmItem: 'swarm-item-1',
     });
 
     expect(child.id).toBe('child');
     expect(registerAgent).toHaveBeenCalledWith('child', {
       homedir: '/tmp/kimi-agent-lifecycle-test/agents/child',
-      type: 'sub',
-      parentAgentId: 'main',
+      forkedFrom: 'main',
       swarmItem: 'swarm-item-1',
     });
   });

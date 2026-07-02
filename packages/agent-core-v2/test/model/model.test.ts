@@ -18,6 +18,7 @@ import {
   ModelsSectionSchema,
 } from '#/app/model/model';
 import { ModelService } from '#/app/model/modelService';
+import '#/app/model/configSection';
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
 
 describe('ModelService', () => {
@@ -50,8 +51,7 @@ describe('ModelService', () => {
   });
   afterEach(() => disposables.dispose());
 
-  it('registers the models section schema on construction', () => {
-    ix.get(IModelService);
+  it('registers the models section schema from configSection import', () => {
     expect(registry.getSection(MODELS_SECTION)).toBeDefined();
   });
 

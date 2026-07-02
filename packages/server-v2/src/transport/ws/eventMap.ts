@@ -7,12 +7,12 @@
  *   Core    `events`                — process-wide `DomainEvent` bus (`IEventService`)
  *   Session `interactions`          — pending human-in-the-loop requests (`ISessionInteractionService.onDidChange`)
  *   Session `interactions:resolved` — request resolutions (`ISessionInteractionService.onDidResolve`)
- *   Agent   `events`                — per-agent `AgentEvent` stream (`IAgentEventSinkService`)
+ *   Agent   `events`                — per-agent `AgentEvent` stream (`IAgentRecordService`)
  */
 
 import {
   IEventService,
-  IAgentEventSinkService,
+  IAgentRecordService,
   ISessionInteractionService,
   type DomainEvent,
   type IDisposable,
@@ -58,7 +58,7 @@ export const eventMap: Record<ScopeKind, Record<string, EventSource>> = {
   },
   agent: {
     events: {
-      subscribe: (scope, listener) => scope.accessor.get(IAgentEventSinkService).on(listener),
+      subscribe: (scope, listener) => scope.accessor.get(IAgentRecordService).on(listener),
     },
   },
 };

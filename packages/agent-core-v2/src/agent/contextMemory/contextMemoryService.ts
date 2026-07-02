@@ -3,7 +3,7 @@ import {
 } from "#/_base/di";
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentReplayBuilderService } from '#/agent/replayBuilder';
-import { IAgentWireRecordService, type WireRecord } from '#/agent/wireRecord';
+import { IAgentRecordService, type AgentRecord } from '#/agent/record';
 import { IAgentContextMemoryService } from './contextMemory';
 import { ensureMessageId } from './messageId';
 import type { ContextMessage } from './types';
@@ -35,18 +35,17 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   };
 
   constructor(
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentReplayBuilderService private readonly replayBuilder: IAgentReplayBuilderService,
   ) {
     super();
     this._register(
-      wireRecord.register(
-        'context.splice',
-        (record) => {
-          this.applySplice(record);
+      record.define('context.splice', {
+        resume: (r) => {
+          this.applySplice(r);
         },
-        {
-          blobs: (record) => record.messages.map((message, index) => ({
+        blobs: (r) =>
+          r.messages.map((message, index) => ({
             parts: message.content,
             replace: (current, content) => ({
               ...current,
@@ -55,8 +54,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
               ),
             }),
           })),
-        },
-      ),
+      }),
     );
   }
 
@@ -71,18 +69,18 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     tokens?: number,
   ): void {
     const stamped = messages.map(ensureMessageId);
-    const record: WireRecord<'context.splice'> = {
+    const record: AgentRecord<'context.splice'> = {
       type: 'context.splice',
       start,
       deleteCount,
       messages: stamped,
       tokens,
     };
-    this.wireRecord.append(record);
+    this.record.append(record);
     this.applySplice(record);
   }
 
-  private applySplice(record: WireRecord<'context.splice'>): void {
+  private applySplice(record: AgentRecord<'context.splice'>): void {
     const removedMessages =
       record.deleteCount > 0 && record.start > 0
         ? this.history.slice(record.start, record.start + record.deleteCount)

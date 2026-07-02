@@ -15,7 +15,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import {
   createScopedChildHandle,
-  type IScopeHandle,
+  type ISessionScopeHandle,
   LifecycleScope,
   registerScopedService,
 } from '#/_base/di/scope';
@@ -26,7 +26,8 @@ import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { IBootstrapService } from '#/app/bootstrap';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { ErrorCodes, KimiError } from '#/errors';
-import { IKaos, IKaosFactory } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { createExecContext, execContextSeed } from '#/session/execContext';
 import { ISessionActivity } from '#/session/session-activity';
 import { ISessionIndex } from '#/app/session-index';
 import { IAtomicDocumentStore, IAppendLogStore } from '#/app/storage';
@@ -54,7 +55,7 @@ import {
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
-  private readonly sessions = new Map<string, IScopeHandle>();
+  private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
   readonly onDidCreateSession: Event<SessionCreatedEvent> = this._onDidCreateSession.event;
   private readonly _onDidCloseSession = this._register(new Emitter<SessionClosedEvent>());
@@ -66,12 +67,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   /** In-flight `resume` promises, keyed by session id — de-dupes concurrent
    *  cold loads so a hot read path (e.g. snapshot retry) cannot materialize
    *  the same session twice and leak a handle. */
-  private readonly resuming = new Map<string, Promise<IScopeHandle | undefined>>();
+  private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IKaosFactory private readonly kaosFactory: IKaosFactory,
+    @IHostEnvironment private readonly hostEnv: IHostEnvironment,
     @ISessionIndex private readonly index: ISessionIndex,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
@@ -80,7 +81,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     super();
   }
 
-  async create(opts: CreateSessionOptions): Promise<IScopeHandle> {
+  async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const workspaceId = encodeWorkDirKey(opts.workDir);
     const sessionDir = join(this.bootstrap.sessionsDir, workspaceId, opts.sessionId);
     // Metadata lives at `<sessionDir>/state.json` (shared with v1's layout; the
@@ -94,7 +95,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionDir,
       metaScope,
     };
-    const kaos = await this.kaosFactory.createLocal(opts.workDir);
+    // Wait for the host-environment probe to complete before creating any
+    // Session scope — Session/Agent-scope services (bash, permission policies,
+    // path-access) read `IHostEnvironment.osKind` / `pathClass` / `homeDir`
+    // synchronously in their constructors, so the probe must have landed by
+    // the time the first Session-scoped service is resolved.
+    await this.hostEnv.ready;
+    const execCtx = createExecContext(opts.workDir);
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
@@ -102,10 +109,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       {
         extra: [
           ...sessionContextSeed(ctx),
-          [IKaos, kaos] as const,
+          ...execContextSeed(execCtx),
         ],
       },
-    );
+    ) as ISessionScopeHandle;
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).load();
@@ -113,11 +120,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  get(sessionId: string): IScopeHandle | undefined {
+  get(sessionId: string): ISessionScopeHandle | undefined {
     return this.sessions.get(sessionId);
   }
 
-  resume(sessionId: string): Promise<IScopeHandle | undefined> {
+  resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
     const inflight = this.resuming.get(sessionId);
@@ -127,7 +134,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return promise;
   }
 
-  private async doResume(sessionId: string): Promise<IScopeHandle | undefined> {
+  private async doResume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
     // Re-check after the serialized entry: a prior `resume` for the same id may
     // have already materialized the session while this call was queued.
     const live = this.sessions.get(sessionId);
@@ -151,7 +158,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  list(): readonly IScopeHandle[] {
+  list(): readonly ISessionScopeHandle[] {
     return [...this.sessions.values()];
   }
 
@@ -172,7 +179,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this._onDidArchiveSession.fire({ sessionId });
   }
 
-  async fork(opts: ForkSessionOptions): Promise<IScopeHandle> {
+  async fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
     const sourceId = opts.sourceSessionId;
 
     // 1. Resolve the source: prefer a live handle, otherwise fall back to the
@@ -253,10 +260,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     // log. Creating them registers fresh agent entries with TARGET homedirs.
     for (const agentId of agentIds) {
       const sourceAgent = sourceAgents[agentId]!;
+      const legacy = sourceAgent as { parentAgentId?: string };
       const agentHandle = await target.accessor.get(IAgentLifecycleService).create({
         agentId,
-        type: sourceAgent.type,
-        parentAgentId: sourceAgent.parentAgentId,
+        forkedFrom: sourceAgent.forkedFrom ?? legacy.parentAgentId,
         swarmItem: sourceAgent.swarmItem,
       });
       await agentHandle.accessor.get(IAgentWireRecordService).restore();
@@ -276,7 +283,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
    * sources (flush then read) and closed sources (read the persisted log).
    */
   private async copyAgentWire(args: {
-    readonly sourceHandle: IScopeHandle | undefined;
+    readonly sourceHandle: ISessionScopeHandle | undefined;
     readonly sourceHomedir: string;
     readonly agentId: string;
     readonly targetSessionDir: string;

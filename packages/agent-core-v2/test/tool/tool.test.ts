@@ -235,7 +235,6 @@ describe('Agent tools', () => {
         resume: vi.fn(),
         retry: vi.fn(),
         getProfileName: vi.fn().mockResolvedValue(undefined),
-        markDetached: vi.fn(),
       };
       ctx = createTestAgent(agentToolServices(runOverride));
       profile = ctx.get(IAgentProfileService);

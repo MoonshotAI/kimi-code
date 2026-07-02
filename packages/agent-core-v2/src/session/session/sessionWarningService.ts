@@ -15,7 +15,9 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { IBootstrapService } from '#/app/bootstrap';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { ISessionAgentFileSystem } from '#/session/agentFs';
+import { IExecContext } from '#/session/execContext';
 import { IAgentProfileService, prepareSystemPromptContext } from '#/agent/profile';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 
@@ -28,7 +30,9 @@ export class SessionWarningService implements ISessionWarningService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IKaos private readonly kaos: IKaos,
+    @IHostEnvironment private readonly env: IHostEnvironment,
+    @ISessionAgentFileSystem private readonly fs: ISessionAgentFileSystem,
+    @IExecContext private readonly ctx: IExecContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
@@ -52,9 +56,14 @@ export class SessionWarningService implements ISessionWarningService {
     // No live main agent (or it has not applied a profile yet): recompute on
     // demand so the warning still surfaces for long-lived / resumed sessions.
     try {
-      const context = await prepareSystemPromptContext(this.kaos, this.bootstrap.homeDir, {
-        additionalDirs: this.workspace.additionalDirs,
-      });
+      const context = await prepareSystemPromptContext(
+        { fs: this.fs, homeDir: this.env.homeDir },
+        this.ctx.cwd,
+        this.bootstrap.homeDir,
+        {
+          additionalDirs: this.workspace.additionalDirs,
+        },
+      );
       return context.agentsMdWarning;
     } catch {
       // Best-effort: warning retrieval must not throw to the caller.

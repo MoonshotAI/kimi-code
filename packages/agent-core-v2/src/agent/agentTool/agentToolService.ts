@@ -2,7 +2,7 @@
  * `agentTool` domain (L5) — registers the `Agent` collaboration tool for an agent.
  *
  * Registers the `Agent` tool into the `toolRegistry` so the agent can spawn task
- * subagents, bound to this agent as the parent (`parentAgentId` from the agent
+ * subagents, bound to this agent as the caller (`callerAgentId` from the agent
  * `scopeContext`). The optional first static `runner` argument is a test seam
  * (`AgentToolRunOverride`) that lets tests substitute the `runChildAgent`
  * helpers; the scoped registry supplies none. Bound at Agent scope; reads its
@@ -19,7 +19,7 @@ import { IAgentBackgroundService } from '#/agent/background';
 import { IAgentProfileService } from '#/agent/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
-import { IKaos } from '#/app/kaos';
+import { IExecContext } from '#/session/execContext';
 import { ILogService } from '#/app/log';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import { ISessionProcessRunner } from '#/session/process';
@@ -40,7 +40,7 @@ export class AgentToolService extends Disposable implements IAgentToolService {
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
     @IAgentBackgroundService background: IAgentBackgroundService,
     @IAgentProfileService profile: IAgentProfileService,
-    @IKaos kaos: IKaos,
+    @IExecContext execContext: IExecContext,
     @ISessionProcessRunner processRunner: ISessionProcessRunner,
     @ILogService log?: ILogService,
   ) {
@@ -49,11 +49,11 @@ export class AgentToolService extends Disposable implements IAgentToolService {
       toolRegistry.register(
         new AgentTool({
           lifecycle,
-          parentAgentId: ctx.agentId,
+          callerAgentId: ctx.agentId,
           metadata,
           background,
           profile,
-          cwd: kaos.cwd,
+          cwd: execContext.cwd,
           processRunner,
           log,
           runOverride: runner,

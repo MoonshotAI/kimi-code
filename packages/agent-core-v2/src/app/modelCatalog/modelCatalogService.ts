@@ -28,7 +28,7 @@ import type {
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, KimiError } from '#/errors';
 import { IEventService } from '#/app/event/event';
 import { IModelService, MODELS_SECTION, type ModelAlias } from '#/app/model/model';
@@ -39,7 +39,6 @@ import {
   PROVIDERS_SECTION,
 } from '#/app/provider/provider';
 
-import { MODEL_CATALOG_SECTION, ModelCatalogConfigSchema } from './configSection';
 import {
   type ProviderCredentialState,
   type RefreshProviderModelsOptions,
@@ -61,10 +60,7 @@ export class ModelCatalogService implements IModelCatalogService {
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
-    @IConfigRegistry configRegistry: IConfigRegistry,
-  ) {
-    configRegistry.registerSection(MODEL_CATALOG_SECTION, ModelCatalogConfigSchema);
-  }
+  ) {}
 
   async listModels(): Promise<readonly ModelCatalogItem[]> {
     const models = this.modelService.list();

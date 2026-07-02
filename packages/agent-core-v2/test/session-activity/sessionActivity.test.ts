@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { type IAgentScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle/agentLifecycle';
 import { ISessionInteractionService, type Interaction, type InteractionKind } from '#/session/interaction';
@@ -41,7 +41,7 @@ function makeAccessor(turn: IAgentTurnService): ServicesAccessor {
   };
 }
 
-function handle(id: string, active: boolean): IScopeHandle {
+function handle(id: string, active: boolean): IAgentScopeHandle {
   const turn = makeTurnService(active);
   return {
     id,
@@ -51,14 +51,14 @@ function handle(id: string, active: boolean): IScopeHandle {
   };
 }
 
-function lifecycle(handles: readonly IScopeHandle[]): IAgentLifecycleService {
+function lifecycle(handles: readonly IAgentScopeHandle[]): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
     onDidCreate: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.resolve(handles[0]!),
     createMain: () => Promise.resolve(handles[0]!),
-    fork: () => Promise.resolve(handles[0]!),
+    clone: () => Promise.resolve(handles[0]!),
     getHandle: () => undefined,
     list: () => handles,
     remove: () => Promise.resolve(),

@@ -2,10 +2,10 @@
  * `model` domain (L2) — `IModelService` implementation.
  *
  * Owns the in-memory view of the `models` config section, persists changes
- * through `config`, registers the section schema plus the `KIMI_MODEL_*`
- * effective overlay on construction, and forwards section changes as
- * `onDidChangeModels`. Bound at App scope, eager — registering the `models` section
- * is an early side effect that config reads depend on.
+ * through `config`, registers the `KIMI_MODEL_*` effective overlay on
+ * construction, and forwards section changes as `onDidChangeModels`. The
+ * section schema self-registers at module load via `configSection.ts`. Bound
+ * at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -14,7 +14,6 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 
-import { modelsFromToml, modelsToToml } from './configSection';
 import { kimiModelEnvOverlay } from './envOverlay';
 import {
   type ModelAlias,
@@ -22,7 +21,6 @@ import {
   type ModelsSection,
   IModelService,
   MODELS_SECTION,
-  ModelsSectionSchema,
 } from './model';
 
 export class ModelService extends Disposable implements IModelService {
@@ -35,11 +33,6 @@ export class ModelService extends Disposable implements IModelService {
     @IConfigService private readonly config: IConfigService,
   ) {
     super();
-    registry.registerSection(MODELS_SECTION, ModelsSectionSchema, {
-      defaultValue: {},
-      fromToml: modelsFromToml,
-      toToml: modelsToToml,
-    });
     registry.registerEffectiveOverlay(kimiModelEnvOverlay);
     this._register(
       config.onDidChangeConfiguration((e) => {

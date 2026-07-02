@@ -15,13 +15,11 @@ import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { generateHeroSlug } from "#/_base/utils/hero-slug";
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
 import { IAgentContextInjectorService } from '#/agent/contextInjector';
-import { IAgentEventSinkService } from '#/agent/eventSink';
 import { ISessionAgentFileSystem } from '#/session/agentFs';
 import { IAgentProfileService } from '#/agent/profile';
-import { IAgentReplayBuilderService } from '#/agent/replayBuilder';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService } from '#/agent/record';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import type { ExecutableToolResult } from '#/agent/tool';
 import { EnterPlanModeInputSchema } from '#/agent/plan/tools/enter-plan-mode';
@@ -65,31 +63,36 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @ISessionAgentFileSystem private readonly agentFs: ISessionAgentFileSystem,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentReplayBuilderService private readonly replayBuilder: IAgentReplayBuilderService,
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this._register(
-      wireRecord.register('plan_mode.enter', ({ id }) => {
-        this.restoreEnter({ id });
+      record.define('plan_mode.enter', {
+        resume: ({ id }) => {
+          this.restoreEnter({ id });
+        },
+        toReplay: () => ({ type: 'plan_updated', enabled: true }),
       }),
     );
     this._register(
-      wireRecord.register('plan_mode.cancel', () => {
-        this.replayBuilder.push({ type: 'plan_updated', enabled: false });
-        this.applyInactive();
+      record.define('plan_mode.cancel', {
+        resume: () => {
+          this.applyInactive();
+        },
+        toReplay: () => ({ type: 'plan_updated', enabled: false }),
       }),
     );
     this._register(
-      wireRecord.register('plan_mode.exit', () => {
-        this.replayBuilder.push({ type: 'plan_updated', enabled: false });
-        this.applyInactive();
+      record.define('plan_mode.exit', {
+        resume: () => {
+          this.applyInactive();
+        },
+        toReplay: () => ({ type: 'plan_updated', enabled: false }),
       }),
     );
 
@@ -169,7 +172,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
       const planFilePath = this.planFilePathFor(id);
       this._planFilePath = planFilePath;
       await this.ensurePlanDirectory(planFilePath);
-      this.wireRecord.append({ type: 'plan_mode.enter', id });
+      this.record.append({ type: 'plan_mode.enter', id });
       enterRecorded = true;
       if (createFile) {
         await this.writeEmptyPlanFile(planFilePath);
@@ -187,15 +190,13 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private restoreEnter({ id }: { readonly id: string }): void {
-    this.replayBuilder.push({ type: 'plan_updated', enabled: true });
     this._active = true;
     this.planId = id;
     this._planFilePath = this.planFilePathFor(id);
   }
 
   cancel(id?: string): void {
-    this.wireRecord.append({ type: 'plan_mode.cancel', id });
-    this.replayBuilder.push({ type: 'plan_updated', enabled: false });
+    this.record.append({ type: 'plan_mode.cancel', id });
     this.applyInactive();
     this.emitChanged();
   }
@@ -206,8 +207,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   exit(id?: string): void {
-    this.wireRecord.append({ type: 'plan_mode.exit', id });
-    this.replayBuilder.push({ type: 'plan_updated', enabled: false });
+    this.record.append({ type: 'plan_mode.exit', id });
     this.applyInactive();
     this.emitChanged();
   }
@@ -343,7 +343,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private emitChanged(): void {
-    this.events.emit({ type: 'agent.status.updated', planMode: this._active });
+    this.record.signal({ type: 'agent.status.updated', planMode: this._active });
   }
 
   private trackTelemetry(

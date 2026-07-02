@@ -51,6 +51,8 @@ export interface HttpClientOptions {
   apiPrefix: string;
   fetchImpl: typeof fetch;
   reportDir?: string;
+  /** Optional bearer token — sent as `Authorization: Bearer <token>` when set. */
+  token?: string;
 }
 
 type UploadFileData = Blob | ArrayBuffer | Uint8Array | string;
@@ -69,6 +71,9 @@ export class HttpClient {
   ): Promise<T> {
     const startedAt = Date.now();
     const headers: Record<string, string> = { accept: 'application/json' };
+    if (this.opts.token !== undefined) {
+      headers['authorization'] = `Bearer ${this.opts.token}`;
+    }
     let init: RequestInit;
     if (body !== undefined) {
       headers['content-type'] = 'application/json';

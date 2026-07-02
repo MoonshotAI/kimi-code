@@ -12,7 +12,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { parseBooleanEnv } from '#/_base/utils';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { IConfigService } from '#/app/config/config';
 
 import {
   type ExperimentalFeatureState,
@@ -20,9 +20,6 @@ import {
   type ExperimentalFlagMap,
   type ExperimentalFlagSource,
   EXPERIMENTAL_SECTION,
-  ExperimentalConfigSchema,
-  experimentalFromToml,
-  experimentalToToml,
   IFlagService,
 } from './flag';
 import { type FlagDefinitionInput, type FlagId, IFlagRegistry } from './flagRegistry';
@@ -36,16 +33,11 @@ export class FlagService extends Disposable implements IFlagService {
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IConfigRegistry private readonly configRegistry: IConfigRegistry,
     @IConfigService private readonly config: IConfigService,
     @IFlagRegistry registry: IFlagRegistry,
   ) {
     super();
     this.registry = registry;
-    configRegistry.registerSection(EXPERIMENTAL_SECTION, ExperimentalConfigSchema, {
-      fromToml: experimentalFromToml,
-      toToml: experimentalToToml,
-    });
     this.configOverrides = this.readConfig();
     this._register(
       this.config.onDidChangeConfiguration((e) => {

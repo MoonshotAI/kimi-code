@@ -3,24 +3,23 @@
  *
  * Tracks swarm-mode enter/exit (mirroring it into `wireRecord` and
  * `systemReminder`), auto-exits on turn end, and registers the `AgentSwarm`
- * tool bound to this agent as the parent. Bound at Agent scope; spawns child
- * agents through `agent-lifecycle`, reads its identity through `scopeContext`,
- * and registers the tool through `toolRegistry`.
+ * tool bound to this agent as the caller. Bound at Agent scope; reads its
+ * identity through `scopeContext`, registers the tool through `toolRegistry`,
+ * and delegates batch runs to the Session-scoped `sessionSwarm` service.
  */
 
 import { Disposable } from '#/_base/di';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import { IAgentScopeContext } from '#/agent/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { IAgentTurnService } from '#/agent/turn';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
-import { IAgentLifecycleService } from '#/session/agent-lifecycle';
+import { ISessionSwarmService } from '#/session/swarm';
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
-import { AgentSwarmTool, type AgentSwarmToolHost } from '#/agent/swarm/tools/agent-swarm';
+import { AgentSwarmTool } from '#/agent/swarm/tools/agent-swarm';
 import {
   IAgentSwarmService,
   type SwarmModeTrigger,
@@ -41,24 +40,26 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
   private _active: SwarmModeTrigger | null = null;
 
   constructor(
-    runQueued: AgentSwarmToolHost['runQueued'] | undefined,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentTurnService turnService: IAgentTurnService,
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
-    @IAgentLifecycleService lifecycle: IAgentLifecycleService,
     @IAgentScopeContext ctx: IAgentScopeContext,
+    @ISessionSwarmService swarmService: ISessionSwarmService,
   ) {
     super();
     this._register(
-      wireRecord.register('swarm_mode.enter', (record) => {
-        this.restoreEnter(record.trigger);
+      record.define('swarm_mode.enter', {
+        resume: (r) => {
+          this.restoreEnter(r.trigger);
+        },
       }),
     );
     this._register(
-      wireRecord.register('swarm_mode.exit', () => {
-        this.applyExit(false);
+      record.define('swarm_mode.exit', {
+        resume: () => {
+          this.applyExit(false);
+        },
       }),
     );
     this._register(
@@ -72,20 +73,20 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
     );
     this._register(
       toolRegistry.register(
-        new AgentSwarmTool({ lifecycle, parentAgentId: ctx.agentId, runQueued }, this),
+        new AgentSwarmTool({ swarmService, callerAgentId: ctx.agentId }, this),
       ),
     );
   }
 
   enter(trigger: SwarmModeTrigger): void {
     if (this._active !== null) return;
-    this.wireRecord.append({ type: 'swarm_mode.enter', trigger });
+    this.record.append({ type: 'swarm_mode.enter', trigger });
     this.applyEnter(trigger, true);
   }
 
   exit(): void {
     if (this._active === null) return;
-    this.wireRecord.append({ type: 'swarm_mode.exit' });
+    this.record.append({ type: 'swarm_mode.exit' });
     this.applyExit(true);
   }
 
@@ -124,7 +125,7 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
   }
 
   private emitChanged(): void {
-    this.events.emit({ type: 'agent.status.updated', swarmMode: this.isActive });
+    this.record.signal({ type: 'agent.status.updated', swarmMode: this.isActive });
   }
 }
 

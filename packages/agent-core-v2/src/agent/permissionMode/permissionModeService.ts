@@ -6,11 +6,8 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector';
-import { IAgentEventSinkService } from '#/agent/eventSink';
 import { OrderedHookSlot } from '#/hooks';
-import { IAgentReplayBuilderService } from '#/agent/replayBuilder';
-import type { WireRecord } from '#/agent/wireRecord';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService } from '#/agent/record';
 import { registerPermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { IAgentPermissionModeService } from './permissionMode';
 
@@ -35,15 +32,17 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
   };
 
   constructor(
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
-    @IAgentReplayBuilderService private readonly replayBuilder: IAgentReplayBuilderService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
   ) {
     super();
     this._register(
-      wireRecord.register('permission.set_mode', (record) => {
-        this.applyMode(record);
+      record.define('permission.set_mode', {
+        resume: (r) => {
+          this.applyMode(r.mode);
+        },
+        toLive: (r) => ({ type: 'agent.status.updated', permission: r.mode }),
+        toReplay: (r) => ({ type: 'permission_updated', mode: r.mode }),
       }),
     );
     this._register(
@@ -56,18 +55,13 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
   }
 
   setMode(mode: PermissionMode): void {
-    this.wireRecord.append({ type: 'permission.set_mode', mode });
-    this.applyMode({ type: 'permission.set_mode', mode });
+    this.record.append({ type: 'permission.set_mode', mode });
+    this.applyMode(mode);
   }
 
-  private applyMode(record: WireRecord<'permission.set_mode'>): void {
-    this.replayBuilder.push({ type: 'permission_updated', mode: record.mode });
+  private applyMode(mode: PermissionMode): void {
     const previousMode = this.currentMode;
-    this.currentMode = record.mode;
-    this.events.emit({
-      type: 'agent.status.updated',
-      permission: this.currentMode,
-    });
+    this.currentMode = mode;
     void this.hooks.onChanged.run({ mode: this.currentMode, previousMode });
   }
 }

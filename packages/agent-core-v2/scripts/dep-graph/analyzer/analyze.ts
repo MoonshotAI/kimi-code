@@ -7,7 +7,7 @@
  *  - `ctor`     — constructor DI (`@IToken` param decorators)
  *  - `accessor` — runtime lookups (`<expr>.get(IToken)`)
  *  - `publish`/`subscribe` — `IEventService` usage from a class field
- *  - `emit`/`on`           — `IAgentEventSinkService` usage from a class field
+ *  - `signal`/`append`/`on` — `IAgentRecordService` usage from a class field
  *
  * Deliberately parse-only (no type checker) so the whole tree runs in ~1s.
  * We rely on the codebase convention that constructor DI params carry an
@@ -40,12 +40,13 @@ export const REPO_ROOT = resolve(PKG_ROOT, '..', '..');
 export const SRC_ROOT = join(PKG_ROOT, 'src');
 export const SNAPSHOT_PATH = join(PKG_ROOT, '.local', 'dep-graph.json');
 
-const EVENT_BUS_TOKENS = new Set(['IEventService', 'IAgentEventSinkService']);
+const EVENT_BUS_TOKENS = new Set(['IEventService', 'IAgentRecordService']);
 
 const EVENT_METHOD_KIND: Record<string, EdgeKind> = {
   publish: 'publish',
   subscribe: 'subscribe',
-  emit: 'emit',
+  append: 'emit',
+  signal: 'emit',
   on: 'on',
 };
 
@@ -160,9 +161,36 @@ function pushEdge(
   token: string,
   kind: EdgeKind,
   ref: EdgeRef,
+  /**
+   * When set, resolve `token` from this scope instead of the source service's
+   * scope. Used for `<handle>.accessor.get(IX)` where the handle is statically
+   * known to belong to an inner scope (e.g. an `IAgentScopeHandle`), so the
+   * lookup resolves against that inner scope rather than the source's.
+   */
+  overrideScope?: ServiceScope,
 ): void {
-  const target = resolveFromScope(acc.bindings, token, source.scope);
-  const toId = target ? target.id : `unresolved::${token}`;
+  const target = resolveFromScope(acc.bindings, token, overrideScope ?? source.scope);
+
+  // Classify a miss: the token is either unknown everywhere (genuinely
+  // unresolved) or registered at a scope the resolution scope can't see (a
+  // scope mismatch). The two render differently in the viewer.
+  let toId: string;
+  let extra: Pick<Edge, 'unresolved' | 'scopeMismatch' | 'actualScope'>;
+  if (target) {
+    toId = target.id;
+    extra = {};
+  } else {
+    const scopeMap = acc.bindings.get(token);
+    const actualScope = scopeMap ? innermostScope(scopeMap) : undefined;
+    if (actualScope !== undefined) {
+      toId = `scopeMismatch::${token}`;
+      extra = { scopeMismatch: true as const, actualScope };
+    } else {
+      toId = `unresolved::${token}`;
+      extra = { unresolved: true as const };
+    }
+  }
+
   const key = edgeKey(fromId, toId, kind);
   const existing = acc.edges.get(key);
   if (existing) {
@@ -177,10 +205,23 @@ function pushEdge(
     token,
     kind,
     refs: [ref],
-    ...(target ? {} : { unresolved: true as const }),
+    ...extra,
   };
   acc.edges.set(key, edge);
-  if (!target) acc.unknownRefs.add(token);
+  if (extra.unresolved) acc.unknownRefs.add(token);
+}
+
+function innermostScope(scopeMap: Map<ServiceScope, ServiceNode>): ServiceScope | undefined {
+  let best: ServiceScope | undefined;
+  let bestLevel = -1;
+  for (const s of scopeMap.keys()) {
+    const lvl = SCOPE_LEVEL[s];
+    if (lvl > bestLevel) {
+      bestLevel = lvl;
+      best = s;
+    }
+  }
+  return best;
 }
 
 function sameRef(a: EdgeRef, b: EdgeRef): boolean {
@@ -439,6 +480,251 @@ function chainedMethodName(getCall: CallExpression): string | undefined {
 }
 
 /**
+ * Map scope-typed handle aliases (and the generic `IScopeHandle<LifecycleScope.X>`
+ * form) to their scope. Used to resolve `<handle>.accessor.get(IX)` against the
+ * handle's real scope rather than the source service's scope.
+ */
+const HANDLE_ALIAS_SCOPE: Record<string, ServiceScope> = {
+  IAppScopeHandle: 'App',
+  ISessionScopeHandle: 'Session',
+  IAgentScopeHandle: 'Agent',
+};
+
+const FUNCTION_LIKE_KINDS = new Set<SyntaxKind>([
+  SyntaxKind.MethodDeclaration,
+  SyntaxKind.FunctionDeclaration,
+  SyntaxKind.ArrowFunction,
+  SyntaxKind.FunctionExpression,
+  SyntaxKind.Constructor,
+  SyntaxKind.GetAccessor,
+  SyntaxKind.SetAccessor,
+]);
+
+/** Strip `Promise<...>`, `| undefined` / `| null`, array brackets, `readonly`. */
+function stripTypeWrappers(text: string): string {
+  let t = text.trim();
+  t = t.replace(/\s*\|\s*(undefined|null)\s*/g, '').trim();
+  const promise = /^Promise\s*<\s*(.+?)\s*>$/.exec(t);
+  if (promise) t = promise[1].trim();
+  t = t.replace(/\[\]\s*$/, '').trim();
+  t = t.replace(/^readonly\s+/, '').trim();
+  return t;
+}
+
+function handleScopeFromTypeText(text: string | undefined): ServiceScope | undefined {
+  if (text === undefined) return undefined;
+  const t = stripTypeWrappers(text);
+  const alias = HANDLE_ALIAS_SCOPE[t];
+  if (alias !== undefined) return alias;
+  const generic = /^IScopeHandle\s*<\s*LifecycleScope\.(App|Session|Agent)\s*>$/.exec(t);
+  if (generic) return generic[1] as ServiceScope;
+  return undefined;
+}
+
+/** Nearest function-like ancestor (method / function / arrow / ctor / accessor). */
+function enclosingFunction(node: Node): Node | undefined {
+  let cur: Node | undefined = node.getParent();
+  while (cur) {
+    if (FUNCTION_LIKE_KINDS.has(cur.getKind())) return cur;
+    cur = cur.getParent();
+  }
+  return undefined;
+}
+
+/** Parameters of a function-like node (all such nodes carry `getParameters`). */
+function getParams(fn: Node): ParameterDeclaration[] {
+  return (fn as unknown as { getParameters(): ParameterDeclaration[] }).getParameters();
+}
+
+function isAccessorReceiver(node: Node): boolean {
+  if (node.getKind() !== SyntaxKind.PropertyAccessExpression) return false;
+  return node.asKindOrThrow(SyntaxKind.PropertyAccessExpression).getName() === 'accessor';
+}
+
+/**
+ * Per-interface method → declared return-type text. Lets the analyzer resolve
+ * what `agents.getHandle(...)` returns once it knows `agents: IAgentLifecycleService`.
+ */
+function collectInterfaceMethodReturns(
+  interfacesByName: Map<string, InterfaceDeclaration>,
+): Map<string, Map<string, string>> {
+  const out = new Map<string, Map<string, string>>();
+  for (const [name, iface] of interfacesByName) {
+    const methods = new Map<string, string>();
+    for (const member of iface.getMembers()) {
+      if (member.getKind() === SyntaxKind.MethodSignature) {
+        const m = member.asKindOrThrow(SyntaxKind.MethodSignature);
+        const rt = m.getReturnTypeNode()?.getText();
+        if (rt) methods.set(m.getName(), rt);
+      }
+    }
+    out.set(name, methods);
+  }
+  return out;
+}
+
+/**
+ * Best-effort, parse-only type-text inference for an expression within a
+ * function. Handles just enough to follow scope-typed handles:
+ *  - parameter / variable annotations,
+ *  - `<x>.accessor.get(IToken)` → the token (DI accessor returns its type),
+ *  - `this.method(...)` → the class method's declared return type,
+ *  - `<base>.method(...)` → the interface method's declared return type,
+ *  - `await X` and single-step identifier aliases.
+ * Returns `undefined` when it can't tell — callers fall back to source scope.
+ * `depth` bounds identifier-chasing so we don't loop on aliased locals.
+ */
+function inferExprTypeText(
+  expr: Node,
+  cls: ClassDeclaration,
+  ifaceMethods: Map<string, Map<string, string>>,
+  fn: Node,
+  depth = 0,
+): string | undefined {
+  if (depth > 6) return undefined;
+  const kind = expr.getKind();
+
+  if (kind === SyntaxKind.AwaitExpression) {
+    const inner = (expr as unknown as { getExpression(): Node }).getExpression();
+    return inferExprTypeText(inner, cls, ifaceMethods, fn, depth + 1);
+  }
+
+  if (kind === SyntaxKind.AsExpression || kind === SyntaxKind.NonNullExpression) {
+    const inner = (expr as unknown as { getExpression(): Node }).getExpression();
+    return inferExprTypeText(inner, cls, ifaceMethods, fn, depth + 1);
+  }
+
+  if (kind === SyntaxKind.CallExpression) {
+    const call = expr.asKindOrThrow(SyntaxKind.CallExpression);
+    const callee = call.getExpression();
+    if (callee.getKind() !== SyntaxKind.PropertyAccessExpression) return undefined;
+    const pae = callee.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
+    const methodName = pae.getName();
+    const base = pae.getExpression();
+
+    // `<x>.accessor.get(IToken)` → the DI accessor returns the token's type.
+    if (methodName === 'get' && isAccessorReceiver(base)) {
+      const first = call.getArguments()[0];
+      if (first && first.getKind() === SyntaxKind.Identifier) return first.getText();
+      return undefined;
+    }
+
+    // `this.method(...)` → class method's declared return type.
+    if (base.getKind() === SyntaxKind.ThisKeyword) {
+      return cls.getMethod(methodName)?.getReturnTypeNode()?.getText();
+    }
+
+    // `<base>.method(...)` → resolve base to an interface, look up the method.
+    const baseType = inferExprTypeText(base, cls, ifaceMethods, fn, depth + 1);
+    if (baseType === undefined) return undefined;
+    return ifaceMethods.get(stripTypeWrappers(baseType))?.get(methodName);
+  }
+
+  if (kind === SyntaxKind.Identifier) {
+    return resolveIdentifierTypeText(expr, cls, ifaceMethods, fn, depth + 1);
+  }
+
+  // `this.<field>` → the field's declared type (ctor parameter property or
+  // class property annotation).
+  if (kind === SyntaxKind.PropertyAccessExpression) {
+    const pae = expr.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
+    if (pae.getExpression().getKind() === SyntaxKind.ThisKeyword) {
+      return thisFieldTypeText(cls, pae.getName());
+    }
+    return undefined;
+  }
+
+  // `a ?? b` → either branch's type.
+  if (kind === SyntaxKind.BinaryExpression) {
+    const bin = expr.asKindOrThrow(SyntaxKind.BinaryExpression);
+    if (bin.getOperatorToken().getKind() === SyntaxKind.QuestionQuestionToken) {
+      return (
+        inferExprTypeText(bin.getLeft(), cls, ifaceMethods, fn, depth + 1) ??
+        inferExprTypeText(bin.getRight(), cls, ifaceMethods, fn, depth + 1)
+      );
+    }
+    return undefined;
+  }
+
+  // `cond ? a : b` → either branch's type.
+  if (kind === SyntaxKind.ConditionalExpression) {
+    const cond = expr.asKindOrThrow(SyntaxKind.ConditionalExpression);
+    return (
+      inferExprTypeText(cond.getWhenTrue(), cls, ifaceMethods, fn, depth + 1) ??
+      inferExprTypeText(cond.getWhenFalse(), cls, ifaceMethods, fn, depth + 1)
+    );
+  }
+
+  return undefined;
+}
+
+function thisFieldTypeText(cls: ClassDeclaration, fieldName: string): string | undefined {
+  // Constructor parameter property: `constructor(@IX private readonly foo: IX)`.
+  const ctor = cls.getConstructors()[0];
+  if (ctor) {
+    for (const p of ctor.getParameters()) {
+      if (p.getName() !== fieldName) continue;
+      const t = p.getTypeNode()?.getText();
+      if (t) return t;
+    }
+  }
+  // Class property with an explicit type annotation.
+  return cls.getProperty(fieldName)?.getTypeNode()?.getText();
+}
+
+function resolveIdentifierTypeText(
+  id: Node,
+  cls: ClassDeclaration,
+  ifaceMethods: Map<string, Map<string, string>>,
+  fn: Node,
+  depth: number,
+): string | undefined {
+  const name = id.getText();
+
+  for (const p of getParams(fn)) {
+    if (p.getName() === name) {
+      const t = p.getTypeNode()?.getText();
+      if (t) return t;
+    }
+  }
+
+  const decls = fn.getDescendantsOfKind(SyntaxKind.VariableDeclaration);
+  for (const decl of decls) {
+    if (decl.getName() !== name) continue;
+    if (decl.getStart() > id.getStart()) continue;
+    const annotated = decl.getTypeNode()?.getText();
+    if (annotated) return annotated;
+    const init = decl.getInitializer();
+    if (init) {
+      const inferred = inferExprTypeText(init, cls, ifaceMethods, fn, depth + 1);
+      if (inferred) return inferred;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * For a `<obj>.accessor.get(IX)` call, return the scope of the handle `<obj>`
+ * when it can be inferred from a scope-typed handle alias. Returns `undefined`
+ * for the scope-agnostic cases (base `IScopeHandle`, unions, injected
+ * accessors) so the caller keeps the default source-scope resolution.
+ */
+function inferAccessorScope(
+  getCall: CallExpression,
+  cls: ClassDeclaration,
+  ifaceMethods: Map<string, Map<string, string>>,
+): ServiceScope | undefined {
+  const getExpr = getCall.getExpression();
+  if (getExpr.getKind() !== SyntaxKind.PropertyAccessExpression) return undefined;
+  const receiver = getExpr.asKindOrThrow(SyntaxKind.PropertyAccessExpression).getExpression();
+  if (!isAccessorReceiver(receiver)) return undefined;
+  const obj = receiver.asKindOrThrow(SyntaxKind.PropertyAccessExpression).getExpression();
+  const fn = enclosingFunction(getCall);
+  if (fn === undefined) return undefined;
+  return handleScopeFromTypeText(inferExprTypeText(obj, cls, ifaceMethods, fn));
+}
+
+/**
  * Pass 2 — for a given impl class, walk method bodies and detect:
  *   - `<expr>.get(IToken)[.method(...)]` → accessor edge (with optional `toMethod`)
  *   - `this.<injectedField>.<method>(...)` → attach method info to the ctor
@@ -450,6 +736,7 @@ function collectRuntimeEdges(
   source: ServiceNode,
   injectedFields: Map<string, string>,
   acc: EdgeAccumulator,
+  ifaceMethods: Map<string, Map<string, string>>,
 ): void {
   const filePath = relFromRepo(cls.getSourceFile().getFilePath());
 
@@ -476,7 +763,11 @@ function collectRuntimeEdges(
       const toMethod = chainedMethodName(call);
       const ref: EdgeRef = { ...baseRef };
       if (toMethod !== undefined) ref.toMethod = toMethod;
-      pushEdge(acc, source.id, source, tokenName, 'accessor', ref);
+      // If this is `<handle>.accessor.get(IX)` and the handle's scope is
+      // statically known (e.g. `agent: IAgentScopeHandle`), resolve IX against
+      // that scope instead of the source service's scope.
+      const accessorScope = inferAccessorScope(call, cls, ifaceMethods);
+      pushEdge(acc, source.id, source, tokenName, 'accessor', ref, accessorScope);
       continue;
     }
 
@@ -542,6 +833,7 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
 
   const { services, implClasses, bindings } = collectServices(sourceFiles);
   const interfacesByName = collectInterfaces(sourceFiles);
+  const ifaceMethods = collectInterfaceMethodReturns(interfacesByName);
 
   // Seed the framework tokens as synthetic nodes so edges to them resolve
   // like any other registered service. They are marked domain=`framework`
@@ -630,7 +922,7 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
       if (dep.token === svc.token) continue;
       pushEdge(acc, svc.id, svc, dep.token, 'ctor', { file: filePath, line: dep.line });
     }
-    collectRuntimeEdges(cls, svc, injectedFields, acc);
+    collectRuntimeEdges(cls, svc, injectedFields, acc, ifaceMethods);
   }
 
   // Synthesise interface-only nodes for tokens referenced by edges but with no
@@ -671,6 +963,35 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
       file: '',
       line: 0,
       unresolved: true,
+    };
+    const iface = interfacesByName.get(token);
+    if (iface) {
+      const members = collectInterfaceMembers(iface);
+      if (members.length > 0) node.publicMembers = members;
+    }
+    services.push(node);
+  }
+
+  // Synthesise scope-mismatch nodes: tokens that ARE registered but referenced
+  // from a scope that can't see them. Placed at the token's real registered
+  // scope (from `actualScope`) and flagged so the viewer styles them apart
+  // from genuinely missing implementations.
+  const mismatchTokens = new Map<string, ServiceScope>();
+  for (const edge of acc.edges.values()) {
+    if (!edge.scopeMismatch || edge.actualScope === undefined) continue;
+    if (!mismatchTokens.has(edge.token)) mismatchTokens.set(edge.token, edge.actualScope);
+  }
+  for (const [token, scope] of mismatchTokens) {
+    const registered = acc.bindings.get(token)?.get(scope);
+    const node: ServiceNode = {
+      id: `scopeMismatch::${token}`,
+      token,
+      impl: token,
+      scope,
+      domain: registered?.domain ?? 'unknown',
+      file: '',
+      line: 0,
+      scopeMismatch: true,
     };
     const iface = interfacesByName.get(token);
     if (iface) {

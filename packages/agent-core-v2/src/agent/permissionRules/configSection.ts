@@ -5,13 +5,14 @@
  * Owns the `[permission]` configuration section (the persisted permission
  * rules), including the snake_case ↔ camelCase TOML transforms that reshape the
  * on-disk `deny` / `allow` / `ask` lists and the `tool`/`match` shorthand into
- * the in-memory `rules` array. Registered into `IConfigRegistry` by
- * `AgentPermissionRulesService` on construction, so the `config` domain never
- * imports this domain's types.
+ * the in-memory `rules` array. Self-registered at module load via
+ * `registerConfigSection`, so the `config` domain never imports this domain's
+ * types.
  */
 
 import { z } from 'zod';
 
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
   cloneRecord,
   isPlainObject,
@@ -116,3 +117,8 @@ export const permissionToToml = (value: unknown, rawSnake: unknown): unknown => 
   }
   return out;
 };
+
+registerConfigSection(PERMISSION_SECTION, PermissionConfigSchema, {
+  fromToml: permissionFromToml,
+  toToml: permissionToToml,
+});

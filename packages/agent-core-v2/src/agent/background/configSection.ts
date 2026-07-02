@@ -2,11 +2,13 @@
  * `background` domain (L5) — `background` config-section schema.
  *
  * Owns the `[background]` configuration section (background-task limits and
- * lifecycle tuning). Registered into `IConfigRegistry` by `AgentBackgroundService`
- * on construction, so the `config` domain never imports this domain's types.
+ * lifecycle tuning). Self-registered at module load via `registerConfigSection`,
+ * so the `config` domain never imports this domain's types.
  */
 
 import { z } from 'zod';
+
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 
 export const BACKGROUND_SECTION = 'background';
 
@@ -18,3 +20,5 @@ export const BackgroundConfigSchema = z.object({
 });
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
+
+registerConfigSection(BACKGROUND_SECTION, BackgroundConfigSchema);

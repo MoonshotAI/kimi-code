@@ -57,7 +57,7 @@ describe('Cron — session E2E (P1.9)', () => {
     vi.stubEnv('KIMI_CRON_NO_JITTER', '1');
     vi.stubEnv('KIMI_CRON_POLL_INTERVAL_MS', '0');
     harness = createClocks();
-    ctx = createTestAgent(cronServices({}));
+    ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
     cron = ctx.get(IAgentCronService);
     prompt = ctx.get(IAgentPromptService);
     cron.start();

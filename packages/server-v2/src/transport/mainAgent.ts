@@ -7,7 +7,11 @@
  * missing main agent is created instead of reported as `agent.not_found`.
  */
 
-import { IAgentLifecycleService, type IScopeHandle } from '@moonshot-ai/agent-core-v2';
+import {
+  IAgentLifecycleService,
+  type IAgentScopeHandle,
+  type ISessionScopeHandle,
+} from '@moonshot-ai/agent-core-v2';
 
 export const MAIN_AGENT_ID = 'main';
 
@@ -15,7 +19,7 @@ export const MAIN_AGENT_ID = 'main';
  * Return the session's main agent, creating it on demand when it does not
  * exist yet.
  */
-export async function ensureMainAgent(session: IScopeHandle): Promise<IScopeHandle> {
+export async function ensureMainAgent(session: ISessionScopeHandle): Promise<IAgentScopeHandle> {
   const agents = session.accessor.get(IAgentLifecycleService);
   const existing = agents.getHandle(MAIN_AGENT_ID);
   if (existing !== undefined) return existing;

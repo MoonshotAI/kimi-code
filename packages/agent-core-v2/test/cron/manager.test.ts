@@ -107,7 +107,7 @@ describe('AgentCronService', () => {
 
   describe('construction', () => {
     beforeEach(() => {
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
     });
 
@@ -140,7 +140,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
       telemetry = ctx.get(ITelemetryService);
@@ -212,7 +212,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
       telemetry = ctx.get(ITelemetryService);
@@ -257,7 +257,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
     });
 
@@ -312,7 +312,7 @@ describe('AgentCronService', () => {
     beforeEach(() => {
       vi.stubEnv('KIMI_CRON_NO_STALE', '1');
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
     });
 
@@ -332,7 +332,7 @@ describe('AgentCronService', () => {
     beforeEach(() => {
       vi.spyOn(Date, 'now').mockReturnValue(Number.NaN);
       ctx = createTestAgent(
-        cronServices({}),
+        cronServices({ _serviceBrand: undefined, agentId: 'main' }),
       );
       cron = ctx.get(IAgentCronService);
     });
@@ -356,7 +356,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
       telemetry = ctx.get(ITelemetryService);
@@ -424,7 +424,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
       telemetry = ctx.get(ITelemetryService);
@@ -451,7 +451,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
       telemetry = ctx.get(ITelemetryService);
@@ -494,7 +494,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
       steerCalls = createSteerSpy(prompt);
@@ -518,7 +518,7 @@ describe('AgentCronService', () => {
     let telemetryRecords: TelemetryRecord[];
 
     beforeEach(() => {
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
       telemetry = ctx.get(ITelemetryService);
@@ -573,7 +573,7 @@ describe('AgentCronService', () => {
 
     beforeEach(() => {
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
     });

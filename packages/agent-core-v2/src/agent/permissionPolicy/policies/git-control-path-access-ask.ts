@@ -1,6 +1,6 @@
 import type { ResolvedToolExecutionHookContext } from '#/agent/tool';
-import { IKaos } from '#/app/kaos';
-import type { IKaos as KaosService } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import type { IHostEnvironment as HostEnvironment } from '#/app/hostEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext';
 import type {
@@ -18,7 +18,7 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
   readonly name = 'git-control-path-access-ask';
 
   constructor(
-    @IKaos private readonly kaos: KaosService,
+    @IHostEnvironment private readonly env: HostEnvironment,
     @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
   ) {}
 
@@ -27,7 +27,7 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
   ): Promise<PermissionPolicyResult | undefined> {
     const cwd = this.workspace.workDir;
     if (cwd.length === 0) return undefined;
-    const pathClass = this.kaos.pathClass();
+    const pathClass = this.env.pathClass;
     const accesses = fileAccesses(context);
     if (accesses.length === 0) return undefined;
 

@@ -1,4 +1,3 @@
-import type { Environment } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig, ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -7,13 +6,17 @@ import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord';
 import { createTestAgent, type TestAgentContext } from '../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../harness/snapshots';
 
-const TEST_OS_ENV: Environment = {
+// Historical `osEnv` shape carried by `useProfile` context — the test only
+// exercises the profile-service pass-through; the exact fields don't matter to
+// the assertions, so we keep a minimal literal instead of importing an
+// external type.
+const TEST_OS_ENV = {
   osKind: 'Linux',
   osArch: 'x86_64',
   osVersion: 'test',
   shellName: 'bash',
   shellPath: '/bin/bash',
-};
+} as const;
 
 describe('Agent config', () => {
   let ctx: TestAgentContext;

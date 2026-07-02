@@ -7,13 +7,13 @@
  *
  * WS event fan-out (sequencing, journaling, replay, per-connection dispatch)
  * is a transport concern and lives in the edge package (`packages/server-v2`)
- * on top of `IEventService` + `IAgentEventSinkService` — not here.
+ * on top of `IEventService` + `IAgentRecordService` — not here.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
-import { type IScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle/agentLifecycle';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import { ILogService, ISessionLogService } from '#/app/log';
 import { IAgentPromptService } from '#/agent/prompt';
 import { ISessionLifecycleService } from '#/app/session-lifecycle';
@@ -29,7 +29,7 @@ export class RestGateway implements IRestGateway {
     @ILogService private readonly log: ILogService,
   ) {}
 
-  private agent(sessionId: string, agentId: string): IScopeHandle {
+  private agent(sessionId: string, agentId: string): IAgentScopeHandle {
     const session = this.sessions.get(sessionId);
     if (session === undefined) throw new Error(`unknown session '${sessionId}'`);
     const agents = session.accessor.get(IAgentLifecycleService);
@@ -92,7 +92,7 @@ export class WSGateway implements IWSGateway {
 
   constructor(
     @ISessionLifecycleService _sessions: ISessionLifecycleService,
-    @IAgentEventSinkService _event: IAgentEventSinkService,
+    @IAgentRecordService _record: IAgentRecordService,
   ) {}
 
   connect(connectionId: string): void {

@@ -10,9 +10,8 @@
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
-import { type IScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle';
-import { IAuthSummaryService } from '#/app/auth';
 import { IAgentContextMemoryService, toProtocolMessage, type ContextMessage } from '#/agent/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize';
 import { ErrorCodes, isKimiError, KimiError } from '#/errors';
@@ -37,7 +36,6 @@ import type {
   ForkSessionRequest,
   SessionAbortResponse,
   SessionStatusResponse,
-  StartBtwSessionResponse,
   UndoSessionRequest,
   UndoSessionResponse,
 } from '@moonshot-ai/protocol';
@@ -73,7 +71,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
     @ISessionIndex private readonly index: ISessionIndex,
     @IWorkspaceRegistry private readonly workspaceRegistry: IWorkspaceRegistry,
-    @IAuthSummaryService private readonly auth: IAuthSummaryService,
   ) {}
 
   async fork(sessionId: string, body: ForkSessionRequest): Promise<SessionWireFields> {
@@ -222,16 +219,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     return { aborted: true };
   }
 
-  async startBtw(sessionId: string): Promise<StartBtwSessionResponse> {
-    if (this.lifecycle.get(sessionId) === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
-    }
-    await this.auth.ensureReady();
-    const agent = await this.resolveMainAgent(sessionId);
-    const agentId = await agent.accessor.get(IAgentRPCService).startBtw({});
-    return { agent_id: agentId };
-  }
-
   async archive(sessionId: string): Promise<ArchiveSessionResponse> {
     // Native `ISessionLifecycleService.archive` is a no-op for sessions that
     // are not live, so gate on the live handle (matches the previous route
@@ -278,7 +265,7 @@ export class SessionLegacyService implements ISessionLegacyService {
    * Resolve the session's main agent, creating it on demand (mirrors v1's
    * `resumeSession` + the server-v2 `ensureMainAgent` helper).
    */
-  private async resolveMainAgent(sessionId: string): Promise<IScopeHandle> {
+  private async resolveMainAgent(sessionId: string): Promise<IAgentScopeHandle> {
     const session = this.lifecycle.get(sessionId);
     if (session === undefined) {
       throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
@@ -289,7 +276,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     return agents.createMain();
   }
 
-  private async assembleStatus(sessionId: string, agent: IScopeHandle): Promise<SessionStatusResponse> {
+  private async assembleStatus(sessionId: string, agent: IAgentScopeHandle): Promise<SessionStatusResponse> {
     const session = this.lifecycle.get(sessionId);
     const profile = agent.accessor.get(IAgentProfileService);
     const contextSize = agent.accessor.get(IAgentContextSizeService);

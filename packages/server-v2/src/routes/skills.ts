@@ -52,7 +52,7 @@ import {
   ISessionLifecycleService,
   ISessionSkillCatalog,
   isKimiError,
-  type IScopeHandle,
+  type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -98,7 +98,7 @@ const skillTailParamsSchema = z.object({
 });
 
 type ResolvedSession =
-  | { readonly handle: IScopeHandle }
+  | { readonly handle: ISessionScopeHandle }
   | { readonly envelope: ReturnType<typeof errEnvelope> };
 
 /**

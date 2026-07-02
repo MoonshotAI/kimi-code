@@ -26,7 +26,7 @@ import {
   ReadInputSchema,
   ReadTool,
 } from '#/agent/fileTools/tools/read';
-import type { IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 
 const signal = new AbortController().signal;
@@ -60,11 +60,18 @@ function toolContentString(result: ExecutableToolResult): string {
   return c;
 }
 
-function createTestKaos(home = '/home'): IKaos {
+function createTestEnv(home = '/home'): IHostEnvironment {
   return {
-    pathClass: () => 'posix',
-    gethome: () => home,
-  } as unknown as IKaos;
+    _serviceBrand: undefined,
+    osKind: 'Linux',
+    osArch: 'x86_64',
+    osVersion: 'test',
+    shellName: 'bash',
+    shellPath: '/bin/bash',
+    pathClass: 'posix',
+    homeDir: home,
+    ready: Promise.resolve(),
+  };
 }
 
 /**
@@ -130,7 +137,7 @@ function createSpiedMapFs(files: Record<string, FakeFile>) {
 }
 
 function toolWithContent(content: string, workspace: WorkspaceConfig = PERMISSIVE_WORKSPACE) {
-  return new ReadTool(createSpiedFs(content).fs, createTestKaos(), workspace);
+  return new ReadTool(createSpiedFs(content).fs, createTestEnv(), workspace);
 }
 
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
@@ -298,7 +305,7 @@ describe('ReadTool', () => {
 
   it('rejects relative traversal before reading', async () => {
     const { fs, readText } = createSpiedFs('secret');
-    const tool = new ReadTool(fs, createTestKaos(), {
+    const tool = new ReadTool(fs, createTestEnv(), {
       workspaceDir: '/workspace/project',
       additionalDirs: [],
     });
@@ -312,7 +319,7 @@ describe('ReadTool', () => {
 
   it('allows explicit absolute paths outside the workspace', async () => {
     const { fs, readBytes, readLines } = createSpiedFs('external');
-    const tool = new ReadTool(fs, createTestKaos(), {
+    const tool = new ReadTool(fs, createTestEnv(), {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
@@ -331,7 +338,7 @@ describe('ReadTool', () => {
 
   it('returns a friendly error for missing files before sniffing bytes', async () => {
     const { fs, readBytes, readLines } = createSpiedMapFs({});
-    const tool = new ReadTool(fs, createTestKaos(), {
+    const tool = new ReadTool(fs, createTestEnv(), {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
@@ -350,7 +357,7 @@ describe('ReadTool', () => {
     const { fs, readBytes, readLines } = createSpiedMapFs({
       '/workspace/src': { bytes: Buffer.alloc(0), isFile: false, isDirectory: true },
     });
-    const tool = new ReadTool(fs, createTestKaos(), {
+    const tool = new ReadTool(fs, createTestEnv(), {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
@@ -367,7 +374,7 @@ describe('ReadTool', () => {
 
   it('expands leading tilde paths using the kaos home directory', async () => {
     const { fs, readBytes, readLines } = createSpiedFs('home note');
-    const tool = new ReadTool(fs, createTestKaos('/home/test'), {
+    const tool = new ReadTool(fs, createTestEnv('/home/test'), {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
@@ -386,7 +393,7 @@ describe('ReadTool', () => {
 
   it('blocks sensitive files independently from workspace access', async () => {
     const { fs, readText } = createSpiedFs('SECRET=value');
-    const tool = new ReadTool(fs, createTestKaos(), {
+    const tool = new ReadTool(fs, createTestEnv(), {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });
@@ -403,7 +410,7 @@ describe('ReadTool', () => {
     const { fs, readText } = createSpiedMapFs({
       '/tmp/sample.png': { bytes: pngHeader },
     });
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/sample.png' });
     const output = toolContentString(result);
@@ -422,7 +429,7 @@ describe('ReadTool', () => {
     const { fs, readText } = createSpiedMapFs({
       '/tmp/fake.png': { bytes: plainText },
     });
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/fake.png' });
     const output = toolContentString(result);
@@ -439,7 +446,7 @@ describe('ReadTool', () => {
     const { fs, readText } = createSpiedMapFs({
       '/tmp/sample': { bytes: pngHeader },
     });
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/sample' });
     const output = toolContentString(result);
@@ -460,7 +467,7 @@ describe('ReadTool', () => {
     const { fs, readText } = createSpiedMapFs({
       '/tmp/sample.mp4': { bytes: mp4Header },
     });
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/sample.mp4' });
     const output = toolContentString(result);
@@ -476,7 +483,7 @@ describe('ReadTool', () => {
     const { fs, readText } = createSpiedMapFs({
       '/tmp/blob.bin': { bytes: header },
     });
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/blob.bin' });
     const output = toolContentString(result);
@@ -500,7 +507,7 @@ describe('ReadTool', () => {
         },
       },
     });
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/blob-with-late-nul' });
     const output = toolContentString(result);
@@ -528,7 +535,7 @@ describe('ReadTool', () => {
         },
       },
     });
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/not-utf8.txt' });
     const output = toolContentString(result);
@@ -588,7 +595,7 @@ describe('ReadTool', () => {
     );
     const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: bytes.length }));
     const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as ISessionAgentFileSystem;
-    const tool = new ReadTool(fs, createTestKaos(), PERMISSIVE_WORKSPACE);
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/large.txt' });
     const output = toolContentString(result);
@@ -665,7 +672,7 @@ describe('ReadTool', () => {
 
   it('reads files inside additional_dirs via absolute path', async () => {
     const { fs } = createSpiedFs('extra-dir note');
-    const tool = new ReadTool(fs, createTestKaos(), {
+    const tool = new ReadTool(fs, createTestEnv(), {
       workspaceDir: '/workspace',
       additionalDirs: ['/extra'],
     });
@@ -678,7 +685,7 @@ describe('ReadTool', () => {
 
   it('reports nonexistent files with the expected does-not-exist phrasing', async () => {
     const { fs } = createSpiedMapFs({});
-    const tool = new ReadTool(fs, createTestKaos(), {
+    const tool = new ReadTool(fs, createTestEnv(), {
       workspaceDir: '/workspace',
       additionalDirs: [],
     });

@@ -2,11 +2,12 @@
  * `model` domain (L2) — `models` config-section TOML transforms.
  *
  * Snake_case ↔ camelCase transforms that preserve user-defined alias names
- * (record keys) while converting each alias's fields. Registered into
- * `IConfigRegistry` by `ModelService` on construction, so the `config` domain
- * never imports this domain's types.
+ * (record keys) while converting each alias's fields. Self-registered at module
+ * load via `registerConfigSection`, so the `config` domain never imports this
+ * domain's types.
  */
 
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
   camelToSnake,
   cloneRecord,
@@ -14,6 +15,8 @@ import {
   setDefined,
   transformPlainObject,
 } from '#/app/config/toml';
+
+import { MODELS_SECTION, ModelsSectionSchema } from './model';
 
 /** Read transform: preserve alias names; camelCase each alias's fields. */
 export const modelsFromToml = (rawSnake: unknown): unknown => {
@@ -47,4 +50,10 @@ export const modelsToToml = (value: unknown, rawSnake: unknown): unknown => {
     out[alias] = { ...rawEntry, ...converted };
   }
   return out;
-};
+}
+
+registerConfigSection(MODELS_SECTION, ModelsSectionSchema, {
+  defaultValue: {},
+  fromToml: modelsFromToml,
+  toToml: modelsToToml,
+});;

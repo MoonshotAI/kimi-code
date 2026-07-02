@@ -14,7 +14,7 @@
 import type { Message, PageResponse } from '@moonshot-ai/protocol';
 
 import { InstantiationType } from '#/_base/di/extensions';
-import { type IScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle';
 import {
   IAgentContextMemoryService,
@@ -125,7 +125,7 @@ export class MessageLegacyService implements IMessageLegacyService {
    * Returns `undefined` only when a cold session's workspace is gone and the
    * session directory cannot be reconstructed (mirrors the `fork` limitation).
    */
-  private async resolveMainAgent(sessionId: string): Promise<IScopeHandle | undefined> {
+  private async resolveMainAgent(sessionId: string): Promise<IAgentScopeHandle | undefined> {
     const session = await this.lifecycle.resume(sessionId);
     if (session === undefined) return undefined;
     const agents = session.accessor.get(IAgentLifecycleService);

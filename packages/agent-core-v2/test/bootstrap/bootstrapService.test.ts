@@ -42,17 +42,6 @@ describe('BootstrapService (scoped)', () => {
     expect(svc.getEnv('MISSING')).toBeUndefined();
     host.dispose();
   });
-
-  it('detect() returns a cached OS/shell probe', async () => {
-    const host = createScopedTestHost(bootstrapSeed({ homeDir: '/tmp/kimi-home' }));
-    const svc = host.app.accessor.get(IBootstrapService);
-    const a = await svc.detect();
-    const b = await svc.detect();
-    expect(a).toBe(b);
-    expect(typeof a.osKind).toBe('string');
-    expect(typeof a.shellPath).toBe('string');
-    host.dispose();
-  });
 });
 
 describe('resolveBootstrapOptions', () => {

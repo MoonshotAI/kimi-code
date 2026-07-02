@@ -12,7 +12,7 @@ import type {
 import { ISessionInteractionService } from '#/session/interaction';
 import { IAgentProfileService } from '#/agent/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService } from '#/agent/record';
 import {
   IAgentUserToolService,
   type UserToolRegistration,
@@ -44,29 +44,33 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
   constructor(
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
+    @IAgentRecordService private readonly records: IAgentRecordService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
   ) {
     super();
     this._register(
-      wireRecord.register('tools.register_user_tool', (record) => {
-        this.applyRegister(record);
+      records.define('tools.register_user_tool', {
+        resume: (r) => {
+          this.applyRegister(r);
+        },
       }),
     );
     this._register(
-      wireRecord.register('tools.unregister_user_tool', (record) => {
-        this.applyUnregister(record.name);
+      records.define('tools.unregister_user_tool', {
+        resume: (r) => {
+          this.applyUnregister(r.name);
+        },
       }),
     );
   }
 
   register(input: UserToolRegistration): void {
-    this.wireRecord.append({ type: 'tools.register_user_tool', ...input });
+    this.records.append({ type: 'tools.register_user_tool', ...input });
     this.applyRegister(input);
   }
 
   unregister(name: string): void {
-    this.wireRecord.append({ type: 'tools.unregister_user_tool', name });
+    this.records.append({ type: 'tools.unregister_user_tool', name });
     this.applyUnregister(name);
   }
 

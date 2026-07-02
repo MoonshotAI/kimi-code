@@ -4,12 +4,11 @@ import { toKimiErrorPayload, type KimiErrorPayload } from "#/errors";
 import { isUserCancellation } from "#/_base/utils/abort";
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory';
 import { IAgentContextMemoryService, USER_PROMPT_ORIGIN } from '#/agent/contextMemory';
-import { IAgentEventSinkService } from '#/agent/eventSink';
 import { IAgentExternalHooksService } from '#/agent/externalHooks';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentLoopService, type TurnResult as LoopTurnResult } from '#/agent/loop';
 import { ITelemetryService } from '#/app/telemetry';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService } from '#/agent/record';
 import type {
   Turn,
   TurnEndedContext,
@@ -45,14 +44,15 @@ export class AgentTurnService implements IAgentTurnService {
 
   constructor(
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentExternalHooksService private readonly externalHooks: IAgentExternalHooksService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
-    wireRecord.register('turn.launch', (record) => {
-      this.restoreLaunch(record.turnId);
+    record.define('turn.launch', {
+      resume: (r) => {
+        this.restoreLaunch(r.turnId);
+      },
     });
     this.loop.hooks.beforeStep.register(
       'turn-ready-before-step',
@@ -64,7 +64,7 @@ export class AgentTurnService implements IAgentTurnService {
         }
       },
     );
-    this.events.on((event) => {
+    this.record.on((event) => {
       if (event.type === 'agent.status.updated' && event.planMode !== undefined) {
         this.planModeActive = event.planMode;
         return;
@@ -87,7 +87,7 @@ export class AgentTurnService implements IAgentTurnService {
     this.lastEndedReasonValue = undefined;
 
     const turnId = this.nextTurnId;
-    this.wireRecord.append({ type: 'turn.launch', turnId, origin, promptMessageId });
+    this.record.append({ type: 'turn.launch', turnId, origin, promptMessageId });
     this.restoreLaunch(turnId);
     const abortController = new AbortController();
     const ready = createControlledPromise<void>();
@@ -121,7 +121,7 @@ export class AgentTurnService implements IAgentTurnService {
     let result: TurnResult | undefined;
     try {
       this.telemetry.track('turn_started', { mode: telemetryMode });
-      this.events.emit({
+      this.record.signal({
         type: 'turn.started',
         turnId: turn.id,
         origin,
@@ -163,9 +163,9 @@ export class AgentTurnService implements IAgentTurnService {
         ) {
           this.externalHooks.triggerInterrupt({ turnId: turn.id, reason: 'cancelled' });
         }
-        this.events.emit(ended);
+        this.record.signal(ended);
         if (ended.error !== undefined) {
-          this.events.emit({ type: 'error', ...ended.error });
+          this.record.signal({ type: 'error', ...ended.error });
         }
         if (ended.reason !== 'completed') {
           this.trackTurnInterrupted(turn.id, 0);
@@ -210,7 +210,7 @@ export class AgentTurnService implements IAgentTurnService {
         toolCalls: [],
         origin: { kind: 'hook_result', event: hookResult.event, blocked: true },
       });
-      this.events.emit({
+      this.record.signal({
         type: 'hook.result',
         turnId: turn.id,
         hookEvent: hookResult.event,
@@ -227,7 +227,7 @@ export class AgentTurnService implements IAgentTurnService {
         toolCalls: [],
         origin: { kind: 'hook_result', event: hookResult.event },
       });
-      this.events.emit({
+      this.record.signal({
         type: 'hook.result',
         turnId: turn.id,
         hookEvent: hookResult.event,

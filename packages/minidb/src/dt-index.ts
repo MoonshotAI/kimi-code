@@ -80,6 +80,17 @@ export class DtIndex {
     return c.list.range(opts).map((n: RangeEntry<number, string>) => ({ key: n.val, value: n.key }));
   }
 
+  /** Lazy range over a dt column; yields { key: recordKey, value: ts } like
+   *  range() but lets the caller stop early without materializing everything. */
+  *iterate(
+    col: string,
+    opts: Parameters<SkipList<number, string>['iterate']>[0] = {},
+  ): Generator<DtRangeEntry> {
+    const c = this.cols.get(col);
+    if (!c) return;
+    for (const n of c.list.iterate(opts)) yield { key: n.val, value: n.key };
+  }
+
   columns(): string[] {
     return [...this.cols.keys()];
   }

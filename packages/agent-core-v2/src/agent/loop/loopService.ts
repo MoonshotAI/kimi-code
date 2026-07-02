@@ -6,7 +6,7 @@ import {
   type ContextMessage,
 } from '#/agent/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IAgentRecordService } from '#/agent/record';
 import { IAgentExternalHooksService } from '#/agent/externalHooks';
 import {
   IAgentLLMRequesterService,
@@ -15,7 +15,7 @@ import {
 import { IAgentProfileService } from '#/agent/profile';
 import type { ToolResult } from '#/agent/tool';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
-import { IConfigRegistry, IConfigService } from '#/app/config';
+import { IConfigService } from '#/app/config';
 import { ILogService } from '#/app/log';
 import { ErrorCodes, isKimiError } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
@@ -30,13 +30,7 @@ import {
 } from '@moonshot-ai/kosong';
 import type { AgentEvent } from '@moonshot-ai/protocol';
 import { randomUUID } from 'node:crypto';
-import {
-  LOOP_CONTROL_SECTION,
-  LoopControlSchema,
-  loopControlFromToml,
-  loopControlToToml,
-  type LoopControl,
-} from './configSection';
+import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
   errorMessage,
@@ -71,19 +65,13 @@ export class AgentLoopService implements IAgentLoopService {
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentExternalHooksService private readonly externalHooks: IAgentExternalHooksService,
-    @IConfigRegistry configRegistry: IConfigRegistry,
     @IConfigService private readonly config: IConfigService,
     @ILogService private readonly log: ILogService,
-  ) {
-    configRegistry.registerSection(LOOP_CONTROL_SECTION, LoopControlSchema, {
-      fromToml: loopControlFromToml,
-      toToml: loopControlToToml,
-    });
-  }
+  ) {}
 
   async runTurn(
     turnId: number,
@@ -174,7 +162,7 @@ export class AgentLoopService implements IAgentLoopService {
     const stepUuid = randomUUID();
     const turnStep = `${turnId}.${String(currentStep)}`;
     const emit = (event: AgentEvent): void => {
-      this.events.emit(event);
+      this.record.signal(event);
     };
 
     emit({ type: 'turn.step.started', turnId, step: currentStep, stepId: stepUuid });
@@ -301,10 +289,10 @@ export class AgentLoopService implements IAgentLoopService {
   ): void {
     switch (part.type) {
       case 'text':
-        this.events.emit({ type: 'assistant.delta', turnId, delta: part.text });
+        this.record.signal({ type: 'assistant.delta', turnId, delta: part.text });
         return;
       case 'think':
-        this.events.emit({ type: 'thinking.delta', turnId, delta: part.think });
+        this.record.signal({ type: 'thinking.delta', turnId, delta: part.think });
         return;
       case 'image_url':
       case 'audio_url':
@@ -334,7 +322,7 @@ export class AgentLoopService implements IAgentLoopService {
     const normalFinish =
       (response.providerFinishReason === 'completed' && finishReason === 'end_turn') ||
       (response.providerFinishReason === 'tool_calls' && finishReason === 'tool_use');
-    this.events.emit({
+    this.record.signal({
       type: 'turn.step.completed',
       turnId,
       step,
@@ -359,7 +347,7 @@ export class AgentLoopService implements IAgentLoopService {
     message?: string,
   ): void {
     if (activeStep === undefined) return;
-    this.events.emit({
+    this.record.signal({
       type: 'turn.step.interrupted',
       turnId,
       step: activeStep,

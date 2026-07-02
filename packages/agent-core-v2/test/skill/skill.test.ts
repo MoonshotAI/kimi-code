@@ -20,6 +20,8 @@ import { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { Turn } from '#/agent/turn';
 import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentReplayBuilderService } from '#/agent/replayBuilder';
+import { AgentRecordService, IAgentRecordService } from '#/agent/record';
 import { stubWireRecord } from '../contextMemory/stubs';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubSkill } from './stubs';
@@ -71,6 +73,13 @@ describe('AgentSkillService', () => {
           on: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(IAgentWireRecordService, stubWireRecord());
+        reg.definePartialInstance(IAgentReplayBuilderService, {
+          push: () => {},
+          buildResult: () => [],
+          captureLiveRecords: false,
+          postRestoring: false,
+        });
+        reg.define(IAgentRecordService, AgentRecordService);
         reg.definePartialInstance(ITelemetryService, { track: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
@@ -171,6 +180,13 @@ describe('SkillTool', () => {
           on: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(IAgentWireRecordService, stubWireRecord());
+        reg.definePartialInstance(IAgentReplayBuilderService, {
+          push: () => {},
+          buildResult: () => [],
+          captureLiveRecords: false,
+          postRestoring: false,
+        });
+        reg.define(IAgentRecordService, AgentRecordService);
         reg.definePartialInstance(ITelemetryService, { track: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),

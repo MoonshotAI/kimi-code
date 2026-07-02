@@ -6,8 +6,7 @@ import {
 } from "#/_base/utils/tokens";
 import type { ContextMessage } from '#/agent/contextMemory';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
-import { IAgentEventSinkService } from '#/agent/eventSink';
-import { IAgentWireRecordService, type WireRecord } from '#/agent/wireRecord';
+import { IAgentRecordService, type AgentRecord } from '#/agent/record';
 import {
   IAgentContextSizeService,
   type ContextSizeStatus,
@@ -39,8 +38,7 @@ export class AgentContextSizeService
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
+    @IAgentRecordService private readonly records: IAgentRecordService,
   ) {
     super();
     this._register(
@@ -50,8 +48,10 @@ export class AgentContextSizeService
       }),
     );
     this._register(
-      wireRecord.register('context_size.measured', (record) => {
-        this.applyMeasurement(record);
+      records.define('context_size.measured', {
+        resume: (r) => {
+          this.applyMeasurement(r);
+        },
       }),
     );
   }
@@ -66,12 +66,12 @@ export class AgentContextSizeService
   }
 
   measured(length: number, tokens: number): void {
-    const record: WireRecord<'context_size.measured'> = {
+    const record: AgentRecord<'context_size.measured'> = {
       type: 'context_size.measured',
       length,
       tokens,
     };
-    this.wireRecord.append(record);
+    this.records.append(record);
     this.applyMeasurement(record);
   }
 
@@ -102,7 +102,7 @@ export class AgentContextSizeService
     this.emitIfChanged();
   }
 
-  private applyMeasurement(record: WireRecord<'context_size.measured'>): void {
+  private applyMeasurement(record: AgentRecord<'context_size.measured'>): void {
     const length = clampMeasuredLength(record.length, this.estimates.length);
     const tokens = Math.max(0, record.tokens);
     this.measuredPrefixTokens[length] = tokens;
@@ -125,7 +125,7 @@ export class AgentContextSizeService
       return;
     }
     this.lastEmitted = status;
-    this.events.emit({
+    this.records.signal({
       type: 'agent.status.updated',
       contextTokens: status.contextTokens,
     });

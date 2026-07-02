@@ -3,14 +3,15 @@
  *
  * Registers the built-in Bash tool into the agent `IAgentToolRegistryService` on
  * construction, wiring it to the session `ISessionProcessRunner` (process spawn),
- * `IKaos` (cwd + OS/shell probe) and `IAgentBackgroundService` (background-task
- * lifecycle). Bound at Agent scope.
+ * `IHostEnvironment` (OS / shell probe), `IExecContext` (session cwd) and
+ * `IAgentBackgroundService` (background-task lifecycle). Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentBackgroundService } from '#/agent/background';
-import { IKaos } from '#/app/kaos';
+import { IHostEnvironment } from '#/app/hostEnvironment';
+import { IExecContext } from '#/session/execContext';
 import { ISessionProcessRunner } from '#/session/process';
 import { IAgentProfileService } from '#/agent/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
@@ -24,11 +25,12 @@ export class AgentShellToolsService implements IAgentShellToolsService {
   constructor(
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
     @ISessionProcessRunner runner: ISessionProcessRunner,
-    @IKaos kaos: IKaos,
+    @IHostEnvironment env: IHostEnvironment,
+    @IExecContext ctx: IExecContext,
     @IAgentBackgroundService background: IAgentBackgroundService,
     @IAgentProfileService profile: IAgentProfileService,
   ) {
-    toolRegistry.register(new BashTool(runner, kaos, background, {
+    toolRegistry.register(new BashTool(runner, env, ctx, background, {
       allowBackground: () =>
         profile.isToolActive('TaskOutput') && profile.isToolActive('TaskStop'),
     }));

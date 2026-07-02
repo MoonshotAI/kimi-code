@@ -3,9 +3,9 @@
  *
  * Defines the `IBootstrapService`, the snapshot of the world the process runs
  * in, resolved once at startup and frozen for the process: observed host facts
- * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `detect`) and the app path
- * layout (`homeDir`, `configPath`, …). `resolveBootstrapOptions` is the single
- * place that reads `process.env` / `os.homedir()` / invocation input to resolve
+ * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`) and the app path layout
+ * (`homeDir`, `configPath`, …). `resolveBootstrapOptions` is the single place
+ * that reads `process.env` / `os.homedir()` / invocation input to resolve
  * the snapshot; everything downstream reads from `IBootstrapService` instead of
  * touching `process` directly. Bound at App scope. Also seeds the App storage
  * roles (`IStorageService`, `IAppendLogStorage`, `IAtomicDocumentStorage`,
@@ -18,8 +18,6 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import { join } from 'pathe';
-
-import type { Environment } from '#/app/kaos';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -64,7 +62,6 @@ export interface IBootstrapService {
   readonly logsDir: string;
 
   getEnv(name: string): string | undefined;
-  detect(): Promise<Environment>;
 }
 
 export const IBootstrapService: ServiceIdentifier<IBootstrapService> =

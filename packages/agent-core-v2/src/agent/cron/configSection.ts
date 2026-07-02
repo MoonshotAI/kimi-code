@@ -8,6 +8,7 @@
  */
 
 import { type ConfigStripEnv, type EnvBindings, envBindings } from '#/app/config';
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 
 export const CRON_SECTION = 'cron';
 
@@ -53,3 +54,9 @@ export const cronEnvBindings: EnvBindings<CronConfig> = envBindings(cronConfigSc
 });
 
 export const stripCronEnv: ConfigStripEnv<CronConfig> = () => undefined;
+
+registerConfigSection(CRON_SECTION, cronConfigSchema, {
+  defaultValue: DEFAULT_CRON_CONFIG,
+  env: cronEnvBindings,
+  stripEnv: stripCronEnv,
+});

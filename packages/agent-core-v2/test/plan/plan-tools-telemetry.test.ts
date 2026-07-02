@@ -11,10 +11,10 @@ import type { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 
 import { executeTool } from '../tools/fixtures/execute-tool';
-import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { createFakeAgentFs } from '../tools/fixtures/fake-exec';
 import {
   createTestAgent,
-  kaosServices,
+  execEnvServices,
   permissionModeServices,
   telemetryServices,
   type TestAgentContext,
@@ -216,9 +216,11 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
       beforeEach(() => {
         records.splice(0);
         ctx = createTestAgent(
-          kaosServices(createFakeKaos({
-            mkdir: vi.fn().mockResolvedValue(undefined),
-          })),
+          execEnvServices({
+            agentFs: createFakeAgentFs({
+              mkdir: vi.fn().mockResolvedValue(undefined),
+            }),
+          }),
           permissionModeServices(mode),
           telemetryServices(captureTelemetry(records)),
         );

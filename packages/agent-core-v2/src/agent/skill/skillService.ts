@@ -19,12 +19,11 @@ import {
   isUserActivatableSkillType,
   type SkillDefinition,
 } from '#/app/globalSkillCatalog/types';
-import { IAgentEventSinkService } from '#/agent/eventSink';
 import { IAgentPromptService } from '#/agent/prompt';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { Turn } from '#/agent/turn';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService } from '#/agent/record';
 import {
   IAgentSkillService,
   type ModelSkillActivationInput,
@@ -47,15 +46,16 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   constructor(
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
-    @IAgentEventSinkService private readonly events: IAgentEventSinkService,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
+    @IAgentRecordService private readonly records: IAgentRecordService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolRegistryService toolRegistry: IAgentToolRegistryService,
   ) {
     super();
     this._register(
-      this.wireRecord.register('skill.activate', (record) => {
-        this.publishActivation(record.origin);
+      records.define('skill.activate', {
+        resume: (r) => {
+          this.publishActivation(r.origin);
+        },
       }),
     );
     this._register(toolRegistry.register(new SkillTool(this)));
@@ -162,7 +162,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
     input?: readonly ContentPart[],
     delivery: 'prompt' | 'steer' = 'prompt',
   ): Turn | undefined {
-    this.wireRecord.append({ type: 'skill.activate', origin });
+    this.records.append({ type: 'skill.activate', origin });
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
@@ -180,7 +180,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   }
 
   private publishActivation(origin: SkillActivationOrigin): void {
-    this.events.emit({
+    this.records.signal({
       type: 'skill.activated',
       activationId: origin.activationId,
       skillName: origin.skillName,
@@ -189,7 +189,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
       skillPath: origin.skillPath,
       skillSource: origin.skillSource,
     });
-    if (this.wireRecord.restoring !== null) return;
+    if (this.records.restoring !== null) return;
     this.telemetry.track('skill_invoked', {
       skill_name: origin.skillName,
       trigger: origin.trigger,

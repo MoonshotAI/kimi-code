@@ -71,6 +71,38 @@ test('string comparator orders keys and supports prefix scans', () => {
   assert.deepEqual(res, ['user:1', 'user:10', 'user:2', 'user:3']);
 });
 
+test('iterate() yields the same sequence as range()', () => {
+  const sl = new SkipList();
+  for (let i = 1; i <= 20; i++) sl.insert(i, `v${i}`);
+  const cases = [
+    {},
+    { gte: 3, lte: 7 },
+    { gt: 3, lt: 7 },
+    { gte: 1, lte: 20, offset: 2, count: 5 },
+    { gte: 5 },
+    { lte: 5 },
+    { gte: 3, lte: 7, reverse: true },
+    { reverse: true, offset: 2, count: 4 },
+    { gt: 3, lt: 7, reverse: true },
+    { gte: 100 }, // empty
+    { lte: 0 }, // empty
+  ];
+  for (const opts of cases) {
+    assert.deepEqual([...sl.iterate(opts)], sl.range(opts), `opts=${JSON.stringify(opts)}`);
+  }
+});
+
+test('iterate() stops early (lazy)', () => {
+  const sl = new SkipList();
+  for (let i = 1; i <= 1000; i++) sl.insert(i, `v${i}`);
+  let seen = 0;
+  for (const _ of sl.iterate({ gte: 1 })) {
+    seen++;
+    if (seen === 3) break;
+  }
+  assert.equal(seen, 3);
+});
+
 test('matches a sorted reference under random operations', () => {
   const sl = new SkipList();
   const ref = new Map(); // val -> key

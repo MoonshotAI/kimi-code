@@ -5,7 +5,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolStoreService, type ToolStoreData, type ToolStoreKey } from './toolStore';
-import { IAgentWireRecordService, type WireRecord } from '#/agent/wireRecord';
+import { IAgentRecordService, type AgentRecord } from '#/agent/record';
 
 declare module '#/agent/wireRecord' {
   interface WireRecordMap {
@@ -27,13 +27,13 @@ export class AgentToolStoreService extends Disposable implements IAgentToolStore
     }>(),
   };
 
-  constructor(
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
-  ) {
+  constructor(@IAgentRecordService private readonly records: IAgentRecordService) {
     super();
     this._register(
-      wireRecord.register('tools.update_store', (record) => {
-        this.apply(record.key, record.value);
+      records.define('tools.update_store', {
+        resume: (r) => {
+          this.apply(r.key, r.value);
+        },
       }),
     );
   }
@@ -43,12 +43,12 @@ export class AgentToolStoreService extends Disposable implements IAgentToolStore
   }
 
   set<K extends ToolStoreKey>(key: K, value: ToolStoreData[K]): void {
-    const record: WireRecord<'tools.update_store'> = {
+    const record: AgentRecord<'tools.update_store'> = {
       type: 'tools.update_store',
       key,
       value,
     };
-    this.wireRecord.append(record);
+    this.records.append(record);
     this.apply(key, value);
   }
 
@@ -58,7 +58,7 @@ export class AgentToolStoreService extends Disposable implements IAgentToolStore
 
   private apply<K extends ToolStoreKey>(key: K, value: ToolStoreData[K]): void {
     this.store[key] = value;
-    if (!this.wireRecord.restoring) {
+    if (!this.records.restoring) {
       void this.hooks.onUpdated.run({ key, value });
     }
   }

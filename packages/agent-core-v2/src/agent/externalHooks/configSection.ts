@@ -4,12 +4,13 @@
  *
  * Owns the `[[hooks]]` configuration section (external hook definitions),
  * including the snake_case ↔ camelCase TOML transforms for each hook entry.
- * Registered into `IConfigRegistry` by `AgentExternalHooksService` on construction,
- * so the `config` domain never imports this domain's types.
+ * Registered at module load via `registerConfigSection`, so the `config` domain
+ * never imports this domain's types.
  */
 
 import { z } from 'zod';
 
+import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { isPlainObject, plainObjectToToml, transformPlainObject } from '#/app/config/toml';
 
 import { HOOK_EVENT_TYPES } from './types';
@@ -40,3 +41,8 @@ export const hooksToToml = (value: unknown, _rawSnake: unknown): unknown => {
   if (!Array.isArray(value)) return value;
   return value.map((hook) => (isPlainObject(hook) ? plainObjectToToml(hook, undefined) : hook));
 };
+
+registerConfigSection(HOOKS_SECTION, HooksConfigSchema, {
+  fromToml: hooksFromToml,
+  toToml: hooksToToml,
+});

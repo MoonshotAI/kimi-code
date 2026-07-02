@@ -1,13 +1,13 @@
 /**
  * `SessionEventBroadcaster` — per-session single fan-out point that turns
- * agent `IAgentEventSinkService` emissions into a sequenced, journaled, replayable
+ * agent `IAgentRecordService` emissions into a sequenced, journaled, replayable
  * `/api/v1/ws` event stream (the `{seq, epoch}` watermark).
  *
  * Port of v1's `WSBroadcastService` (`packages/server/.../wsBroadcastService.ts`),
- * adapted to v2 where agent events live on per-agent `IAgentEventSinkService`s (not a Core
+ * adapted to v2 where agent events live on per-agent `IAgentRecordService`s (not a Core
  * firehose). For each session it:
  *
- *   1. Subscribes to every agent's `IAgentEventSinkService` via `IAgentLifecycleService`
+ *   1. Subscribes to every agent's `IAgentRecordService` via `IAgentLifecycleService`
  *      reach-down-via-handle (and `onDidCreate`/`onDidDispose` for late agents).
  *   2. Attaches `agentId`/`sessionId` to build the wire `Event`.
  *   3. Classifies durable vs volatile (`VOLATILE_EVENT_TYPES`).
@@ -24,10 +24,16 @@
  * the journal is continuous from first activation onward.
  */
 
-import type { DomainEvent, IDisposable, IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
+import type {
+  DomainEvent,
+  IAgentScopeHandle,
+  IDisposable,
+  ISessionScopeHandle,
+  Scope,
+} from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
-  IAgentEventSinkService,
+  IAgentRecordService,
   IEventService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
@@ -247,11 +253,11 @@ export class SessionEventBroadcaster {
     state.queue = state.queue.then(() => this.dispatch(state, event)).catch(() => {});
   }
 
-  private attachAgents(sessionId: string, session: IScopeHandle, state: SessionState): void {
+  private attachAgents(sessionId: string, session: ISessionScopeHandle, state: SessionState): void {
     const agents = session.accessor.get(IAgentLifecycleService);
-    const subscribeAgent = (handle: IScopeHandle): void => {
+    const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
-      const sink = handle.accessor.get(IAgentEventSinkService);
+      const sink = handle.accessor.get(IAgentRecordService);
       const d = sink.on((agentEvent) => this.onAgentEvent(sessionId, handle.id, agentEvent));
       state.agentDisposables.set(handle.id, d);
     };

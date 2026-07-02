@@ -2,9 +2,9 @@
  * Path safety guards used by Read/Write/Edit/Grep/Glob.
  *
  * Canonicalization is **lexical** only (no `realpath` / symlink following).
- * Mirrors `KaosPath.canonical()` and keeps the guard backend-aware:
- * callers should pass the active Kaos path class so SSH paths stay POSIX
- * even when the host Node process is running on Windows.
+ * The guard stays host-aware: callers pass the active `IHostEnvironment`
+ * path class so SSH paths stay POSIX even when the host Node process is
+ * running on Windows.
  *
  * Shared-prefix escapes (a path like `/workspace-evil` passing a naive
  * `startswith('/workspace')` check) are blocked by requiring a path
@@ -14,7 +14,7 @@
 
 import * as pathe from 'pathe';
 
-import type { IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
 
 import type { WorkspaceConfig } from '../support/workspace';
 import { isSensitiveFile } from './sensitive';
@@ -178,7 +178,7 @@ export interface ResolvePathAccessOptions {
 }
 
 export interface ResolvePathAccessPathOptions {
-  readonly kaos: Pick<IKaos, 'pathClass' | 'gethome'>;
+  readonly env: Pick<IHostEnvironment, 'pathClass' | 'homeDir'>;
   readonly workspace: WorkspaceConfig;
   readonly operation: PathAccessOperation;
   readonly policy?: WorkspaceAccessPolicy;
@@ -246,12 +246,12 @@ export function resolvePathAccessPath(
   path: string,
   options: ResolvePathAccessPathOptions,
 ): string {
-  const { kaos, workspace, operation, policy, expandHome = true } = options;
+  const { env, workspace, operation, policy, expandHome = true } = options;
   return resolvePathAccess(path, workspace.workspaceDir, workspace, {
     operation,
     policy,
-    pathClass: kaos.pathClass(),
-    homeDir: expandHome ? kaos.gethome() : undefined,
+    pathClass: env.pathClass,
+    homeDir: expandHome ? env.homeDir : undefined,
   }).path;
 }
 

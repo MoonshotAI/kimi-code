@@ -266,7 +266,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
   }
 
   private isSubagent(): boolean {
-    return this.options.agentType === 'sub';
+    return this.options.agentId !== undefined && this.options.agentId !== 'main';
   }
 }
 

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { IAgentBackgroundService } from '#/agent/background';
 import type { IDisposable } from '#/_base/di';
-import type { IKaos } from '#/app/kaos';
+import type { IHostEnvironment } from '#/app/hostEnvironment';
+import { createExecContext, type IExecContext } from '#/session/execContext';
 import type { ISessionProcessRunner } from '#/session/process';
 import type { IAgentProfileService } from '#/agent/profile';
 import { AgentShellToolsService } from '#/agent/shellTools';
@@ -22,11 +23,18 @@ function fakeToolRegistry(): { registry: IAgentToolRegistryService; names: () =>
 }
 
 const fakeRunner = {} as unknown as ISessionProcessRunner;
-const fakeKaos = {
-  cwd: '/workspace',
-  osEnv: { osKind: 'Linux', osArch: 'x64', osVersion: '', shellName: 'bash', shellPath: '/bin/bash' },
-  pathClass: () => 'posix',
-} as unknown as IKaos;
+const fakeEnv: IHostEnvironment = {
+  _serviceBrand: undefined,
+  osKind: 'Linux',
+  osArch: 'x64',
+  osVersion: '',
+  shellName: 'bash',
+  shellPath: '/bin/bash',
+  pathClass: 'posix',
+  homeDir: '/home',
+  ready: Promise.resolve(),
+};
+const fakeCtx: IExecContext = createExecContext('/workspace');
 const fakeBackground = {} as unknown as IAgentBackgroundService;
 const fakeProfile = {
   isToolActive: () => true,
@@ -35,7 +43,7 @@ const fakeProfile = {
 describe('AgentShellToolsService', () => {
   it('registers Bash into the tool registry', () => {
     const { registry, names } = fakeToolRegistry();
-    new AgentShellToolsService(registry, fakeRunner, fakeKaos, fakeBackground, fakeProfile);
+    new AgentShellToolsService(registry, fakeRunner, fakeEnv, fakeCtx, fakeBackground, fakeProfile);
     expect(names()).toEqual(['Bash']);
   });
 });

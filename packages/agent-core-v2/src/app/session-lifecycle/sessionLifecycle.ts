@@ -13,7 +13,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { IScopeHandle } from '#/_base/di/scope';
+import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 
 export interface CreateSessionOptions {
@@ -32,7 +32,7 @@ export interface ForkSessionOptions {
 
 export interface SessionCreatedEvent {
   readonly sessionId: string;
-  readonly handle: IScopeHandle;
+  readonly handle: ISessionScopeHandle;
 }
 
 export interface SessionClosedEvent {
@@ -46,7 +46,7 @@ export interface SessionArchivedEvent {
 export interface SessionForkedEvent {
   readonly sourceSessionId: string;
   readonly sessionId: string;
-  readonly handle: IScopeHandle;
+  readonly handle: ISessionScopeHandle;
 }
 
 export interface ISessionLifecycleService {
@@ -55,9 +55,9 @@ export interface ISessionLifecycleService {
   readonly onDidCloseSession: Event<SessionClosedEvent>;
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;
-  create(opts: CreateSessionOptions): Promise<IScopeHandle>;
-  get(sessionId: string): IScopeHandle | undefined;
-  list(): readonly IScopeHandle[];
+  create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
+  get(sessionId: string): ISessionScopeHandle | undefined;
+  list(): readonly ISessionScopeHandle[];
   /**
    * Load a persisted session into the live scope tree and restore its main
    * agent from the persisted wire log. Returns the existing handle when the
@@ -70,10 +70,10 @@ export interface ISessionLifecycleService {
    * a previous process or by v1 — without requiring a prior `create` in this
    * process. Restores only the main agent; sub-agents are materialized lazily.
    */
-  resume(sessionId: string): Promise<IScopeHandle | undefined>;
+  resume(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   close(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
-  fork(opts: ForkSessionOptions): Promise<IScopeHandle>;
+  fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle>;
 }
 
 export const ISessionLifecycleService: ServiceIdentifier<ISessionLifecycleService> =

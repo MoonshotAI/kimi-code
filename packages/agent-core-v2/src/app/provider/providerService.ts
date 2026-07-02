@@ -2,15 +2,16 @@
  * `provider` domain (L2) — `IProviderService` implementation.
  *
  * Owns the in-memory view of the `providers` config section, persists changes
- * through `config`, registers the section schema on construction, and forwards
- * section changes as `onDidChangeProviders`. Bound at App scope.
+ * through `config`, and forwards section changes as `onDidChangeProviders`.
+ * The section schema self-registers at module load via `configSection.ts`.
+ * Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { IConfigService } from '#/app/config/config';
 
 import {
   type ProviderConfig,
@@ -18,32 +19,15 @@ import {
   type ProvidersSection,
   IProviderService,
   PROVIDERS_SECTION,
-  ProvidersSectionSchema,
 } from './provider';
-import {
-  providersEnvBindings,
-  providersFromToml,
-  providersToToml,
-  stripProvidersEnv,
-} from './configSection';
 
 export class ProviderService extends Disposable implements IProviderService {
   declare readonly _serviceBrand: undefined;
   private readonly _onDidChangeProviders = this._register(new Emitter<ProvidersChangedEvent>());
   readonly onDidChangeProviders: Event<ProvidersChangedEvent> = this._onDidChangeProviders.event;
 
-  constructor(
-    @IConfigRegistry registry: IConfigRegistry,
-    @IConfigService private readonly config: IConfigService,
-  ) {
+  constructor(@IConfigService private readonly config: IConfigService) {
     super();
-    registry.registerSection(PROVIDERS_SECTION, ProvidersSectionSchema, {
-      defaultValue: {},
-      env: providersEnvBindings,
-      stripEnv: stripProvidersEnv,
-      fromToml: providersFromToml,
-      toToml: providersToToml,
-    });
     this._register(
       config.onDidChangeConfiguration((e) => {
         if (e.domain === PROVIDERS_SECTION) {

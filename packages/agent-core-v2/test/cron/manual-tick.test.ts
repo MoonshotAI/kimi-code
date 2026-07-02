@@ -60,7 +60,7 @@ describe('AgentCronService — P1.8 manual tick + SIGUSR1', () => {
     beforeEach(() => {
       vi.stubEnv('KIMI_CRON_MANUAL_TICK', '1');
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
     });
@@ -100,7 +100,7 @@ describe('AgentCronService — P1.8 manual tick + SIGUSR1', () => {
       vi.useFakeTimers();
       vi.stubEnv('KIMI_CRON_POLL_INTERVAL_MS', '50');
       harness = createClocks();
-      ctx = createTestAgent(cronServices({}));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
       cron = ctx.get(IAgentCronService);
       prompt = ctx.get(IAgentPromptService);
     });
@@ -135,7 +135,7 @@ describe('AgentCronService — P1.8 manual tick + SIGUSR1', () => {
       beforeEach(() => {
         vi.stubEnv('KIMI_CRON_MANUAL_TICK', '1');
         listenerCountBeforeCreate = process.listenerCount('SIGUSR1');
-        ctx = createTestAgent(cronServices({}));
+        ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
         cron = ctx.get(IAgentCronService);
       });
 
@@ -208,7 +208,7 @@ describe('AgentCronService — P1.8 manual tick + SIGUSR1', () => {
       beforeEach(() => {
         vi.stubEnv('KIMI_CRON_MANUAL_TICK', '1');
         vi.stubEnv('KIMI_CRON_DEBUG', '1');
-        ctx = createTestAgent(cronServices({}));
+        ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
         cron = ctx.get(IAgentCronService);
       });
 
@@ -244,7 +244,7 @@ describe('AgentCronService — P1.8 manual tick + SIGUSR1', () => {
       let cron: IAgentCronService;
 
       beforeEach(() => {
-        ctx = createTestAgent(cronServices({}));
+        ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'main' }));
         cron = ctx.get(IAgentCronService);
       });
 

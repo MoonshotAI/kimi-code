@@ -71,7 +71,6 @@ function createRunOverride(
     resume: vi.fn(),
     retry: vi.fn(),
     getProfileName: vi.fn().mockResolvedValue(undefined),
-    markDetached: vi.fn(),
   };
   return Object.assign(run, overrides);
 }
@@ -120,7 +119,7 @@ describe('AgentTool direct contract', () => {
       run,
       tool: new AgentTool({
         lifecycle: fakeLifecycle(),
-        parentAgentId: PARENT_AGENT_ID,
+        callerAgentId: PARENT_AGENT_ID,
         background,
         profile: fakeProfile(isToolActive),
         cwd: '/repo',
@@ -354,57 +353,6 @@ describe('AgentTool direct contract', () => {
     expect(valid.output).toContain('status: running');
     expect(run.resume).not.toHaveBeenCalled();
     expect(run.spawn).toHaveBeenCalledTimes(1);
-  });
-
-  it('can detach a foreground subagent through the background manager', async () => {
-    let resolveCompletion: (value: { result: string }) => void = () => {};
-    const completion = new Promise<{ result: string }>((resolve) => {
-      resolveCompletion = resolve;
-    });
-    const run = createRunOverride({
-      markDetached: vi.fn(),
-      spawn: vi.fn().mockResolvedValue({
-        agentId: 'agent-child',
-        profileName: 'coder',
-        resumed: false,
-        completion,
-      }),
-    });
-    const { background, tool } = makeTool({ run });
-
-    const running = executeTool(
-      tool,
-      context({
-        prompt: 'Investigate',
-        description: 'Find cause',
-      }),
-    );
-    await vi.waitFor(() => {
-      expect(background.list(false)).toHaveLength(1);
-    });
-    const task = background.list(false)[0]!;
-
-    expect(task).toMatchObject({
-      kind: 'agent',
-      detached: false,
-      agentId: 'agent-child',
-    });
-
-    background.detach(task.taskId);
-    const result = await running;
-
-    expect(run.markDetached).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: 'agent-child' }),
-    );
-    expect(result.output).toContain(`task_id: ${task.taskId}`);
-    expect(result.output).toContain('agent_id: agent-child');
-    expect(result.output).toContain('automatic_notification: true');
-
-    resolveCompletion({ result: 'finished later' });
-    await expect(background.wait(task.taskId)).resolves.toMatchObject({
-      status: 'completed',
-      detached: true,
-    });
   });
 
   it('does not recommend disabled task tools when a foreground subagent is detached', async () => {

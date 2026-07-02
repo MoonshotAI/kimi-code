@@ -43,7 +43,7 @@ describe('Agent + Cron — subagent suppression', () => {
 
     beforeEach(() => {
       listenerCountBeforeCreate = process.listenerCount('SIGUSR1');
-      ctx = createTestAgent(cronServices({ isSubagent: true }));
+      ctx = createTestAgent(cronServices({ _serviceBrand: undefined, agentId: 'sub-1' }));
       cron = ctx.get(IAgentCronService);
       profile = ctx.get(IAgentProfileService);
     });

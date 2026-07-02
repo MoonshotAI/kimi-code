@@ -19,7 +19,7 @@ import {
   estimateTokensForMessages,
 } from "#/_base/utils/tokens";
 import type { TelemetryProperties } from '#/app/telemetry';
-import { IConfigRegistry, IConfigService } from '#/app/config';
+import { IConfigService } from '#/app/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize';
 import { IFlagService } from '#/app/flag';
@@ -27,7 +27,7 @@ import { IAgentLoopService } from '#/agent/loop';
 import { IAgentProfileService } from '#/agent/profile';
 import { ITelemetryService } from '#/app/telemetry';
 import type { ContextMessage } from '#/agent/contextMemory';
-import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentRecordService } from '#/agent/record';
 import {
   IAgentMicroCompactionService,
   type MicroCompactionConfig,
@@ -35,7 +35,6 @@ import {
 } from './microCompaction';
 import {
   MICRO_COMPACTION_SECTION,
-  MicroCompactionConfigSchema,
   type MicroCompactionConfigPatch,
 } from './configSection';
 
@@ -67,16 +66,14 @@ export class AgentMicroCompactionService
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
-    @IAgentWireRecordService private readonly wireRecord: IAgentWireRecordService,
+    @IAgentRecordService private readonly record: IAgentRecordService,
     @IFlagService private readonly flags: IFlagService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService loop: IAgentLoopService,
-    @IConfigRegistry configRegistry: IConfigRegistry,
     @IConfigService private readonly config: IConfigService,
   ) {
     super();
-    configRegistry.registerSection(MICRO_COMPACTION_SECTION, MicroCompactionConfigSchema);
     this.microConfig = this.readConfig();
     this._register(
       this.config.onDidSectionChange((event) => {
@@ -95,13 +92,17 @@ export class AgentMicroCompactionService
       ),
     );
     this._register(
-      this.wireRecord.register('micro_compaction.apply', (record) => {
-        this.apply(record.cutoff);
+      this.record.define('micro_compaction.apply', {
+        resume: (r) => {
+          this.apply(r.cutoff);
+        },
       }),
     );
     this._register(
-      this.wireRecord.register('full_compaction.complete', () => {
-        this.reset();
+      this.record.define('full_compaction.complete', {
+        resume: () => {
+          this.reset();
+        },
       }),
     );
     this._register(
@@ -121,7 +122,7 @@ export class AgentMicroCompactionService
   }
 
   private apply(cutoff: number): void {
-    this.wireRecord.append({
+    this.record.append({
       type: 'micro_compaction.apply',
       cutoff,
     });
@@ -212,7 +213,7 @@ export class AgentMicroCompactionService
     }
 
     if (context.messages.some(isAssistantCacheAnchor)) {
-      this._lastAssistantAt = this.wireRecord.restoring?.time ?? Date.now();
+      this._lastAssistantAt = this.record.restoring?.time ?? Date.now();
     }
   }
 

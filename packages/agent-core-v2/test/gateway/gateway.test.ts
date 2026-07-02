@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle/agentLifecycle';
 import type { ContextMessage } from '#/agent/contextMemory';
@@ -59,7 +59,7 @@ describe('RestGateway', () => {
       clear: () => {},
     };
 
-    const agentHandle: IScopeHandle = {
+    const agentHandle: IAgentScopeHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: makeAccessor([
@@ -74,12 +74,12 @@ describe('RestGateway', () => {
       onDidDispose: () => ({ dispose: () => {} }),
       create: () => Promise.resolve(agentHandle),
       createMain: () => Promise.resolve(agentHandle),
-      fork: () => Promise.resolve(agentHandle),
+      clone: () => Promise.resolve(agentHandle),
       getHandle: (id) => (id === 'main' ? agentHandle : undefined),
       list: () => [agentHandle],
       remove: () => Promise.resolve(),
     };
-    const sessionHandle: IScopeHandle = {
+    const sessionHandle: ISessionScopeHandle = {
       id: 's1',
       kind: LifecycleScope.Session,
       accessor: makeAccessor([[IAgentLifecycleService, agents]]),

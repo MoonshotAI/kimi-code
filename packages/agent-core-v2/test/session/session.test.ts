@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { type IScopeHandle, LifecycleScope } from '#/_base/di/scope';
+import { type IAgentScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agent-lifecycle/agentLifecycle';
 import { IEventService } from '#/app/event';
@@ -11,7 +11,7 @@ import { SessionService } from '#/session/session/sessionService';
 import { ISessionContext } from '#/session/session-context';
 import { ISessionMetadata } from '#/session/session-metadata';
 
-const handle: IScopeHandle = {
+const handle: IAgentScopeHandle = {
   id: 'main',
   kind: LifecycleScope.Agent,
   accessor: { get: () => ({}) } as unknown as ServicesAccessor,
