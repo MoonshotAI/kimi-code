@@ -301,7 +301,7 @@ export function selectCompactionUserMessages<T extends MessageLike>(
 
   // Head: oldest messages first, over everything the tail did not keep. The
   // boundary message keeps its BEGINNING.
-  const headCandidates = [...messages.slice(0, headEndExclusive)];
+  const headCandidates = messages.slice(0, headEndExclusive);
   if (tailBoundaryDroppedPrefix !== null) {
     headCandidates.push(tailBoundaryDroppedPrefix);
   }
