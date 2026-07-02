@@ -11,6 +11,7 @@ import Menu from '../ui/Menu.vue';
 import MenuItem from '../ui/MenuItem.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
+import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();
@@ -215,7 +216,9 @@ async function startArchive(): Promise<void> {
         @blur="commitRename"
         @click.stop
       />
-      <span v-else-if="sessionTitle" class="ch-ses">{{ sessionTitle }}</span>
+      <Tooltip v-else-if="sessionTitle" :text="sessionTitle">
+        <span class="ch-ses">{{ sessionTitle }}</span>
+      </Tooltip>
     </div>
 
     <!-- More menu trigger: copy-all + session actions -->
