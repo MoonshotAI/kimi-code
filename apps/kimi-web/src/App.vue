@@ -560,8 +560,9 @@ function openPr(url: string): void {
 
 <template>
   <div class="app-shell">
-    <ServerAuthDialog v-if="showServerAuth" />
-    <section v-if="showAuthGate" class="auth-page">
+    <DesignSystemView v-if="isDesignSystem" />
+    <ServerAuthDialog v-else-if="showServerAuth" />
+    <section v-else-if="showAuthGate" class="auth-page">
       <div class="auth-page-inner">
         <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
           <defs>
@@ -585,7 +586,6 @@ function openPr(url: string): void {
         </Button>
       </div>
     </section>
-    <DesignSystemView v-else-if="isDesignSystem" />
     <div
       v-else
       class="app"
