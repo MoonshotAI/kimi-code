@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code
 
+## 0.22.1
+
+### Patch Changes
+
+- [#1290](https://github.com/MoonshotAI/kimi-code/pull/1290) [`3ea84a5`](https://github.com/MoonshotAI/kimi-code/commit/3ea84a56e4dfdeaddd58add5b269be0342f3f986) - Fix the session search dialog showing a horizontal scrollbar for long session titles or snippets.
+
+- [#1283](https://github.com/MoonshotAI/kimi-code/pull/1283) [`ea55911`](https://github.com/MoonshotAI/kimi-code/commit/ea55911062eefcb0414cfddb84c8a4494c45f363) - Sharpen the conversation-compaction handoff prompt so resumed sessions continue more reliably: the summary now leads with the intent of the latest request instead of re-transcribing it, carries forward tool results (not just the commands that produced them), separates settled decisions from still-open questions, names the context the next turn must re-check, matches the conversation's language, and stays proportional to the task. Also corrects the system prompt's description of the post-compaction shape.
+
 ## 0.22.0
 
 ### Minor Changes

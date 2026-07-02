@@ -1,5 +1,14 @@
 # @moonshot-ai/agent-core
 
+## 0.15.1
+
+### Patch Changes
+
+- [#1285](https://github.com/MoonshotAI/kimi-code/pull/1285) [`c434b4c`](https://github.com/MoonshotAI/kimi-code/commit/c434b4c3e658b686e5f0d0d7d3a2b4cfbfbcaffa) - Cap the output a single foreground shell command may stream so a runaway command can no longer crash the process. A command that produces a very large or unbounded amount of output (e.g. `b3sum --length 18446744073709551615`) previously grew the live-output buffer until Node aborted with a JavaScript heap out-of-memory error; it is now gracefully terminated once its output exceeds 16 MiB, and the result explains how to redirect large output to a file instead. The per-task output ring buffer is also maintained in O(1) per chunk rather than O(n²). Background tasks are unaffected.
+
+- Updated dependencies [[`93ec6cb`](https://github.com/MoonshotAI/kimi-code/commit/93ec6cb6526021156a951f8c513c45f138bf5dbb)]:
+  - @moonshot-ai/kosong@0.5.2
+
 ## 0.15.0
 
 ### Minor Changes
