@@ -266,6 +266,8 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh .gh-add { display: none; }
 .gh:hover .gh-more,
 .gh:hover .gh-add,
+.gh:focus-within .gh-more,
+.gh:focus-within .gh-add,
 .gh-more.open,
 .gh-more:focus-visible,
 .gh-add:focus-visible { display: inline-flex; }

@@ -579,6 +579,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
                 <button
                   type="button"
                   class="u-edit"
+                  :aria-label="t('conversation.undoTooltip')"
                   @click="onUndo(turn)"
                 >
                   <Icon name="undo" size="sm" />
@@ -592,6 +593,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
               <button
                 type="button"
                 class="u-copy"
+                :aria-label="t('filePreview.copy')"
                 @click.stop="copyUserMessage(turn)"
               >
                 <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
@@ -654,6 +656,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           >
             <button
               class="a-cpbtn"
+              :aria-label="t('filePreview.copy')"
               @click="copyAssistantRun(ti)"
             >
               <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
