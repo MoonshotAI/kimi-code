@@ -51,8 +51,8 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-[experimental]
-micro_compaction = false
+# [experimental]
+# micro_compaction = false  # disabled: micro compaction has been removed
 
 [[permission.rules]]
 decision = "allow"
@@ -200,6 +200,7 @@ default_effort = "high"
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
 
+<!--
 ## `experimental`
 
 `experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `false`；如需自动清理较旧的大型工具结果，把它设为 `true`。
@@ -207,6 +208,7 @@ default_effort = "high"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+-->
 
 ## `services`
 

@@ -349,7 +349,9 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
   // to a recent suffix but still projected through MicroCompaction.compact()
   // with the cutoff computed for the FULL history. The absolute cutoff applied
   // to the shifted suffix can clear recent tool results the summary needs.
-  it.fails('does not clear recent tool results when projecting a shrunk suffix under an active micro-compaction cutoff', () => {
+  // SKIPPED: micro-compaction has been disabled and its flag removed, so this
+  // defect no longer exists.
+  it.skip('does not clear recent tool results when projecting a shrunk suffix under an active micro-compaction cutoff', () => {
     // This defect only exists when micro-compaction is active, so enable the
     // flag explicitly rather than inheriting the ambient KIMI_CODE_EXPERIMENTAL
     // master switch — otherwise the probe's pass/fail flips with the runner's
