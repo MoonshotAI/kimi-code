@@ -7,8 +7,11 @@ import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
 import { escapeXml } from '../../utils/xml-escape';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
+  COMPACTION_ELISION_VARIANT,
+  buildCompactionElisionText,
   collectCompactableUserMessages,
   isRealUserInput,
+  selectCompactionUserMessages,
   selectRecentUserMessages,
   type CompactionInput,
   type CompactionResult,
@@ -221,17 +224,44 @@ export class ContextMemory {
   }
 
   applyCompaction(input: CompactionInput): CompactionResult {
-    // Single derivation point for the post-compaction shape: the most recent
-    // real user messages (verbatim, within the token budget) followed by a
-    // user-role summary. `tokensAfter` and `keptUserMessageCount` are derived
-    // here from the actual `_history` so the live context, the wire record,
-    // and the transcript reducer all agree — re-deriving them elsewhere (e.g.
-    // from the full transcript, which still holds the untruncated originals of
-    // messages the live context truncated) would diverge.
-    const keptUserMessages = selectRecentUserMessages(
-      collectCompactableUserMessages(this._history),
-      COMPACT_USER_MESSAGE_MAX_TOKENS,
-    );
+    // Single derivation point for the post-compaction shape: the kept user
+    // messages (verbatim, within the token budget — the oldest head plus the
+    // most recent tail, with an elision marker between them when the pool
+    // overflowed), followed by a user-role summary. `tokensAfter` and the
+    // kept-count fields are derived here from the actual `_history` so the
+    // live context, the wire record, and the transcript reducer all agree —
+    // re-deriving them elsewhere (e.g. from the full transcript, which still
+    // holds the untruncated originals of messages the live context truncated)
+    // would diverge.
+    const compactableUserMessages = collectCompactableUserMessages(this._history);
+    // Records written before the head/tail split carry `keptUserMessageCount`
+    // but no `keptHeadUserMessageCount`; they were produced by the tail-only
+    // selection, so restore must reproduce that exact selection or the rebuilt
+    // history would diverge from the persisted counts the transcript reducer
+    // relies on. (A new-code record without elision restores identically under
+    // either selection, so gating on the head field alone is sufficient.)
+    const restoreTailOnly =
+      this.agent.records.restoring !== null && input.keptHeadUserMessageCount === undefined;
+    const selection = restoreTailOnly
+      ? {
+          head: [],
+          tail: selectRecentUserMessages(compactableUserMessages, COMPACT_USER_MESSAGE_MAX_TOKENS),
+          elided: false,
+          omittedTokens: 0,
+        }
+      : selectCompactionUserMessages(compactableUserMessages);
+    const elisionMessage: ContextMessage | null = selection.elided
+      ? {
+          role: 'user',
+          content: [{ type: 'text', text: buildCompactionElisionText(selection.omittedTokens) }],
+          toolCalls: [],
+          origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
+        }
+      : null;
+    const keptMessages: ContextMessage[] =
+      elisionMessage === null
+        ? [...selection.head, ...selection.tail]
+        : [...selection.head, elisionMessage, ...selection.tail];
     // Live compaction omits these so they are derived from the actual
     // `_history`; restore passes the persisted record so its historical values
     // are preserved verbatim. Older wire records did not have `contextSummary`,
@@ -239,8 +269,11 @@ export class ContextMemory {
     const contextSummary = input.contextSummary ?? input.summary;
     const tokensAfter =
       input.tokensAfter ??
-      estimateTokens(contextSummary) + estimateTokensForMessages(keptUserMessages);
-    const keptUserMessageCount = input.keptUserMessageCount ?? keptUserMessages.length;
+      estimateTokens(contextSummary) + estimateTokensForMessages(keptMessages);
+    const keptUserMessageCount =
+      input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
+    const keptHeadUserMessageCount =
+      input.keptHeadUserMessageCount ?? (selection.elided ? selection.head.length : undefined);
     const result: CompactionResult = {
       summary: input.summary,
       contextSummary,
@@ -248,6 +281,7 @@ export class ContextMemory {
       tokensBefore: input.tokensBefore,
       tokensAfter,
       keptUserMessageCount,
+      keptHeadUserMessageCount,
       droppedCount: input.droppedCount,
     };
     this.agent.records.logRecord({
@@ -262,6 +296,7 @@ export class ContextMemory {
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
         keptUserMessageCount: result.keptUserMessageCount,
+        keptHeadUserMessageCount: result.keptHeadUserMessageCount,
         droppedCount: result.droppedCount,
       },
     });
@@ -287,7 +322,7 @@ export class ContextMemory {
       input.compactedCount < this._history.length;
     this._history = isLegacyRestore
       ? [summaryMessage, ...this._history.slice(input.compactedCount)]
-      : [...keptUserMessages, summaryMessage];
+      : [...keptMessages, summaryMessage];
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     // Drop deferred messages (mostly injections/system reminders) instead of

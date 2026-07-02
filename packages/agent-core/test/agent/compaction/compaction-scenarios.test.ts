@@ -16,7 +16,12 @@ import type { ContentPart, Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { AgentOptions } from '../../../src/agent';
-import { COMPACTION_SUMMARY_PREFIX } from '../../../src/agent/compaction';
+import { COMPACTION_ELISION_VARIANT, COMPACTION_SUMMARY_PREFIX } from '../../../src/agent/compaction';
+import type { AgentRecord } from '../../../src/agent';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../../src/agent/records';
 import type { ContextMessage } from '../../../src/agent/context';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../../src/flags';
 import { testAgent, type TestAgentContext } from '../harness/agent';
@@ -429,5 +434,151 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
 
     const keptParts = ctx.agent.context.history.flatMap((message) => message.content);
     expect(keptParts.some((part) => part.type === 'image_url')).toBe(true);
+  });
+});
+
+describe('compaction — head/tail user-message retention', () => {
+  const FIRST = `FIRST ${'a'.repeat(4_000)}`; // ~1k tokens
+  const MIDDLE = 'b'.repeat(88_000); // ~22k tokens, over the 20k budget on its own
+  const LAST = `LAST ${'c'.repeat(4_000)}`; // ~1k tokens
+
+  async function compactedOversizedPool() {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    for (const text of [FIRST, MIDDLE, LAST]) {
+      ctx.agent.context.appendUserMessage([{ type: 'text', text }]);
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'Summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+    return ctx;
+  }
+
+  it('splits an oversized user pool into head + elision marker + tail', async () => {
+    const ctx = await compactedOversizedPool();
+
+    const history = ctx.agent.context.history;
+    const texts = historyTexts(ctx);
+    // [FIRST, head slice of MIDDLE, marker, tail slice of MIDDLE, LAST, summary]
+    expect(history).toHaveLength(6);
+    expect(texts[0]).toBe(FIRST);
+    expect(/^b+$/.test(texts[1]!)).toBe(true);
+    expect(MIDDLE.startsWith(texts[1]!)).toBe(true);
+    expect(history[2]!.origin).toEqual({ kind: 'injection', variant: COMPACTION_ELISION_VARIANT });
+    expect(texts[2]).toContain('<system-reminder>');
+    expect(texts[2]).toContain('omitted');
+    expect(/^b+$/.test(texts[3]!)).toBe(true);
+    expect(MIDDLE.endsWith(texts[3]!)).toBe(true);
+    expect(texts[4]).toBe(LAST);
+    expect(history[5]!.origin?.kind).toBe('compaction_summary');
+
+    const completedEvent = ctx.allEvents.find((entry) => entry.event === 'compaction.completed');
+    expect(completedEvent?.args).toEqual({
+      result: expect.objectContaining({
+        keptUserMessageCount: 4,
+        keptHeadUserMessageCount: 2,
+      }),
+    });
+
+    await ctx.expectResumeMatches();
+  });
+
+  it('does not stack elision markers or re-summarize them across repeated compactions', async () => {
+    const ctx = await compactedOversizedPool();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'd'.repeat(8_000) }]);
+    ctx.mockNextResponse({ type: 'text', text: 'Second summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const markers = ctx.agent.context.history.filter(
+      (message) =>
+        message.origin?.kind === 'injection' && message.origin.variant === COMPACTION_ELISION_VARIANT,
+    );
+    expect(markers).toHaveLength(1);
+    const summaries = ctx.agent.context.history.filter(
+      (message) => message.origin?.kind === 'compaction_summary',
+    );
+    expect(summaries).toHaveLength(1);
+  });
+
+  it('keeps everything verbatim (no marker) when the user pool fits the budget', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'small question' }]);
+    ctx.mockNextResponse({ type: 'text', text: 'Summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    expect(historyTexts(ctx)[0]).toBe('small question');
+    expect(
+      ctx.agent.context.history.some(
+        (message) =>
+          message.origin?.kind === 'injection' &&
+          message.origin.variant === COMPACTION_ELISION_VARIANT,
+      ),
+    ).toBe(false);
+
+    const completedEvent = ctx.allEvents.find((entry) => entry.event === 'compaction.completed');
+    expect(completedEvent?.args).toEqual({
+      result: expect.not.objectContaining({ keptHeadUserMessageCount: expect.anything() }),
+    });
+  });
+
+  it('restores a pre-split wire record with the tail-only selection and no marker', async () => {
+    // A record written before the head/tail split (no `keptHeadUserMessageCount`)
+    // must restore with the original tail-only selection, or the rebuilt live
+    // history would diverge from the persisted keptUserMessageCount that the
+    // wire-transcript reducer uses for its folded length.
+    const big = 'x'.repeat(88_000); // ~22k tokens: over budget under the old algorithm too
+    const records = [
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: big }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'recent question' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: 'OLD SUMMARY',
+        contextSummary: 'OLD SUMMARY',
+        compactedCount: 2,
+        tokensBefore: 22_007,
+        tokensAfter: 20_005,
+        keptUserMessageCount: 2,
+      },
+    ] as unknown as AgentRecord[];
+    const ctx = testAgent({ persistence: new InMemoryAgentRecordPersistence(records) });
+    await ctx.agent.resume();
+
+    const history = ctx.agent.context.history;
+    const texts = historyTexts(ctx);
+    // Old tail-only shape: [truncated big message, recent question, summary].
+    expect(history).toHaveLength(3);
+    expect(
+      history.some(
+        (message) =>
+          message.origin?.kind === 'injection' &&
+          message.origin.variant === COMPACTION_ELISION_VARIANT,
+      ),
+    ).toBe(false);
+    // The legacy truncation keeps the boundary message's beginning.
+    expect(texts[0]!.length).toBeGreaterThan(0);
+    expect(big.startsWith(texts[0]!)).toBe(true);
+    expect(texts[1]).toBe('recent question');
+    expect(history.at(-1)!.origin?.kind).toBe('compaction_summary');
   });
 });

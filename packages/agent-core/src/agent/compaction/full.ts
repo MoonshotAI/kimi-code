@@ -70,8 +70,9 @@ export class FullCompaction {
   private readonly observedMaxContextTokensByModel = new Map<string, number>();
   // Token count right after the last successful compaction. While no new
   // content has been appended (tokenCountWithPending <= this value), the
-  // history is already in its minimal compacted form ([kept user prompts,
-  // summary]); re-compacting would only nest summaries, so
+  // history is already in its minimal compacted form ([kept user prompts
+  // (possibly split around an elision marker), summary]); re-compacting would
+  // only nest summaries, so
   // checkAutoCompaction skips in that case even if an observed overflow
   // limit still flags the context as oversized.
   private lastCompactedTokenCount: number | null = null;

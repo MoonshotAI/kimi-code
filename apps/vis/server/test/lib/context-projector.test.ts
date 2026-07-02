@@ -363,6 +363,46 @@ describe('context-projector', () => {
     ]);
   });
 
+  it('apply_compaction splits an oversized user pool into head + elision marker + tail (model)', () => {
+    const first = `FIRST ${'a'.repeat(4_000)}`; // ~1k tokens
+    const middle = 'b'.repeat(88_000); // ~22k tokens, over the 20k budget on its own
+    const last = `LAST ${'c'.repeat(4_000)}`; // ~1k tokens
+    const entries = [
+      { lineNo: 1, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: first }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 2, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: middle }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.append_message' as const,
+          message: { role: 'user' as const, content: [{ type: 'text' as const, text: last }], toolCalls: [], origin: { kind: 'user' as const } } }, raw: {} },
+      { lineNo: 4, data: { type: 'context.apply_compaction' as const,
+          summary: 'sum', compactedCount: 3, tokensBefore: 24_000, tokensAfter: 20_000,
+          keptUserMessageCount: 4, keptHeadUserMessageCount: 2 }, raw: {} },
+    ];
+
+    const proj = projectContext(entries as any);
+    // [FIRST, head slice of middle, marker, tail slice of middle, LAST, summary]
+    // — mirrors agent-core's selectCompactionUserMessages + elision marker.
+    expect(proj.messages).toHaveLength(6);
+    const texts = proj.messages.map((m) =>
+      m.message.content.map((p: any) => (p.type === 'text' ? p.text : '')).join(''),
+    );
+    expect(texts[0]).toBe(first);
+    expect(/^b+$/.test(texts[1]!)).toBe(true);
+    expect(middle.startsWith(texts[1]!)).toBe(true);
+    expect(proj.messages[2]!.message.origin).toEqual({
+      kind: 'injection',
+      variant: 'compaction_elision',
+    });
+    expect(texts[2]).toContain('<system-reminder>');
+    expect(/^b+$/.test(texts[3]!)).toBe(true);
+    expect(middle.endsWith(texts[3]!)).toBe(true);
+    expect(texts[4]).toBe(last);
+    expect(proj.messages[5]!.source).toBe('compaction_summary');
+    // Synthesized entries (the head slice of the same message that anchors the
+    // tail, and the marker) get fractional lineNos so keys stay unique.
+    expect(new Set(proj.messages.map((m) => m.lineNo)).size).toBe(6);
+  });
+
   it('apply_compaction drops shell/local-command/background messages in model mode only', () => {
     const entries = [
       { lineNo: 1, data: { type: 'context.append_message' as const,

@@ -80,9 +80,13 @@ export { AGENT_WIRE_PROTOCOL_VERSION } from './agent/records';
 export type { AgentConfigUpdateData } from './agent/config';
 export type { CompactionBeginData, CompactionResult } from './agent/compaction';
 export {
+  COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
+  COMPACTION_ELISION_VARIANT,
+  buildCompactionElisionText,
   collectCompactableUserMessages,
   isRealUserInput,
+  selectCompactionUserMessages,
   selectRecentUserMessages,
 } from './agent/compaction';
 export type {
