@@ -2366,9 +2366,8 @@ onUnmounted(() => {
 
 /* ---- View shell + topbar (scoped, product tokens) ---- */
 .ds-page {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-max);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 .ds-topbar {
