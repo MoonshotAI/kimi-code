@@ -392,6 +392,10 @@ git add packages/pi-tui/src/tui.ts packages/pi-tui/test/tui-render.test.ts
 git commit -m "fix(pi-tui): truncate overwide rendered lines instead of throwing"
 ```
 
+- [x] **审查修正记录（已执行）**：质量审查实测发现两个问题并已修复（commit `152dd114`、`23db656d`）：
+  1. Critical：截断循环每帧全量 `visibleWidth` 在长会话（ANSI/CJK 行）实测 12-40ms/帧。修复：`utils.ts` 新增导出 `asciiVisibleWidth(line, limit)`（复用 `extractAnsiCode` 跳过 ANSI、ASCII 快扫、超限早退，非 ASCII/控制字符/残缺 ESC 返回 undefined 回退 `visibleWidth`），截断循环改 `asciiVisibleWidth(line, width) ?? visibleWidth(line)`；`WIDTH_CACHE_SIZE` 512→4096；`test/truncate-to-width.test.ts` 加 "asciiVisibleWidth" 单元用例。修复后 styled-ASCII 场景 30.7→~1-2ms/帧。已知边界：>4096 条 distinct 非 ASCII 行仍会缓存抖动（合成极端），根治留待 prepared-frame 行级缓存后续任务。
+  2. Important：原 `includes` 断言被 xterm 自动折行架空（删掉截断循环测试仍绿）。修复：组件行改三行（含 `\x1b[31m` 样式行压快路径），断言改 `viewport[0..3]` 精确 `strictEqual`，判别力已双向验证。
+
 ---
 
 ### Task 4: 编辑器窄宽度端到端回归测试
@@ -600,7 +604,7 @@ git commit -m "fix(pi-tui): guard blank-line padding against negative widths"
 
 1. **`src/components/editor.ts` — `wordWrapLine` 单 grapheme 递归守卫**：segment 不可再分（单 grapheme）且比 `maxWidth` 宽时不再递归（上游在 maxWidth=1 + CJK 时无限递归栈溢出）。守卫必须基于 grapheme 数（`graphemeSegmenter.segment(...)`）而非 code-unit 长度——`grapheme.length` 对 ZWJ emoji 会误判。守护测试：`test/editor.test.ts` 的 "wordWrapLine narrow width"。
 2. **`src/tui.ts` — `Container.render` 宽度钳制**：入口 `width = Math.max(1, width)`。守护测试：`test/tui-render.test.ts` 的 "Container width clamping"。
-3. **`src/tui.ts` — 超宽行截断替代 throw**：`doRender` 在 `applyLineResets` 前对超宽行统一 `sliceByColumn` 截断；上游差分渲染路径的"写崩溃日志 + throw"块已删除，不要在同步时带回来。守护测试：`test/tui-render.test.ts` 的 "TUI overwide line handling"。
+3. **`src/tui.ts` — 超宽行截断替代 throw**：`doRender` 在 `applyLineResets` 前对超宽行统一 `sliceByColumn` 截断；上游差分渲染路径的"写崩溃日志 + throw"块已删除，不要在同步时带回来。性能约束：截断检查每帧扫全部行，必须先走 `utils.ts` 的 `asciiVisibleWidth` 快路径（ANSI 感知 ASCII 快扫 + 超限早退），仅对非 ASCII 行回退 `visibleWidth`；配套 `WIDTH_CACHE_SIZE` 为 4096。已知边界：>4096 条 distinct 非 ASCII 行时宽度缓存 FIFO 抖动（约 30ms/帧），根治需 prepared-frame 行级缓存，属后续任务。守护测试：`test/tui-render.test.ts` 的 "TUI overwide line handling"（精确 viewport 断言）、`test/truncate-to-width.test.ts` 的 "asciiVisibleWidth"。
 4. **`src/components/text.ts` / `markdown.ts` / `truncated-text.ts` — 负宽度 repeat 防御**：空行/分隔线的 `repeat` 参数钳到 ≥0。守护测试：各自测试文件的 "negative width safety"。
 
 ## 同步上游后的验收
