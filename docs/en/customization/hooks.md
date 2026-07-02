@@ -100,7 +100,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | --- | --- | --- | --- |
 | `UserPromptSubmit` | The text submitted by the user | ✓ | Triggered when the user sends a message; returned text is appended to context; if blocked, the model is not called for this turn |
 | `PreToolUse` | Tool name | ✓ | Triggered before a tool call (before permission checks); the tool will not execute if blocked |
-| `Stop` | Empty string | ✓ | Triggered when the model is about to end the current turn; if blocked, a message can be appended to let the model continue |
+| `Stop` | Empty string | ✓ | Triggered when the model is about to end the current turn; the payload includes `messages` (recent user/assistant text) so memory hooks can learn from the turn. If blocked, a message can be appended to let the model continue. |
 | `PostToolUse` | Tool name | — | Triggered after a tool executes successfully (observation only) |
 | `PostToolUseFailure` | Tool name | — | Triggered after a tool fails or is blocked (observation only) |
 | `PermissionRequest` | Tool name | — | Triggered just before waiting for user approval (observation only) |
