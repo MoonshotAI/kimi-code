@@ -830,21 +830,17 @@ describe("TUI overwide line handling", () => {
 		await terminal.waitForRender();
 
 		// 改成超宽行并触发差分渲染路径（修复前这里会 throw）。
-		component.lines = ["xxxxxxxxxx", "你好世界"];
+		component.lines = ["xxxxxxxxxx", "\x1b[31myyyyyyyyyy\x1b[0m", "你好世界"];
 		tui.requestRender();
 		await terminal.waitForRender();
 
 		const viewport = terminal.getViewport();
-		assert.ok(viewport.some((line) => line.includes("xxxx")));
-		assert.ok(
-			!viewport.some((line) => line.includes("xxxxx")),
-			"ASCII line should be truncated to terminal width",
-		);
-		assert.ok(viewport.some((line) => line.includes("你好")));
-		assert.ok(
-			!viewport.some((line) => line.includes("你好世")),
-			"CJK line should be truncated to terminal width",
-		);
+		// 截断生效时每个逻辑行恰占一个 viewport 行；若截断丢失，
+		// xterm 会把超宽行自动折行，后续行整体下移，下面的精确断言会失败。
+		assert.strictEqual(viewport[0], "xxxx");
+		assert.strictEqual(viewport[1], "yyyy");
+		assert.strictEqual(viewport[2], "你好");
+		assert.strictEqual(viewport[3], "");
 
 		tui.stop();
 	});
