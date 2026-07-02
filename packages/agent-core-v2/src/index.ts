@@ -13,7 +13,6 @@ export * from '#/app/bootstrap';
 export * from '#/app/hostFs';
 export { IEventService, type DomainEvent } from '#/app/event';
 export * from '#/app/llmProtocol';
-export * from '#/app/chatProvider';
 
 export * from '#/app/sessionIndex';
 export * from '#/session/sessionMetadata';
@@ -23,7 +22,6 @@ export * from '#/app/platform';
 export * from '#/app/protocol';
 export * from '#/app/model';
 export * from '#/app/modelCatalog';
-export * from '#/session/modelRuntime';
 export * from '#/app/plugin';
 
 export type { SkillSource } from '#/app/globalSkillCatalog';

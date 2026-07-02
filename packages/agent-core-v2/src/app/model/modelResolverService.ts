@@ -95,6 +95,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       video_in: declared.has('video_in') || UNKNOWN_CAPABILITY.video_in,
       tool_use: declared.has('tool_use') || UNKNOWN_CAPABILITY.tool_use,
     };
+    const alwaysThinking = declared.has('always_thinking');
 
     return new ModelImpl({
       id,
@@ -108,6 +109,8 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       maxOutputSize: model.maxOutputSize,
       displayName: model.displayName,
       reasoningKey: model.reasoningKey,
+      alwaysThinking,
+      providerName,
       authProvider,
       protocolRegistry: this.protocolRegistry as ProtocolAdapterRegistry,
     });
@@ -227,7 +230,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
 
   private buildAuthProvider(providerName: string, auth: ResolvedAuthMaterial): AuthProvider {
     if (auth.apiKey !== undefined) {
-      return new StaticAuthProvider({ Authorization: `Bearer ${auth.apiKey}` });
+      return new StaticAuthProvider(auth.apiKey);
     }
     if (auth.oauth !== undefined) {
       const oauthRef = auth.oauth;
@@ -237,8 +240,9 @@ export class ModelResolverService extends Disposable implements IModelResolver {
         async getAuth(options): Promise<ProviderRequestAuth | undefined> {
           const tokenProvider = oauthService.resolveTokenProvider(providerKey, oauthRef);
           if (tokenProvider === undefined) return undefined;
-          const token = await tokenProvider.getAccessToken({ force: options?.force ?? false });
-          return { headers: { Authorization: `Bearer ${token}` } } as ProviderRequestAuth;
+          const apiKey = await tokenProvider.getAccessToken({ force: options?.force ?? false });
+          if (apiKey.trim().length === 0) return undefined;
+          return { apiKey };
         },
       };
     }

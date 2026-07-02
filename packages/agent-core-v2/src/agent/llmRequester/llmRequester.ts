@@ -1,5 +1,5 @@
 import { createDecorator } from "#/_base/di";
-import type { FinishReason, Message, StreamedMessagePart, TokenUsage, Tool } from "@moonshot-ai/kosong";
+import type { FinishReason, Message, StreamedMessagePart, TokenUsage, Tool } from '#/app/llmProtocol';
 import type { LLMRequestLogFields } from '#/agent/loop';
 import type { UsageRecordContext } from '#/agent/usage';
 

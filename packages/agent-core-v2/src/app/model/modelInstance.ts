@@ -28,6 +28,8 @@ import type {
   ThinkingEffort,
   TokenUsage,
   Tool,
+  VideoUploadInput,
+  VideoURLPart,
 } from '#/app/llmProtocol';
 import type { Protocol } from '#/app/protocol';
 
@@ -93,6 +95,18 @@ export interface Model {
   readonly displayName?: string;
   readonly reasoningKey?: string;
   readonly thinkingEffort: ThinkingEffort | null;
+  /**
+   * True when this Model's capabilities include `always_thinking` — the
+   * runtime should force a thinking pass even if the user's requested
+   * `thinkingLevel` is `off`.
+   */
+  readonly alwaysThinking: boolean;
+  /**
+   * The config-side Provider id this Model resolves against (the entry in
+   * `[providers.*]`). For flat-case Models, this is the origin derived from
+   * `baseUrl` (e.g. `api.openai.com`).
+   */
+  readonly providerName: string;
 
   /**
    * Fresh auth material for every request. The Model closes over the
@@ -115,4 +129,14 @@ export interface Model {
    * Cancellation is via the optional `AbortSignal`.
    */
   request(input: LLMRequestInput, signal?: AbortSignal): AsyncIterable<LLMEvent>;
+
+  /**
+   * Upload a video for multi-modal input. Present only when the underlying
+   * protocol adapter supports it (currently Kimi). Callers should feature-
+   * detect via `capabilities.video_in`.
+   */
+  uploadVideo?(
+    input: string | VideoUploadInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<VideoURLPart>;
 }

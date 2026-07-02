@@ -21,10 +21,10 @@ export class AgentLLMRequestLogService implements IAgentLLMRequestLogService {
   logRequest(input: LLMRequestLogInput): void {
     const requestLogFields = input.fields ?? {};
     const config = {
-      provider: input.provider.name,
-      model: input.provider.modelName,
+      provider: input.protocol,
+      model: input.modelName,
       modelAlias: input.modelAlias,
-      thinkingEffort: input.provider.thinkingEffort ?? undefined,
+      thinkingEffort: input.thinkingEffort ?? undefined,
       systemPromptChars: input.systemPrompt.length,
       toolCount: input.tools.length,
     };

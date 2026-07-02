@@ -1,10 +1,11 @@
 /**
  * Completion-token budget — resolves env/config caps and applies them to a
- * chat provider.
+ * runnable Model. Pure computation over the Model's `.withMaxCompletionTokens`
+ * facade; no wire coupling.
  */
 
-import type { ChatProvider } from '@moonshot-ai/kosong';
 import type { ModelCapability } from '#/app/llmProtocol';
+import type { Model } from '#/app/model';
 
 export interface CompletionBudgetConfig {
   readonly hardCap?: number;
@@ -44,18 +45,17 @@ export function computeCompletionBudgetCap(args: {
 }
 
 export function applyCompletionBudget(args: {
-  readonly provider: ChatProvider;
+  readonly model: Model;
   readonly budget: CompletionBudgetConfig | undefined;
   readonly capability: ModelCapability | undefined;
   readonly usedContextTokens?: number;
-}): ChatProvider {
-  if (args.budget === undefined) return args.provider;
-  if (args.provider.withMaxCompletionTokens === undefined) return args.provider;
+}): Model {
+  if (args.budget === undefined) return args.model;
   const cap = computeCompletionBudgetCap({
     budget: args.budget,
     capability: args.capability,
   });
-  return args.provider.withMaxCompletionTokens(cap, {
+  return args.model.withMaxCompletionTokens(cap, {
     usedContextTokens: args.usedContextTokens,
     maxContextTokens: args.capability?.max_context_tokens,
   });

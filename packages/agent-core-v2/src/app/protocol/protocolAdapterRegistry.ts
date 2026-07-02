@@ -1,12 +1,3 @@
-/**
- * `protocol` domain (L1) — `IProtocolAdapterRegistry` implementation.
- *
- * Owns the current mapping from a Protocol identifier to a request-handler
- * factory. Delegates to `@moonshot-ai/kosong`'s `createProvider` for now;
- * this is v2's only runtime kosong boundary (Phase 8 replaces it with native
- * adapters). Bound at App scope.
- */
-
 import type { ChatProvider, ProviderConfig as KosongProviderConfig } from '@moonshot-ai/kosong';
 import { createProvider } from '@moonshot-ai/kosong';
 
@@ -19,6 +10,15 @@ import {
   type Protocol,
   type ProtocolAdapterConfig,
 } from './protocol';
+
+/**
+ * `protocol` domain (L1) — `IProtocolAdapterRegistry` implementation.
+ *
+ * Owns the current mapping from a Protocol identifier to a request-handler
+ * factory. Delegates to `@moonshot-ai/kosong`'s `createProvider` for now;
+ * this is v2's only runtime kosong boundary (Phase 8 replaces it with native
+ * adapters). Bound at App scope.
+ */
 
 const SUPPORTED: readonly Protocol[] = [
   'kimi',

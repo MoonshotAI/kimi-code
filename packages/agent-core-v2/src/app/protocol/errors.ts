@@ -1,11 +1,14 @@
 /**
- * `chatProvider` domain error codes — provider (LLM API) failures raised while
- * driving a `ChatProvider`.
+ * `protocol` domain error codes — LLM wire API failures raised while driving
+ * a Model's `request(...)` through the protocol adapter registry.
+ *
+ * Registered at module load. Historical name `ChatProviderErrors` is retained
+ * as a re-exported alias so existing call sites don't have to migrate.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors';
 
-export const ChatProviderErrors = {
+export const ProtocolErrors = {
   codes: {
     PROVIDER_API_ERROR: 'provider.api_error',
     PROVIDER_RATE_LIMIT: 'provider.rate_limit',
@@ -29,4 +32,7 @@ export const ChatProviderErrors = {
   },
 } as const satisfies ErrorDomain;
 
-registerErrorDomain(ChatProviderErrors);
+/** @deprecated Use `ProtocolErrors` — same codes, renamed with the domain. */
+export const ChatProviderErrors = ProtocolErrors;
+
+registerErrorDomain(ProtocolErrors);

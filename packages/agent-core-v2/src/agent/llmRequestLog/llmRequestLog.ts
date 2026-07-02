@@ -1,12 +1,18 @@
-import type { ChatProvider } from '@moonshot-ai/kosong';
-import type { Message, Tool } from '#/app/llmProtocol';
+import type { Message, ThinkingEffort, Tool } from '#/app/llmProtocol';
+import type { Protocol } from '#/app/protocol';
 
 import { createDecorator } from "#/_base/di";
 import type { LLMRequestLogFields } from '#/agent/loop';
 
 export interface LLMRequestLogInput {
-  readonly provider: ChatProvider;
+  /** Wire protocol identifier (e.g. `kimi`, `anthropic`). */
+  readonly protocol: Protocol;
+  /** Wire-facing model name (e.g. `kimi-k2-instruct`). */
+  readonly modelName: string;
+  /** Config-side Model id / alias. */
   readonly modelAlias?: string;
+  /** Thinking effort applied for the request, when any. */
+  readonly thinkingEffort?: ThinkingEffort | null;
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
   readonly messages: readonly Message[];

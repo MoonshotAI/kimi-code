@@ -53,9 +53,6 @@ import {
   SYSTEM_CLOCKS,
   type ClockSources,
 } from './clock';
-import { CronCreateTool } from './tools/cron-create';
-import { CronDeleteTool } from './tools/cron-delete';
-import { CronListTool } from './tools/cron-list';
 
 /** Telemetry event names emitted by the cron subsystem. Centralised so a typo can't drift a metric. */
 export const CRON_SCHEDULED = 'cron_scheduled' as const;

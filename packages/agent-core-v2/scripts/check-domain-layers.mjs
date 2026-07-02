@@ -79,7 +79,6 @@ const DOMAIN_LAYER = new Map([
   // and the `errors` facade, so it sits in L1 beside the other host bridges.
   ['git', 1],
   ['workspaceContext', 1],
-  ['chatProvider', 1],
   ['protocol', 1],
   ['hooks', 1],
   ['storage', 1],
@@ -115,7 +114,6 @@ const DOMAIN_LAYER = new Map([
   ['permissionRules', 3],
   ['plugin', 3],
   ['record', 3],
-  ['modelRuntime', 3],
   ['modelCatalog', 3],
   // L4 — agent behaviour
   ['context', 4],

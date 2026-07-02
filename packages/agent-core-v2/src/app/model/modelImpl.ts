@@ -17,22 +17,20 @@
  * file changes.
  */
 
-import type {
-  ChatProvider,
-  GenerateCallbacks,
-} from '@moonshot-ai/kosong';
-import { generate } from '@moonshot-ai/kosong';
-
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import type {
+  GenerateCallbacks,
   GenerationKwargs,
   MaxCompletionTokensOptions,
   ModelCapability,
   ProviderRequestAuth,
   StreamDecodeStats,
   ThinkingEffort,
+  VideoUploadInput,
+  VideoURLPart,
 } from '#/app/llmProtocol';
-import type { Protocol } from '#/app/protocol';
+import type { ChatProvider, Protocol } from '#/app/protocol';
+import { generate } from '#/app/protocol';
 import { type ProtocolAdapterRegistry } from '#/app/protocol/protocolAdapterRegistry';
 
 import type { AuthProvider, LLMEvent, LLMRequestInput, Model } from './modelInstance';
@@ -49,6 +47,8 @@ export interface ModelImplInit {
   readonly maxOutputSize?: number;
   readonly displayName?: string;
   readonly reasoningKey?: string;
+  readonly alwaysThinking: boolean;
+  readonly providerName: string;
   readonly authProvider: AuthProvider;
   readonly protocolRegistry: ProtocolAdapterRegistry;
   /** Extra kosong-shaped config passed through when constructing the wire adapter. */
@@ -69,6 +69,8 @@ export class ModelImpl implements Model {
   readonly reasoningKey?: string;
   readonly authProvider: AuthProvider;
   readonly thinkingEffort: ThinkingEffort | null;
+  readonly alwaysThinking: boolean;
+  readonly providerName: string;
 
   private readonly protocolRegistry: ProtocolAdapterRegistry;
   private readonly extras: Readonly<Record<string, unknown>>;
@@ -98,6 +100,8 @@ export class ModelImpl implements Model {
     this.protocolRegistry = init.protocolRegistry;
     this.extras = init.extras ?? {};
     this.transforms = transforms;
+    this.alwaysThinking = init.alwaysThinking;
+    this.providerName = init.providerName;
     // thinkingEffort is materialized via `withThinking` — the transform chain
     // owns the actual value applied to the underlying ChatProvider; we track
     // the most recent effort on the wrapper so callers can inspect it.
@@ -121,6 +125,8 @@ export class ModelImpl implements Model {
         maxOutputSize: this.maxOutputSize,
         displayName: this.displayName,
         reasoningKey: this.reasoningKey,
+        alwaysThinking: this.alwaysThinking,
+        providerName: this.providerName,
         authProvider: this.authProvider,
         protocolRegistry: this.protocolRegistry,
         extras: this.extras,
@@ -174,6 +180,19 @@ export class ModelImpl implements Model {
       (err) => queue.fail(err),
     );
     return queue;
+  }
+
+  async uploadVideo(
+    input: string | VideoUploadInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<VideoURLPart> {
+    const provider = this.resolveChatProvider();
+    if (provider.uploadVideo === undefined) {
+      throw new Error(
+        `Model "${this.id}" (protocol=${this.protocol}) does not support video upload`,
+      );
+    }
+    return provider.uploadVideo(input, { signal: options?.signal });
   }
 
   private async runRequest(
@@ -301,9 +320,11 @@ export function buildStreamTiming(
  * refresh semantics.
  */
 export class StaticAuthProvider implements AuthProvider {
-  constructor(private readonly headers: Readonly<Record<string, string>> | undefined) {}
+  constructor(private readonly apiKey: string | undefined) {}
   async getAuth(): Promise<ProviderRequestAuth | undefined> {
-    if (this.headers === undefined) return undefined;
-    return { headers: { ...this.headers } } as ProviderRequestAuth;
+    if (this.apiKey === undefined || this.apiKey.trim().length === 0) return undefined;
+    // kosong's provider adapters read the bearer/api token from `apiKey`
+    // (see `requireProviderApiKey`); a headers-only shape is rejected.
+    return { apiKey: this.apiKey };
   }
 }

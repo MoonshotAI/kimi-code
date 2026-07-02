@@ -1,22 +1,18 @@
-import type {
-  ChatProvider,
-  ModelCapability,
-  ProviderConfig,
-  ThinkingEffort,
-} from '@moonshot-ai/kosong';
+import type { ModelCapability, ThinkingEffort } from '#/app/llmProtocol';
 import type { Model } from '#/app/model';
 
 import { createDecorator } from "#/_base/di";
 import type { ToolSource } from '#/agent/tool';
 
 /**
- * Data required to configure an agent: provider, model, capabilities, profile,
- * thinking level, system prompt, and working directory. Owned by `profile`
- * (which assembles it); consumed by `replayBuilder` and `rpc` as a wire DTO.
+ * Data required to configure an agent: active model id, its capability
+ * matrix, profile, thinking level, system prompt, and working directory.
+ * Owned by `profile` (which assembles it); consumed by `replayBuilder` and
+ * `rpc` as a wire DTO. The runnable `Model` god-object is resolved on demand
+ * via `resolveModel()`; it does not travel through this DTO.
  */
 export interface AgentConfigData {
   cwd: string;
-  provider?: ProviderConfig;
   modelAlias?: string;
   modelCapabilities: ModelCapability;
   profileName?: string;
@@ -82,7 +78,6 @@ export interface ApplyProfileOptions {
 }
 
 export interface ProfileModelContext {
-  readonly provider: ProviderConfig;
   readonly modelAlias: string;
   readonly modelCapabilities: ModelCapability;
   readonly maxOutputSize: number | undefined;
@@ -121,21 +116,22 @@ export interface IAgentProfileService {
   getAgentsMdWarning(): string | undefined;
   data(): ProfileData;
   resolveModelContext(): ProfileModelContext;
-  getProvider(): ChatProvider;
   /**
-   * Return a runnable god-object `Model` for the currently-active model.
-   * Phase 3 addition — coexists with {@link getProvider} during the
-   * transitional period. Consumers migrating off the kosong `ChatProvider`
-   * surface should call this instead. Returns `undefined` when no model is
-   * configured yet (same shape as `hasModel()` returning false).
+   * Return the runnable god-object `Model` for the currently-active model.
+   * Throws when no model is configured — use {@link hasModel} to feature-test.
+   */
+  getProvider(): Model;
+  /**
+   * Return the runnable god-object `Model` for the currently-active model, or
+   * `undefined` when no model is configured yet. Prefer this in code paths
+   * that may run before configuration is ready.
    */
   resolveModel(): Model | undefined;
   /**
-   * The resolved chat provider for the active model. Equivalent to
-   * {@link getProvider}, exposed as a property so media/video tooling (and
-   * tests) can read or override the upload-capable provider directly.
+   * Alias of {@link getProvider}, exposed as a property so media/video tooling
+   * (and tests) can read or override it directly.
    */
-  readonly provider: ChatProvider;
+  readonly provider: Model;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;
   hasModel(): boolean;
