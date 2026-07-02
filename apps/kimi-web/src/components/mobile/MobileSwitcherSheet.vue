@@ -111,7 +111,15 @@ function toggleExpand(id: string): void {
 }
 
 function visibleSessions(g: WorkspaceGroup): Session[] {
-  return isExpanded(g.workspace.id) ? g.sessions : g.sessions.slice(0, g.initialCount);
+  if (isExpanded(g.workspace.id)) return g.sessions;
+  const head = g.sessions.slice(0, g.initialCount);
+  // Keep the active session visible when it's beyond the first page (e.g.
+  // selected via search or a deep link), mirroring the desktop sidebar.
+  if (props.activeId && !head.some((s) => s.id === props.activeId)) {
+    const active = g.sessions.find((s) => s.id === props.activeId);
+    if (active) return [...head, active];
+  }
+  return head;
 }
 
 function onLoadMore(id: string): void {

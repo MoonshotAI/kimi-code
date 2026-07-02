@@ -63,12 +63,19 @@ const renameValueModel = computed<string>({
 
 // Sessions to render: all when expanded, otherwise only the first page. The
 // collapse is a pure view-layer trim — data, cursor and hasMore stay intact, so
-// re-expanding never refetches.
-const visibleSessions = computed(() =>
-  props.isExpanded(props.group.workspace.id)
-    ? props.group.sessions
-    : props.group.sessions.slice(0, props.group.initialCount),
-);
+// re-expanding never refetches. When collapsed, the active session is always
+// kept visible: an older session selected via Cmd/Ctrl-K search or a URL deep
+// link would otherwise be hidden past the first page, so navigation would land
+// on a missing row. It appends in newest-first order (older than the head).
+const visibleSessions = computed(() => {
+  if (props.isExpanded(props.group.workspace.id)) return props.group.sessions;
+  const head = props.group.sessions.slice(0, props.group.initialCount);
+  if (props.activeId && !head.some((s) => s.id === props.activeId)) {
+    const active = props.group.sessions.find((s) => s.id === props.activeId);
+    if (active) return [...head, active];
+  }
+  return head;
+});
 // True once more than the first page is loaded — gates the show-less/show-all toggle.
 const canToggleExpand = computed(
   () => props.group.sessions.length > props.group.initialCount,
