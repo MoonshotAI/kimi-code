@@ -67,6 +67,25 @@ export class EditorKeyboardController {
       host.updateEditorBorderHighlight(text);
     };
 
+    // bash mode recalls only shell (`!`-prefixed) history entries; prompt mode
+    // recalls everything. The closure reads inputMode live at navigation time.
+    editor.setHistoryFilter((entry: string) =>
+      editor.inputMode === 'bash' ? entry.startsWith('!') : true,
+    );
+
+    // Recalling a `!`-prefixed entry strips the marker and returns to bash
+    // mode; recalling a plain entry returns to prompt mode. The filter above
+    // guarantees bash mode only ever lands on `!` entries, so this never
+    // misfires on commands typed in bash mode.
+    editor.onRecall = (entry: string) => {
+      if (entry.startsWith('!')) {
+        editor.setInputMode('bash');
+        return entry.slice(1);
+      }
+      editor.setInputMode('prompt');
+      return undefined;
+    };
+
     editor.onNonEscapeInput = () => {
       this.clearPendingUndoEsc();
     };

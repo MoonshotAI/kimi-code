@@ -33,7 +33,9 @@ interface PasteHarness {
 }
 
 function createPasteHarness(): PasteHarness {
-  const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {};
+  const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
+    setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
+  };
   const store = new ImageAttachmentStore();
   const host = {
     state: {
