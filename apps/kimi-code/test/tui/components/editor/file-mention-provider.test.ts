@@ -4,7 +4,22 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
+import {
+  FileMentionProvider,
+  getDirectoryNavigationSuggestions,
+} from '#/tui/components/editor/file-mention-provider';
+
+// Overridable homedir so `@~/...` navigation is testable against a temp
+// directory; every other node:os export keeps its real behavior. vitest
+// hoists vi.mock above the imports, so placement here is fine.
+const mockHome = vi.hoisted(() => ({ path: '' }));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return {
+    ...actual,
+    homedir: () => (mockHome.path.length > 0 ? mockHome.path : actual.homedir()),
+  };
+});
 
 function ctrl(): AbortSignal {
   return new AbortController().signal;
@@ -572,5 +587,103 @@ describe('FileMentionProvider', () => {
       expect(getArgumentCompletions).toHaveBeenCalled();
       expect(result?.items.map((item) => item.label)).toContain('shared/');
     });
+  });
+});
+
+describe('getDirectoryNavigationSuggestions', () => {
+  let workDir: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'nav-work-'));
+    fakeHome = mkdtempSync(join(tmpdir(), 'nav-home-'));
+    mockHome.path = fakeHome;
+
+    mkdirSync(join(workDir, 'src'));
+    writeFileSync(join(workDir, 'src', 'main.ts'), '');
+    writeFileSync(join(workDir, 'src', 'ROADMAP深度研究报告.docx'), '');
+    writeFileSync(join(workDir, 'src', 'with space.md'), '');
+    mkdirSync(join(workDir, 'src', 'deep'));
+    writeFileSync(join(workDir, 'src', 'deep', 'main-deep.ts'), '');
+    writeFileSync(join(workDir, 'src', '.hidden'), '');
+
+    // Junk that recursive fuzzy search would surface above ~/Downloads.
+    mkdirSync(join(fakeHome, 'Downloads'));
+    mkdirSync(join(fakeHome, '.Trash', 'app', 'XPCServices', 'Downloader.xpc'), {
+      recursive: true,
+    });
+  });
+
+  afterEach(() => {
+    mockHome.path = '';
+    rmSync(workDir, { recursive: true, force: true });
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it('returns null for bare fragments (no slash) so fuzzy search handles them', () => {
+    expect(getDirectoryNavigationSuggestions(workDir, '@Down')).toBeNull();
+  });
+
+  it('lists only the single directory level, prefix matches before substring', () => {
+    const result = getDirectoryNavigationSuggestions(workDir, '@src/ma');
+    // `main.ts` prefix-matches `ma`; `ROADMAP…` only substring-matches (roadMAp).
+    // `deep/main-deep.ts` must not leak up from the nested level.
+    expect(result?.items.map((item) => item.label)).toEqual(['main.ts', 'ROADMAP深度研究报告.docx']);
+    expect(result?.items[0]?.value).toBe('@src/main.ts');
+  });
+
+  it('matches CJK fragments by substring', () => {
+    const result = getDirectoryNavigationSuggestions(workDir, '@src/深度');
+    expect(result?.items.map((item) => item.label)).toEqual(['ROADMAP深度研究报告.docx']);
+  });
+
+  it('lists a directory on trailing slash, directories before files', () => {
+    const result = getDirectoryNavigationSuggestions(workDir, '@src/');
+    expect(result?.items.map((item) => item.label)).toEqual([
+      'deep/',
+      'main.ts',
+      'ROADMAP深度研究报告.docx',
+      'with space.md',
+    ]);
+  });
+
+  it('hides dot entries unless the fragment starts with a dot', () => {
+    const listed = getDirectoryNavigationSuggestions(workDir, '@src/');
+    expect(listed?.items.map((item) => item.label)).not.toContain('.hidden');
+    const dotted = getDirectoryNavigationSuggestions(workDir, '@src/.hi');
+    expect(dotted?.items.map((item) => item.label)).toEqual(['.hidden']);
+  });
+
+  it('expands ~/ and keeps it as typed in the inserted value', () => {
+    const result = getDirectoryNavigationSuggestions(workDir, '@~/Down');
+    expect(result?.items.map((item) => item.value)).toEqual(['@~/Downloads/']);
+    expect(result?.items[0]?.description).toBe(join(fakeHome, 'Downloads'));
+  });
+
+  it('does not surface hidden-tree junk for scoped queries', () => {
+    const result = getDirectoryNavigationSuggestions(workDir, '@~/Down');
+    const labels = result?.items.map((item) => item.label) ?? [];
+    expect(labels).not.toContain('Downloader.xpc/');
+    expect(labels).toEqual(['Downloads/']);
+  });
+
+  it('quotes values for names containing spaces', () => {
+    const result = getDirectoryNavigationSuggestions(workDir, '@src/with');
+    expect(result?.items[0]?.value).toBe('@"src/with space.md"');
+  });
+
+  it('returns null when the directory part does not resolve', () => {
+    expect(getDirectoryNavigationSuggestions(workDir, '@nope/x')).toBeNull();
+  });
+
+  it('returns null when nothing in the directory matches', () => {
+    expect(getDirectoryNavigationSuggestions(workDir, '@src/zzz')).toBeNull();
+  });
+
+  it('takes priority over the fallback scanner inside the provider', async () => {
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+    const text = 'see @~/Down';
+    const result = await provider.getSuggestions([text], 0, text.length, { signal: ctrl() });
+    expect(result?.items.map((item) => item.value)).toEqual(['@~/Downloads/']);
   });
 });

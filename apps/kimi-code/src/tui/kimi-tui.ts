@@ -132,6 +132,7 @@ import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
+import { resolveFileMentions } from './utils/file-mention';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
@@ -1071,7 +1072,10 @@ export class KimiTUI {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    const extraction = extractMediaAttachments(text, this.imageStore);
+    // Resolve `@` file mentions before media extraction so both rewrites
+    // land in the parts we send; the transcript keeps the text as typed.
+    const mentionResolution = resolveFileMentions(text, this.state.appState.workDir);
+    const extraction = extractMediaAttachments(mentionResolution.text, this.imageStore);
     if (!this.validateMediaCapabilities(extraction)) return;
     const session = this.session;
     if (session === undefined) {
@@ -1083,6 +1087,10 @@ export class KimiTUI {
         hasMedia: true,
         parts: extraction.parts,
         imageAttachmentIds: extraction.imageAttachmentIds,
+      });
+    } else if (mentionResolution.mentions.length > 0) {
+      this.sendMessage(session, text, {
+        parts: [{ type: 'text', text: mentionResolution.text }],
       });
     } else {
       this.sendMessage(session, text);
@@ -1272,15 +1280,23 @@ export class KimiTUI {
   }
 
   steerMessage(session: Session, input: string[]): void {
+    // Same `@` mention treatment as sendNormalUserInput: the payload
+    // carries resolved paths, the transcript/queue keeps the typed text.
+    const workDir = this.state.appState.workDir;
+    const resolveOptions = (part: string): SendMessageOptions | undefined => {
+      const resolution = resolveFileMentions(part, workDir);
+      if (resolution.mentions.length === 0) return undefined;
+      return { parts: [{ type: 'text', text: resolution.text }] };
+    };
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       for (const part of input) {
-        this.enqueueMessage(part);
+        this.enqueueMessage(part, resolveOptions(part));
       }
       return;
     }
     if (this.state.appState.streamingPhase === 'idle') {
       for (const part of input) {
-        this.sendMessageInternal(session, part);
+        this.sendMessageInternal(session, part, resolveOptions(part));
       }
       return;
     }
@@ -1295,7 +1311,8 @@ export class KimiTUI {
       });
     }
 
-    void session.steer(input.join('\n\n')).catch((error: unknown) => {
+    const steerText = input.map((part) => resolveFileMentions(part, workDir).text).join('\n\n');
+    void session.steer(steerText).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.showError(`Failed to steer: ${message}`);
     });
