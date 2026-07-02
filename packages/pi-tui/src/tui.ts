@@ -278,6 +278,9 @@ export class Container implements Component {
 	}
 
 	render(width: number): string[] {
+		// Extremely narrow terminals can report tiny or even non-positive
+		// column counts; never propagate a width below 1 into components.
+		width = Math.max(1, width);
 		const lines: string[] = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);

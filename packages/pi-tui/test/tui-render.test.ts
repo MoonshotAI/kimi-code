@@ -9,7 +9,7 @@ import {
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
-import { type Component, TUI } from "../src/tui.ts";
+import { type Component, Container, TUI } from "../src/tui.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {
@@ -798,5 +798,22 @@ describe("TUI scrollback preservation", () => {
 		assert.ok(!writes.includes("\x1b[2J"), "should not full redraw (no ESC[2J)");
 
 		tui.stop();
+	});
+});
+
+describe("Container width clamping", () => {
+	it("clamps non-positive widths to 1 before rendering children", () => {
+		const container = new Container();
+		const received: number[] = [];
+		container.addChild({
+			render(width: number): string[] {
+				received.push(width);
+				return [];
+			},
+			invalidate(): void {},
+		});
+		container.render(0);
+		container.render(-3);
+		assert.deepStrictEqual(received, [1, 1]);
 	});
 });
