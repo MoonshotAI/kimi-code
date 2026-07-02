@@ -142,6 +142,23 @@ describe('EditorKeyboardController shell history recall', () => {
     expect(filter('hello')).toBe(false);
   });
 
+  it('locks the filter to the browse-entry mode once browsing starts', () => {
+    const { editor } = createHarness();
+    const setHistoryFilter = editor['setHistoryFilter'] as unknown as Mock;
+    const [filter] = setHistoryFilter.mock.calls[0] as [(entry: string) => boolean];
+    const save = editor['onHistoryDraftSave'] as unknown as () => unknown;
+
+    // Enter browse from prompt mode, then simulate landing on a shell entry
+    // (which flips inputMode to bash). The filter should stay locked to prompt
+    // and keep allowing plain entries.
+    (editor as unknown as { inputMode: string }).inputMode = 'prompt';
+    save();
+    (editor as unknown as { inputMode: string }).inputMode = 'bash';
+
+    expect(filter('hello')).toBe(true);
+    expect(filter('!cmd')).toBe(true);
+  });
+
   it('strips the leading ! and switches to bash mode when recalling a shell entry', () => {
     const { editor } = createHarness();
     const onRecall = editor['onRecall'] as unknown as Recall;

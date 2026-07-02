@@ -68,10 +68,14 @@ export class EditorKeyboardController {
     };
 
     // bash mode recalls only shell (`!`-prefixed) history entries; prompt mode
-    // recalls everything. The closure reads inputMode live at navigation time.
-    editor.setHistoryFilter((entry: string) =>
-      editor.inputMode === 'bash' ? entry.startsWith('!') : true,
-    );
+    // recalls everything. The filter is locked to the mode captured when the
+    // user first enters history browsing (see onHistoryDraftSave), so landing on
+    // a shell entry mid-browse doesn't switch the filter to shell-only.
+    let browseMode: 'prompt' | 'bash' | null = null;
+    editor.setHistoryFilter((entry: string) => {
+      const mode = browseMode ?? editor.inputMode;
+      return mode === 'bash' ? entry.startsWith('!') : true;
+    });
 
     // Recalling a `!`-prefixed entry strips the marker and returns to bash
     // mode; recalling a plain entry returns to prompt mode. The filter above
@@ -89,10 +93,15 @@ export class EditorKeyboardController {
     // Save/restore the input mode alongside pi-tui's history draft. Without
     // this, recalling a shell entry and then pressing Down back to an empty
     // draft would leave the editor stuck in bash mode, so the next typed
-    // message would be submitted as a shell command.
-    editor.onHistoryDraftSave = () => editor.inputMode;
+    // message would be submitted as a shell command. Also locks the history
+    // filter (browseMode) for the duration of the browse session.
+    editor.onHistoryDraftSave = () => {
+      browseMode = editor.inputMode;
+      return editor.inputMode;
+    };
     editor.onHistoryDraftRestore = (state: unknown) => {
       editor.setInputMode(state as 'prompt' | 'bash');
+      browseMode = null;
     };
 
     editor.onNonEscapeInput = () => {
