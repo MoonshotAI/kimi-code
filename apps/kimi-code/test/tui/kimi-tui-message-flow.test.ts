@@ -4697,6 +4697,109 @@ command = "vim"
     expect(countOccurrences(transcript, 'ctrl+o to expand')).toBe(2);
   });
 
+  it('compacts pending thinking before appending a hook result', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'hook.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        hookEvent: 'UserPromptSubmit',
+        content: '{}',
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('line1');
+    expect(transcript).toContain('line2');
+    expect(transcript).not.toContain('line7');
+    expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+    expect(transcript).not.toContain('thought');
+  });
+
+  it('compacts pending thinking when a step is interrupted', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 0,
+        reason: 'aborted',
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('line1');
+    expect(transcript).toContain('line2');
+    expect(transcript).not.toContain('line7');
+    expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+    expect(transcript).not.toContain('thought');
+  });
+
+  it('compacts pending thinking on session error', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'error',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        code: 'provider.api_error',
+        message: 'boom',
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('line1');
+    expect(transcript).toContain('line2');
+    expect(transcript).not.toContain('line7');
+    expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+    expect(transcript).not.toContain('thought');
+  });
+
+  it('compacts pending thinking when compaction begins', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        trigger: 'manual',
+        instruction: 'summarize',
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('line1');
+    expect(transcript).toContain('line2');
+    expect(transcript).not.toContain('line7');
+    expect(transcript).toContain('... (5 more lines, ctrl+o to expand)');
+    expect(transcript).not.toContain('thought');
+  });
+
   it('compacts pending thinking before rendering a tool call', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'thinking';
@@ -4875,7 +4978,6 @@ command = "vim"
   });
 });
 
-<<<<<<< HEAD
 describe('/model status displayName override', () => {
   it('shows the overridden display name in the switch status', async () => {
     const session = makeSession();
