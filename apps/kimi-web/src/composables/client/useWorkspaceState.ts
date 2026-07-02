@@ -863,6 +863,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   function writeSessionUrl(sessionId: string | undefined, mode: SessionUrlMode): void {
     if (mode === 'none') return;
     if (typeof window === 'undefined' || !window.history) return;
+    // The design-system route is independent of the session URL binding — do not
+    // clobber /design-system with a session URL during auto-select on load.
+    if (window.location.pathname === '/design-system') return;
     const target = sessionUrl(sessionId);
     if (window.location.pathname === target) return;
     try {
