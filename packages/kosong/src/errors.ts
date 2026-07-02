@@ -170,16 +170,25 @@ export function isContextOverflowStatusError(statusCode: number, message: string
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
-// Strict providers (Anthropic) reject a request whose assistant `tool_use` and
-// `tool_result` blocks are not correctly paired and adjacent — a missing result,
-// a stray result with no matching call, or a result that does not immediately
-// follow its call. The validation runs before any generation, so the error is a
-// non-retryable 4xx. A caller can react by resending a re-projected, strictly
-// wire-compliant request rather than leaving the session permanently stuck.
+// Strict providers reject a request whose assistant `tool_use`/`tool_calls` and
+// `tool_result`/`tool` blocks are not correctly paired and adjacent — a missing
+// result, a stray result with no matching call, or a result that does not
+// immediately follow its call. Anthropic phrases this in terms of
+// `tool_use`/`tool_result`; OpenAI-compatible providers (Moonshot / Kimi) phrase
+// it as a `tool_call_id` that "is not found" in the preceding assistant message.
+// The validation runs before any generation, so the error is a non-retryable
+// 4xx. A caller can react by resending a re-projected, strictly wire-compliant
+// request rather than leaving the session permanently stuck.
 const TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS = [
   /tool_use[\s\S]*tool_result/,
   /tool_result[\s\S]*tool_use/,
   /unexpected\s+`?tool_result/,
+  // OpenAI-compatible (Moonshot / Kimi): a `tool` message references a
+  // `tool_call_id` with no matching `tool_calls` entry in the preceding
+  // assistant message. Observed verbatim as `tool_call_id  is not found`
+  // (doubled space). Anchored on `tool_call_id` so an unrelated "not found"
+  // (e.g. a 404-style body) cannot trip the recovery.
+  /tool_call_id[\s\S]*not found/,
 ] as const;
 
 export function isToolExchangeAdjacencyError(error: unknown): boolean {
