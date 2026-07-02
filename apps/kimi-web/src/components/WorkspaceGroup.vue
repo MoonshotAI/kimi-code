@@ -108,30 +108,26 @@ function onHeaderDragStart(event: DragEvent): void {
           @click.stop
         />
 
-        <Tooltip :text="t('sidebar.options')">
-          <IconButton
-            class="gh-more"
-            :class="{ open: wsMenuOpenId === group.workspace.id }"
-            size="sm"
-            :label="t('sidebar.options')"
-            aria-haspopup="menu"
-            :aria-expanded="wsMenuOpenId === group.workspace.id"
-            @click.stop="emit('toggleWsMenu', group.workspace, $event)"
-          >
-            <Icon name="dots-horizontal" size="sm" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          class="gh-more"
+          :class="{ open: wsMenuOpenId === group.workspace.id }"
+          size="sm"
+          :label="t('sidebar.options')"
+          aria-haspopup="menu"
+          :aria-expanded="wsMenuOpenId === group.workspace.id"
+          @click.stop="emit('toggleWsMenu', group.workspace, $event)"
+        >
+          <Icon name="dots-horizontal" size="sm" />
+        </IconButton>
 
-        <Tooltip :text="t('workspace.newInGroup')">
-          <IconButton
-            class="gh-add"
-            size="sm"
-            :label="t('workspace.newInGroup')"
-            @click.stop="emit('createInWorkspace', group.workspace.id)"
-          >
-            <Icon name="chat-new" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          class="gh-add"
+          size="sm"
+          :label="t('workspace.newInGroup')"
+          @click.stop="emit('createInWorkspace', group.workspace.id)"
+        >
+          <Icon name="chat-new" />
+        </IconButton>
       </div>
 
       <Tooltip :text="group.workspace.root">

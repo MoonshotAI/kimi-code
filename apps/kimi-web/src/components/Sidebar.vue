@@ -23,7 +23,6 @@ import IconButton from './ui/IconButton.vue';
 import Icon from './ui/Icon.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
-import Tooltip from './ui/Tooltip.vue';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 
 const { t } = useI18n();
@@ -553,24 +552,20 @@ onBeforeUnmount(() => {
           <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
           <InternalBuildBanner />
         </div>
-        <Tooltip :text="t('sidebar.collapseSidebar')">
-          <IconButton
-            size="sm"
-            :label="t('sidebar.collapseSidebar')"
-            @click.stop="emit('collapse')"
-          >
-            <Icon name="panel-collapse" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip :text="t('settings.title')">
-          <IconButton
-            size="sm"
-            :label="t('settings.title')"
-            @click.stop="emit('openSettings')"
-          >
-            <Icon name="settings" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          size="sm"
+          :label="t('sidebar.collapseSidebar')"
+          @click.stop="emit('collapse')"
+        >
+          <Icon name="panel-collapse" />
+        </IconButton>
+        <IconButton
+          size="sm"
+          :label="t('settings.title')"
+          @click.stop="emit('openSettings')"
+        >
+          <Icon name="settings" />
+        </IconButton>
       </div>
 
       <!-- Session search — opens the Spotlight-style search dialog -->
@@ -585,16 +580,14 @@ onBeforeUnmount(() => {
           <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
-        <Tooltip :text="t('sidebar.newWorkspace')">
-          <IconButton
-            v-if="showNewWorkspaceButton"
-            size="sm"
-            :label="t('sidebar.newWorkspace')"
-            @click.stop="emit('addWorkspace')"
-          >
-            <Icon name="folder" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          v-if="showNewWorkspaceButton"
+          size="sm"
+          :label="t('sidebar.newWorkspace')"
+          @click.stop="emit('addWorkspace')"
+        >
+          <Icon name="folder" />
+        </IconButton>
       </div>
 
       <!-- Session list — grouped by workspace -->
@@ -609,29 +602,25 @@ onBeforeUnmount(() => {
           <div class="side-section-label">
             <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
             <div class="side-section-actions">
-              <Tooltip :text="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')">
-                <IconButton
-                  class="side-section-toggle"
-                  size="sm"
-                  :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
-                  @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
-                >
-                  <Icon v-if="allCollapsed" name="expand" />
-                  <Icon v-else name="collapse" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip :text="t('sidebar.options')">
-                <IconButton
-                  class="side-section-toggle side-section-kebab"
-                  size="sm"
-                  :label="t('sidebar.options')"
-                  aria-haspopup="menu"
-                  :aria-expanded="sectionMenuOpen"
-                  @click.stop="toggleSectionMenu($event)"
-                >
-                  <Icon name="dots-horizontal" />
-                </IconButton>
-              </Tooltip>
+              <IconButton
+                class="side-section-toggle"
+                size="sm"
+                :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
+                @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
+              >
+                <Icon v-if="allCollapsed" name="expand" />
+                <Icon v-else name="collapse" />
+              </IconButton>
+              <IconButton
+                class="side-section-toggle side-section-kebab"
+                size="sm"
+                :label="t('sidebar.options')"
+                aria-haspopup="menu"
+                :aria-expanded="sectionMenuOpen"
+                @click.stop="toggleSectionMenu($event)"
+              >
+                <Icon name="dots-horizontal" />
+              </IconButton>
             </div>
           </div>
           <div

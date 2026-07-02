@@ -30,7 +30,7 @@ const BACKGROUND_FIELDS_TO_KEEP = new Set([
   'keep_alive_on_exit',
 ]);
 const REGISTERED_EXPERIMENTAL_FLAGS: ReadonlySet<string> = new Set(
-  FLAG_DEFINITIONS.map((definition) => definition.id),
+  (FLAG_DEFINITIONS as ReadonlyArray<{ readonly id: string }>).map((definition) => definition.id),
 );
 
 // kimi-code's tui.toml `theme` enum (mirrors apps/kimi-code TuiThemeSchema).

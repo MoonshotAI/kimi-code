@@ -51,8 +51,8 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-[experimental]
-micro_compaction = false
+# [experimental]
+# micro_compaction = false  # disabled: micro compaction has been removed
 
 [[permission.rules]]
 decision = "allow"
@@ -200,6 +200,7 @@ You can also switch models temporarily without touching the config file — by s
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
 
+<!--
 ## `experimental`
 
 `experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `false`; set it to `true` to enable automatic trimming of older large tool results.
@@ -207,6 +208,7 @@ You can also switch models temporarily without touching the config file — by s
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
+-->
 
 ## `services`
 

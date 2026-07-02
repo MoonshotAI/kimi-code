@@ -40,7 +40,6 @@ import type { AppConfig, ThinkingLevel } from './api/types';
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
-import Tooltip from './components/ui/Tooltip.vue';
 
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -625,15 +624,13 @@ function openPr(url: string): void {
         @update:width="sessionColWidth = $event"
       />
       <div v-if="sidebarCollapsed" class="sidebar-rail">
-        <Tooltip :text="t('sidebar.expandSidebar')">
-          <IconButton
-            size="sm"
-            :label="t('sidebar.expandSidebar')"
-            @click="toggleSidebarCollapse"
-          >
-            <Icon name="panel-expand" size="sm" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          size="sm"
+          :label="t('sidebar.expandSidebar')"
+          @click="toggleSidebarCollapse"
+        >
+          <Icon name="panel-expand" size="sm" />
+        </IconButton>
       </div>
     </template>
 

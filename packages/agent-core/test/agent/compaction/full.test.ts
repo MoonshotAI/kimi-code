@@ -324,7 +324,9 @@ describe('FullCompaction', () => {
     ).toBe(false);
   });
 
-  it('micro-compacts old tool results before sending the summary request', async () => {
+  // Micro compaction is disabled; this scenario is skipped because the feature
+  // can no longer be enabled.
+  it.skip('micro-compacts old tool results before sending the summary request', async () => {
     vi.useFakeTimers();
     enableMicroCompactionFlag();
     const ctx = testAgent({
@@ -2227,11 +2229,9 @@ function enableMicroCompactionFlag(): void {
 }
 
 function getMicroCompactionFlagEnv(): string {
-  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro_compaction');
-  if (flag === undefined) {
-    throw new Error('Missing micro_compaction flag definition.');
-  }
-  return flag.env;
+  // Micro compaction is disabled and its flag has been removed from the registry;
+  // the env var name is kept so the (skipped) test still type-checks.
+  return 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION';
 }
 
 function deferred<T>() {

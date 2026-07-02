@@ -198,27 +198,23 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
             class="att"
           >{{ wsAttention(g.workspace.id) }}</span>
 
-          <Tooltip :text="t('sidebar.options')">
-            <IconButton
-              size="lg"
-              class="mgh-more"
-              :label="t('sidebar.options')"
-              @click.stop="toggleWsMenu(g.workspace.id)"
-            >
-              <Icon name="dots-horizontal" size="md" />
-            </IconButton>
-          </Tooltip>
+          <IconButton
+            size="lg"
+            class="mgh-more"
+            :label="t('sidebar.options')"
+            @click.stop="toggleWsMenu(g.workspace.id)"
+          >
+            <Icon name="dots-horizontal" size="md" />
+          </IconButton>
 
-          <Tooltip :text="t('workspace.newInGroup')">
-            <IconButton
-              size="lg"
-              class="mgh-add"
-              :label="t('workspace.newInGroup')"
-              @click.stop="onCreateInWorkspace(g.workspace.id)"
-            >
-              <Icon name="plus" size="md" />
-            </IconButton>
-          </Tooltip>
+          <IconButton
+            size="lg"
+            class="mgh-add"
+            :label="t('workspace.newInGroup')"
+            @click.stop="onCreateInWorkspace(g.workspace.id)"
+          >
+            <Icon name="plus" size="md" />
+          </IconButton>
 
           <!-- Workspace menu: copy path / delete (two-step confirm) -->
           <Menu v-if="wsMenuFor === g.workspace.id" class="kmenu wsmenu" @click.stop>
@@ -243,16 +239,14 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
               <div class="s">{{ s.time }}</div>
             </div>
             <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>
-            <Tooltip :text="t('sidebar.options')">
-              <IconButton
-                size="lg"
-                class="kb"
-                :label="t('sidebar.options')"
-                @click.stop="toggleMenu(s.id)"
-              >
-                <Icon name="dots-horizontal" size="md" />
-              </IconButton>
-            </Tooltip>
+            <IconButton
+              size="lg"
+              class="kb"
+              :label="t('sidebar.options')"
+              @click.stop="toggleMenu(s.id)"
+            >
+              <Icon name="dots-horizontal" size="md" />
+            </IconButton>
 
             <!-- Kebab menu -->
             <Menu v-if="menuFor === s.id" class="kmenu" @click.stop>
