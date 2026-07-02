@@ -222,19 +222,17 @@ async function startArchive(): Promise<void> {
     </div>
 
     <!-- More menu trigger: copy-all + session actions -->
-    <Tooltip :text="t('header.options')">
-      <IconButton
-        ref="kebabRef"
-        class="ch-act-more"
-        :class="{ open: menuOpen }"
-        :label="t('header.options')"
-        :aria-expanded="menuOpen"
-        aria-haspopup="menu"
-        @click.stop="toggleMenu($event)"
-      >
-        <Icon name="dots-horizontal" size="md" />
-      </IconButton>
-    </Tooltip>
+    <IconButton
+      ref="kebabRef"
+      class="ch-act-more"
+      :class="{ open: menuOpen }"
+      :label="t('header.options')"
+      :aria-expanded="menuOpen"
+      aria-haspopup="menu"
+      @click.stop="toggleMenu($event)"
+    >
+      <Icon name="dots-horizontal" size="md" />
+    </IconButton>
 
     <!-- Fixed more menu -->
     <Menu

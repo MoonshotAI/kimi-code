@@ -575,31 +575,25 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           </div>
           <div v-if="turn.createdAt || canEditTurn(turn)" class="u-meta">
             <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
-              <Tooltip :text="t('conversation.undoTooltip')">
-                <button
-                  type="button"
-                  class="u-edit"
-                  :aria-label="t('conversation.undoTooltip')"
-                  @click="onUndo(turn)"
-                >
-                  <Icon name="undo" size="sm" />
-                </button>
-              </Tooltip>
-            </div>
-            <Tooltip
-              v-if="turn.text.trim().length > 0"
-              :text="t('filePreview.copy')"
-            >
               <button
                 type="button"
-                class="u-copy"
-                :aria-label="t('filePreview.copy')"
-                @click.stop="copyUserMessage(turn)"
+                class="u-edit"
+                :aria-label="t('conversation.undoTooltip')"
+                @click="onUndo(turn)"
               >
-                <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
-                <Icon v-else name="check" size="sm" />
+                <Icon name="undo" size="sm" />
               </button>
-            </Tooltip>
+            </div>
+            <button
+              v-if="turn.text.trim().length > 0"
+              type="button"
+              class="u-copy"
+              :aria-label="t('filePreview.copy')"
+              @click.stop="copyUserMessage(turn)"
+            >
+              <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
+              <Icon v-else name="check" size="sm" />
+            </button>
             <button
               v-if="turn.createdAt"
               type="button"
@@ -650,19 +644,15 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           <Tooltip :text="`${turn.durationMs} ms`">
             <span v-if="turn.durationMs !== undefined" class="a-duration">{{ formatDuration(turn.durationMs) }}</span>
           </Tooltip>
-          <Tooltip
+          <button
             v-if="assistantRunFinalText(ti).trim().length > 0"
-            :text="t('filePreview.copy')"
+            class="a-cpbtn"
+            :aria-label="t('filePreview.copy')"
+            @click="copyAssistantRun(ti)"
           >
-            <button
-              class="a-cpbtn"
-              :aria-label="t('filePreview.copy')"
-              @click="copyAssistantRun(ti)"
-            >
-              <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
-              <Icon v-else name="check" size="sm" />
-            </button>
-          </Tooltip>
+            <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
+            <Icon v-else name="check" size="sm" />
+          </button>
         </div>
       </div>
     </template>
@@ -733,16 +723,14 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           </div>
           <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
           <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
-          <Tooltip :text="t('composer.remove')">
-            <button
-              type="button"
-              class="q-rm"
-              :aria-label="t('composer.remove')"
-              @click.stop="emit('unqueue', qi)"
-            >
-              <Icon name="close" size="sm" />
-            </button>
-          </Tooltip>
+          <button
+            type="button"
+            class="q-rm"
+            :aria-label="t('composer.remove')"
+            @click.stop="emit('unqueue', qi)"
+          >
+            <Icon name="close" size="sm" />
+          </button>
         </div>
       </div>
     </div>

@@ -783,18 +783,16 @@ function selectModel(modelId: string): void {
             @compositionend="handleCompositionEnd"
             @input="handleInput"
           />
-          <Tooltip :text="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')">
-            <button
-              v-if="expanded || isGrown"
-              class="expand-btn"
-              type="button"
-              :aria-label="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
-              @click="toggleExpand"
-            >
-              <Icon v-if="expanded" name="collapse" size="sm" />
-              <Icon v-else name="expand" size="sm" />
-            </button>
-          </Tooltip>
+          <button
+            v-if="expanded || isGrown"
+            class="expand-btn"
+            type="button"
+            :aria-label="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
+            @click="toggleExpand"
+          >
+            <Icon v-if="expanded" name="collapse" size="sm" />
+            <Icon v-else name="expand" size="sm" />
+          </button>
         </div>
       </div>
 
@@ -813,30 +811,26 @@ function selectModel(modelId: string): void {
       <div ref="toolbarRef" class="toolbar">
         <!-- Left: attach + permission + plan -->
         <div class="toolbar-left">
-          <Tooltip :text="t('composer.attachImage')">
-            <IconButton
-              v-if="hasUpload"
-              size="md"
-              :label="t('composer.attachImage')"
-              @click="openFilePicker"
-            >
-              <Icon name="image" />
-            </IconButton>
-          </Tooltip>
+          <IconButton
+            v-if="hasUpload"
+            size="md"
+            :label="t('composer.attachImage')"
+            @click="openFilePicker"
+          >
+            <Icon name="image" />
+          </IconButton>
 
           <!-- Permission pill — click to open dropdown -->
-          <Tooltip :text="t('status.permissionTooltip')">
-            <span
-              v-if="status"
-              class="perm-pill"
-              :class="['perm-' + status.permission, { open: permDropdownOpen }]"
-              role="button"
-              tabindex="0"
-              @click.stop="togglePermDropdown"
-              @keydown.enter="togglePermDropdown"
-              @keydown.space.prevent="togglePermDropdown"
-            >{{ permLabel }}</span>
-          </Tooltip>
+          <span
+            v-if="status"
+            class="perm-pill"
+            :class="['perm-' + status.permission, { open: permDropdownOpen }]"
+            role="button"
+            tabindex="0"
+            @click.stop="togglePermDropdown"
+            @keydown.enter="togglePermDropdown"
+            @keydown.space.prevent="togglePermDropdown"
+          >{{ permLabel }}</span>
 
           <!-- Permission dropdown — anchored to the toolbar left side -->
           <div v-if="permDropdownOpen && status" class="perm-dropdown" role="menu" @click.stop>
@@ -858,19 +852,17 @@ function selectModel(modelId: string): void {
 
           <!-- Modes selector (plan / goal / swarm) — replaces the plan pill. -->
           <div v-if="status" ref="modesRef" class="modes">
-            <Tooltip :text="t('status.modesTooltip')">
-              <button
-                type="button"
-                class="mode-pill"
-                :class="{ on: anyModeActive, open: modesOpen }"
-                @click.stop="toggleModes"
-              >
-                <span class="mode-label">{{ t('status.modesLabel') }}</span>
-                <span v-if="planOn" class="mode-tag">{{ t('status.planLabel') }}</span>
-                <span v-if="swarmOn" class="mode-tag">{{ t('status.swarmLabel') }}</span>
-                <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
-              </button>
-            </Tooltip>
+            <button
+              type="button"
+              class="mode-pill"
+              :class="{ on: anyModeActive, open: modesOpen }"
+              @click.stop="toggleModes"
+            >
+              <span class="mode-label">{{ t('status.modesLabel') }}</span>
+              <span v-if="planOn" class="mode-tag">{{ t('status.planLabel') }}</span>
+              <span v-if="swarmOn" class="mode-tag">{{ t('status.swarmLabel') }}</span>
+              <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
+            </button>
 
             <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuStyle">
               <!-- Plan — functional client toggle -->
@@ -925,22 +917,20 @@ function selectModel(modelId: string): void {
           </Tooltip>
 
           <!-- Model pill — click to open quick-switch dropdown -->
-          <Tooltip :text="t('status.modelTooltip')">
-            <span
-              v-if="status"
-              class="model-pill"
-              :class="{ open: dropdownOpen }"
-              role="button"
-              tabindex="0"
-              @click.stop="toggleDropdown"
-              @keydown.enter="toggleDropdown"
-              @keydown.space.prevent="toggleDropdown"
-            >
-              <b>{{ status.model }}</b>
-              <span v-if="thinkingOn" class="think-suffix">{{ t('composer.thinkingSuffix') }}</span>
-              <Icon class="cv" name="chevron-down" size="sm" />
-            </span>
-          </Tooltip>
+          <span
+            v-if="status"
+            class="model-pill"
+            :class="{ open: dropdownOpen }"
+            role="button"
+            tabindex="0"
+            @click.stop="toggleDropdown"
+            @keydown.enter="toggleDropdown"
+            @keydown.space.prevent="toggleDropdown"
+          >
+            <b>{{ status.model }}</b>
+            <span v-if="thinkingOn" class="think-suffix">{{ t('composer.thinkingSuffix') }}</span>
+            <Icon class="cv" name="chevron-down" size="sm" />
+          </span>
           <Tooltip v-if="running" :text="t('composer.interruptTitle')">
             <button
               class="stop"
@@ -950,15 +940,13 @@ function selectModel(modelId: string): void {
               <Icon name="stop" size="sm" />
             </button>
           </Tooltip>
-          <Tooltip :text="sendLabel">
-            <button
-              class="send"
-              :aria-label="sendLabel"
-              @click="handleSubmit()"
-            >
-              <Icon name="send" size="sm" />
-            </button>
-          </Tooltip>
+          <button
+            class="send"
+            :aria-label="sendLabel"
+            @click="handleSubmit()"
+          >
+            <Icon name="send" size="sm" />
+          </button>
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->
