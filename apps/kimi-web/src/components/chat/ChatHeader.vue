@@ -11,7 +11,6 @@ import Menu from '../ui/Menu.vue';
 import MenuItem from '../ui/MenuItem.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();
@@ -216,9 +215,7 @@ async function startArchive(): Promise<void> {
         @blur="commitRename"
         @click.stop
       />
-      <Tooltip v-else-if="sessionTitle" :text="sessionTitle">
-        <span class="ch-ses">{{ sessionTitle }}</span>
-      </Tooltip>
+      <span v-else-if="sessionTitle" class="ch-ses">{{ sessionTitle }}</span>
     </div>
 
     <!-- More menu trigger: copy-all + session actions -->
@@ -268,45 +265,39 @@ async function startArchive(): Promise<void> {
     <!-- Git branch + status — plain text with semantic colors. Renders for any
          git repo, even a detached HEAD (empty branch → "detached" label), so the
          diff counter below is never hidden just because there's no branch name. -->
-    <Tooltip :text="t('header.gitTooltip')">
-      <button
-        v-if="isGitRepo"
-        type="button"
-        class="ch-git"
-        @click="emit('openChanges')"
+    <button
+      v-if="isGitRepo"
+      type="button"
+      class="ch-git"
+      @click="emit('openChanges')"
+    >
+      <span
+        class="ch-branch"
+        :class="{ 'ch-detached': !branch }"
       >
-        <Tooltip :text="branch || t('header.detached')">
-          <span
-            class="ch-branch"
-            :class="{ 'ch-detached': !branch }"
-          >
-            {{ branch || t('header.detached') }}
-          </span>
-        </Tooltip>
-        <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
-          <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
-          <span v-if="behind > 0" class="ch-behind">↓{{ behind }}</span>
-        </span>
-        <span v-if="hasLineStats" class="ch-pill ch-diff-pill">
-          <span v-if="adds > 0" class="ch-add">+{{ adds }}</span>
-          <span v-if="dels > 0" class="ch-del">-{{ dels }}</span>
-        </span>
-      </button>
-    </Tooltip>
+        {{ branch || t('header.detached') }}
+      </span>
+      <span v-if="ahead > 0 || behind > 0" class="ch-pill ch-sync-pill">
+        <span v-if="ahead > 0" class="ch-ahead">↑{{ ahead }}</span>
+        <span v-if="behind > 0" class="ch-behind">↓{{ behind }}</span>
+      </span>
+      <span v-if="hasLineStats" class="ch-pill ch-diff-pill">
+        <span v-if="adds > 0" class="ch-add">+{{ adds }}</span>
+        <span v-if="dels > 0" class="ch-del">-{{ dels }}</span>
+      </span>
+    </button>
 
     <!-- GitHub PR status -->
-    <Tooltip :text="t('header.openPr')">
-      <button
-        v-if="pr"
-        type="button"
-        class="ch-pill ch-pr"
-        :class="`pr-${pr.state}`"
-        @click="pr && emit('openPr', pr.url)"
-      >
-        <Icon name="git-pull-request" size="sm" />
-        <span>PR #{{ pr.number }} · {{ pr.state }}</span>
-      </button>
-    </Tooltip>
+    <button
+      v-if="pr"
+      type="button"
+      class="ch-pill ch-pr"
+      :class="`pr-${pr.state}`"
+      @click="pr && emit('openPr', pr.url)"
+    >
+      <Icon name="git-pull-request" size="sm" />
+      <span>PR #{{ pr.number }} · {{ pr.state }}</span>
+    </button>
 
   </header>
 </template>
