@@ -587,6 +587,10 @@ git add packages/pi-tui/src/components/text.ts packages/pi-tui/src/components/ma
 git commit -m "fix(pi-tui): guard blank-line padding against negative widths"
 ```
 
+- [x] **审查修正记录（已执行，amend 进上述 commit，最终 SHA `471aec5e`，共 8 文件）**：
+  1. 实现者自审发现同类风险遗漏，经批准并入：`editor.ts` 上/下边框两处 `horizontal.repeat(width)` → `Math.max(0, width)`，并在 editor.test.ts 的 "Editor narrow width rendering" 组内补 `does not throw at zero or negative widths` 用例（红阶段命中 editor.ts:528）。
+  2. 质量审查变异测试确认：6 处守卫回滚 → 恰 4 个新用例红；`Math.max(0,...)` 选型与库内惯例一致。已知事实：markdown.ts hr 处的守卫当前从 `render()` 入口不可达（所有调用点已钳 ≥1），属纯防御，保留。
+
 ---
 
 ### Task 6: 记录与上游的本地分歧（防 re-vendor 回归）
@@ -610,7 +614,7 @@ git commit -m "fix(pi-tui): guard blank-line padding against negative widths"
 1. **`src/components/editor.ts` — `wordWrapLine` 单 grapheme 递归守卫**：segment 不可再分（单 grapheme）且比 `maxWidth` 宽时不再递归（上游在 maxWidth=1 + CJK 时无限递归栈溢出）。守卫必须基于 grapheme 数（`graphemeSegmenter.segment(...)`）而非 code-unit 长度——`grapheme.length` 对 ZWJ emoji 会误判。守护测试：`test/editor.test.ts` 的 "wordWrapLine narrow width" 与 "Editor narrow width rendering"。
 2. **`src/tui.ts` — `Container.render` 宽度钳制**：入口 `width = Math.max(1, width)`。守护测试：`test/tui-render.test.ts` 的 "Container width clamping"。
 3. **`src/tui.ts` — 超宽行截断替代 throw**：`doRender` 在 `applyLineResets` 前对超宽行统一 `sliceByColumn` 截断；上游差分渲染路径的"写崩溃日志 + throw"块已删除，不要在同步时带回来。性能约束：截断检查每帧扫全部行，必须先走 `utils.ts` 的 `asciiVisibleWidth` 快路径（ANSI 感知 ASCII 快扫 + 超限早退），仅对非 ASCII 行回退 `visibleWidth`；配套 `WIDTH_CACHE_SIZE` 为 4096。已知边界：>4096 条 distinct 非 ASCII 行时宽度缓存 FIFO 抖动（约 30ms/帧），根治需 prepared-frame 行级缓存，属后续任务。守护测试：`test/tui-render.test.ts` 的 "TUI overwide line handling"（精确 viewport 断言）、`test/truncate-to-width.test.ts` 的 "asciiVisibleWidth"。
-4. **`src/components/text.ts` / `markdown.ts` / `truncated-text.ts` — 负宽度 repeat 防御**：空行/分隔线的 `repeat` 参数钳到 ≥0。守护测试：各自测试文件的 "negative width safety"。
+4. **`src/components/text.ts` / `markdown.ts` / `truncated-text.ts` / `editor.ts` — 负宽度 repeat 防御**：空行/分隔线/编辑器上下边框的 `repeat` 参数钳到 ≥0（editor 上/下边框两处、markdown 的 emptyLine 与 hr——hr 处现从 render 入口不可达，属纯防御）。守护测试：前三者各自测试文件的 "negative width safety"，编辑器为 `test/editor.test.ts` "Editor narrow width rendering" 组内的 "does not throw at zero or negative widths"。
 
 ## 同步上游后的验收
 
