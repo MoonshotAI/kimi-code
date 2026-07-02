@@ -52,7 +52,12 @@ export const GrepInputSchema = z.object({
     .describe(
       'File or directory to search. Accepts an absolute path, or a path relative to the current working directory. Omit to search the current working directory. Use Read instead when you already know a concrete file path and need its contents.',
     ),
-  glob: z.string().optional().describe('Optional glob filter passed to ripgrep.'),
+  glob: z
+    .string()
+    .optional()
+    .describe(
+      "Optional glob filter for which files to search, e.g. `*.ts`. Matched against each file's full absolute path, so a path-anchored pattern like `src/**/*.ts` silently matches nothing — use a basename pattern (`*.ts`), or anchor with `**/` (`**/src/**/*.ts`). To scope the search to a directory, use `path` instead.",
+    ),
   type: z
     .string()
     .optional()
@@ -122,7 +127,7 @@ export const GrepInputSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'Also search files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. Defaults to false.',
+      'Also search files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false.',
     ),
 });
 

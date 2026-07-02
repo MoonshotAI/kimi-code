@@ -56,13 +56,13 @@ export const GlobInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Absolute path to the directory to search in. Defaults to the current working directory.',
+      'Directory to search. Accepts an absolute path, or a path relative to the current working directory. Defaults to the current working directory.',
     ),
   include_ignored: z
     .boolean()
     .optional()
     .describe(
-      'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. Defaults to false.',
+      'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false.',
     ),
   include_dirs: z
     .boolean()

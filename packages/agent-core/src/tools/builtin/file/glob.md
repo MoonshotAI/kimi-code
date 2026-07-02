@@ -1,6 +1,6 @@
 Find files by glob pattern, sorted by modification time (most recent first).
 
-Powered by ripgrep. Respects `.gitignore`, `.ignore`, and `.rgignore` by default — set `include_ignored` to also match ignored files (e.g. build outputs, `node_modules`). Sensitive files (such as `.env`) are always filtered out.
+Powered by ripgrep. Respects `.gitignore`, `.ignore`, and `.rgignore` by default — set `include_ignored` to also match ignored files (e.g. build outputs, `node_modules`). Sensitive files (such as `.env`) are always filtered out. Matches are files only — directories themselves are never listed; to find a directory, glob for a file inside it (e.g. `**/fixtures/**`).
 
 Good patterns:
 - `*.ts` — all files matching an extension, at any depth below the search root (a bare pattern without `/` matches recursively)

@@ -27,6 +27,8 @@ Only use minute 0 or 30 when the user names that exact time and clearly means it
 
 ## Coalesce semantics
 
+Fires are delivered only while the session is idle: a fire that comes due during an active turn is held and delivered at the next idle moment, never injected mid-turn.
+
 If the scheduler slept past multiple ideal fire times (laptop closed, long-running turn, etc.), only **one** fire is delivered when it wakes up. The origin carries `coalescedCount` showing how many ideal fires were collapsed into this single delivery. You should treat `coalescedCount > 1` as "I missed some checks; only the latest state matters" rather than running the prompt that many times.
 
 ## Cron-fire envelope
@@ -77,7 +79,7 @@ to the resumed session id, not to the working directory.
 
 ## Limits
 
-A session holds at most 50 live cron tasks; creating one beyond that is rejected. (The `prompt` body is also capped — see its parameter description.)
+A session holds at most 50 live cron tasks; creating one beyond that is rejected. (The `prompt` body is also capped — see its parameter description.) Expressions that never fire within the next 5 years (e.g. `0 0 31 2 *`, an impossible date) are rejected at create time.
 
 ## Returned fields
 

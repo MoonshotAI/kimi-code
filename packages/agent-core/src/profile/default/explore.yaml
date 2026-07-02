@@ -18,6 +18,7 @@ promptVars:
     - Use Read when you know the specific file path
     - Use Bash ONLY for read-only operations (ls, git status, git log, git diff, find)
     - NEVER use Bash for any file creation or modification commands
+    - Use WebSearch or FetchURL when a question needs external context (library documentation, error messages, upstream APIs); the local codebase remains your primary domain
     - Adapt your search depth based on the thoroughness level specified by the caller
     - Wherever possible, spawn multiple parallel tool calls for grepping and reading files to maximize speed
 

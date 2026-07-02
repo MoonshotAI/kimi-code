@@ -9,5 +9,6 @@ Read media content from a file.
 - If the file doesn't exist or path is invalid, an error will be returned.
 - The maximum size that can be read is {{ MAX_MEDIA_MEGABYTES }}MB. An error will be returned if the file is larger than this limit.
 - The media content will be returned in a form that you can directly view and understand.
+- Large images may be downsampled before being shown to you; the `<system>` block reports the original pixel dimensions when known — compute absolute coordinates from those, never by measuring the displayed copy.
 
 **Capabilities**

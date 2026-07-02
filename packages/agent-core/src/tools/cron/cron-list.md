@@ -36,8 +36,6 @@ Each record carries:
   again with the original `cron` and `prompt` (the `prompt` row above
   carries it for exactly this purpose). One-shots are never marked
   stale — they fire at most once by construction.
-  `KIMI_CRON_NO_STALE=1` disables the judgment entirely (bench /
-  acceptance runs).
 
 Guidelines:
 
