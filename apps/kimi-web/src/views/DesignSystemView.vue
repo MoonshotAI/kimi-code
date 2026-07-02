@@ -5,14 +5,11 @@ import { useRouter } from 'vue-router';
 const router = useRouter();
 
 function close(): void {
-  // A deep-link straight to /design-system has no in-app history to go back to,
-  // so fall back to the home route. Otherwise prefer the browser back entry so
-  // the user returns to exactly where they long-pressed the logo.
-  if (window.history.length > 1) {
-    router.back();
-  } else {
-    void router.push('/');
-  }
+  // In-page nav anchors (#tokens, #primitives, …) push hash history entries, so
+  // router.back() would only step through those hashes instead of leaving the
+  // page. Always return to the app root — the client lives above the route, so
+  // the active session and other state survive the navigation.
+  void router.push('/');
 }
 
 let io: IntersectionObserver | null = null;
