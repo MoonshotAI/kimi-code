@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix the terminal occasionally going blank with the input box disappearing after the conversation content shrinks sharply (for example after context compaction or collapsing expanded output).
+Fix the terminal going blank or the UI drifting toward the top with dead rows below after content shrinks sharply (for example after collapsing expanded output or context compaction); the input box now stays anchored to the bottom of the screen.

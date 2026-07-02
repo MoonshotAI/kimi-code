@@ -179,6 +179,42 @@ describe("TUI shrinking content", () => {
 		tui.stop();
 	});
 
+	it("re-anchors the input box to the screen bottom when content shrinks", async () => {
+		// Regression: previousViewportTop only ever grows, so after a shrink
+		// (e.g. collapsing expanded tool output) the content bottom hovered
+		// mid-screen with dead rows below, and nothing ever re-anchored it.
+		const terminal = new VirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const content = new Lines([]);
+		tui.addChild(content);
+
+		content.setLines([...Array.from({ length: 59 }, (_, i) => `old-${i}`), "[INPUT-BOX]"]);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport()[9]!.includes("[INPUT-BOX]"));
+
+		// Shrink 60 -> 30 lines; content is still taller than the screen, so
+		// the tail must stay glued to the screen bottom.
+		content.setLines([...Array.from({ length: 29 }, (_, i) => `new-${i}`), "[INPUT-BOX]"]);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.ok(
+			viewport[9]!.includes("[INPUT-BOX]"),
+			`input box should sit on the bottom screen row, got: ${JSON.stringify(viewport)}`,
+		);
+		assert.ok(viewport[0]!.includes("new-20"), "viewport should show the tail of the new content");
+
+		// Subsequent renders must land in the right place (self-healing).
+		content.setLines([...Array.from({ length: 29 }, (_, i) => `new-${i}`), "[INPUT-BOX]x"]);
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport()[9]!.includes("[INPUT-BOX]x"));
+
+		tui.stop();
+	});
+
 	it("shows the tail of collapsed content when it is still taller than the screen", async () => {
 		// 100 lines -> 30 lines (still > height 10) with a change above the
 		// viewport: the viewport should show the tail of the new content.

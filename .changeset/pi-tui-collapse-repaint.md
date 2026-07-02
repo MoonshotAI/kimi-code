@@ -2,4 +2,4 @@
 "@moonshot-ai/pi-tui": patch
 ---
 
-Repaint the visible viewport in place when content collapses above it, and clamp deleted-line clearing to the screen bottom, so a large shrink with above-viewport changes no longer desyncs the cursor and blanks the screen.
+Re-anchor the viewport with an in-place repaint whenever content shrinks below the screen bottom, and clamp deleted-line clearing to the screen bottom, so large shrinks no longer blank the screen, desync the cursor, or leave the UI hovering above dead rows.
