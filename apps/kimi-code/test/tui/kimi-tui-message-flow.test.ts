@@ -400,7 +400,6 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     harness.track.mockClear();
 
-    driver.state.editor.handleInput('\u001B[106;5u');
     driver.state.editor.handleInput('\u001F');
     delete process.env['VISUAL'];
     delete process.env['EDITOR'];
@@ -408,7 +407,6 @@ describe('KimiTUI message flow', () => {
     driver.state.editor.onToggleToolExpand?.();
     driver.state.editor.onTextPaste?.();
 
-    expect(harness.track).toHaveBeenCalledWith('shortcut_newline', undefined);
     expect(harness.track).toHaveBeenCalledWith('undo', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_editor', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_expand', undefined);

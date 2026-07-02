@@ -341,8 +341,9 @@ describe('project tool_use/tool_result adjacency', () => {
       tool('orphan-result'),
       user('u2'),
     ];
+    // Without dropOrphanResults (fragment projections, e.g. token estimation)
+    // the stray result stays where it was; nothing references it.
     const projected = project(history);
-    // The stray result stays where it was; nothing references it.
     expect(projected.map((m) => [m.role, m.toolCallId])).toEqual([
       ['user', undefined],
       ['assistant', undefined],
@@ -350,6 +351,10 @@ describe('project tool_use/tool_result adjacency', () => {
       ['tool', 'orphan-result'],
       ['user', undefined],
     ]);
+    // Request-building projections enable dropOrphanResults and remove it.
+    const wire = project(history, { dropOrphanResults: true });
+    expect(wire.some((m) => m.toolCallId === 'orphan-result')).toBe(false);
+    expect(wire.some((m) => m.toolCallId === 'a')).toBe(true);
   });
 
   it('does not crash when a tool result appears before its tool_use', () => {
@@ -425,15 +430,18 @@ describe('project repair reporting', () => {
     ]);
   });
 
-  it('reports a dropped orphan result only on the strict path', () => {
+  it('reports a dropped orphan result when dropOrphanResults is set', () => {
     const history: ContextMessage[] = [user('u1'), assistant(['a']), tool('a'), tool('stray')];
-    const normal: ProjectionAnomaly[] = [];
-    project(history, { onAnomaly: (a) => normal.push(a) });
-    expect(normal).toEqual([]); // normal path leaves the stray result in place
+    // Fragment projections (no flag) leave the stray in place and report nothing.
+    const fragment: ProjectionAnomaly[] = [];
+    project(history, { onAnomaly: (a) => fragment.push(a) });
+    expect(fragment).toEqual([]);
 
-    const strict: ProjectionAnomaly[] = [];
-    project(history, { dropOrphanResults: true, onAnomaly: (a) => strict.push(a) });
-    expect(strict).toEqual([{ kind: 'orphan_tool_result_dropped', toolCallId: 'stray' }]);
+    // Request-building projections (normal wire, strict resend, summarizer)
+    // enable the flag, drop the stray, and surface the repair.
+    const wire: ProjectionAnomaly[] = [];
+    project(history, { dropOrphanResults: true, onAnomaly: (a) => wire.push(a) });
+    expect(wire).toEqual([{ kind: 'orphan_tool_result_dropped', toolCallId: 'stray' }]);
   });
 
   it('reports a whitespace-only text drop but not a truly-empty one', () => {

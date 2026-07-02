@@ -49,6 +49,7 @@ import {
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
+import { sessionMediaOriginalsDir } from '../tools/support/image-originals';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import { abortError } from '../utils/abort';
@@ -733,6 +734,9 @@ export class Session {
       toolServices: this.options.toolServices,
       config: this.options.config,
       homedir,
+      // Session-level, shared across agents: originals persisted for
+      // compression captions live with the session, not the agent.
+      mediaOriginalsDir: sessionMediaOriginalsDir(this.options.homedir),
       skills: this.skills,
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,

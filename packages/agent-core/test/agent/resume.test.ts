@@ -388,6 +388,95 @@ describe('Agent resume', () => {
     ]);
   });
 
+  it('keeps a legacy mid-tool-exchange cut faithful but projects it wire-valid', async () => {
+    // A pre-rework compaction record (no `keptUserMessageCount`) restores via the
+    // legacy path, which keeps a verbatim tail `history.slice(compactedCount)`.
+    // Here the cut (compactedCount=2) lands *between* the assistant `tool_call`
+    // and its result, so the retained tail starts with a `tool` message whose
+    // assistant was summarized away — a wire-invalid orphan a strict provider
+    // (OpenAI / DeepSeek) rejects with "role 'tool' must be a response to a
+    // preceding message with 'tool_calls'". The restore keeps the history
+    // faithful (so the transcript reducer's fold length stays in sync); the
+    // projector drops the orphan at the wire boundary.
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'first prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'orphan-step', turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'orphan-call',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'orphan-step',
+          toolCallId: 'call_orphaned',
+          name: 'Bash',
+          args: { command: 'pwd' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'orphan-call',
+          toolCallId: 'call_orphaned',
+          result: { output: 'ok', isError: false },
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'second prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: 'Compacted the first exchange.',
+        compactedCount: 2,
+        tokensBefore: 120,
+        tokensAfter: 24,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    // The stored history stays faithful to the wire records: the orphan `tool`
+    // result is kept verbatim (not mutated away at restore), so downstream
+    // consumers that model the history from the records — e.g. the transcript
+    // reducer's fold length — stay in sync.
+    expect(ctx.agent.context.history.some((message) => message.role === 'tool')).toBe(true);
+
+    // But the projected wire the provider actually sees has no orphan: every
+    // `tool` result is answered by a preceding assistant `tool_calls`.
+    const projected = ctx.agent.context.messages;
+    const toolCallIds = new Set(
+      projected.flatMap((message) =>
+        message.role === 'assistant' ? message.toolCalls.map((toolCall) => toolCall.id) : [],
+      ),
+    );
+    const orphanToolResults = projected.filter(
+      (message) =>
+        message.role === 'tool' &&
+        (message.toolCallId === undefined || !toolCallIds.has(message.toolCallId)),
+    );
+    expect(orphanToolResults).toEqual([]);
+  });
+
   it('projects restored cancelled compactions into replay records', async () => {
     const persistence = new RecordingAgentPersistence([
       {

@@ -1,7 +1,10 @@
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
+  COMPACTION_ELISION_VARIANT,
+  buildCompactionElisionText,
   collectCompactableUserMessages,
   isRealUserInput,
+  selectCompactionUserMessages,
   selectRecentUserMessages,
 } from '@moonshot-ai/agent-core';
 import type {
@@ -246,13 +249,15 @@ export function projectContext(
         openSteps = new Map();
         // Mirror agent-core's `applyCompaction`
         // (`packages/agent-core/src/agent/context/index.ts`): the live history
-        // becomes the most recent real user messages (verbatim, within a token
-        // budget) followed by a single user-role summary tagged
-        // `origin.kind = 'compaction_summary'`. Assistant messages, tool calls,
-        // and tool results are dropped. The selection rule
-        // (`selectRecentUserMessages` / `collectCompactableUserMessages`) is the
-        // same helper agent-core's `ContextMemory` and the web transcript
-        // reducer apply, so all three views stay in sync.
+        // becomes the kept real user messages (verbatim, within a token budget
+        // — the oldest head plus the most recent tail, separated by an elision
+        // marker when the pool overflowed) followed by a single user-role
+        // summary tagged `origin.kind = 'compaction_summary'`. Assistant
+        // messages, tool calls, and tool results are dropped. The selection
+        // rules (`selectCompactionUserMessages` / `selectRecentUserMessages` /
+        // `collectCompactableUserMessages`) are the same helpers agent-core's
+        // `ContextMemory` and the web transcript reducer apply, so all three
+        // views stay in sync.
         const summaryBubble: ProjectedMessage = {
           lineNo: entry.lineNo,
           time: rec.time,
@@ -294,8 +299,10 @@ export function projectContext(
             // session in model mode shows the same tail the resumed agent still
             // holds, instead of hiding it behind the new selection.
             messages = [modelSummaryBubble, ...historyEntries.slice(rec.compactedCount)];
-          } else {
-            // `realUserEntries` is filtered with the exact
+          } else if (rec.keptHeadUserMessageCount === undefined) {
+            // Tail-only record: written before the head/tail split, or by new
+            // code whose user pool fit the budget (the two selections agree in
+            // that case). `realUserEntries` is filtered with the exact
             // `collectCompactableUserMessages` predicate so it stays aligned with
             // the selection below (genuine user input only — no injections, system
             // triggers, or prior summaries). `selectRecentUserMessages` keeps a
@@ -316,6 +323,49 @@ export function projectContext(
               return original.message === message ? original : { ...original, message };
             });
             messages = [...keptEntries, modelSummaryBubble];
+          } else {
+            // Head/tail record: mirror `selectCompactionUserMessages` and the
+            // elision marker `ContextMemory.applyCompaction` inserts between the
+            // segments. `tail` is a contiguous suffix of `realUserEntries` and
+            // `head` a contiguous prefix, except that the head's last item may be
+            // a slice of the SAME message whose end anchors the tail (the head
+            // extends into the tail boundary's cut-off beginning) — map that one
+            // onto the tail-boundary original. Fractional lineNos keep the
+            // synthesized entries' React keys unique; ContextTab renders in array
+            // order, so they never affect placement.
+            const realUserEntries = historyEntries.filter(
+              (pm) => collectCompactableUserMessages([pm.message]).length === 1,
+            );
+            const selection = selectCompactionUserMessages(
+              realUserEntries.map((pm) => pm.message),
+            );
+            const tailStart = realUserEntries.length - selection.tail.length;
+            const headEntries: ProjectedMessage[] = selection.head.map((message, i) => {
+              const original = i < tailStart ? realUserEntries[i]! : realUserEntries[tailStart]!;
+              if (original.message === message) return original;
+              return i < tailStart
+                ? { ...original, message }
+                : { ...original, lineNo: original.lineNo - 0.5, message };
+            });
+            const tailEntries: ProjectedMessage[] = selection.tail.map((message, i) => {
+              const original = realUserEntries[tailStart + i]!;
+              return original.message === message ? original : { ...original, message };
+            });
+            const markerBubble: ProjectedMessage = {
+              lineNo: entry.lineNo - 0.5,
+              time: rec.time,
+              source: 'append_message',
+              message: {
+                role: 'user',
+                content: [
+                  { type: 'text', text: buildCompactionElisionText(selection.omittedTokens) },
+                ],
+                toolCalls: [],
+                origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
+              } as ContextMessage,
+              toolStepUuids: [],
+            };
+            messages = [...headEntries, markerBubble, ...tailEntries, modelSummaryBubble];
           }
         } else {
           // Full history: keep ALL preceding messages, just append the summary

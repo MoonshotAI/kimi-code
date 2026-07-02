@@ -1,5 +1,5 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
-import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
@@ -281,10 +281,6 @@ export class EditorKeyboardController {
       host.track('undo');
     };
 
-    editor.onInsertNewline = () => {
-      host.track('shortcut_newline');
-    };
-
     editor.onTextPaste = () => {
       host.track('shortcut_paste', { kind: 'text' });
     };
@@ -407,13 +403,29 @@ export class EditorKeyboardController {
     // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
     // and the submitted image all agree, and the agent core only ever sees an
     // already-compressed image. Best effort: originals pass through on failure.
+    // When compression changed the bytes, the original is persisted (into the
+    // session's media-originals dir when known, else the temp-dir fallback)
+    // and recorded on the attachment, so submit-time expansion can announce
+    // the compression and point the model at the full-fidelity copy.
     const compressed = await compressImageForModel(media.bytes, meta.mime);
+    const sessionDir = this.host.session?.summary?.sessionDir;
     const attachment = compressed.changed
       ? this.imageStore.addImage(
           compressed.data,
           compressed.mimeType,
           compressed.width,
           compressed.height,
+          {
+            path: await persistOriginalImage(
+              media.bytes,
+              meta.mime,
+              sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
+            ),
+            width: meta.width,
+            height: meta.height,
+            byteLength: media.bytes.length,
+            mime: meta.mime,
+          },
         )
       : this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
     this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
