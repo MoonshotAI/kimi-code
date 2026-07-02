@@ -436,6 +436,13 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 		if (this.history.length === 0) return;
 
+		// When entering browse, capture host state up front — before the filter
+		// runs — so the host's filter can read the browse-entry mode rather than a
+		// mode that changes as entries are recalled. The captured value is only
+		// committed to hostHistoryDraft once a matching entry is actually found.
+		const entering = this.historyIndex === -1;
+		const pendingHostDraft = entering ? this.onHistoryDraftSave?.() : undefined;
+
 		// Find the next index that passes the filter. Up(-1) increases index,
 		// Down(1) decreases. The draft (-1) is always reachable; stepping past
 		// either end is a no-op.
@@ -460,10 +467,10 @@ export class Editor implements Component, Focusable {
 		if (!found) return;
 
 		// Capture state when first entering history browsing mode
-		if (this.historyIndex === -1 && newIndex >= 0) {
+		if (entering && newIndex >= 0) {
 			this.pushUndoSnapshot();
 			this.historyDraft = structuredClone(this.state);
-			this.hostHistoryDraft = this.onHistoryDraftSave?.();
+			this.hostHistoryDraft = pendingHostDraft;
 		}
 
 		this.historyIndex = newIndex;
