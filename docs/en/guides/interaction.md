@@ -4,7 +4,7 @@ Kimi Code CLI runs as an interactive TUI (terminal user interface) built around 
 
 ## Input box basics
 
-The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / `Ctrl-J` to insert a newline. When the input box is empty, press `↑` / `↓` to browse the input history for the current working directory.
+The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / `Ctrl-J` to insert a newline. When the input box is empty, press `↑` / `↓` to browse the input history for the current working directory, including previous shell commands.
 
 **Exiting the CLI**: press `Ctrl-D` with the input box empty, press `Ctrl-C` twice while idle, or type `/exit`. Pressing `Ctrl-C` or `Esc` during streaming output interrupts the current turn — it does not exit the program.
 
@@ -71,6 +71,7 @@ Shell mode lets you run terminal commands without leaving the conversation. The 
 - Enter: type `!` in an empty input box, or paste a command that starts with `!`.
 - Exit: press `Backspace` or `Esc` in an empty input box; submitting a command also returns you to normal mode automatically.
 - Run in background: while a command is running, press `Ctrl+B` to move it to a background task.
+- Recall previous commands: with the input box empty in shell mode, press `↑` to browse earlier shell commands; recalling one keeps you in shell mode so it runs as a command again.
 
 In shell mode the input box shows a `!` prompt on the left and the border turns violet. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal, so Kimi can use `gh` afterward.
 
