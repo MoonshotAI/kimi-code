@@ -64,6 +64,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     recordUsage,
   } = deps;
 
+  let stepTools = tools;
   if (hooks?.beforeStep !== undefined) {
     const beforeStep = await hooks.beforeStep({
       turnId,
@@ -73,6 +74,9 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     });
     if (beforeStep?.block === true) {
       throw new Error(beforeStep.reason ?? `Step ${String(currentStep)} was blocked`);
+    }
+    if (beforeStep?.tools !== undefined) {
+      stepTools = beforeStep.tools;
     }
   }
 
@@ -84,7 +88,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   const stepUuid = randomUUID();
 
   const step: ToolCallStepContext = {
-    tools,
+    tools: stepTools,
     hooks,
     log,
     dispatchEvent,
@@ -104,7 +108,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
 
   const chatParams: LLMChatParams = {
     messages,
-    tools: tools ?? [],
+    tools: stepTools ?? [],
     signal,
     ...createChatStreamingCallbacks({
       dispatchEvent,

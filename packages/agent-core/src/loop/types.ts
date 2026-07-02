@@ -198,6 +198,11 @@ export interface LoopStoppedStepContext extends LoopStepHookContext {
 export interface BeforeStepResult {
   readonly block?: boolean | undefined;
   readonly reason?: string | undefined;
+  /**
+   * Override the tools available to the model for this step only.
+   * Returning an empty array forces a text-only response.
+   */
+  readonly tools?: readonly ExecutableTool[] | undefined;
 }
 
 export interface AfterStepResult {
