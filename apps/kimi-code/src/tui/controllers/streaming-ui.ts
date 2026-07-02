@@ -590,7 +590,7 @@ export class StreamingUIController {
   /**
    * Compact a stable-mode thinking component to its minimal finalized form.
    *
-   * Called at the start of assistant text streaming so that the thinking
+   * Called after the first visible assistant text update so that the thinking
    * line-count reduction and the assistant content addition happen in the
    * same pi-tui render cycle. The assistant content growing below offsets
    * the destructive fullRender, making the transition invisible.
@@ -616,10 +616,6 @@ export class StreamingUIController {
   }
 
   onStreamingTextStart(): void {
-    // Compact thinking before adding assistant content so both changes
-    // land in the same render cycle (fixes #981 viewport jump).
-    this.compactPendingThinking();
-
     const { state } = this.host;
     this._pendingAgentGroup = null;
     this._pendingReadGroup = null;
@@ -640,8 +636,12 @@ export class StreamingUIController {
   onStreamingTextUpdate(fullText: string): void {
     const block = this._streamingBlock;
     if (block !== null) {
+      const hasVisibleAssistantText = fullText.trim().length > 0;
       block.entry.content = fullText;
       block.component.updateContent(fullText, { transient: true });
+      if (hasVisibleAssistantText) {
+        this.compactPendingThinking();
+      }
       this.host.state.ui.requestRender();
     }
   }

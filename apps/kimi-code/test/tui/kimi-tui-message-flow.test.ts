@@ -4687,6 +4687,7 @@ command = "vim"
       } as Event,
       vi.fn(),
     );
+    driver.streamingUI.flushNow();
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('old1');
@@ -4695,6 +4696,49 @@ command = "vim"
     expect(transcript).toContain('new2');
     expect(transcript).not.toContain('new7');
     expect(countOccurrences(transcript, 'ctrl+o to expand')).toBe(2);
+  });
+
+  it('renders first assistant text before compacting pending thinking', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    streamThinking(driver, ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7']);
+    driver.streamingUI.flushNow();
+
+    const renderedFrames: string[] = [];
+    vi.mocked(driver.state.ui.requestRender).mockImplementation(() => {
+      renderedFrames.push(stripSgr(renderTranscript(driver)));
+    });
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        delta: 'answer',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+
+    expect(
+      renderedFrames.some(
+        (frame) => frame.includes('... (5 more lines, ctrl+o to expand)') && !frame.includes('answer'),
+      ),
+    ).toBe(false);
+    expect(
+      renderedFrames.some(
+        (frame) => frame.includes('... (5 more lines, ctrl+o to expand)') && frame.includes('answer'),
+      ),
+    ).toBe(true);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('answer');
+    expect(transcript).toContain('line1');
+    expect(transcript).toContain('line2');
+    expect(transcript).not.toContain('line7');
   });
 
   it('compacts pending thinking before appending a hook result', async () => {
