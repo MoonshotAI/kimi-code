@@ -597,6 +597,92 @@ describe('plan mode injection cadence', () => {
 
     expect(lastUserText(ctx.agent.context.history)).toContain('Plan mode is active');
   });
+
+  it('cancels plan mode when undo removes the turn that entered planning', async () => {
+    const enterPlanModeCall: ToolCall = {
+      type: 'function',
+      id: 'call_enter_plan_undo',
+      name: 'EnterPlanMode',
+      arguments: '{}',
+    };
+    const ctx = testAgent({ kaos: createPlanKaos() });
+    ctx.configure({ tools: ['EnterPlanMode'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will enter plan mode.' }, enterPlanModeCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Plan mode is active now.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Plan first' }] });
+    await ctx.untilTurnEnd();
+
+    ctx.newEvents();
+    await ctx.rpc.undoHistory({ count: 1 });
+
+    expect(ctx.agent.planMode.isActive).toBe(false);
+    await expect(ctx.rpc.getPlan({})).resolves.toBeNull();
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.undo',
+        args: expect.objectContaining({ count: 1 }),
+      }),
+    );
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'plan_mode.cancel',
+      }),
+    );
+  });
+
+  it('keeps plan mode active when undo stops after the plan-enter anchor', async () => {
+    const ctx = testAgent({ kaos: createPlanKaos() });
+    ctx.configure();
+    await ctx.rpc.enterPlan({});
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'first plan request' }]);
+    await ctx.agent.injection.inject();
+    ctx.appendAssistantTurn(1, 'First plan drafted.');
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'second plan request' }]);
+    await ctx.agent.injection.inject();
+    ctx.appendAssistantTurn(2, 'Second plan drafted.');
+
+    await ctx.rpc.undoHistory({ count: 1 });
+
+    expect(ctx.agent.planMode.isActive).toBe(true);
+    await expect(ctx.rpc.getPlan({})).resolves.toMatchObject({
+      path: ctx.agent.planMode.planFilePath,
+    });
+  });
+
+  it('restores plan mode off from an undo followed by plan cancel', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'plan_mode.enter',
+      id: 'restored-plan',
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'draft the plan' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    ctx.dispatch({
+      type: 'context.undo',
+      count: 1,
+    });
+    ctx.dispatch({
+      type: 'plan_mode.cancel',
+      id: 'restored-plan',
+    });
+
+    expect(ctx.agent.planMode.isActive).toBe(false);
+  });
 });
 
 function delay(ms: number): Promise<void> {

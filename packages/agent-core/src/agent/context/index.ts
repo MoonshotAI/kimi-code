@@ -157,6 +157,7 @@ export class ContextMemory {
     this._lastAssistantAt = null;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
+    this.agent.planMode.onContextClear();
     this.agent.emitStatusUpdated();
   }
 
@@ -167,6 +168,7 @@ export class ContextMemory {
     this.agent.records.logRecord({ type: 'context.undo', count });
 
     let removedUserCount = 0;
+    let oldestRemovedUserIndex: number | undefined;
     const removedMessages = new Set<ContextMessage>();
     let stoppedAtBoundary = false;
     for (let i = this._history.length - 1; i >= 0; i--) {
@@ -189,6 +191,7 @@ export class ContextMemory {
 
       if (isRealUserInput(message)) {
         removedUserCount++;
+        oldestRemovedUserIndex = i;
         if (removedUserCount >= count) break;
       }
     }
@@ -217,6 +220,10 @@ export class ContextMemory {
           },
         },
       );
+    }
+
+    if (oldestRemovedUserIndex !== undefined) {
+      this.agent.planMode.cancelAfterUndoIfNeeded(oldestRemovedUserIndex);
     }
   }
 
@@ -297,6 +304,7 @@ export class ContextMemory {
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextCompacted();
+    this.agent.planMode.onContextCompacted();
     this.agent.emitStatusUpdated();
     return result;
   }
