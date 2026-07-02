@@ -8,17 +8,17 @@ const router = useRouter();
 const activeSessionId = inject('activeSessionId') as { value: string | null } | undefined;
 
 function close(): void {
-  // Prefer the URL captured on entry (in-app navigation). For a direct deep
-  // link that URL is '/', so fall back to the active session's canonical URL —
-  // the app auto-selects a session on load, and this keeps the address bar in
-  // sync with it. Also sidesteps the in-page hash anchors that would trap
-  // router.back().
+  // Replace (not push) the current /design-system history entry with the return
+  // URL, so the browser Back button goes to the page before the easter egg
+  // rather than reopening /design-system. Falls back to the active session URL
+  // for a direct deep link. Also sidesteps the in-page hash anchors that would
+  // trap router.back().
   const fromEntry = designSystemReturnPath;
   if (fromEntry && fromEntry !== '/') {
-    void router.push(fromEntry);
+    void router.replace(fromEntry);
     return;
   }
-  void router.push(sessionUrl(activeSessionId?.value ?? undefined));
+  void router.replace(sessionUrl(activeSessionId?.value ?? undefined));
 }
 
 let io: IntersectionObserver | null = null;
