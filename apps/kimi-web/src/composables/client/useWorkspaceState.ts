@@ -118,7 +118,7 @@ export interface UseWorkspaceStateDeps {
   nextOptimisticMsgId: () => string;
   getEventConn: () => KimiEventConnection | null;
   syncSessionFromSnapshot: (sessionId: string) => Promise<SyncSessionResult>;
-  subscribeToSessionEvents: (sessionId: string) => void;
+  reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   persistSessionProfile: (patch: PersistSessionProfilePatch) => void;
@@ -166,7 +166,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     nextOptimisticMsgId,
     getEventConn,
     syncSessionFromSnapshot,
-    subscribeToSessionEvents,
+    reopenSession,
     hasLoadedMessages,
     refreshSessionStatus,
     persistSessionProfile,
@@ -959,9 +959,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         const result = await syncSessionFromSnapshot(sessionId);
         if (result === 'not-found') return;
       } else {
-        // Re-open: resume from the tracked cursor; the daemon replays any
-        // missed durable events (or answers resync_required → snapshot).
-        subscribeToSessionEvents(sessionId);
+        // Re-open: if the session was evicted from the subscription cap since
+        // last open, reopenSession rebuilds it from a snapshot (the kept cursor
+        // may have skipped per-session events); otherwise it re-subscribes from
+        // the tracked cursor and the daemon replays any missed durable events.
+        const result = await reopenSession(sessionId);
+        if (result === 'not-found') return;
       }
 
       // Refresh sidecars AFTER the snapshot settles so status/usage updates
