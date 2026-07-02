@@ -887,9 +887,13 @@
         <div class="callout good">
           <span class="ico">✓</span>
           <div>
-            <b>品牌调性（反向清单）</b>：冷静、临床、不夸大。<span class="pill red" style="margin:0 4px">拒绝</span>紫色渐变、玻璃拟态、发光阴影、「Boost your productivity」式营销文案、以及用 emoji 充当图标——<b>月相 🌑…🌘 是唯一例外</b>，仅用于「等待 Agent 响应」的聊天态，属品牌特色。
+            <b>品牌调性（反向清单）</b>：冷静、临床、不夸大。<span class="pill red" style="margin:0 4px">拒绝</span>紫色渐变、玻璃拟态、发光阴影、AI 紫 / 蓝辉光、无限循环的碎微动效、「Boost your productivity」式营销文案、以及用 emoji 充当图标——<b>月相 🌑…🌘 是唯一例外</b>，仅用于「等待 Agent 响应」的聊天态，属品牌特色。这些都是 AI 生成界面的常见套路（AI tell），有意避开。
           </div>
         </div>
+
+        <div class="callout info"><span class="ico">i</span><div>
+          <b>先声明设计意图（Design Read）</b>：新增组件 / 页面前，用一句话写清它是什么场景、给谁、什么调性（例如「会话内嵌的轻量工具卡，给开发者，冷静克制」），再动手。读不出意图时先问一句，不要默认套最近的现成样式。
+        </div></div>
       </section>
 
 
@@ -1039,7 +1043,7 @@
         </table>
 
         <h4 class="mini">图标 Icon</h4>
-        <p>图标一律从集中注册表 <code>lib/icons.ts</code> 取用：模板中用 <code>&lt;Icon name size /&gt;</code> 组件（<code>components/ui/Icon.vue</code>），<code>v-html</code> 场景（如工具 glyph）用 <code>iconSvg(name, size)</code>。<b>禁止手写 <code>&lt;svg&gt;</code></b>——<code>scripts/check-style.mjs</code> 的 <code>icon-from-registry</code> 规则会对游离 SVG 告警。图标来自 <a href="https://remixicon.com/">Remix Icon</a>（Apache-2.0），统一为 fill 风格（<code>fill="currentColor"</code>、24×24 源网格），颜色跟随文字；尺寸走下方三档 token。注册表由 <code>scripts/gen-icon-data.mjs</code> 从 <code>@iconify-json/ri</code> 按需生成，离线且 tree-shaken。</p>
+        <p>图标一律从集中注册表 <code>lib/icons.ts</code> 取用：模板中用 <code>&lt;Icon name size /&gt;</code> 组件（<code>components/ui/Icon.vue</code>），<code>v-html</code> 场景（如工具 glyph）用 <code>iconSvg(name, size)</code>。<b>禁止手写 <code>&lt;svg&gt;</code></b>——<code>scripts/check-style.mjs</code> 的 <code>icon-from-registry</code> 规则会对游离 SVG 告警。图标来自 <a href="https://remixicon.com/">Remix Icon</a>（Apache-2.0），统一为 fill 风格（<code>fill="currentColor"</code>、24×24 源网格），颜色跟随文字；尺寸走下方三档 token。注册表由 <code>scripts/gen-icon-data.mjs</code> 从 <code>@iconify-json/ri</code> 按需生成，离线且 tree-shaken。<b>全站只用这一个图标 family</b>，不混用其他图标库，也<b>绝不手写 SVG 路径</b>；缺图标时往注册表里加（改 <code>gen-icon-data.mjs</code> 的映射并重生成），不在组件里手绘。</p>
 
         <h4 class="mini">尺寸阶梯 Size scale</h4>
         <div class="icon-sizes">
@@ -2247,6 +2251,7 @@ export function auth(token: string) {
         <h4 class="mini">1. 对比度与颜色 Contrast &amp; color</h4>
         <ul class="clean">
           <li>正文文本与背景对比度 <b>≥ 4.5:1</b>；控件边框、图标、关键图形 <b>≥ 3:1</b>。换主题色 / 暗色模式时按 §05 一起核对。</li>
+          <li><b>按钮文字对按钮底色</b>、<b>表单控件</b>（输入框、placeholder、helper / 错误文案）<b>对所在背景</b>的对比度均须 ≥ 4.5:1（大文字 ≥ 3:1）。白底白字、透明按钮无描边浮于底色上、浅色 placeholder 近白底，均按样式规则告警。</li>
           <li><b>状态不只靠颜色传达。</b>错误、选中、禁用等状态要同时有文字、图标或形态变化（例如错误态不只红，还带文案或图标）。</li>
         </ul>
 
