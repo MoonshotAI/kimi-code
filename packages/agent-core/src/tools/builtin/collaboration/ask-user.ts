@@ -80,7 +80,7 @@ const AskUserQuestionInputSchemaWithBackground = AskUserQuestionInputBaseSchema.
     .boolean()
     .default(false)
     .describe(
-      'Set true to ask in the background and return immediately with a background task_id; the answer arrives automatically in a later turn — do not poll for it with TaskOutput.',
+      'Set true to ask in the background and return immediately with a background task_id; you are notified automatically when the user answers — do not poll with TaskOutput while the question is pending.',
     ),
 });
 
@@ -231,7 +231,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
         `status: ${status}\n` +
         `automatic_notification: true\n` +
         'next_step: Continue your current work; the answer will arrive automatically when the user responds.\n' +
-        'next_step: Use TaskOutput with this task_id only to re-read the answer if you missed the notification — do not poll for it.\n' +
+        'next_step: When the completion notice arrives, it may carry an output-file pointer rather than the answer text — read that file (or call TaskOutput once) to get the answer. Do not poll before then.\n' +
         'next_step: Use TaskStop only if the question should be cancelled.\n' +
         'human_shell_hint: The pending question is also visible in /tasks.',
       message: `Started ${taskId}`,
