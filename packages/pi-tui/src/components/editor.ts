@@ -299,6 +299,7 @@ export class Editor implements Component, Focusable {
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
 	private historyDraft: EditorState | null = null;
+	private historyFilter: ((entry: string) => boolean) | null = null;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -322,6 +323,13 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	/**
+	 * Called when a history entry is recalled, before it is put into the buffer.
+	 * Return the text to display, or `undefined` to use the entry as-is. Lets the
+	 * host decorate entries (e.g. strip a marker) and react to recalls (e.g.
+	 * switch input mode) without touching editor internals.
+	 */
+	public onRecall?: (entry: string, direction: 1 | -1) => string | undefined;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -375,6 +383,14 @@ export class Editor implements Component, Focusable {
 	}
 
 	/**
+	 * Limit which history entries ↑/↓ navigate. `null` (default) visits every
+	 * entry. The filter is evaluated against each stored entry as-is.
+	 */
+	setHistoryFilter(filter: ((entry: string) => boolean) | null): void {
+		this.historyFilter = filter;
+	}
+
+	/**
 	 * Add a prompt to history for up/down arrow navigation.
 	 * Called after successful submission.
 	 */
@@ -410,8 +426,28 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 		if (this.history.length === 0) return;
 
-		const newIndex = this.historyIndex - direction; // Up(-1) increases index, Down(1) decreases
-		if (newIndex < -1 || newIndex >= this.history.length) return;
+		// Find the next index that passes the filter. Up(-1) increases index,
+		// Down(1) decreases. The draft (-1) is always reachable; stepping past
+		// either end is a no-op.
+		let newIndex = this.historyIndex;
+		let found = false;
+		while (true) {
+			newIndex = newIndex - direction;
+			if (newIndex === -1) {
+				found = true;
+				break;
+			}
+			if (newIndex < -1 || newIndex >= this.history.length) {
+				found = false;
+				break;
+			}
+			const candidate = this.history[newIndex];
+			if (!this.historyFilter || (candidate !== undefined && this.historyFilter(candidate))) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) return;
 
 		// Capture state when first entering history browsing mode
 		if (this.historyIndex === -1 && newIndex >= 0) {
@@ -434,7 +470,9 @@ export class Editor implements Component, Focusable {
 				this.setTextInternal("");
 			}
 		} else {
-			this.setTextInternal(this.history[this.historyIndex] || "", direction === -1 ? "start" : "end");
+			const rawEntry = this.history[this.historyIndex] || "";
+			const entry = this.onRecall ? this.onRecall(rawEntry, direction) ?? rawEntry : rawEntry;
+			this.setTextInternal(entry, direction === -1 ? "start" : "end");
 		}
 	}
 
