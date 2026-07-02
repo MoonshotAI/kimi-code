@@ -263,14 +263,20 @@ function onHeaderDragStart(event: DragEvent): void {
    focused). `.gh .gh-more` / `.gh .gh-add` out-specificity IconButton's display
    so the hidden default wins. */
 .gh .gh-more,
-.gh .gh-add { display: none; }
+.gh .gh-add {
+  opacity: 0;
+  pointer-events: none;
+}
 .gh:hover .gh-more,
 .gh:hover .gh-add,
 .gh:focus-within .gh-more,
 .gh:focus-within .gh-add,
 .gh-more.open,
 .gh-more:focus-visible,
-.gh-add:focus-visible { display: inline-flex; }
+.gh-add:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
 .gh-more.open { color: var(--color-text); background: var(--color-line); }
 
 .group-empty {

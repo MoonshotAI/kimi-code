@@ -14,10 +14,10 @@
 //   - iconSvg() below, for v-html contexts (e.g. lib/toolMeta.ts).
 
 import { iconToSVG } from '@iconify/utils';
-import { ICON_DATA, type IconData, type IconName } from './icon-data.ts';
+import { ICON_DATA, type IconData, type IconName } from './icon-data';
 
-export type { IconName } from './icon-data.ts';
-export { NAME_TO_REMIX } from './icon-data.ts';
+export type { IconName } from './icon-data';
+export { NAME_TO_REMIX } from './icon-data';
 
 export type IconSize = 'sm' | 'md' | 'lg';
 
