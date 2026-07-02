@@ -147,16 +147,14 @@ max_context_size = 1047576
 如果某些用户覆盖需要在 provider-model 刷新后保留，请写到 `[models."<alias>".overrides]`。运行时读取的是 effective 值：有 override 时用 override，否则用顶层字段。
 
 ```toml
-[models."kimi-code/kimi-k2"]
+[models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
-model = "kimi-k2"
+model = "kimi-for-coding"
 max_context_size = 262144
-support_efforts = ["low", "high", "max"]
-default_effort = "max"
 
-[models."kimi-code/kimi-k2".overrides]
-support_efforts = ["low", "high"]
-default_effort = "high"
+[models."kimi-code/kimi-for-coding".overrides]
+max_context_size = 131072
+display_name = "Kimi for Coding (custom)"
 ```
 
 `[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts` 和 `default_effort`。不接受身份 / 路由字段：`provider`、`model`、`protocol` 和 `beta_api`。
