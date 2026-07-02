@@ -426,4 +426,69 @@ describe('mcpResultToExecutableOutput', () => {
     expect(persisted.equals(bigBytes)).toBe(true);
     await rm(dir, { recursive: true, force: true });
   });
+
+  test('keeps the caption intact when the tool text exhausts the 100K budget', async () => {
+    // The caption must never compete with the tool's own text for the budget:
+    // a chatty tool (page text + screenshot) would otherwise silently evict
+    // it, reintroducing exactly the silent downsampling the caption exists
+    // to prevent — and orphaning the persisted original.
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'text', text: 'x'.repeat(100_001) },
+        { type: 'image', data: big, mimeType: 'image/png' },
+      ]),
+      'mcp__s__shot',
+      { originalsDir: dir },
+    );
+
+    const parts = out.output as ContentPart[];
+    // The tool text is truncated (with the notice), the image survives…
+    expect(out.truncated).toBe(true);
+    expect(parts.some((p) => p.type === 'image_url')).toBe(true);
+    const toolText = parts[0];
+    if (toolText?.type !== 'text') throw new Error('expected the tool text part first');
+    expect(toolText.text).toContain('Output truncated');
+    // …and the caption survives INTACT, still pointing at the original.
+    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
+    if (caption?.type !== 'text') throw new Error('expected a compression caption');
+    expect(caption.text).toMatch(/<\/system>$/);
+    expect(caption.text).toContain('saved at');
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test('does not slice the caption when the budget is nearly exhausted', async () => {
+    // 99,900 chars of tool text fit the budget on their own; the caption
+    // must not be charged the remaining 100 chars and sliced mid-string
+    // into an unclosed <system> fragment.
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'text', text: 'y'.repeat(99_900) },
+        { type: 'image', data: big, mimeType: 'image/png' },
+      ]),
+      'mcp__s__shot',
+      { originalsDir: dir },
+    );
+
+    const parts = out.output as ContentPart[];
+    // The tool text fits — nothing is truncated at all.
+    expect(out.truncated).toBeUndefined();
+    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
+    if (caption?.type !== 'text') throw new Error('expected a compression caption');
+    expect(caption.text).toMatch(/^<system>Image compressed/);
+    expect(caption.text).toMatch(/<\/system>$/);
+    expect(caption.text).toContain('saved at');
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).not.toContain('Output truncated');
+    await rm(dir, { recursive: true, force: true });
+  });
 });
