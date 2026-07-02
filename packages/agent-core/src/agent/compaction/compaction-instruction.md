@@ -17,10 +17,13 @@ above will be gone. In your own words, preserve what you genuinely need to
 continue:
 
 - What the latest request is actually asking for: your reading of its intent and
-  any ambiguity you have already resolved — not a re-transcription, since the
-  request itself survives verbatim in the kept messages. If several requests are
-  in play, say which one governs the next move, and re-quote any still-relevant
-  earlier request that may have scrolled out of the kept messages.
+  any ambiguity you have already resolved — not a re-transcription, since what
+  fits is kept verbatim in your most recent messages. But those kept messages are
+  size-capped, so a long request is truncated there: if the latest request is
+  large (a big paste or file), preserve the parts at risk of being dropped —
+  above all the actual ask. If several requests are in play, say which one governs
+  the next move, and re-quote any still-relevant earlier request that may have
+  scrolled out of the kept messages.
 - The instructions and constraints currently in force (user preferences,
   project rules, environment and tooling limits) — condensed to what still
   matters, keeping decisions you have already settled (what you chose and why)
