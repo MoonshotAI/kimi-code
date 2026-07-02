@@ -1501,6 +1501,65 @@ export class TUI extends Container {
 				this.previousViewportTop = prevViewportTop;
 				return;
 			}
+			// The remaining visible changes are entirely in the deleted tail
+			// region: the new content ends at or above the viewport top. The
+			// differential path below cannot handle this — its render loop
+			// would be empty while the cursor sits at the clamped row, and the
+			// tail-clear would scroll past the screen bottom untracked,
+			// desyncing every subsequent render. Repaint the visible viewport
+			// in place instead: draw the tail of the new content from the top
+			// of the screen and blank the remaining rows. Scrollback keeps
+			// stale bytes but is never cleared (no ESC[3J), preserving the
+			// user's scroll position.
+			if (visibleFirstChanged >= newLines.length) {
+				const newViewportTop = Math.max(0, newLines.length - height);
+				// Kitty image lines need multi-row placement; fall back to a
+				// destructive full render for that rare combination.
+				for (let r = 0; r < height; r++) {
+					const idx = newViewportTop + r;
+					if (idx < newLines.length && isImageLine(newLines[idx]!)) {
+						logRedraw(`viewport repaint hit kitty image at line ${idx}`);
+						fullRender(true);
+						return;
+					}
+				}
+				logRedraw(
+					`viewport repaint: content collapsed above viewport (newLines=${newLines.length}, viewportTop=${prevViewportTop})`,
+				);
+				let repaint = "\x1b[?2026h"; // Begin synchronized output
+				// Delete kitty images placed in the old visible viewport; images
+				// above it live in scrollback and are left alone.
+				repaint += this.deleteChangedKittyImages(prevViewportTop, this.previousLines.length - 1);
+				// Move the cursor to the top of the screen (old anchor still valid).
+				const cursorScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+				if (cursorScreenRow > 0) {
+					repaint += `\x1b[${cursorScreenRow}A`;
+				}
+				repaint += "\r";
+				// Rewrite every screen row; the last row gets no trailing \r\n,
+				// so this never scrolls the terminal.
+				for (let r = 0; r < height; r++) {
+					if (r > 0) repaint += "\r\n";
+					repaint += "\x1b[2K";
+					const idx = newViewportTop + r;
+					if (idx < newLines.length) {
+						repaint += newLines[idx]!;
+					}
+				}
+				repaint += "\x1b[?2026l"; // End synchronized output
+				this.terminal.write(repaint);
+				// Re-anchor: screen row r now shows newLines[newViewportTop + r].
+				this.cursorRow = Math.max(0, newLines.length - 1);
+				this.hardwareCursorRow = newViewportTop + height - 1;
+				this.previousViewportTop = newViewportTop;
+				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
+				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.previousLines = newLines;
+				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+				this.previousWidth = width;
+				this.previousHeight = height;
+				return;
+			}
 			logRedraw(`clamped firstChanged ${firstChanged} -> ${visibleFirstChanged} (viewportTop=${prevViewportTop})`);
 			firstChanged = visibleFirstChanged;
 		}
@@ -1578,12 +1637,20 @@ export class TUI extends Container {
 				buffer += `\x1b[${moveDown}B`;
 				finalCursorRow = newLines.length - 1;
 			}
+			// Only clear what is actually on screen: writing \r\n past the
+			// bottom row would scroll the terminal without updating
+			// viewportTop/hardwareCursorRow, desyncing every later render.
+			// Rows below the screen bottom are invisible and need no clearing.
 			const extraLines = this.previousLines.length - newLines.length;
-			for (let i = newLines.length; i < this.previousLines.length; i++) {
+			const rowsBelowCursor = height - 1 - (finalCursorRow - viewportTop);
+			const clearLines = Math.max(0, Math.min(extraLines, rowsBelowCursor));
+			for (let i = 0; i < clearLines; i++) {
 				buffer += "\r\n\x1b[2K";
 			}
 			// Move cursor back to end of new content
-			buffer += `\x1b[${extraLines}A`;
+			if (clearLines > 0) {
+				buffer += `\x1b[${clearLines}A`;
+			}
 		}
 
 		buffer += "\x1b[?2026l"; // End synchronized output
