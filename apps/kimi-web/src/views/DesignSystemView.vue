@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { inject, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { designSystemReturnPath } from '../router';
+import { sessionUrl } from '../lib/sessionRoute';
 
 const router = useRouter();
+const activeSessionId = inject('activeSessionId') as { value: string | null } | undefined;
 
 function close(): void {
-  // Return to the URL the user was on before opening the design system
-  // (recorded by the router on entry) instead of the app root, so a
-  // /sessions/<id> URL is preserved. This also sidesteps the in-page hash
-  // anchors that would otherwise trap router.back().
-  void router.push(designSystemReturnPath || '/');
+  // Prefer the URL captured on entry (in-app navigation). For a direct deep
+  // link that URL is '/', so fall back to the active session's canonical URL —
+  // the app auto-selects a session on load, and this keeps the address bar in
+  // sync with it. Also sidesteps the in-page hash anchors that would trap
+  // router.back().
+  const fromEntry = designSystemReturnPath;
+  if (fromEntry && fromEntry !== '/') {
+    void router.push(fromEntry);
+    return;
+  }
+  void router.push(sessionUrl(activeSessionId?.value ?? undefined));
 }
 
 let io: IntersectionObserver | null = null;

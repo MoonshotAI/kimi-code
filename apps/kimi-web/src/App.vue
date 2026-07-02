@@ -54,6 +54,7 @@ let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
+provide('activeSessionId', client.activeSessionId);
 const { t } = useI18n();
 const route = useRoute();
 const isDesignSystem = computed(() => route.name === 'design-system');
