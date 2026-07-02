@@ -90,6 +90,13 @@ interface MessageDriver {
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
+  sendSkillActivation(session: unknown, skillName: string, skillArgs: string): void;
+  activatePluginCommand(
+    session: unknown,
+    pluginId: string,
+    commandName: string,
+    args: string,
+  ): void;
   getCurrentSessionId(): string;
 }
 
@@ -207,6 +214,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
     reloadSession: vi.fn(async () => ({})),
     activateSkill: vi.fn(async () => {}),
+    activatePluginCommand: vi.fn(async () => {}),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -3862,6 +3870,43 @@ command = "vim"
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBe(panel);
     });
+  });
+
+  it('resolves @ file mentions in skill activation args', async () => {
+    const dir = await makeTempHome();
+    const filePath = join(dir, 'notes.md');
+    await writeFile(filePath, 'x');
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.sendSkillActivation(session, 'review', `@${filePath} summarize`);
+
+    expect(session.activateSkill).toHaveBeenCalledWith('review', `${filePath} summarize`);
+  });
+
+  it('leaves unresolved @ tokens untouched in skill activation args', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.sendSkillActivation(session, 'review', 'check @types/node please');
+
+    expect(session.activateSkill).toHaveBeenCalledWith('review', 'check @types/node please');
+  });
+
+  it('resolves @ file mentions in plugin command args', async () => {
+    const dir = await makeTempHome();
+    const filePath = join(dir, 'data.json');
+    await writeFile(filePath, '{}');
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.activatePluginCommand(session, 'kimi-webbridge', 'run', `@${filePath}`);
+
+    expect(session.activatePluginCommand).toHaveBeenCalledWith(
+      'kimi-webbridge',
+      'run',
+      filePath,
+    );
   });
 
   it('removes a plugin record without auto-running any cleanup skill', async () => {

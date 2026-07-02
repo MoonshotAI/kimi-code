@@ -1248,7 +1248,12 @@ export class KimiTUI {
 
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
     this.beginSessionRequest();
-    void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
+    // Skill/plugin arguments accept `@` file mentions too (completion is
+    // offered in slash-command arguments), so resolve them to real paths
+    // here as well — the SDK receives args as a plain string, so we send
+    // the resolved text directly.
+    const resolvedArgs = resolveFileMentions(skillArgs, this.state.appState.workDir).text;
+    void session.activateSkill(skillName, resolvedArgs).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
     });
@@ -1261,7 +1266,8 @@ export class KimiTUI {
     args: string,
   ): void {
     this.beginSessionRequest();
-    void session.activatePluginCommand(pluginId, commandName, args).catch((error: unknown) => {
+    const resolvedArgs = resolveFileMentions(args, this.state.appState.workDir).text;
+    void session.activatePluginCommand(pluginId, commandName, resolvedArgs).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
     });
