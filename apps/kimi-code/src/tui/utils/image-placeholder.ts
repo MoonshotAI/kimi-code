@@ -16,6 +16,7 @@
  */
 
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
+import { buildImageCompressionCaption } from '@moonshot-ai/kimi-code-sdk';
 
 import type {
   ImageAttachment,
@@ -66,6 +67,11 @@ export function extractMediaAttachments(
       pushText(parts, mediaText);
       videoAttachmentIds.push(id);
     } else {
+      // Paste-time compression is announced next to the image so the model
+      // knows it received a downsampled copy and where the original lives.
+      if (attachment.original !== undefined) {
+        pushText(parts, captionForCompressedImage(attachment));
+      }
       parts.push(imagePartForAttachment(attachment));
       imageAttachmentIds.push(id);
     }
@@ -107,6 +113,26 @@ function imagePartForAttachment(att: ImageAttachment): PromptPart {
     type: 'image_url',
     imageUrl: { url: `data:${att.mime};base64,${base64}` },
   };
+}
+
+function captionForCompressedImage(att: ImageAttachment): string {
+  const original = att.original;
+  if (original === undefined) return '';
+  return buildImageCompressionCaption({
+    original: {
+      width: original.width,
+      height: original.height,
+      byteLength: original.byteLength,
+      mimeType: original.mime,
+    },
+    final: {
+      width: att.width,
+      height: att.height,
+      byteLength: att.bytes.length,
+      mimeType: att.mime,
+    },
+    originalPath: original.path,
+  });
 }
 
 function tagTextForVideo(att: VideoAttachment): string {

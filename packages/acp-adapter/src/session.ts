@@ -11,6 +11,7 @@ import {
 import {
   ErrorCodes,
   log,
+  sessionMediaOriginalsDir,
   type ApprovalRequest,
   type ApprovalResponse,
   type BackgroundTaskInfo,
@@ -735,7 +736,11 @@ export class AcpSession {
     this.pendingPromptAborts.add(pending);
     let parts: readonly PromptPart[];
     try {
-      parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks));
+      const sessionDir = this.session.summary?.sessionDir;
+      parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks), {
+        originalsDir:
+          sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
+      });
     } finally {
       this.pendingPromptAborts.delete(pending);
     }

@@ -8,11 +8,14 @@
  *  2. Wrap media-only outputs in `<mcp_tool_result name="…">` tags so the
  *     model can attribute binary output when several tools return media.
  *     Mirrors the in-tree `ReadMediaFile` convention.
- *  3. Apply size limits: text/think share a 100K character budget; binary
+ *  3. Compress oversized inline images, announcing each compression with a
+ *     caption (original vs. sent size, readback path to the persisted
+ *     original) so downsampling is never silent.
+ *  4. Apply size limits: text/think share a 100K character budget; binary
  *     parts (image/audio/video URLs) each carry an independent 10 MB cap and
  *     collapse to a notice when oversize, so a single screenshot cannot
  *     evict every text part.
- *  4. Collapse a single-text-part result to a plain string output; otherwise
+ *  5. Collapse a single-text-part result to a plain string output; otherwise
  *     emit the `ContentPart[]` as-is.
  *
  * `mcpResultToExecutableOutput` is the single entry point; the per-step
@@ -22,7 +25,17 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import { compressImageContentParts } from '../tools/support/image-compress';
+import { persistOriginalImage } from '../tools/support/image-originals';
 import type { MCPContentBlock, MCPToolResult } from './types';
+
+export interface McpOutputOptions {
+  /**
+   * Session-owned directory for pre-compression originals (typically
+   * `sessionMediaOriginalsDir(sessionDir)` threaded down from the agent).
+   * Falls back to the shared temp-dir cache when absent.
+   */
+  readonly originalsDir?: string | undefined;
+}
 
 // MCP servers can produce arbitrarily large outputs; cap what we feed back to
 // the model so a single chatty server does not blow up the context window. The
@@ -134,6 +147,7 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
 export async function mcpResultToExecutableOutput(
   result: MCPToolResult,
   qualifiedToolName: string,
+  options: McpOutputOptions = {},
 ): Promise<{ output: string | ContentPart[]; isError: boolean; truncated?: true }> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
@@ -146,8 +160,21 @@ export async function mcpResultToExecutableOutput(
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
   // Shrink oversized images BEFORE the per-part byte cap, so a large but
   // compressible screenshot is downsampled and kept rather than dropped to a
-  // text notice. Best effort: parts that cannot be compressed pass through.
-  const compressed = await compressImageContentParts(wrapped);
+  // text notice. Compression is never silent: each re-encoded image gains a
+  // caption stating what the original was, and the original bytes are
+  // persisted (best effort, into the session's media-originals dir when
+  // known) so the model can read detail back via ReadMediaFile + region.
+  // Parts that cannot be compressed pass through.
+  const compressed = await compressImageContentParts(wrapped, {
+    annotate: {
+      persistOriginal: (bytes, mimeType) =>
+        persistOriginalImage(
+          bytes,
+          mimeType,
+          options.originalsDir === undefined ? {} : { dir: options.originalsDir },
+        ),
+    },
+  });
   const limited = applyOutputLimits(compressed);
   const output = collapseSingleText(limited.parts);
   return limited.truncated

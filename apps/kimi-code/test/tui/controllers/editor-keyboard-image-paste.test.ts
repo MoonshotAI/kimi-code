@@ -5,8 +5,16 @@
  *   - an oversized pasted image is downsampled while building the attachment,
  *     so the stored bytes, the `[image #N (W×H)]` placeholder, and the eventual
  *     submitted image all agree on the compressed size
- *   - a within-budget paste is stored byte-for-byte (fast path)
+ *   - the pre-compression original is persisted and recorded on the
+ *     attachment, so the submitted prompt can announce the compression and
+ *     point the model at the full-fidelity bytes
+ *   - a within-budget paste is stored byte-for-byte (fast path), with no
+ *     original recorded
  */
+
+import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { Jimp } from 'jimp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,7 +40,7 @@ interface PasteHarness {
   pasteImage(): Promise<void>;
 }
 
-function createPasteHarness(): PasteHarness {
+function createPasteHarness(options: { sessionDir?: string } = {}): PasteHarness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {};
   const store = new ImageAttachmentStore();
   const host = {
@@ -43,7 +51,10 @@ function createPasteHarness(): PasteHarness {
       footer: { setTransientHint: vi.fn() },
       ui: { requestRender: vi.fn() },
     },
-    session: undefined,
+    session:
+      options.sessionDir === undefined
+        ? undefined
+        : { summary: { sessionDir: options.sessionDir } },
     btwPanelController: { closeOrCancel: vi.fn(() => false) },
     track: vi.fn(),
     showError: vi.fn(),
@@ -98,6 +109,45 @@ describe('clipboard image paste compression', () => {
     expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(2000);
   });
 
+  it('records and persists the pre-compression original for an oversized paste', async () => {
+    const big = await solidPng(2600, 2600);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
+
+    const { store, pasteImage } = createPasteHarness();
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.original).toBeDefined();
+    expect(att.original?.width).toBe(2600);
+    expect(att.original?.height).toBe(2600);
+    expect(att.original?.byteLength).toBe(big.length);
+    expect(att.original?.mime).toBe('image/png');
+
+    // The original bytes are readable back from the persisted path.
+    expect(att.original?.path).not.toBeNull();
+    const persisted = await readFile(att.original!.path!);
+    expect(new Uint8Array(persisted)).toEqual(big);
+    await unlink(att.original!.path!).catch(() => undefined);
+  });
+
+  it('persists the original into the session media-originals dir when the session is known', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-paste-session-'));
+    const big = await solidPng(2600, 2600);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
+
+    const { store, pasteImage } = createPasteHarness({ sessionDir });
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.original?.path).not.toBeNull();
+    expect(att.original!.path!.startsWith(join(sessionDir, 'media-originals'))).toBe(true);
+    const persisted = await readFile(att.original!.path!);
+    expect(new Uint8Array(persisted)).toEqual(big);
+    await rm(sessionDir, { recursive: true, force: true });
+  });
+
   it('stores a within-budget paste byte-for-byte', async () => {
     const small = await solidPng(80, 80);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: small, mimeType: 'image/png' });
@@ -110,5 +160,6 @@ describe('clipboard image paste compression', () => {
     expect(att.width).toBe(80);
     expect(att.height).toBe(80);
     expect(att.bytes).toBe(small); // identity: no re-encode on the fast path
+    expect(att.original).toBeUndefined();
   });
 });

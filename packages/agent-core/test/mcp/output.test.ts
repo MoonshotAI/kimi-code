@@ -1,6 +1,9 @@
 import { ContentBlockSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { ContentPart } from '@moonshot-ai/kosong';
 import { Jimp } from 'jimp';
+import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '../../src/mcp/output';
@@ -354,5 +357,73 @@ describe('mcpResultToExecutableOutput', () => {
     // The image was compressed and kept, not dropped to a notice.
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('image_url dropped');
+  });
+
+  test('annotates a downsampled image with a caption and a readable original', async () => {
+    const bigBytes = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: bigBytes.toString('base64'), mimeType: 'image/png' }]),
+      'mcp__s__shot',
+    );
+
+    const parts = out.output as ContentPart[];
+    const captionIndex = parts.findIndex(
+      (p) => p.type === 'text' && p.text.includes('Image compressed'),
+    );
+    expect(captionIndex).toBeGreaterThanOrEqual(0);
+    const caption = (parts[captionIndex] as { text: string }).text;
+    expect(caption).toContain('2600x2600');
+    // The caption sits immediately before the image it describes.
+    expect(parts[captionIndex + 1]?.type).toBe('image_url');
+
+    // The caption points at a persisted copy of the ORIGINAL bytes, so the
+    // model can read fine detail back with ReadMediaFile + region.
+    const pathMatch = /saved at "([^"]+)"/.exec(caption);
+    expect(pathMatch).not.toBeNull();
+    const persisted = await readFile(pathMatch![1]!);
+    expect(persisted.equals(bigBytes)).toBe(true);
+    await unlink(pathMatch![1]!).catch(() => undefined);
+  });
+
+  test('adds no caption for an image that passes through unchanged', async () => {
+    const small = Buffer.from(
+      await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: small, mimeType: 'image/png' }]),
+      'mcp__s__shot',
+    );
+
+    const parts = out.output as ContentPart[];
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).not.toContain('Image compressed');
+  });
+
+  test('persists originals into the provided session originals dir', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
+    const bigBytes = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: bigBytes.toString('base64'), mimeType: 'image/png' }]),
+      'mcp__s__shot',
+      { originalsDir: dir },
+    );
+
+    const parts = out.output as ContentPart[];
+    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
+    if (caption?.type !== 'text') throw new Error('expected a compression caption');
+    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
+    expect(pathMatch).not.toBeNull();
+    // The original lands inside the session-scoped dir, not the tmp cache.
+    expect(pathMatch![1]!.startsWith(dir)).toBe(true);
+    const persisted = await readFile(pathMatch![1]!);
+    expect(persisted.equals(bigBytes)).toBe(true);
+    await rm(dir, { recursive: true, force: true });
   });
 });

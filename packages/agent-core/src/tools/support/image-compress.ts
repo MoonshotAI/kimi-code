@@ -16,6 +16,11 @@
  *  - Only PNG and JPEG are re-encoded. GIF is passed through to preserve
  *    animation; WebP is passed through because the default jimp build ships no
  *    WebP codec. Unknown formats are passed through.
+ *  - Compression must never be silent to the model: results carry the
+ *    original dimensions, {@link buildImageCompressionCaption} renders the
+ *    shared "what was compressed, where is the original" note every ingestion
+ *    point can place next to the image, and {@link cropImageForModel} lets a
+ *    caller read a region of the original back at full fidelity.
  */
 
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -82,6 +87,10 @@ export interface CompressImageResult {
   readonly width: number;
   /** Pixel height of `data`; falls back to the input size when unknown. */
   readonly height: number;
+  /** Pixel width of the input image; 0 when it cannot be sniffed. */
+  readonly originalWidth: number;
+  /** Pixel height of the input image; 0 when it cannot be sniffed. */
+  readonly originalHeight: number;
   /** True only when `data` differs from the input bytes. */
   readonly changed: boolean;
   readonly originalByteLength: number;
@@ -111,6 +120,8 @@ export async function compressImageForModel(
     mimeType,
     width: dims?.width ?? 0,
     height: dims?.height ?? 0,
+    originalWidth: dims?.width ?? 0,
+    originalHeight: dims?.height ?? 0,
     changed: false,
     originalByteLength: bytes.length,
     finalByteLength: bytes.length,
@@ -162,6 +173,8 @@ export async function compressImageForModel(
       mimeType: encoded.mimeType,
       width: encoded.width,
       height: encoded.height,
+      originalWidth: dims?.width ?? 0,
+      originalHeight: dims?.height ?? 0,
       changed: true,
       originalByteLength: bytes.length,
       finalByteLength: encoded.data.length,
@@ -175,6 +188,14 @@ export async function compressImageForModel(
 export interface CompressBase64Result {
   readonly base64: string;
   readonly mimeType: string;
+  /** Pixel width of the (possibly re-encoded) payload; 0 when unknown. */
+  readonly width: number;
+  /** Pixel height of the (possibly re-encoded) payload; 0 when unknown. */
+  readonly height: number;
+  /** Pixel width of the input image; 0 when it cannot be sniffed. */
+  readonly originalWidth: number;
+  /** Pixel height of the input image; 0 when it cannot be sniffed. */
+  readonly originalHeight: number;
   readonly changed: boolean;
   readonly originalByteLength: number;
   readonly finalByteLength: number;
@@ -199,6 +220,10 @@ export async function compressBase64ForModel(
     return {
       base64,
       mimeType,
+      width: 0,
+      height: 0,
+      originalWidth: 0,
+      originalHeight: 0,
       changed: false,
       originalByteLength: approxBytes,
       finalByteLength: approxBytes,
@@ -211,6 +236,10 @@ export async function compressBase64ForModel(
     return {
       base64,
       mimeType,
+      width: 0,
+      height: 0,
+      originalWidth: 0,
+      originalHeight: 0,
       changed: false,
       originalByteLength: 0,
       finalByteLength: 0,
@@ -221,6 +250,10 @@ export async function compressBase64ForModel(
     return {
       base64,
       mimeType,
+      width: result.width,
+      height: result.height,
+      originalWidth: result.originalWidth,
+      originalHeight: result.originalHeight,
       changed: false,
       originalByteLength: result.originalByteLength,
       finalByteLength: result.finalByteLength,
@@ -229,6 +262,10 @@ export async function compressBase64ForModel(
   return {
     base64: Buffer.from(result.data).toString('base64'),
     mimeType: result.mimeType,
+    width: result.width,
+    height: result.height,
+    originalWidth: result.originalWidth,
+    originalHeight: result.originalHeight,
     changed: true,
     originalByteLength: result.originalByteLength,
     finalByteLength: result.finalByteLength,
@@ -241,18 +278,57 @@ export async function compressBase64ForModel(
  * the MCP tool-result path. Image parts whose URL is not a `data:` URL (e.g. a
  * remote http(s) image) are passed through, as are non-image parts. Best
  * effort: a part that fails to compress is left unchanged.
+ *
+ * With `annotate` set, every image that was actually re-encoded gains a
+ * {@link buildImageCompressionCaption} text part immediately before it, so the
+ * model knows it is looking at a downsampled copy. `annotate.persistOriginal`
+ * additionally saves the pre-compression bytes and puts the returned path in
+ * the caption so the model can read the original back; persistence failures
+ * degrade to a caption without a path.
  */
 export async function compressImageContentParts(
   parts: readonly ContentPart[],
-  options: CompressImageOptions = {},
+  options: CompressImageOptions & { readonly annotate?: CompressAnnotateOptions } = {},
 ): Promise<ContentPart[]> {
+  const { annotate, ...compressOptions } = options;
   const out: ContentPart[] = [];
   for (const part of parts) {
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {
-        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType, options);
+        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType, compressOptions);
         if (result.changed) {
+          if (annotate !== undefined) {
+            let originalPath: string | null = null;
+            if (annotate.persistOriginal !== undefined) {
+              try {
+                originalPath = await annotate.persistOriginal(
+                  Buffer.from(parsed.base64, 'base64'),
+                  parsed.mimeType,
+                );
+              } catch {
+                originalPath = null;
+              }
+            }
+            out.push({
+              type: 'text',
+              text: buildImageCompressionCaption({
+                original: {
+                  width: result.originalWidth,
+                  height: result.originalHeight,
+                  byteLength: result.originalByteLength,
+                  mimeType: parsed.mimeType,
+                },
+                final: {
+                  width: result.width,
+                  height: result.height,
+                  byteLength: result.finalByteLength,
+                  mimeType: result.mimeType,
+                },
+                originalPath,
+              }),
+            });
+          }
           out.push({
             type: 'image_url',
             imageUrl: { ...part.imageUrl, url: `data:${result.mimeType};base64,${result.base64}` },
@@ -264,6 +340,237 @@ export async function compressImageContentParts(
     out.push(part);
   }
   return out;
+}
+
+export interface CompressAnnotateOptions {
+  /**
+   * Persist the pre-compression original bytes somewhere the model can read
+   * them back; return the absolute path, or null when persistence failed.
+   */
+  readonly persistOriginal?: (bytes: Uint8Array, mimeType: string) => Promise<string | null>;
+}
+
+// ── crop ─────────────────────────────────────────────────────────────
+
+/** Crop rectangle in ORIGINAL-image pixel coordinates. */
+export interface ImageCropRegion {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface CropImageOptions extends CompressImageOptions {
+  /**
+   * Keep the crop at native resolution (no edge-fit downscale). The byte
+   * budget still applies: a crop that cannot be encoded within it fails
+   * explicitly instead of being silently degraded.
+   */
+  readonly skipResize?: boolean;
+}
+
+export interface CropImageSuccess {
+  readonly ok: true;
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+  /** Pixel size of the encoded crop actually produced. */
+  readonly width: number;
+  readonly height: number;
+  /** Pixel size of the source image the region was cut from. */
+  readonly originalWidth: number;
+  readonly originalHeight: number;
+  /** The region actually applied, after clamping to the image bounds. */
+  readonly region: ImageCropRegion;
+  /** True when the crop was downscaled to fit the pixel/byte budget. */
+  readonly resized: boolean;
+  readonly originalByteLength: number;
+  readonly finalByteLength: number;
+}
+
+export interface CropImageFailure {
+  readonly ok: false;
+  /** Human/model-readable reason, safe to surface as a tool error. */
+  readonly error: string;
+}
+
+export type CropImageOutcome = CropImageSuccess | CropImageFailure;
+
+/**
+ * Cut `region` out of `bytes` and encode it for the model.
+ *
+ * Unlike {@link compressImageForModel}, cropping is an explicit request: it
+ * never falls back to the full image. Anything that prevents an accurate crop
+ * (unsupported format, undecodable bytes, a region outside the image, a
+ * skipResize result over the byte budget) returns `ok: false` with a reason
+ * the caller can hand straight back to the model.
+ *
+ * The default path fits the crop to the usual pixel/byte budgets; a crop no
+ * larger than the edge cap is therefore delivered at native resolution.
+ */
+export async function cropImageForModel(
+  bytes: Uint8Array,
+  mimeType: string,
+  region: ImageCropRegion,
+  options: CropImageOptions = {},
+): Promise<CropImageOutcome> {
+  const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+  const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const normalizedMime = normalizeMime(mimeType);
+
+  if (bytes.length === 0) {
+    return { ok: false, error: 'The image is empty.' };
+  }
+  if (!RECODABLE_MIME.has(normalizedMime)) {
+    return {
+      ok: false,
+      error: `Cropping is only supported for PNG and JPEG images; got ${mimeType}.`,
+    };
+  }
+  const dims = sniffImageDimensions(bytes);
+  if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) {
+    return {
+      ok: false,
+      error: `The image (${String(dims.width)}x${String(dims.height)} pixels) is too large to decode for cropping.`,
+    };
+  }
+  if (bytes.length > maxDecodeBytes) {
+    return { ok: false, error: 'The image is too large to decode for cropping.' };
+  }
+
+  try {
+    const { Jimp } = await import('jimp');
+    const image = await Jimp.fromBuffer(Buffer.from(bytes));
+    const originalWidth = image.width;
+    const originalHeight = image.height;
+
+    const x = Math.floor(region.x);
+    const y = Math.floor(region.y);
+    if (x < 0 || y < 0 || x >= originalWidth || y >= originalHeight || region.width < 1 || region.height < 1) {
+      return {
+        ok: false,
+        error:
+          `Region (x=${String(region.x)}, y=${String(region.y)}, width=${String(region.width)}, ` +
+          `height=${String(region.height)}) lies outside the ${String(originalWidth)}x${String(originalHeight)} image.`,
+      };
+    }
+    const w = Math.min(Math.floor(region.width), originalWidth - x);
+    const h = Math.min(Math.floor(region.height), originalHeight - y);
+    const applied: ImageCropRegion = { x, y, width: w, height: h };
+    image.crop({ x, y, w, h });
+    const sourceIsPng = normalizedMime === 'image/png';
+
+    if (options.skipResize === true) {
+      // Native resolution requested: encode once, favoring fidelity (lossless
+      // PNG, or high-quality JPEG), and refuse rather than degrade when the
+      // result cannot fit the byte budget.
+      const buffer = sourceIsPng
+        ? await image.getBuffer('image/png', { deflateLevel: 9 })
+        : await image.getBuffer('image/jpeg', { quality: 90 });
+      if (buffer.length > byteBudget) {
+        return {
+          ok: false,
+          error:
+            `The cropped region encodes to ${formatByteSize(buffer.length)}, over the ` +
+            `${formatByteSize(byteBudget)} per-image limit. Choose a smaller region, or allow downscaling.`,
+        };
+      }
+      return {
+        ok: true,
+        data: new Uint8Array(buffer),
+        mimeType: sourceIsPng ? 'image/png' : 'image/jpeg',
+        width: image.width,
+        height: image.height,
+        originalWidth,
+        originalHeight,
+        region: applied,
+        resized: false,
+        originalByteLength: bytes.length,
+        finalByteLength: buffer.length,
+      };
+    }
+
+    fitWithinEdge(image, maxEdge);
+    const encoded = await encodeWithinBudget(image, {
+      sourceIsPng,
+      byteBudget,
+      fallbackEdge: FALLBACK_EDGE_PX,
+    });
+    return {
+      ok: true,
+      data: new Uint8Array(encoded.data),
+      mimeType: encoded.mimeType,
+      width: encoded.width,
+      height: encoded.height,
+      originalWidth,
+      originalHeight,
+      region: applied,
+      resized: encoded.width !== w || encoded.height !== h,
+      originalByteLength: bytes.length,
+      finalByteLength: encoded.data.length,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Failed to decode the image for cropping: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+// ── compression caption ──────────────────────────────────────────────
+
+export interface ImageVariantDescription {
+  /** Pixel size; pass 0 when unknown to omit the dimensions. */
+  readonly width: number;
+  readonly height: number;
+  readonly byteLength: number;
+  readonly mimeType: string;
+}
+
+export interface ImageCompressionCaptionInput {
+  readonly original: ImageVariantDescription;
+  readonly final: ImageVariantDescription;
+  /** Absolute path where the pre-compression original can be read back. */
+  readonly originalPath?: string | null;
+}
+
+/**
+ * Render the shared `<system>` note placed next to a compressed image so the
+ * model knows it is looking at a downsampled copy: what the original was, what
+ * was actually sent, and — when the original is on disk — where to read it
+ * back (via ReadMediaFile `region`) for full-fidelity detail.
+ */
+export function buildImageCompressionCaption(input: ImageCompressionCaptionInput): string {
+  const sentences = [
+    `Image compressed to fit model limits: original ${describeImageVariant(input.original)} -> ` +
+      `sent ${describeImageVariant(input.final)}.`,
+    'Fine detail may be lost.',
+  ];
+  if (typeof input.originalPath === 'string' && input.originalPath.length > 0) {
+    sentences.push(
+      `The uncompressed original is saved at "${input.originalPath}"; if you need fine detail ` +
+        '(e.g. small text), call ReadMediaFile on that path with the region parameter ' +
+        '(original-pixel coordinates) to view a crop at full fidelity.',
+    );
+  } else {
+    sentences.push('The uncompressed original was not preserved.');
+  }
+  return `<system>${sentences.join(' ')}</system>`;
+}
+
+function describeImageVariant(variant: ImageVariantDescription): string {
+  const size = `${variant.mimeType} (${formatByteSize(variant.byteLength)})`;
+  if (variant.width > 0 && variant.height > 0) {
+    return `${String(variant.width)}x${String(variant.height)} ${size}`;
+  }
+  return size;
+}
+
+/** Human-readable byte size: `640 B`, `128 KB`, `3.8 MB`. */
+export function formatByteSize(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${String(Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function parseImageDataUrl(url: string): { mimeType: string; base64: string } | null {
