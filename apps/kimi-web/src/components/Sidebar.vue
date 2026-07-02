@@ -147,6 +147,36 @@ const allCollapsed = computed(
 );
 
 // ---------------------------------------------------------------------------
+// In-group expand / collapse (show-more pagination)
+// ---------------------------------------------------------------------------
+// Tracks which workspace groups are "expanded" past their first page. Ephemeral
+// (not persisted): a refresh reloads only the first page, so everything starts
+// collapsed. Loading more expands automatically; the user can collapse back to
+// the first page without losing the already-loaded data.
+const expandedIds = ref<Set<string>>(new Set());
+
+function isExpanded(id: string): boolean {
+  return expandedIds.value.has(id);
+}
+
+function toggleExpand(id: string): void {
+  const next = new Set(expandedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedIds.value = next;
+}
+
+function onLoadMore(id: string): void {
+  // Loading more should reveal the new rows immediately.
+  if (!expandedIds.value.has(id)) {
+    const next = new Set(expandedIds.value);
+    next.add(id);
+    expandedIds.value = next;
+  }
+  emit('loadMoreSessions', id);
+}
+
+// ---------------------------------------------------------------------------
 // Workspace path display (toggle in the Workspaces section header)
 // ---------------------------------------------------------------------------
 // Off by default so the list stays compact; turning it on reveals every
@@ -646,6 +676,7 @@ onBeforeUnmount(() => {
               :ws-menu-open-id="wsMenuOpenId"
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
+              :is-expanded="isExpanded"
               :show-path="showWorkspacePaths"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
@@ -655,7 +686,8 @@ onBeforeUnmount(() => {
               @rename-session="(id, title) => emit('rename', id, title)"
               @archive-session="(id) => emit('archive', id)"
               @fork-session="(id) => emit('fork', id)"
-              @load-more="(id) => emit('loadMoreSessions', id)"
+              @load-more="onLoadMore"
+              @toggle-expand="toggleExpand"
               @confirm-rename="confirmRenameWorkspace"
               @cancel-rename="cancelRenameWorkspace"
               @update-rename-value="onUpdateRenameValue"

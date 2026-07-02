@@ -45,6 +45,10 @@ import type { UseSideChat } from './useSideChat';
 import type { UseTaskPoller } from './useTaskPoller';
 
 const MESSAGES_PAGE_SIZE = 50;
+// Sessions fetched per workspace on first load — keeps the initial request
+// count at (number of workspaces) and each response small. Exported so the
+// sidebar can fall back to it when a workspace's first-page size is unknown.
+export const SESSIONS_INITIAL_PAGE_SIZE = 5;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
 // Shared "already resolved" conflict (40902). The daemon reuses it for both
@@ -327,9 +331,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   // Backend max page size for GET /sessions. Bigger pages mean fewer round-trips
   // when draining the full session list.
   const SESSION_PAGE_SIZE = 100;
-  // Sessions fetched per workspace on first load — keeps the initial request
-  // count at (number of workspaces) and each response small.
-  const SESSIONS_INITIAL_PAGE_SIZE = 5;
   // Sessions fetched per "load more" click within a workspace.
   const SESSIONS_LOAD_MORE_SIZE = 30;
   // On initial load, if the oldest session of the first page is still within
@@ -429,6 +430,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const fallback = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
       rawState.sessionsHasMoreByWorkspace = {};
       rawState.sessionsCursorByWorkspace = {};
+      rawState.sessionsInitialCountByWorkspace = {};
       rawState.sessionsFullyLoaded = true;
       return fallback;
     }
@@ -443,6 +445,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const loaded: AppSession[] = [];
     const hasMore: Record<string, boolean> = {};
     const cursors: Record<string, string | undefined> = {};
+    const counts: Record<string, number> = {};
     for (const { workspaceId, page } of pages) {
       loaded.push(...page.items);
       // Trust the server's hasMore — the per-workspace session_count is only a
@@ -453,9 +456,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // out of band cannot shift the cursor and skip intervening sessions.
       cursors[workspaceId] =
         page.items.length > 0 ? page.items[page.items.length - 1]!.id : undefined;
+      // First-page size = how many were loaded on first paint. Used by the
+      // sidebar's in-group "show less" control as the collapse target.
+      counts[workspaceId] = page.items.length;
     }
     rawState.sessionsHasMoreByWorkspace = hasMore;
     rawState.sessionsCursorByWorkspace = cursors;
+    rawState.sessionsInitialCountByWorkspace = counts;
     rawState.sessionsFullyLoaded = false;
     // Keep rawState.sessions newest-first for readers that pick sessions[0]
     // (e.g. auto-selecting the most recent session on first load).
