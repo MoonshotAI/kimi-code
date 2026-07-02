@@ -17,7 +17,7 @@ import {
   ProcessBackgroundTask,
   type BackgroundTaskInfo,
 } from '#/agent/background';
-import type { SubagentHandle } from '#/agent/agentTool';
+import type { SubagentHandle } from '#/agent/background';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import {
   configServices,

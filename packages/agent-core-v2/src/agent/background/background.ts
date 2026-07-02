@@ -6,7 +6,7 @@ import type {
 } from './task';
 
 export { AgentBackgroundTask } from './agent-task';
-export type { AgentBackgroundTaskInfo } from './agent-task';
+export type { AgentBackgroundTaskInfo, SubagentHandle } from './agent-task';
 export { ProcessBackgroundTask } from './process-task';
 export type { ProcessBackgroundTaskInfo } from './process-task';
 export { QuestionBackgroundTask } from './question-task';

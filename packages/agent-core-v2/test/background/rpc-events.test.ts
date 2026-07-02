@@ -21,7 +21,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentEventSinkService } from '#/agent/eventSink';
 import type { HookEngine } from '#/agent/externalHooks/engine';
 import { IAgentPromptService } from '#/agent/prompt';
-import type { SubagentHandle } from '#/agent/agentTool';
+import type { SubagentHandle } from '#/agent/background';
 import { ISessionMetadata } from '#/session/sessionMetadata';
 import {
   configServices,

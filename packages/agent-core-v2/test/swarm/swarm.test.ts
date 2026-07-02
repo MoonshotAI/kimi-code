@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { makeAgentScopeContext } from '#/agent/scopeContext';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentRecordService } from '#/agent/record';
-import {
-  DEFAULT_SUBAGENT_TIMEOUT_MS,
-} from '#/agent/agentTool';
+const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 import { IAgentLifecycleService } from '#/session/agentLifecycle';
 import { ISessionSwarmService } from '#/session/swarm';
 import type {
@@ -73,7 +72,7 @@ describe('AgentSwarmService', () => {
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.stub(IAgentLifecycleService, {});
     ix.stub(ISessionSwarmService, { run: async () => [], cancel: () => {} });
-    ix.stub(IAgentScopeContext, { _serviceBrand: undefined, agentId: 'main' });
+    ix.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
     ix.set(IAgentSystemReminderService, new SyncDescriptor(AgentSystemReminderService));
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
   });
@@ -134,7 +133,7 @@ describe('AgentSwarmTool', () => {
       ]),
     });
     const swarmMode = mockSwarmMode();
-    const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, swarmMode);
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode);
     const input = {
       description: 'Review files',
       prompt_template: 'Review {{item}}',
@@ -221,7 +220,7 @@ describe('AgentSwarmTool', () => {
 
   it('does not expose permission rule argument matching', () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, mockSwarmMode());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
     const execution = tool.resolveExecution({
       description: 'Review files',
       prompt_template: 'Review {{item}}',
@@ -280,7 +279,7 @@ describe('AgentSwarmTool', () => {
 
     for (const testCase of cases) {
       const host = mockSwarmHost();
-      const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, mockSwarmMode());
+      const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
 
       const result = await executeTool(tool, context(testCase.input));
 
@@ -313,7 +312,7 @@ describe('AgentSwarmTool', () => {
       },
     );
     const host = mockSwarmHost({ run });
-    const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, mockSwarmMode());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
     // Seed the module-level swarm item map so resume_agent_ids can recover the original items.
     await executeTool(
       tool,
@@ -440,7 +439,7 @@ describe('AgentSwarmTool', () => {
       },
     );
     const host = mockSwarmHost({ run });
-    const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, mockSwarmMode());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
     // Seed the module-level swarm item map so resume_agent_ids can recover the original item.
     await executeTool(
       tool,
@@ -508,7 +507,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, mockSwarmMode());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
 
     const result = await executeTool(
       tool,
@@ -547,7 +546,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, mockSwarmMode());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
 
     const result = await executeTool(
       tool,
@@ -594,7 +593,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, { _serviceBrand: undefined, agentId: host.callerAgentId }, mockSwarmMode());
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
 
     const result = await executeTool(
       tool,

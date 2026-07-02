@@ -115,6 +115,7 @@ const DOMAIN_LAYER = new Map([
   ['plugin', 3],
   ['record', 3],
   ['modelCatalog', 3],
+  ['agentProfileCatalog', 3],
   // L4 — agent behaviour
   ['context', 4],
   ['message', 4],
@@ -149,9 +150,8 @@ const DOMAIN_LAYER = new Map([
   ['background', 5],
   ['mcp', 5],
   ['cron', 5],
-  ['agentTool', 5],
-  // `btw` forks a single side-question sub-agent via `agentLifecycle`, mirroring
-  // the `agentTool` shape (Agent-scope, spawns one child) — same layer.
+  // `btw` forks a single side-question sub-agent via `agentLifecycle`,
+  // parallel to how the `Agent` tool spawns child agents. Agent-scope, L5.
   ['btw', 5],
   // L6 — coordination
   ['agentLifecycle', 6],
@@ -270,11 +270,8 @@ const ALLOWED_EXCEPTIONS = new Set([
   'shellTools>background',
   'skill>contextMemory',
   'skill>prompt',
-  'swarm>agentTool',
   'swarm>sessionMetadata',
   'btw>agentLifecycle',
-  'agentTool>agentLifecycle',
-  'agentTool>sessionMetadata',
   'toolExecutor>loop',
   'userTool>profile',
   'wireRecord>contextMemory',

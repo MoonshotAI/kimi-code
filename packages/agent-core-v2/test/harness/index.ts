@@ -28,7 +28,6 @@ export {
   sessionService,
   sessionServices,
   skillServices,
-  agentToolServices,
   swarmServices,
   telemetryServices,
   testAgent,

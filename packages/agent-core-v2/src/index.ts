@@ -22,6 +22,7 @@ export * from '#/app/platform';
 export * from '#/app/protocol';
 export * from '#/app/model';
 export * from '#/app/modelCatalog';
+export * from '#/app/agentProfileCatalog';
 export * from '#/app/plugin';
 
 export type { SkillSource } from '#/app/globalSkillCatalog';
@@ -91,7 +92,6 @@ export * from '#/agent/replayBuilder';
 export * from '#/agent/record';
 export * from '#/agent/rpc';
 export * from '#/agent/scopeContext';
-export * from '#/agent/agentTool';
 export * from '#/session/btw';
 export * from '#/session/swarm';
 export * from '#/agent/todoList';

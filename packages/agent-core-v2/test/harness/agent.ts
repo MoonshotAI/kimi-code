@@ -60,8 +60,6 @@ import {
   AgentSwarmService,
   ITelemetryService,
   ISessionTerminalBackend,
-  IAgentToolService,
-  AgentToolService,
   IAgentToolRegistryService,
   IAgentBuiltinToolsRegistrar,
   IAgentToolStoreService,
@@ -88,7 +86,6 @@ import {
   type Scope,
   type ScopeSeed,
   type ServiceIdentifier,
-  type AgentToolRunOverride,
 } from '#/index';
 import type { IProcess } from '#/session/process';
 import { IExecContext, createExecContext } from '#/session/execContext';
@@ -602,13 +599,6 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
   };
 }
 
-export function agentToolServices(runOverride: AgentToolRunOverride): TestAgentServiceOverride {
-  return agentService(
-    IAgentToolService,
-    new SyncDescriptor(AgentToolService, [runOverride]),
-  );
-}
-
 export function swarmServices(
   swarmService: ISessionSwarmService,
 ): TestAgentServiceOverride {
@@ -1033,10 +1023,6 @@ export class AgentTestContext {
             scope: (subKey?: string): string =>
               subKey === undefined || subKey === '' ? agentScope : `${agentScope}/${subKey}`,
           });
-          reg.defineDescriptor(
-            IAgentToolService,
-            new SyncDescriptor(AgentToolService, [unavailableAgentToolRun()]),
-          );
         },
       ], this.serviceOverrides, 'agent'),
     });
@@ -1852,18 +1838,6 @@ function createTerminalBackend(): ISessionTerminalBackend {
       resize: () => {},
       kill: () => {},
     }),
-  };
-}
-
-function unavailableAgentToolRun(): AgentToolRunOverride {
-  const fail = async (): Promise<never> => {
-    throw new Error('Agent tool run is not configured in this test.');
-  };
-  return {
-    spawn: fail,
-    resume: fail,
-    retry: fail,
-    getProfileName: async () => undefined,
   };
 }
 

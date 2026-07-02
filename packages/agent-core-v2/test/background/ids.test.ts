@@ -9,7 +9,7 @@ import {
   IAgentBackgroundService,
   ProcessBackgroundTask,
 } from '#/agent/background';
-import type { SubagentHandle } from '#/agent/agentTool';
+import type { SubagentHandle } from '#/agent/background';
 import { createTestAgent, type TestAgentContext } from '../harness';
 import { createBackgroundTaskPersistence } from './stubs';
 

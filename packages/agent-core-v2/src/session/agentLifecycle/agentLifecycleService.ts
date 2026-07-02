@@ -39,7 +39,7 @@ import {
   AgentExternalHooksService,
 } from '#/agent/externalHooks';
 
-import { type AgentListFilter, type CreateAgentOptions, IAgentLifecycleService } from './agentLifecycle';
+import { type AgentListFilter, type CreateAgentOptions, IAgentLifecycleService, type SpawnAgentOptions } from './agentLifecycle';
 
 let nextAgentId = 0;
 
@@ -164,6 +164,26 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (sourceMessages !== undefined && sourceMessages.length > 0) {
       child.accessor.get(IAgentContextMemoryService)?.splice(0, 0, sourceMessages);
     }
+    return child;
+  }
+
+  async spawn(parentAgentId: string, opts?: SpawnAgentOptions): Promise<IAgentScopeHandle> {
+    const parent = this.handles.get(parentAgentId);
+    if (parent === undefined) throw new Error(`Parent agent "${parentAgentId}" does not exist`);
+    const parentData = parent.accessor.get(IAgentProfileService).data();
+    const child = await this.create({
+      agentId: opts?.agentId,
+      forkedFrom: parentAgentId,
+      cwd: opts?.cwd ?? parentData.cwd,
+      swarmItem: opts?.swarmItem,
+    });
+    child.accessor.get(IAgentProfileService).update({
+      cwd: opts?.cwd ?? parentData.cwd,
+      modelAlias: parentData.modelAlias,
+      thinkingLevel: parentData.thinkingLevel,
+      systemPrompt: parentData.systemPrompt,
+      activeToolNames: parentData.activeToolNames,
+    });
     return child;
   }
 

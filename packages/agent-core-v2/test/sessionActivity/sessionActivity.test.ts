@@ -59,6 +59,7 @@ function lifecycle(handles: readonly IAgentScopeHandle[]): IAgentLifecycleServic
     create: () => Promise.resolve(handles[0]!),
     createMain: () => Promise.resolve(handles[0]!),
     clone: () => Promise.resolve(handles[0]!),
+    spawn: () => Promise.resolve(handles[0]!),
     getHandle: () => undefined,
     list: () => handles,
     remove: () => Promise.resolve(),

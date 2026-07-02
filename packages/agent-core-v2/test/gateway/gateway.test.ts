@@ -75,6 +75,7 @@ describe('RestGateway', () => {
       create: () => Promise.resolve(agentHandle),
       createMain: () => Promise.resolve(agentHandle),
       clone: () => Promise.resolve(agentHandle),
+      spawn: () => Promise.resolve(agentHandle),
       getHandle: (id) => (id === 'main' ? agentHandle : undefined),
       list: () => [agentHandle],
       remove: () => Promise.resolve(),

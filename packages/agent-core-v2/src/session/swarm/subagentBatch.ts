@@ -11,13 +11,42 @@
 import { isProviderRateLimitError, type TokenUsage } from '#/app/llmProtocol';
 import * as retry from 'retry';
 
-import type {
-  RunSubagentOptions,
-  SpawnSubagentOptions,
-  SubagentHandle,
-} from '#/agent/agentTool';
 import { isUserCancellation } from '#/_base/utils/abort';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
+
+// ── Launcher contract ────────────────────────────────────────────────
+//
+// The scheduler drives child-agent attempts through a small launcher
+// interface. Consumers (currently only `SessionSwarmService`) implement it
+// on top of `IAgentLifecycleService.spawn` + `applyProfileToAgent` +
+// `observeChildAgentTurn`; the option shapes are defined here so the
+// scheduler has a stable contract regardless of how launches are wired.
+
+export interface RunSubagentOptions {
+  readonly parentToolCallId: string;
+  readonly parentToolCallUuid?: string;
+  readonly prompt: string;
+  readonly description: string;
+  readonly swarmIndex?: number;
+  readonly runInBackground: boolean;
+  readonly signal: AbortSignal;
+  readonly onReady?: () => void;
+  readonly suppressRateLimitFailureEvent?: boolean;
+}
+
+export interface SpawnSubagentOptions extends RunSubagentOptions {
+  readonly profileName: string;
+  readonly swarmItem?: string;
+}
+
+export type SubagentHandle = {
+  readonly agentId: string;
+  readonly profileName: string;
+  readonly completion: Promise<{
+    readonly result: string;
+    readonly usage?: TokenUsage;
+  }>;
+};
 
 /*
 Subagent batch scheduling contract:
