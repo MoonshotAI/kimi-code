@@ -279,22 +279,18 @@ export class ContextMemory {
     // `records.restoring`, so the live/forward path — which always sets
     // `contextSummary` and `keptUserMessageCount` — is unaffected.
     //
-    // The cut can land *inside* a tool exchange (`compactedCount` between an
-    // assistant `tool_call` and its result), leaving the tail starting with an
+    // The cut can land inside a tool exchange, leaving the tail starting with an
     // orphan `tool` result whose assistant is now in the summarized prefix. The
-    // normal projection does NOT drop such a leading orphan (only the post-400
-    // strict resend does), so a strict provider (OpenAI / DeepSeek) would reject
-    // every turn with "role 'tool' must be a response to a preceding message with
-    // 'tool_calls'". Drop the leading tool results here so the restored history is
-    // wire-valid from the first turn. Any later tool result in the tail keeps its
-    // assistant (the original history was well-formed and contiguous), so only the
-    // leading run can be orphaned.
+    // history is kept faithful to the wire records (so the transcript reducer's
+    // fold length stays in sync); the projector drops the orphan at the wire
+    // boundary — see `dropOrphanToolResults` — so a strict provider still gets a
+    // valid request without mutating the stored history here.
     const isLegacyRestore =
       this.agent.records.restoring !== null &&
       input.keptUserMessageCount === undefined &&
       input.compactedCount < this._history.length;
     this._history = isLegacyRestore
-      ? [summaryMessage, ...dropLeadingToolResults(this._history.slice(input.compactedCount))]
+      ? [summaryMessage, ...this._history.slice(input.compactedCount)]
       : [...keptUserMessages, summaryMessage];
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
@@ -402,14 +398,21 @@ export class ContextMemory {
   }
 
   get messages(): Message[] {
-    return this.project(this.history);
+    // The normal wire projection. `dropOrphanResults` is on for every
+    // request-building projection (here, `strictMessages`, and the compaction
+    // summarizer): a stray result with no matching call anywhere is wire-invalid
+    // on strict providers and useless to the model, so it never reaches the
+    // provider — while fragment projections (e.g. token estimation of a history
+    // slice) leave it alone.
+    return this.project(this.history, { dropOrphanResults: true });
   }
 
   // Last-resort projection for the post-400 strict resend: close every open tool
-  // call (including a trailing in-flight one) and drop any stray tool result with
-  // no matching call, so the request is wire-compliant for strict providers no
-  // matter how the history was mangled. Only used when the provider has already
-  // rejected the normal projection — see the adjacency fallback in `turn-step`.
+  // call (including a trailing in-flight one), drop stray tool results, drop a
+  // leading non-user message, and merge consecutive assistant turns, so the
+  // request is wire-compliant for strict providers no matter how the history was
+  // mangled. Only used when the provider has already rejected the normal
+  // projection — see the adjacency fallback in `turn-step`.
   get strictMessages(): Message[] {
     return this.project(this.history, {
       synthesizeMissing: true,
@@ -585,17 +588,6 @@ export class ContextMemory {
       });
     }
   }
-}
-
-// Drop any `tool` result messages at the front of a message list. Used by the
-// legacy-restore compaction, whose verbatim tail can begin with an orphan tool
-// result whose assistant `tool_call` was summarized into the compacted prefix.
-function dropLeadingToolResults(messages: readonly ContextMessage[]): ContextMessage[] {
-  let start = 0;
-  while (start < messages.length && messages[start]!.role === 'tool') {
-    start += 1;
-  }
-  return start === 0 ? [...messages] : messages.slice(start);
 }
 
 function toolResultOutputForModel(result: ExecutableToolResult): string | ContentPart[] {

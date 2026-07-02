@@ -388,14 +388,16 @@ describe('Agent resume', () => {
     ]);
   });
 
-  it('drops leading orphan tool results when a legacy compaction cut mid-tool-exchange', async () => {
+  it('keeps a legacy mid-tool-exchange cut faithful but projects it wire-valid', async () => {
     // A pre-rework compaction record (no `keptUserMessageCount`) restores via the
     // legacy path, which keeps a verbatim tail `history.slice(compactedCount)`.
     // Here the cut (compactedCount=2) lands *between* the assistant `tool_call`
     // and its result, so the retained tail starts with a `tool` message whose
     // assistant was summarized away — a wire-invalid orphan a strict provider
     // (OpenAI / DeepSeek) rejects with "role 'tool' must be a response to a
-    // preceding message with 'tool_calls'". Restore must not resurrect it.
+    // preceding message with 'tool_calls'". The restore keeps the history
+    // faithful (so the transcript reducer's fold length stays in sync); the
+    // projector drops the orphan at the wire boundary.
     const persistence = new RecordingAgentPersistence([
       {
         type: 'context.append_message',
@@ -453,12 +455,14 @@ describe('Agent resume', () => {
 
     await ctx.agent.resume();
 
-    // The restored history must carry no `tool` message at all — the only one
-    // was orphaned by the cut and had to be dropped, not kept.
-    expect(ctx.agent.context.history.some((message) => message.role === 'tool')).toBe(false);
+    // The stored history stays faithful to the wire records: the orphan `tool`
+    // result is kept verbatim (not mutated away at restore), so downstream
+    // consumers that model the history from the records — e.g. the transcript
+    // reducer's fold length — stay in sync.
+    expect(ctx.agent.context.history.some((message) => message.role === 'tool')).toBe(true);
 
-    // And the projected wire the provider actually sees must have no orphan:
-    // every `tool` result is answered by a preceding assistant `tool_calls`.
+    // But the projected wire the provider actually sees has no orphan: every
+    // `tool` result is answered by a preceding assistant `tool_calls`.
     const projected = ctx.agent.context.messages;
     const toolCallIds = new Set(
       projected.flatMap((message) =>
