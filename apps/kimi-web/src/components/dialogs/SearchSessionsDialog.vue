@@ -261,6 +261,7 @@ onMounted(() => {
 }
 
 .sd-title {
+  min-width: 0;
   font-size: var(--text-base);
   color: var(--color-text);
   overflow: hidden;
@@ -268,6 +269,7 @@ onMounted(() => {
   white-space: nowrap;
 }
 .sd-snippet {
+  min-width: 0;
   font-size: var(--text-sm);
   color: var(--color-text-muted);
   overflow: hidden;
