@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
 import {
@@ -509,10 +510,10 @@ function blinkOnce(): void {
   blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
 
-// Logo long-press easter-egg: holding the Kimi mark for 1 second opens the
-// design system page in a full-screen overlay. A short click still just blinks.
-// Pointer capture keeps the hold alive even if the pointer drifts off the mark.
-const showDesignSystem = ref(false);
+// Logo long-press easter-egg: holding the Kimi mark for 1 second navigates to
+// the design system route. A short click still just blinks. Pointer capture
+// keeps the hold alive even if the pointer drifts off the mark.
+const router = useRouter();
 const EGG_HOLD_MS = 1000;
 let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
 let logoLongPressed = false;
@@ -523,7 +524,7 @@ function onLogoPointerDown(event: PointerEvent): void {
   (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
   logoPressTimer = setTimeout(() => {
     logoLongPressed = true;
-    showDesignSystem.value = true;
+    void router.push('/design-system');
   }, EGG_HOLD_MS);
 }
 
@@ -541,22 +542,8 @@ function onLogoClick(): void {
   blinkOnce();
 }
 
-function closeDesignSystem(): void {
-  showDesignSystem.value = false;
-}
-
-function onDesignSystemKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && showDesignSystem.value) closeDesignSystem();
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('keydown', onDesignSystemKeydown);
-}
 onBeforeUnmount(() => {
   clearTimeout(logoPressTimer);
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('keydown', onDesignSystemKeydown);
-  }
 });
 </script>
 
@@ -763,23 +750,6 @@ onBeforeUnmount(() => {
       @select="onSelectSession"
       @close="showSearch = false"
     />
-    <Teleport to="body">
-      <div
-        v-if="showDesignSystem"
-        class="ds-egg"
-        @mousedown.self="closeDesignSystem"
-      >
-        <div class="ds-egg-frame">
-          <div class="ds-egg-head">
-            <span class="ds-egg-title">Design system</span>
-            <IconButton size="sm" :label="t('diff.close')" @click="closeDesignSystem">
-              <Icon name="close" size="md" />
-            </IconButton>
-          </div>
-          <iframe class="ds-egg-iframe" src="/design-system.html" title="Design system" />
-        </div>
-      </div>
-    </Teleport>
   </aside>
 </template>
 
@@ -1067,47 +1037,4 @@ onBeforeUnmount(() => {
   width: 14px;
 }
 
-/* Logo long-press easter-egg: a dialog showing the design system page. */
-.ds-egg {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-max);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-6);
-  background: rgba(13, 17, 23, 0.55);
-}
-.ds-egg-frame {
-  display: flex;
-  flex-direction: column;
-  width: min(1100px, 94vw);
-  height: min(820px, 92vh);
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xl);
-  overflow: hidden;
-}
-.ds-egg-head {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px 12px 18px;
-  border-bottom: 1px solid var(--color-line);
-}
-.ds-egg-title {
-  font-size: var(--text-base);
-  font-weight: 500;
-  color: var(--color-text);
-}
-.ds-egg-iframe {
-  flex: 1;
-  min-height: 0;
-  display: block;
-  width: 100%;
-  border: 0;
-  background: #fff;
-}
 </style>

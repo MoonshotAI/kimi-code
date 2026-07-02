@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 import i18n from './i18n';
+import router from './router';
 import { installClientErrorCapture } from './debug/trace';
 import '@fontsource-variable/inter/wght.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
@@ -11,4 +12,4 @@ import './style.css';
 // a complete troubleshooting log, not just network traffic.
 installClientErrorCapture();
 
-createApp(App).use(i18n).mount('#app');
+createApp(App).use(i18n).use(router).mount('#app');
