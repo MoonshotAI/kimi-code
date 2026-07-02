@@ -655,7 +655,9 @@ export class Editor implements Component, Focusable {
 		}
 
 		const isEnterKey = data !== "\n" && kb.matches(data, "tui.input.submit");
-		const printableForBurst = decodePrintableKey(data) ?? (data.charCodeAt(0) >= 32 ? data : undefined);
+		const charCode = data.charCodeAt(0);
+		const printableForBurst = decodePrintableKey(data) ??
+			(data.length === 1 && charCode >= 32 && charCode !== 0x7f ? data : undefined);
 		if (!this.disablePasteBurst && !isEnterKey && printableForBurst === undefined) {
 			this.pasteBurst.reset();
 		}

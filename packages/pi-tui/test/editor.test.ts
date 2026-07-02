@@ -403,6 +403,27 @@ describe("Editor component", () => {
 
 			assert.strictEqual(submitted, "abc");
 		});
+
+		it("resets when DEL backspace arrives after a burst", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+
+			editor.handleInput("a");
+			editor.handleInput("b");
+			editor.handleInput("c");
+			editor.handleInput("d");
+			editor.handleInput("e");
+			editor.handleInput("f");
+			editor.handleInput("g");
+			editor.handleInput("h");
+			editor.handleInput("\x7f");
+			editor.handleInput("\r");
+
+			assert.strictEqual(submitted, "abcdefg");
+		});
 	});
 
 	describe("Backslash+Enter newline workaround", () => {
