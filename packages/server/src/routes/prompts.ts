@@ -1,6 +1,7 @@
 
 
-import { readFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
+import { extname, join } from 'node:path';
 
 import {
   ErrorCode,
@@ -12,7 +13,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, IFileStore, compressImageForModel, compressBase64ForModel, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, IEnvironmentService, IFileStore, compressImageForModel, compressBase64ForModel, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -126,7 +127,11 @@ export function registerPromptsRoutes(
         const result = await ix.invokeFunction(async (a) =>
           a.get(IPromptService).submit(
             session_id,
-            await resolvePromptMediaFiles(body, a.get(IFileStore)),
+            await resolvePromptMediaFiles(
+              body,
+              a.get(IFileStore),
+              join(a.get(IEnvironmentService).homeDir, 'cache'),
+            ),
           ),
         );
         reply.send(okEnvelope(result, req.id));
@@ -250,6 +255,7 @@ export function registerPromptsRoutes(
 async function resolvePromptMediaFiles(
   body: PromptSubmission,
   store: IFileStore,
+  cacheDir: string,
 ): Promise<PromptSubmission> {
   let changed = false;
   const content: PromptSubmission['content'] = [];
@@ -276,6 +282,15 @@ async function resolvePromptMediaFiles(
     }
     const file = await store.get(part.source.file_id);
     assertMediaFile(file, part.type);
+    if (part.type === 'video') {
+      // Materialize the uploaded video into the shared cache and reference it by
+      // path, so the agent reads it via ReadMediaFile — letting the provider's
+      // VideoUploader handle it (no eager base64), exactly like the TUI.
+      const cachePath = await materializeVideoToCache(file, cacheDir);
+      content.push({ type: 'text', text: formatVideoTag(cachePath) });
+      changed = true;
+      continue;
+    }
     const data = await readFile(file.blobPath);
     // Compress the image while inlining it into the prompt (an input-stage data
     // step, before the prompt reaches the agent core). The stored file keeps its
@@ -293,10 +308,54 @@ async function resolvePromptMediaFiles(
       media_type: mediaType,
       data: Buffer.from(bytes).toString('base64'),
     };
-    content.push(part.type === 'video' ? { type: 'video', source } : { type: 'image', source });
+    content.push({ type: 'image', source });
     changed = true;
   }
   return changed ? { ...body, content } : body;
+}
+
+const VIDEO_EXT_BY_MIME: Record<string, string> = {
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'video/x-msvideo': '.avi',
+  'video/x-matroska': '.mkv',
+  'video/mpeg': '.mpeg',
+};
+
+async function materializeVideoToCache(
+  file: GetResult,
+  cacheDir: string,
+): Promise<string> {
+  await mkdir(cacheDir, { recursive: true });
+  const target = join(cacheDir, `${file.meta.id}${videoExtension(file.meta)}`);
+  // Idempotent: a prior submit of the same upload already produced this file.
+  try {
+    const info = await stat(target);
+    if (info.size === file.meta.size) return target;
+  } catch {
+    // Missing — fall through to copy.
+  }
+  await copyFile(file.blobPath, target);
+  return target;
+}
+
+function videoExtension(meta: GetResult['meta']): string {
+  const fromName = extname(meta.name);
+  if (fromName.length > 0) return fromName;
+  return VIDEO_EXT_BY_MIME[meta.media_type.toLowerCase()] ?? '.bin';
+}
+
+function formatVideoTag(absPath: string): string {
+  return `<video path="${escapeAttribute(absPath)}"></video>`;
+}
+
+function escapeAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
 
 function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
