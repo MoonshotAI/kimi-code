@@ -33,7 +33,7 @@ import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
-import { useWorkspaceState } from './client/useWorkspaceState';
+import { SESSIONS_INITIAL_PAGE_SIZE, useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
@@ -334,6 +334,9 @@ export interface ExtendedState extends KimiClientState {
    *  the end of the last fetched page so a deep-linked older session appended
    *  out of band does not shift the cursor and skip intervening sessions. */
   sessionsCursorByWorkspace: Record<string, string | undefined>;
+  /** First-page capacity per workspace (sessions loaded on first paint, floored
+   *  at one full page). Drives the sidebar's in-group show-less collapse target. */
+  sessionsInitialCountByWorkspace: Record<string, number>;
   /** True once every session has been loaded (after a search-triggered full drain). */
   sessionsFullyLoaded: boolean;
 }
@@ -375,6 +378,7 @@ const rawState: ExtendedState = reactive({
   sessionsHasMoreByWorkspace: {},
   sessionsLoadingMoreByWorkspace: {},
   sessionsCursorByWorkspace: {},
+  sessionsInitialCountByWorkspace: {},
   sessionsFullyLoaded: false,
 });
 
@@ -2084,6 +2088,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
     sessions: byId.get(w.id) ?? [],
     hasMore: rawState.sessionsHasMoreByWorkspace[w.id] ?? false,
     loadingMore: rawState.sessionsLoadingMoreByWorkspace[w.id] ?? false,
+    initialCount: rawState.sessionsInitialCountByWorkspace[w.id] ?? SESSIONS_INITIAL_PAGE_SIZE,
   }));
 });
 

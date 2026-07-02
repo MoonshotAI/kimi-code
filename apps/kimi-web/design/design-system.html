@@ -2226,6 +2226,18 @@ export function auth(token: string) {
           <li>The group is collapsible; when collapsed its session list is hidden.</li>
         </ul>
 
+        <h3 class="sub">Show more &amp; collapse</h3>
+        <p>The "load more / show less" control at the bottom of each workspace group is a session-row-shaped compact list control (same family as search, New chat, inline rename — not a Button). It doubles as the pagination trigger and the in-group expand / collapse toggle.</p>
+        <table class="dt">
+          <thead><tr><th>Part</th><th>Rule</th></tr></thead>
+          <tbody>
+            <tr><td class="tk">Container</td><td>session-row pill: <code>display:flex; gap:--sb-gap; min-height:26px</code>, same padding as a session row, <code>radius-md</code>; hover = <code>surface-sunken</code> (no text recolor); <code>:focus-visible</code> uses <code>--p-focus-ring</code></td></tr>
+            <tr><td class="tk">Lead slot</td><td>empty, <code>--sb-gutter</code> wide, so the label's start x aligns with the session titles (<code>--sb-pad-x + --sb-gutter + --sb-gap</code>)</td></tr>
+            <tr><td class="tk">Label</td><td><code>font-ui</code>, <code>text-xs</code>, <code>--color-text</code>; flex:1, truncated</td></tr>
+            <tr><td class="tk">Behavior</td><td>"Load more" fetches the next page and auto-expands; once more than the first page is loaded, "Show less" appears and collapses back to the first page (view-layer trim — data is kept, no refetch); "Show all" re-expands</td></tr>
+          </tbody>
+        </table>
+
         <h3 class="sub">ResizeHandle</h3>
         <p>A 4px vertical drag bar, layered over the 1px column border (<code>margin: 0 -2px</code> makes the whole 4px grabbable), turning accent on hover / drag.</p>
         <table class="dt">
