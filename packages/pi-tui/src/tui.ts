@@ -1281,6 +1281,18 @@ export class TUI extends Container {
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
+		// Never write a line wider than the terminal: truncate defensively
+		// instead of crashing. Extremely narrow terminals can make
+		// components overflow by a column (e.g. wide graphemes at width 1).
+		// applyLineResets() runs afterwards, so truncated lines still get
+		// their trailing reset and cannot leak styles.
+		for (let i = 0; i < newLines.length; i++) {
+			const line = newLines[i]!;
+			if (!isImageLine(line) && visibleWidth(line) > width) {
+				newLines[i] = sliceByColumn(line, 0, width, true);
+			}
+		}
+
 		newLines = this.applyLineResets(newLines);
 
 		// Helper to clear scrollback and viewport and render all new lines
@@ -1543,34 +1555,6 @@ export class TUI extends Container {
 			}
 
 			buffer += "\x1b[2K"; // Clear current line
-			if (!isImage && visibleWidth(line) > width) {
-				// Log all lines to crash file for debugging
-				const crashLogPath = path.join(os.homedir(), ".pi", "agent", "pi-crash.log");
-				const crashData = [
-					`Crash at ${new Date().toISOString()}`,
-					`Terminal width: ${width}`,
-					`Line ${i} visible width: ${visibleWidth(line)}`,
-					"",
-					"=== All rendered lines ===",
-					...newLines.map((l, idx) => `[${idx}] (w=${visibleWidth(l)}) ${l}`),
-					"",
-				].join("\n");
-				fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
-				fs.writeFileSync(crashLogPath, crashData);
-
-				// Clean up terminal state before throwing
-				this.stop();
-
-				const errorMsg = [
-					`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
-					"",
-					"This is likely caused by a custom TUI component not truncating its output.",
-					"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
-					"",
-					`Debug log written to: ${crashLogPath}`,
-				].join("\n");
-				throw new Error(errorMsg);
-			}
 			buffer += line;
 		}
 

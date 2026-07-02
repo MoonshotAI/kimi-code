@@ -814,6 +814,38 @@ describe("Container width clamping", () => {
 		});
 		container.render(0);
 		container.render(-3);
-		assert.deepStrictEqual(received, [1, 1]);
+		container.render(5);
+		assert.deepStrictEqual(received, [1, 1, 5]);
+	});
+});
+
+describe("TUI overwide line handling", () => {
+	it("truncates lines wider than the terminal instead of throwing", async () => {
+		const terminal = new VirtualTerminal(4, 10);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		component.lines = ["ok"];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		// 改成超宽行并触发差分渲染路径（修复前这里会 throw）。
+		component.lines = ["xxxxxxxxxx", "你好世界"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.ok(viewport.some((line) => line.includes("xxxx")));
+		assert.ok(
+			!viewport.some((line) => line.includes("xxxxx")),
+			"ASCII line should be truncated to terminal width",
+		);
+		assert.ok(viewport.some((line) => line.includes("你好")));
+		assert.ok(
+			!viewport.some((line) => line.includes("你好世")),
+			"CJK line should be truncated to terminal width",
+		);
+
+		tui.stop();
 	});
 });
