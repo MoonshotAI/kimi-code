@@ -2355,7 +2355,12 @@ export class KimiTUI {
       if (!isExpandable(child)) continue;
       child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
-    this.state.ui.requestRender();
+    // Expanding/collapsing shifts content above the viewport; the clamped
+    // differential render would paint a second copy below the stale one in
+    // scrollback. This is a deliberate user action (like /clear), so do a
+    // destructive full render: scrollback holds exactly one copy and the
+    // expanded output can be read by scrolling up.
+    this.state.ui.requestRender(true);
   }
 
   toggleTodoPanelExpansion(): void {
