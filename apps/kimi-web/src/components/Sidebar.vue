@@ -806,15 +806,18 @@ onBeforeUnmount(() => {
 }
 /* macOS desktop: the window uses a hidden title bar, so the traffic lights float
    over the top-left of the sidebar. Push the header content right to clear them,
-   and turn the empty header area into the window-drag region; interactive
-   controls opt out with no-drag. */
+   and turn the whole header into the window-drag region — matching the chat
+   header. The action buttons and the logo opt out with no-drag so they stay
+   clickable: this is the same no-drag-inside-drag pattern ChatHeader.vue relies
+   on (the previous "drag only the brand area" approach still captured the
+   sibling buttons, because Electron treats a flex-grown drag item's hit area as
+   covering the whole flex line). */
 .side.macos-desktop .ch {
   padding-left: 80px;
   -webkit-app-region: drag;
 }
-.side.macos-desktop .ch-logo,
-.side.macos-desktop .collapse-btn,
-.side.macos-desktop .settings-btn {
+.side.macos-desktop .ch button,
+.side.macos-desktop .ch-logo {
   -webkit-app-region: no-drag;
 }
 .ch-logo {
