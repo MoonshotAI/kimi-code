@@ -23,7 +23,7 @@ export class TruncatedText implements Component {
 		const result: string[] = [];
 
 		// Empty line padded to width
-		const emptyLine = " ".repeat(width);
+		const emptyLine = " ".repeat(Math.max(0, width));
 
 		// Add vertical padding above
 		for (let i = 0; i < this.paddingY; i++) {

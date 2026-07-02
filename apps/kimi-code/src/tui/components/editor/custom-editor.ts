@@ -211,6 +211,12 @@ export class CustomEditor extends Editor {
     };
   }
 
+  public setInputMode(mode: 'prompt' | 'bash'): void {
+    if (this.inputMode === mode) return;
+    this.inputMode = mode;
+    this.onInputModeChange?.(mode);
+  }
+
   private expandPasteMarkerAtCursor(): boolean {
     const { line, col } = this.getCursor();
     const lines = this.getLines();

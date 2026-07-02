@@ -582,7 +582,7 @@ onBeforeUnmount(() => {
       <!-- New chat + new workspace buttons -->
       <div class="btn-wrap" :class="{ 'btn-wrap--scrolled': sessionsScrolled }">
         <button class="btn-new-chat" type="button" @click.stop="emit('create')">
-          <Icon name="plus" />
+          <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
         <Tooltip :text="t('sidebar.newWorkspace')">
@@ -806,15 +806,18 @@ onBeforeUnmount(() => {
 }
 /* macOS desktop: the window uses a hidden title bar, so the traffic lights float
    over the top-left of the sidebar. Push the header content right to clear them,
-   and turn the empty header area into the window-drag region; interactive
-   controls opt out with no-drag. */
+   and turn the whole header into the window-drag region — matching the chat
+   header. The action buttons and the logo opt out with no-drag so they stay
+   clickable: this is the same no-drag-inside-drag pattern ChatHeader.vue relies
+   on (the previous "drag only the brand area" approach still captured the
+   sibling buttons, because Electron treats a flex-grown drag item's hit area as
+   covering the whole flex line). */
 .side.macos-desktop .ch {
   padding-left: 80px;
   -webkit-app-region: drag;
 }
-.side.macos-desktop .ch-logo,
-.side.macos-desktop .collapse-btn,
-.side.macos-desktop .settings-btn {
+.side.macos-desktop .ch button,
+.side.macos-desktop .ch-logo {
   -webkit-app-region: no-drag;
 }
 .ch-logo {
@@ -924,7 +927,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--color-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -942,7 +945,7 @@ onBeforeUnmount(() => {
 .search-input {
   flex: 1;
   min-width: 0;
-  color: var(--faint);
+  color: var(--color-text);
   font-family: var(--mono);
   font-size: var(--ui-font-size);
   overflow: hidden;
