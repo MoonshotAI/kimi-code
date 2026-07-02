@@ -4093,4 +4093,68 @@ describe("wordWrapLine narrow width", () => {
 		assert.ok(chunks.length > 1);
 		assert.strictEqual(chunks.map((c) => c.text).join(""), marker);
 	});
+
+	it("does not recurse infinitely on a multi-code-unit grapheme at maxWidth 1", () => {
+		// Guards "grapheme count, not code-unit length": a ZWJ family emoji
+		// is 11 code units but 1 grapheme (width 2). A guard mistakenly
+		// written as `grapheme.length <= 1` passes the BMP CJK cases yet
+		// recurses forever on this input.
+		const chunks = wordWrapLine("👨‍👩‍👧‍👦", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["👨‍👩‍👧‍👦"],
+		);
+	});
+});
+
+describe("Editor narrow width rendering", () => {
+	it("renders CJK text without crashing at widths 1-8 (default padding)", () => {
+		for (let width = 1; width <= 8; width++) {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setText("你好世界");
+			assert.doesNotThrow(() => editor.render(width), `width ${width}`);
+		}
+	});
+
+	it("renders CJK text without crashing at widths 1-8 (paddingX 4, matches kimi-code)", () => {
+		for (let width = 1; width <= 8; width++) {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { paddingX: 4 });
+			editor.setText("你好，世界！");
+			assert.doesNotThrow(() => editor.render(width), `width ${width}`);
+		}
+	});
+
+	it("recalls history without crashing after rendering at width 1", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.addToHistory("你好世界");
+		editor.render(1); // 窄渲染把 lastWidth 钉在 1
+		assert.doesNotThrow(() => {
+			(editor as unknown as { navigateHistory(direction: 1 | -1): void }).navigateHistory(-1);
+			// 导航召回 CJK 文本后在钉住的窄宽度下重排版——守卫缺失时这里栈溢出。
+			editor.render(1);
+		});
+		assert.strictEqual(editor.getText(), "你好世界");
+	});
+
+	it("renders inside a TUI at 5 columns without crashing or overflowing", async () => {
+		const terminal = new VirtualTerminal(5, 12);
+		const tui = new TUI(terminal);
+		const editor = new Editor(tui, defaultEditorTheme, { paddingX: 4 });
+		tui.addChild(editor);
+		editor.setText("你好世界");
+		tui.start();
+		await terminal.waitForRender();
+		const viewport = terminal.getViewport();
+		// 精确断言可见行：截断回滚时超宽行会被 xterm 自动折行、结构错位，
+		// 这些断言会红；恒真的 every(visibleWidth<=5) 断言已被移除。
+		// 内容行宽 6（左 padding 2 + CJK 字 2 + 右 padding 2）被截到 5，
+		// 因此行尾保留一个空格。
+		assert.strictEqual(viewport[0], "─────");
+		assert.strictEqual(viewport[1], "  你 ");
+		assert.strictEqual(viewport[2], "  好 ");
+		assert.strictEqual(viewport[3], "  世 ");
+		assert.strictEqual(viewport[4], "  界 ");
+		assert.strictEqual(viewport[5], "─────");
+		tui.stop();
+	});
 });
