@@ -830,14 +830,16 @@ describe("TUI overwide line handling", () => {
 		tui.start();
 		await terminal.waitForRender();
 
-		// 改成超宽行并触发差分渲染路径（修复前这里会 throw）。
+		// Switch to overwide lines and re-render through the differential
+		// path (this threw before the fix).
 		component.lines = ["xxxxxxxxxx", "\x1b[31myyyyyyyyyy\x1b[0m", "你好世界"];
 		tui.requestRender();
 		await terminal.waitForRender();
 
 		const viewport = terminal.getViewport();
-		// 截断生效时每个逻辑行恰占一个 viewport 行；若截断丢失，
-		// xterm 会把超宽行自动折行，后续行整体下移，下面的精确断言会失败。
+		// With truncation each logical line occupies exactly one viewport
+		// row; without it, xterm auto-wraps the overwide lines and shifts
+		// the following rows, failing the exact assertions below.
 		assert.strictEqual(viewport[0], "xxxx");
 		assert.strictEqual(viewport[1], "yyyy");
 		assert.strictEqual(viewport[2], "你好");

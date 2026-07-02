@@ -4085,8 +4085,9 @@ describe("wordWrapLine narrow width", () => {
 	});
 
 	it("still re-wraps multi-grapheme atomic segments at narrow widths", () => {
-		// 粘贴标记以单个原子 segment 传入（preSegmented），内部仍可按
-		// grapheme 拆分，递归必须保留这个能力。
+		// Paste markers arrive as one atomic pre-segmented unit; they can
+		// still be broken down grapheme by grapheme — recursion must keep
+		// that ability.
 		const marker = "[paste #1]";
 		const preSegmented: Intl.SegmentData[] = [{ segment: marker, index: 0, input: marker }];
 		const chunks = wordWrapLine(marker, 3, preSegmented);
@@ -4127,10 +4128,11 @@ describe("Editor narrow width rendering", () => {
 	it("recalls history without crashing after rendering at width 1", () => {
 		const editor = new Editor(createTestTUI(), defaultEditorTheme);
 		editor.addToHistory("你好世界");
-		editor.render(1); // 窄渲染把 lastWidth 钉在 1
+		editor.render(1); // narrow render pins lastWidth at 1
 		assert.doesNotThrow(() => {
 			(editor as unknown as { navigateHistory(direction: 1 | -1): void }).navigateHistory(-1);
-			// 导航召回 CJK 文本后在钉住的窄宽度下重排版——守卫缺失时这里栈溢出。
+			// Recalling CJK text re-wraps it at the pinned narrow width —
+			// without the guard this overflows the stack.
 			editor.render(1);
 		});
 		assert.strictEqual(editor.getText(), "你好世界");
@@ -4145,10 +4147,13 @@ describe("Editor narrow width rendering", () => {
 		tui.start();
 		await terminal.waitForRender();
 		const viewport = terminal.getViewport();
-		// 精确断言可见行：截断回滚时超宽行会被 xterm 自动折行、结构错位，
-		// 这些断言会红；恒真的 every(visibleWidth<=5) 断言已被移除。
-		// 内容行宽 6（左 padding 2 + CJK 字 2 + 右 padding 2）被截到 5，
-		// 因此行尾保留一个空格。
+		// Assert the exact visible rows: without truncation, xterm
+		// auto-wraps the overwide rows and the structure shifts, turning
+		// these assertions red (a tautological every(visibleWidth <= 5)
+		// check cannot fail on a 5-column terminal and was removed).
+		// Each content row is 6 columns wide (left padding 2 + CJK char 2
+		// + right padding 2) and is truncated to 5, leaving the trailing
+		// space.
 		assert.strictEqual(viewport[0], "─────");
 		assert.strictEqual(viewport[1], "  你 ");
 		assert.strictEqual(viewport[2], "  好 ");
