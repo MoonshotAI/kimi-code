@@ -1161,6 +1161,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       eventConn.subscribe(sessionId, { seq: snap.asOfSeq, epoch: snap.epoch });
       retainWsSubscription(sessionId);
     }
+    sessionsWithStaleCursor.delete(sessionId);
     void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
@@ -1204,9 +1205,9 @@ function hasLoadedMessages(sessionId: string): boolean {
 // `isGlobalSessionEvent` on the server) and still advance `lastSeqBySession`
 // for an unsubscribed session. If a session emits per-session durable events
 // while evicted and then a global event, the cursor jumps past the missed
-// events and resuming from it would skip them. Evicted sessions are therefore
-// tracked in `sessionsWithStaleCursor`, and their cursor is reset on the next
-// re-subscribe so the daemon replays (or snapshots) what was missed.
+// events. Evicted sessions are therefore tracked in `sessionsWithStaleCursor`;
+// when one is re-opened we rebuild from a snapshot (see `reopenSession`) rather
+// than resume from a cursor that may have skipped events.
 const MAX_WS_SUBSCRIPTIONS = 4;
 const wsSubscriptionOrder: string[] = [];
 const sessionsWithStaleCursor = new Set<string>();
@@ -1215,15 +1216,24 @@ function retainWsSubscription(sessionId: string): void {
   const idx = wsSubscriptionOrder.indexOf(sessionId);
   if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
   wsSubscriptionOrder.unshift(sessionId);
-  // Evict oldest subscriptions past the cap. The active session sits at the
-  // front (selectSession touches it on every open), but guard anyway so it can
-  // never be evicted.
+  // Evict the oldest entries past the cap, skipping the active session. The
+  // active session is NOT guaranteed to sit at the front: first-time opens only
+  // retain after an awaited snapshot, so rapid clicks can complete out of order
+  // and leave the active session at the tail. Skipping it (rather than breaking
+  // when the tail is active) keeps the cap effective.
   while (wsSubscriptionOrder.length > MAX_WS_SUBSCRIPTIONS) {
-    const tail = wsSubscriptionOrder.at(-1);
-    if (tail === undefined || tail === rawState.activeSessionId) break;
-    wsSubscriptionOrder.pop();
-    eventConn?.unsubscribe(tail);
-    sessionsWithStaleCursor.add(tail);
+    let victimIdx = -1;
+    for (let i = wsSubscriptionOrder.length - 1; i >= 0; i--) {
+      if (wsSubscriptionOrder[i] !== rawState.activeSessionId) {
+        victimIdx = i;
+        break;
+      }
+    }
+    if (victimIdx === -1) break;
+    const [victim] = wsSubscriptionOrder.splice(victimIdx, 1);
+    if (victim === undefined) break;
+    eventConn?.unsubscribe(victim);
+    sessionsWithStaleCursor.add(victim);
   }
 }
 
@@ -1241,19 +1251,25 @@ function subscribeToSessionEvents(sessionId: string): void {
     // they don't advance lastSeqBySession — but flushing here is cheap and
     // future-proofs the cursor if the batching set ever changes.)
     enqueueEvent.flush();
-    // If this session was evicted from the cap, its cursor may have been
-    // advanced past missed per-session events by global session events. Reset
-    // it so the daemon replays (or snapshots) what was missed while
-    // unsubscribed, instead of resuming from a cursor that skips them.
-    if (sessionsWithStaleCursor.delete(sessionId)) {
-      delete rawState.lastSeqBySession[sessionId];
-      delete epochBySession[sessionId];
-    }
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
     retainWsSubscription(sessionId);
   }
+}
+
+/** Re-open an already-loaded session. If it was evicted from the subscription
+ *  cap since it was last open, rebuild from a snapshot: resuming from the kept
+ *  cursor would skip the per-session events that arrived while unsubscribed,
+ *  and replaying from seq 0 would make the projector regenerate message ids and
+ *  duplicate the already-loaded transcript. Otherwise just re-subscribe from the
+ *  tracked cursor. */
+async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
+  if (sessionsWithStaleCursor.delete(sessionId)) {
+    return syncSessionFromSnapshot(sessionId);
+  }
+  subscribeToSessionEvents(sessionId);
+  return 'ok';
 }
 
 // ---------------------------------------------------------------------------
@@ -2181,7 +2197,7 @@ const workspaceState = useWorkspaceState(rawState, {
   nextOptimisticMsgId,
   getEventConn: () => eventConn,
   syncSessionFromSnapshot,
-  subscribeToSessionEvents,
+  reopenSession,
   hasLoadedMessages,
   refreshSessionStatus,
   persistSessionProfile,
