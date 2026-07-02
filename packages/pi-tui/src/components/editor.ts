@@ -2,6 +2,7 @@ import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocompl
 import { getKeybindings } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
+import { PasteBurst } from "../paste-burst.ts";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
@@ -226,6 +227,7 @@ export interface EditorTheme {
 export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
+	disablePasteBurst?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -295,6 +297,10 @@ export class Editor implements Component, Focusable {
 	private pasteBuffer: string = "";
 	private isInPaste: boolean = false;
 
+	// Non-bracketed paste-burst fallback
+	private pasteBurst = new PasteBurst();
+	private disablePasteBurst: boolean = false;
+
 	// Prompt history for up/down navigation
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
@@ -332,6 +338,7 @@ export class Editor implements Component, Focusable {
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
+		this.disablePasteBurst = options.disablePasteBurst ?? false;
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
@@ -365,6 +372,13 @@ export class Editor implements Component, Focusable {
 		if (this.autocompleteMaxVisible !== newMaxVisible) {
 			this.autocompleteMaxVisible = newMaxVisible;
 			this.tui.requestRender();
+		}
+	}
+
+	setDisablePasteBurst(disabled: boolean): void {
+		this.disablePasteBurst = disabled;
+		if (disabled) {
+			this.pasteBurst.reset();
 		}
 	}
 
@@ -616,6 +630,7 @@ export class Editor implements Component, Focusable {
 		if (data.includes("\x1b[200~")) {
 			this.isInPaste = true;
 			this.pasteBuffer = "";
+			this.pasteBurst.reset();
 			data = data.replace("\x1b[200~", "");
 		}
 
@@ -630,12 +645,19 @@ export class Editor implements Component, Focusable {
 				this.isInPaste = false;
 				const remaining = this.pasteBuffer.substring(endIndex + 6);
 				this.pasteBuffer = "";
+				this.pasteBurst.reset();
 				if (remaining.length > 0) {
 					this.handleInput(remaining);
 				}
 				return;
 			}
 			return;
+		}
+
+		const isEnterKey = data !== "\n" && kb.matches(data, "tui.input.submit");
+		const printableForBurst = decodePrintableKey(data) ?? (data.charCodeAt(0) >= 32 ? data : undefined);
+		if (!this.disablePasteBurst && !isEnterKey && printableForBurst === undefined) {
+			this.pasteBurst.reset();
 		}
 
 		// Ctrl+C - let parent handle (exit/clear)
@@ -801,6 +823,12 @@ export class Editor implements Component, Focusable {
 				return;
 			}
 
+			if (!this.disablePasteBurst && this.pasteBurst.shouldInsertNewlineInsteadOfSubmit(Date.now())) {
+				this.addNewLine();
+				this.pasteBurst.extendWindow(Date.now());
+				return;
+			}
+
 			this.submitValue();
 			return;
 		}
@@ -868,12 +896,18 @@ export class Editor implements Component, Focusable {
 
 		const printable = decodePrintableKey(data);
 		if (printable !== undefined) {
+			if (!this.disablePasteBurst) {
+				this.pasteBurst.onPlainChar(Date.now());
+			}
 			this.insertCharacter(printable);
 			return;
 		}
 
 		// Regular characters
 		if (data.charCodeAt(0) >= 32) {
+			if (!this.disablePasteBurst) {
+				this.pasteBurst.onPlainChar(Date.now());
+			}
 			this.insertCharacter(data);
 		}
 	}

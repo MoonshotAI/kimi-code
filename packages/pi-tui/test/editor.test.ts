@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
+import { PasteBurst } from "../src/paste-burst.ts";
 import { TUI } from "../src/tui.ts";
 import { visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
@@ -37,6 +38,60 @@ async function flushAutocomplete(): Promise<void> {
 	await Promise.resolve();
 	await new Promise((resolve) => setImmediate(resolve));
 }
+
+describe("PasteBurst", () => {
+	it("does not suppress Enter for slow typing", () => {
+		const burst = new PasteBurst();
+		burst.onPlainChar(0);
+		burst.onPlainChar(20);
+
+		assert.strictEqual(burst.shouldInsertNewlineInsteadOfSubmit(40), false);
+	});
+
+	it("suppresses Enter during a rapid paste-like burst", () => {
+		const burst = new PasteBurst();
+		burst.onPlainChar(0);
+		burst.onPlainChar(1);
+		burst.onPlainChar(2);
+		burst.onPlainChar(3);
+		burst.onPlainChar(4);
+		burst.onPlainChar(5);
+		burst.onPlainChar(6);
+		burst.onPlainChar(7);
+
+		assert.strictEqual(burst.shouldInsertNewlineInsteadOfSubmit(8), true);
+	});
+
+	it("keeps suppressing Enter briefly after a burst", () => {
+		const burst = new PasteBurst();
+		burst.onPlainChar(0);
+		burst.onPlainChar(1);
+		burst.onPlainChar(2);
+		burst.onPlainChar(3);
+		burst.onPlainChar(4);
+		burst.onPlainChar(5);
+		burst.onPlainChar(6);
+		burst.onPlainChar(7);
+
+		assert.strictEqual(burst.shouldInsertNewlineInsteadOfSubmit(100), true);
+		assert.strictEqual(burst.shouldInsertNewlineInsteadOfSubmit(200), false);
+	});
+
+	it("resets after explicit paste handling", () => {
+		const burst = new PasteBurst();
+		burst.onPlainChar(0);
+		burst.onPlainChar(1);
+		burst.onPlainChar(2);
+		burst.onPlainChar(3);
+		burst.onPlainChar(4);
+		burst.onPlainChar(5);
+		burst.onPlainChar(6);
+		burst.onPlainChar(7);
+		burst.reset();
+
+		assert.strictEqual(burst.shouldInsertNewlineInsteadOfSubmit(8), false);
+	});
+});
 
 describe("Editor component", () => {
 	describe("Prompt history navigation", () => {
@@ -309,6 +364,44 @@ describe("Editor component", () => {
 
 			lines[0] = "mutated";
 			assert.deepStrictEqual(editor.getLines(), ["a", "b"]);
+		});
+	});
+
+	describe("Paste burst fallback", () => {
+		it("inserts a newline instead of submitting during a rapid burst", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = false;
+			editor.onSubmit = () => {
+				submitted = true;
+			};
+
+			editor.handleInput("a");
+			editor.handleInput("b");
+			editor.handleInput("c");
+			editor.handleInput("d");
+			editor.handleInput("e");
+			editor.handleInput("f");
+			editor.handleInput("g");
+			editor.handleInput("h");
+			editor.handleInput("\r");
+
+			assert.strictEqual(submitted, false);
+			assert.strictEqual(editor.getText(), "abcdefgh\n");
+		});
+
+		it("can be disabled", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { disablePasteBurst: true });
+			let submitted = "";
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+
+			editor.handleInput("a");
+			editor.handleInput("b");
+			editor.handleInput("c");
+			editor.handleInput("\r");
+
+			assert.strictEqual(submitted, "abc");
 		});
 	});
 

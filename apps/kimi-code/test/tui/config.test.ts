@@ -59,10 +59,20 @@ auto_install = false
 
     expect(config).toEqual({
       theme: 'light',
+      disablePasteBurst: false,
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
     });
+  });
+
+  it('parses disable_paste_burst', () => {
+    const config = parseTuiConfig(`
+theme = "dark"
+disable_paste_burst = true
+`);
+
+    expect(config.disablePasteBurst).toBe(true);
   });
 
   it('normalizes an empty editor command to auto-detect', () => {
@@ -73,6 +83,7 @@ command = "   "
 
     expect(config).toEqual({
       theme: 'auto',
+      disablePasteBurst: false,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -104,6 +115,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme: 'light',
+        disablePasteBurst: false,
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
@@ -113,6 +125,7 @@ command = "   "
 
     expect(await loadTuiConfig(filePath)).toEqual({
       theme: 'light',
+      disablePasteBurst: false,
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
@@ -124,6 +137,7 @@ command = "   "
     await saveTuiConfig(
       {
         theme,
+        disablePasteBurst: DEFAULT_TUI_CONFIG.disablePasteBurst,
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,

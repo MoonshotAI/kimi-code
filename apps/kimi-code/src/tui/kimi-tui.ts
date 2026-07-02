@@ -217,6 +217,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     theme: input.tuiConfig.theme,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
+    disablePasteBurst: input.tuiConfig.disablePasteBurst,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     availableModels: {},

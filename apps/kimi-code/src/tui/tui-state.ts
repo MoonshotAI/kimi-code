@@ -10,6 +10,7 @@ import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
+import { DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
@@ -68,7 +69,9 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const btwPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const editor = new CustomEditor(ui);
+  const editor = new CustomEditor(ui, {
+    disablePasteBurst: initialAppState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+  });
   const footer = new FooterComponent({ ...initialAppState }, () => {
     ui.requestRender();
   });

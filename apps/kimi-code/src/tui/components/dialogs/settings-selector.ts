@@ -7,6 +7,7 @@ export type SettingsSelection =
   | 'permission'
   | 'experiments'
   | 'upgrade'
+  | 'paste-burst'
   | 'usage';
 
 const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
@@ -41,6 +42,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Turn automatic CLI updates on or off.',
   },
   {
+    value: 'paste-burst',
+    label: 'Paste burst detection',
+    description: 'Avoid submitting rapid multi-line pastes line by line.',
+  },
+  {
     value: 'usage',
     label: 'Usage',
     description: 'Show session tokens, context window, and plan quotas.',
@@ -55,6 +61,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'permission' ||
     value === 'experiments' ||
     value === 'upgrade' ||
+    value === 'paste-burst' ||
     value === 'usage'
   );
 }

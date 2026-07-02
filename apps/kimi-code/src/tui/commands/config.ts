@@ -17,10 +17,11 @@ import {
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
+import { PasteBurstSelectorComponent } from '../components/dialogs/paste-burst-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { saveTuiConfig } from '../config';
+import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -35,6 +36,16 @@ import type { SlashCommandHost } from './dispatch';
 // ---------------------------------------------------------------------------
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
+
+function currentTuiConfig(host: SlashCommandHost): TuiConfig {
+  return {
+    theme: host.state.appState.theme,
+    editorCommand: host.state.appState.editorCommand,
+    disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+    notifications: host.state.appState.notifications,
+    upgrade: host.state.appState.upgrade,
+  };
+}
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
@@ -329,10 +340,8 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   const editorCommand = value.length > 0 ? value : null;
   try {
     await saveTuiConfig({
-      theme: host.state.appState.theme,
+      ...currentTuiConfig(host),
       editorCommand,
-      notifications: host.state.appState.notifications,
-      upgrade: host.state.appState.upgrade,
     });
   } catch (error) {
     host.showStatus(
@@ -514,10 +523,8 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
 
   try {
     await saveTuiConfig({
+      ...currentTuiConfig(host),
       theme,
-      editorCommand: host.state.appState.editorCommand,
-      notifications: host.state.appState.notifications,
-      upgrade: host.state.appState.upgrade,
     });
   } catch (error) {
     host.showStatus(
@@ -565,6 +572,49 @@ export function showUpdatePreferencePicker(host: SlashCommandHost): void {
       },
     }),
   );
+}
+
+export function showPasteBurstPicker(host: SlashCommandHost): void {
+  const currentValue = !(host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst);
+  host.mountEditorReplacement(
+    new PasteBurstSelectorComponent({
+      currentValue,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyPasteBurstChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function applyPasteBurstChoice(host: SlashCommandHost, enabled: boolean): Promise<void> {
+  const disablePasteBurst = !enabled;
+  const previous = host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst;
+  if (disablePasteBurst === previous) {
+    host.showStatus(`Paste burst detection already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host),
+      disablePasteBurst,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save paste burst setting: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  host.setAppState({ disablePasteBurst });
+  host.state.editor.setDisablePasteBurst(disablePasteBurst);
+  host.track('paste_burst_changed', { enabled });
+  host.showStatus(`Paste burst detection ${enabled ? 'enabled' : 'disabled'}.`, 'success');
 }
 
 export async function showExperimentsPanel(host: SlashCommandHost): Promise<void> {
@@ -657,9 +707,7 @@ export async function applyUpdatePreferenceChoice(
   const upgrade = { autoInstall };
   try {
     await saveTuiConfig({
-      theme: host.state.appState.theme,
-      editorCommand: host.state.appState.editorCommand,
-      notifications: host.state.appState.notifications,
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
       upgrade,
     });
   } catch (error) {
@@ -715,6 +763,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'editor': showEditorPicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
+    case 'paste-burst': showPasteBurstPicker(host); return;
     case 'usage': void showUsage(host); return;
   }
 }

@@ -271,6 +271,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, `light`, or the name of a [custom theme](../customization/themes) |
+| `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
@@ -279,6 +280,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
+disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 
 [editor]
 command = "" # empty uses $VISUAL / $EDITOR
