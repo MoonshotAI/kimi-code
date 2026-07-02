@@ -503,6 +503,7 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  dropWsSubscription(sessionId);
   // Drain the streaming-event batcher too. unsubscribe() stops future server
   // frames, but events already queued for the next animation frame would
   // otherwise survive and be reduced AFTER the maps below are cleared —
@@ -1158,6 +1159,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       // before live deltas (aligned by wire offset) start appending to it.
       eventConn.seedSnapshot(sessionId, snap);
       eventConn.subscribe(sessionId, { seq: snap.asOfSeq, epoch: snap.epoch });
+      retainWsSubscription(sessionId);
     }
     void pullSessionWarnings(sessionId);
     return 'ok';
@@ -1181,6 +1183,45 @@ function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
 }
 
+// ---------------------------------------------------------------------------
+// WS subscription cap (LRU eviction)
+// ---------------------------------------------------------------------------
+//
+// Every opened session subscribes to its WS event stream, and the socket keeps
+// subscriptions across reconnects (re-sending them in `client_hello`). Without
+// a cap, a user who has opened hundreds of sessions stays subscribed to all of
+// them: every background session's status/meta/usage event then flows through
+// the reducer and dirties the sidebar computeds — the root cause of "the UI
+// gets sluggish once I have a lot of sessions".
+//
+// Keep only the most-recently-opened sessions subscribed (MRU order, index 0 =
+// newest). The active session is always retained. Evicting an entry only drops
+// the live WS subscription; `lastSeqBySession` / `epochBySession` are kept so
+// re-opening the session resumes from the tracked cursor — the daemon replays
+// missed durable events, or answers `resync_required` → snapshot.
+const MAX_WS_SUBSCRIPTIONS = 4;
+const wsSubscriptionOrder: string[] = [];
+
+function retainWsSubscription(sessionId: string): void {
+  const idx = wsSubscriptionOrder.indexOf(sessionId);
+  if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
+  wsSubscriptionOrder.unshift(sessionId);
+  // Evict oldest subscriptions past the cap. The active session sits at the
+  // front (selectSession touches it on every open), but guard anyway so it can
+  // never be evicted.
+  while (wsSubscriptionOrder.length > MAX_WS_SUBSCRIPTIONS) {
+    const tail = wsSubscriptionOrder.at(-1);
+    if (tail === undefined || tail === rawState.activeSessionId) break;
+    wsSubscriptionOrder.pop();
+    eventConn?.unsubscribe(tail);
+  }
+}
+
+function dropWsSubscription(sessionId: string): void {
+  const idx = wsSubscriptionOrder.indexOf(sessionId);
+  if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
+}
+
 function subscribeToSessionEvents(sessionId: string): void {
   connectEventsIfNeeded();
   if (eventConn) {
@@ -1192,6 +1233,7 @@ function subscribeToSessionEvents(sessionId: string): void {
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
+    retainWsSubscription(sessionId);
   }
 }
 
