@@ -482,6 +482,11 @@ git add packages/pi-tui/test/editor.test.ts
 git commit -m "test(pi-tui): add editor narrow-width regression tests"
 ```
 
+- [x] **审查修正记录（已执行，均已 amend 进上述 commit，最终 SHA `d00a38f1`）**：
+  1. 历史回溯用例判别力：计划原版只把 `navigateHistory(-1)` 包进 `doesNotThrow`，实测对守卫回滚零判别力（私有方法不触发 wrap）。修正：块内追加召回后的 `editor.render(1)`，守卫禁用时该用例栈溢出变红。
+  2. 5 列 TUI 用例断言：计划原版 `viewport.every(visibleWidth(line) <= 5)` 在 5 列 xterm 上结构性恒真（物理行最多 5 格）。修正：改为 `viewport[0..5]` 精确 `strictEqual`（实测值 `"─────", "  你 ", "  好 ", "  世 ", "  界 ", "─────"`，内容行含截断保留的尾空格）——同时获得对 Task 3 截断回滚的判别力（回滚时结构错位变红，双向已验证）。
+  3. 守护矩阵（审查者在 /tmp 副本实测）：editor.ts 守卫回滚 → editor.test.ts 8 红；Container 钳制回滚 → tui-render "Container width clamping" 红；截断回滚 → tui-render "TUI overwide line handling" 红 + editor 5 列用例红。三种分歧单独回滚均有守护测试变红。
+
 ---
 
 ### Task 5: 组件裸 `repeat` 负宽度加固
@@ -602,7 +607,7 @@ git commit -m "fix(pi-tui): guard blank-line padding against negative widths"
 
 从上游同步代码时，绝不能直接整目录覆盖。以下本地修复必须在同步后重新核对，全部有测试守护：
 
-1. **`src/components/editor.ts` — `wordWrapLine` 单 grapheme 递归守卫**：segment 不可再分（单 grapheme）且比 `maxWidth` 宽时不再递归（上游在 maxWidth=1 + CJK 时无限递归栈溢出）。守卫必须基于 grapheme 数（`graphemeSegmenter.segment(...)`）而非 code-unit 长度——`grapheme.length` 对 ZWJ emoji 会误判。守护测试：`test/editor.test.ts` 的 "wordWrapLine narrow width"。
+1. **`src/components/editor.ts` — `wordWrapLine` 单 grapheme 递归守卫**：segment 不可再分（单 grapheme）且比 `maxWidth` 宽时不再递归（上游在 maxWidth=1 + CJK 时无限递归栈溢出）。守卫必须基于 grapheme 数（`graphemeSegmenter.segment(...)`）而非 code-unit 长度——`grapheme.length` 对 ZWJ emoji 会误判。守护测试：`test/editor.test.ts` 的 "wordWrapLine narrow width" 与 "Editor narrow width rendering"。
 2. **`src/tui.ts` — `Container.render` 宽度钳制**：入口 `width = Math.max(1, width)`。守护测试：`test/tui-render.test.ts` 的 "Container width clamping"。
 3. **`src/tui.ts` — 超宽行截断替代 throw**：`doRender` 在 `applyLineResets` 前对超宽行统一 `sliceByColumn` 截断；上游差分渲染路径的"写崩溃日志 + throw"块已删除，不要在同步时带回来。性能约束：截断检查每帧扫全部行，必须先走 `utils.ts` 的 `asciiVisibleWidth` 快路径（ANSI 感知 ASCII 快扫 + 超限早退），仅对非 ASCII 行回退 `visibleWidth`；配套 `WIDTH_CACHE_SIZE` 为 4096。已知边界：>4096 条 distinct 非 ASCII 行时宽度缓存 FIFO 抖动（约 30ms/帧），根治需 prepared-frame 行级缓存，属后续任务。守护测试：`test/tui-render.test.ts` 的 "TUI overwide line handling"（精确 viewport 断言）、`test/truncate-to-width.test.ts` 的 "asciiVisibleWidth"。
 4. **`src/components/text.ts` / `markdown.ts` / `truncated-text.ts` — 负宽度 repeat 防御**：空行/分隔线的 `repeat` 参数钳到 ≥0。守护测试：各自测试文件的 "negative width safety"。
