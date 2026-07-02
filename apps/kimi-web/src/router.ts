@@ -25,7 +25,12 @@ export let designSystemReturnPath: string | null = null;
 
 router.beforeEach((to, from) => {
   if (to.name === 'design-system' && from.name !== 'design-system') {
-    designSystemReturnPath = from.fullPath;
+    // The session URL is rewritten via the native history API, bypassing
+    // vue-router, so read the actual browser URL instead of from.fullPath
+    // (which can be stale, e.g. still '/' after a session was selected).
+    const { pathname, search, hash } = window.location;
+    const current = `${pathname}${search}${hash}`;
+    designSystemReturnPath = current.startsWith('/design-system') ? '/' : current;
   }
 });
 
