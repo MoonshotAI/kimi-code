@@ -12,8 +12,6 @@ For your information, `AGENTS.md` is a file intended to be read by AI coding age
 
 You should compose this file according to the actual project content. Do not make any assumptions or generalizations. Ensure the information is accurate and useful. You must use the natural language that is mainly used in the project's comments and documentation.
 
-Keep the file concise and information-dense: its full content is injected into the system prompt of every future session in this project, and a combined AGENTS.md size beyond about 32 KB triggers a performance warning to the user. Record only project-specific facts an agent could not quickly infer from the code — commands, conventions, and gotchas — and leave out generic engineering advice and long file inventories.
-
 Popular sections that people usually write in `AGENTS.md` are:
 
 - Project overview
