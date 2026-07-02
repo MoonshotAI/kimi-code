@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
+import { Text } from "../src/components/text.ts";
 import {
 	deleteKittyImage,
 	encodeKitty,
@@ -843,5 +844,13 @@ describe("TUI overwide line handling", () => {
 		assert.strictEqual(viewport[3], "");
 
 		tui.stop();
+	});
+});
+
+describe("Text negative width safety", () => {
+	it("does not throw at zero or negative widths", () => {
+		const text = new Text("你好", 1, 1);
+		assert.doesNotThrow(() => text.render(0));
+		assert.doesNotThrow(() => text.render(-1));
 	});
 });

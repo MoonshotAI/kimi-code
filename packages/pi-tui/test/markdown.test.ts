@@ -1440,3 +1440,11 @@ bar`,
 		});
 	});
 });
+
+describe("Markdown negative width safety", () => {
+	it("does not throw at zero or negative widths", () => {
+		const markdown = new Markdown("# Title\n\ntext\n\n---", 1, 1, defaultMarkdownTheme);
+		assert.doesNotThrow(() => markdown.render(0));
+		assert.doesNotThrow(() => markdown.render(-1));
+	});
+});

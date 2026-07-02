@@ -4157,4 +4157,11 @@ describe("Editor narrow width rendering", () => {
 		assert.strictEqual(viewport[5], "─────");
 		tui.stop();
 	});
+
+	it("does not throw at zero or negative widths", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("你好世界");
+		assert.doesNotThrow(() => editor.render(0));
+		assert.doesNotThrow(() => editor.render(-1));
+	});
 });

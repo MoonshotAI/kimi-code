@@ -127,3 +127,11 @@ describe("TruncatedText component", () => {
 		assert.ok(!stripped.includes("Second line"));
 	});
 });
+
+describe("TruncatedText negative width safety", () => {
+	it("does not throw at zero or negative widths", () => {
+		const component = new TruncatedText("hello", 1, 1);
+		assert.doesNotThrow(() => component.render(0));
+		assert.doesNotThrow(() => component.render(-1));
+	});
+});

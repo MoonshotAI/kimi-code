@@ -525,7 +525,7 @@ export class Editor implements Component, Focusable {
 				result.push(this.borderColor(truncateToWidth(indicator, width)));
 			}
 		} else {
-			result.push(horizontal.repeat(width));
+			result.push(horizontal.repeat(Math.max(0, width)));
 		}
 
 		// Render each visible layout line
@@ -583,7 +583,7 @@ export class Editor implements Component, Focusable {
 			const remaining = width - visibleWidth(indicator);
 			result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
 		} else {
-			result.push(horizontal.repeat(width));
+			result.push(horizontal.repeat(Math.max(0, width)));
 		}
 
 		// Add autocomplete list if active
