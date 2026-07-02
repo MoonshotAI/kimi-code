@@ -166,7 +166,18 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 
 			// The segment remains logically atomic for cursor
 			// movement / editing — the split is purely visual for word-wrap layout.
-			const subChunks = wordWrapLine(grapheme, maxWidth);
+			const subSegments = [...graphemeSegmenter.segment(grapheme)];
+			if (subSegments.length <= 1) {
+				// An indivisible grapheme wider than maxWidth (e.g. a CJK
+				// character at maxWidth 1) cannot be split further —
+				// re-wrapping it would recurse forever. Keep it as the
+				// current open chunk and let it overflow by one column;
+				// the TUI paint layer truncates overwide lines.
+				currentWidth = gWidth;
+				wrapOppIndex = -1;
+				continue;
+			}
+			const subChunks = wordWrapLine(grapheme, maxWidth, subSegments);
 			for (let j = 0; j < subChunks.length - 1; j++) {
 				const sc = subChunks[j]!;
 				chunks.push({ text: sc.text, startIndex: charIndex + sc.startIndex, endIndex: charIndex + sc.endIndex });

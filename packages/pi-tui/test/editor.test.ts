@@ -4049,3 +4049,48 @@ describe("Editor component", () => {
 		});
 	});
 });
+
+describe("wordWrapLine narrow width", () => {
+	it("does not recurse infinitely on a wide grapheme at maxWidth 1", () => {
+		const chunks = wordWrapLine("中", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["中"],
+		);
+	});
+
+	it("splits CJK text into per-grapheme overflow chunks at maxWidth 1", () => {
+		const chunks = wordWrapLine("中文文本", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["中", "文", "文", "本"],
+		);
+		assert.deepStrictEqual(
+			chunks.map((c) => [c.startIndex, c.endIndex]),
+			[
+				[0, 1],
+				[1, 2],
+				[2, 3],
+				[3, 4],
+			],
+		);
+	});
+
+	it("handles mixed narrow and wide graphemes at maxWidth 1", () => {
+		const chunks = wordWrapLine("ab中cd", 1);
+		assert.deepStrictEqual(
+			chunks.map((c) => c.text),
+			["a", "b", "中", "c", "d"],
+		);
+	});
+
+	it("still re-wraps multi-grapheme atomic segments at narrow widths", () => {
+		// 粘贴标记以单个原子 segment 传入（preSegmented），内部仍可按
+		// grapheme 拆分，递归必须保留这个能力。
+		const marker = "[paste #1]";
+		const preSegmented: Intl.SegmentData[] = [{ segment: marker, index: 0, input: marker }];
+		const chunks = wordWrapLine(marker, 3, preSegmented);
+		assert.ok(chunks.length > 1);
+		assert.strictEqual(chunks.map((c) => c.text).join(""), marker);
+	});
+});
