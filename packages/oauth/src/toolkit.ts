@@ -30,6 +30,7 @@ import {
   resolveKimiCodeOAuthKey,
   type ManagedKimiCodeProvisionResult,
   type ManagedKimiConfigAdapter,
+  type ManagedKimiConfigShape,
 } from './managed-kimi-code';
 import {
   fetchManagedUsage,
@@ -139,14 +140,28 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
-    return {
-      providers: [
-        {
-          providerName: name,
-          hasToken: await this.managerFor(name, oauthKey, oauthHost).hasToken(),
-        },
-      ],
-    };
+    const providers: AuthProviderStatus[] = [
+      {
+        providerName: name,
+        hasToken: await this.managerFor(name, oauthKey, oauthHost).hasToken(),
+      },
+    ];
+    // API-key providers authenticate with a configured `apiKey` instead of an
+    // OAuth token file, so they have no credentials entry for `hasToken()` to
+    // find. Without surfacing them here the ACP session gate (which treats any
+    // provider with `hasToken` as authed) rejects API-key-only users with
+    // `auth_required`, even though their key is valid.
+    if (this.configAdapter !== undefined) {
+      const config = (await this.configAdapter.read()) as ManagedKimiConfigShape;
+      for (const [key, entry] of Object.entries(config.providers ?? {})) {
+        if (typeof entry !== 'object' || entry === null) continue;
+        const apiKey = (entry as { apiKey?: unknown }).apiKey;
+        if (typeof apiKey === 'string' && apiKey.length > 0) {
+          providers.push({ providerName: key, hasToken: true });
+        }
+      }
+    }
+    return { providers };
   }
 
   async login(

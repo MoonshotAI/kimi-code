@@ -133,6 +133,60 @@ describe('KimiOAuthToolkit', () => {
     await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('access-1');
   });
 
+  it('reports API-key providers as authed even without an OAuth token', async () => {
+    const storage = new MemoryTokenStorage();
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        'moonshot-cn': { type: 'kimi', baseUrl: 'https://api.moonshot.cn/v1', apiKey: 'sk-test' },
+      },
+    };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+      configAdapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: () => ({ defaultModel: 'moonshot-cn/kimi-for-coding', defaultThinking: true }),
+      },
+    });
+
+    const status = await toolkit.status();
+    // The managed OAuth slot has no token file, but the API-key provider must
+    // still surface as authed so the ACP session gate does not reject it.
+    expect(status.providers).toContainEqual({ providerName: 'moonshot-cn', hasToken: true });
+    expect(status.providers.some((entry) =>  entry.hasToken)).toBe(true);
+  });
+
+  it('does not report API-key providers when the key is empty', async () => {
+    const storage = new MemoryTokenStorage();
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        // Managed OAuth provisioning writes an empty `apiKey`; it must not
+        // count as an API-key provider.
+        [KIMI_CODE_PROVIDER_NAME]: { type: 'kimi', apiKey: '' },
+      },
+    };
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+      configAdapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: () => ({ defaultModel: 'kimi-code/kimi-for-coding', defaultThinking: true }),
+      },
+    });
+
+    const status = await toolkit.status();
+    expect(status.providers).toEqual([
+      { providerName: KIMI_CODE_PROVIDER_NAME, hasToken: false },
+    ]);
+    expect(status.providers.some((entry) => entry.hasToken)).toBe(false);
+  });
+
   it('resolves bearer token providers using the configured oauth key', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('custom-kimi-code', token('custom-access'));
@@ -494,7 +548,7 @@ describe('KimiOAuthToolkit', () => {
       key: devOauthKey,
       oauthHost: devOauthHost,
     });
-    const modelRequest = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const modelRequest = fetchMock.mock.calls[0]?.[1];
     expect(new Headers(modelRequest?.headers).get('authorization')).toBe('Bearer dev-access');
     expect(write).toHaveBeenCalledWith(config);
   });
