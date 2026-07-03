@@ -302,6 +302,9 @@ export class PermissionManager {
     if (this.agent.type === 'sub') {
       return `${prefix}${suffix} Try a different approach — don't retry the same call, don't attempt to bypass the restriction.`;
     }
+    if (result.decision === 'rejected') {
+      return `${prefix}${suffix} Do not re-attempt the exact same call — think about why it was rejected, then adjust your approach or ask the user what they would prefer.`;
+    }
     return `${prefix}${suffix}`;
   }
 
