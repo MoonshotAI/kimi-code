@@ -19,7 +19,7 @@ import { PermissionSelectorComponent } from '../components/dialogs/permission-se
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { saveTuiConfig } from '../config';
+import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -34,6 +34,16 @@ import type { SlashCommandHost } from './dispatch';
 // ---------------------------------------------------------------------------
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
+
+function currentTuiConfig(host: SlashCommandHost): TuiConfig {
+  return {
+    theme: host.state.appState.theme,
+    editorCommand: host.state.appState.editorCommand,
+    disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+    notifications: host.state.appState.notifications,
+    upgrade: host.state.appState.upgrade,
+  };
+}
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
@@ -328,10 +338,8 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   const editorCommand = value.length > 0 ? value : null;
   try {
     await saveTuiConfig({
-      theme: host.state.appState.theme,
+      ...currentTuiConfig(host),
       editorCommand,
-      notifications: host.state.appState.notifications,
-      upgrade: host.state.appState.upgrade,
     });
   } catch (error) {
     host.showStatus(
@@ -513,10 +521,8 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
 
   try {
     await saveTuiConfig({
+      ...currentTuiConfig(host),
       theme,
-      editorCommand: host.state.appState.editorCommand,
-      notifications: host.state.appState.notifications,
-      upgrade: host.state.appState.upgrade,
     });
   } catch (error) {
     host.showStatus(
@@ -656,9 +662,7 @@ export async function applyUpdatePreferenceChoice(
   const upgrade = { autoInstall };
   try {
     await saveTuiConfig({
-      theme: host.state.appState.theme,
-      editorCommand: host.state.appState.editorCommand,
-      notifications: host.state.appState.notifications,
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
       upgrade,
     });
   } catch (error) {

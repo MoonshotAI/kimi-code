@@ -17,7 +17,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
-import type { AgentOptions } from '../../src/agent';
+import type { AgentOptions, AgentRecord, AgentRecordPersistence } from '../../src/agent';
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import type { Logger, LogPayload } from '../../src/logging';
 import type {
@@ -1928,3 +1929,68 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     rawFinishReason: 'stop',
   };
 }
+
+describe('abandoned tool exchange teardown', () => {
+  it('closes dangling tool calls when a turn dies mid-batch so follow-up messages are not swallowed', async () => {
+    // A transcript write failure between a recorded tool.call and its paired
+    // tool.result breaks the batch's "every recorded call gets a result"
+    // invariant: the result-dispatch loop dies, the turn fails, and
+    // pendingToolResultIds stays open — stranding every later message in
+    // deferredMessages.
+    const base = new InMemoryAgentRecordPersistence();
+    let failedOnce = false;
+    const persistence: AgentRecordPersistence = {
+      read: () => base.read(),
+      append: (record: AgentRecord) => {
+        if (
+          !failedOnce &&
+          record.type === 'context.append_loop_event' &&
+          record.event.type === 'tool.result'
+        ) {
+          failedOnce = true;
+          throw new Error('transcript write failed');
+        }
+        base.append(record);
+      },
+      rewrite: (records) => {
+        base.rewrite(records);
+      },
+      flush: () => base.flush(),
+      close: () => base.close(),
+    };
+    const ctx = testAgent({ kaos: createCommandKaos('ok'), persistence });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'I will run both commands.' },
+      bashCallWithId('call_one', 'echo one'),
+      bashCallWithId('call_two', 'echo two'),
+    );
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run both' }] });
+    const events = await ctx.untilTurnEnd();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'failed' }),
+      }),
+    );
+
+    // Every recorded tool.call must still get a result: the turn teardown
+    // synthesizes an error result for each dangling call.
+    const toolMessages = ctx.agent.context.history.filter((message) => message.role === 'tool');
+    expect(toolMessages.map((message) => message.toolCallId)).toEqual(['call_one', 'call_two']);
+    for (const message of toolMessages) {
+      expect(message.isError).toBe(true);
+    }
+
+    // With the exchange closed, a follow-up message reaches the history instead
+    // of being stranded in deferredMessages forever.
+    ctx.agent.context.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'follow-up after failure' }],
+      toolCalls: [],
+    });
+    expect(JSON.stringify(ctx.agent.context.history)).toContain('follow-up after failure');
+  });
+});
