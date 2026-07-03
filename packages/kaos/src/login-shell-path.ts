@@ -8,19 +8,28 @@
  * tool can't find tools the user has in their interactive shell (e.g.
  * `gh`). We run the user's login shell once (`$SHELL -l -c env`), extract
  * its PATH, and append the entries the current PATH lacks. Existing
- * entries keep their order and priority; failures (missing SHELL, hung or
- * broken profile) silently leave PATH untouched.
+ * entries keep their order and priority; failures (no resolvable shell,
+ * hung or broken profile) silently leave PATH untouched.
+ *
+ * launchd/daemon launches can leave `$SHELL` unset or blank (see
+ * `defaultShell()` in agent-core's terminalService for the same case), so
+ * the probe falls back to the OS account's login shell from the user
+ * database before giving up.
  *
  * Like `detectEnvironment`, the probe is a pure function of injected deps
  * so the suite runs identically on any host. Windows is skipped: the
  * problem is specific to POSIX login-shell profiles.
  */
 
+import { userInfo } from 'node:os';
+
 import { execFileText } from './environment';
 
 export interface LoginShellPathDeps {
   readonly platform: string;
   readonly env: Record<string, string | undefined>;
+  /** Login shell from the OS user database; fallback when $SHELL is unset. */
+  readonly userShell: () => string | undefined;
   readonly execFileText: (
     file: string,
     args: readonly string[],
@@ -32,12 +41,14 @@ const LOGIN_SHELL_ENV_TIMEOUT_MS = 5_000;
 
 /**
  * Run the user's login shell and return its PATH, or `undefined` when the
- * probe does not apply (Windows, no `$SHELL`) or fails (spawn error,
- * timeout, no PATH in the output).
+ * probe does not apply (Windows, no resolvable shell) or fails (spawn
+ * error, timeout, no PATH in the output).
  */
 export async function probeLoginShellPath(deps: LoginShellPathDeps): Promise<string | undefined> {
   if (deps.platform === 'win32') return undefined;
-  const shell = deps.env['SHELL']?.trim();
+  // A set-but-blank $SHELL (some daemon/launchd envs) must also fall back.
+  const envShell = deps.env['SHELL']?.trim();
+  const shell = envShell === undefined || envShell.length === 0 ? deps.userShell() : envShell;
   if (shell === undefined || shell.length === 0) return undefined;
 
   // `env` prints the resolved environment in every shell dialect, unlike
@@ -89,6 +100,23 @@ export async function applyLoginShellPath(deps: LoginShellPathDeps): Promise<voi
  * does not change for the lifetime of the process, and repeated
  * `LocalKaos.create()` calls must not re-spawn the shell.
  */
+/**
+ * Login shell from the OS user database (`/etc/passwd` via getpwuid on
+ * Linux, Directory Services on macOS). `userInfo()` throws when the uid
+ * has no database entry (e.g. containers running an arbitrary uid), and
+ * service accounts may carry `/usr/sbin/nologin` — the latter needs no
+ * special casing here because probing it simply fails and degrades
+ * silently.
+ */
+function userShellFromNode(): string | undefined {
+  try {
+    const shell = userInfo().shell;
+    return shell === null || shell.length === 0 ? undefined : shell;
+  } catch {
+    return undefined;
+  }
+}
+
 let appliedLoginShellPath: Promise<void> | undefined;
 
 export function applyLoginShellPathFromNode(): Promise<void> {
@@ -96,6 +124,7 @@ export function applyLoginShellPathFromNode(): Promise<void> {
   appliedLoginShellPath = applyLoginShellPath({
     platform: process.platform,
     env: process.env as Record<string, string | undefined>,
+    userShell: userShellFromNode,
     execFileText,
   });
   return appliedLoginShellPath;

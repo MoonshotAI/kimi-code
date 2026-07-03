@@ -8,9 +8,11 @@
  * inherits the impoverished PATH.
  *
  * `LocalKaos.create()` must probe the user's login shell (`$SHELL -l -c
- * env`) once and append the missing PATH entries to `process.env.PATH` —
- * without reordering or overriding what is already there. Probe failures
- * (missing SHELL, hung or broken profile) must leave PATH untouched.
+ * env`, falling back to the OS account's login shell when $SHELL is unset
+ * or blank) once and append the missing PATH entries to
+ * `process.env.PATH` — without reordering or overriding what is already
+ * there. Probe failures (no resolvable shell, hung or broken profile)
+ * must leave PATH untouched.
  *
  * The probe/merge unit tests are pure (injected deps) and run on every
  * platform. The end-to-end LocalKaos suite spawns a stub shell and is
@@ -35,6 +37,7 @@ interface StubOpts {
   readonly env?: Record<string, string | undefined>;
   readonly execFileResult?: string | undefined;
   readonly execFileText?: LoginShellPathDeps['execFileText'];
+  readonly userShell?: string | undefined;
 }
 
 /** Build a stub deps bag; records `execFileText` invocations in `calls`. */
@@ -45,6 +48,7 @@ function stubDeps(opts: StubOpts): { deps: LoginShellPathDeps; calls: unknown[][
     deps: {
       platform: opts.platform ?? 'darwin',
       env: opts.env ?? { SHELL: '/bin/zsh' },
+      userShell: () => opts.userShell,
       execFileText:
         opts.execFileText ??
         (async (file, args, timeoutMs) => {
@@ -77,7 +81,22 @@ describe('probeLoginShellPath', () => {
     expect(calls).toEqual([]);
   });
 
-  it('returns undefined when SHELL is unset or blank', async () => {
+  it('falls back to the account login shell when SHELL is unset or blank', async () => {
+    // launchd/daemon launches can leave $SHELL unset or blank (the very
+    // contexts whose PATH is impoverished); the probe must then use the
+    // OS account's login shell instead of giving up.
+    for (const env of [{}, { SHELL: '' }, { SHELL: '   ' }]) {
+      const { deps, calls } = stubDeps({
+        env,
+        userShell: '/bin/zsh',
+        execFileResult: 'PATH=/opt/homebrew/bin:/usr/bin\n',
+      });
+      await expect(probeLoginShellPath(deps)).resolves.toBe('/opt/homebrew/bin:/usr/bin');
+      expect(calls).toEqual([['/bin/zsh', ['-l', '-c', 'env'], 5_000]]);
+    }
+  });
+
+  it('returns undefined when SHELL is unset and no account shell is available', async () => {
     for (const env of [{}, { SHELL: '' }, { SHELL: '   ' }]) {
       const { deps, calls } = stubDeps({ env, execFileResult: 'PATH=/x' });
       await expect(probeLoginShellPath(deps)).resolves.toBeUndefined();
