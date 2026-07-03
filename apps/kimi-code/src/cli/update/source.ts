@@ -155,6 +155,14 @@ export async function detectInstallSource(
     const globalPrefix = await resolved.getGlobalPrefix();
     return classifyInstallSource(packageRoot, globalPrefix, resolved.platform);
   } catch {
+    const normalized = normalizeForHeuristic(packageRoot);
+    if (
+      (resolved.platform === 'win32' &&
+        normalized.includes(`/npm/node_modules/${NPM_PACKAGE_NAME}`)) ||
+      normalized.endsWith(`/lib/node_modules/${NPM_PACKAGE_NAME}`)
+    ) {
+      return 'npm-global';
+    }
     return 'unsupported';
   }
 }
