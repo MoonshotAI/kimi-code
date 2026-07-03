@@ -702,6 +702,8 @@ export interface KimiWebApi {
   // File upload / download
   uploadFile(input: { file: Blob; name?: string }): Promise<{ id: string; name: string; mediaType: string; size: number }>;
   getFileUrl(fileId: string): string;
+  /** Fetch a file's bytes with auth — feed the resulting Blob to a blob URL for <video>/<img> src. */
+  getFileBlob(fileId: string): Promise<Blob>;
 
   // Config — REAL endpoints
   getConfig(): Promise<AppConfig>;

@@ -1230,6 +1230,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return buildRestUrl(this.config.serverHttpUrl, `/files/${encodeURIComponent(fileId)}`);
   }
 
+  /** Fetch a file's bytes with the Bearer credential attached. Use this (not
+   *  getFileUrl) when the bytes feed a <video>/<img> src: the browser loads
+   *  those natively without the Authorization header, so the URL alone 401s. */
+  async getFileBlob(fileId: string): Promise<Blob> {
+    return this.http.getBlob(`/files/${encodeURIComponent(fileId)}`);
+  }
+
   // -------------------------------------------------------------------------
   // WebSocket events
   // -------------------------------------------------------------------------
