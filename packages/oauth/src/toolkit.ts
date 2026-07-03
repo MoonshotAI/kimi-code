@@ -30,7 +30,6 @@ import {
   resolveKimiCodeOAuthKey,
   type ManagedKimiCodeProvisionResult,
   type ManagedKimiConfigAdapter,
-  type ManagedKimiConfigShape,
 } from './managed-kimi-code';
 import {
   fetchManagedUsage,
@@ -136,6 +135,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   async status(
     providerName?: string | undefined,
     oauthRef?: KimiOAuthTokenRef | undefined,
+    options?: { readonly apiKeyProviders?: readonly string[] | undefined },
   ): Promise<AuthStatus> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
@@ -150,16 +150,11 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     // OAuth token file, so they have no credentials entry for `hasToken()` to
     // find. Without surfacing them here the ACP session gate (which treats any
     // provider with `hasToken` as authed) rejects API-key-only users with
-    // `auth_required`, even though their key is valid.
-    if (this.configAdapter !== undefined) {
-      const config = (await this.configAdapter.read()) as ManagedKimiConfigShape;
-      for (const [key, entry] of Object.entries(config.providers ?? {})) {
-        if (typeof entry !== 'object' || entry === null) continue;
-        const apiKey = (entry as { apiKey?: unknown }).apiKey;
-        if (typeof apiKey === 'string' && apiKey.length > 0) {
-          providers.push({ providerName: key, hasToken: true });
-        }
-      }
+    // `auth_required`, even though their key is valid. The caller resolves the
+    // list of API-key provider names from a lenient config read so a broken
+    // unrelated config section cannot abort status resolution.
+    for (const providerName of options?.apiKeyProviders ?? []) {
+      providers.push({ providerName, hasToken: true });
     }
     return { providers };
   }
