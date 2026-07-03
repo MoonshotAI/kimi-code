@@ -80,12 +80,20 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const composerRef = ref<{ loadForEdit: (value: string) => void; focus: () => void } | null>(null);
+const composerRef = ref<{
+  loadForEdit: (value: string) => void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  focus: () => void;
+} | null>(null);
 const workPanelRef = ref<HTMLElement | null>(null);
 const workbarRef = ref<HTMLElement | null>(null);
 
 function loadForEdit(value: string): void {
   composerRef.value?.loadForEdit(value);
+}
+
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+  composerRef.value?.loadAttachmentsForEdit(atts);
 }
 
 function focus(): void {
@@ -117,7 +125,7 @@ onUnmounted(() => {
   }
 });
 
-defineExpose({ loadForEdit, focus });
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 </script>
 
 <template>
