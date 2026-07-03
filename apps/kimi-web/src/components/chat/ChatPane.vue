@@ -488,10 +488,12 @@ function copyUserMessage(turn: ChatTurn): void {
   }).catch(() => {/* ignore */});
 }
 
-function userImageMedia(img: { url: string; alt?: string }): ToolMedia {
+function userImageMedia(img: { url: string; alt?: string; fileId?: string }): ToolMedia {
   // User-uploaded images carry no path/mime metadata; the preview panel falls
-  // back to a generic label and sniffs the mime from the URL when needed.
-  return { kind: 'image', url: img.url, path: img.alt };
+  // back to a generic label and sniffs the mime from the URL when needed. When
+  // a fileId is present the preview fetches the bytes with auth (a bare
+  // getFileUrl src 401s under daemon auth).
+  return { kind: 'image', url: img.url, path: img.alt, fileId: img.fileId };
 }
 
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {

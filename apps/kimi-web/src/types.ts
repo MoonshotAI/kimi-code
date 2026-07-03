@@ -110,6 +110,9 @@ export interface ToolMedia {
   mimeType?: string;
   bytes?: number;
   dimensions?: string;
+  /** File-store id when the media is an uploaded file. The preview fetches its
+   *  bytes with the Bearer credential (a bare getFileUrl src 401s in <img>). */
+  fileId?: string;
 }
 
 export type AgentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
