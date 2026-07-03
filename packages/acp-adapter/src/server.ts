@@ -227,6 +227,7 @@ export class AcpServer implements Agent {
         sse: true,
       },
       sessionCapabilities: {
+        additionalDirectories: {},
         list: {},
         resume: {},
       },
@@ -286,6 +287,7 @@ export class AcpServer implements Agent {
     const session = await this.harness.createSession({
       id: sessionId,
       workDir: params.cwd,
+      additionalDirs: params.additionalDirectories,
       kaos: acpKaos,
       persistenceKaos,
       sessionStartedProperties: { mode: 'new' },
@@ -358,6 +360,7 @@ export class AcpServer implements Agent {
     const { session, acpSession, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
+      additionalDirectories: params.additionalDirectories,
       mcpServers: params.mcpServers,
       mode: 'load',
     });
@@ -394,6 +397,7 @@ export class AcpServer implements Agent {
     const { session, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
+      additionalDirectories: params.additionalDirectories,
       mcpServers: params.mcpServers,
       mode: 'resume',
     });
@@ -427,6 +431,7 @@ export class AcpServer implements Agent {
   private async setupSessionFromExisting(params: {
     cwd: string;
     sessionId: string;
+    additionalDirectories?: readonly string[];
     mcpServers?: ReadonlyArray<McpServer>;
     mode: 'load' | 'resume';
   }): Promise<{
@@ -456,6 +461,7 @@ export class AcpServer implements Agent {
     try {
       session = await this.harness.resumeSession({
         id: params.sessionId,
+        additionalDirs: params.additionalDirectories,
         kaos: acpKaos,
         persistenceKaos,
         sessionStartedProperties: { mode: params.mode },

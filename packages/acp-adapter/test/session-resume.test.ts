@@ -98,6 +98,7 @@ function makeSessionWithMainConfig(
 }
 
 function makeHarness(opts: {
+  capturedResumeInputs?: Array<{ additionalDirs?: readonly string[]; id: string }>;
   hasUsableToken?: boolean;
   session?: Session;
   resumeError?: Error;
@@ -107,7 +108,8 @@ function makeHarness(opts: {
     auth: {
       status: async () => (authed ? AUTHED_STATUS : UNAUTHED_STATUS),
     },
-    resumeSession: async (_input: { id: string }) => {
+    resumeSession: async (input: { additionalDirs?: readonly string[]; id: string }) => {
+      opts.capturedResumeInputs?.push(input);
       if (opts.resumeError) throw opts.resumeError;
       if (!opts.session) throw new Error('test harness has no session configured');
       return opts.session;
@@ -137,6 +139,30 @@ describe('AcpServer.resumeSession', () => {
     await expect(
       clientConn.resumeSession({ sessionId: 'sess-x', cwd: '/tmp/x', mcpServers: [] }),
     ).rejects.toMatchObject({ code: -32000 });
+  });
+
+  it('passes ACP additionalDirectories through as SDK additionalDirs', async () => {
+    const sessionId = 'sess-resume-multi-root';
+    const session = makeSessionWithMainConfig(sessionId);
+    const capturedResumeInputs: Array<{ additionalDirs?: readonly string[]; id: string }> = [];
+    const harness = makeHarness({ hasUsableToken: true, session, capturedResumeInputs });
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const clientConn = new ClientSideConnection((_a) => new CapturingClient(), clientStream);
+
+    await clientConn.resumeSession({
+      sessionId,
+      cwd: '/tmp/x',
+      additionalDirectories: ['/tmp/docs', '/tmp/plugin'],
+      mcpServers: [],
+    });
+
+    expect(capturedResumeInputs).toHaveLength(1);
+    expect(capturedResumeInputs[0]).toMatchObject({
+      id: sessionId,
+      additionalDirs: ['/tmp/docs', '/tmp/plugin'],
+    });
   });
 
   it('returns configOptions matching the resumed session model + mode + thinking', async () => {

@@ -174,6 +174,7 @@ describe('AcpServer end-to-end happy path', () => {
         sse: true,
       },
       sessionCapabilities: {
+        additionalDirectories: {},
         list: {},
         resume: {},
       },
