@@ -158,27 +158,15 @@ describe('fetchCustomRegistry', () => {
           'registry_chat-completions': goodEntry,
         }),
     );
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      fetchMock as unknown as typeof fetch,
+    );
 
-    try {
-      const result = await fetchCustomRegistry(
-        KOKUB_SOURCE,
-        fetchMock as unknown as typeof fetch,
-      );
-
-      expect(Object.keys(result)).toEqual(['registry_chat-completions']);
-      expect(result['broken-entry']).toBeUndefined();
-      expect(result['unknown-type']).toBeUndefined();
-      expect(result['registry_chat-completions']?.type).toBe('openai');
-
-      expect(warnSpy).toHaveBeenCalledTimes(2);
-      const warnings = warnSpy.mock.calls.map((args) => String(args[0]));
-      expect(warnings.some((m) => m.includes('broken-entry'))).toBe(true);
-      expect(warnings.some((m) => m.includes('unknown-type'))).toBe(true);
-      expect(warnings.every((m) => m.includes(KOKUB_SOURCE.url))).toBe(true);
-    } finally {
-      warnSpy.mockRestore();
-    }
+    expect(Object.keys(result)).toEqual(['registry_chat-completions']);
+    expect(result['broken-entry']).toBeUndefined();
+    expect(result['unknown-type']).toBeUndefined();
+    expect(result['registry_chat-completions']?.type).toBe('openai');
   });
 });
 

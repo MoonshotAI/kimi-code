@@ -218,9 +218,6 @@ export async function fetchCustomRegistry(
       // fetch, mirroring `toModelEntry`'s skip-on-invalid behavior. This keeps
       // existing providers working when kokub adds a new provider type that
       // this client doesn't yet recognize.
-      console.warn(
-        `[custom-registry] Skipping invalid entry "${key}" at ${source.url}: missing required fields or unsupported type (id, name, api, type, models).`,
-      );
       continue;
     }
     out[key] = entry;
