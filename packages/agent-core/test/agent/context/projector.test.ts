@@ -543,6 +543,61 @@ describe('project strict-provider sanitizers', () => {
   });
 });
 
+describe('project duplicate tool_use ids', () => {
+  // A provider that (buggily) emits two tool_use blocks with the same id
+  // produces a wire-invalid request on every strict provider ("tool_use ids
+  // must be unique"), and the state machine only ever records one result for
+  // the id — so without projection-time dedup the session is stuck behind a
+  // 400 that even the strict resend cannot repair.
+  it('drops a duplicate tool call id within one assistant message', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project(
+      [
+        user('u1'),
+        assistant(['call_dup', 'call_dup'], 'calling twice'),
+        tool('call_dup', 'result'),
+        user('u2'),
+      ],
+      { dropOrphanResults: true, onAnomaly: (anomaly) => anomalies.push(anomaly) },
+    );
+    const assistantMessage = projected.find((message) => message.role === 'assistant');
+    expect(assistantMessage?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_dup']);
+    expect(anomalies).toContainEqual({
+      kind: 'duplicate_tool_call_dropped',
+      toolCallId: 'call_dup',
+    });
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
+
+  it('drops a tool call id repeated across assistant messages, keeping the first', () => {
+    const projected = project(
+      [
+        user('u1'),
+        assistant(['call_a'], 'first'),
+        tool('call_a'),
+        assistant(['call_a', 'call_b'], 'second'),
+        tool('call_b'),
+        user('u2'),
+      ],
+      { dropOrphanResults: true },
+    );
+    const assistants = projected.filter(
+      (message) => message.role === 'assistant' && message.toolCalls.length > 0,
+    );
+    expect(assistants[0]?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_a']);
+    expect(assistants[1]?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_b']);
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
+
+  it('drops an assistant message left empty after removing duplicate tool calls', () => {
+    const projected = project(
+      [user('u1'), assistant(['call_a'], 'first'), tool('call_a'), assistant(['call_a']), user('u2')],
+      { dropOrphanResults: true },
+    );
+    expect(projected.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Property-based fuzz test
 // ---------------------------------------------------------------------------

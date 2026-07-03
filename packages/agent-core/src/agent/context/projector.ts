@@ -73,6 +73,8 @@ export type ProjectionAnomaly =
   | { readonly kind: 'tool_result_synthesized'; readonly toolCallId: string; readonly trailing: boolean }
   /** A result with no matching call anywhere was dropped (wire exits only). */
   | { readonly kind: 'orphan_tool_result_dropped'; readonly toolCallId: string }
+  /** A tool call whose id already appeared earlier was dropped (always). */
+  | { readonly kind: 'duplicate_tool_call_dropped'; readonly toolCallId: string }
   /** A leading non-user message was dropped so the first turn is user (strict). */
   | { readonly kind: 'leading_non_user_dropped'; readonly role: string }
   /** Two adjacent assistant turns were merged into one (strict). */
@@ -82,7 +84,10 @@ export type ProjectionAnomaly =
 
 export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
   let result = repairToolExchangeAdjacency(
-    mergeAdjacentUserMessages(history, options?.onAnomaly),
+    dedupeDuplicateToolCalls(
+      mergeAdjacentUserMessages(history, options?.onAnomaly),
+      options?.onAnomaly,
+    ),
     options,
   );
   if (options?.mergeConsecutiveAssistants === true) {
@@ -185,6 +190,43 @@ function repairToolExchangeAdjacency(
         });
       }
     }
+  }
+  return out;
+}
+
+// Strict providers reject a request whose assistant messages carry two
+// `tool_use` blocks with the same id ("tool_use ids must be unique"), and the
+// context state machine only ever records one result per id — so a duplicate
+// emitted by a (buggy) provider would strand the session behind a 400 that even
+// the strict resend cannot repair. Keep the first occurrence, drop the rest,
+// and drop an assistant message entirely when duplicates were all it carried.
+// Runs on every projection, before the adjacency repair, so pending-result
+// matching never sees the duplicate.
+function dedupeDuplicateToolCalls(
+  messages: readonly Message[],
+  onAnomaly?: (anomaly: ProjectionAnomaly) => void,
+): Message[] {
+  const seenToolCallIds = new Set<string>();
+  const out: Message[] = [];
+  for (const message of messages) {
+    if (message.role !== 'assistant' || message.toolCalls.length === 0) {
+      out.push(message);
+      continue;
+    }
+    const kept = message.toolCalls.filter((toolCall) => {
+      if (seenToolCallIds.has(toolCall.id)) {
+        onAnomaly?.({ kind: 'duplicate_tool_call_dropped', toolCallId: toolCall.id });
+        return false;
+      }
+      seenToolCallIds.add(toolCall.id);
+      return true;
+    });
+    if (kept.length === message.toolCalls.length) {
+      out.push(message);
+      continue;
+    }
+    if (kept.length === 0 && message.content.length === 0) continue;
+    out.push({ ...message, toolCalls: kept });
   }
   return out;
 }

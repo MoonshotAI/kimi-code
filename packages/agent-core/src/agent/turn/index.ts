@@ -552,6 +552,11 @@ export class TurnFlow {
         }
       }
     }
+    // A live turn must never end with recorded tool calls still awaiting
+    // results; if one does (a dispatch failure mid-batch broke the "every
+    // recorded call gets a result" invariant), close the exchange now so the
+    // context state machine cannot strand later messages in deferredMessages.
+    this.closeAbandonedToolExchange(ended);
     // Emit the terminal turn.ended and (for a standalone turn) release the active
     // turn in the SAME synchronous frame, so the session is observably idle the
     // instant turn.ended fires. A goal drive keeps the active turn across its
@@ -837,6 +842,29 @@ export class TurnFlow {
         }
         throw error;
       }
+    }
+  }
+
+  // Guarded so this repair can never turn a finished turn into a crash: a
+  // failure to close (e.g. record persistence still broken) is logged and the
+  // projection-level safeguards remain the last line of defense.
+  private closeAbandonedToolExchange(ended: TurnEndedEvent): void {
+    try {
+      const closed = this.agent.context.closeAbandonedToolExchange(
+        abandonedToolResultOutput(ended),
+      );
+      if (closed === 0) return;
+      this.agent.log.warn('closed abandoned tool exchange at turn end', {
+        turnId: ended.turnId,
+        reason: ended.reason,
+        closed,
+      });
+      this.agent.telemetry.track('tool_exchange_abandoned', {
+        reason: ended.reason,
+        closed,
+      });
+    } catch (error) {
+      this.agent.log.warn('failed to close abandoned tool exchange', { error });
     }
   }
 
@@ -1264,4 +1292,18 @@ function telemetryToolErrorType(result: ToolTelemetryResult): string {
 
 function toolResultText(result: ToolTelemetryResult): string {
   return toolOutputText(result.output);
+}
+
+// Output for a tool call abandoned by its turn (see closeAbandonedToolExchange):
+// name the cause so the model treats the gap as an interruption to reason about,
+// not a tool outcome. Mirrors the phrasing of the resume-time synthesis in
+// `ContextMemory`.
+function abandonedToolResultOutput(ended: TurnEndedEvent): string {
+  const cause =
+    ended.reason === 'cancelled'
+      ? 'the turn was cancelled'
+      : ended.reason === 'failed'
+        ? `the turn failed${ended.error !== undefined ? ` (${ended.error.message})` : ''}`
+        : 'the turn ended';
+  return `Tool call did not complete: ${cause} before its result was recorded. Do not assume the tool completed successfully.`;
 }
