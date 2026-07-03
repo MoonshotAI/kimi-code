@@ -18,10 +18,6 @@ export function useAuthGate({ client, authLogoRef }: UseAuthGateOptions) {
   const authReady = computed(() => client.authReady.value);
   const showAuthGate = computed(() => client.initialized.value && !authReady.value);
   const LOGIN_PATH = '/login';
-  // Routes that render without authentication. The design-system showcase is
-  // read-only and holds no user data, so it stays reachable (and deep-linkable)
-  // even before the app is OAuth-ready — matching the old static page behavior.
-  const AUTH_EXEMPT_PATHS = new Set(['/design-system']);
   const authReturnPath = ref<string | null>(null);
   let authLogoBlinkTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -38,10 +34,7 @@ export function useAuthGate({ client, authLogoRef }: UseAuthGateOptions) {
   watch(showAuthGate, (show) => {
     if (typeof window === 'undefined') return;
     if (show) {
-      if (
-        window.location.pathname !== LOGIN_PATH &&
-        !AUTH_EXEMPT_PATHS.has(window.location.pathname)
-      ) {
+      if (window.location.pathname !== LOGIN_PATH) {
         authReturnPath.value = currentPathWithSuffix();
         replaceBrowserPath(LOGIN_PATH);
       }

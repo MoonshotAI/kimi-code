@@ -1,24 +1,15 @@
 <script setup lang="ts">
-import { inject, onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { designSystemReturnPath } from '../router';
-import { sessionUrl } from '../lib/sessionRoute';
 
 const router = useRouter();
-const activeSessionId = inject('activeSessionId') as { value: string | null } | undefined;
 
 function close(): void {
-  // Replace (not push) the current /design-system history entry with the return
-  // URL, so the browser Back button goes to the page before the easter egg
-  // rather than reopening /design-system. Falls back to the active session URL
-  // for a direct deep link. Also sidesteps the in-page hash anchors that would
-  // trap router.back().
-  const fromEntry = designSystemReturnPath;
-  if (fromEntry && fromEntry !== '/') {
-    void router.replace(fromEntry);
-    return;
-  }
-  void router.replace(sessionUrl(activeSessionId?.value ?? undefined));
+  // Replace the current /design-system history entry with the URL captured at
+  // logo entry, so the browser Back button returns to the page before the
+  // easter egg rather than reopening /design-system.
+  void router.replace(designSystemReturnPath || '/');
 }
 
 let io: IntersectionObserver | null = null;
