@@ -28,6 +28,12 @@ const props = withDefaults(
 
 const resolvedUrl = ref<string>(props.fileId ? '' : props.url);
 let objectUrl: string | null = null;
+// Sequence guard + unmount flag: a reused component (e.g. queued thumbnails
+// keyed by index) can change fileId before a previous fetch resolves, and an
+// in-flight fetch can outlive the component. In both cases the stale response
+// must not win or leak its blob URL.
+let requestSeq = 0;
+let disposed = false;
 
 function revoke(): void {
   if (objectUrl !== null) {
@@ -37,6 +43,7 @@ function revoke(): void {
 }
 
 async function resolve(): Promise<void> {
+  const seq = ++requestSeq;
   revoke();
   if (!props.fileId) {
     resolvedUrl.value = props.url;
@@ -44,16 +51,25 @@ async function resolve(): Promise<void> {
   }
   try {
     const blob = await getKimiWebApi().getFileBlob(props.fileId);
-    objectUrl = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    if (disposed || seq !== requestSeq) {
+      URL.revokeObjectURL(url);
+      return;
+    }
+    objectUrl = url;
     resolvedUrl.value = objectUrl;
   } catch {
+    if (disposed || seq !== requestSeq) return;
     // Honest broken-media state beats a blank box if the authenticated fetch fails.
     resolvedUrl.value = props.url;
   }
 }
 
 watch(() => [props.fileId, props.url] as const, resolve, { immediate: true });
-onBeforeUnmount(revoke);
+onBeforeUnmount(() => {
+  disposed = true;
+  revoke();
+});
 </script>
 
 <template>
