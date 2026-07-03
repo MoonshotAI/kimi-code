@@ -151,7 +151,7 @@ describe('useAttachmentUpload', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue({ fileId: 'f_new', name: 'a.png', mediaType: 'image/png' });
     const att = setup(uploadImage);
     const blob = new Blob(['x'], { type: 'image/png' });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ blob: () => Promise.resolve(blob) }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) }));
 
     att.loadAttachments([{ kind: 'image', url: 'data:image/png;base64,AAAA', name: 'a.png' }]);
     expect(att.attachments.value).toHaveLength(1);
@@ -167,6 +167,29 @@ describe('useAttachmentUpload', () => {
   it('loadAttachments skips a fileId-less data URL when re-upload is unavailable', () => {
     const att = setup(undefined);
     att.loadAttachments([{ kind: 'image', url: 'data:image/png;base64,AAAA', name: 'a.png' }]);
+    expect(att.attachments.value).toHaveLength(0);
+  });
+
+  it('loadAttachments re-uploads a fileId-less http URL so it becomes resendable', async () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue({ fileId: 'f_http', name: 'x.png', mediaType: 'image/png' });
+    const att = setup(uploadImage);
+    const blob = new Blob(['x'], { type: 'image/png' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) }));
+
+    att.loadAttachments([{ kind: 'image', url: 'https://example.test/x.png', name: 'x.png' }]);
+    expect(att.attachments.value).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(att.attachments.value[0].fileId).toBe('f_http');
+  });
+
+  it('loadAttachments drops a fileId-less URL whose fetch fails', async () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue({ fileId: 'f_x', name: 'x.png', mediaType: 'image/png' });
+    const att = setup(uploadImage);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+
+    att.loadAttachments([{ kind: 'image', url: 'https://example.test/protected.png', name: 'protected.png' }]);
+    expect(att.attachments.value).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(att.attachments.value).toHaveLength(0);
   });
 

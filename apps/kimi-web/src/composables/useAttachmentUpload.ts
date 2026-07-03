@@ -218,8 +218,11 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     );
   }
 
-  function dataUrlToBlob(url: string): Promise<Blob> {
-    return fetch(url).then((r) => r.blob());
+  function urlToBlob(url: string): Promise<Blob> {
+    return fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`fetch failed: ${r.status}`);
+      return r.blob();
+    });
   }
 
   /** Refill the attachment strip from already-uploaded files (used when a queued
@@ -262,9 +265,12 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
             // Keep the fallback previewUrl (honest broken state if it 401s).
           });
         }
-      } else if (isData) {
-        // No fileId (e.g. an image the server base64-inlined): re-upload so the
-        // chip is actually resendable — otherwise handleSubmit silently drops it.
+      } else {
+        // No fileId (e.g. a server-base64-inlined image, or a URL-backed source
+        // from the wire/REST prompt path): re-upload the URL so the chip is
+        // actually resendable — otherwise handleSubmit silently drops it. If the
+        // URL can't be fetched (CORS / non-2xx) or upload is unavailable, skip
+        // the chip rather than show a misleading ready attachment.
         const upload = uploadImage();
         if (!upload) continue;
         const entry: Attachment = {
@@ -275,24 +281,24 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           uploading: true,
         };
         setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
-        void dataUrlToBlob(att.url)
+        void urlToBlob(att.url)
           .then((blob) => {
             const fname = name.includes('.') ? name : `${name}.${blob.type.split('/')[1] ?? 'bin'}`;
             return upload(blob, fname);
           })
           .then((result) => {
-            patchAttachment(sid, localId, {
-              uploading: false,
-              fileId: result?.fileId,
-              error: result === null,
-            });
+            if (result === null) {
+              const current = attachmentsBySession.value[sid] ?? [];
+              setForSession(sid, current.filter((a) => a.localId !== localId));
+              return;
+            }
+            patchAttachment(sid, localId, { uploading: false, fileId: result.fileId });
           })
           .catch(() => {
-            patchAttachment(sid, localId, { uploading: false, error: true });
+            const current = attachmentsBySession.value[sid] ?? [];
+            setForSession(sid, current.filter((a) => a.localId !== localId));
           });
       }
-      // No fileId and not a data URL — can't make resendable, skip rather than
-      // show a chip that handleSubmit would silently drop.
     }
   }
 
