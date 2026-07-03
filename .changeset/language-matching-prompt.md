@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Strengthen the system prompt's language rule so replies and reasoning follow the user's language even after long tool-output stretches, while repository artifacts keep project conventions.
+Promote the language-matching rule to a dedicated section in the system prompt, so replies and reasoning consistently follow the user's language through long English tool output, while repository artifacts keep project conventions.
