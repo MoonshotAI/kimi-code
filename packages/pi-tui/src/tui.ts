@@ -1388,6 +1388,91 @@ export class TUI extends Container {
 			return;
 		}
 
+		// Repaint the visible viewport in place with the tail of the new
+		// content, re-anchoring previousViewportTop to desiredTop. Used when
+		// the differential path cannot run safely or would push duplicate
+		// rows into scrollback. Emits no ESC[3J and never scrolls, so
+		// scrollback and the user's scroll position stay intact.
+		const repaintViewport = (desiredTop: number, reason: string): void => {
+			// Kitty image lines need multi-row placement; fall back to a
+			// destructive full render for that rare combination.
+			for (let r = 0; r < height; r++) {
+				const idx = desiredTop + r;
+				if (idx < newLines.length && isImageLine(newLines[idx]!)) {
+					logRedraw(`viewport repaint hit kitty image at line ${idx}`);
+					fullRender(true);
+					return;
+				}
+			}
+			logRedraw(`viewport repaint: ${reason}`);
+			let repaint = "\x1b[?2026h"; // Begin synchronized output
+			// Delete kitty images placed in the old visible viewport; images
+			// above it live in scrollback and are left alone. A multi-row
+			// image can straddle the viewport top: its id lives on the image
+			// line above prevViewportTop while its reserved rows are still
+			// visible, so widen the range to include such blocks — otherwise
+			// the stale overlay would survive the repaint and its id would
+			// drop out of previousKittyImageIds, never to be cleaned up.
+			let deleteFrom = prevViewportTop;
+			for (let k = 0; k < prevViewportTop; k++) {
+				const prevLine = this.previousLines[k] ?? "";
+				if (!isImageLine(prevLine)) continue;
+				const blockEnd = k + this.getKittyImageReservedRows(this.previousLines, k) - 1;
+				if (blockEnd >= prevViewportTop) {
+					deleteFrom = k;
+					break;
+				}
+			}
+			repaint += this.deleteChangedKittyImages(deleteFrom, this.previousLines.length - 1);
+			// Move the cursor to the top of the screen (old anchor still valid).
+			const cursorScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+			if (cursorScreenRow > 0) {
+				repaint += `\x1b[${cursorScreenRow}A`;
+			}
+			repaint += "\r";
+			// Rewrite every screen row; the last row gets no trailing \r\n,
+			// so this never scrolls the terminal.
+			for (let r = 0; r < height; r++) {
+				if (r > 0) repaint += "\r\n";
+				repaint += "\x1b[2K";
+				const idx = desiredTop + r;
+				if (idx < newLines.length) {
+					repaint += newLines[idx]!;
+				}
+			}
+			repaint += "\x1b[?2026l"; // End synchronized output
+			this.terminal.write(repaint);
+			// Re-anchor: screen row r now shows newLines[desiredTop + r].
+			this.cursorRow = Math.max(0, newLines.length - 1);
+			this.hardwareCursorRow = desiredTop + height - 1;
+			this.previousViewportTop = desiredTop;
+			this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
+			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.previousLines = newLines;
+			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+			this.previousWidth = width;
+			this.previousHeight = height;
+		};
+
+		// Rewinding the viewport anchor below the scrollback high-water mark
+		// (previousViewportTop) repaints rows that scrollback already holds,
+		// and the next scroll commits them again — every rewind duplicates
+		// its span. So a shrink normally keeps the anchor pinned: the content
+		// bottom hovers above the screen bottom with a bounded blank gap that
+		// the next growth naturally fills. The single exception is a collapse
+		// — the content ends at or above the screen top (compaction, clears),
+		// where nothing sensible could be shown otherwise. There the rewind
+		// is unavoidable, and the content has changed so drastically that the
+		// duplicated span is not recognizable as such.
+		const desiredViewportTop = Math.max(0, newLines.length - height);
+		if (prevViewportTop > desiredViewportTop && newLines.length <= prevViewportTop) {
+			repaintViewport(
+				desiredViewportTop,
+				`re-anchor after collapse (viewportTop ${prevViewportTop} -> ${desiredViewportTop}, newLines=${newLines.length})`,
+			);
+			return;
+		}
+
 		// Find first and last changed lines
 		let firstChanged = -1;
 		let lastChanged = -1;
@@ -1421,80 +1506,6 @@ export class TUI extends Container {
 		if (firstChanged === -1) {
 			this.positionHardwareCursor(cursorPos, newLines.length);
 			this.previousViewportTop = prevViewportTop;
-			this.previousHeight = height;
-			return;
-		}
-
-		// Re-anchor the viewport when content shrinks. previousViewportTop
-		// only ever grows during normal rendering, so after a shrink the
-		// content bottom can sit above the screen bottom, leaving dead rows
-		// that nothing repaints (upstream masked this by frequently doing
-		// destructive full redraws, which re-anchored as a side effect).
-		// Repaint the visible viewport in place with the tail of the new
-		// content: the input area snaps back to the screen bottom (or the
-		// content top-anchors when shorter than the screen), while scrollback
-		// and the user's scroll position stay intact (no ESC[3J).
-		const desiredViewportTop = Math.max(0, newLines.length - height);
-		if (prevViewportTop > desiredViewportTop) {
-			// Kitty image lines need multi-row placement; fall back to a
-			// destructive full render for that rare combination.
-			for (let r = 0; r < height; r++) {
-				const idx = desiredViewportTop + r;
-				if (idx < newLines.length && isImageLine(newLines[idx]!)) {
-					logRedraw(`viewport repaint hit kitty image at line ${idx}`);
-					fullRender(true);
-					return;
-				}
-			}
-			logRedraw(
-				`viewport repaint: re-anchor after shrink (viewportTop ${prevViewportTop} -> ${desiredViewportTop}, newLines=${newLines.length})`,
-			);
-			let repaint = "\x1b[?2026h"; // Begin synchronized output
-			// Delete kitty images placed in the old visible viewport; images
-			// above it live in scrollback and are left alone. A multi-row
-			// image can straddle the viewport top: its id lives on the image
-			// line above prevViewportTop while its reserved rows are still
-			// visible, so widen the range to include such blocks — otherwise
-			// the stale overlay would survive the repaint and its id would
-			// drop out of previousKittyImageIds, never to be cleaned up.
-			let deleteFrom = prevViewportTop;
-			for (let k = 0; k < prevViewportTop; k++) {
-				const prevLine = this.previousLines[k] ?? "";
-				if (!isImageLine(prevLine)) continue;
-				const blockEnd = k + this.getKittyImageReservedRows(this.previousLines, k) - 1;
-				if (blockEnd >= prevViewportTop) {
-					deleteFrom = k;
-					break;
-				}
-			}
-			repaint += this.deleteChangedKittyImages(deleteFrom, this.previousLines.length - 1);
-			// Move the cursor to the top of the screen (old anchor still valid).
-			const cursorScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
-			if (cursorScreenRow > 0) {
-				repaint += `\x1b[${cursorScreenRow}A`;
-			}
-			repaint += "\r";
-			// Rewrite every screen row; the last row gets no trailing \r\n,
-			// so this never scrolls the terminal.
-			for (let r = 0; r < height; r++) {
-				if (r > 0) repaint += "\r\n";
-				repaint += "\x1b[2K";
-				const idx = desiredViewportTop + r;
-				if (idx < newLines.length) {
-					repaint += newLines[idx]!;
-				}
-			}
-			repaint += "\x1b[?2026l"; // End synchronized output
-			this.terminal.write(repaint);
-			// Re-anchor: screen row r now shows newLines[desiredViewportTop + r].
-			this.cursorRow = Math.max(0, newLines.length - 1);
-			this.hardwareCursorRow = desiredViewportTop + height - 1;
-			this.previousViewportTop = desiredViewportTop;
-			this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
-			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousLines = newLines;
-			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
-			this.previousWidth = width;
 			this.previousHeight = height;
 			return;
 		}
@@ -1575,17 +1586,33 @@ export class TUI extends Container {
 				this.previousViewportTop = prevViewportTop;
 				return;
 			}
-			// The remaining visible changes would be entirely in the deleted
-			// tail region. The shrink re-anchor repaint above handles every
-			// case where the content bottom moves off the screen bottom, so
-			// this should be unreachable; keep a destructive fallback rather
-			// than let the differential path below desync on an empty render
-			// range (empty loop + untracked tail-clear scrolling).
+			// The remaining visible changes are entirely in the deleted tail
+			// region. Reachable while a shrink is pinned (debounced re-anchor
+			// pending): repaint the window at the pinned anchor, which clears
+			// the deleted rows without scrolling or rewinding.
 			if (visibleFirstChanged >= newLines.length) {
-				logRedraw(
-					`unexpected deleted-tail clamp (visibleFirstChanged=${visibleFirstChanged} >= ${newLines.length})`,
+				repaintViewport(
+					prevViewportTop,
+					`deleted tail within pinned viewport (newLines=${newLines.length}, viewportTop=${prevViewportTop})`,
 				);
-				fullRender(true);
+				return;
+			}
+			// A length change above the viewport shifts every line below it.
+			// Painting the shifted lines through the screen would push rows
+			// that are already in scrollback out again, stacking a duplicate
+			// copy there on every shrink/grow cycle (e.g. streaming content
+			// oscillating). Repaint the visible viewport in place instead:
+			// nothing scrolls, scrollback keeps the stale old version, and
+			// the screen shows the fresh tail. The anchor never rewinds here
+			// (that would duplicate as well): it stays pinned until the
+			// debounced shrink re-anchor above decides to rewind, and only
+			// advances when the content has outgrown the pinned window.
+			if (newLines.length !== this.previousLines.length) {
+				const repaintTop = Math.max(desiredViewportTop, prevViewportTop);
+				repaintViewport(
+					repaintTop,
+					`re-anchor after above-viewport length change (${this.previousLines.length} -> ${newLines.length}, viewportTop ${prevViewportTop} -> ${repaintTop})`,
+				);
 				return;
 			}
 			logRedraw(`clamped firstChanged ${firstChanged} -> ${visibleFirstChanged} (viewportTop=${prevViewportTop})`);

@@ -744,7 +744,7 @@ describe("TUI differential rendering", () => {
 		assert.strictEqual(
 			tui.fullRedraws,
 			redrawsBeforeSwitch,
-			"Branch switch should not trigger a full redraw (re-anchored in place)",
+			"Branch switch should not trigger a full redraw (repainted in place)",
 		);
 
 		const viewport = terminal.getViewport();
@@ -755,21 +755,21 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
-		// Each shrink re-anchors the viewport so the content bottom stays on
-		// the bottom screen row; the tail of the chat plus the editor fill
-		// the screen with no dead rows. Stale "Chat 12/13/14" rows remain in
-		// scrollback but are not visible.
+		// Partial shrinks keep the viewport anchor pinned (rewinding would
+		// duplicate scrollback rows), so the remaining content sits at the
+		// top of the window with blank rows below. The stale "Chat 12/13/14"
+		// rows remain in scrollback but are not visible.
 		assert.deepStrictEqual(viewport, [
-			"Chat 5",
-			"Chat 6",
-			"Chat 7",
-			"Chat 8",
-			"Chat 9",
-			"Chat 10",
-			"Chat 11",
-			"Editor 0",
 			"Editor 1",
 			"Editor 2",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"",
 		]);
 
 		tui.stop();

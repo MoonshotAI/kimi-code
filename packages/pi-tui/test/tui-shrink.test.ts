@@ -179,10 +179,10 @@ describe("TUI shrinking content", () => {
 		tui.stop();
 	});
 
-	it("re-anchors the input box to the screen bottom when content shrinks", async () => {
-		// Regression: previousViewportTop only ever grows, so after a shrink
-		// (e.g. collapsing expanded tool output) the content bottom hovered
-		// mid-screen with dead rows below, and nothing ever re-anchored it.
+	it("re-anchors the input box to the screen bottom when content collapses past the viewport top", async () => {
+		// Regression: previousViewportTop only ever grows; when content
+		// collapses to or above the viewport top (compaction, clears) the
+		// viewport must rewind so the tail of the new content is shown.
 		const terminal = new VirtualTerminal(40, 10);
 		const tui = new TUI(terminal);
 		const content = new Lines([]);
@@ -193,8 +193,8 @@ describe("TUI shrinking content", () => {
 		await terminal.waitForRender();
 		assert.ok(terminal.getViewport()[9]!.includes("[INPUT-BOX]"));
 
-		// Shrink 60 -> 30 lines; content is still taller than the screen, so
-		// the tail must stay glued to the screen bottom.
+		// Collapse 60 -> 30 lines (30 <= viewportTop 50); content is still
+		// taller than the screen, so the tail must land at the screen bottom.
 		content.setLines([...Array.from({ length: 29 }, (_, i) => `new-${i}`), "[INPUT-BOX]"]);
 		tui.requestRender();
 		await terminal.waitForRender();
@@ -211,6 +211,91 @@ describe("TUI shrinking content", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 		assert.ok(terminal.getViewport()[9]!.includes("[INPUT-BOX]x"));
+
+		tui.stop();
+	});
+
+	it("does not duplicate scrollback rows on a shrink/grow cycle with above-viewport changes", async () => {
+		// Regression: a shrink re-anchor rewinds viewportTop; if the next
+		// grow with an above-viewport change painted from the rewound top
+		// through the end, rows already in scrollback were pushed out again,
+		// stacking a duplicate copy there on every oscillation.
+		const terminal = new VirtualTerminal(60, 10);
+		const tui = new TUI(terminal);
+		const content = new Lines([]);
+		tui.addChild(content);
+
+		const base = (status: string, tail: string[]): string[] => [
+			...Array.from({ length: 5 }, (_, i) => `L${i}`),
+			status,
+			...Array.from({ length: 48 }, (_, i) => `M${i}`),
+			...tail,
+			"[INPUT]",
+		];
+
+		content.setLines(base("status-A", ["** marker message **"]));
+		tui.start();
+		await terminal.waitForRender();
+
+		// Shrink by a few rows (activity pane collapsing) -> re-anchor.
+		content.setLines(base("status-A", ["** marker message **"]).slice(0, -4).concat(["[INPUT]"]));
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		// Grow back with an above-viewport change (reflow/status update).
+		content.setLines(base("status-B", ["** marker message **"]));
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const buffer = terminal.getScrollBuffer();
+		for (const marker of ["M37", "M39", "** marker message **"]) {
+			const count = buffer.filter((line) => line.includes(marker)).length;
+			assert.strictEqual(count, 1, `"${marker}" should appear exactly once, got ${count}`);
+		}
+		const viewport = terminal.getViewport();
+		assert.ok(viewport[9]!.includes("[INPUT]"), "input box should sit on the bottom screen row");
+		assert.ok(viewport.some((line) => line.includes("** marker message **")));
+
+		tui.stop();
+	});
+
+	it("keeps the viewport pinned on partial shrinks and lets growth refill the gap", async () => {
+		// Rewinding the anchor would repaint rows scrollback already holds
+		// and duplicate them on the next scroll, so a partial shrink stays
+		// pinned: the input box hovers above a bounded blank gap that the
+		// next growth naturally fills. No rewind, no duplication.
+		const terminal = new VirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const content = new Lines([]);
+		tui.addChild(content);
+
+		content.setLines([...Array.from({ length: 59 }, (_, i) => `old-${i}`), "[INPUT-BOX]"]);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport()[9]!.includes("[INPUT-BOX]"));
+
+		// Shrink by 4 rows; content still spans the pinned viewport (56 > 50).
+		content.setLines([...Array.from({ length: 55 }, (_, i) => `old-${i}`), "[INPUT-BOX]"]);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		// The viewport stays pinned: the input box hovers above blank rows.
+		const pinned = terminal.getViewport();
+		assert.ok(pinned[5]!.includes("[INPUT-BOX]"), `expected pinned gap, got: ${JSON.stringify(pinned)}`);
+		assert.strictEqual(pinned[9], "", "rows below the content should be blank while pinned");
+
+		// Growth fills the gap; the input box returns to the bottom row and
+		// nothing was duplicated in the buffer along the way.
+		content.setLines([...Array.from({ length: 59 }, (_, i) => `old-${i}`), "[INPUT-BOX]"]);
+		tui.requestRender();
+		await terminal.waitForRender();
+		const grown = terminal.getViewport();
+		assert.ok(grown[9]!.includes("[INPUT-BOX]"), `input box should be back at the bottom, got: ${JSON.stringify(grown)}`);
+		const buffer = terminal.getScrollBuffer();
+		for (const marker of ["old-40", "old-54", "[INPUT-BOX]"]) {
+			const count = buffer.filter((line) => line.includes(marker)).length;
+			assert.strictEqual(count, 1, `"${marker}" should appear exactly once, got ${count}`);
+		}
 
 		tui.stop();
 	});
