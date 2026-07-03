@@ -48,6 +48,8 @@ export interface AppState {
   theme: ThemeName;
   version: string;
   editorCommand: string | null;
+  /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
+  disablePasteBurst?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   availableModels: Record<string, ModelAlias>;

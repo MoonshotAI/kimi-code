@@ -161,6 +161,7 @@ function installState(overrides: Partial<UpdateInstallState> = {}): UpdateInstal
 function tuiConfig(overrides: Partial<TuiConfig> = {}): TuiConfig {
   return {
     theme: 'auto',
+    disablePasteBurst: false,
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
@@ -598,6 +599,27 @@ describe('runUpdatePreflight', () => {
         notifiedAt: null,
       }),
     }));
+  });
+
+  it('win32 background auto-update hides the console window', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.readUpdateInstallState.mockResolvedValue(installState());
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    mockSpawnExit(0);
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      const { options } = captureOutput();
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+      expect(mocks.spawn).toHaveBeenCalledWith(
+        'npm.cmd',
+        ['install', '-g', '@moonshot-ai/kimi-code@0.5.0'],
+        { detached: true, stdio: 'ignore', shell: true, windowsHide: true },
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
   });
 
   it('tracks and logs successful background update installs', async () => {
