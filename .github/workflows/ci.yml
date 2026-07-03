@@ -44,6 +44,24 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test
 
+  # pi-tui's suite runs on node:test (not vitest), so the root `pnpm run test`
+  # does not execute it; it needs its own job.
+  test-pi-tui:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @moonshot-ai/pi-tui test
+
   test-windows:
     runs-on: windows-latest
     # Temporarily disabled while Windows tests are being stabilized.
