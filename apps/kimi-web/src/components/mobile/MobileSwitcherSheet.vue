@@ -93,6 +93,45 @@ function toggleCollapse(id: string): void {
   wsMenuFor.value = null;
 }
 
+// ---------------------------------------------------------------------------
+// In-group expand / collapse (show-more pagination) — mirrors the desktop
+// sidebar. Local to the sheet; a refresh reloads only the first page.
+// ---------------------------------------------------------------------------
+const expandedIds = ref<Set<string>>(new Set());
+
+function isExpanded(id: string): boolean {
+  return expandedIds.value.has(id);
+}
+
+function toggleExpand(id: string): void {
+  const next = new Set(expandedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedIds.value = next;
+}
+
+function visibleSessions(g: WorkspaceGroup): Session[] {
+  if (isExpanded(g.workspace.id)) return g.sessions;
+  const head = g.sessions.slice(0, g.initialCount);
+  // Keep the active session visible when it's beyond the first page (e.g.
+  // selected via search or a deep link), mirroring the desktop sidebar.
+  if (props.activeId && !head.some((s) => s.id === props.activeId)) {
+    const active = g.sessions.find((s) => s.id === props.activeId);
+    if (active) return [...head, active];
+  }
+  return head;
+}
+
+function onLoadMore(id: string): void {
+  // Loading more should reveal the new rows immediately.
+  if (!expandedIds.value.has(id)) {
+    const next = new Set(expandedIds.value);
+    next.add(id);
+    expandedIds.value = next;
+  }
+  emit('loadMore', id);
+}
+
 function wsAttention(id: string): number {
   return props.attentionByWorkspace[id] ?? 0;
 }
@@ -198,27 +237,23 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
             class="att"
           >{{ wsAttention(g.workspace.id) }}</span>
 
-          <Tooltip :text="t('sidebar.options')">
-            <IconButton
-              size="lg"
-              class="mgh-more"
-              :label="t('sidebar.options')"
-              @click.stop="toggleWsMenu(g.workspace.id)"
-            >
-              <Icon name="dots-vertical" size="md" />
-            </IconButton>
-          </Tooltip>
+          <IconButton
+            size="lg"
+            class="mgh-more"
+            :label="t('sidebar.options')"
+            @click.stop="toggleWsMenu(g.workspace.id)"
+          >
+            <Icon name="dots-horizontal" size="md" />
+          </IconButton>
 
-          <Tooltip :text="t('workspace.newInGroup')">
-            <IconButton
-              size="lg"
-              class="mgh-add"
-              :label="t('workspace.newInGroup')"
-              @click.stop="onCreateInWorkspace(g.workspace.id)"
-            >
-              <Icon name="plus" size="md" />
-            </IconButton>
-          </Tooltip>
+          <IconButton
+            size="lg"
+            class="mgh-add"
+            :label="t('workspace.newInGroup')"
+            @click.stop="onCreateInWorkspace(g.workspace.id)"
+          >
+            <Icon name="plus" size="md" />
+          </IconButton>
 
           <!-- Workspace menu: copy path / delete (two-step confirm) -->
           <Menu v-if="wsMenuFor === g.workspace.id" class="kmenu wsmenu" @click.stop>
@@ -232,7 +267,7 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
         <div v-show="!isCollapsed(g.workspace.id)">
           <div v-if="g.sessions.length === 0" class="mempty small">{{ t('sidebar.noSessions') }}</div>
           <div
-            v-for="s in g.sessions"
+            v-for="s in visibleSessions(g)"
             :key="s.id"
             class="srow"
             :class="{ cur: s.id === activeId }"
@@ -243,16 +278,14 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
               <div class="s">{{ s.time }}</div>
             </div>
             <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>
-            <Tooltip :text="t('sidebar.options')">
-              <IconButton
-                size="lg"
-                class="kb"
-                :label="t('sidebar.options')"
-                @click.stop="toggleMenu(s.id)"
-              >
-                <Icon name="dots-vertical" size="md" />
-              </IconButton>
-            </Tooltip>
+            <IconButton
+              size="lg"
+              class="kb"
+              :label="t('sidebar.options')"
+              @click.stop="toggleMenu(s.id)"
+            >
+              <Icon name="dots-horizontal" size="md" />
+            </IconButton>
 
             <!-- Kebab menu -->
             <Menu v-if="menuFor === s.id" class="kmenu" @click.stop>
@@ -265,12 +298,24 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
             type="button"
             class="mshow-more"
             :disabled="g.loadingMore"
-            @click.stop="emit('loadMore', g.workspace.id)"
+            @click.stop="onLoadMore(g.workspace.id)"
           >
             {{
               g.loadingMore
                 ? t('sidebar.loadingMore')
                 : t('sidebar.showMore', { count: Math.max(0, g.workspace.sessionCount - g.sessions.length) })
+            }}
+          </button>
+          <button
+            v-if="g.sessions.length > g.initialCount"
+            type="button"
+            class="mshow-more"
+            @click.stop="toggleExpand(g.workspace.id)"
+          >
+            {{
+              isExpanded(g.workspace.id)
+                ? t('sidebar.showLess')
+                : t('sidebar.showAll', { count: g.sessions.length - g.initialCount })
             }}
           </button>
         </div>

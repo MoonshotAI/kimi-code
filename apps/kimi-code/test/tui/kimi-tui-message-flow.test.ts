@@ -401,7 +401,6 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     harness.track.mockClear();
 
-    driver.state.editor.handleInput('\u001B[106;5u');
     driver.state.editor.handleInput('\u001F');
     delete process.env['VISUAL'];
     delete process.env['EDITOR'];
@@ -409,7 +408,6 @@ describe('KimiTUI message flow', () => {
     driver.state.editor.onToggleToolExpand?.();
     driver.state.editor.onTextPaste?.();
 
-    expect(harness.track).toHaveBeenCalledWith('shortcut_newline', undefined);
     expect(harness.track).toHaveBeenCalledWith('undo', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_editor', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_expand', undefined);
@@ -1665,7 +1663,7 @@ command = "vim"
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
-  it('does not persist bash input to input history', async () => {
+  it('persists bash input to input history with a leading !', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
     driver.state.appState.inputMode = 'bash';
@@ -1673,7 +1671,7 @@ command = "vim"
 
     driver.handleUserInput('ls');
 
-    expect(driver.persistInputHistory).not.toHaveBeenCalled();
+    expect(driver.persistInputHistory).toHaveBeenCalledWith('!ls');
   });
 
   it('persists normal input to input history', async () => {

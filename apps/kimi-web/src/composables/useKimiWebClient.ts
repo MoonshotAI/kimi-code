@@ -33,7 +33,7 @@ import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
-import { useWorkspaceState } from './client/useWorkspaceState';
+import { SESSIONS_INITIAL_PAGE_SIZE, useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
@@ -334,6 +334,9 @@ export interface ExtendedState extends KimiClientState {
    *  the end of the last fetched page so a deep-linked older session appended
    *  out of band does not shift the cursor and skip intervening sessions. */
   sessionsCursorByWorkspace: Record<string, string | undefined>;
+  /** First-page capacity per workspace (sessions loaded on first paint, floored
+   *  at one full page). Drives the sidebar's in-group show-less collapse target. */
+  sessionsInitialCountByWorkspace: Record<string, number>;
   /** True once every session has been loaded (after a search-triggered full drain). */
   sessionsFullyLoaded: boolean;
 }
@@ -375,6 +378,7 @@ const rawState: ExtendedState = reactive({
   sessionsHasMoreByWorkspace: {},
   sessionsLoadingMoreByWorkspace: {},
   sessionsCursorByWorkspace: {},
+  sessionsInitialCountByWorkspace: {},
   sessionsFullyLoaded: false,
 });
 
@@ -503,6 +507,7 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  dropWsSubscription(sessionId);
   // Drain the streaming-event batcher too. unsubscribe() stops future server
   // frames, but events already queued for the next animation frame would
   // otherwise survive and be reduced AFTER the maps below are cleared —
@@ -1158,7 +1163,9 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       // before live deltas (aligned by wire offset) start appending to it.
       eventConn.seedSnapshot(sessionId, snap);
       eventConn.subscribe(sessionId, { seq: snap.asOfSeq, epoch: snap.epoch });
+      retainWsSubscription(sessionId);
     }
+    sessionsWithStaleCursor.delete(sessionId);
     void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
@@ -1181,6 +1188,65 @@ function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
 }
 
+// ---------------------------------------------------------------------------
+// WS subscription cap (LRU eviction)
+// ---------------------------------------------------------------------------
+//
+// Every opened session subscribes to its WS event stream, and the socket keeps
+// subscriptions across reconnects (re-sending them in `client_hello`). Without
+// a cap, a user who has opened hundreds of sessions stays subscribed to all of
+// them: every background session's status/meta/usage event then flows through
+// the reducer and dirties the sidebar computeds — the root cause of "the UI
+// gets sluggish once I have a lot of sessions".
+//
+// Keep only the most-recently-opened sessions subscribed (MRU order, index 0 =
+// newest). The active session is always retained.
+//
+// Eviction drops the live WS subscription but keeps the session's cursor so a
+// quick re-open can resume cheaply. However, a cursor kept across an eviction
+// can go stale: some session events (`event.session.status_changed`,
+// `session.meta.updated`, ...) are broadcast to EVERY connection (see
+// `isGlobalSessionEvent` on the server) and still advance `lastSeqBySession`
+// for an unsubscribed session. If a session emits per-session durable events
+// while evicted and then a global event, the cursor jumps past the missed
+// events. Evicted sessions are therefore tracked in `sessionsWithStaleCursor`;
+// when one is re-opened we rebuild from a snapshot (see `reopenSession`) rather
+// than resume from a cursor that may have skipped events.
+const MAX_WS_SUBSCRIPTIONS = 4;
+const wsSubscriptionOrder: string[] = [];
+const sessionsWithStaleCursor = new Set<string>();
+
+function retainWsSubscription(sessionId: string): void {
+  const idx = wsSubscriptionOrder.indexOf(sessionId);
+  if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
+  wsSubscriptionOrder.unshift(sessionId);
+  // Evict the oldest entries past the cap, skipping the active session. The
+  // active session is NOT guaranteed to sit at the front: first-time opens only
+  // retain after an awaited snapshot, so rapid clicks can complete out of order
+  // and leave the active session at the tail. Skipping it (rather than breaking
+  // when the tail is active) keeps the cap effective.
+  while (wsSubscriptionOrder.length > MAX_WS_SUBSCRIPTIONS) {
+    let victimIdx = -1;
+    for (let i = wsSubscriptionOrder.length - 1; i >= 0; i--) {
+      if (wsSubscriptionOrder[i] !== rawState.activeSessionId) {
+        victimIdx = i;
+        break;
+      }
+    }
+    if (victimIdx === -1) break;
+    const [victim] = wsSubscriptionOrder.splice(victimIdx, 1);
+    if (victim === undefined) break;
+    eventConn?.unsubscribe(victim);
+    sessionsWithStaleCursor.add(victim);
+  }
+}
+
+function dropWsSubscription(sessionId: string): void {
+  const idx = wsSubscriptionOrder.indexOf(sessionId);
+  if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
+  sessionsWithStaleCursor.delete(sessionId);
+}
+
 function subscribeToSessionEvents(sessionId: string): void {
   connectEventsIfNeeded();
   if (eventConn) {
@@ -1192,7 +1258,27 @@ function subscribeToSessionEvents(sessionId: string): void {
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
+    retainWsSubscription(sessionId);
   }
+}
+
+/** Re-open an already-loaded session. If it was evicted from the subscription
+ *  cap since it was last open, rebuild from a snapshot: resuming from the kept
+ *  cursor would skip the per-session events that arrived while unsubscribed,
+ *  and replaying from seq 0 would make the projector regenerate message ids and
+ *  duplicate the already-loaded transcript. Otherwise just re-subscribe from the
+ *  tracked cursor.
+ *
+ * The stale marker is only read here; `syncSessionFromSnapshot` clears it once
+ * the snapshot succeeds. If the snapshot fails transiently the marker stays, so
+ * the next re-open retries the snapshot instead of falling back to a cursor
+ * that may have skipped events while unsubscribed. */
+async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
+  if (sessionsWithStaleCursor.has(sessionId)) {
+    return syncSessionFromSnapshot(sessionId);
+  }
+  subscribeToSessionEvents(sessionId);
+  return 'ok';
 }
 
 // ---------------------------------------------------------------------------
@@ -2002,6 +2088,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
     sessions: byId.get(w.id) ?? [],
     hasMore: rawState.sessionsHasMoreByWorkspace[w.id] ?? false,
     loadingMore: rawState.sessionsLoadingMoreByWorkspace[w.id] ?? false,
+    initialCount: rawState.sessionsInitialCountByWorkspace[w.id] ?? SESSIONS_INITIAL_PAGE_SIZE,
   }));
 });
 
@@ -2120,7 +2207,7 @@ const workspaceState = useWorkspaceState(rawState, {
   nextOptimisticMsgId,
   getEventConn: () => eventConn,
   syncSessionFromSnapshot,
-  subscribeToSessionEvents,
+  reopenSession,
   hasLoadedMessages,
   refreshSessionStatus,
   persistSessionProfile,

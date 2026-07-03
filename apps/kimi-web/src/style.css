@@ -213,15 +213,12 @@ summary {
 
 /* -- icon primitive (design-system §02) -------------------------------------
    Shared by the <Icon> component and iconSvg() v-html strings (lib/icons.ts).
-   non-scaling-stroke keeps the 1.5px stroke identical whether an icon's source
-   grid is 16, 24 or 12, so every icon renders at a uniform weight. */
+   Icons are Remix Icon (fill="currentColor" on a 24x24 grid), so colour follows
+   text and the rendered size comes from the width/height attributes. */
 .kw-icon {
   display: inline-block;
   flex: none;
   vertical-align: -0.15em;
-}
-.kw-icon > * {
-  vector-effect: non-scaling-stroke;
 }
 
 /* color-scheme drives UA-rendered parts (scrollbars, form controls, etc.).

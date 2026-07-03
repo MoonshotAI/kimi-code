@@ -80,7 +80,7 @@ const AskUserQuestionInputSchemaWithBackground = AskUserQuestionInputBaseSchema.
     .boolean()
     .default(false)
     .describe(
-      'Set true to ask in the background and return immediately with a background task_id. Use TaskOutput to read the answer later.',
+      'Set true to ask in the background and return immediately with a background task_id; you are notified automatically when the user answers — do not poll with TaskOutput while the question is pending.',
     ),
 });
 

@@ -70,8 +70,9 @@ export class FullCompaction {
   private readonly observedMaxContextTokensByModel = new Map<string, number>();
   // Token count right after the last successful compaction. While no new
   // content has been appended (tokenCountWithPending <= this value), the
-  // history is already in its minimal compacted form ([kept user prompts,
-  // summary]); re-compacting would only nest summaries, so
+  // history is already in its minimal compacted form ([kept user prompts
+  // (possibly split around an elision marker), summary]); re-compacting would
+  // only nest summaries, so
   // checkAutoCompaction skips in that case even if an observed overflow
   // limit still flags the context as oversized.
   private lastCompactedTokenCount: number | null = null;
@@ -411,8 +412,15 @@ export class FullCompaction {
       let overflowShrinkCount = 0;
       let emptyOrTruncatedShrinkCount = 0;
       while (true) {
+        // A request-building projection: close still-open calls in the sliced
+        // prefix (synthesizeMissing) and drop stray results with no call anywhere
+        // (dropOrphanResults), so the summarizer request cannot be rejected by a
+        // strict provider even when the history carries a legacy-restore orphan.
         const messages = [
-          ...this.agent.context.project(historyForModel, { synthesizeMissing: true }),
+          ...this.agent.context.project(historyForModel, {
+            synthesizeMissing: true,
+            dropOrphanResults: true,
+          }),
           createUserMessage(instruction),
         ];
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);

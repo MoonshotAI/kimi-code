@@ -30,17 +30,15 @@ defineEmits<{ close: [] }>();
       <span v-if="subtitle" class="ui-panel-header__sub">{{ subtitle }}</span>
     </Tooltip>
     <slot />
-    <Tooltip :text="closeLabel">
-      <IconButton
-        v-if="closable"
-        class="ui-panel-header__close"
-        size="sm"
-        :label="closeLabel"
-        @click="$emit('close')"
-      >
-        <Icon name="close" size="sm" />
-      </IconButton>
-    </Tooltip>
+    <IconButton
+      v-if="closable"
+      class="ui-panel-header__close"
+      size="sm"
+      :label="closeLabel"
+      @click="$emit('close')"
+    >
+      <Icon name="close" size="sm" />
+    </IconButton>
   </div>
 </template>
 

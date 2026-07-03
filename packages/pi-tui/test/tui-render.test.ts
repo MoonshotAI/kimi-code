@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
+import { Text } from "../src/components/text.ts";
 import {
 	deleteKittyImage,
 	encodeKitty,
@@ -9,7 +10,7 @@ import {
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
-import { type Component, TUI } from "../src/tui.ts";
+import { type Component, Container, TUI } from "../src/tui.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {
@@ -657,7 +658,7 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 
-	it("full re-renders when deleted lines move the viewport upward", async () => {
+	it("re-anchors without a full redraw when deleted lines move the viewport upward", async () => {
 		const terminal = new VirtualTerminal(20, 5);
 		const tui = new TUI(terminal);
 		const component = new TestComponent();
@@ -673,7 +674,7 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.ok(tui.fullRedraws > initialRedraws, "Shrink should trigger a full redraw");
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "Shrink should re-anchor in place, not full-redraw");
 		assert.deepStrictEqual(terminal.getViewport(), ["Line 2", "Line 3", "Line 4", "Line 5", "Line 6"]);
 
 		tui.stop();
@@ -695,7 +696,8 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.ok(tui.fullRedraws > initialRedraws, "Shrink should reset the viewport with a full redraw");
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "Shrink should re-anchor in place, not full-redraw");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 0", "Line 1", "", "", ""]);
 		const redrawsAfterShrink = tui.fullRedraws;
 
 		component.lines = ["Line 0", "Line 1", "Line 2"];
@@ -742,7 +744,7 @@ describe("TUI differential rendering", () => {
 		assert.strictEqual(
 			tui.fullRedraws,
 			redrawsBeforeSwitch,
-			"Branch switch should not trigger a full redraw (clamped to viewport)",
+			"Branch switch should not trigger a full redraw (re-anchored in place)",
 		);
 
 		const viewport = terminal.getViewport();
@@ -753,20 +755,21 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
-		// After clamping, the viewport keeps its previous scroll position
-		// (prevViewportTop=13) rather than resetting to the new content bottom.
-		// The stale "Chat 12/13/14" rows remain in scrollback but are not visible.
+		// Each shrink re-anchors the viewport so the content bottom stays on
+		// the bottom screen row; the tail of the chat plus the editor fill
+		// the screen with no dead rows. Stale "Chat 12/13/14" rows remain in
+		// scrollback but are not visible.
 		assert.deepStrictEqual(viewport, [
+			"Chat 5",
+			"Chat 6",
+			"Chat 7",
+			"Chat 8",
+			"Chat 9",
+			"Chat 10",
+			"Chat 11",
+			"Editor 0",
 			"Editor 1",
 			"Editor 2",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
 		]);
 
 		tui.stop();
@@ -798,5 +801,60 @@ describe("TUI scrollback preservation", () => {
 		assert.ok(!writes.includes("\x1b[2J"), "should not full redraw (no ESC[2J)");
 
 		tui.stop();
+	});
+});
+
+describe("Container width clamping", () => {
+	it("clamps non-positive widths to 1 before rendering children", () => {
+		const container = new Container();
+		const received: number[] = [];
+		container.addChild({
+			render(width: number): string[] {
+				received.push(width);
+				return [];
+			},
+			invalidate(): void {},
+		});
+		container.render(0);
+		container.render(-3);
+		container.render(5);
+		assert.deepStrictEqual(received, [1, 1, 5]);
+	});
+});
+
+describe("TUI overwide line handling", () => {
+	it("truncates lines wider than the terminal instead of throwing", async () => {
+		const terminal = new VirtualTerminal(4, 10);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		component.lines = ["ok"];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		// Switch to overwide lines and re-render through the differential
+		// path (this threw before the fix).
+		component.lines = ["xxxxxxxxxx", "\x1b[31myyyyyyyyyy\x1b[0m", "你好世界"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		// With truncation each logical line occupies exactly one viewport
+		// row; without it, xterm auto-wraps the overwide lines and shifts
+		// the following rows, failing the exact assertions below.
+		assert.strictEqual(viewport[0], "xxxx");
+		assert.strictEqual(viewport[1], "yyyy");
+		assert.strictEqual(viewport[2], "你好");
+		assert.strictEqual(viewport[3], "");
+
+		tui.stop();
+	});
+});
+
+describe("Text negative width safety", () => {
+	it("does not throw at zero or negative widths", () => {
+		const text = new Text("你好", 1, 1);
+		assert.doesNotThrow(() => text.render(0));
+		assert.doesNotThrow(() => text.render(-1));
 	});
 });

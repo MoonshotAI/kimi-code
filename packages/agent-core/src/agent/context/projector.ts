@@ -19,11 +19,13 @@ export interface ProjectOptions {
   readonly synthesizeMissing?: boolean;
   /**
    * When `true`, drop any `tool_result` whose `toolCallId` matches no assistant
-   * `tool_use` anywhere in the provided messages. Strict providers reject such a
-   * stray result as an "unexpected `tool_result`". Off by default so the normal
-   * path never silently discards recorded output; the post-400 strict-resend
-   * fallback enables it (together with `synthesizeMissing`) as a last resort to
-   * force a wire-compliant request out of an otherwise-bricked session.
+   * `tool_use` anywhere in the provided messages. Such an orphan is wire-invalid
+   * on every strict provider and useless to the model (it has no record of the
+   * call the result answers). Enabled on every request-building projection — the
+   * normal wire, the strict resend, and the compaction summarizer — so a stray
+   * result never reaches a provider. Left OFF for non-request projections (e.g.
+   * token-estimating a history slice), where a result's matching call may
+   * legitimately sit outside the slice and must not be mistaken for an orphan.
    */
   readonly dropOrphanResults?: boolean;
   /**
@@ -69,7 +71,7 @@ export type ProjectionAnomaly =
    * was lost (a genuine defect worth investigating).
    */
   | { readonly kind: 'tool_result_synthesized'; readonly toolCallId: string; readonly trailing: boolean }
-  /** A result with no matching call anywhere was dropped (strict resend only). */
+  /** A result with no matching call anywhere was dropped (wire exits only). */
   | { readonly kind: 'orphan_tool_result_dropped'; readonly toolCallId: string }
   /** A leading non-user message was dropped so the first turn is user (strict). */
   | { readonly kind: 'leading_non_user_dropped'; readonly role: string }
@@ -189,8 +191,12 @@ function repairToolExchangeAdjacency(
 
 // Remove any `tool_result` whose `toolCallId` matches no assistant `tool_use`
 // anywhere in the projected messages. Strict providers reject such a stray
-// result; the post-400 strict-resend fallback drops them as a last resort. Kept
-// separate from the adjacency repair so the normal path never discards output.
+// result, and it is useless to the model regardless (it has no record of the
+// call the result answers), so every request-building projection drops it (via
+// `dropOrphanResults`). Kept separate from the adjacency repair, which only
+// reorders results that DO have a matching call; this removes the ones that do
+// not. Reported via `onAnomaly` so the drop leaves a trace instead of silently
+// discarding a recorded result.
 function dropOrphanToolResults(
   messages: readonly Message[],
   onAnomaly?: (anomaly: ProjectionAnomaly) => void,

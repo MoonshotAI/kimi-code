@@ -16,6 +16,14 @@
  *   - base64 wrapper round-trips
  *   - performance: the fast path is codec-free; a large image compresses
  *     within a generous time bound
+ *   - metadata: results always carry the original pixel dimensions
+ *   - crop: cropImageForModel cuts a region at native resolution, clamps
+ *     overflow, refuses out-of-bounds/undecodable input explicitly, and
+ *     honors skipResize with a hard byte-budget failure
+ *   - caption: buildImageCompressionCaption renders a consistent
+ *     `<system>` note (dims, sizes, readback path)
+ *   - annotate: compressImageContentParts can insert that caption next to
+ *     each compressed image and persist the original via a callback
  */
 
 import { Jimp } from 'jimp';
@@ -23,9 +31,11 @@ import { describe, expect, it } from 'vitest';
 
 // eslint-disable-next-line import/no-unresolved
 import {
+  buildImageCompressionCaption,
   compressBase64ForModel,
   compressImageContentParts,
   compressImageForModel,
+  cropImageForModel,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
 } from '../../src/tools/support/image-compress';
@@ -353,5 +363,285 @@ describe('compressImageContentParts', () => {
     if (imagePart?.type !== 'image_url') throw new Error('expected image_url');
     expect(imagePart.imageUrl.id).toBe('att-1');
     expect(imagePart.imageUrl.url).not.toBe(dataUrl('image/png', big));
+  });
+});
+
+// ── original-dimension metadata ──────────────────────────────────────
+
+describe('compressImageForModel — original dimensions metadata', () => {
+  it('reports original dimensions on passthrough and compressed results', async () => {
+    const small = await solidPng(64, 64);
+    const pass = await compressImageForModel(small, 'image/png');
+    expect(pass.changed).toBe(false);
+    expect(pass.originalWidth).toBe(64);
+    expect(pass.originalHeight).toBe(64);
+
+    const big = await solidPng(3000, 1500);
+    const shrunk = await compressImageForModel(big, 'image/png');
+    expect(shrunk.changed).toBe(true);
+    expect(shrunk.originalWidth).toBe(3000);
+    expect(shrunk.originalHeight).toBe(1500);
+    expect(shrunk.width).toBe(2000);
+  });
+
+  it('reports original dimensions through the base64 wrapper', async () => {
+    const big = await solidPng(2600, 1300);
+    const base64 = Buffer.from(big).toString('base64');
+    const result = await compressBase64ForModel(base64, 'image/png');
+    expect(result.changed).toBe(true);
+    expect(result.originalWidth).toBe(2600);
+    expect(result.originalHeight).toBe(1300);
+    expect(result.width).toBe(2000);
+    expect(result.height).toBe(1000);
+  });
+});
+
+// ── crop ─────────────────────────────────────────────────────────────
+
+describe('cropImageForModel', () => {
+  it('crops a region out of a PNG at native resolution', async () => {
+    const png = await solidPng(3000, 1500);
+    const result = await cropImageForModel(png, 'image/png', {
+      x: 100,
+      y: 200,
+      width: 500,
+      height: 400,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.width).toBe(500);
+    expect(result.height).toBe(400);
+    expect(result.originalWidth).toBe(3000);
+    expect(result.originalHeight).toBe(1500);
+    expect(result.region).toEqual({ x: 100, y: 200, width: 500, height: 400 });
+    expect(result.resized).toBe(false);
+    expect(result.mimeType).toBe('image/png');
+    expect(sniffImageDimensions(result.data)).toEqual({ width: 500, height: 400 });
+  });
+
+  it('preserves the JPEG format when cropping a JPEG', async () => {
+    const jpeg = await solidJpeg(2400, 1200);
+    const result = await cropImageForModel(jpeg, 'image/jpeg', {
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 300,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mimeType).toBe('image/jpeg');
+    expect(result.width).toBe(300);
+    expect(result.height).toBe(300);
+  });
+
+  it('clamps a region that overflows the image bounds', async () => {
+    const png = await solidPng(3000, 1500);
+    const result = await cropImageForModel(png, 'image/png', {
+      x: 2500,
+      y: 1000,
+      width: 1000,
+      height: 1000,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.region).toEqual({ x: 2500, y: 1000, width: 500, height: 500 });
+    expect(result.width).toBe(500);
+    expect(result.height).toBe(500);
+  });
+
+  it('rejects a region fully outside the image, naming the original size', async () => {
+    const png = await solidPng(3000, 1500);
+    const result = await cropImageForModel(png, 'image/png', {
+      x: 3000,
+      y: 0,
+      width: 100,
+      height: 100,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('3000x1500');
+  });
+
+  it('downscales an oversized crop to the edge cap by default', async () => {
+    const png = await solidPng(3000, 1500);
+    const result = await cropImageForModel(png, 'image/png', {
+      x: 0,
+      y: 0,
+      width: 2500,
+      height: 1200,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.resized).toBe(true);
+    expect(Math.max(result.width, result.height)).toBeLessThanOrEqual(MAX_IMAGE_EDGE_PX);
+    expect(result.region).toEqual({ x: 0, y: 0, width: 2500, height: 1200 });
+  });
+
+  it('keeps native resolution with skipResize', async () => {
+    const png = await solidPng(3000, 1500);
+    const result = await cropImageForModel(
+      png,
+      'image/png',
+      { x: 0, y: 0, width: 2500, height: 1200 },
+      { skipResize: true },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.resized).toBe(false);
+    expect(result.width).toBe(2500);
+    expect(result.height).toBe(1200);
+  });
+
+  it('fails explicitly when a skipResize crop exceeds the byte budget', async () => {
+    const png = await noisePng(900, 900);
+    const result = await cropImageForModel(
+      png,
+      'image/png',
+      { x: 0, y: 0, width: 900, height: 900 },
+      { skipResize: true, byteBudget: 8 * 1024 },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/smaller region/i);
+  });
+
+  it('rejects non-recodable formats explicitly', async () => {
+    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]);
+    const result = await cropImageForModel(gif, 'image/gif', {
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/PNG and JPEG/);
+  });
+
+  it('rejects corrupt bytes without throwing', async () => {
+    const corrupt = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const result = await cropImageForModel(corrupt, 'image/png', {
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects non-finite region coordinates with a clean error', async () => {
+    // NaN slips past every `<`/`>=` comparison, so without an explicit guard
+    // it reaches jimp and surfaces as a misleading internal validation dump.
+    const png = await solidPng(300, 200);
+    for (const region of [
+      { x: Number.NaN, y: 0, width: 10, height: 10 },
+      { x: 0, y: Number.NaN, width: 10, height: 10 },
+      { x: 0, y: 0, width: Number.NaN, height: 10 },
+      { x: 0, y: 0, width: 10, height: Number.NaN },
+    ]) {
+      const result = await cropImageForModel(png, 'image/png', region);
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.error).toMatch(/finite/i);
+      expect(result.error).not.toMatch(/Failed to decode/);
+    }
+  });
+
+  it('refuses to decode a decompression bomb', async () => {
+    const header = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+    header.writeUInt32BE(13, 8);
+    header.write('IHDR', 12, 'latin1');
+    header.writeUInt32BE(30000, 16);
+    header.writeUInt32BE(30000, 20);
+    const result = await cropImageForModel(new Uint8Array(header), 'image/png', {
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+// ── compression caption ──────────────────────────────────────────────
+
+describe('buildImageCompressionCaption', () => {
+  it('describes the original and sent variants with a readback path', () => {
+    const caption = buildImageCompressionCaption({
+      original: { width: 5184, height: 3456, byteLength: 13002342, mimeType: 'image/png' },
+      final: { width: 2000, height: 1333, byteLength: 1153433, mimeType: 'image/jpeg' },
+      originalPath: '/tmp/originals/ab.png',
+    });
+    expect(caption).toMatch(/^<system>.*<\/system>$/s);
+    expect(caption).toContain('5184x3456 image/png (12.4 MB)');
+    expect(caption).toContain('2000x1333 image/jpeg (1.1 MB)');
+    expect(caption).toContain('/tmp/originals/ab.png');
+    expect(caption).toContain('region');
+  });
+
+  it('omits dimensions when unknown and notes a missing original', () => {
+    const caption = buildImageCompressionCaption({
+      original: { width: 0, height: 0, byteLength: 5 * 1024 * 1024, mimeType: 'image/png' },
+      final: { width: 0, height: 0, byteLength: 1024 * 1024, mimeType: 'image/jpeg' },
+    });
+    expect(caption).not.toContain('0x0');
+    expect(caption).toContain('image/png (5.0 MB)');
+    expect(caption).toContain('image/jpeg (1.0 MB)');
+    expect(caption).toMatch(/not preserved/i);
+  });
+});
+
+// ── content-part annotation ──────────────────────────────────────────
+
+describe('compressImageContentParts — annotate', () => {
+  function dataUrl(mime: string, bytes: Uint8Array): string {
+    return `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+  }
+
+  it('inserts a caption before a compressed image and persists the original', async () => {
+    const big = await solidPng(2600, 2600);
+    const persisted: { bytes: Uint8Array; mimeType: string }[] = [];
+    const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
+    const out = await compressImageContentParts(parts, {
+      annotate: {
+        persistOriginal: (bytes, mimeType) => {
+          persisted.push({ bytes, mimeType });
+          return Promise.resolve('/tmp/originals/big.png');
+        },
+      },
+    });
+
+    expect(out).toHaveLength(2);
+    const caption = out[0];
+    if (caption?.type !== 'text') throw new Error('expected caption text part');
+    expect(caption.text).toContain('2600x2600');
+    expect(caption.text).toContain('/tmp/originals/big.png');
+    expect(out[1]?.type).toBe('image_url');
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]?.mimeType).toBe('image/png');
+    expect(persisted[0]?.bytes.length).toBe(big.length);
+  });
+
+  it('adds no caption when the image passes through unchanged', async () => {
+    const small = await solidPng(48, 48);
+    const url = dataUrl('image/png', small);
+    const out = await compressImageContentParts([{ type: 'image_url' as const, imageUrl: { url } }], {
+      annotate: {},
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toEqual({ type: 'image_url', imageUrl: { url } });
+  });
+
+  it('captions without a path when persistence fails', async () => {
+    const big = await solidPng(2600, 2600);
+    const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
+    const out = await compressImageContentParts(parts, {
+      annotate: { persistOriginal: () => Promise.resolve(null) },
+    });
+    expect(out).toHaveLength(2);
+    const caption = out[0];
+    if (caption?.type !== 'text') throw new Error('expected caption text part');
+    expect(caption.text).toMatch(/not preserved/i);
   });
 });

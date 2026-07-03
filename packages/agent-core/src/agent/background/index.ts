@@ -58,8 +58,20 @@ interface ManagedTask {
   readonly taskId: string;
   readonly task: BackgroundTask;
   readonly outputChunks: string[];
+  /**
+   * Running total of characters currently held in `outputChunks`, maintained
+   * incrementally so the ring-buffer cap stays O(1) per chunk instead of
+   * re-summing every chunk (which was O(n²) over a command's lifetime).
+   */
+  outputRingChars: number;
   /** Total UTF-8 bytes observed, including chunks dropped from the live ring buffer. */
   outputSizeBytes: number;
+  /**
+   * True once a foreground command has crossed `MAX_FOREGROUND_OUTPUT_BYTES`
+   * and termination has been requested. One-shot guard so the ceiling fires
+   * exactly once.
+   */
+  outputLimitTripped: boolean;
   status: BackgroundTaskStatus;
   /** Normalized registration options. Current mutable state stays on ManagedTask. */
   readonly options: RegisterBackgroundTaskOptions;
@@ -109,6 +121,28 @@ interface ManagedTask {
  */
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+
+/**
+ * Hard ceiling on the combined output a single *foreground* command may stream
+ * before it is force-terminated (SIGTERM → grace → SIGKILL). It guards the
+ * live-forward path — which has no memory bound of its own — from a runaway
+ * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow the
+ * process heap until Node aborts with an out-of-memory crash.
+ *
+ * Detached (background) tasks are exempt: their output is ring-buffered and
+ * spilled to disk, so it never accumulates unbounded in memory.
+ */
+const MAX_FOREGROUND_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+
+/** Terminal `stopReason` recorded when a foreground command trips the output ceiling. */
+function foregroundOutputLimitReason(): string {
+  const mib = Math.floor(MAX_FOREGROUND_OUTPUT_BYTES / (1024 * 1024));
+  return (
+    `Output limit exceeded: the command produced more than ${mib} MiB and was ` +
+    'terminated. Redirect large output to a file (e.g. `command > out.txt`) and ' +
+    'inspect it in slices instead.'
+  );
+}
 
 const SIGTERM_GRACE_MS = 5_000;
 const USER_INTERRUPT_REASON = 'Interrupted by user';
@@ -281,7 +315,9 @@ export class BackgroundManager {
       taskId,
       task,
       outputChunks: [],
+      outputRingChars: 0,
       outputSizeBytes: 0,
+      outputLimitTripped: false,
       status: 'running',
       options: entryOptions,
       startedAt: Date.now(),
@@ -594,13 +630,38 @@ export class BackgroundManager {
   private appendOutput(entry: ManagedTask, chunk: string): void {
     entry.outputSizeBytes += Buffer.byteLength(chunk, 'utf-8');
     entry.outputChunks.push(chunk);
-    // Enforce output cap: drop oldest chunks when over budget.
-    let total = entry.outputChunks.reduce((s, c) => s + c.length, 0);
-    while (total > MAX_OUTPUT_BYTES && entry.outputChunks.length > 1) {
+    entry.outputRingChars += chunk.length;
+    // Enforce the ring-buffer cap: drop oldest chunks when over budget. The
+    // running total keeps this O(1) amortized per chunk; re-summing the whole
+    // buffer on every chunk was O(n²) over a command's lifetime and could
+    // starve the event loop (and so the foreground timeout) under a high-rate
+    // output stream.
+    while (entry.outputRingChars > MAX_OUTPUT_BYTES && entry.outputChunks.length > 1) {
       const removed = entry.outputChunks.shift();
       if (removed === undefined) break;
-      total -= removed.length;
+      entry.outputRingChars -= removed.length;
     }
+
+    // Foreground output ceiling: a single non-detached command must not grow
+    // the (unbounded) live-forward buffer until the process runs out of memory.
+    // Trip once, then request graceful termination through the shared stop path
+    // (SIGTERM → grace → SIGKILL). Detached tasks are exempt — their output is
+    // ring-buffered and spilled to disk, so it never accumulates in memory.
+    if (
+      !entry.outputLimitTripped &&
+      !this.isDetached(entry) &&
+      entry.outputSizeBytes > MAX_FOREGROUND_OUTPUT_BYTES
+    ) {
+      entry.outputLimitTripped = true;
+      void this.stop(entry.taskId, foregroundOutputLimitReason());
+    }
+
+    // Once the cap has tripped the task is being terminated: keep only the
+    // bounded in-memory ring buffer above and stop feeding the (unbounded) disk
+    // write chain. A producer that ignores SIGTERM could otherwise keep the
+    // chain — and the chunk strings each pending write retains — growing through
+    // the grace window until SIGKILL, re-introducing the OOM this cap prevents.
+    if (entry.outputLimitTripped) return;
 
     if (this.persistence === undefined) return;
 

@@ -488,7 +488,14 @@ export async function installUpdate(
 ): Promise<void> {
   const { cmd, args } = spawnForSource(source, version, platform);
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, [...args], { stdio: 'inherit' });
+    // Windows package managers (npm/pnpm/yarn) are .cmd shims. Since the
+    // CVE-2024-27980 fix, Node throws EINVAL when spawning a .cmd/.bat without
+    // a shell, so run through the shell on win32. The version is a validated
+    // semver and the package name is a constant, so args are shell-safe.
+    const child = spawn(cmd, [...args], {
+      stdio: 'inherit',
+      shell: platform === 'win32' ? true : undefined,
+    });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (code === 0) {
@@ -596,7 +603,15 @@ async function startBackgroundInstall(
       });
     };
 
-    const child = spawn(cmd, [...args], { detached: true, stdio: 'ignore' });
+    const child = spawn(cmd, [...args], {
+      detached: true,
+      stdio: 'ignore',
+      shell: platform === 'win32' ? true : undefined,
+      // On Windows a detached child gets its own console window; with shell:true
+      // that window would flash during a passive background update. Hide it so
+      // the silent updater stays silent.
+      windowsHide: platform === 'win32' ? true : undefined,
+    });
     child.once('error', () => { finish(false); });
     child.once('exit', (code) => { finish(code === 0); });
     child.unref();

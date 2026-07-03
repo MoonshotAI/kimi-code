@@ -1,7 +1,6 @@
 import {
   effectiveModelAlias,
   type ExperimentalFeatureState,
-  type FlagId,
   type ModelAlias,
   type PermissionMode,
   type Session,
@@ -596,7 +595,7 @@ export async function applyExperimentalFeatureChanges(
     return;
   }
 
-  const experimental: Partial<Record<FlagId, boolean>> = {};
+  const experimental: Record<string, boolean> = {};
   for (const change of changes) {
     experimental[change.id] = change.enabled;
   }

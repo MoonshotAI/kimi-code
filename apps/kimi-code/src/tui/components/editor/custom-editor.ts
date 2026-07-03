@@ -114,12 +114,6 @@ function stripSgr(s: string): string {
   return s.replace(ANSI_SGR, '');
 }
 
-function getNewlineInput(data: string): string | undefined {
-  if (data === '\n' || data === '\u001B\r' || data === '\u001B[13;2~') return data;
-  if (matchesKey(data, Key.ctrl('j'))) return '\n';
-  return undefined;
-}
-
 interface CustomEditorOptions {
   disablePasteBurst?: boolean;
 }
@@ -141,7 +135,6 @@ export class CustomEditor extends Editor {
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
   public onUndo?: () => void;
-  public onInsertNewline?: () => void;
   public onTextPaste?: () => void;
   /**
    * Called when ↑ is pressed in an empty editor. Return `true` to consume
@@ -217,6 +210,12 @@ export class CustomEditor extends Editor {
 
   override setDisablePasteBurst(disabled: boolean): void {
     super.setDisablePasteBurst(disabled);
+  }
+
+  public setInputMode(mode: 'prompt' | 'bash'): void {
+    if (this.inputMode === mode) return;
+    this.inputMode = mode;
+    this.onInputModeChange?.(mode);
   }
 
   private expandPasteMarkerAtCursor(): boolean {
@@ -435,13 +434,6 @@ export class CustomEditor extends Editor {
     ) {
       this.inputMode = 'prompt';
       this.onInputModeChange?.('prompt');
-      return;
-    }
-
-    const newlineInput = getNewlineInput(normalized);
-    if (newlineInput !== undefined) {
-      this.onInsertNewline?.();
-      super.handleInput(newlineInput);
       return;
     }
 

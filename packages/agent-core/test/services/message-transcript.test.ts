@@ -158,6 +158,26 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(3);
   });
 
+  it('accounts for the elision marker when the compaction record kept a head segment', () => {
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s1', 'a1'),
+      {
+        type: 'context.apply_compaction',
+        summary: 'SUM',
+        compactedCount: 3,
+        tokensBefore: 100_000,
+        tokensAfter: 20_000,
+        keptUserMessageCount: 2,
+        keptHeadUserMessageCount: 1,
+      } as AgentRecord,
+    ]);
+
+    // Live context: head user message + elision marker + tail user message + summary.
+    expect(foldedLength).toBe(4);
+  });
+
   it('handles repeated compactions', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),

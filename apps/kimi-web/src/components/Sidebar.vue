@@ -23,7 +23,6 @@ import IconButton from './ui/IconButton.vue';
 import Icon from './ui/Icon.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
-import Tooltip from './ui/Tooltip.vue';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 
 const { t } = useI18n();
@@ -146,6 +145,36 @@ const allCollapsed = computed(
     props.groups.length > 0 &&
     props.groups.every((g) => collapsedIds.value.has(g.workspace.id)),
 );
+
+// ---------------------------------------------------------------------------
+// In-group expand / collapse (show-more pagination)
+// ---------------------------------------------------------------------------
+// Tracks which workspace groups are "expanded" past their first page. Ephemeral
+// (not persisted): a refresh reloads only the first page, so everything starts
+// collapsed. Loading more expands automatically; the user can collapse back to
+// the first page without losing the already-loaded data.
+const expandedIds = ref<Set<string>>(new Set());
+
+function isExpanded(id: string): boolean {
+  return expandedIds.value.has(id);
+}
+
+function toggleExpand(id: string): void {
+  const next = new Set(expandedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedIds.value = next;
+}
+
+function onLoadMore(id: string): void {
+  // Loading more should reveal the new rows immediately.
+  if (!expandedIds.value.has(id)) {
+    const next = new Set(expandedIds.value);
+    next.add(id);
+    expandedIds.value = next;
+  }
+  emit('loadMoreSessions', id);
+}
 
 // ---------------------------------------------------------------------------
 // Workspace path display (toggle in the Workspaces section header)
@@ -553,24 +582,20 @@ onBeforeUnmount(() => {
           <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
           <InternalBuildBanner />
         </div>
-        <Tooltip :text="t('sidebar.collapseSidebar')">
-          <IconButton
-            size="sm"
-            :label="t('sidebar.collapseSidebar')"
-            @click.stop="emit('collapse')"
-          >
-            <Icon name="panel-collapse" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip :text="t('settings.title')">
-          <IconButton
-            size="sm"
-            :label="t('settings.title')"
-            @click.stop="emit('openSettings')"
-          >
-            <Icon name="settings" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          size="sm"
+          :label="t('sidebar.collapseSidebar')"
+          @click.stop="emit('collapse')"
+        >
+          <Icon name="panel-collapse" />
+        </IconButton>
+        <IconButton
+          size="sm"
+          :label="t('settings.title')"
+          @click.stop="emit('openSettings')"
+        >
+          <Icon name="settings" />
+        </IconButton>
       </div>
 
       <!-- Session search — opens the Spotlight-style search dialog -->
@@ -582,19 +607,17 @@ onBeforeUnmount(() => {
       <!-- New chat + new workspace buttons -->
       <div class="btn-wrap" :class="{ 'btn-wrap--scrolled': sessionsScrolled }">
         <button class="btn-new-chat" type="button" @click.stop="emit('create')">
-          <Icon name="plus" />
+          <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
-        <Tooltip :text="t('sidebar.newWorkspace')">
-          <IconButton
-            v-if="showNewWorkspaceButton"
-            size="sm"
-            :label="t('sidebar.newWorkspace')"
-            @click.stop="emit('addWorkspace')"
-          >
-            <Icon name="folder" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          v-if="showNewWorkspaceButton"
+          size="sm"
+          :label="t('sidebar.newWorkspace')"
+          @click.stop="emit('addWorkspace')"
+        >
+          <Icon name="folder" />
+        </IconButton>
       </div>
 
       <!-- Session list — grouped by workspace -->
@@ -609,29 +632,25 @@ onBeforeUnmount(() => {
           <div class="side-section-label">
             <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
             <div class="side-section-actions">
-              <Tooltip :text="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')">
-                <IconButton
-                  class="side-section-toggle"
-                  size="sm"
-                  :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
-                  @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
-                >
-                  <Icon v-if="allCollapsed" name="expand" />
-                  <Icon v-else name="collapse" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip :text="t('sidebar.options')">
-                <IconButton
-                  class="side-section-toggle side-section-kebab"
-                  size="sm"
-                  :label="t('sidebar.options')"
-                  aria-haspopup="menu"
-                  :aria-expanded="sectionMenuOpen"
-                  @click.stop="toggleSectionMenu($event)"
-                >
-                  <Icon name="dots-horizontal" />
-                </IconButton>
-              </Tooltip>
+              <IconButton
+                class="side-section-toggle"
+                size="sm"
+                :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
+                @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
+              >
+                <Icon v-if="allCollapsed" name="expand" />
+                <Icon v-else name="collapse" />
+              </IconButton>
+              <IconButton
+                class="side-section-toggle side-section-kebab"
+                size="sm"
+                :label="t('sidebar.options')"
+                aria-haspopup="menu"
+                :aria-expanded="sectionMenuOpen"
+                @click.stop="toggleSectionMenu($event)"
+              >
+                <Icon name="dots-horizontal" />
+              </IconButton>
             </div>
           </div>
           <div
@@ -657,6 +676,7 @@ onBeforeUnmount(() => {
               :ws-menu-open-id="wsMenuOpenId"
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
+              :is-expanded="isExpanded"
               :show-path="showWorkspacePaths"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
@@ -666,7 +686,8 @@ onBeforeUnmount(() => {
               @rename-session="(id, title) => emit('rename', id, title)"
               @archive-session="(id) => emit('archive', id)"
               @fork-session="(id) => emit('fork', id)"
-              @load-more="(id) => emit('loadMoreSessions', id)"
+              @load-more="onLoadMore"
+              @toggle-expand="toggleExpand"
               @confirm-rename="confirmRenameWorkspace"
               @cancel-rename="cancelRenameWorkspace"
               @update-rename-value="onUpdateRenameValue"
@@ -806,15 +827,18 @@ onBeforeUnmount(() => {
 }
 /* macOS desktop: the window uses a hidden title bar, so the traffic lights float
    over the top-left of the sidebar. Push the header content right to clear them,
-   and turn the empty header area into the window-drag region; interactive
-   controls opt out with no-drag. */
+   and turn the whole header into the window-drag region — matching the chat
+   header. The action buttons and the logo opt out with no-drag so they stay
+   clickable: this is the same no-drag-inside-drag pattern ChatHeader.vue relies
+   on (the previous "drag only the brand area" approach still captured the
+   sibling buttons, because Electron treats a flex-grown drag item's hit area as
+   covering the whole flex line). */
 .side.macos-desktop .ch {
   padding-left: 80px;
   -webkit-app-region: drag;
 }
-.side.macos-desktop .ch-logo,
-.side.macos-desktop .collapse-btn,
-.side.macos-desktop .settings-btn {
+.side.macos-desktop .ch button,
+.side.macos-desktop .ch-logo {
   -webkit-app-region: no-drag;
 }
 .ch-logo {
@@ -924,7 +948,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--color-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -942,7 +966,7 @@ onBeforeUnmount(() => {
 .search-input {
   flex: 1;
   min-width: 0;
-  color: var(--faint);
+  color: var(--color-text);
   font-family: var(--mono);
   font-size: var(--ui-font-size);
   overflow: hidden;

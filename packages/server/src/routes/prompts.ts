@@ -12,7 +12,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, IFileStore, compressImageForModel, compressBase64ForModel, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IFileStore, buildImageCompressionCaption, compressImageForModel, compressBase64ForModel, persistOriginalImage, sessionMediaOriginalsDir, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -123,12 +123,25 @@ export function registerPromptsRoutes(
       try {
         const { session_id } = req.params;
         const body = req.body;
-        const result = await ix.invokeFunction(async (a) =>
-          a.get(IPromptService).submit(
-            session_id,
-            await resolvePromptMediaFiles(body, a.get(IFileStore)),
-          ),
-        );
+        const result = await ix.invokeFunction(async (a) => {
+          // Grab service references synchronously — the accessor is only
+          // valid until the first await inside invokeFunction.
+          const promptService = a.get(IPromptService);
+          const fileStore = a.get(IFileStore);
+          const core = a.get(ICoreProcessService);
+          const resolved = await resolvePromptMediaFiles(body, fileStore, {
+            // Resolved lazily — only when an inline base64 image actually
+            // got compressed — so image-free prompts never pay the lookup.
+            resolveOriginalsDir: async () => {
+              const summaries = await core.rpc.listSessions({ sessionId: session_id });
+              const sessionDir = summaries[0]?.sessionDir;
+              return sessionDir === undefined
+                ? undefined
+                : sessionMediaOriginalsDir(sessionDir);
+            },
+          });
+          return promptService.submit(session_id, resolved);
+        });
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
         sendMappedError(reply, req.id, error);
@@ -247,11 +260,31 @@ export function registerPromptsRoutes(
   );
 }
 
+interface ResolvePromptMediaOptions {
+  /**
+   * Lazily resolve the session's media-originals dir for persisting the
+   * pre-compression bytes of inline base64 images. Only invoked when an
+   * image was actually compressed; a failure or undefined result falls back
+   * to the shared temp-dir cache.
+   */
+  readonly resolveOriginalsDir?: () => Promise<string | undefined>;
+}
+
 async function resolvePromptMediaFiles(
   body: PromptSubmission,
   store: IFileStore,
+  options: ResolvePromptMediaOptions = {},
 ): Promise<PromptSubmission> {
   let changed = false;
+  let originalsDir: string | undefined;
+  let originalsDirResolved = false;
+  const resolveOriginalsDir = async (): Promise<string | undefined> => {
+    if (!originalsDirResolved) {
+      originalsDirResolved = true;
+      originalsDir = await options.resolveOriginalsDir?.().catch(() => undefined);
+    }
+    return originalsDir;
+  };
   const content: PromptSubmission['content'] = [];
   for (const part of body.content) {
     // Inline base64 image: compress the payload in place. This is the same
@@ -260,6 +293,34 @@ async function resolvePromptMediaFiles(
     if (part.type === 'image' && part.source.kind === 'base64') {
       const compressed = await compressBase64ForModel(part.source.data, part.source.media_type);
       if (compressed.changed) {
+        // There is no stored file to point at, so persist the original into
+        // the session's media-originals dir (best effort, temp-dir fallback)
+        // and announce the compression next to the image — silent
+        // downsampling would leave the model unaware that detail is missing.
+        const dir = await resolveOriginalsDir();
+        const originalPath = await persistOriginalImage(
+          Buffer.from(part.source.data, 'base64'),
+          part.source.media_type,
+          dir === undefined ? {} : { dir },
+        );
+        content.push({
+          type: 'text',
+          text: buildImageCompressionCaption({
+            original: {
+              width: compressed.originalWidth,
+              height: compressed.originalHeight,
+              byteLength: compressed.originalByteLength,
+              mimeType: part.source.media_type,
+            },
+            final: {
+              width: compressed.width,
+              height: compressed.height,
+              byteLength: compressed.finalByteLength,
+              mimeType: compressed.mimeType,
+            },
+            originalPath,
+          }),
+        });
         content.push({
           type: 'image',
           source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
@@ -285,6 +346,28 @@ async function resolvePromptMediaFiles(
     let bytes: Uint8Array = data;
     if (part.type === 'image') {
       const compressed = await compressImageForModel(data, mediaType);
+      if (compressed.changed) {
+        // The stored file already holds the original bytes — the caption
+        // points straight at it, no extra copy needed.
+        content.push({
+          type: 'text',
+          text: buildImageCompressionCaption({
+            original: {
+              width: compressed.originalWidth,
+              height: compressed.originalHeight,
+              byteLength: compressed.originalByteLength,
+              mimeType: mediaType,
+            },
+            final: {
+              width: compressed.width,
+              height: compressed.height,
+              byteLength: compressed.finalByteLength,
+              mimeType: compressed.mimeType,
+            },
+            originalPath: file.blobPath,
+          }),
+        });
+      }
       bytes = compressed.data;
       mediaType = compressed.mimeType;
     }
