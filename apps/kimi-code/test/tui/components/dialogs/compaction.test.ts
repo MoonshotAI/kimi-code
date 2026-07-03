@@ -129,6 +129,25 @@ describe('CompactionComponent', () => {
     }
   });
 
+  it('keeps expanded summary child order on invalidate', () => {
+    const component = new CompactionComponent(undefined, 'keep the recent files only');
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      component.setExpanded(true);
+      currentTheme.setPalette(lightColors);
+      component.invalidate();
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('Keep the src/tui compaction notes.');
+      expect(text.indexOf('keep the recent files only')).toBeLessThan(
+        text.indexOf('Keep the src/tui compaction notes.'),
+      );
+    } finally {
+      component.dispose();
+    }
+  });
+
   it('repaints the header with the active palette on invalidate', () => {
     // Force truecolor so palette differences surface as ANSI codes even when
     // the test runner has no TTY.

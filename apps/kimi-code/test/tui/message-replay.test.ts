@@ -1046,6 +1046,29 @@ describe('KimiTUI resume message replay', () => {
     expect(expanded).toContain('Compacted transcript summary.');
   });
 
+  it('initializes replayed compaction blocks as expanded when tool output is already expanded', async () => {
+    const initial = makeSession([]);
+    const resumed = makeSession([
+      {
+        time: REPLAY_TIME,
+        type: 'compaction',
+        result: {
+          summary: 'Compacted transcript summary.',
+          compactedCount: 4,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+      },
+    ]);
+    const driver = await makeDriver(initial);
+    driver.state.toolOutputExpanded = true;
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('Compaction complete');
+    expect(transcript).toContain('Compacted transcript summary.');
+  });
+
   it('renders replayed cancelled compaction records as cancelled compaction blocks', async () => {
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'prompt before cancellation' }]),

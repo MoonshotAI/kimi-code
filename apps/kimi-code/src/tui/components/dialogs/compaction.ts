@@ -72,9 +72,17 @@ export class CompactionComponent extends Container {
   override invalidate(): void {
     // Repaint the header with the active palette (it caches ANSI codes).
     this.headerText.setText(this.buildHeader());
-    // Rebuild instruction line with fresh theme colours.
+    // Rebuild instruction and summary text with fresh theme colours, preserving
+    // header → instruction → summary child order.
+    const expanded = this.expanded;
     this.removeInstructionChild();
+    if (expanded) {
+      this.removeSummaryChild();
+    }
     this.addInstructionChild();
+    if (expanded) {
+      this.addSummaryChild();
+    }
     super.invalidate();
   }
 
