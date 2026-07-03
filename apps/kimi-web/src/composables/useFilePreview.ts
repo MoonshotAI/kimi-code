@@ -199,6 +199,9 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
   }
 
   function closeFilePreview(): void {
+    // Invalidate any in-flight authenticated media fetch so it doesn't create a
+    // blob URL after the panel closed (which would leak until the next preview).
+    previewRequestSeq += 1;
     previewTarget.value = null;
     previewNormalizedPath.value = null;
     previewFile.value = null;
