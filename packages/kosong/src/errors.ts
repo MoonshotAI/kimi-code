@@ -237,6 +237,11 @@ const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
   /first message must use the .*user.* role/,
   /roles must alternate/,
   /multiple .*(?:user|assistant).* roles in a row/,
+  // Anthropic rejects a request whose assistant messages carry two `tool_use`
+  // blocks with the same id: "messages: `tool_use` ids must be unique". Seen
+  // when a provider reused a call id (e.g. per-response counter ids) earlier
+  // in the session; the strict resend dedupes the ids.
+  /tool_use[\s\S]*ids must be unique/,
 ] as const;
 
 export function isRecoverableRequestStructureError(error: unknown): boolean {

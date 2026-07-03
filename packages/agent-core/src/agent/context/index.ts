@@ -397,7 +397,8 @@ export class ContextMemory {
     let reordered = 0;
     let synthesized = 0;
     let droppedOrphan = 0;
-    let duplicateDropped = 0;
+    let duplicateCallsDropped = 0;
+    let duplicateResultsDropped = 0;
     let leadingDropped = 0;
     let assistantsMerged = 0;
     let whitespaceDropped = 0;
@@ -405,7 +406,8 @@ export class ContextMemory {
       if (anomaly.kind === 'tool_result_reordered') reordered += 1;
       else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
       else if (anomaly.kind === 'orphan_tool_result_dropped') droppedOrphan += 1;
-      else if (anomaly.kind === 'duplicate_tool_call_dropped') duplicateDropped += 1;
+      else if (anomaly.kind === 'duplicate_tool_call_dropped') duplicateCallsDropped += 1;
+      else if (anomaly.kind === 'duplicate_tool_result_dropped') duplicateResultsDropped += 1;
       else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
       else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
       else whitespaceDropped += 1;
@@ -419,7 +421,8 @@ export class ContextMemory {
       reordered,
       synthesized,
       droppedOrphan,
-      duplicateDropped,
+      duplicateCallsDropped,
+      duplicateResultsDropped,
       leadingDropped,
       assistantsMerged,
       whitespaceDropped,
@@ -429,7 +432,8 @@ export class ContextMemory {
       reordered,
       synthesized,
       dropped_orphan: droppedOrphan,
-      duplicate_dropped: duplicateDropped,
+      duplicate_calls_dropped: duplicateCallsDropped,
+      duplicate_results_dropped: duplicateResultsDropped,
       leading_dropped: leadingDropped,
       assistants_merged: assistantsMerged,
       whitespace_dropped: whitespaceDropped,
@@ -447,15 +451,17 @@ export class ContextMemory {
   }
 
   // Last-resort projection for the post-400 strict resend: close every open tool
-  // call (including a trailing in-flight one), drop stray tool results, drop a
-  // leading non-user message, and merge consecutive assistant turns, so the
-  // request is wire-compliant for strict providers no matter how the history was
-  // mangled. Only used when the provider has already rejected the normal
-  // projection — see the adjacency fallback in `turn-step`.
+  // call (including a trailing in-flight one), drop stray tool results, dedupe
+  // duplicate tool call ids (with their extra results), drop a leading non-user
+  // message, and merge consecutive assistant turns, so the request is
+  // wire-compliant for strict providers no matter how the history was mangled.
+  // Only used when the provider has already rejected the normal projection —
+  // see the adjacency fallback in `turn-step`.
   get strictMessages(): Message[] {
     return this.project(this.history, {
       synthesizeMissing: true,
       dropOrphanResults: true,
+      dedupeDuplicateToolCalls: true,
       dropLeadingNonUser: true,
       mergeConsecutiveAssistants: true,
     });
