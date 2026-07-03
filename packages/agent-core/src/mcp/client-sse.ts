@@ -4,11 +4,13 @@ import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.
 import { SSEClientTransport, SseError } from '@modelcontextprotocol/sdk/client/sse.js';
 
 import {
+  buildListChangedClientOptions,
   buildRequestOptions,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   toMcpToolDefinition,
   toMcpToolResult,
+  type ToolsChangedListener,
   type UnexpectedCloseListener,
   type UnexpectedCloseReason,
 } from './client-shared';
@@ -52,6 +54,7 @@ export class SseMcpClient implements MCPClient {
   private ready = false;
   private hooksInstalled = false;
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
+  private toolsChangedListener: ToolsChangedListener | undefined;
   private lastTransportError: Error | undefined;
   private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
   private unexpectedCloseFired = false;
@@ -68,7 +71,7 @@ export class SseMcpClient implements MCPClient {
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
-    });
+    }, buildListChangedClientOptions(() => this.toolsChangedListener));
     this.toolCallTimeoutMs = options.toolCallTimeoutMs;
   }
 
@@ -110,6 +113,10 @@ export class SseMcpClient implements MCPClient {
       this.pendingUnexpectedClose = undefined;
       listener(pending);
     }
+  }
+
+  onToolsChanged(listener: ToolsChangedListener): void {
+    this.toolsChangedListener = listener;
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {

@@ -4,11 +4,13 @@ import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 import {
+  buildListChangedClientOptions,
   buildRequestOptions,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   toMcpToolDefinition,
   toMcpToolResult,
+  type ToolsChangedListener,
   type UnexpectedCloseListener,
   type UnexpectedCloseReason,
 } from './client-shared';
@@ -54,6 +56,7 @@ export class HttpMcpClient implements MCPClient {
   private ready = false;
   private hooksInstalled = false;
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
+  private toolsChangedListener: ToolsChangedListener | undefined;
   private lastTransportError: Error | undefined;
   // See StdioMcpClient — buffered when the listener has not been installed
   // yet so an early close is replayed instead of dropped.
@@ -75,7 +78,7 @@ export class HttpMcpClient implements MCPClient {
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,
       version: options.clientVersion ?? KIMI_MCP_CLIENT_VERSION,
-    });
+    }, buildListChangedClientOptions(() => this.toolsChangedListener));
     this.toolCallTimeoutMs = options.toolCallTimeoutMs;
   }
 
@@ -119,6 +122,10 @@ export class HttpMcpClient implements MCPClient {
       this.pendingUnexpectedClose = undefined;
       listener(pending);
     }
+  }
+
+  onToolsChanged(listener: ToolsChangedListener): void {
+    this.toolsChangedListener = listener;
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {
