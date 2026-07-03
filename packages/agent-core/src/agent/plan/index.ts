@@ -15,6 +15,7 @@ export class PlanMode {
   protected _isActive = false;
   protected _planId: null | string = null;
   protected _planFilePath: PlanFilePath = null;
+  protected _enteredAtHistoryLength: number | null = null;
 
   constructor(protected readonly agent: Agent) {}
 
@@ -30,6 +31,7 @@ export class PlanMode {
     this._isActive = true;
     this._planId = id;
     this._planFilePath = null;
+    this._enteredAtHistoryLength = null;
 
     let enterRecorded = false;
     try {
@@ -41,6 +43,7 @@ export class PlanMode {
       if (createFile) {
         await this.writeEmptyPlanFile(planFilePath);
       }
+      this._enteredAtHistoryLength = this.agent.context.history.length;
     } catch (error) {
       if (enterRecorded) {
         this.cancel(id);
@@ -48,6 +51,7 @@ export class PlanMode {
         this._isActive = false;
         this._planId = null;
         this._planFilePath = null;
+        this._enteredAtHistoryLength = null;
       }
       throw error;
     }
@@ -64,6 +68,7 @@ export class PlanMode {
     this._isActive = true;
     this._planId = id;
     this._planFilePath = this.planFilePathFor(id);
+    this._enteredAtHistoryLength = this.agent.context.history.length;
   }
 
   cancel(id?: string): void {
@@ -75,7 +80,31 @@ export class PlanMode {
     this._isActive = false;
     this._planId = null;
     this._planFilePath = null;
+    this._enteredAtHistoryLength = null;
     this.agent.emitStatusUpdated();
+  }
+
+  cancelAfterUndoIfNeeded(removedUserIndex: number): void {
+    if (!this._isActive) return;
+    if (this.agent.records.restoring !== null) return;
+    if (this._enteredAtHistoryLength === null) return;
+    // Cancel only when plan mode was entered after the user prompt being
+    // undone. Manual `/plan on` before a prompt should survive undoing that prompt.
+    if (this._enteredAtHistoryLength > removedUserIndex) {
+      this.cancel(this._planId ?? undefined);
+    }
+  }
+
+  onContextClear(): void {
+    if (this._isActive && this._enteredAtHistoryLength !== null) {
+      this._enteredAtHistoryLength = 0;
+    }
+  }
+
+  onContextCompacted(): void {
+    if (this._isActive && this._enteredAtHistoryLength !== null) {
+      this._enteredAtHistoryLength = 0;
+    }
   }
 
   async clear(): Promise<void> {
@@ -92,6 +121,7 @@ export class PlanMode {
     this._isActive = false;
     this._planId = null;
     this._planFilePath = null;
+    this._enteredAtHistoryLength = null;
     this.agent.emitStatusUpdated();
   }
 
