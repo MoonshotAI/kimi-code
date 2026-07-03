@@ -40,8 +40,17 @@ continue:
   conversation never established — files or paths referenced but not yet read,
   schemas or APIs assumed but unseen, questions the user has not answered. Name
   these gaps so the next turn goes and checks them instead of assuming.
-- The precise next action — including the exact next command or tool call you
-  intend to make — and any required format for the final answer.
+- The forward plan — and this is the moment to invest in it. Right now you
+  hold more context on this task than you ever will again; the next turn
+  resumes with less, so the plan you commit here is the one it will follow.
+  Give the exact next command or tool call, but don't stop at the next step:
+  set out the remaining sequence to finish, the decisions you have already
+  made for those upcoming steps (so the next turn doesn't reopen them), the
+  obstacles or edge cases you can already foresee and how you mean to handle
+  them, and any work you can commit to now — the exact patch, query, or shape
+  of the final answer you already know you will produce. Anything you settle
+  here is one less thing the next turn must rediscover. Include any required
+  format for the final answer.
 
 Your TODO list is re-attached automatically below this note from its live
 source, so do not transcribe it — copying it wastes space and can contradict the
