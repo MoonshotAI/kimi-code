@@ -97,6 +97,8 @@ max_steps_per_run = 42
 max_retries_per_step = 3
 reserved_context_size = 50000
 compaction_trigger_ratio = 0.85
+progress_stall_threshold = 12
+progress_min_info_gain_length = 120
 
 [background]
 max_running_tasks = 4
@@ -174,6 +176,8 @@ describe('harness config TOML loader', () => {
       maxRetriesPerStep: 3,
       reservedContextSize: 50000,
       compactionTriggerRatio: 0.85,
+      progressStallThreshold: 12,
+      progressMinInfoGainLength: 120,
     });
     expect(config.background).toMatchObject({
       maxRunningTasks: 4,

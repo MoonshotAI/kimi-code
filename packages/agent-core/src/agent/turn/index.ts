@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Readable } from 'node:stream';
 
 import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
 import {
@@ -39,6 +40,7 @@ import { abortable, isUserCancellation, userCancellationReason } from '../../uti
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
+import { ProgressDetector, type ProgressSnapshot } from './progress-detector';
 import { ToolCallDeduplicator } from './tool-dedup';
 import { budgetToolResultForModel } from './tool-result-budget';
 
@@ -78,6 +80,22 @@ const GOAL_PROVIDER_API_PAUSE_PREFIX = 'Paused after provider API error';
 const GOAL_MODEL_CONFIG_PAUSE_PREFIX = 'Paused after model configuration error';
 const GOAL_RUNTIME_PAUSE_PREFIX = 'Paused after runtime error';
 const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy block';
+
+/**
+ * Number of consecutive steps without external progress before the harness
+ * forces the model into text-only mode. This is a safety rail against tool-use
+ * loops where the model emits placeholder calls (e.g. Bash(:), Read /dev/null)
+ * instead of responding to the user.
+ */
+const PROGRESS_STALL_THRESHOLD = 8;
+
+const PROGRESS_STALL_REMINDER = [
+  'The last several actions did not advance the task: no files were changed,',
+  'no new background work started, and no new useful information was gathered.',
+  'Stop making tool calls. In your next response, reply with text only:',
+  'summarize what you know, what has already been tried, and what decision or',
+  'information is needed next.',
+].join(' ');
 
 /**
  * The prompt the goal driver appends to start each continuation turn — the
@@ -665,7 +683,14 @@ export class TurnFlow {
   private async runStepLoop(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
     let goalOutcomeMessageContinuationUsed = false;
+    let forceTextMode = false;
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
+    const loopControl = this.agent.kimiConfig?.loopControl;
+    const progressStallThreshold = loopControl?.progressStallThreshold ?? PROGRESS_STALL_THRESHOLD;
+    const progressDetector = new ProgressDetector({
+      takeSnapshot: () => this.takeProgressSnapshot(),
+      minInfoGainLength: loopControl?.progressMinInfoGainLength,
+    });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
     // there is no active goal). Each goal continuation is its own turn, so this
@@ -674,7 +699,6 @@ export class TurnFlow {
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
-      const loopControl = this.agent.kimiConfig?.loopControl;
       let stopForGoalBudget = false;
       try {
         const result = await runTurn({
@@ -683,7 +707,7 @@ export class TurnFlow {
           llm: this.agent.llm,
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
-          dispatchEvent: this.buildDispatchEvent(turnId),
+          dispatchEvent: this.buildDispatchEvent(turnId, progressDetector),
           tools: this.agent.tools.loopTools,
           log: this.agent.log,
           maxSteps: loopControl?.maxStepsPerTurn,
@@ -697,6 +721,7 @@ export class TurnFlow {
             }
           },
           hooks: {
+            // oxlint-disable-next-line no-loop-func -- step hook state is scoped to this turn.
             beforeStep: async ({ signal: stepSignal }) => {
               this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
@@ -709,12 +734,29 @@ export class TurnFlow {
               this.flushSteerBuffer();
               await this.agent.injection.inject();
               deduper.beginStep();
+              if (forceTextMode) {
+                this.agent.context.appendSystemReminder(PROGRESS_STALL_REMINDER, {
+                  kind: 'system_trigger',
+                  name: 'progress_stall_guard',
+                });
+                return { tools: [] };
+              }
               return;
             },
-            afterStep: async ({ usage }) => {
+            // oxlint-disable-next-line no-loop-func -- step hook state is scoped to this turn.
+            afterStep: async ({ stepNumber, usage }) => {
               this.agent.usage.record(model, usage, 'turn');
               await this.agent.fullCompaction.afterStep();
               deduper.endStep();
+              const progress = await progressDetector.recordStep(stepNumber);
+              if (!progress && progressDetector.stepsSinceLastProgress(stepNumber) >= progressStallThreshold) {
+                this.agent.log.warn('turn appears stalled; forcing text-only mode', {
+                  turnId,
+                  stepNumber,
+                  threshold: progressStallThreshold,
+                });
+                forceTextMode = true;
+              }
               return stopForGoalBudget ? { stopTurn: true } : undefined;
             },
             // oxlint-disable-next-line no-loop-func -- stop hook continuation state is scoped to this turn.
@@ -840,10 +882,11 @@ export class TurnFlow {
     }
   }
 
-  private buildDispatchEvent(turnId: number) {
+  private buildDispatchEvent(turnId: number, progressDetector?: ProgressDetector) {
     return createLoopEventDispatcher({
       appendTranscriptRecord: async (event: LoopRecordedEvent) => {
         this.agent.context.appendLoopEvent(event);
+        progressDetector?.onLoopEvent(event);
       },
       emitLiveEvent: (event: LoopEvent) => {
         this.noteFirstRequestEvent(event);
@@ -852,6 +895,47 @@ export class TurnFlow {
         if (mapped !== undefined) this.agent.emitEvent(mapped);
       },
     });
+  }
+
+  private async takeProgressSnapshot(): Promise<ProgressSnapshot> {
+    const cwd = this.agent.config.cwd;
+    const [gitStatus, backgroundTasks] = await Promise.all([
+      this.runGitStatus(cwd),
+      this.captureBackgroundTasks(),
+    ]);
+    return { gitStatus, backgroundTasks };
+  }
+
+  private async runGitStatus(cwd: string): Promise<string> {
+    try {
+      const proc = await this.agent.kaos.exec('git', '-C', cwd, 'status', '--porcelain');
+      const stdout = await this.collectStream(proc.stdout);
+      const exitCode = await proc.wait();
+      if (exitCode !== 0) {
+        return '';
+      }
+      return stdout.trim();
+    } catch {
+      return '';
+    }
+  }
+
+  private captureBackgroundTasks(): string {
+    const tasks = this.agent.background.list(true);
+    return JSON.stringify(
+      tasks.map((task) => ({
+        id: task.taskId,
+        status: task.status,
+      })),
+    );
+  }
+
+  private async collectStream(stream: Readable): Promise<string> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+    }
+    return Buffer.concat(chunks).toString('utf-8');
   }
 
   private noteFirstRequestEvent(event: LoopEvent): void {
