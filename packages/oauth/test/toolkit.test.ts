@@ -167,6 +167,24 @@ describe('KimiOAuthToolkit', () => {
     expect(status.providers.some((entry) => entry.hasToken)).toBe(false);
   });
 
+  it('merges the API-key status into the primary entry when the requested provider is an API-key provider', async () => {
+    const storage = new MemoryTokenStorage();
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    // `moonshot-cn` has no OAuth token file, so the OAuth probe alone would
+    // report hasToken:false. Because it is listed as an API-key provider, the
+    // primary entry must reflect hasToken:true with no duplicate appended.
+    const status = await toolkit.status('moonshot-cn', undefined, {
+      apiKeyProviders: ['moonshot-cn'],
+    });
+    expect(status.providers).toEqual([{ providerName: 'moonshot-cn', hasToken: true }]);
+  });
+
   it('resolves bearer token providers using the configured oauth key', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('custom-kimi-code', token('custom-access'));
