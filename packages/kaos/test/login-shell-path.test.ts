@@ -8,8 +8,8 @@
  * inherits the impoverished PATH.
  *
  * `LocalKaos.create()` must probe the user's login shell (`$SHELL -l -c
- * env`, falling back to the OS account's login shell when $SHELL is unset
- * or blank) once and append the missing PATH entries to
+ * /usr/bin/env`, falling back to the OS account's login shell when $SHELL
+ * is unset or blank) once and append the missing PATH entries to
  * `process.env.PATH` — without reordering or overriding what is already
  * there. Probe failures (no resolvable shell, hung or broken profile)
  * must leave PATH untouched.
@@ -60,12 +60,15 @@ function stubDeps(opts: StubOpts): { deps: LoginShellPathDeps; calls: unknown[][
 }
 
 describe('probeLoginShellPath', () => {
-  it('runs $SHELL -l -c env and returns its PATH', async () => {
+  it('runs $SHELL -l -c /usr/bin/env and returns its PATH', async () => {
     const { deps, calls } = stubDeps({
       execFileResult: 'HOME=/Users/u\nPATH=/opt/homebrew/bin:/usr/bin:/bin\nTERM=dumb\n',
     });
     await expect(probeLoginShellPath(deps)).resolves.toBe('/opt/homebrew/bin:/usr/bin:/bin');
-    expect(calls).toEqual([['/bin/zsh', ['-l', '-c', 'env'], 5_000]]);
+    // env must be invoked by absolute path: a bare `env` resolves through
+    // the inherited (possibly cwd-dependent) PATH from the workspace cwd,
+    // so a repo-planted `env` binary could run at session startup.
+    expect(calls).toEqual([['/bin/zsh', ['-l', '-c', '/usr/bin/env'], 5_000]]);
   });
 
   it('keeps the last PATH= line, ignoring profile noise printed earlier', async () => {
@@ -92,7 +95,7 @@ describe('probeLoginShellPath', () => {
         execFileResult: 'PATH=/opt/homebrew/bin:/usr/bin\n',
       });
       await expect(probeLoginShellPath(deps)).resolves.toBe('/opt/homebrew/bin:/usr/bin');
-      expect(calls).toEqual([['/bin/zsh', ['-l', '-c', 'env'], 5_000]]);
+      expect(calls).toEqual([['/bin/zsh', ['-l', '-c', '/usr/bin/env'], 5_000]]);
     }
   });
 

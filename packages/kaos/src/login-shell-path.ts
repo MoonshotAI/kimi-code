@@ -6,8 +6,8 @@
  * profile (GUI launchers, non-login parent shells), `process.env.PATH`
  * misses entries like `/opt/homebrew/bin`, so commands spawned by the Bash
  * tool can't find tools the user has in their interactive shell (e.g.
- * `gh`). We run the user's login shell once (`$SHELL -l -c env`), extract
- * its PATH, and append the entries the current PATH lacks. Existing
+ * `gh`). We run the user's login shell once (`$SHELL -l -c /usr/bin/env`),
+ * extract its PATH, and append the entries the current PATH lacks. Existing
  * entries keep their order and priority; failures (no resolvable shell,
  * hung or broken profile) silently leave PATH untouched.
  *
@@ -52,8 +52,18 @@ export async function probeLoginShellPath(deps: LoginShellPathDeps): Promise<str
   if (shell === undefined || shell.length === 0) return undefined;
 
   // `env` prints the resolved environment in every shell dialect, unlike
-  // `echo $PATH`, which fish would join with spaces.
-  const stdout = await deps.execFileText(shell, ['-l', '-c', 'env'], LOGIN_SHELL_ENV_TIMEOUT_MS);
+  // `echo $PATH`, which fish would join with spaces. Invoke it by absolute
+  // path: a bare `env` resolves through the inherited PATH — which may
+  // carry cwd-dependent components — from the workspace cwd, so a
+  // repo-planted `env` binary could run at session startup and feed us an
+  // arbitrary PATH. The absolute path also bypasses profile function
+  // shadowing, and /usr/bin/env is guaranteed on every mainstream POSIX
+  // system (it is the canonical shebang interpreter path).
+  const stdout = await deps.execFileText(
+    shell,
+    ['-l', '-c', '/usr/bin/env'],
+    LOGIN_SHELL_ENV_TIMEOUT_MS,
+  );
   if (stdout === undefined) return undefined;
 
   // Profile output lands on stdout before `env` runs, so keep the last
