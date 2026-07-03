@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   FsPathEscapesError,
   resolveSafePath,
+  isTempPath,
+  resolveTempPath,
 } from '@moonshot-ai/agent-core';
 
 let tmpDir: string;
@@ -109,5 +111,51 @@ describe('resolveSafePath', () => {
   it('accepts a missing-tail path (e.g. for future write or 40409 surface)', async () => {
     const r = await resolveSafePath(cwd, 'does-not-exist.txt');
     expect(r.relative).toBe('does-not-exist.txt');
+  });
+});
+
+describe('isTempPath', () => {
+  it('recognises /tmp and descendants', () => {
+    expect(isTempPath('/tmp')).toBe(true);
+    expect(isTempPath('/tmp/foo.txt')).toBe(true);
+    expect(isTempPath('/tmp/nested/file')).toBe(true);
+  });
+
+  it('recognises /var/tmp and /dev/shm', () => {
+    expect(isTempPath('/var/tmp')).toBe(true);
+    expect(isTempPath('/var/tmp/bar')).toBe(true);
+    expect(isTempPath('/dev/shm')).toBe(true);
+    expect(isTempPath('/dev/shm/baz')).toBe(true);
+  });
+
+  it('rejects non-temp absolute paths', () => {
+    expect(isTempPath('/etc/passwd')).toBe(false);
+    expect(isTempPath('/home/user/file')).toBe(false);
+    expect(isTempPath('/')).toBe(false);
+  });
+
+  it('rejects relative paths', () => {
+    expect(isTempPath('tmp/foo')).toBe(false);
+    expect(isTempPath('./tmp/foo')).toBe(false);
+  });
+});
+
+describe('resolveTempPath', () => {
+  it('resolves a simple /tmp file', async () => {
+    const r = await resolveTempPath('/tmp/hello.txt');
+    expect(r.absolute).toBe('/tmp/hello.txt');
+    expect(r.relative).toBe('/tmp/hello.txt');
+  });
+
+  it('rejects empty string', async () => {
+    await expect(resolveTempPath('')).rejects.toThrowError(FsPathEscapesError);
+  });
+
+  it('rejects paths with ".." segments', async () => {
+    await expect(resolveTempPath('/tmp/../etc/passwd')).rejects.toThrowError(FsPathEscapesError);
+  });
+
+  it('rejects non-temp absolute paths', async () => {
+    await expect(resolveTempPath('/etc/passwd')).rejects.toThrowError(FsPathEscapesError);
   });
 });

@@ -1899,12 +1899,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // model usually references images by absolute path. Strip the session cwd.
     let path = src;
     if (path.startsWith('/')) {
-      const cwd = rawState.sessions.find((s) => s.id === sid)?.cwd;
-      if (cwd && (path === cwd || path.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`))) {
-        path = path.slice(cwd.length).replace(/^\//, '');
-        if (!path) return src;
+      // Allow system temp directories (e.g. /tmp/...) to be read directly
+      if (/^\/(tmp|var\/tmp|dev\/shm)\b/.test(path)) {
+        // keep absolute path for temp files
       } else {
-        return src; // absolute path outside the workspace — unreadable
+        const cwd = rawState.sessions.find((s) => s.id === sid)?.cwd;
+        if (cwd && (path === cwd || path.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`))) {
+          path = path.slice(cwd.length).replace(/^\//, '');
+          if (!path) return src;
+        } else {
+          return src; // absolute path outside the workspace — unreadable
+        }
       }
     }
 

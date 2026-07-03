@@ -55,6 +55,10 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
     return out.join('/');
   }
 
+  function isSystemTempPath(path: string): boolean {
+    return /^\/(tmp|var\/tmp|dev\/shm)\b/.test(path);
+  }
+
   function normalizePreviewPath(inputPath: string): { path: string } | { error: string } {
     const raw = inputPath.trim();
     if (!raw) return { error: t('filePreview.errors.emptyPath') };
@@ -65,8 +69,14 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
       return { error: t('filePreview.errors.outsideWorkspace') };
     }
 
-    const cwd = trimTrailingSlash(client.status.value.cwd);
+    // Allow absolute paths inside system temp directories (e.g. /tmp/...)
     if (raw.startsWith('/')) {
+      if (isSystemTempPath(raw)) {
+        const normalized = normalizeRelativePath(raw);
+        return normalized ? { path: raw } : { error: t('filePreview.errors.emptyPath') };
+      }
+
+      const cwd = trimTrailingSlash(client.status.value.cwd);
       if (!cwd || (raw !== cwd && !raw.startsWith(`${cwd}/`))) {
         return { error: t('filePreview.errors.outsideWorkspace') };
       }
