@@ -28,6 +28,8 @@ import {
   type StatResult,
 } from '@moonshot-ai/kaos';
 
+import { assertPathInRoots } from './path-boundary';
+
 /**
  * `Kaos` that routes `read*` / `write*` through the ACP reverse-RPC
  * channel and delegates everything else to `inner`.
@@ -44,6 +46,19 @@ export class AcpKaos implements Kaos {
     private readonly conn: AgentSideConnection,
     private readonly sessionId: string,
     private readonly inner: Kaos,
+    /**
+     * Canonical (realpath-resolved) workspace roots this AcpKaos
+     * treats as authoritative: `[cwd, ...additionalDirectories]`.
+     * Set at construction time so the per-call hot path only
+     * resolves the target, not the roots. Must be the output of
+     * {@link resolveCanonicalRoots} — caller is responsible for
+     * realpath'ing the supplied cwd + additionalDirectories up front
+     * (see `maybeBuildAcpKaos` in `server.ts`).
+     *
+     * Carried unchanged through {@link withCwd} / {@link withEnv} —
+     * the effective root set is session-scoped, not cwd-scoped.
+     */
+    private readonly effectiveRoots: readonly string[],
   ) {}
 
   // ── identity ────────────────────────────────────────────────────────
@@ -84,33 +99,47 @@ export class AcpKaos implements Kaos {
    * instance — so a `chdir` followed by `readText('relative.ts')`
    * continues to hit the ACP bridge rather than silently dropping back
    * to local filesystem reads.
+   *
+   * The effective root set (this adapter's `additionalDirectories`
+   * boundary) is **session-scoped**, not cwd-scoped, so it carries
+   * forward unchanged — changing `inner.withCwd()` does not retune
+   * which paths are allowed.
    */
   withCwd(cwd: string): Kaos {
-    return new AcpKaos(this.conn, this.sessionId, this.inner.withCwd(cwd));
+    return new AcpKaos(this.conn, this.sessionId, this.inner.withCwd(cwd), this.effectiveRoots);
   }
 
   withEnv(env: Record<string, string>): Kaos {
-    return new AcpKaos(this.conn, this.sessionId, this.inner.withEnv(env));
+    return new AcpKaos(this.conn, this.sessionId, this.inner.withEnv(env), this.effectiveRoots);
   }
 
-  stat(path: string, options?: { followSymlinks?: boolean }): Promise<StatResult> {
+  async stat(path: string, options?: { followSymlinks?: boolean }): Promise<StatResult> {
+    await assertPathInRoots(path, this.effectiveRoots, 'stat');
     return this.inner.stat(path, options);
   }
 
-  iterdir(path: string): AsyncGenerator<string> {
-    return this.inner.iterdir(path);
+  async *iterdir(path: string): AsyncGenerator<string> {
+    // Anchor the check before yielding so callers that never consume
+    // the iterator still see the boundary violation.
+    await assertPathInRoots(path, this.effectiveRoots, 'iterdir');
+    yield* this.inner.iterdir(path);
   }
 
-  glob(
+  async *glob(
     path: string,
     pattern: string,
     options?: { caseSensitive?: boolean },
   ): AsyncGenerator<string> {
-    return this.inner.glob(path, pattern, options);
+    await assertPathInRoots(path, this.effectiveRoots, 'glob');
+    yield* this.inner.glob(path, pattern, options);
   }
 
-  mkdir(path: string, options?: { parents?: boolean; existOk?: boolean }): Promise<void> {
-    return this.inner.mkdir(path, options);
+  async mkdir(
+    path: string,
+    options?: { parents?: boolean; existOk?: boolean },
+  ): Promise<void> {
+    await assertPathInRoots(path, this.effectiveRoots, 'mkdir');
+    await this.inner.mkdir(path, options);
   }
 
   // ── reads: route through ACP `fs/readTextFile` ─────────────────────
@@ -126,6 +155,7 @@ export class AcpKaos implements Kaos {
     path: string,
     _options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
   ): Promise<string> {
+    await assertPathInRoots(path, this.effectiveRoots, 'readText');
     const rpcPath = this.toClientPath(path);
     try {
       const resp = await this.conn.readTextFile({ sessionId: this.sessionId, path: rpcPath });
@@ -141,8 +171,14 @@ export class AcpKaos implements Kaos {
    * payloads (images, video, archives — anything `ReadMediaFile` may
    * touch). The ACP bridge only owns the *text* surface; raw bytes
    * stay on the local filesystem via `inner`.
+   *
+   * Even though the bytes go to `inner`, the path is still subject
+   * to the effective-root check — without that, a model could read
+   * `/etc/passwd` bytes by routing through the binary surface. The
+   * `additionalDirectories` boundary is about scope, not surface.
    */
-  readBytes(path: string, n?: number): Promise<Buffer> {
+  async readBytes(path: string, n?: number): Promise<Buffer> {
+    await assertPathInRoots(path, this.effectiveRoots, 'readBytes');
     return this.inner.readBytes(path, n);
   }
 
@@ -200,6 +236,13 @@ export class AcpKaos implements Kaos {
     data: string,
     options?: { mode?: 'w' | 'a'; encoding?: BufferEncoding },
   ): Promise<number> {
+    // Single boundary check for the outer path, regardless of mode.
+    // The append-mode's read-then-write fallback re-checks the same
+    // target via readText, which would otherwise double-resolve and
+    // race the same canonical path twice. The outer check is what
+    // gates the write; the inner read is a fallback for "file does
+    // not exist yet", not a separate authorization surface.
+    await assertPathInRoots(path, this.effectiveRoots, 'writeText');
     if (options?.mode === 'a') {
       let existing = '';
       try {
@@ -221,6 +264,7 @@ export class AcpKaos implements Kaos {
    * (Read/Write/Edit tools), not binary streaming.
    */
   async writeBytes(path: string, data: Buffer): Promise<number> {
+    await assertPathInRoots(path, this.effectiveRoots, 'writeBytes');
     await this.acpWrite(path, data.toString('utf8'));
     return data.byteLength;
   }

@@ -26,7 +26,9 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
-import { describe, expect, it } from 'vitest';
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AcpKaos } from '../src/kaos-acp';
 import { AcpServer } from '../src/server';
@@ -81,6 +83,19 @@ function makeHarness(captured: CapturedCreate[]): KimiHarness {
 }
 
 describe('AcpServer FS-capability activation (boundary injection)', () => {
+  // The boundary check on `cwd` requires a realpath-able path; these
+  // tests predate that and exercise delegation only, but the server
+  // still has to construct an AcpKaos (with realpathed roots) before
+  // the call reaches the harness. Use a mkdtemp'd scratch dir and
+  // teardown so the activation surface is exercised end-to-end.
+  let scratchWork: string;
+  beforeAll(async () => {
+    scratchWork = await fsp.mkdtemp(path.join('/tmp', 'acp-activation-'));
+  });
+  afterAll(async () => {
+    if (scratchWork) await fsp.rm(scratchWork, { recursive: true, force: true });
+  });
+
   it('passes an AcpKaos to createSession when the client advertises fs.readTextFile', async () => {
     const captured: CapturedCreate[] = [];
     const harness = makeHarness(captured);
@@ -93,7 +108,7 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: true, writeTextFile: false } },
     });
-    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+    await client.newSession({ cwd: scratchWork, mcpServers: [] });
 
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeInstanceOf(AcpKaos);
@@ -114,7 +129,7 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: true } },
     });
-    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+    await client.newSession({ cwd: scratchWork, mcpServers: [] });
 
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeInstanceOf(AcpKaos);
@@ -134,7 +149,7 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
     });
-    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+    await client.newSession({ cwd: scratchWork, mcpServers: [] });
 
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeUndefined();
@@ -153,7 +168,7 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
     });
-    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+    await client.newSession({ cwd: scratchWork, mcpServers: [] });
 
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeUndefined();
@@ -180,13 +195,13 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: true } },
     });
-    const response = await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+    const response = await client.newSession({ cwd: scratchWork, mcpServers: [] });
 
     const kaos = captured[0]?.options.kaos;
     expect(kaos).toBeInstanceOf(AcpKaos);
     // Drive a reverse-RPC read through the AcpKaos and verify the
     // sessionId on the wire matches the one returned by newSession.
-    await kaos!.readText('/abs/file.ts');
+    await kaos!.readText(path.join(scratchWork, 'file.ts'));
     expect(observedSessionId).toBe(response.sessionId);
   });
 });

@@ -8,6 +8,7 @@
 
 import { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 import {
   AgentSideConnection,
@@ -51,6 +52,7 @@ import { LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 import { TERMINAL_AUTH_METHOD, buildTerminalAuthMethod } from './auth-methods';
 import { redirectConsoleToStderr } from './log-guard';
 import { AcpKaos } from './kaos-acp';
+import { resolveCanonicalRoots } from './path-boundary';
 import { AcpSession, type TelemetryTrackFn } from './session';
 import { buildSessionConfigOptions } from './config-options';
 import { availableCommandsUpdateNotification } from './events-map';
@@ -282,14 +284,15 @@ export class AcpServer implements Agent {
     // by the kernel `SessionImpl` ctor and every tool downstream sees
     // the same reference, no AsyncLocalStorage needed.
     const sessionId = `session_${randomUUID()}`;
-    const acpKaos = await this.maybeBuildAcpKaos(sessionId);
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
+    const acpKaos = await this.maybeBuildAcpKaos(sessionId, params.cwd, additionalDirs);
     const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
     const session = await this.harness.createSession({
       id: sessionId,
       workDir: params.cwd,
-      additionalDirs: params.additionalDirectories,
       kaos: acpKaos,
       persistenceKaos,
+      additionalDirs,
       sessionStartedProperties: { mode: 'new' },
       // @ts-expect-error — `mcpServers` is a kernel-side extension
       // (agent-core `CreateSessionPayload`) the SDK transparently
@@ -357,11 +360,12 @@ export class AcpServer implements Agent {
    * deliberately skips it (per ACP spec G4 / plan gap-4.3).
    */
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
     const { session, acpSession, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
-      additionalDirectories: params.additionalDirectories,
       mcpServers: params.mcpServers,
+      additionalDirs,
       mode: 'load',
     });
     // Synchronously replay history — the response must not settle
@@ -394,11 +398,12 @@ export class AcpServer implements Agent {
    * rationale, and gap-4.1 for the matching capability advertisement.
    */
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
     const { session, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
-      additionalDirectories: params.additionalDirectories,
       mcpServers: params.mcpServers,
+      additionalDirs,
       mode: 'resume',
     });
     this.scheduleAvailableCommandsUpdate(session.id);
@@ -431,8 +436,8 @@ export class AcpServer implements Agent {
   private async setupSessionFromExisting(params: {
     cwd: string;
     sessionId: string;
-    additionalDirectories?: readonly string[];
     mcpServers?: ReadonlyArray<McpServer>;
+    additionalDirs?: readonly string[];
     mode: 'load' | 'resume';
   }): Promise<{
     session: Session;
@@ -455,15 +460,19 @@ export class AcpServer implements Agent {
     // `resumeSession` spreads `input` so unknown fields ride to the
     // kernel.
     const mcpServers = acpMcpServersToConfigs(params.mcpServers);
-    const acpKaos = await this.maybeBuildAcpKaos(params.sessionId);
+    const acpKaos = await this.maybeBuildAcpKaos(
+      params.sessionId,
+      params.cwd,
+      params.additionalDirs,
+    );
     const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
     let session: Session;
     try {
       session = await this.harness.resumeSession({
         id: params.sessionId,
-        additionalDirs: params.additionalDirectories,
         kaos: acpKaos,
         persistenceKaos,
+        additionalDirs: params.additionalDirs,
         sessionStartedProperties: { mode: params.mode },
         // @ts-expect-error — see block comment above; mcpServers is a
         // kernel-only field that the SDK forwards via spread.
@@ -537,8 +546,24 @@ export class AcpServer implements Agent {
    * it. The resulting {@link AcpKaos} is captured by the kernel
    * `SessionImpl` ctor and every tool downstream sees the same
    * reference — no AsyncLocalStorage involved.
+   *
+   * @param sessionId   ACP-side session id (also used as the
+   *                    reverse-RPC session binding).
+   * @param additionalDirs  Optional additional workspace roots from
+   *                        `additionalDirectories`. Combined with
+   *                        `cwd` (supplied by the caller) to form
+   *                        the effective root set the {@link AcpKaos}
+   *                        enforces on every file operation.
+   *                        Missing / non-existent roots cause a
+   *                        structured `invalid_params` rejection —
+   *                        fail-closed at session-init time per the
+   *                        ACP `additionalDirectories` RFD.
    */
-  private async maybeBuildAcpKaos(sessionId: string): Promise<AcpKaos | undefined> {
+  private async maybeBuildAcpKaos(
+    sessionId: string,
+    cwd: string,
+    additionalDirs?: readonly string[],
+  ): Promise<AcpKaos | undefined> {
     const fs = this.clientCapabilities?.fs;
     if (!fs?.readTextFile && !fs?.writeTextFile) {
       return undefined;
@@ -547,7 +572,22 @@ export class AcpServer implements Agent {
       return undefined;
     }
     const innerKaos = await this.ensureInnerKaos();
-    return new AcpKaos(this.conn, sessionId, innerKaos);
+    const roots = [cwd, ...(additionalDirs ?? [])];
+    let canonical: string[];
+    try {
+      canonical = await resolveCanonicalRoots(roots);
+    } catch (err) {
+      // Fail-closed: a missing/unresolved root is a misconfigured
+      // session, not a transient condition. Surface it as a
+      // structured JSON-RPC `invalid_params` so the client sees a
+      // clear failure rather than a tool-time boundary error many
+      // turns later.
+      throw RequestError.invalidParams(
+        { additionalDirectories: additionalDirs ?? [] },
+        `cannot resolve additionalDirectories on disk: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return new AcpKaos(this.conn, sessionId, innerKaos, canonical);
   }
 
   private async ensureInnerKaos(): Promise<Kaos> {
@@ -1102,4 +1142,46 @@ function sessionSummaryToSessionInfo(summary: SessionSummary): SessionInfo {
     title,
     updatedAt,
   };
+}
+
+/**
+ * Validate the ACP `additionalDirectories` field per protocol spec.
+ *
+ * Returns the validated string array when the field is present, or
+ * `undefined` when the field is absent (`null` or `undefined`).
+ * Throws {@link RequestError.invalidParams} for non-array values,
+ * non-string entries, empty strings, or non-absolute paths.
+ */
+export function validateAdditionalDirectories(
+  dirs: unknown,
+): string[] | undefined {
+  if (dirs === undefined || dirs === null) return undefined;
+  if (!Array.isArray(dirs)) {
+    throw RequestError.invalidParams(
+      { additionalDirectories: dirs },
+      'additionalDirectories must be an array',
+    );
+  }
+  for (let i = 0; i < dirs.length; i++) {
+    const entry = dirs[i];
+    if (typeof entry !== 'string') {
+      throw RequestError.invalidParams(
+        { additionalDirectories: dirs },
+        `additionalDirectories[${i}] must be a string`,
+      );
+    }
+    if (entry === '') {
+      throw RequestError.invalidParams(
+        { additionalDirectories: dirs },
+        `additionalDirectories[${i}] must not be empty`,
+      );
+    }
+    if (!path.isAbsolute(entry)) {
+      throw RequestError.invalidParams(
+        { additionalDirectories: dirs },
+        `additionalDirectories[${i}] must be an absolute path`,
+      );
+    }
+  }
+  return dirs;
 }
