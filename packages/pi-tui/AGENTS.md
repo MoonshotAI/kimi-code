@@ -17,5 +17,6 @@ Never overwrite this directory wholesale when syncing from upstream. Each of the
 
 ## Testing
 
-- This package's tests run with `node --test` (`pnpm --filter @moonshot-ai/pi-tui test`), not vitest; the root `vitest run` does not execute them.
+- This package's tests run with `node --test` (`pnpm --filter @moonshot-ai/pi-tui test`), not vitest; the root `vitest run` does not execute them. The `test` script runs both `test/*.test.ts` and `e2e/*.test.ts`; `test:e2e` runs the e2e cases alone.
 - Prefer adding new narrow-width tests to the existing test file of the corresponding component.
+- `e2e/` is a rendering-bug ledger: one case file per production rendering bug, driven end to end through the xterm-emulated `VirtualTerminal` (screen, scrollback, scroll position). When a rendering bug is found, add a `caseNN-*.test.ts` repro there and register it in `e2e/README.md`; keep it as a permanent regression guard after the fix. See `e2e/README.md` for the renderer invariants these cases assert.

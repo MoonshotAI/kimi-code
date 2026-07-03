@@ -56,7 +56,8 @@
 	"scripts": {
 		"build": "tsdown",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "node --test test/*.test.ts",
+		"test": "node --test test/*.test.ts e2e/*.test.ts",
+		"test:e2e": "node --test e2e/*.test.ts",
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {

@@ -1341,7 +1341,7 @@ export class TUI extends Container {
 			}
 			const bufferLength = Math.max(height, newLines.length);
 			this.previousViewportTop = Math.max(0, bufferLength - height);
-			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.positionHardwareCursor(cursorPos, newLines.length, this.previousViewportTop, height);
 			this.previousLines = newLines;
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
@@ -1391,13 +1391,23 @@ export class TUI extends Container {
 		// Repaint the visible viewport in place with the tail of the new
 		// content, re-anchoring previousViewportTop to desiredTop. Used when
 		// the differential path cannot run safely or would push duplicate
-		// rows into scrollback. Emits no ESC[3J and never scrolls, so
-		// scrollback and the user's scroll position stay intact.
+		// rows into scrollback. Emits no ESC[3J. When desiredTop advances
+		// past the current anchor, the skipped rows are painted with fresh
+		// content and scrolled into scrollback (committed exactly once);
+		// otherwise nothing scrolls, so scrollback and the user's scroll
+		// position stay intact.
 		const repaintViewport = (desiredTop: number, reason: string): void => {
+			// An advancing anchor must commit the rows it skips: paint from
+			// the old anchor and let the paint loop scroll `advance` rows out
+			// of the screen top. A pinned or rewound anchor paints the target
+			// window in place without scrolling.
+			const advance = Math.max(0, desiredTop - prevViewportTop);
+			const paintStart = advance > 0 ? prevViewportTop : desiredTop;
+			const paintCount = height + advance;
 			// Kitty image lines need multi-row placement; fall back to a
 			// destructive full render for that rare combination.
-			for (let r = 0; r < height; r++) {
-				const idx = desiredTop + r;
+			for (let r = 0; r < paintCount; r++) {
+				const idx = paintStart + r;
 				if (idx < newLines.length && isImageLine(newLines[idx]!)) {
 					logRedraw(`viewport repaint hit kitty image at line ${idx}`);
 					fullRender(true);
@@ -1430,12 +1440,15 @@ export class TUI extends Container {
 				repaint += `\x1b[${cursorScreenRow}A`;
 			}
 			repaint += "\r";
-			// Rewrite every screen row; the last row gets no trailing \r\n,
-			// so this never scrolls the terminal.
-			for (let r = 0; r < height; r++) {
+			// Rewrite paintCount rows from paintStart. Rows written past the
+			// bottom screen row scroll the terminal: with an advancing anchor
+			// the first `advance` rows (freshly painted) scroll into
+			// scrollback, committing them exactly once. With advance = 0 the
+			// last row gets no trailing \r\n, so nothing scrolls.
+			for (let r = 0; r < paintCount; r++) {
 				if (r > 0) repaint += "\r\n";
 				repaint += "\x1b[2K";
-				const idx = desiredTop + r;
+				const idx = paintStart + r;
 				if (idx < newLines.length) {
 					repaint += newLines[idx]!;
 				}
@@ -1447,7 +1460,7 @@ export class TUI extends Container {
 			this.hardwareCursorRow = desiredTop + height - 1;
 			this.previousViewportTop = desiredTop;
 			this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
-			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.positionHardwareCursor(cursorPos, newLines.length, desiredTop, height);
 			this.previousLines = newLines;
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
@@ -1504,7 +1517,7 @@ export class TUI extends Container {
 
 		// No changes - but still need to update hardware cursor position if it moved
 		if (firstChanged === -1) {
-			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.positionHardwareCursor(cursorPos, newLines.length, prevViewportTop, height);
 			this.previousViewportTop = prevViewportTop;
 			this.previousHeight = height;
 			return;
@@ -1550,7 +1563,7 @@ export class TUI extends Container {
 				this.cursorRow = targetRow;
 				this.hardwareCursorRow = targetRow;
 			}
-			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.positionHardwareCursor(cursorPos, newLines.length, prevViewportTop, height);
 			this.previousLines = newLines;
 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 			this.previousWidth = width;
@@ -1578,7 +1591,7 @@ export class TUI extends Container {
 			}
 			if (visibleFirstChanged === -1) {
 				logRedraw(`all changes above viewport (firstChanged=${firstChanged} < ${prevViewportTop})`);
-				this.positionHardwareCursor(cursorPos, newLines.length);
+				this.positionHardwareCursor(cursorPos, newLines.length, prevViewportTop, height);
 				this.previousLines = newLines;
 				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 				this.previousWidth = width;
@@ -1587,9 +1600,9 @@ export class TUI extends Container {
 				return;
 			}
 			// The remaining visible changes are entirely in the deleted tail
-			// region. Reachable while a shrink is pinned (debounced re-anchor
-			// pending): repaint the window at the pinned anchor, which clears
-			// the deleted rows without scrolling or rewinding.
+			// region. Reachable while a shrink is pinned: repaint the window
+			// at the pinned anchor, which clears the deleted rows without
+			// scrolling or rewinding.
 			if (visibleFirstChanged >= newLines.length) {
 				repaintViewport(
 					prevViewportTop,
@@ -1601,12 +1614,12 @@ export class TUI extends Container {
 			// Painting the shifted lines through the screen would push rows
 			// that are already in scrollback out again, stacking a duplicate
 			// copy there on every shrink/grow cycle (e.g. streaming content
-			// oscillating). Repaint the visible viewport in place instead:
-			// nothing scrolls, scrollback keeps the stale old version, and
-			// the screen shows the fresh tail. The anchor never rewinds here
-			// (that would duplicate as well): it stays pinned until the
-			// debounced shrink re-anchor above decides to rewind, and only
-			// advances when the content has outgrown the pinned window.
+			// oscillating). Repaint the visible viewport instead: scrollback
+			// keeps the stale old version and the screen shows the fresh
+			// tail. The anchor never rewinds here (that would duplicate as
+			// well): it stays pinned on a shrink, and advances only when the
+			// content has outgrown the pinned window — repaintViewport then
+			// scrolls the skipped rows into scrollback so none are lost.
 			if (newLines.length !== this.previousLines.length) {
 				const repaintTop = Math.max(desiredViewportTop, prevViewportTop);
 				repaintViewport(
@@ -1752,7 +1765,7 @@ export class TUI extends Container {
 		this.previousViewportTop = Math.max(prevViewportTop, finalCursorRow - height + 1);
 
 		// Position hardware cursor for IME
-		this.positionHardwareCursor(cursorPos, newLines.length);
+		this.positionHardwareCursor(cursorPos, newLines.length, this.previousViewportTop, height);
 
 		this.previousLines = newLines;
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
@@ -1764,8 +1777,15 @@ export class TUI extends Container {
 	 * Position the hardware cursor for IME candidate window.
 	 * @param cursorPos The cursor position extracted from rendered output, or null
 	 * @param totalLines Total number of rendered lines
+	 * @param viewportTop Logical row shown on the top screen row after this frame
+	 * @param height Terminal height (visible viewport size)
 	 */
-	private positionHardwareCursor(cursorPos: { row: number; col: number } | null, totalLines: number): void {
+	private positionHardwareCursor(
+		cursorPos: { row: number; col: number } | null,
+		totalLines: number,
+		viewportTop: number,
+		height: number,
+	): void {
 		if (!cursorPos || totalLines <= 0) {
 			this.terminal.hideCursor();
 			return;
@@ -1774,6 +1794,17 @@ export class TUI extends Container {
 		// Clamp cursor position to valid range
 		const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1));
 		const targetCol = Math.max(0, cursorPos.col);
+
+		// The hardware cursor can only sit inside the visible window. A
+		// marker outside it (e.g. a tall editor poking above a pinned
+		// viewport) must not move the cursor: the ANSI moves would clamp at
+		// the screen edge while hardwareCursorRow recorded the unreachable
+		// row, desyncing every later differential move. Hide the cursor and
+		// keep the bookkeeping on the real cursor row instead.
+		if (targetRow < viewportTop || targetRow >= viewportTop + height) {
+			this.terminal.hideCursor();
+			return;
+		}
 
 		// Move cursor from current position to target
 		const rowDelta = targetRow - this.hardwareCursorRow;
