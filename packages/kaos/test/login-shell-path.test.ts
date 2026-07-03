@@ -122,16 +122,30 @@ describe('mergeLoginShellPath', () => {
     );
   });
 
-  it('returns the current PATH unchanged when nothing is missing', () => {
-    expect(mergeLoginShellPath('/a:/b:/c', '/b:/a')).toBe('/a:/b:/c');
+  it('returns the current PATH string verbatim when nothing is missing', () => {
+    // Strict identity, including empty components and duplicates the user
+    // already has — a no-op merge must not normalize anything.
+    expect(mergeLoginShellPath('/a::/b:/a:', '/b:/a')).toBe('/a::/b:/a:');
+  });
+
+  it('preserves empty components (cwd lookup) in the current PATH while appending', () => {
+    // POSIX treats a leading colon, trailing colon, or double colon as
+    // "search the current directory"; merging must not strip that.
+    expect(mergeLoginShellPath(':/usr/bin', '/new')).toBe(':/usr/bin:/new');
+    expect(mergeLoginShellPath('/usr/bin:', '/new')).toBe('/usr/bin::/new');
+    expect(mergeLoginShellPath('/a::/b', '/c')).toBe('/a::/b:/c');
+    // A set-but-empty PATH is cwd-only lookup; the empty component stays first.
+    expect(mergeLoginShellPath('', '/a')).toBe(':/a');
   });
 
   it('handles an unset current PATH', () => {
     expect(mergeLoginShellPath(undefined, '/a:/b')).toBe('/a:/b');
   });
 
-  it('drops empty segments and duplicates', () => {
-    expect(mergeLoginShellPath('/a::/b', ':/c::/a:')).toBe('/a:/b:/c');
+  it('skips empty and duplicate login-shell entries', () => {
+    // Empty login-shell components are never imported: appending a cwd
+    // lookup the user did not already have would widen their search path.
+    expect(mergeLoginShellPath('/a', ':/b::/a:')).toBe('/a:/b');
   });
 });
 
@@ -148,6 +162,16 @@ describe('applyLoginShellPath', () => {
     const { deps } = stubDeps({ env, execFileResult: undefined });
     await applyLoginShellPath(deps);
     expect(env['PATH']).toBe('/usr/bin');
+  });
+
+  it('does not set an unset PATH when the login shell contributes nothing', async () => {
+    // Pathological but possible: the login-shell PATH holds only empty
+    // components. Writing '' back would turn "unset" (implementation
+    // default search path) into "cwd-only lookup".
+    const env: Record<string, string | undefined> = { SHELL: '/bin/zsh' };
+    const { deps } = stubDeps({ env, execFileResult: 'PATH=:::\n' });
+    await applyLoginShellPath(deps);
+    expect('PATH' in env).toBe(false);
   });
 });
 

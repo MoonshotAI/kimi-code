@@ -69,29 +69,45 @@ export async function probeLoginShellPath(deps: LoginShellPathDeps): Promise<str
 }
 
 /**
- * Union of the current PATH and the login-shell PATH: current entries keep
- * their order and priority, login-shell entries the current PATH lacks are
- * appended in their own order.
+ * Union of the current PATH and the login-shell PATH: the current PATH
+ * string is kept verbatim — including empty components, which POSIX
+ * command lookup treats as the current directory — and login-shell
+ * entries the current PATH lacks are appended in their own order. When
+ * nothing is missing the current string is returned unchanged. Empty
+ * login-shell components are never imported: appending a cwd lookup the
+ * user did not already have would widen their search path.
  */
 export function mergeLoginShellPath(
   currentPath: string | undefined,
   loginShellPath: string,
 ): string {
-  const merged = (currentPath ?? '').split(':').filter((entry) => entry.length > 0);
-  const seen = new Set(merged);
+  const current = currentPath ?? '';
+  const seen = new Set(current.split(':').filter((entry) => entry.length > 0));
+  const additions: string[] = [];
   for (const entry of loginShellPath.split(':')) {
     if (entry.length === 0 || seen.has(entry)) continue;
     seen.add(entry);
-    merged.push(entry);
+    additions.push(entry);
   }
-  return merged.join(':');
+  if (additions.length === 0) return current;
+  // `undefined` means "no PATH at all", so the additions stand alone; ''
+  // is a real (cwd-only) PATH whose empty component must survive as a
+  // leading colon.
+  if (currentPath === undefined) return additions.join(':');
+  return `${current}:${additions.join(':')}`;
 }
 
 /** Probe the login shell and merge its PATH into `deps.env['PATH']`. */
 export async function applyLoginShellPath(deps: LoginShellPathDeps): Promise<void> {
   const loginShellPath = await probeLoginShellPath(deps);
   if (loginShellPath === undefined) return;
-  deps.env['PATH'] = mergeLoginShellPath(deps.env['PATH'], loginShellPath);
+  const currentPath = deps.env['PATH'];
+  const merged = mergeLoginShellPath(currentPath, loginShellPath);
+  // Only write when something was appended — an unset PATH must stay
+  // unset (assigning '' would turn "implementation default search path"
+  // into "cwd-only lookup"), and a set PATH must not be rewritten.
+  if (merged === (currentPath ?? '')) return;
+  deps.env['PATH'] = merged;
 }
 
 /**
