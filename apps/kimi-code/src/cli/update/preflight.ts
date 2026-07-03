@@ -607,6 +607,10 @@ async function startBackgroundInstall(
       detached: true,
       stdio: 'ignore',
       shell: platform === 'win32' ? true : undefined,
+      // On Windows a detached child gets its own console window; with shell:true
+      // that window would flash during a passive background update. Hide it so
+      // the silent updater stays silent.
+      windowsHide: platform === 'win32' ? true : undefined,
     });
     child.once('error', () => { finish(false); });
     child.once('exit', (code) => { finish(code === 0); });
