@@ -5,7 +5,7 @@
      credential — so when a fileId is present we fetch the bytes through the
      authenticated API client and play from a page-local blob URL instead. -->
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getKimiWebApi } from '../../api';
 
 const props = withDefaults(
@@ -27,6 +27,11 @@ const props = withDefaults(
 );
 
 const resolvedUrl = ref<string>(props.fileId ? '' : props.url);
+const mediaEl = ref<HTMLElement | null>(null);
+// Flips true once the element nears the viewport, deferring the authenticated
+// download so a session with many historical large uploads doesn't fetch every
+// blob (and hold them in memory) before the user ever scrolls to or plays them.
+const visible = ref(!props.fileId);
 let objectUrl: string | null = null;
 // Sequence guard + unmount flag: a reused component (e.g. queued thumbnails
 // keyed by index) can change fileId before a previous fetch resolves, and an
@@ -34,6 +39,7 @@ let objectUrl: string | null = null;
 // must not win or leak its blob URL.
 let requestSeq = 0;
 let disposed = false;
+let observer: IntersectionObserver | null = null;
 
 function revoke(): void {
   if (objectUrl !== null) {
@@ -49,6 +55,7 @@ async function resolve(): Promise<void> {
     resolvedUrl.value = props.url;
     return;
   }
+  if (!visible.value) return; // defer until near the viewport
   try {
     const blob = await getKimiWebApi().getFileBlob(props.fileId);
     const url = URL.createObjectURL(blob);
@@ -65,9 +72,30 @@ async function resolve(): Promise<void> {
   }
 }
 
-watch(() => [props.fileId, props.url] as const, resolve, { immediate: true });
+watch(() => [props.fileId, props.url, visible.value] as const, resolve, { immediate: true });
+
+onMounted(() => {
+  if (typeof IntersectionObserver === 'function' && mediaEl.value) {
+    observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          visible.value = true;
+          observer?.disconnect();
+          observer = null;
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(mediaEl.value);
+  } else {
+    visible.value = true;
+  }
+});
+
 onBeforeUnmount(() => {
   disposed = true;
+  observer?.disconnect();
+  observer = null;
   revoke();
 });
 </script>
@@ -75,6 +103,7 @@ onBeforeUnmount(() => {
 <template>
   <video
     v-if="kind === 'video'"
+    ref="mediaEl"
     :class="mediaClass"
     :src="resolvedUrl || undefined"
     :controls="controls"
@@ -84,6 +113,7 @@ onBeforeUnmount(() => {
   />
   <img
     v-else
+    ref="mediaEl"
     :class="mediaClass"
     :src="resolvedUrl || undefined"
     :alt="alt || ''"
