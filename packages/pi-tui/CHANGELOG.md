@@ -1,5 +1,13 @@
 # @moonshot-ai/pi-tui
 
+## 0.80.5
+
+### Patch Changes
+
+- [#1305](https://github.com/MoonshotAI/kimi-code/pull/1305) [`9091627`](https://github.com/MoonshotAI/kimi-code/commit/909162725770700efd3051f4cfa68156d9b84fa8) - Add a paste-burst fallback that treats Enter as a newline during rapid non-bracketed multi-line input bursts.
+
+- [#1353](https://github.com/MoonshotAI/kimi-code/pull/1353) [`68ad686`](https://github.com/MoonshotAI/kimi-code/commit/68ad686211760eb1c3e6b5c23eb28ace9009c17f) - Pin the viewport anchor on partial shrinks and repaint above-viewport shifts in place, so streaming shrink/grow cycles no longer stack duplicate copies of content in scrollback; only a collapse past the viewport top re-anchors the view.
+
 ## 0.80.4
 
 ### Patch Changes
