@@ -155,7 +155,7 @@ For a first-time user, the following is all you need to know:
 | `Ctrl-C` | Interrupt output; press twice while idle to exit |
 | `Shift-Tab` | Toggle Plan mode |
 | `Ctrl-S` | Inject a message mid-stream without waiting for the current response to finish |
-| `Ctrl-O` | Collapse / expand tool output |
+| `Ctrl-O` | Collapse / expand tool output and compaction summaries |
 
 For the full list, type `/help` or visit [Slash commands reference](../reference/slash-commands.md) and [Keyboard shortcuts](../reference/keyboard.md).
 
