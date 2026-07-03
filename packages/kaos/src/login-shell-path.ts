@@ -1,0 +1,102 @@
+/**
+ * Login-shell PATH probe — enrich `process.env.PATH` with entries from the
+ * user's login shell.
+ *
+ * When kimi-code is launched from a context that skipped the user's shell
+ * profile (GUI launchers, non-login parent shells), `process.env.PATH`
+ * misses entries like `/opt/homebrew/bin`, so commands spawned by the Bash
+ * tool can't find tools the user has in their interactive shell (e.g.
+ * `gh`). We run the user's login shell once (`$SHELL -l -c env`), extract
+ * its PATH, and append the entries the current PATH lacks. Existing
+ * entries keep their order and priority; failures (missing SHELL, hung or
+ * broken profile) silently leave PATH untouched.
+ *
+ * Like `detectEnvironment`, the probe is a pure function of injected deps
+ * so the suite runs identically on any host. Windows is skipped: the
+ * problem is specific to POSIX login-shell profiles.
+ */
+
+import { execFileText } from './environment';
+
+export interface LoginShellPathDeps {
+  readonly platform: string;
+  readonly env: Record<string, string | undefined>;
+  readonly execFileText: (
+    file: string,
+    args: readonly string[],
+    timeoutMs: number,
+  ) => Promise<string | undefined>;
+}
+
+const LOGIN_SHELL_ENV_TIMEOUT_MS = 5_000;
+
+/**
+ * Run the user's login shell and return its PATH, or `undefined` when the
+ * probe does not apply (Windows, no `$SHELL`) or fails (spawn error,
+ * timeout, no PATH in the output).
+ */
+export async function probeLoginShellPath(deps: LoginShellPathDeps): Promise<string | undefined> {
+  if (deps.platform === 'win32') return undefined;
+  const shell = deps.env['SHELL']?.trim();
+  if (shell === undefined || shell.length === 0) return undefined;
+
+  // `env` prints the resolved environment in every shell dialect, unlike
+  // `echo $PATH`, which fish would join with spaces.
+  const stdout = await deps.execFileText(shell, ['-l', '-c', 'env'], LOGIN_SHELL_ENV_TIMEOUT_MS);
+  if (stdout === undefined) return undefined;
+
+  // Profile output lands on stdout before `env` runs, so keep the last
+  // PATH= line.
+  let path: string | undefined;
+  for (const line of stdout.split('\n')) {
+    if (line.startsWith('PATH=')) {
+      path = line.slice('PATH='.length).trim();
+    }
+  }
+  if (path === undefined || path.length === 0) return undefined;
+  return path;
+}
+
+/**
+ * Union of the current PATH and the login-shell PATH: current entries keep
+ * their order and priority, login-shell entries the current PATH lacks are
+ * appended in their own order.
+ */
+export function mergeLoginShellPath(
+  currentPath: string | undefined,
+  loginShellPath: string,
+): string {
+  const merged = (currentPath ?? '').split(':').filter((entry) => entry.length > 0);
+  const seen = new Set(merged);
+  for (const entry of loginShellPath.split(':')) {
+    if (entry.length === 0 || seen.has(entry)) continue;
+    seen.add(entry);
+    merged.push(entry);
+  }
+  return merged.join(':');
+}
+
+/** Probe the login shell and merge its PATH into `deps.env['PATH']`. */
+export async function applyLoginShellPath(deps: LoginShellPathDeps): Promise<void> {
+  const loginShellPath = await probeLoginShellPath(deps);
+  if (loginShellPath === undefined) return;
+  deps.env['PATH'] = mergeLoginShellPath(deps.env['PATH'], loginShellPath);
+}
+
+/**
+ * Production convenience — apply the probe to `process.env` once per
+ * process. Memoised like `detectEnvironmentFromNode`: the login-shell PATH
+ * does not change for the lifetime of the process, and repeated
+ * `LocalKaos.create()` calls must not re-spawn the shell.
+ */
+let appliedLoginShellPath: Promise<void> | undefined;
+
+export function applyLoginShellPathFromNode(): Promise<void> {
+  if (appliedLoginShellPath !== undefined) return appliedLoginShellPath;
+  appliedLoginShellPath = applyLoginShellPath({
+    platform: process.platform,
+    env: process.env as Record<string, string | undefined>,
+    execFileText,
+  });
+  return appliedLoginShellPath;
+}

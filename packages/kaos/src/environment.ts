@@ -284,7 +284,7 @@ async function findExecutablesOnPath(
   return platform === 'win32' ? dedupeWindowsPaths(paths) : paths;
 }
 
-async function execFileText(
+export async function execFileText(
   file: string,
   args: readonly string[],
   timeoutMs: number,
