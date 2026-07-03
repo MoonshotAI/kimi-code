@@ -114,6 +114,14 @@ After stripping, each entry should be only:
 - <body text>
 ```
 
+Web UI prefix: if the entry is a web UI change, prefix the body text with `web: ` so readers can tell it affects the web UI:
+
+```markdown
+- web: <body text>
+```
+
+An entry counts as a web UI change when its upstream commit touches `apps/kimi-web/`. Check with `git show --name-only <hash>` (the commit hash is the one stripped above). `gen-changesets` writes this prefix for web changes, so it is usually already present in upstream — preserve it when it is there, and add it when a web entry lacks it. When a commit touches both web and non-web code, use `web:` only if the user-facing change described by the entry is in the web UI. Keep the `web:` prefix on the Chinese page too — it is a scope marker, not translated text.
+
 Upstream language rule: `gen-changesets` requires changelog entries to be English. If the upstream CLI changelog contains a non-English entry, stop and report it to the user. Do not silently rewrite it while syncing docs.
 
 Public-text rule: do not copy real internal endpoints, key names, account names, or service names into docs changelogs. Replace examples with neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY` while preserving the user-visible meaning.
@@ -254,7 +262,7 @@ Guidelines:
 - **Keep usage hints to one short clause**.
   - Bad: `传入 --allowed-host 以允许额外的 host。例如 ... （多句展开）`
   - Better: `例如 kimi web --allowed-host example.com。`
-- **Do not translate technical identifiers**: keep command names, flag names, file names, env vars, and config keys as-is.
+- **Do not translate technical identifiers**: keep command names, flag names, file names, env vars, config keys, and the `web:` scope prefix as-is.
 
 Example — translating a feature entry:
 
@@ -397,6 +405,7 @@ Return the PR URL to the user when done.
 - The English docs changelog is the source of truth.
 - Never edit upstream `apps/kimi-code/CHANGELOG.md`.
 - Do not backfill unreleased `.changeset/*.md` drafts into the docs site.
+- Prefix web UI entries with `web: ` (when the upstream commit touches `apps/kimi-web/`), and keep the prefix on both the English and Chinese pages.
 - If upstream wording is wrong, leave upstream alone and fix it in a future changeset.
 - Always sync on a `docs/changelog-sync-*` branch and open a PR; never push changelog docs sync directly to `main`.
 - Wait for the human review checkpoint before committing, pushing, or opening a PR.
@@ -425,6 +434,7 @@ Return the PR URL to the user when done.
 | Committing or opening a PR before the user skips review or confirms review is done | Wait at the human review checkpoint |
 | Using curly quotes or half-width Chinese punctuation | Follow `docs/AGENTS.md` |
 | Omitting the release date from a version heading, or guessing it | Add ` (YYYY-MM-DD)` (full-width `（）` in Chinese) taken from the published tag |
+| Forgetting or translating the `web:` prefix on web UI entries | Prefix web UI entries (commit touches `apps/kimi-web/`) with `web: ` on both pages; keep the prefix as-is when translating |
 
 ## Stop Signals
 
