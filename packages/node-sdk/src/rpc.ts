@@ -542,6 +542,11 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async waitForBackgroundTasksOnPrint(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.waitForBackgroundTasksOnPrint({ sessionId: input.sessionId });
+  }
+
   async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
     return rpc.createGoal({

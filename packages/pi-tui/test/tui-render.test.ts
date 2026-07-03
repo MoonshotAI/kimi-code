@@ -658,7 +658,7 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 
-	it("full re-renders when deleted lines move the viewport upward", async () => {
+	it("re-anchors without a full redraw when deleted lines move the viewport upward", async () => {
 		const terminal = new VirtualTerminal(20, 5);
 		const tui = new TUI(terminal);
 		const component = new TestComponent();
@@ -674,7 +674,7 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.ok(tui.fullRedraws > initialRedraws, "Shrink should trigger a full redraw");
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "Shrink should re-anchor in place, not full-redraw");
 		assert.deepStrictEqual(terminal.getViewport(), ["Line 2", "Line 3", "Line 4", "Line 5", "Line 6"]);
 
 		tui.stop();
@@ -696,7 +696,8 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.ok(tui.fullRedraws > initialRedraws, "Shrink should reset the viewport with a full redraw");
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "Shrink should re-anchor in place, not full-redraw");
+		assert.deepStrictEqual(terminal.getViewport(), ["Line 0", "Line 1", "", "", ""]);
 		const redrawsAfterShrink = tui.fullRedraws;
 
 		component.lines = ["Line 0", "Line 1", "Line 2"];
@@ -743,7 +744,7 @@ describe("TUI differential rendering", () => {
 		assert.strictEqual(
 			tui.fullRedraws,
 			redrawsBeforeSwitch,
-			"Branch switch should not trigger a full redraw (clamped to viewport)",
+			"Branch switch should not trigger a full redraw (re-anchored in place)",
 		);
 
 		const viewport = terminal.getViewport();
@@ -754,20 +755,21 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
-		// After clamping, the viewport keeps its previous scroll position
-		// (prevViewportTop=13) rather than resetting to the new content bottom.
-		// The stale "Chat 12/13/14" rows remain in scrollback but are not visible.
+		// Each shrink re-anchors the viewport so the content bottom stays on
+		// the bottom screen row; the tail of the chat plus the editor fill
+		// the screen with no dead rows. Stale "Chat 12/13/14" rows remain in
+		// scrollback but are not visible.
 		assert.deepStrictEqual(viewport, [
+			"Chat 5",
+			"Chat 6",
+			"Chat 7",
+			"Chat 8",
+			"Chat 9",
+			"Chat 10",
+			"Chat 11",
+			"Editor 0",
 			"Editor 1",
 			"Editor 2",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
 		]);
 
 		tui.stop();

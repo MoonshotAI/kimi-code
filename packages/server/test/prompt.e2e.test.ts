@@ -22,6 +22,7 @@
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
+import { readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -471,7 +472,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     });
     expect(envelopeOf(res.json()).code).toBe(0);
 
-    const part = submitted?.content[0];
+    const part = submitted?.content[1];
     if (part?.type !== 'image' || part.source.kind !== 'base64') {
       throw new Error('expected a resolved base64 image part');
     }
@@ -479,6 +480,19 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const decoded = await Jimp.fromBuffer(sentBytes);
     // The model-facing copy is downsampled to the edge cap.
     expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+
+    // Compression is announced next to the image, and the caption points at
+    // the stored file (which keeps the original bytes) for readback.
+    const caption = submitted?.content[0];
+    if (caption?.type !== 'text') {
+      throw new Error('expected a compression caption before the image part');
+    }
+    expect(caption.text).toContain('Image compressed');
+    expect(caption.text).toContain('2600x2600');
+    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
+    expect(pathMatch).not.toBeNull();
+    const persisted = await readFile(pathMatch![1]!);
+    expect(persisted.equals(bigPng)).toBe(true);
   });
 
   it('compresses an inline base64 image submitted directly in the prompt', async () => {
@@ -519,12 +533,30 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     });
     expect(envelopeOf(res.json()).code).toBe(0);
 
-    const part = submitted?.content[0];
+    const part = submitted?.content[1];
     if (part?.type !== 'image' || part.source.kind !== 'base64') {
       throw new Error('expected a base64 image part');
     }
     const decoded = await Jimp.fromBuffer(Buffer.from(part.source.data, 'base64'));
     expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+
+    // Inline base64 has no stored file, so the original is persisted into the
+    // session's media-originals dir and the caption points there.
+    const caption = submitted?.content[0];
+    if (caption?.type !== 'text') {
+      throw new Error('expected a compression caption before the image part');
+    }
+    expect(caption.text).toContain('Image compressed');
+    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
+    expect(pathMatch).not.toBeNull();
+    // Session dirs live under the daemon home: <home>/sessions/<ws>/<id>.
+    // (realpath both sides: macOS tmpdir is a /var → /private/var symlink.)
+    const realHome = await realpath(bridgeHome);
+    const realPersistedPath = await realpath(pathMatch![1]!);
+    expect(realPersistedPath.startsWith(realHome)).toBe(true);
+    expect(pathMatch![1]!).toContain('/media-originals/');
+    const persisted = await readFile(pathMatch![1]!);
+    expect(persisted.equals(Buffer.from(base64, 'base64'))).toBe(true);
   });
 
   it('returns 40407 when prompt image file_id is unknown', async () => {

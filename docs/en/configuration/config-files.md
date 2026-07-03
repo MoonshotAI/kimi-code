@@ -51,8 +51,8 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-[experimental]
-micro_compaction = false
+# [experimental]
+# micro_compaction = false  # disabled: micro compaction has been removed
 
 [[permission.rules]]
 decision = "allow"
@@ -86,12 +86,11 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
-| `experimental` | `table` | — | Experimental feature overrides → [`experimental`](#experimental) |
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
 
-The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `experimental`, `services`, and `permission`.
+The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `services`, and `permission`.
 
 ## `providers`
 
@@ -147,16 +146,14 @@ max_context_size = 1047576
 Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Runtime consumers read the effective value: the override when present, otherwise the top-level field.
 
 ```toml
-[models."kimi-code/kimi-k2"]
+[models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
-model = "kimi-k2"
+model = "kimi-for-coding"
 max_context_size = 262144
-support_efforts = ["low", "high", "max"]
-default_effort = "max"
 
-[models."kimi-code/kimi-k2".overrides]
-support_efforts = ["low", "high"]
-default_effort = "high"
+[models."kimi-code/kimi-for-coding".overrides]
+max_context_size = 131072
+display_name = "Kimi for Coding (custom)"
 ```
 
 `[models."<alias>".overrides]` accepts ordinary model fields such as `max_context_size`, `max_output_size`, `capabilities`, `display_name`, `reasoning_key`, `adaptive_thinking`, `support_efforts`, and `default_effort`. It does not accept identity / routing fields: `provider`, `model`, `protocol`, and `beta_api`.
@@ -196,10 +193,14 @@ You can also switch models temporarily without touching the config file — by s
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently |
-| `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes. By default, Kimi Code requests that all background tasks stop before the process exits; set this to `true` only when you want tasks to outlive the session |
+| `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes. By default, Kimi Code requests that all background tasks stop before the process exits; set this to `true` only when you want tasks to outlive the session. In print mode (`kimi -p`), setting this to `true` also makes the process wait for all background tasks to finish before exiting, so background subagents can complete their work |
+| `print_wait_ceiling_s` | `integer` | `3600` | In print mode (`kimi -p`) with `keep_alive_on_exit = true`, the maximum number of seconds the process waits for background tasks to finish after the main agent's turn ends. Has no effect outside print mode or when `keep_alive_on_exit` is `false` |
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
 
+In print mode (`kimi -p "<prompt>"`), Kimi Code runs a single non-interactive turn and exits as soon as the main agent finishes. If you launch background tasks (for example, concurrent subagents via `Agent(run_in_background=true)`) and need them to run to completion, set `keep_alive_on_exit = true`: the process then waits for every background task to reach a terminal state before exiting, bounded by `print_wait_ceiling_s`. Without it, the single turn ending tears background tasks down with the process.
+
+<!--
 ## `experimental`
 
 `experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `false`; set it to `true` to enable automatic trimming of older large tool results.
@@ -207,6 +208,7 @@ You can also switch models temporarily without touching the config file — by s
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
+-->
 
 ## `services`
 
@@ -271,6 +273,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, `light`, or the name of a [custom theme](../customization/themes) |
+| `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
@@ -279,6 +282,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 ```toml
 # ~/.kimi-code/tui.toml
 theme = "auto" # "auto" | "dark" | "light" | custom theme name
+disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 
 [editor]
 command = "" # empty uses $VISUAL / $EDITOR

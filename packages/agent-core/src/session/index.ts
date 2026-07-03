@@ -49,6 +49,7 @@ import {
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
+import { sessionMediaOriginalsDir } from '../tools/support/image-originals';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import { abortError } from '../utils/abort';
@@ -422,6 +423,81 @@ export class Session {
     );
   }
 
+  /**
+   * Wait for all still-running background tasks (across every agent) to reach a
+   * terminal state before a `kimi -p` (print) run exits.
+   *
+   * Gated by `background.keep_alive_on_exit`: when it is not `true`, this returns
+   * immediately so print mode keeps its default single-turn semantics. The wait is
+   * bounded by `background.print_wait_ceiling_s` (default 3600s) so a wedged task
+   * cannot keep the process alive forever.
+   *
+   * Terminal notifications are suppressed for each task while we wait, so a task
+   * completing cannot `turn.steer` the (already finished) main agent into launching
+   * a new turn.
+   */
+  async waitForBackgroundTasksOnPrint(): Promise<void> {
+    const keepAliveOnExit = resolveConfigValue({
+      env: process.env,
+      envKey: BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV,
+      configValue: this.options.background?.keepAliveOnExit,
+      defaultValue: false,
+      parseEnv: parseBooleanEnv,
+    });
+    if (!keepAliveOnExit) return;
+
+    const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
+    const timeoutMs = ceilingS * 1000;
+    const deadline = Date.now() + timeoutMs;
+
+    // Re-enumerate active background tasks across every agent until none remain
+    // (or the ceiling expires). A subagent may fan out new background tasks
+    // after a previous enumeration, so a single pass could return while those
+    // later tasks are still running — breaking the "every background task"
+    // guarantee. Each round waits for the newly discovered tasks, then rescans
+    // to catch anything spawned in the meantime.
+    const seen = new Set<string>();
+    const allWaiters: Promise<unknown>[] = [];
+    while (Date.now() < deadline) {
+      const batch: Promise<unknown>[] = [];
+      const suppressions: Promise<void>[] = [];
+      let activeCount = 0;
+      for (const agent of this.readyAgents()) {
+        for (const task of agent.background.list(true)) {
+          activeCount++;
+          if (seen.has(task.taskId)) continue;
+          seen.add(task.taskId);
+          // suppressTerminalNotification sets the suppressed flag synchronously
+          // when called; defer awaiting the persist until after the whole
+          // enumeration so no task can complete and fire a notification while
+          // another task's persist write is pending.
+          suppressions.push(agent.background.suppressTerminalNotification(task.taskId));
+          const remaining = Math.max(1, deadline - Date.now());
+          const waiter = agent.background.wait(task.taskId, remaining);
+          batch.push(waiter);
+          allWaiters.push(waiter);
+        }
+      }
+      if (suppressions.length > 0) {
+        await Promise.all(suppressions);
+      }
+      if (activeCount === 0 || batch.length === 0) break;
+      this.log.info('waiting for background tasks before print exit', {
+        active: activeCount,
+        new: batch.length,
+        timeoutMs,
+      });
+      await Promise.all(batch);
+    }
+    if (allWaiters.length > 0) {
+      await Promise.all(allWaiters);
+      this.log.info('background tasks settled before print exit', {
+        count: seen.size,
+        timeoutMs,
+      });
+    }
+  }
+
   async createAgent(
     config: Partial<AgentOptions>,
     options: CreateAgentOptions = {},
@@ -733,6 +809,9 @@ export class Session {
       toolServices: this.options.toolServices,
       config: this.options.config,
       homedir,
+      // Session-level, shared across agents: originals persisted for
+      // compression captions live with the session, not the agent.
+      mediaOriginalsDir: sessionMediaOriginalsDir(this.options.homedir),
       skills: this.skills,
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,

@@ -19,11 +19,13 @@ export interface ProjectOptions {
   readonly synthesizeMissing?: boolean;
   /**
    * When `true`, drop any `tool_result` whose `toolCallId` matches no assistant
-   * `tool_use` anywhere in the provided messages. Strict providers reject such a
-   * stray result as an "unexpected `tool_result`". Off by default so the normal
-   * path never silently discards recorded output; the post-400 strict-resend
-   * fallback enables it (together with `synthesizeMissing`) as a last resort to
-   * force a wire-compliant request out of an otherwise-bricked session.
+   * `tool_use` anywhere in the provided messages. Such an orphan is wire-invalid
+   * on every strict provider and useless to the model (it has no record of the
+   * call the result answers). Enabled on every request-building projection — the
+   * normal wire, the strict resend, and the compaction summarizer — so a stray
+   * result never reaches a provider. Left OFF for non-request projections (e.g.
+   * token-estimating a history slice), where a result's matching call may
+   * legitimately sit outside the slice and must not be mistaken for an orphan.
    */
   readonly dropOrphanResults?: boolean;
   /**
@@ -42,6 +44,18 @@ export interface ProjectOptions {
    * consecutive assistant turns do not arise in well-formed transcripts.
    */
   readonly mergeConsecutiveAssistants?: boolean;
+  /**
+   * When `true`, drop assistant tool calls whose id already appeared earlier
+   * (first occurrence wins; a message left with no content and no calls is
+   * dropped), and drop every tool result after the first for a given id so the
+   * kept call keeps exactly one answer. Duplicate ids are wire-invalid on
+   * strict providers ("`tool_use` ids must be unique") and no other pass can
+   * repair them. Strict-resend only: a provider that accepted the duplicates
+   * when it produced them (e.g. per-response counter ids like `call_0`) must
+   * keep seeing the history it generated — deduping the normal path would
+   * silently erase its later tool exchanges.
+   */
+  readonly dedupeDuplicateToolCalls?: boolean;
   /**
    * Optional sink invoked for every repair the projector applies to keep the
    * outgoing wire valid: a displaced result moved back next to its call, a
@@ -69,8 +83,12 @@ export type ProjectionAnomaly =
    * was lost (a genuine defect worth investigating).
    */
   | { readonly kind: 'tool_result_synthesized'; readonly toolCallId: string; readonly trailing: boolean }
-  /** A result with no matching call anywhere was dropped (strict resend only). */
+  /** A result with no matching call anywhere was dropped (wire exits only). */
   | { readonly kind: 'orphan_tool_result_dropped'; readonly toolCallId: string }
+  /** A tool call whose id already appeared earlier was dropped (strict-resend only). */
+  | { readonly kind: 'duplicate_tool_call_dropped'; readonly toolCallId: string }
+  /** A second result for an already-answered id was dropped (strict-resend only). */
+  | { readonly kind: 'duplicate_tool_result_dropped'; readonly toolCallId: string }
   /** A leading non-user message was dropped so the first turn is user (strict). */
   | { readonly kind: 'leading_non_user_dropped'; readonly role: string }
   /** Two adjacent assistant turns were merged into one (strict). */
@@ -79,10 +97,11 @@ export type ProjectionAnomaly =
   | { readonly kind: 'whitespace_text_dropped'; readonly role: string };
 
 export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
-  let result = repairToolExchangeAdjacency(
-    mergeAdjacentUserMessages(history, options?.onAnomaly),
-    options,
-  );
+  let result = mergeAdjacentUserMessages(history, options?.onAnomaly);
+  if (options?.dedupeDuplicateToolCalls === true) {
+    result = dedupeDuplicateToolCalls(result, options.onAnomaly);
+  }
+  result = repairToolExchangeAdjacency(result, options);
   if (options?.mergeConsecutiveAssistants === true) {
     result = mergeConsecutiveAssistantMessages(result, options.onAnomaly);
   }
@@ -187,10 +206,61 @@ function repairToolExchangeAdjacency(
   return out;
 }
 
+// Strict providers reject a request whose assistant messages carry two
+// `tool_use` blocks with the same id ("tool_use ids must be unique"). Keep the
+// first occurrence of each call id, drop the rest, and drop an assistant
+// message entirely when duplicates were all it carried. Every result after the
+// first for a given id is dropped with its call, so no dangling tool message
+// survives the dedupe; when the kept call has no result of its own, the later
+// duplicate's surviving result is reattached by the adjacency repair. Runs
+// before the adjacency repair so pending-result matching never sees the
+// duplicate. Strict-resend only (see `ProjectOptions.dedupeDuplicateToolCalls`):
+// the normal projection keeps duplicates verbatim for the lax provider that
+// produced and accepts them.
+function dedupeDuplicateToolCalls(
+  messages: readonly Message[],
+  onAnomaly?: (anomaly: ProjectionAnomaly) => void,
+): Message[] {
+  const seenToolCallIds = new Set<string>();
+  const seenToolResultIds = new Set<string>();
+  const out: Message[] = [];
+  for (const message of messages) {
+    if (message.role === 'assistant' && message.toolCalls.length > 0) {
+      const kept = message.toolCalls.filter((toolCall) => {
+        if (seenToolCallIds.has(toolCall.id)) {
+          onAnomaly?.({ kind: 'duplicate_tool_call_dropped', toolCallId: toolCall.id });
+          return false;
+        }
+        seenToolCallIds.add(toolCall.id);
+        return true;
+      });
+      if (kept.length === message.toolCalls.length) {
+        out.push(message);
+      } else if (kept.length > 0 || message.content.length > 0) {
+        out.push({ ...message, toolCalls: kept });
+      }
+      continue;
+    }
+    if (message.role === 'tool' && message.toolCallId !== undefined) {
+      if (seenToolResultIds.has(message.toolCallId)) {
+        onAnomaly?.({ kind: 'duplicate_tool_result_dropped', toolCallId: message.toolCallId });
+        continue;
+      }
+      seenToolResultIds.add(message.toolCallId);
+    }
+    out.push(message);
+  }
+  return out;
+}
+
 // Remove any `tool_result` whose `toolCallId` matches no assistant `tool_use`
 // anywhere in the projected messages. Strict providers reject such a stray
-// result; the post-400 strict-resend fallback drops them as a last resort. Kept
-// separate from the adjacency repair so the normal path never discards output.
+// result, and it is useless to the model regardless (it has no record of the
+// call the result answers), so every request-building projection drops it (via
+// `dropOrphanResults`). Kept separate from the adjacency repair, which only
+// reorders results that DO have a matching call; this removes the ones that do
+// not. Reported via `onAnomaly` so the drop leaves a trace instead of silently
+// discarding a recorded result.
 function dropOrphanToolResults(
   messages: readonly Message[],
   onAnomaly?: (anomaly: ProjectionAnomaly) => void,

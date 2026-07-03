@@ -151,6 +151,7 @@ export class KosongLLM implements LLM {
       toolCalls: [...result.message.toolCalls],
       providerFinishReason: result.finishReason ?? undefined,
       rawFinishReason: result.rawFinishReason ?? undefined,
+      messageId: result.id ?? undefined,
       usage: result.usage ?? emptyUsage(),
       streamTiming:
         firstChunkAt === undefined

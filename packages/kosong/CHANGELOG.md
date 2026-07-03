@@ -1,5 +1,13 @@
 # @moonshot-ai/kosong
 
+## 0.5.2
+
+### Patch Changes
+
+- [#1292](https://github.com/MoonshotAI/kimi-code/pull/1292) [`93ec6cb`](https://github.com/MoonshotAI/kimi-code/commit/93ec6cb6526021156a951f8c513c45f138bf5dbb) - Recognize the OpenAI-compatible (Moonshot / Kimi) `tool_call_id ... is not found` 400 as a recoverable tool-exchange structural error, so the post-400 strict-resend fallback fires and un-bricks the session instead of failing every subsequent turn with the same error.
+
+- [#1308](https://github.com/MoonshotAI/kimi-code/pull/1308) [`4dd926b`](https://github.com/MoonshotAI/kimi-code/commit/4dd926b0ac8f901030b012827a418274cd7434ae) - Recognize the OpenAI-compatible `role 'tool' must be a response to a preceding message with 'tool_calls'` and `assistant message with 'tool_calls' must be followed by tool messages` 400s (OpenAI / DeepSeek / vLLM / Qwen phrasings) as recoverable tool-exchange structural errors, so the post-400 strict-resend fallback fires and un-bricks the session instead of failing every subsequent turn — including after switching providers or models.
+
 ## 0.5.1
 
 ### Patch Changes

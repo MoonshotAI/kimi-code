@@ -341,8 +341,9 @@ describe('project tool_use/tool_result adjacency', () => {
       tool('orphan-result'),
       user('u2'),
     ];
+    // Without dropOrphanResults (fragment projections, e.g. token estimation)
+    // the stray result stays where it was; nothing references it.
     const projected = project(history);
-    // The stray result stays where it was; nothing references it.
     expect(projected.map((m) => [m.role, m.toolCallId])).toEqual([
       ['user', undefined],
       ['assistant', undefined],
@@ -350,6 +351,10 @@ describe('project tool_use/tool_result adjacency', () => {
       ['tool', 'orphan-result'],
       ['user', undefined],
     ]);
+    // Request-building projections enable dropOrphanResults and remove it.
+    const wire = project(history, { dropOrphanResults: true });
+    expect(wire.some((m) => m.toolCallId === 'orphan-result')).toBe(false);
+    expect(wire.some((m) => m.toolCallId === 'a')).toBe(true);
   });
 
   it('does not crash when a tool result appears before its tool_use', () => {
@@ -425,15 +430,18 @@ describe('project repair reporting', () => {
     ]);
   });
 
-  it('reports a dropped orphan result only on the strict path', () => {
+  it('reports a dropped orphan result when dropOrphanResults is set', () => {
     const history: ContextMessage[] = [user('u1'), assistant(['a']), tool('a'), tool('stray')];
-    const normal: ProjectionAnomaly[] = [];
-    project(history, { onAnomaly: (a) => normal.push(a) });
-    expect(normal).toEqual([]); // normal path leaves the stray result in place
+    // Fragment projections (no flag) leave the stray in place and report nothing.
+    const fragment: ProjectionAnomaly[] = [];
+    project(history, { onAnomaly: (a) => fragment.push(a) });
+    expect(fragment).toEqual([]);
 
-    const strict: ProjectionAnomaly[] = [];
-    project(history, { dropOrphanResults: true, onAnomaly: (a) => strict.push(a) });
-    expect(strict).toEqual([{ kind: 'orphan_tool_result_dropped', toolCallId: 'stray' }]);
+    // Request-building projections (normal wire, strict resend, summarizer)
+    // enable the flag, drop the stray, and surface the repair.
+    const wire: ProjectionAnomaly[] = [];
+    project(history, { dropOrphanResults: true, onAnomaly: (a) => wire.push(a) });
+    expect(wire).toEqual([{ kind: 'orphan_tool_result_dropped', toolCallId: 'stray' }]);
   });
 
   it('reports a whitespace-only text drop but not a truly-empty one', () => {
@@ -532,6 +540,107 @@ describe('project strict-provider sanitizers', () => {
   it('leaves consecutive assistant messages untouched on the normal path', () => {
     const projected = project([user('hi'), assistantText('part one'), assistantText('part two')]);
     expect(projected.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant']);
+  });
+});
+
+describe('project duplicate tool_use ids', () => {
+  // A provider that (buggily, or via per-response counter ids like `call_0`)
+  // emits two tool_use blocks with the same id produces a request strict
+  // providers reject ("`tool_use` ids must be unique"). The normal projection
+  // must leave the duplicates untouched — the lax provider that produced them
+  // accepts them, and deduping would silently erase its later tool exchanges.
+  // Only the strict resend (after a provider already rejected the request)
+  // dedupes, dropping later duplicate calls together with their recorded
+  // results so no dangling tool message survives.
+  const duplicateAcrossSteps: ContextMessage[] = [
+    user('u1'),
+    assistant(['call_a'], 'first'),
+    tool('call_a', 'first result'),
+    assistant(['call_a', 'call_b'], 'second'),
+    tool('call_a', 'second result'),
+    tool('call_b'),
+    user('u2'),
+  ];
+
+  it('leaves duplicate ids and their results untouched on the normal path', () => {
+    const projected = project(duplicateAcrossSteps, { dropOrphanResults: true });
+    const assistants = projected.filter(
+      (message) => message.role === 'assistant' && message.toolCalls.length > 0,
+    );
+    expect(assistants[0]?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_a']);
+    expect(assistants[1]?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_a', 'call_b']);
+    expect(projected.filter((message) => message.role === 'tool')).toHaveLength(3);
+  });
+
+  it('under the strict flag, drops later duplicate calls together with their results', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project(duplicateAcrossSteps, {
+      dedupeDuplicateToolCalls: true,
+      dropOrphanResults: true,
+      onAnomaly: (anomaly) => anomalies.push(anomaly),
+    });
+    const assistants = projected.filter(
+      (message) => message.role === 'assistant' && message.toolCalls.length > 0,
+    );
+    expect(assistants[0]?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_a']);
+    expect(assistants[1]?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_b']);
+    const toolMessages = projected.filter((message) => message.role === 'tool');
+    expect(toolMessages.map((message) => message.toolCallId)).toEqual(['call_a', 'call_b']);
+    expect(textOf(toolMessages[0])).toBe('first result');
+    expect(anomalies).toContainEqual({
+      kind: 'duplicate_tool_call_dropped',
+      toolCallId: 'call_a',
+    });
+    expect(anomalies).toContainEqual({
+      kind: 'duplicate_tool_result_dropped',
+      toolCallId: 'call_a',
+    });
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
+
+  it('under the strict flag, drops a duplicate call id within one assistant message', () => {
+    const projected = project(
+      [
+        user('u1'),
+        assistant(['call_dup', 'call_dup'], 'calling twice'),
+        tool('call_dup', 'result'),
+        user('u2'),
+      ],
+      { dedupeDuplicateToolCalls: true, dropOrphanResults: true },
+    );
+    const assistantMessage = projected.find((message) => message.role === 'assistant');
+    expect(assistantMessage?.toolCalls.map((toolCall) => toolCall.id)).toEqual(['call_dup']);
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
+
+  it("under the strict flag, reattaches a later duplicate's result when the first call has none", () => {
+    const projected = project(
+      [
+        user('u1'),
+        assistant(['call_a'], 'first attempt'),
+        assistant(['call_a'], 'second attempt'),
+        tool('call_a', 'late result'),
+        user('u2'),
+      ],
+      { dedupeDuplicateToolCalls: true, dropOrphanResults: true },
+    );
+    expect(projected.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'user',
+    ]);
+    expect(textOf(projected[2])).toBe('late result');
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
+
+  it('under the strict flag, drops an assistant message left empty after removing duplicates', () => {
+    const projected = project(
+      [user('u1'), assistant(['call_a'], 'first'), tool('call_a'), assistant(['call_a']), user('u2')],
+      { dedupeDuplicateToolCalls: true, dropOrphanResults: true },
+    );
+    expect(projected.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
   });
 });
 

@@ -196,6 +196,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     llmServerFirstTokenMs: response.streamTiming?.serverFirstTokenMs,
     llmServerDecodeMs: response.streamTiming?.serverDecodeMs,
     llmClientConsumeMs: response.streamTiming?.clientConsumeMs,
+    messageId: response.messageId,
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
 

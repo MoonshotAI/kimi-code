@@ -458,8 +458,11 @@ base_url = "https://target.example/v1"
 
     expect(r.migrated).toBe(true);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    expect(cfg).toContain('[experimental]');
-    expect(cfg).toContain('micro_compaction = false');
+    // No experimental flags are currently registered, so the whole
+    // `[experimental]` section (including the former `micro_compaction`) is
+    // dropped along with unknown flags during migration.
+    expect(cfg).not.toContain('[experimental]');
+    expect(cfg).not.toContain('micro_compaction');
     expect(cfg).not.toContain('unknown_flag');
     expect(cfg).toContain('[loop_control]');
     expect(cfg).toContain('max_retries_per_step = 2');

@@ -10,7 +10,6 @@ import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
   question: UIQuestion;
@@ -278,17 +277,15 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
         <span v-if="total > 1 && !minimized" class="qstep">{{ t('question.step', { current: step + 1, total }) }}</span>
         <!-- When minimized, surface the question text so the bar stays identifiable -->
         <span v-if="minimized" class="qmin-peek">{{ current.question }}</span>
-        <Tooltip :text="minimized ? t('question.expand') : t('question.minimize')">
-          <IconButton
-            class="qmin"
-            size="sm"
-            :label="minimized ? t('question.expand') : t('question.minimize')"
-            @click="minimized = !minimized"
-          >
-            <Icon v-if="minimized" name="chevron-down" size="md" />
-            <Icon v-else name="minus" size="md" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          class="qmin"
+          size="sm"
+          :label="minimized ? t('question.expand') : t('question.minimize')"
+          @click="minimized = !minimized"
+        >
+          <Icon v-if="minimized" name="chevron-down" size="md" />
+          <Icon v-else name="minus" size="md" />
+        </IconButton>
       </div>
     </template>
 

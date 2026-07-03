@@ -32,6 +32,14 @@ const ADJACENCY_400 = new APIStatusError(
 // structural rejection. Verbatim from the field, doubled space included.
 const MOONSHOT_TOOL_CALL_ID_400 = new APIStatusError(400, '400 tool_call_id  is not found');
 
+// The OpenAI / DeepSeek phrasing of an orphan `tool` result — a `tool` message
+// with no preceding assistant `tool_calls`. This is what a DeepSeek / OpenAI-
+// compatible provider returns for a history bricked by a stray tool result.
+const OPENAI_ROLE_TOOL_400 = new APIStatusError(
+  400,
+  "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'",
+);
+
 function userMessage(text: string): Message {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
 }
@@ -87,6 +95,19 @@ describe('executeLoopStep — tool exchange adjacency fallback', () => {
 
   it('resends once and recovers after a Moonshot tool_call_id-not-found 400', async () => {
     const { input, llm, strictCalls, strictMessages } = makeHarness(MOONSHOT_TOOL_CALL_ID_400);
+
+    const result = await runTurn(input);
+
+    expect(result.stopReason).toBe('end_turn');
+    // Exactly two provider calls: the rejected one and the strict resend.
+    expect(llm.callCount).toBe(2);
+    expect(strictCalls.count).toBe(1);
+    expect(llm.calls[0]?.messages).toEqual([userMessage('normal projection')]);
+    expect(llm.calls[1]?.messages).toBe(strictMessages);
+  });
+
+  it('resends once and recovers after an OpenAI/DeepSeek role-tool 400', async () => {
+    const { input, llm, strictCalls, strictMessages } = makeHarness(OPENAI_ROLE_TOOL_400);
 
     const result = await runTurn(input);
 

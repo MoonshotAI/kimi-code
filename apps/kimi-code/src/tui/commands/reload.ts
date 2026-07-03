@@ -45,9 +45,11 @@ export async function applyReloadedTuiConfig(
   host.refreshTerminalThemeTracking();
   host.setAppState({
     editorCommand: config.editorCommand,
+    disablePasteBurst: config.disablePasteBurst,
     notifications: config.notifications,
     upgrade: config.upgrade,
   });
+  host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
 }
 
 function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {

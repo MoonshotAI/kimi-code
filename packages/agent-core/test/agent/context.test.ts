@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
+import { buildImageCompressionCaption } from '../../src/tools/support/image-compress';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
@@ -57,6 +58,79 @@ describe('Agent context', () => {
       { role: 'tool', origin: undefined },
     ]);
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it('reroutes an inline image-compression caption into a hidden system reminder', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    // The TUI merges the caption into the preceding text segment; the server
+    // route emits it as a standalone part. Cover the merged (harder) shape.
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: `能展示但是没有快捷键提示${caption}` },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'injection', variant: 'image_compression' } },
+      { role: 'user', origin: { kind: 'user' } },
+    ]);
+    const [reminder, userMessage] = ctx.agent.context.history;
+    expect(textOf(reminder!)).toContain('<system-reminder>');
+    expect(textOf(reminder!)).toContain('Image compressed to fit model limits');
+    expect(textOf(reminder!)).toContain('/tmp/originals/shot.png');
+    expect(textOf(reminder!)).not.toContain('<system>');
+    expect(textOf(userMessage!)).toBe('能展示但是没有快捷键提示');
+    expect(userMessage!.content.some((part) => part.type === 'image_url')).toBe(true);
+  });
+
+  it('drops a caption-only text part instead of leaving an empty user text part', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: caption },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+
+    const [, userMessage] = ctx.agent.context.history;
+    expect(userMessage!.content).toEqual([
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+  });
+
+  it('leaves caption-shaped text alone on non-user origins', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: caption }], {
+      kind: 'hook_result',
+      event: 'PostToolUse',
+    });
+
+    expect(ctx.agent.context.history).toHaveLength(1);
+    expect(ctx.agent.context.history[0]!.origin).toEqual({
+      kind: 'hook_result',
+      event: 'PostToolUse',
+    });
   });
 
   it('tracks conversation_undo when undoHistory reverts a user message', async () => {
@@ -1254,3 +1328,63 @@ function textOf(message: Message): string {
     .map((part) => part.text)
     .join('');
 }
+
+describe('strictMessages duplicate tool call ids', () => {
+  it('keeps duplicates on the normal projection but dedupes them in the strict one', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run the tool twice' }]);
+    // A provider with per-response counter ids reuses `call_dup` in two steps;
+    // both exchanges record their own result.
+    for (const step of [1, 2]) {
+      const stepUuid = `dup-step-${String(step)}`;
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+      });
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: `dup-call-${String(step)}`,
+          turnId: '',
+          step,
+          stepUuid,
+          toolCallId: 'call_dup',
+          name: 'Run',
+          args: { attempt: step },
+        },
+      });
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: stepUuid, turnId: '', step },
+      });
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: `dup-call-${String(step)}`,
+          toolCallId: 'call_dup',
+          result: { output: `result ${String(step)}` },
+        },
+      });
+    }
+
+    // Normal projection: the lax provider that produced the duplicate ids
+    // accepts them, so nothing is dropped.
+    const normal = ctx.agent.context.messages;
+    expect(
+      normal.filter((message) => message.role === 'assistant').flatMap((m) => m.toolCalls),
+    ).toHaveLength(2);
+    expect(normal.filter((message) => message.role === 'tool')).toHaveLength(2);
+
+    // Strict resend projection: one call, one result.
+    const strict = ctx.agent.context.strictMessages;
+    expect(
+      strict.filter((message) => message.role === 'assistant').flatMap((m) => m.toolCalls),
+    ).toHaveLength(1);
+    const strictResults = strict.filter((message) => message.role === 'tool');
+    expect(strictResults).toHaveLength(1);
+    expect(textOf(strictResults[0]!)).toBe('result 1');
+  });
+});

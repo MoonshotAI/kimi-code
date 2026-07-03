@@ -114,10 +114,8 @@ function stripSgr(s: string): string {
   return s.replace(ANSI_SGR, '');
 }
 
-function getNewlineInput(data: string): string | undefined {
-  if (data === '\n' || data === '\u001B\r' || data === '\u001B[13;2~') return data;
-  if (matchesKey(data, Key.ctrl('j'))) return '\n';
-  return undefined;
+interface CustomEditorOptions {
+  disablePasteBurst?: boolean;
 }
 
 export class CustomEditor extends Editor {
@@ -137,7 +135,6 @@ export class CustomEditor extends Editor {
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
   public onUndo?: () => void;
-  public onInsertNewline?: () => void;
   public onTextPaste?: () => void;
   /**
    * Called when ↑ is pressed in an empty editor. Return `true` to consume
@@ -171,14 +168,14 @@ export class CustomEditor extends Editor {
     this.argumentHints = hints;
   }
 
-  constructor(tui: TUI) {
+  constructor(tui: TUI, options: CustomEditorOptions = {}) {
     // paddingX: 4 reserves column 0 for the left vertical border (│),
     // column 1 as a single space between border and prompt, column 2 for
     // the `>` prompt token, and column 3 as the space between prompt and
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
     const theme = createEditorTheme();
-    super(tui, theme, { paddingX: 4 });
+    super(tui, theme, { paddingX: 4, disablePasteBurst: options.disablePasteBurst });
 
     // pi-tui keeps `createAutocompleteList` private; shadow it with an
     // instance property so slash command menus render descriptions wrapped
@@ -209,6 +206,10 @@ export class CustomEditor extends Editor {
     triggerInternals.tryTriggerAutocomplete = (explicitTab = false) => {
       triggerInternals.requestAutocomplete({ force: this.inputMode === 'bash', explicitTab });
     };
+  }
+
+  override setDisablePasteBurst(disabled: boolean): void {
+    super.setDisablePasteBurst(disabled);
   }
 
   public setInputMode(mode: 'prompt' | 'bash'): void {
@@ -433,13 +434,6 @@ export class CustomEditor extends Editor {
     ) {
       this.inputMode = 'prompt';
       this.onInputModeChange?.('prompt');
-      return;
-    }
-
-    const newlineInput = getNewlineInput(normalized);
-    if (newlineInput !== undefined) {
-      this.onInsertNewline?.();
-      super.handleInput(newlineInput);
       return;
     }
 

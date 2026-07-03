@@ -217,6 +217,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     theme: input.tuiConfig.theme,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
+    disablePasteBurst: input.tuiConfig.disablePasteBurst,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     availableModels: {},
@@ -1905,6 +1906,11 @@ export class KimiTUI {
     this.state.todoPanelContainer.clear();
     this.imageStore.clear();
     this.renderWelcome();
+    // Session resets (/new, /clear, session switch) want a pristine screen.
+    // Force a destructive full render: the renderer's collapse repaint
+    // intentionally preserves scrollback, which would leave the previous
+    // session's text above the welcome banner.
+    this.state.ui.requestRender(true);
   }
 
   private isTurnBoundaryComponent(child: Component): boolean {
@@ -2350,7 +2356,12 @@ export class KimiTUI {
       if (!isExpandable(child)) continue;
       child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
-    this.state.ui.requestRender();
+    // Expanding/collapsing shifts content above the viewport; the clamped
+    // differential render would paint a second copy below the stale one in
+    // scrollback. This is a deliberate user action (like /clear), so do a
+    // destructive full render: scrollback holds exactly one copy and the
+    // expanded output can be read by scrolling up.
+    this.state.ui.requestRender(true);
   }
 
   toggleTodoPanelExpansion(): void {

@@ -586,19 +586,6 @@ describe('CustomEditor paste marker expansion', () => {
 });
 
 describe('CustomEditor shortcut telemetry hooks', () => {
-  it('reports newline shortcuts, including Ctrl-J, before delegating to the base editor', () => {
-    const editor = makeEditor();
-    const onInsertNewline = vi.fn();
-    editor.onInsertNewline = onInsertNewline;
-
-    editor.handleInput('a');
-    editor.handleInput('\n');
-    editor.handleInput('\u001B[106;5u');
-
-    expect(onInsertNewline).toHaveBeenCalledTimes(2);
-    expect(editor.getText()).toBe('a\n\n');
-  });
-
   it('reports undo shortcuts before delegating to the base editor', () => {
     const editor = makeEditor();
     const onUndo = vi.fn();
