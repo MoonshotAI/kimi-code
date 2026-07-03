@@ -46,12 +46,16 @@ function mediaPathTag(text: string): { kind: 'image' | 'video' | 'audio'; path: 
 /** The server materializes uploads into `<cacheDir>/<fileId>.<ext>` (see
  *  materializeVideoToCache in the server prompts route). The browser can't play
  *  a server-local path, but the same bytes are served at getFileUrl(fileId), so
- *  recover the fileId from the cache filename to build a playable URL. */
+ *  recover the fileId from the cache filename to build a playable URL. Returns
+ *  undefined when the basename isn't shaped like a file-store id (`f_…`) — e.g.
+ *  TUI cache names (`<uuid>-<label>`) or legacy `/tmp/foo.mp4` paths — so the
+ *  caller leaves the raw tag as text instead of fabricating a broken /files url. */
+const FILE_STORE_ID_RE = /^f_[A-Za-z0-9]{10,}$/;
 function fileIdFromCachePath(p: string): string | undefined {
   const base = p.split(/[\\/]/).at(-1) ?? '';
   const dot = base.lastIndexOf('.');
   const id = dot > 0 ? base.slice(0, dot) : base;
-  return id.length > 0 ? id : undefined;
+  return FILE_STORE_ID_RE.test(id) ? id : undefined;
 }
 
 function bytesFromBase64(b64: string): number {
