@@ -8,6 +8,7 @@
 <script setup lang="ts">
 import { createApp, onBeforeUnmount, onMounted, ref, type App } from 'vue';
 import KapDebugView from './KapDebugView.vue';
+import Tooltip from '../components/ui/Tooltip.vue';
 
 const isOpen = ref(false);
 
@@ -15,7 +16,7 @@ let kapWin: Window | null = null;
 let kapApp: App | null = null;
 let themeObserver: MutationObserver | null = null;
 
-const THEME_ATTRS = ['data-theme', 'data-color-scheme', 'data-accent'] as const;
+const THEME_ATTRS = ['data-color-scheme', 'data-accent'] as const;
 
 function syncThemeAttrs(doc: Document): void {
   const src = document.documentElement;
@@ -95,9 +96,11 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- The launcher stays in the corner: opens the KAP window, or refocuses it. -->
-  <button class="kap-fab" type="button" :title="isOpen ? 'Focus KAP debug window' : 'Open KAP debug window'" @click="openKapWindow">
-    KAP
-  </button>
+  <Tooltip :text="isOpen ? 'Focus KAP debug window' : 'Open KAP debug window'">
+    <button class="kap-fab" type="button" @click="openKapWindow">
+      KAP
+    </button>
+  </Tooltip>
 </template>
 
 <style scoped>
@@ -105,7 +108,7 @@ onBeforeUnmount(() => {
   position: fixed;
   right: 10px;
   bottom: 10px;
-  z-index: 240;
+  z-index: var(--z-overlay);
   padding: 5px 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -113,10 +116,10 @@ onBeforeUnmount(() => {
   color: var(--muted);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 3px);
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.04em;
   cursor: pointer;
   opacity: 0.75;
 }
-.kap-fab:hover { opacity: 1; color: var(--blue); }
+.kap-fab:hover { opacity: 1; color: var(--color-accent); }
 </style>

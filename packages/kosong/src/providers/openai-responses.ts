@@ -1084,6 +1084,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         );
       }
 
+      options?.onRequestSent?.();
       const response = await (
         client.responses as {
           create(params: unknown, opts?: unknown): Promise<unknown>;

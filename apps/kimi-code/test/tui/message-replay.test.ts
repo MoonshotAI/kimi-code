@@ -150,7 +150,7 @@ function baseAgentState(
         tool_use: true,
         max_context_tokens: 100,
       },
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       systemPrompt: '',
     },
     context: { history: [], tokenCount: 0 },
@@ -177,7 +177,7 @@ function makeSession(
     summary: { title: null },
     getStatus: vi.fn(async () => ({
       model: 'k2',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       permission: 'manual',
       planMode: false,
       contextTokens: 0,

@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/server",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "private": true,
   "description": "Local REST + WebSocket server exposing kimi-code SDK over a stable wire protocol.",
   "license": "MIT",
@@ -19,6 +19,7 @@
     "#/services/approval/*": "./src/services/approval/*.ts",
     "#/services/gateway": "./src/services/gateway/index.ts",
     "#/services/gateway/*": "./src/services/gateway/*.ts",
+    "#/services/guiStore/*": "./src/services/guiStore/*.ts",
     "#/services/question": "./src/services/question/index.ts",
     "#/services/question/*": "./src/services/question/*.ts",
     "#/services/snapshot": "./src/services/snapshot/index.ts",
@@ -46,6 +47,7 @@
     "fastify": "^5.1.0",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
+    "smol-toml": "^1.6.1",
     "ulid": "^3.0.1",
     "ws": "^8.18.0",
     "zod": "catalog:",
@@ -53,6 +55,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/ws": "^8.18.0"
+    "@types/ws": "^8.18.0",
+    "jimp": "^1.6.1"
   }
 }

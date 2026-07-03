@@ -1,4 +1,4 @@
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import { effectiveModelAlias, type ModelAlias, type ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
   Key,
@@ -6,7 +6,7 @@ import {
   truncateToWidth,
   visibleWidth,
   type Focusable,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
@@ -30,11 +30,15 @@ interface ModelChoice {
 
 export interface ModelSelection {
   readonly alias: string;
-  readonly thinking: boolean;
+  /** Chosen thinking effort: 'off', or a concrete effort such as 'low' /
+   * 'high' / 'max'. Boolean 'on' is normalized to the model's default effort
+   * before the selection is committed (see commitEffort). */
+  readonly thinking: ThinkingEffort;
 }
 
 export function modelDisplayName(alias: string, model: ModelAlias | undefined): string {
-  return model?.displayName ?? model?.model ?? alias;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.displayName ?? effective?.model ?? alias;
 }
 
 export function providerDisplayName(provider: string): string {
@@ -46,17 +50,22 @@ export function providerDisplayName(provider: string): string {
 export function createModelChoiceOptions(
   models: Record<string, ModelAlias>,
 ): readonly ChoiceOption[] {
-  return Object.entries(models).map(([alias, cfg]) => ({
-    value: alias,
-    label: `${modelDisplayName(alias, cfg)} (${providerDisplayName(cfg.provider)})`,
-  }));
+  return Object.entries(models).map(([alias, cfg]) => {
+    const effective = effectiveModelAlias(cfg);
+    return {
+      value: alias,
+      label: `${modelDisplayName(alias, effective)} (${providerDisplayName(effective.provider)})`,
+    };
+  });
 }
 
 export interface ModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
   readonly currentValue: string;
   readonly selectedValue?: string;
-  readonly currentThinking: boolean;
+  /** Live thinking effort of the currently active model (e.g. 'off', 'on',
+   * 'high'). Used to highlight the active segment for the current model. */
+  readonly currentThinkingEffort: ThinkingEffort;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
@@ -73,24 +82,69 @@ export interface ModelSelectorOptions {
 
 function createModelChoices(models: Record<string, ModelAlias>): readonly ModelChoice[] {
   return Object.entries(models).map(([alias, cfg]) => {
-    const name = modelDisplayName(alias, cfg);
-    const provider = providerDisplayName(cfg.provider);
-    return { alias, model: cfg, name, provider, label: `${name} (${provider})` };
+    const effective = effectiveModelAlias(cfg);
+    const name = modelDisplayName(alias, effective);
+    const provider = providerDisplayName(effective.provider);
+    return { alias, model: effective, name, provider, label: `${name} (${provider})` };
   });
 }
 
-function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
+export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
   const caps = model.capabilities ?? [];
   if (caps.includes('always_thinking')) return 'always-on';
   if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
 }
 
-function effectiveThinking(model: ModelAlias, thinkingDraft: boolean): boolean {
+export function effortsOf(model: ModelAlias): readonly string[] {
+  return model.supportEfforts ?? [];
+}
+
+/**
+ * Ordered list of selectable thinking efforts for a model. Effort-capable models
+ * expose their declared efforts (with an 'off' entry when the model is not
+ * always-on); legacy boolean models expose 'on'/'off'; single-segment lists
+ * mean the control is effectively locked.
+ */
+export function segmentsFor(model: ModelAlias): readonly string[] {
+  const efforts = effortsOf(model);
   const availability = thinkingAvailability(model);
-  if (availability === 'always-on') return true;
-  if (availability === 'unsupported') return false;
-  return thinkingDraft;
+  if (efforts.length > 0) {
+    return availability === 'always-on' ? efforts : ['off', ...efforts];
+  }
+  if (availability === 'always-on') return ['on'];
+  if (availability === 'unsupported') return ['off'];
+  return ['on', 'off'];
+}
+
+export function effortLabel(effort: string): string {
+  if (effort.length === 0) return effort;
+  return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+/**
+ * Default thinking effort for a model: declared `default_effort`, else the
+ * middle `support_efforts` entry, else `'on'` for boolean models, `'off'` when
+ * thinking is unsupported.
+ */
+function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
+  if (thinkingAvailability(model) === 'unsupported') return 'off';
+  const efforts = effortsOf(model);
+  if (efforts.length > 0) {
+    return model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+  }
+  return 'on';
+}
+
+/**
+ * Normalize a draft effort before committing a selection. A boolean `'on'`
+ * never leaks past the UI boundary — it becomes the model's default effort
+ * (a concrete effort for effort-capable models, `'on'` only for genuine
+ * boolean models).
+ */
+function commitEffort(choice: ModelChoice, draft: ThinkingEffort): ThinkingEffort {
+  if (draft === 'on') return defaultThinkingEffortFor(choice.model);
+  return draft;
 }
 
 /**
@@ -105,8 +159,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ModelSelectorOptions;
   private readonly list: SearchableList<ModelChoice>;
-  /** Per-model thinking override set by ←/→; absent → the capability default. */
-  private readonly thinkingOverrides = new Map<string, boolean>();
+  /** Per-model thinking-effort override set by ←/→; absent → the default. */
+  private readonly thinkingOverrides = new Map<string, string>();
 
   constructor(opts: ModelSelectorOptions) {
     super();
@@ -124,15 +178,31 @@ export class ModelSelectorComponent extends Container implements Focusable {
   }
 
   /**
-   * Thinking draft for a model: an explicit ←/→ override when set, otherwise
-   * the live thinking state for the active model, otherwise On for any other
-   * thinking-capable model (a capable model should default to thinking on).
+   * Thinking effort for a model: an explicit ←/→ override when set, otherwise
+   * the live effort for the active model, otherwise the model's default effort
+   * (effort-capable) or 'on' (other thinking-capable models).
    */
-  private draftFor(choice: ModelChoice): boolean {
+  private draftFor(choice: ModelChoice): string {
     const override = this.thinkingOverrides.get(choice.alias);
     if (override !== undefined) return override;
-    if (choice.alias === this.opts.currentValue) return this.opts.currentThinking;
-    return thinkingAvailability(choice.model) !== 'unsupported';
+    if (choice.alias === this.opts.currentValue) return this.opts.currentThinkingEffort;
+    const efforts = effortsOf(choice.model);
+    if (efforts.length > 0) {
+      // A model with support_efforts but no default_effort defaults to the
+      // middle entry of its supported efforts.
+      const def = choice.model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)];
+      if (def !== undefined && efforts.includes(def)) return def;
+      return efforts[0]!;
+    }
+    return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';
+  }
+
+  /** Draft coerced onto the model's segment list so rendering/selection never
+   * reference a effort the model cannot actually select. */
+  private effectiveEffort(choice: ModelChoice): string {
+    const draft = this.draftFor(choice);
+    const segments = segmentsFor(choice.model);
+    return segments.includes(draft) ? draft : segments[0]!;
   }
 
   handleInput(data: string): void {
@@ -147,11 +217,27 @@ export class ModelSelectorComponent extends Container implements Focusable {
       return;
     }
 
-    // Left/Right toggle the thinking draft for models that support it.
+    // Left/Right move the active thinking effort within the model's segments.
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
       const selected = this.selectedChoice();
-      if (selected !== undefined && thinkingAvailability(selected.model) === 'toggle') {
-        this.thinkingOverrides.set(selected.alias, !this.draftFor(selected));
+      if (selected !== undefined) {
+        const segments = segmentsFor(selected.model);
+        if (segments.length > 1) {
+          const current = this.effectiveEffort(selected);
+          const idx = segments.indexOf(current);
+          // The two-segment case is the legacy boolean On/Off control: both
+          // arrows flip it. With more segments (efforts), ←/→ step.
+          let next: number;
+          if (segments.length === 2) {
+            next = idx === 0 ? 1 : 0;
+          } else {
+            const delta = matchesKey(data, Key.left) ? -1 : 1;
+            next = Math.max(0, Math.min(segments.length - 1, idx + delta));
+          }
+          if (next !== idx) {
+            this.thinkingOverrides.set(selected.alias, segments[next]!);
+          }
+        }
       }
       return;
     }
@@ -161,7 +247,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSelect({
         alias: selected.alias,
-        thinking: effectiveThinking(selected.model, this.draftFor(selected)),
+        thinking: commitEffort(selected, this.effectiveEffort(selected)),
       });
       return;
     }
@@ -171,7 +257,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSessionOnlySelect({
         alias: selected.alias,
-        thinking: effectiveThinking(selected.model, this.draftFor(selected)),
+        thinking: commitEffort(selected, this.effectiveEffort(selected)),
       });
     }
   }
@@ -255,8 +341,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
     lines.push('');
     const selected = this.selectedChoice();
     if (selected !== undefined) {
-      const availability = thinkingAvailability(selected.model);
-      const thinkingHeader = availability === 'toggle' ? ' Thinking  (←→ to switch)' : ' Thinking';
+      const canSwitch = segmentsFor(selected.model).length > 1;
+      const thinkingHeader = canSwitch ? ' Thinking  (←→ to switch)' : ' Thinking';
       lines.push(currentTheme.fg('textMuted', thinkingHeader));
       lines.push(this.renderThinkingControl(selected));
     }
@@ -279,16 +365,20 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const unavailable = (label: string): string =>
       currentTheme.fg('textMuted', `  ${label} (Unsupported)  `);
 
-    // On stays left and Off right in all three states so the control never
-    // shifts while the cursor moves across models.
+    // Non-effort always-on / unsupported models keep the original On/Off layout
+    // so the control never shifts while moving across legacy models.
+    const efforts = effortsOf(choice.model);
     const availability = thinkingAvailability(choice.model);
-    if (availability === 'always-on') {
+    if (efforts.length === 0 && availability === 'always-on') {
       return `  ${segment('On', true)} ${unavailable('Off')}`;
     }
-    if (availability === 'unsupported') {
+    if (efforts.length === 0 && availability === 'unsupported') {
       return `  ${unavailable('On')} ${segment('Off', true)}`;
     }
-    const draft = this.draftFor(choice);
-    return `  ${segment('On', draft)}  ${segment('Off', !draft)}`;
+
+    const segments = segmentsFor(choice.model);
+    const active = this.effectiveEffort(choice);
+    const rendered = segments.map((effort) => segment(effortLabel(effort), effort === active));
+    return `  ${rendered.join('  ')}`;
   }
 }

@@ -34,6 +34,12 @@ export interface RunTurnInput {
   readonly signal: AbortSignal;
   readonly llm: LLM;
   readonly buildMessages: LoopMessageBuilder;
+  /**
+   * Optional strict, guaranteed wire-compliant rebuild of the request messages.
+   * Used only to resend once after a provider rejects the normal projection with
+   * a tool_use/tool_result adjacency 400 (see `executeLoopStep`).
+   */
+  readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly tools?: readonly ExecutableTool[] | undefined;
   readonly hooks?: LoopHooks | undefined;
@@ -51,6 +57,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     signal,
     llm,
     buildMessages,
+    buildMessagesStrict,
     dispatchEvent,
     tools,
     hooks,
@@ -85,6 +92,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         turnId,
         signal,
         buildMessages,
+        buildMessagesStrict,
         dispatchEvent,
         llm,
         tools,

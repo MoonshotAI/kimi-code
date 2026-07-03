@@ -1,5 +1,21 @@
 # @moonshot-ai/kosong
 
+## 0.5.2
+
+### Patch Changes
+
+- [#1292](https://github.com/MoonshotAI/kimi-code/pull/1292) [`93ec6cb`](https://github.com/MoonshotAI/kimi-code/commit/93ec6cb6526021156a951f8c513c45f138bf5dbb) - Recognize the OpenAI-compatible (Moonshot / Kimi) `tool_call_id ... is not found` 400 as a recoverable tool-exchange structural error, so the post-400 strict-resend fallback fires and un-bricks the session instead of failing every subsequent turn with the same error.
+
+- [#1308](https://github.com/MoonshotAI/kimi-code/pull/1308) [`4dd926b`](https://github.com/MoonshotAI/kimi-code/commit/4dd926b0ac8f901030b012827a418274cd7434ae) - Recognize the OpenAI-compatible `role 'tool' must be a response to a preceding message with 'tool_calls'` and `assistant message with 'tool_calls' must be followed by tool messages` 400s (OpenAI / DeepSeek / vLLM / Qwen phrasings) as recoverable tool-exchange structural errors, so the post-400 strict-resend fallback fires and un-bricks the session instead of failing every subsequent turn — including after switching providers or models.
+
+## 0.5.1
+
+### Patch Changes
+
+- [#1269](https://github.com/MoonshotAI/kimi-code/pull/1269) [`bf35f63`](https://github.com/MoonshotAI/kimi-code/commit/bf35f63c5d9b53625f3bf04f50b9a0bb49ced2c9) - Honor `base_url` for the `google-genai` and `vertexai` providers. A configured base URL was previously ignored and requests always went to `generativelanguage.googleapis.com`; it is now forwarded to the Google GenAI SDK (with `GOOGLE_GEMINI_BASE_URL` / `GOOGLE_VERTEX_BASE_URL` env fallbacks), so Gemini-compatible proxies and gateways can be used. Give the host root only — the SDK appends the API version segment itself.
+
+- [#1274](https://github.com/MoonshotAI/kimi-code/pull/1274) [`074bb9b`](https://github.com/MoonshotAI/kimi-code/commit/074bb9ba1359dd3ea2a55eff81986f2bb4772793) - Retry a dropped provider stream instead of failing the turn. A raw undici `terminated` error (an SSE/HTTP response body cut mid-flight, common on long streaming responses) is now classified as a retryable `APIConnectionError` on the Anthropic path — matching the OpenAI path, which already recognized it — so a transient stream drop is retried rather than surfaced as a fatal error.
+
 ## 0.5.0
 
 ### Minor Changes

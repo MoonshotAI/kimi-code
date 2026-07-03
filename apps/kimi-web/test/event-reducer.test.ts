@@ -148,6 +148,45 @@ describe('reduceAppEvent taskProgress', () => {
     expect(lines?.[0]).toBe('line 20');
     expect(lines?.at(-1)).toBe('line 59');
   });
+
+  it('concatenates subagent text-kind chunks into a growing text block', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: { 's1': [makeSubagentTask('t1', 's1')] },
+    };
+    let next = state;
+    for (const chunk of ['Hello', ', ', 'world', '!']) {
+      next = reduceAppEvent(
+        next,
+        {
+          type: 'taskProgress',
+          sessionId: 's1',
+          taskId: 't1',
+          outputChunk: chunk,
+          stream: 'stdout',
+          kind: 'text',
+        },
+        { sessionId: 's1', seq: 1 },
+      );
+    }
+    const task = next.tasksBySession['s1']?.[0];
+    expect(task?.text).toBe('Hello, world!');
+    // Text chunks must not pollute the line-based progress output.
+    expect(task?.outputLines ?? []).toHaveLength(0);
+  });
+
+  it('preserves accumulated text across a taskCreated replacement', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: { 's1': [{ ...makeSubagentTask('t1', 's1'), text: 'partial' }] },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: 's1', task: makeSubagentTask('t1', 's1') },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]?.text).toBe('partial');
+  });
 });
 
 describe('reduceAppEvent sessions reference stability', () => {

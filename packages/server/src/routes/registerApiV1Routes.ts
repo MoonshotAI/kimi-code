@@ -9,6 +9,7 @@ import { registerConnectionsRoutes } from './connections';
 import { registerDebugRoutes } from './debug';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
+import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
@@ -114,6 +115,7 @@ export async function registerApiV1Routes(
       );
     }
     registerFsRoutes(apiV1 as unknown as Parameters<typeof registerFsRoutes>[0], ix);
+    registerGuiStoreRoutes(apiV1 as unknown as Parameters<typeof registerGuiStoreRoutes>[0], ix);
     registerFilesRoutes(apiV1 as unknown as Parameters<typeof registerFilesRoutes>[0], ix);
     registerWorkspacesRoutes(
       apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],

@@ -1,7 +1,11 @@
 import { type ChatProvider, KimiChatProvider } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '../../src/config/kimi-env-params';
+import {
+  applyKimiEnvSamplingParams,
+  applyKimiEnvThinkingEffort,
+  applyKimiEnvThinkingKeep,
+} from '../../src/config/kimi-env-params';
 import { KimiError } from '../../src/errors';
 
 function kimi(): KimiChatProvider {
@@ -11,7 +15,7 @@ function kimi(): KimiChatProvider {
 interface KimiGenerationState {
   temperature?: number;
   top_p?: number;
-  extra_body?: { thinking?: { keep?: unknown } };
+  extra_body?: { thinking?: { type?: string; effort?: string; keep?: unknown } };
 }
 
 function genState(provider: ChatProvider): KimiGenerationState {
@@ -76,5 +80,46 @@ describe('applyKimiEnvThinkingKeep', () => {
   it('leaves non-kimi providers untouched', () => {
     const stub = { name: 'stub' } as unknown as ChatProvider;
     expect(applyKimiEnvThinkingKeep(stub, 'high', { KIMI_MODEL_THINKING_KEEP: 'all' })).toBe(stub);
+  });
+});
+
+describe('applyKimiEnvThinkingEffort', () => {
+  it('injects thinking.effort when thinking is on', () => {
+    const out = applyKimiEnvThinkingEffort(kimi(), 'high', {
+      KIMI_MODEL_THINKING_EFFORT: 'max',
+    });
+    expect(genState(out).extra_body?.thinking?.effort).toBe('max');
+  });
+
+  it('forces the effort even when the model does not declare it', () => {
+    // kimi() has no support_efforts, so withThinking('high') carries no effort;
+    // the env var injects one anyway, bypassing the support_efforts gate.
+    const provider = kimi().withThinking('high');
+    const out = applyKimiEnvThinkingEffort(provider, 'high', {
+      KIMI_MODEL_THINKING_EFFORT: 'max',
+    });
+    expect(genState(out).extra_body?.thinking).toEqual({ type: 'enabled', effort: 'max' });
+  });
+
+  it('does NOT inject thinking.effort when thinking is off', () => {
+    const out = applyKimiEnvThinkingEffort(kimi(), 'off', {
+      KIMI_MODEL_THINKING_EFFORT: 'max',
+    });
+    expect(genState(out).extra_body).toBeUndefined();
+  });
+
+  it('returns the same provider when the env var is unset or blank', () => {
+    const provider = kimi();
+    expect(applyKimiEnvThinkingEffort(provider, 'high', {})).toBe(provider);
+    expect(
+      applyKimiEnvThinkingEffort(provider, 'high', { KIMI_MODEL_THINKING_EFFORT: '  ' }),
+    ).toBe(provider);
+  });
+
+  it('leaves non-kimi providers untouched', () => {
+    const stub = { name: 'stub' } as unknown as ChatProvider;
+    expect(
+      applyKimiEnvThinkingEffort(stub, 'high', { KIMI_MODEL_THINKING_EFFORT: 'max' }),
+    ).toBe(stub);
   });
 });

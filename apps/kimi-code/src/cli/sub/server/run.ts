@@ -18,7 +18,7 @@ import { startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_UI_MODE } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -346,7 +346,7 @@ async function runServerInProcess(
     },
   });
 
-  track('server_started', { ui_mode: WEB_UI_MODE, daemon: mode.daemon });
+  track('server_started', { daemon: mode.daemon });
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');

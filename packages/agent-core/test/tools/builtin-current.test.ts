@@ -44,6 +44,12 @@ import {
   AgentSwarmToolInputSchema,
 } from '../../src/tools/builtin/collaboration/agent-swarm';
 
+vi.mock('../../src/tools/support/rg-locator', () => ({
+  ensureRgPath: vi.fn(async () => ({ path: '/mock/rg', source: 'system-path' })),
+  rgUnavailableMessage: (cause: unknown) =>
+    `rg unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+}));
+
 const signal = new AbortController().signal;
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 const regularFileStat = {
@@ -187,18 +193,9 @@ describe('current builtin file and shell tools', () => {
   it('Glob exposes parameters and walks pure-wildcard patterns capped at MAX_MATCHES', async () => {
     // Pure wildcards used to be rejected up-front; now they walk like
     // any other pattern and the 100-match cap is the only safety.
-    const glob = vi.fn().mockReturnValue(
-      (async function* () {
-        yield '/workspace/a.ts';
-      })(),
-    );
-    const tool = new GlobTool(
-      createFakeKaos({
-        glob,
-        stat: vi.fn().mockResolvedValue({ stMtime: 1, stMode: 0o100000 }),
-      }),
-      workspace,
-    );
+    const exec = vi.fn().mockResolvedValue(processWithOutput('/workspace/a.ts\n'));
+    const stat = vi.fn().mockResolvedValue({ ...regularFileStat, stMode: 0o040000 });
+    const tool = new GlobTool(createFakeKaos({ exec, stat }), workspace);
 
     expect(GlobInputSchema.safeParse({ pattern: '*.ts' }).success).toBe(true);
     expect(tool.parameters).toMatchObject({
@@ -208,7 +205,8 @@ describe('current builtin file and shell tools', () => {
 
     const result = await executeTool(tool, context({ pattern: '**' }));
     expect(result.isError).toBeFalsy();
-    expect(glob).toHaveBeenCalledWith('/workspace', '**');
+    expect(exec).toHaveBeenCalled();
+    expect((exec.mock.calls[0] as string[]).at(-1)).toBe('.');
     expect(result.output).toContain('a.ts');
   });
 

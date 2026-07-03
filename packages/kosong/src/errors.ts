@@ -98,6 +98,33 @@ export function isRetryableGenerateError(error: unknown): boolean {
   return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
 }
 
+// `terminated` is the undici signature for an SSE/HTTP body stream that is
+// dropped mid-flight (common with Node's native fetch on long reasoning
+// streams). It surfaces as a raw `TypeError: terminated`, so it must be
+// recognized here as a transport-layer connection failure. Shared by the
+// Anthropic and OpenAI providers so a raw, non-SDK transport error classifies
+// the same way regardless of which provider was streaming.
+const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
+const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
+
+/**
+ * Classify a raw (non-SDK) error message into the right transport-layer
+ * `ChatProviderError` subclass: a timeout becomes a retryable `APITimeoutError`,
+ * a dropped connection / undici `terminated` becomes a retryable
+ * `APIConnectionError`, and anything else stays a non-retryable base
+ * `ChatProviderError`. Timeout is checked first so "connection timed out"
+ * classifies as a timeout rather than a bare connection error.
+ */
+export function classifyBaseApiError(message: string): ChatProviderError {
+  if (TIMEOUT_RE.test(message)) {
+    return new APITimeoutError(message);
+  }
+  if (NETWORK_RE.test(message)) {
+    return new APIConnectionError(message);
+  }
+  return new ChatProviderError(`Error: ${message}`);
+}
+
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /context[ _-]?length/,
   /(?:context[ _-]?window.*exceed|exceed.*context[ _-]?window)/,
@@ -141,6 +168,84 @@ export function isContextOverflowStatusError(statusCode: number, message: string
   if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
   const lowerMessage = message.toLowerCase();
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
+// Strict providers reject a request whose assistant `tool_use`/`tool_calls` and
+// `tool_result`/`tool` blocks are not correctly paired and adjacent — a missing
+// result, a stray result with no matching call, or a result that does not
+// immediately follow its call. Anthropic phrases this in terms of
+// `tool_use`/`tool_result`. OpenAI-compatible providers phrase it in terms of
+// `tool_call_id` / `role 'tool'` / `tool_calls`: Moonshot / Kimi as a
+// `tool_call_id` that "is not found", and OpenAI / DeepSeek / vLLM / Qwen as a
+// `role 'tool'` message without a preceding `tool_calls`, or an assistant
+// `tool_calls` not followed by its tool results. The validation runs before any
+// generation, so the error is a non-retryable 4xx. A caller can react by
+// resending a re-projected, strictly wire-compliant request rather than leaving
+// the session permanently stuck.
+const TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS = [
+  /tool_use[\s\S]*tool_result/,
+  /tool_result[\s\S]*tool_use/,
+  /unexpected\s+`?tool_result/,
+  // OpenAI-compatible (Moonshot / Kimi): a `tool` message references a
+  // `tool_call_id` with no matching `tool_calls` entry in the preceding
+  // assistant message. Observed verbatim as `tool_call_id  is not found`
+  // (doubled space). Anchored on `tool_call_id` so an unrelated "not found"
+  // (e.g. a 404-style body) cannot trip the recovery.
+  /tool_call_id[\s\S]*not found/,
+  // OpenAI / DeepSeek / vLLM and other OpenAI-compatible providers phrase the
+  // same structural rejection in terms of `role 'tool'` / `tool_calls` instead
+  // of Anthropic's `tool_use` / `tool_result`, in two mirror-image shapes:
+  //
+  //   - An orphan `tool` result whose preceding assistant carries no matching
+  //     `tool_calls`: "messages with role 'tool' must be a response to a
+  //     preceding message with 'tool_calls'".
+  //   - An assistant `tool_calls` with no following `tool` results: "an
+  //     assistant message with 'tool_calls' must be followed by tool messages
+  //     responding to each 'tool_call_id'. the following tool_call_ids did not
+  //     have response messages: ...", or the terse "(insufficient tool messages
+  //     following tool_calls message)".
+  //
+  // Both are wire-structure defects the strict resend repairs (drop the orphan
+  // result / synthesize the missing one). Quote style around `tool`/`tool_calls`
+  // varies by provider (straight or backtick), so the anchors tolerate an
+  // optional surrounding quote char.
+  /role\s+['"`]?tool['"`]?\s+must be a response to a preceding message/,
+  /assistant message with\s+['"`]?tool_calls['"`]?\s+must be followed by tool messages/,
+  /tool_call_ids? did not have response messages/,
+  /insufficient tool messages following/,
+] as const;
+
+export function isToolExchangeAdjacencyError(error: unknown): boolean {
+  if (!(error instanceof APIStatusError)) return false;
+  if (error instanceof APIContextOverflowError) return false;
+  if (error.statusCode !== 400 && error.statusCode !== 422) return false;
+  const lowerMessage = error.message.toLowerCase();
+  return TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
+// The broader family of structural request rejections a strict provider returns
+// when the message array itself is malformed — tool_use/tool_result pairing,
+// empty or whitespace-only text blocks, a non-user first message, or
+// non-alternating roles. All are deterministic 4xx validation failures (no
+// generation happened) on a history that is re-sent every turn, so the only
+// recovery is to resend a re-projected, strictly wire-compliant request rather
+// than leave the session permanently stuck. Context-overflow 400s are excluded —
+// they are handled by compaction, not by re-projection.
+const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
+  /text content blocks must be non-empty/,
+  /text content blocks must contain non-whitespace/,
+  /first message must use the .*user.* role/,
+  /roles must alternate/,
+  /multiple .*(?:user|assistant).* roles in a row/,
+] as const;
+
+export function isRecoverableRequestStructureError(error: unknown): boolean {
+  if (isToolExchangeAdjacencyError(error)) return true;
+  if (!(error instanceof APIStatusError)) return false;
+  if (error instanceof APIContextOverflowError) return false;
+  if (error.statusCode !== 400 && error.statusCode !== 422) return false;
+  const lowerMessage = error.message.toLowerCase();
+  return STRUCTURAL_REQUEST_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {

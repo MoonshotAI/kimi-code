@@ -2,13 +2,24 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MarkdownRender, enableKatex } from 'markstream-vue';
+import {
+  MarkdownRender,
+  enableKatex,
+  enableMermaid,
+  setKaTeXWorker,
+  clearKaTeXWorker,
+  setMermaidWorker,
+  clearMermaidWorker,
+} from 'markstream-vue';
 import type { MarkdownIt } from 'markstream-vue';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
 import { markdownRenderPlan } from '../../lib/markdownPerformance';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
+import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
+import Tooltip from '../ui/Tooltip.vue';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
@@ -22,6 +33,35 @@ import 'markstream-vue/index.px.css';
 // together.
 import 'katex/dist/katex.min.css';
 enableKatex();
+
+// Mermaid diagram rendering. enableMermaid() registers the default
+// `import('mermaid')` loader — same pattern as enableKatex(). Without a worker,
+// mermaid.parse() runs on the main thread; with a worker (set via
+// setMermaidWorker), the MermaidBlockNode can validate partial-stream code
+// off-thread so the UI stays responsive during live diagram output.
+enableMermaid();
+
+// ---------------------------------------------------------------------------
+// Off-main-thread workers for KaTeX and Mermaid
+//
+// Both katex.renderToString and mermaid.parse are CPU-heavy. markstream-vue
+// ships pre-built workers (katexRenderer.worker.js, mermaidParser.worker.js)
+// that follow the exact protocol its internal worker clients expect. We import
+// them via Vite's `?worker&type=module` so they're built as ES module chunks
+// (supporting code-splitting, which mermaid needs for per-diagram dynamic
+// imports).
+//
+// markstream-vue's MermaidBlockNode and MathBlockNode auto-detect the presence
+// of a worker: when set, heavy parsing/rendering is dispatched off-thread; when
+// absent, everything runs on the main thread.
+// ---------------------------------------------------------------------------
+
+// Tear down any previous worker (e.g. from HMR) before setting a new one.
+clearKaTeXWorker();
+clearMermaidWorker();
+
+setKaTeXWorker(new katexWorkerModule.default());
+setMermaidWorker(new mermaidWorkerModule.default());
 
 // Only `$$…$$` display math is rendered; single `$` inline math is disabled so
 // prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`) stay literal
@@ -172,7 +212,7 @@ function processFileLinks(): void {
     const parent = text.parentElement;
     if (
       parent &&
-      !parent.closest('a, pre, .md-file-link') &&
+      !parent.closest('a, pre, .md-file-link, svg') &&
       text.data.trim().length > 0
     ) {
       textNodes.push(text);
@@ -231,6 +271,9 @@ function processMarkdownLinks(): void {
   const links = mdRef.value.querySelectorAll<HTMLAnchorElement>('a[href]');
   for (const link of links) {
     if (link.dataset.mdLinkHandled === 'true') continue;
+    // Skip links inside Mermaid SVGs — their hrefs are diagram semantics, not
+    // workspace file paths.
+    if (link.closest('svg')) continue;
     const href = link.getAttribute('href') ?? '';
     if (!isLocalLink(href)) continue;
     link.dataset.mdLinkHandled = 'true';
@@ -389,9 +432,11 @@ function copyDiff(code: string, idx: number) {
       <div v-else class="diff-wrap">
         <div class="diff-bar">
           <span class="diff-lang">diff</span>
-          <button class="diff-copy" :title="t('filePreview.copyCode')" @click="copyDiff(seg.code, i)">
-            {{ copiedDiff === i ? '✓' : '⧉' }}
-          </button>
+          <Tooltip :text="t('filePreview.copyCode')">
+            <button class="diff-copy" @click="copyDiff(seg.code, i)">
+              {{ copiedDiff === i ? '✓' : '⧉' }}
+            </button>
+          </Tooltip>
         </div>
         <pre class="diff-pre"><code><span
           v-for="(ln, j) in diffLines(seg.code)"
@@ -409,41 +454,36 @@ function copyDiff(code: string, idx: number) {
 
    markstream's CSS is namespaced under `.markstream-vue` / `.markdown-renderer`
    so it does not leak globally; here we override those classes (scoped under
-   our `.md` container) to match the rest of the app: mono font, --ink text,
-   our spacing, a light --line-bordered code block, and the blue inline-code
-   chip. Overrides target the markstream classes via :deep().
+   our `.md` container) to match the rest of the app: the UI font for prose,
+   semantic `--color-*` text, our spacing, a sunken `--color-line`-bordered code
+   block, and the accent inline-code chip. Overrides target the markstream
+   classes via :deep(). Fonts use the `font:` shorthand throughout.
 --------------------------------------------------------------------------- */
 
-/* Base prose — matched to the sidebar session-title size (14px). */
+/* Base prose — assistant message text. */
 .md {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  line-height: 1.6;
-  color: var(--text);
+  font: 500 15px/1.6 var(--font-ui);
+  color: var(--color-text);
   word-break: break-word;
-  font-weight: 500;
 }
 .md :deep(.markdown-renderer) {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  line-height: 1.6;
-  color: var(--text);
-  font-weight: 500;
+  font: 500 15px/1.6 var(--font-ui);
+  color: var(--color-text);
 }
 .md :deep(.markstream-vue),
 .md :deep(.markdown-renderer) {
-  --code-bg: var(--panel);
-  --code-fg: var(--text);
-  --code-border: var(--line);
-  --code-header-bg: var(--panel2);
-  --code-action-fg: var(--muted);
-  --code-action-hover-fg: var(--blue);
-  --markstream-code-fallback-bg: var(--panel);
-  --markstream-code-fallback-fg: var(--text);
-  --markstream-code-border-color: var(--line);
-  --inline-code-bg: var(--panel2);
-  --inline-code-fg: var(--blue2);
-  --inline-code-border: var(--line);
+  --code-bg: var(--color-surface-sunken);
+  --code-fg: var(--color-text);
+  --code-border: var(--color-line);
+  --code-header-bg: var(--color-surface);
+  --code-action-fg: var(--color-text-muted);
+  --code-action-hover-fg: var(--color-accent);
+  --markstream-code-fallback-bg: var(--color-surface-sunken);
+  --markstream-code-fallback-fg: var(--color-text);
+  --markstream-code-border-color: var(--color-line);
+  --inline-code-bg: var(--color-surface-sunken);
+  --inline-code-fg: var(--color-fg);
+  --inline-code-border: transparent;
 }
 .md :deep(.md-file-link) {
   appearance: none;
@@ -451,7 +491,7 @@ function copyDiff(code: string, idx: number) {
   border: 0;
   padding: 0;
   background: transparent;
-  color: var(--blue2);
+  color: var(--color-accent-hover);
   font: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -459,17 +499,21 @@ function copyDiff(code: string, idx: number) {
   cursor: pointer;
 }
 .md :deep(.md-file-link:hover) {
-  color: var(--blue);
+  color: var(--color-accent);
 }
-/* Pin the prose text to the session-title size (14px) explicitly. markstream
-   sets no font-size of its own, so without this the rendered <p>/<li> can pick
-   up the (larger) UI base font instead of the .markdown-renderer size. */
+/* Pin the prose text size explicitly. markstream sets no font-size of its own,
+   so without this the rendered <p>/<li> can pick up a different base size. */
 .md :deep(.markdown-renderer p),
 .md :deep(.markdown-renderer li),
 .md :deep(.markdown-renderer blockquote),
 .md :deep(.markdown-renderer td),
 .md :deep(.markdown-renderer th) {
-  font-size: var(--ui-font-size);
+  font-size: 15px;
+}
+
+/* Emphasis — bold steps up from the body (medium/500) to semibold (700). */
+.md :deep(strong) {
+  font-weight: var(--weight-semibold);
 }
 
 /* Headings */
@@ -477,81 +521,97 @@ function copyDiff(code: string, idx: number) {
 .md :deep(h2),
 .md :deep(h3),
 .md :deep(h4) {
-  color: var(--ink);
-  font-weight: 700;
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
   margin: 0.85em 0 0.35em;
-  line-height: 1.3;
+  line-height: var(--leading-tight);
 }
-.md :deep(h1) { font-size: calc(var(--ui-font-size) + 3px); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-.md :deep(h2) { font-size: calc(var(--ui-font-size) + 2px); }
-.md :deep(h3) { font-size: calc(var(--ui-font-size) + 1px); }
-.md :deep(h4) { font-size: var(--ui-font-size); color: var(--dim); }
+.md :deep(h1) { font-size: var(--text-xl); border-bottom: 1px solid var(--color-line); padding-bottom: 4px; }
+.md :deep(h2) { font-size: var(--text-lg); }
+.md :deep(h3) { font-size: var(--text-lg); }
+.md :deep(h4) { font-size: var(--text-base); color: var(--color-text-muted); }
 
 /* Paragraphs */
 .md :deep(p) {
-  margin: 0.4em 0;
+  margin: 0.8rem 0;
+}
+
+/* Spacing between top-level content blocks — markstream wraps each one
+   (paragraph, list, heading, code block, …) in a `.node-slot`. Set to the
+   largest inner block margin (0.8rem) so it collapses evenly into a uniform gap
+   regardless of block type; going lower would let the inner margins take over
+   and make spacing uneven. */
+.md :deep(.node-slot + .node-slot) {
+  margin-top: 0.8rem;
 }
 
 /* Lists */
 .md :deep(ul),
 .md :deep(ol) {
   padding-left: 1.4em;
-  margin: 0.4em 0;
+  margin: 0.6em 0;
 }
 .md :deep(li) {
-  margin: 0.15em 0;
+  margin: 0.3em 0;
 }
 
-/* Inline code — small blue chip (matches the old marked output) */
+/* Inline code — small mono chip */
 .md :deep(:not(pre) > code),
 .md :deep(.inline-code) {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
-  background: var(--panel2);
-  color: var(--blue2);
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid var(--line);
+  font: .9em var(--font-mono);
+  background: var(--color-surface-sunken);
+  color: var(--color-fg);
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
 }
 
 /* ---------------------------------------------------------------------------
-   Code blocks — light surface, 1px --line border, rounded, our language label
-   + copy button (markstream's built-in header).
+   Code blocks — sunken surface, 1px line border, radius md, soft shadow, plus
+   our language label + copy button (markstream's built-in header).
 --------------------------------------------------------------------------- */
 .md :deep(.code-block-container) {
   margin: 0.6em 0;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  box-shadow: var(--shadow-xs);
   overflow: hidden;
-  --markstream-code-font-family: var(--mono);
-  --vscode-editor-font-size: var(--ui-font-size);
-  --vscode-editor-line-height: calc(var(--ui-font-size) * 1.5);
+  --vscode-editor-font-size: var(--text-sm);
+  --vscode-editor-line-height: calc(var(--text-sm) * 1.65);
 }
 .md :deep(.code-block-header) {
-  background: var(--panel2);
-  border-bottom: 1px solid var(--line);
-  padding: 3px 8px;
-  min-height: 0;
-  color: var(--muted);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  letter-spacing: 0.04em;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-line);
+  padding: 4px 12px;
+  color: var(--color-text-muted);
+  font: var(--text-xs) var(--font-mono);
 }
 .md :deep(.code-block-header *) {
-  color: var(--muted);
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
+  color: var(--color-text-muted);
+  font: var(--text-xs) var(--font-mono);
 }
-/* Copy button in the header */
+/* Copy button — mirrors the §03 IconButton: muted glyph, sunken hover, soft
+   radius, and the shared focus ring. markstream renders its own button, so we
+   restyle it in place instead of swapping in the IconButton primitive. */
 .md :deep(.code-block-header .copy-button),
 .md :deep(.code-block-header .code-action-btn) {
-  color: var(--muted);
-  background: none;
+  color: var(--color-text-muted);
+  background: transparent;
   border: none;
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: background var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
 }
 .md :deep(.code-block-header .copy-button:hover),
 .md :deep(.code-block-header .code-action-btn:hover) {
-  color: var(--blue);
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+.md :deep(.code-block-header .copy-button:focus-visible),
+.md :deep(.code-block-header .code-action-btn:focus-visible) {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
 }
 .md :deep(.code-block-header .copy-button *),
 .md :deep(.code-block-header .code-action-btn *) {
@@ -559,20 +619,18 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(.code-block-content),
 .md :deep(.markstream-pre) {
-  background: var(--panel);
+  background: var(--color-surface-sunken);
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(.markstream-pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
   overflow-x: auto;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
+  font: var(--text-sm)/1.65 var(--font-mono);
 }
 .md :deep(.code-block-container pre code) {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  color: var(--text);
+  font: inherit;
+  color: var(--color-text);
   background: none;
   border: none;
   padding: 0;
@@ -582,19 +640,19 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.code-pre-fallback),
 .md :deep(.code-block-content pre:not(.shiki)),
 .md :deep(.code-block-content pre:not(.shiki) code) {
-  color: var(--text);
+  color: var(--color-text);
 }
 
 /* Links — open in a new tab (markstream handles target/rel) */
 .md :deep(a) {
-  color: var(--blue);
+  color: var(--color-accent);
   text-decoration: none;
 }
 .md :deep(a:hover) {
   text-decoration: underline;
 }
 
-/* KaTeX math. Colour already inherits (--text) since KaTeX draws with
+/* KaTeX math. Colour already inherits (--color-text) since KaTeX draws with
    currentColor, so the only skinning needed is layout: let a wide display
    formula scroll inside its own box instead of overflowing the chat column and
    breaking the mobile layout. Inline math stays in the text flow. */
@@ -611,41 +669,64 @@ function copyDiff(code: string, idx: number) {
 .md :deep(blockquote) {
   margin: 0.5em 0;
   padding: 4px 12px;
-  border-left: 3px solid var(--line);
-  color: var(--dim);
+  border-left: 3px solid var(--color-line);
+  color: var(--color-text-muted);
 }
 
 /* HR */
 .md :deep(hr) {
   border: none;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--color-line);
   margin: 0.8em 0;
 }
 
 /* Tables. markstream-vue renders markdown tables as `.table-node` and relies on
-   its own table layout/border model. Keep this generic fallback for any raw
-   HTML tables only; skin `.table-node` without overriding its structure. */
+   its own table layout/border model. The rules below are a generic fallback for
+   raw HTML tables only; `.table-node` itself is styled further down. */
 .md :deep(table:not(.table-node)) {
   border-collapse: collapse;
-  font-size: var(--ui-font-size);
+  font-size: var(--text-lg);
   margin: 0.5em 0;
 }
 .md :deep(table:not(.table-node) th),
 .md :deep(table:not(.table-node) td) {
-  border: 1px solid var(--line);
+  border: 1px solid var(--color-line);
   padding: 4px 10px;
   text-align: left;
 }
 .md :deep(table:not(.table-node) th) {
-  background: var(--panel2);
-  color: var(--ink);
-  font-weight: 600;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
 }
+
+/* Markdown tables. markstream-vue pins these to the message width
+   (`width:100%` + `table-layout:fixed`), squeezing wide content into narrow
+   columns. Instead we size columns to their content (`width:auto` +
+   `table-layout:auto`) and let cells WRAP, so a wide table fills the reading
+   column and wraps its text rather than being crushed or scrolling. (An earlier
+   attempt to break the table out into a *wider* column than the prose — via
+   container units and then fixed @container caps — is parked; see the handover
+   doc.) `!important` beats markstream's scoped `.table-node[data-v-…]` rules
+   regardless of injection order. */
 .md :deep(.table-node) {
-  --table-border: var(--line);
-  --table-header-bg: var(--panel2);
-  font-size: var(--ui-font-size);
+  --table-border: var(--color-line);
+  --table-header-bg: var(--color-surface);
+  font-size: var(--text-lg);
   margin: 0.5em 0;
+  width: auto !important;
+  max-width: 100% !important;
+  table-layout: auto !important;
+}
+/* Default: the table stays inside the reading column and its cells wrap to fit
+   — markstream's own cell default is already `white-space:normal`, so a wide
+   table simply wraps into the column instead of forcing a horizontal scroll.
+   `max-content` + `max-width:100%` sizes columns to their content up to the
+   column width; `overflow-x:auto` is a safety net for an unbreakable cell. */
+.md :deep(.table-node-wrapper) {
+  width: max-content;
+  max-width: 100% !important;
+  overflow-x: auto !important;
 }
 .md :deep(.table-node th),
 .md :deep(.table-node td) {
@@ -670,9 +751,10 @@ function copyDiff(code: string, idx: number) {
 --------------------------------------------------------------------------- */
 .diff-wrap {
   margin: 0.6em 0;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  box-shadow: var(--shadow-xs);
   overflow: hidden;
 }
 .diff-bar {
@@ -681,12 +763,12 @@ function copyDiff(code: string, idx: number) {
   justify-content: flex-end;
   gap: 6px;
   padding: 3px 8px;
-  background: var(--panel2);
-  border-bottom: 1px solid var(--line);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-line);
 }
 .diff-lang {
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  color: var(--muted);
+  font: var(--text-xs) var(--font-mono);
+  color: var(--color-text-muted);
   margin-right: auto;
   letter-spacing: 0.04em;
 }
@@ -694,24 +776,23 @@ function copyDiff(code: string, idx: number) {
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--muted);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text-muted);
+  font: var(--text-sm) var(--font-mono);
   padding: 0 2px;
   line-height: 1;
-  font-family: var(--mono);
 }
 .diff-copy:hover {
-  color: var(--blue);
+  color: var(--color-accent);
 }
 .diff-pre {
   margin: 0;
   padding: 10px 12px;
   overflow-x: auto;
-  background: var(--panel);
+  background: var(--color-surface-sunken);
 }
 .diff-pre code {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
+  font: var(--text-sm) var(--font-mono);
+  color: var(--color-text);
 }
 .diff-pre code span {
   display: block;
@@ -721,19 +802,28 @@ function copyDiff(code: string, idx: number) {
   padding-right: 12px;
 }
 .diff-add {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 8%, transparent);
-  border-left-color: var(--ok) !important;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  border-left-color: var(--color-success) !important;
 }
 .diff-del {
-  color: var(--err);
-  background: color-mix(in srgb, var(--err) 7%, transparent);
-  border-left-color: var(--err) !important;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border-left-color: var(--color-danger) !important;
 }
 .diff-hunk {
-  color: var(--blue);
+  color: var(--color-accent);
 }
 .diff-ctx {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
+
+.md,
+.md .markdown-renderer {
+  font-family: var(--sans);
+}
+.md .code-block-container { border-radius: var(--radius-md); }
+.md .diff-wrap { border-radius: var(--radius-md); }
+.md :not(pre) > code,
+.md .inline-code { border-radius: var(--radius-sm); }
 </style>

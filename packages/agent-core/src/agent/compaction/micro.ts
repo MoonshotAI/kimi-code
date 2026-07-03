@@ -1,10 +1,11 @@
-import type { ContentPart } from '@moonshot-ai/kosong';
+// Micro compaction is disabled; ContentPart is no longer referenced here.
+// import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
 import type { ContextMessage } from '../context';
 import {
   estimateTokensForContentParts,
-  estimateTokensForMessages,
+  // estimateTokensForMessages, // disabled with micro compaction
 } from '../../utils/tokens';
 
 export interface MicroCompactionConfig {
@@ -47,77 +48,93 @@ export class MicroCompaction {
   }
 
   detect(): void {
-    if (!this.agent.experimentalFlags.enabled('micro_compaction')) return;
+    // Micro compaction is disabled: the `micro_compaction` experimental flag has
+    // been removed from the registry, so detection is intentionally a no-op.
+    return;
 
-    const config = this.config;
-    const { history, lastAssistantAt } = this.agent.context;
-    const cacheAgeMs = lastAssistantAt === null ? null : Date.now() - lastAssistantAt;
-    const cacheMissed = cacheAgeMs !== null && cacheAgeMs >= config.cacheMissedThresholdMs;
-    if (!cacheMissed) return;
-
-    const maxContextTokens = this.agent.config.modelCapabilities.max_context_tokens;
-    const contextTokens = this.agent.context.tokenCountWithPending;
-    const contextUsageRatio =
-      maxContextTokens !== undefined && maxContextTokens > 0
-        ? contextTokens / maxContextTokens
-        : 1;
-    if (contextUsageRatio < config.minContextUsageRatio) return;
-
-    const previousCutoff = this.cutoff;
-    const nextCutoff = Math.max(0, history.length - config.keepRecentMessages);
-    this.apply(nextCutoff);
-    if (previousCutoff !== nextCutoff) {
-      const effect = this.measureEffect(history, nextCutoff);
-      const previousEffect = this.measureEffect(history, previousCutoff);
-      const rawContextTokens = estimateTokensForMessages(history);
-      // Whole-context length before/after this cutoff change, mirroring the
-      // `tokensBefore`/`tokensAfter` fields on `compaction_finished` so the
-      // two compaction paths can be compared on the same axis.
-      const tokensBefore =
-        rawContextTokens -
-        previousEffect.truncatedToolResultTokensBefore +
-        previousEffect.truncatedToolResultTokensAfter;
-      const tokensAfter =
-        rawContextTokens -
-        effect.truncatedToolResultTokensBefore +
-        effect.truncatedToolResultTokensAfter;
-      this.agent.telemetry.track('micro_compaction_finished', {
-        ...config,
-        ...effect,
-        tokensBefore,
-        tokensAfter,
-        previous_cutoff: previousCutoff,
-        cutoff: nextCutoff,
-        message_count: history.length,
-        cache_age_ms: cacheAgeMs,
-        thinkingLevel: this.agent.config.thinkingLevel,
-      });
-    }
+    // Original implementation (disabled):
+    // if (!this.agent.experimentalFlags.enabled('micro_compaction')) return;
+    //
+    // const config = this.config;
+    // const { history, lastAssistantAt } = this.agent.context;
+    // const cacheAgeMs = lastAssistantAt === null ? null : Date.now() - lastAssistantAt;
+    // const cacheMissed = cacheAgeMs !== null && cacheAgeMs >= config.cacheMissedThresholdMs;
+    // if (!cacheMissed) return;
+    //
+    // const maxContextTokens = this.agent.config.modelCapabilities.max_context_tokens;
+    // const contextTokens = this.agent.context.tokenCountWithPending;
+    // const contextUsageRatio =
+    //   maxContextTokens !== undefined && maxContextTokens > 0
+    //     ? contextTokens / maxContextTokens
+    //     : 1;
+    // if (contextUsageRatio < config.minContextUsageRatio) return;
+    //
+    // const previousCutoff = this.cutoff;
+    // const nextCutoff = Math.max(0, history.length - config.keepRecentMessages);
+    // this.apply(nextCutoff);
+    // if (previousCutoff !== nextCutoff) {
+    //   const effect = this.measureEffect(history, nextCutoff);
+    //   const previousEffect = this.measureEffect(history, previousCutoff);
+    //   const rawContextTokens = estimateTokensForMessages(history);
+    //   // Whole-context length before/after this cutoff change, mirroring the
+    //   // `tokens_before`/`tokens_after` fields on `compaction_finished` so the
+    //   // two compaction paths can be compared on the same axis.
+    //   const tokensBefore =
+    //     rawContextTokens -
+    //     previousEffect.truncatedToolResultTokensBefore +
+    //     previousEffect.truncatedToolResultTokensAfter;
+    //   const tokensAfter =
+    //     rawContextTokens -
+    //     effect.truncatedToolResultTokensBefore +
+    //     effect.truncatedToolResultTokensAfter;
+    //   this.agent.telemetry.track('micro_compaction_finished', {
+    //     keep_recent_messages: config.keepRecentMessages,
+    //     min_content_tokens: config.minContentTokens,
+    //     cache_missed_threshold_ms: config.cacheMissedThresholdMs,
+    //     truncated_marker: config.truncatedMarker,
+    //     min_context_usage_ratio: config.minContextUsageRatio,
+    //     truncated_tool_result_count: effect.truncatedToolResultCount,
+    //     truncated_tool_result_tokens_before: effect.truncatedToolResultTokensBefore,
+    //     truncated_tool_result_tokens_after: effect.truncatedToolResultTokensAfter,
+    //     tokens_before: tokensBefore,
+    //     tokens_after: tokensAfter,
+    //     previous_cutoff: previousCutoff,
+    //     cutoff: nextCutoff,
+    //     message_count: history.length,
+    //     cache_age_ms: cacheAgeMs,
+    //     thinking_effort: this.agent.config.thinkingEffort,
+    //   });
+    // }
   }
 
   compact(messages: readonly ContextMessage[]): readonly ContextMessage[] {
-    if (!this.agent.experimentalFlags.enabled('micro_compaction')) return messages;
+    // Micro compaction is disabled: the `micro_compaction` experimental flag has
+    // been removed from the registry, so messages are always returned unchanged.
+    return messages;
 
-    const config = this.config;
-    const result: ContextMessage[] = [];
-    let i = 0;
-    for (const msg of messages) {
-      if (
-        i < this.cutoff &&
-        msg.role === 'tool' &&
-        msg.toolCallId !== undefined &&
-        estimateTokensForContentParts(msg.content) >= config.minContentTokens
-      ) {
-        result.push({
-          ...msg,
-          content: [{ type: 'text', text: config.truncatedMarker } satisfies ContentPart],
-        });
-      } else {
-        result.push(msg);
-      }
-      i++;
-    }
-    return result;
+    // Original implementation (disabled):
+    // if (!this.agent.experimentalFlags.enabled('micro_compaction')) return messages;
+    //
+    // const config = this.config;
+    // const result: ContextMessage[] = [];
+    // let i = 0;
+    // for (const msg of messages) {
+    //   if (
+    //     i < this.cutoff &&
+    //     msg.role === 'tool' &&
+    //     msg.toolCallId !== undefined &&
+    //     estimateTokensForContentParts(msg.content) >= config.minContentTokens
+    //   ) {
+    //     result.push({
+    //       ...msg,
+    //       content: [{ type: 'text', text: config.truncatedMarker } satisfies ContentPart],
+    //     });
+    //   } else {
+    //     result.push(msg);
+    //   }
+    //   i++;
+    // }
+    // return result;
   }
 
   private measureEffect(

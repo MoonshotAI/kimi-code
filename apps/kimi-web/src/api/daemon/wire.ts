@@ -381,7 +381,6 @@ export interface WireConfig {
   thinking?: unknown;
   plan_mode?: boolean;
   yolo?: boolean;
-  default_thinking?: boolean;
   default_permission_mode?: string;
   default_plan_mode?: boolean;
   permission?: unknown;
@@ -757,6 +756,17 @@ type WireEventConfigChanged = WireEventBase<'event.config.changed', {
   config: WireConfig;
 }>;
 
+type WireEventModelCatalogChanged = WireEventBase<'event.model_catalog.changed', {
+  changed: Array<{
+    provider_id: string;
+    provider_name: string;
+    added: number;
+    removed: number;
+  }>;
+  unchanged: string[];
+  failed: Array<{ provider: string; reason: string }>;
+}>;
+
 /** Catch-all for unrecognised event frames — keeps lastSeq advancing without warnings */
 type WireEventUnknown = { type: string; seq: number; session_id: string; timestamp: string; payload: unknown };
 
@@ -805,5 +815,6 @@ export type WireEvent =
   | WireEventTaskCompleted
   // Config
   | WireEventConfigChanged
+  | WireEventModelCatalogChanged
   // Unknown / future events
   | WireEventUnknown;

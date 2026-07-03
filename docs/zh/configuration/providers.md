@@ -119,6 +119,17 @@ type = "google-genai"
 api_key = "xxxxx"
 ```
 
+如需经由兼容 Gemini 协议的代理/网关访问，可设置 `base_url`（或 `GOOGLE_GEMINI_BASE_URL` 环境变量）；不填时使用 SDK 默认地址 `https://generativelanguage.googleapis.com`。
+
+> 只填**主机根地址**。Google GenAI SDK 会自行追加 API 版本与路径（如 `/v1beta/models/<model>:generateContent`），所以结尾带 `/v1beta` 会导致路径重复成 `/v1beta/v1beta/…`。
+
+```toml
+[providers.gemini]
+type = "google-genai"
+api_key = "xxxxx"
+base_url = "https://your-gateway.example"
+```
+
 ## `vertexai`
 
 与 `google-genai` 共用实现，`type = "vertexai"` 时切换到 Vertex AI 访问路径。
@@ -138,6 +149,8 @@ GOOGLE_CLOUD_LOCATION = "us-central1"
 gcloud auth application-default login   # 一次性完成认证
 kimi
 ```
+
+如需让 Vertex 请求走自定义（如代理）端点，可设置 `base_url`（或 `GOOGLE_VERTEX_BASE_URL` 环境变量）；不填时使用 SDK 默认的区域化 `*-aiplatform.googleapis.com` 地址。与 `google-genai` 一样，只填主机根地址——SDK 会自行追加 `/v1beta1/publishers/google/models/…`。
 
 ## OAuth 与凭证注入
 

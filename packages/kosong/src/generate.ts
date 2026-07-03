@@ -111,53 +111,83 @@ export async function generate(
   // the stream.
   await throwIfAborted(options?.signal, stream);
 
+  // Decode-phase accounting. We split the window from the first streamed part
+  // to stream end into time spent awaiting the next part (server + network) vs.
+  // time spent processing each part in-process (deep copy, host callback, part
+  // merge). `lastResumeAt` marks the end of the previous part's processing, so
+  // the gap until the next part arrives is attributed to the server. The
+  // per-part processing is wrapped in try/finally so the accounting stays
+  // correct across `continue` and thrown aborts.
+  let serverDecodeMs = 0;
+  let clientConsumeMs = 0;
+  let firstPartAt: number | undefined;
+  let lastResumeAt = 0;
+
   for await (const part of stream) {
-    await throwIfAborted(options?.signal, stream);
+    const arrivedAt = Date.now();
+    if (firstPartAt === undefined) {
+      firstPartAt = arrivedAt;
+    } else {
+      serverDecodeMs += arrivedAt - lastResumeAt;
+    }
 
-    // Notify raw part callback (deep copy to avoid aliasing mutations).
-    if (callbacks?.onMessagePart !== undefined) {
-      await callbacks.onMessagePart(deepCopyPart(part));
+    try {
       await throwIfAborted(options?.signal, stream);
-    }
 
-    // Index-based routing for parallel tool call argument deltas.
-    // When a ToolCallPart arrives with an index referring to a tool call
-    // that is NOT the currently-pending one, append it directly to the
-    // correct ToolCall in message.toolCalls instead of relying on sequential
-    // merging. This prevents argument cross-contamination across parallel calls.
-    if (
-      isToolCallPart(part) &&
-      part.index !== undefined &&
-      !isPendingToolCallAtIndex(pendingPart, part.index)
-    ) {
-      const arrayIdx = toolCallIndexMap.get(part.index);
-      if (arrayIdx !== undefined) {
-        const target = message.toolCalls[arrayIdx];
-        if (target !== undefined && part.argumentsPart !== null) {
-          target.arguments =
-            target.arguments === null
-              ? part.argumentsPart
-              : target.arguments + part.argumentsPart;
-        }
-        continue;
+      // Notify raw part callback (deep copy to avoid aliasing mutations).
+      if (callbacks?.onMessagePart !== undefined) {
+        await callbacks.onMessagePart(deepCopyPart(part));
+        await throwIfAborted(options?.signal, stream);
       }
-      // Unknown index — fall through to the sequential logic as a safety net.
-    }
 
-    if (pendingPart === null) {
-      pendingPart = part;
-    } else if (!mergeInPlace(pendingPart, part)) {
-      // Could not merge — flush the pending part and start a new one.
-      // For parallel tool calls this happens when a new ToolCall header arrives
-      // while a previous ToolCall is still pending; the flush finalizes the
-      // previous tool call into `message.toolCalls`.
-      flushPart(message, pendingPart, toolCallIndexMap);
-      pendingPart = part;
+      // Index-based routing for parallel tool call argument deltas.
+      // When a ToolCallPart arrives with an index referring to a tool call
+      // that is NOT the currently-pending one, append it directly to the
+      // correct ToolCall in message.toolCalls instead of relying on sequential
+      // merging. This prevents argument cross-contamination across parallel calls.
+      if (
+        isToolCallPart(part) &&
+        part.index !== undefined &&
+        !isPendingToolCallAtIndex(pendingPart, part.index)
+      ) {
+        const arrayIdx = toolCallIndexMap.get(part.index);
+        if (arrayIdx !== undefined) {
+          const target = message.toolCalls[arrayIdx];
+          if (target !== undefined && part.argumentsPart !== null) {
+            target.arguments =
+              target.arguments === null
+                ? part.argumentsPart
+                : target.arguments + part.argumentsPart;
+          }
+          continue;
+        }
+        // Unknown index — fall through to the sequential logic as a safety net.
+      }
+
+      if (pendingPart === null) {
+        pendingPart = part;
+      } else if (!mergeInPlace(pendingPart, part)) {
+        // Could not merge — flush the pending part and start a new one.
+        // For parallel tool calls this happens when a new ToolCall header arrives
+        // while a previous ToolCall is still pending; the flush finalizes the
+        // previous tool call into `message.toolCalls`.
+        flushPart(message, pendingPart, toolCallIndexMap);
+        pendingPart = part;
+      }
+    } finally {
+      lastResumeAt = Date.now();
+      clientConsumeMs += lastResumeAt - arrivedAt;
     }
   }
 
   await throwIfAborted(options?.signal, stream);
-  options?.onStreamEnd?.();
+  if (firstPartAt !== undefined) {
+    // Tail wait: from the last processed part to the stream's done signal.
+    serverDecodeMs += Date.now() - lastResumeAt;
+  }
+  options?.onStreamEnd?.(
+    firstPartAt === undefined ? undefined : { serverDecodeMs, clientConsumeMs },
+  );
 
   // Flush the last pending part.
   if (pendingPart !== null) {

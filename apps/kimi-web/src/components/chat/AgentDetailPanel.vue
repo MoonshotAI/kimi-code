@@ -8,6 +8,8 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AgentMember } from '../../types';
+import Badge from '../ui/Badge.vue';
+import PanelHeader from '../ui/PanelHeader.vue';
 
 const props = defineProps<{ member: AgentMember }>();
 
@@ -22,6 +24,10 @@ const progressLines = computed(() =>
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0),
 );
+
+// The subagent's concatenated live output (assistant deltas). Trim trailing
+// whitespace for display; grows in real time as deltas stream in.
+const liveText = computed(() => (props.member.text ?? '').trimEnd());
 
 interface ProgressGroup {
   key: string;
@@ -84,7 +90,9 @@ function phaseLabel(phase: AgentMember['phase']): string {
 
 const bodyEl = ref<HTMLElement | null>(null);
 watch(
-  () => progressLines.value.length,
+  // Follow the bottom as either the tool progress or the live text grows, as
+  // long as the user hasn't scrolled up.
+  () => progressLines.value.length + liveText.value.length,
   () => {
     const el = bodyEl.value;
     if (!el) return;
@@ -100,20 +108,24 @@ watch(
 
 <template>
   <div class="ap">
-    <div class="ap-header">
-      <span class="ap-title">{{ t('common.preview') }}</span>
-      <span class="ap-sub">{{ member.name }}</span>
-      <span class="ap-phase" :class="`phase-${member.phase}`">{{ phaseLabel(member.phase) }}</span>
-      <button type="button" class="ap-close" :title="t('thinking.close')" :aria-label="t('thinking.close')" @click="emit('close')">
-        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-      </button>
-    </div>
+    <PanelHeader
+      :title="t('common.preview')"
+      :subtitle="member.name"
+      :close-label="t('thinking.close')"
+      @close="emit('close')"
+    >
+      <Badge variant="neutral" size="sm" class="ap-phase">{{ phaseLabel(member.phase) }}</Badge>
+    </PanelHeader>
     <div ref="bodyEl" class="ap-body">
       <div v-if="member.subagentType" class="ap-type">{{ member.subagentType }}</div>
       <div v-if="member.suspendedReason" class="ap-reason">{{ member.suspendedReason }}</div>
       <div v-if="member.prompt" class="ap-field">
         <span class="ap-field-label">Task</span>
         <div class="ap-field-body">{{ member.prompt }}</div>
+      </div>
+      <div v-if="liveText" class="ap-field">
+        <span class="ap-field-label">Output</span>
+        <div class="ap-field-body ap-live">{{ liveText }}</div>
       </div>
       <div v-if="progressGroups.length > 0" class="ap-field">
         <span class="ap-field-label">Progress</span>
@@ -152,88 +164,25 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg);
+  background: var(--color-bg);
 }
-.ap-header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--panel-head-h, 32px);
-  padding: 0 6px 0 12px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-.ap-title {
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-}
-.ap-sub {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
-}
-.ap-phase {
-  flex: none;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 1px 7px;
-  color: var(--dim);
-  background: var(--bg);
-  font-family: var(--mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-}
-.ap-phase.phase-completed { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--bg)); }
-.ap-phase.phase-failed { color: var(--err); border-color: color-mix(in srgb, var(--err) 35%, var(--bg)); }
-.ap-phase.phase-suspended { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--bg)); }
-.ap-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.ap-close:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.ap-close:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
+.ap-phase { flex: none; }
 
 .ap-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 12px 14px;
-  font-size: var(--ui-font-size);
-  line-height: 1.6;
-  color: var(--dim);
+  font: var(--text-base)/var(--leading-normal) var(--font-ui);
+  color: var(--color-text-muted);
 }
 .ap-type {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
+  font: var(--text-xs) var(--font-mono);
+  color: var(--color-text-muted);
   margin-bottom: 8px;
 }
 .ap-reason {
-  color: var(--warn);
+  color: var(--color-warning);
   margin-bottom: 8px;
 }
 .ap-field + .ap-field {
@@ -241,9 +190,8 @@ watch(
 }
 .ap-field-label {
   display: block;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
+  color: var(--color-text-muted);
+  font: var(--text-xs) var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 4px;
@@ -256,9 +204,15 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-family: var(--mono);
-  color: var(--text);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-mono);
+  color: var(--color-text);
   min-width: 0;
+}
+.ap-live {
+  font: var(--text-base)/var(--leading-relaxed) var(--font-mono);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .ap-group {
   min-width: 0;
@@ -268,23 +222,23 @@ watch(
   align-items: baseline;
   gap: 6px;
   min-width: 0;
-  font-weight: 600;
-  color: var(--ink);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 .ap-glyph {
   flex: none;
-  color: var(--blue);
+  color: var(--color-accent);
   font-size: 0.85em;
 }
 .ap-output {
   margin: 2px 0 0 16px;
   padding-left: 8px;
-  color: var(--muted);
-  font-size: calc(var(--ui-font-size) - 1px);
-  line-height: 1.5;
-  border-left: 2px solid var(--line2, var(--line));
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  border-left: 2px solid var(--color-line);
   min-width: 0;
 }
 .ap-out-line {
@@ -298,16 +252,15 @@ watch(
   padding: 0;
   background: none;
   border: none;
-  color: var(--blue);
-  font-family: inherit;
-  font-size: inherit;
+  color: var(--color-accent);
+  font: inherit;
   cursor: pointer;
 }
 .ap-fold:hover {
   text-decoration: underline;
 }
 .ap-fold:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--color-accent);
   outline-offset: 1px;
 }
 </style>

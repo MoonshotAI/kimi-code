@@ -6,6 +6,7 @@ import type { Terminal as XTerm, ITheme } from '@xterm/xterm';
 import { computed, nextTick, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { useIsDark } from '../composables/useIsDark';
 import { useTerminal } from '../composables/useTerminal';
+import Button from './ui/Button.vue';
 
 const props = defineProps<{ sessionId: string }>();
 
@@ -175,9 +176,9 @@ onUnmounted(() => {
         <span v-if="terminalClient.readOnly.value" class="terminal-readonly">exited</span>
       </div>
       <div class="terminal-actions">
-        <button type="button" class="terminal-btn" @click="fitAndResize">fit</button>
-        <button type="button" class="terminal-btn" @click="terminalClient.close">close</button>
-        <button type="button" class="terminal-btn primary" @click="restart">new</button>
+        <Button size="sm" variant="secondary" @click="fitAndResize">fit</Button>
+        <Button size="sm" variant="secondary" @click="terminalClient.close">close</Button>
+        <Button size="sm" variant="primary" @click="restart">new</Button>
       </div>
     </div>
     <div class="terminal-surface">
@@ -214,7 +215,7 @@ onUnmounted(() => {
   gap: 7px;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
 }
 .terminal-dot {
   width: 7px;
@@ -224,7 +225,7 @@ onUnmounted(() => {
   flex: none;
 }
 .terminal-dot.on {
-  background: var(--ok);
+  background: var(--color-success);
 }
 .terminal-cwd {
   min-width: 0;
@@ -234,30 +235,13 @@ onUnmounted(() => {
   color: var(--muted);
 }
 .terminal-readonly {
-  color: var(--warn);
+  color: var(--color-warning);
 }
 .terminal-actions {
   display: flex;
   align-items: center;
   gap: 5px;
   flex: none;
-}
-.terminal-btn {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--dim);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  padding: 3px 7px;
-  cursor: pointer;
-}
-.terminal-btn:hover {
-  background: var(--soft);
-  color: var(--ink);
-}
-.terminal-btn.primary {
-  color: var(--blue2);
 }
 .terminal-surface {
   position: relative;
@@ -286,6 +270,6 @@ onUnmounted(() => {
   text-align: center;
 }
 .terminal-overlay.error {
-  color: var(--err);
+  color: var(--color-danger);
 }
 </style>

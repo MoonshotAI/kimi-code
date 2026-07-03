@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { pino } from 'pino';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IModelCatalogService, type IModelCatalogService as ModelCatalogServiceShape } from '@moonshot-ai/agent-core';
 
@@ -19,6 +19,10 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-server-model-catalog-test-'));
   lockPath = join(tmpDir, 'lock');
   bridgeHome = mkdtempSync(join(tmpdir(), 'kimi-server-model-catalog-home-'));
+  // Disable the background refresh scheduler so its startup refresh does not
+  // race the route-level assertions in these tests.
+  process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
+  process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
 });
 
 afterEach(async () => {
@@ -28,6 +32,8 @@ afterEach(async () => {
     // ignore
   }
   server = undefined;
+  delete process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'];
+  delete process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'];
   rmSync(tmpDir, { recursive: true, force: true });
   rmSync(bridgeHome, { recursive: true, force: true });
 });
@@ -264,6 +270,11 @@ describe('model/provider catalog routes', () => {
         unchanged: [],
         failed: [],
       }),
+      refreshProviderModels: async () => ({
+        changed: [],
+        unchanged: [],
+        failed: [],
+      }),
     };
     const r = await bootDaemon([[IModelCatalogService, stub]]);
 
@@ -288,5 +299,82 @@ describe('model/provider catalog routes', () => {
       unchanged: [],
       failed: [],
     });
+  });
+
+  function refreshStub(): {
+    stub: ModelCatalogServiceShape;
+    refreshProviderModels: ReturnType<typeof vi.fn>;
+  } {
+    const refreshProviderModels = vi.fn(async () => ({
+      changed: [
+        {
+          provider_id: 'managed:kimi-code',
+          provider_name: 'Kimi Code',
+          added: 2,
+          removed: 1,
+        },
+      ],
+      unchanged: ['moonshot-cn'],
+      failed: [],
+    }));
+    const stub: ModelCatalogServiceShape = {
+      _serviceBrand: undefined,
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('unused');
+      },
+      setDefaultModel: async () => {
+        throw new Error('unused');
+      },
+      refreshOAuthProviderModels: async () => ({ changed: [], unchanged: [], failed: [] }),
+      refreshProviderModels,
+    };
+    return { stub, refreshProviderModels };
+  }
+
+  it('refreshes all provider models through POST /providers:refresh', async () => {
+    const { stub, refreshProviderModels } = refreshStub();
+    const r = await bootDaemon([[IModelCatalogService, stub]]);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/providers:refresh',
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(envelopeOf<unknown>(res.json()).code).toBe(0);
+    expect(refreshProviderModels).toHaveBeenCalledWith({ scope: 'all' });
+  });
+
+  it('refreshes a single provider through POST /providers/{id}:refresh', async () => {
+    const { stub, refreshProviderModels } = refreshStub();
+    const r = await bootDaemon([[IModelCatalogService, stub]]);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/providers/managed%3Akimi-code:refresh',
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(envelopeOf<unknown>(res.json()).code).toBe(0);
+    expect(refreshProviderModels).toHaveBeenCalledWith({
+      providerId: 'managed:kimi-code',
+    });
+  });
+
+  it('rejects unsupported provider actions', async () => {
+    const { stub } = refreshStub();
+    const r = await bootDaemon([[IModelCatalogService, stub]]);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/providers/foo:bogus',
+      payload: {},
+    });
+
+    expect(envelopeOf<unknown>(res.json()).code).toBe(40001);
   });
 });

@@ -12,7 +12,14 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ISessionService, FsSearchService, ILogService } from '@moonshot-ai/agent-core';
+import {
+  ISessionService,
+  FsSearchService,
+  ILogService,
+  noopTelemetryClient,
+  type TelemetryClient,
+  type TelemetryProperties,
+} from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type RunningServer } from '../src';
 import { fixedTokenAuth } from './helpers/serverHarness';
@@ -398,6 +405,14 @@ describe('FsSearchService direct: rg fallback + grep timeout (W11.1)', () => {
   }
 
   class StubMissingRg extends FsSearchService {
+    constructor(
+      sessions: ISessionService,
+      logger: ILogService,
+      telemetry: TelemetryClient = noopTelemetryClient,
+    ) {
+      super(telemetry, sessions, logger);
+    }
+
     public override probeRg(): Promise<string | null> {
       if (this.rgPath !== undefined) return Promise.resolve(this.rgPath);
       this.rgPath = null;
@@ -445,6 +460,32 @@ describe('FsSearchService direct: rg fallback + grep timeout (W11.1)', () => {
     svc.dispose();
   });
 
+  it('tracks fs grep node fallback when rg is missing', async () => {
+    const sessions = makeStubSession(workspace);
+    const logger = makeStubLogger();
+    const events: Array<{ event: string; properties?: TelemetryProperties }> = [];
+    const svc = new StubMissingRg(sessions, logger, {
+      track: (event, properties) => events.push({ event, properties }),
+    });
+    writeFileSync(join(workspace, 'a.txt'), 'needle\n');
+
+    await svc.grep('sess_stub', {
+      pattern: 'needle',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(events).toEqual([
+      { event: 'fs_grep_node_fallback', properties: { reason: 'rg_missing' } },
+    ]);
+    svc.dispose();
+  });
+
   it('grep timeout fires FsGrepTimeoutError → 41305', async () => {
     const sessions = makeStubSession(workspace);
     const logger = makeStubLogger();
@@ -467,7 +508,7 @@ describe('FsSearchService direct: rg fallback + grep timeout (W11.1)', () => {
         return Promise.resolve(null);
       }
     }
-    const svc = new StubTimeout(sessions, logger);
+    const svc = new StubTimeout(noopTelemetryClient, sessions, logger);
     writeFileSync(join(workspace, 'a.txt'), 'needle\n');
     await expect(
       svc.grep('sess_stub', {

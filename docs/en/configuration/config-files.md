@@ -24,7 +24,6 @@ The following example covers the most commonly used configuration fields. You ca
 
 ```toml
 default_model = "kimi-code/kimi-for-coding"
-default_thinking = true
 default_permission_mode = "manual"
 default_plan_mode = false
 merge_all_available_skills = true
@@ -41,7 +40,8 @@ model = "kimi-for-coding"
 max_context_size = 262144
 
 [thinking]
-mode = "auto"
+enabled = true
+effort = "high"
 
 [loop_control]
 max_retries_per_step = 3
@@ -51,8 +51,8 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-[experimental]
-micro_compaction = true
+# [experimental]
+# micro_compaction = false  # disabled: micro compaction has been removed
 
 [[permission.rules]]
 decision = "allow"
@@ -76,7 +76,6 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
-| `default_thinking` | `boolean` | `false` | Whether new sessions enable Thinking (deep reasoning) mode by default; can be toggled from the model menu inside a session. Even when set to `true`, `[thinking].mode = "off"` will still force Thinking off |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `auto` (auto-approve read operations), or `yolo` (auto-approve everything) |
 | `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
@@ -128,6 +127,8 @@ Each entry in the `models` table defines a model alias (the name used in `defaul
 | `max_context_size` | `integer` | Yes | Maximum context length in tokens; must be at least 1 |
 | `max_output_size` | `integer` | No | Per-request output token cap (maps to `max_tokens`). Currently only the `anthropic` provider honors it; recognized Claude models are automatically clamped to the server-side maximum |
 | `capabilities` | `array<string>` | No | Capability tags to add explicitly: `thinking`, `image_in`, `video_in`, `audio_in`, `tool_use`. Unioned with the capabilities auto-detected by the provider — entries can only be added, never removed |
+| `support_efforts` | `array<string>` | No | Thinking effort levels declared by the model catalog. Managed and open-platform refreshes may rewrite this field; to pin it manually, set `[models."<alias>".overrides] support_efforts` instead |
+| `default_effort` | `string` | No | Default thinking effort for the model. Managed and open-platform refreshes may rewrite this field; to pin it manually, set `[models."<alias>".overrides] default_effort` instead |
 | `display_name` | `string` | No | Name shown in the UI; falls back to `model` when unset |
 | `reasoning_key` | `string` | No | `openai` provider only. Override the field name used for reasoning content when the gateway returns it under a non-standard name; by default `reasoning_content`, `reasoning_details`, and `reasoning` are auto-detected |
 | `adaptive_thinking` | `boolean` | No | `anthropic` provider only. Force adaptive thinking on or off, overriding the version inference based on the model name. Omit to infer automatically (Claude ≥ 4.6 uses adaptive) |
@@ -141,16 +142,42 @@ model = "gpt-4.1"
 max_context_size = 1047576
 ```
 
+### Model overrides
+
+Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Runtime consumers read the effective value: the override when present, otherwise the top-level field.
+
+```toml
+[models."kimi-code/kimi-k2"]
+provider = "managed:kimi-code"
+model = "kimi-k2"
+max_context_size = 262144
+support_efforts = ["low", "high", "max"]
+default_effort = "max"
+
+[models."kimi-code/kimi-k2".overrides]
+support_efforts = ["low", "high"]
+default_effort = "high"
+```
+
+`[models."<alias>".overrides]` accepts ordinary model fields such as `max_context_size`, `max_output_size`, `capabilities`, `display_name`, `reasoning_key`, `adaptive_thinking`, `support_efforts`, and `default_effort`. It does not accept identity / routing fields: `provider`, `model`, `protocol`, and `beta_api`.
+
 You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model).
 
 ## `thinking`
 
-`thinking` sets the global default behavior for Thinking mode. `mode = "off"` forces Thinking off even when the top-level `default_thinking = true`.
+`thinking` sets the global default behavior for Thinking mode.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `mode` | `string` | — | Trigger policy: `auto` (decided by the model), `on` (always on), `off` (force off) |
-| `effort` | `string` | `high` | Thinking effort level: `low`, `medium`, `high`, `xhigh`, `max`; the levels actually available depend on the provider |
+| `enabled` | `boolean` | `true` | Whether Thinking is enabled by default for new sessions; set to `false` to force Thinking off |
+| `effort` | `string` | — | Thinking effort level (for example `low`, `medium`, `high`, `xhigh`, `max`); the levels actually available depend on the model's declared `support_efforts`, and unrecognized values are ignored by the provider |
+
+### Deprecated fields
+
+| Field | Deprecated in | Description |
+| --- | --- | --- |
+| `default_thinking` | 0.21.0 | Top-level boolean, replaced by `[thinking] enabled`. Migrate `default_thinking = true` to `enabled = true`, and `default_thinking = false` to `enabled = false`. |
+| `thinking.mode` | 0.21.0 | One of `auto` / `on` / `off`, replaced by `[thinking] enabled`. `mode = "off"` becomes `enabled = false`; `mode = "on"` and `mode = "auto"` are equivalent to `enabled = true` (the default) and can be removed. |
 
 ## `loop_control`
 
@@ -173,13 +200,15 @@ You can also switch models temporarily without touching the config file — by s
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
 
+<!--
 ## `experimental`
 
-`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `true`; set it to `false` only when you need to disable automatic trimming of older large tool results.
+`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `false`; set it to `true` to enable automatic trimming of older large tool results.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `micro_compaction` | `boolean` | `true` | Trim older large tool results from context while preserving recent conversation |
+| `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
+-->
 
 ## `services`
 

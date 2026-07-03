@@ -68,8 +68,30 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     const deleted = new Set(file.deleted_workspace_ids);
 
     const result: Workspace[] = [];
-    // Registered workspaces (explicitly added by the user).
+    // Registered workspaces (explicitly added by the user). Dedup by root: the
+    // registry can hold legacy entries whose id was computed by an older
+    // encodeWorkDirKey (e.g. realpath-based on Windows) for the same folder, so
+    // a single root may map to multiple ids. Prefer the entry whose id matches
+    // the current canonical key so sessions' workspace_id still resolves and
+    // the sidebar doesn't render the same workspace twice.
+    //
+    // The session count is intentionally scoped to the representative's own
+    // bucket (via hydrate) rather than aggregated across every id for the root:
+    // GET /sessions?workspace_id=<representative> only pages the canonical
+    // bucket, so the count must reflect what the list can actually retrieve.
+    const byRoot = new Map<string, { id: string; entry: WorkspaceRegistryEntry }>();
     for (const [id, entry] of Object.entries(file.workspaces)) {
+      const existing = byRoot.get(entry.root);
+      if (existing === undefined) {
+        byRoot.set(entry.root, { id, entry });
+        continue;
+      }
+      const canonicalId = encodeWorkDirKey(normalizeWorkDir(entry.root));
+      if (existing.id !== canonicalId && id === canonicalId) {
+        byRoot.set(entry.root, { id, entry });
+      }
+    }
+    for (const { id, entry } of byRoot.values()) {
       result.push(await this.hydrate(id, entry));
     }
 

@@ -13,8 +13,8 @@
  * reads the same "work in progress" signal across the UI.
  */
 
-import { Container, Text, Spacer } from '@earendil-works/pi-tui';
-import type { TUI } from '@earendil-works/pi-tui';
+import { Container, Text, Spacer } from '@moonshot-ai/pi-tui';
+import type { TUI } from '@moonshot-ai/pi-tui';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';

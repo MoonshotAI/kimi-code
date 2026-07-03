@@ -2,14 +2,16 @@
 <!-- Minimal token prompt shown when the Web UI has no server-transport
      credential, or when the server rejects it (HTTP 401). On submit we store
      the token as the bearer credential and reload so every REST/WS call picks
-     it up. The overlay is fully opaque so it covers the whole page (nothing
-     underneath shows through). Light only, Kimi blue #1565C0, no emoji. -->
+     it up. The overlay uses a tokened translucent backdrop and the card follows
+     the unified v2 dialog look. -->
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
 import { setCredential } from '../api/daemon/serverAuth';
+import Button from './ui/Button.vue';
+import Input from './ui/Input.vue';
 
 const credential = ref('');
-const inputRef = ref<HTMLInputElement | null>(null);
+const inputRef = ref<InstanceType<typeof Input> | null>(null);
 const submitting = ref(false);
 
 onMounted(() => {
@@ -36,29 +38,34 @@ function onKeydown(e: KeyboardEvent): void {
 <template>
   <div class="server-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="server-auth-title">
     <div class="server-auth-card">
-      <h1 id="server-auth-title" class="server-auth-title">Server token required</h1>
-      <p class="server-auth-hint">
-        This server is protected. Enter the bearer token printed when the server
-        started (or the password set via <code>KIMI_CODE_PASSWORD</code>).
-      </p>
-      <input
-        ref="inputRef"
-        v-model="credential"
-        type="password"
-        class="server-auth-input"
-        autocomplete="current-password"
-        placeholder="Token"
-        :disabled="submitting"
-        @keydown="onKeydown"
-      />
-      <button
-        type="button"
-        class="server-auth-button"
-        :disabled="!credential || submitting"
-        @click="submit"
-      >
-        {{ submitting ? 'Connecting…' : 'Connect' }}
-      </button>
+      <div class="server-auth-head">
+        <h1 id="server-auth-title" class="server-auth-title">Server token required</h1>
+        <p class="server-auth-hint">
+          This server is protected. Enter the bearer token printed when the server
+          started (or the password set via <code>KIMI_CODE_PASSWORD</code>).
+        </p>
+      </div>
+      <div class="server-auth-body">
+        <Input
+          ref="inputRef"
+          v-model="credential"
+          type="password"
+          autocomplete="current-password"
+          placeholder="Token"
+          :disabled="submitting"
+          @keydown="onKeydown"
+        />
+      </div>
+      <div class="server-auth-foot">
+        <Button
+          variant="primary"
+          :disabled="!credential || submitting"
+          :loading="submitting"
+          @click="submit"
+        >
+          {{ submitting ? 'Connecting…' : 'Connect' }}
+        </Button>
+      </div>
     </div>
   </div>
 </template>
@@ -67,82 +74,62 @@ function onKeydown(e: KeyboardEvent): void {
 .server-auth-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Fully opaque so the dialog covers the whole page — nothing underneath
-     (e.g. the login page) shows through. */
-  background: var(--bg, #ffffff);
-  font-family: 'Inter', system-ui, sans-serif;
+  background: color-mix(in srgb, var(--color-bg) 70%, transparent);
 }
 
 .server-auth-card {
-  width: min(360px, calc(100vw - 32px));
-  padding: 28px 28px 24px;
-  background: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  width: 480px;
+  max-width: calc(100vw - 48px);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+}
+
+.server-auth-head {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 22px 14px;
 }
 
 .server-auth-title {
-  margin: 0 0 8px;
-  font-size: 16px;
-  font-weight: 600;
-  color: #1a1a1a;
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  letter-spacing: -0.01em;
+  color: var(--color-text);
 }
 
 .server-auth-hint {
-  margin: 0 0 18px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #555;
+  margin: 4px 0 0;
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
 }
 
 .server-auth-hint code {
   padding: 1px 5px;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 12px;
-  background: #f0f0f0;
-  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-xs);
 }
 
-.server-auth-input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 10px 12px;
-  margin-bottom: 14px;
-  font-size: 14px;
-  color: #1a1a1a;
-  background: #fff;
-  border: 1px solid #d0d0d0;
-  border-radius: 8px;
-  outline: none;
+.server-auth-body {
+  padding: 4px 22px 18px;
 }
 
-.server-auth-input:focus {
-  border-color: #1565c0;
-  box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.15);
-}
-
-.server-auth-button {
-  width: 100%;
-  padding: 10px 12px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #fff;
-  background: #1565c0;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.server-auth-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.server-auth-button:not(:disabled):hover {
-  background: #0d47a1;
+.server-auth-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px 20px;
 }
 </style>

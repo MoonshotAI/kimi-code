@@ -71,7 +71,7 @@ export const WIRE_RENDERERS: RendererMap = {
       if (r.profileName !== undefined) parts.push(`profile=${r.profileName}`);
       if (r.modelAlias !== undefined) parts.push(`model=${r.modelAlias}`);
       if (r.cwd !== undefined) parts.push(`cwd=${r.cwd}`);
-      if (r.thinkingLevel !== undefined) parts.push(`thinking=${r.thinkingLevel}`);
+      if (r.thinkingEffort !== undefined) parts.push(`thinking=${r.thinkingEffort}`);
       if (r.systemPrompt !== undefined) parts.push(`system(${r.systemPrompt.length}b)`);
       return {
         main: (

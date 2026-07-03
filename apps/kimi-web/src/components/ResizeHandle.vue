@@ -69,7 +69,7 @@ watch(dragging, (d) => emit('update:dragging', d));
   touch-action: none;
   /* sits over the 1px column border so the whole 4px strip is grabbable */
   margin: 0 -2px;
-  z-index: 5;
+  z-index: var(--z-sticky);
 }
 .rh-bar {
   position: absolute;
@@ -79,6 +79,6 @@ watch(dragging, (d) => emit('update:dragging', d));
 }
 .rh:hover .rh-bar,
 .rh.dragging .rh-bar {
-  background: var(--blue);
+  background: var(--color-accent);
 }
 </style>

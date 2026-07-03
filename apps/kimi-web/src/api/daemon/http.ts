@@ -126,6 +126,8 @@ export class DaemonHttpClient {
         requestId,
         phase: 'fetch',
         timeoutMs: REQUEST_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
       });
     }
     let envelope: WireEnvelope<T>;
@@ -147,6 +149,8 @@ export class DaemonHttpClient {
         statusText: response.statusText,
         contentType: response.headers.get('content-type') ?? undefined,
         bodyPreview: await readResponsePreview(responseForDiagnostics),
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
       });
     }
     traceRestResponse({
@@ -167,6 +171,8 @@ export class DaemonHttpClient {
         msg: envelope.msg,
         requestId: envelope.request_id,
         details: envelope.details,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
       });
     }
     return envelope.data as T;
@@ -233,6 +239,8 @@ export class DaemonHttpClient {
         requestId,
         phase: 'fetch',
         timeoutMs: REQUEST_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
       });
     }
 
@@ -256,6 +264,8 @@ export class DaemonHttpClient {
         statusText: response.statusText,
         contentType: response.headers.get('content-type') ?? undefined,
         bodyPreview: await readResponsePreview(responseForDiagnostics),
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
       });
     }
 
@@ -280,6 +290,8 @@ export class DaemonHttpClient {
         msg: envelope.msg,
         requestId: envelope.request_id,
         details: envelope.details,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
       });
     }
 

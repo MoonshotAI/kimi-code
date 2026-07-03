@@ -571,6 +571,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
 
     try {
       const client = this._createClient(options?.auth);
+      options?.onRequestSent?.();
       const response = (await client.chat.completions.create(
         createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
         options?.signal ? { signal: options.signal } : undefined,

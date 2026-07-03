@@ -1,4 +1,4 @@
-import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
+import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';

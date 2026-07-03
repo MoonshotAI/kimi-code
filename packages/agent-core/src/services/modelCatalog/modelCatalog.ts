@@ -1,11 +1,20 @@
 import { createDecorator } from '../../di';
-import type { KimiConfig, ModelAlias, ProviderConfig } from '../../config';
+import { effectiveModelAlias, type KimiConfig, type ModelAlias, type ProviderConfig } from '../../config';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
   RefreshOAuthProviderModelsResponse,
+  RefreshProviderModelsResponse,
   SetDefaultModelResponse,
 } from '@moonshot-ai/protocol';
+
+export type RefreshProviderModelsScope = 'all' | 'oauth';
+
+export interface RefreshProviderModelsOptions {
+  readonly scope?: RefreshProviderModelsScope;
+  /** Refresh only this provider id. When set, `scope` is ignored. */
+  readonly providerId?: string;
+}
 
 export interface IModelCatalogService {
   readonly _serviceBrand: undefined;
@@ -15,6 +24,9 @@ export interface IModelCatalogService {
   getProvider(providerId: string): Promise<ProviderCatalogItem>;
   setDefaultModel(modelId: string): Promise<SetDefaultModelResponse>;
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
+  refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
@@ -46,12 +58,15 @@ export function toProtocolModel(
   modelId: string,
   alias: ModelAlias,
 ): ModelCatalogItem {
+  const effective = effectiveModelAlias(alias);
   return {
-    provider: alias.provider,
+    provider: effective.provider,
     model: modelId,
-    display_name: alias.displayName ?? alias.model,
-    max_context_size: alias.maxContextSize,
-    capabilities: alias.capabilities,
+    display_name: effective.displayName ?? effective.model,
+    max_context_size: effective.maxContextSize,
+    capabilities: effective.capabilities,
+    support_efforts: effective.supportEfforts,
+    default_effort: effective.defaultEffort,
   };
 }
 

@@ -58,7 +58,7 @@ export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
     .string()
     .optional()
     .describe(
-      'Optional argument string for the skill, written like a command line (e.g. `-m "fix bug"`, `123`, a file path). It is split on whitespace, with quotes grouping a token, and expanded into the skill\'s declared placeholders. Omit it for skills that take no arguments.',
+      'Optional argument string for the skill, written like a command line (e.g. `-m "fix bug"`, `123`, a file path). It is split on whitespace (quotes group a token) and expanded into the skill\'s placeholders ($NAME, $1, $ARGUMENTS); if the skill body has no placeholders, the whole string is still appended as a trailing `ARGUMENTS:` line. Omit it only when there is nothing to pass.',
     ),
 });
 

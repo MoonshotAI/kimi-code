@@ -41,9 +41,7 @@ export type AssistantRenderBlock =
   | { kind: 'thinking'; thinking: string; sourceIndex: number }
   | { kind: 'text'; text: string; sourceIndex: number }
   | { kind: 'tool'; tool: ToolStackItem['tool']; sourceIndex: number }
-  | { kind: 'tool-stack'; tools: ToolStackItem[] }
-  | { kind: 'agent'; member: Extract<TurnBlock, { kind: 'agent' }>['member']; sourceIndex: number }
-  | { kind: 'agentGroup'; members: Extract<TurnBlock, { kind: 'agentGroup' }>['members']; sourceIndex: number };
+  | { kind: 'tool-stack'; tools: ToolStackItem[] };
 
 export function rendersToolCard(block: Extract<TurnBlock, { kind: 'tool' }>): boolean {
   return !(block.tool.status === 'ok' && block.tool.media);
@@ -87,10 +85,6 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
       rendered.push({ kind: 'thinking', thinking: block.thinking, sourceIndex });
     } else if (block.kind === 'text') {
       rendered.push({ kind: 'text', text: block.text, sourceIndex });
-    } else if (block.kind === 'agent') {
-      rendered.push({ kind: 'agent', member: block.member, sourceIndex });
-    } else {
-      rendered.push({ kind: 'agentGroup', members: block.members, sourceIndex });
     }
   });
 
@@ -115,10 +109,6 @@ export function turnToMarkdown(turn: ChatTurn): string {
     } else if (blk.kind === 'tool' && blk.tool.output && blk.tool.output.length > 0) {
       const output = blk.tool.output.join('\n');
       parts.push(`\`\`\`\n[${blk.tool.name}]\n${output}\n\`\`\``);
-    } else if (blk.kind === 'agent') {
-      parts.push(`**Agent** ${blk.member.name} (${blk.member.phase})`);
-    } else if (blk.kind === 'agentGroup') {
-      parts.push(`**Agents**\n\n${blk.members.map((member) => `- ${member.name}: ${member.phase}`).join('\n')}`);
     }
   }
   return parts.join('\n\n');
@@ -133,7 +123,5 @@ export function renderBlockKey(block: AssistantRenderBlock, index: number): stri
     return `tool-stack-${block.tools[0]?.sourceIndex ?? index}`;
   }
   if (block.kind === 'tool') return toolStackKey({ tool: block.tool, sourceIndex: block.sourceIndex });
-  if (block.kind === 'agent') return `agent-${block.member.id}-${block.sourceIndex}`;
-  if (block.kind === 'agentGroup') return `agent-group-${block.members[0]?.id ?? block.sourceIndex}`;
   return `${block.kind}-${block.sourceIndex}`;
 }

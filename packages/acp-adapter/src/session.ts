@@ -11,6 +11,7 @@ import {
 import {
   ErrorCodes,
   log,
+  sessionMediaOriginalsDir,
   type ApprovalRequest,
   type ApprovalResponse,
   type BackgroundTaskInfo,
@@ -19,6 +20,7 @@ import {
   type KimiErrorPayload,
   type KimiHarness,
   type McpServerInfo,
+  type PromptPart,
   type QuestionAnswers,
   type QuestionRequest,
   type Session,
@@ -38,7 +40,7 @@ import {
 } from './builtin-commands';
 import { buildSessionConfigOptions } from './config-options';
 import { listModelsFromHarness } from './model-catalog';
-import { acpBlocksToPromptParts } from './convert';
+import { acpBlocksToPromptParts, compressPromptImageParts } from './convert';
 import {
   acpToolCallId,
   assistantDeltaToSessionUpdate,
@@ -116,7 +118,7 @@ export class AcpSession {
    * `${id},thinking` form (legacy `unstable_setSessionModel`
    * compatibility).
    *
-   * Maps to the SDK's effort-level string at the boundary:
+   * Maps to the SDK's effort string at the boundary:
    * `true` → `'high'` (the typical default for kimi-code), `false`
    * → `'off'`. The granularity of `'low' | 'medium' | 'xhigh' | 'max'`
    * is intentionally not surfaced — the ACP `thinking` axis is binary
@@ -146,6 +148,13 @@ export class AcpSession {
    * `setSkillCommandMap`) behave as a no-op passthrough.
    */
   private skillCommandMap: ReadonlyMap<string, string> = new Map();
+
+  // One token per in-flight `prompt()` that is still awaiting image compression
+  // (before any turn exists). A `session/cancel` in that window has no turn to
+  // abort, so it flips every token and each affected `prompt()` returns
+  // `cancelled` instead of launching. A set (not a single field) so concurrent
+  // prompts are all covered rather than only the most recent.
+  private readonly pendingPromptAborts = new Set<{ aborted: boolean }>();
 
   /**
    * The most recent command palette advertised to the ACP client. Used by
@@ -199,7 +208,7 @@ export class AcpSession {
      * Initial value of the adapter-side thinking-toggle state, supplied
      * by the server when creating / loading the session. Phase 15
      * introduces this so resumed sessions whose persisted
-     * `thinkingLevel` was non-`'off'` start with the toggle on.
+     * `thinkingEffort` was non-`'off'` start with the toggle on.
      * Defaults to `false` when absent.
      */
     initialThinkingEnabled?: boolean,
@@ -268,6 +277,11 @@ export class AcpSession {
    * acceptable.
    */
   async cancel(): Promise<void> {
+    // If any prompt is mid-compression (no turn yet), mark them aborted so they
+    // do not launch once compression finishes.
+    for (const pending of this.pendingPromptAborts) {
+      pending.aborted = true;
+    }
     await this.session.cancel();
   }
 
@@ -312,8 +326,8 @@ export class AcpSession {
    *
    * Wire semantics:
    *  - `'kimi-v2'`           → setModel('kimi-v2'); thinking state unchanged.
-   *  - `'kimi-v2,thinking'`  → setModel('kimi-v2') + setThinking('high');
-   *    thinking state flips on.
+   *  - `'kimi-v2,thinking'`  → setModel('kimi-v2') + setThinking(<default
+   *    effort for that model>); thinking state flips on.
    *
    * Note the asymmetry: a bare model id does NOT turn thinking OFF.
    * That keeps the model / thinking axes orthogonal — model changes
@@ -337,7 +351,7 @@ export class AcpSession {
     const baseKey = hasSuffix ? modelId.slice(0, -suffix.length) : modelId;
     await this.session.setModel(baseKey);
     if (hasSuffix && typeof this.session.setThinking === 'function') {
-      await this.session.setThinking(THINKING_ON_LEVEL);
+      await this.session.setThinking(await this.thinkingOnEffort());
       this.currentThinkingEnabledInternal = true;
     }
     this.currentModelIdInternal = baseKey;
@@ -348,10 +362,9 @@ export class AcpSession {
    * Forward an ACP thinking-toggle change to the underlying SDK.
    *
    * Phase 15 introduces this as the new canonical channel for the
-   * thinking axis. Boolean → effort-level mapping:
-   *  - `true`  → `Session.setThinking('high')` (kimi-code's typical
-   *    default; the agent-core `resolveThinkingEffort` would also
-   *    coerce a missing config to `'high'`).
+   * thinking axis. Boolean → thinking-effort mapping:
+   *  - `true`  → `Session.setThinking(effort)` where `effort` is the
+   *    current model's default effort (see {@link thinkingOnEffort}).
    *  - `false` → `Session.setThinking('off')`.
    *
    * Tolerant to partial-stub `Session` instances (adapter-level unit
@@ -366,31 +379,26 @@ export class AcpSession {
    * carries a fresh snapshot.
    */
   async setThinking(enabled: boolean): Promise<void> {
-    if (!enabled && (await this.currentModelAlwaysThinking())) {
-      // The current model cannot disable thinking (declared
-      // 'always_thinking'); silently ignore the off request — agent-core
-      // clamps the runtime the same way — but still refresh the snapshot
-      // so a stale client toggle snaps back to on.
-      this.currentThinkingEnabledInternal = true;
-      await this.emitConfigOptionUpdate();
-      return;
-    }
     if (typeof this.session.setThinking === 'function') {
-      await this.session.setThinking(enabled ? THINKING_ON_LEVEL : THINKING_OFF_LEVEL);
+      const effort = enabled ? await this.thinkingOnEffort() : THINKING_OFF_EFFORT;
+      await this.session.setThinking(effort);
     }
     this.currentThinkingEnabledInternal = enabled;
     await this.emitConfigOptionUpdate();
   }
 
   /**
-   * Whether the currently-selected model declares 'always_thinking'.
-   * Harness-less adapter unit tests resolve to false — the agent-core
-   * runtime clamp still protects the actual request in that case.
+   * The effort to send when the ACP thinking toggle flips on: the current
+   * model's declared default effort (or middle `support_efforts`), falling
+   * back to `'on'` for boolean models or when the catalog is unavailable
+   * (harness-less unit tests). The `always_thinking` constraint is enforced
+   * downstream by agent-core's resolve, so this adapter no longer clamps an
+   * explicit off request here.
    */
-  private async currentModelAlwaysThinking(): Promise<boolean> {
-    if (!this.harness) return false;
+  private async thinkingOnEffort(): Promise<string> {
+    if (!this.harness) return 'on';
     const models = await listModelsFromHarness(this.harness);
-    return models.find((m) => m.id === this.currentModelIdInternal)?.alwaysThinking === true;
+    return models.find((m) => m.id === this.currentModelIdInternal)?.defaultThinkingEffort ?? 'on';
   }
 
   /**
@@ -721,7 +729,24 @@ export class AcpSession {
    *    sees a JSON-RPC error rather than a hung request.
    */
   async prompt(blocks: readonly ContentBlock[]): Promise<PromptResponse> {
-    const parts = acpBlocksToPromptParts(blocks);
+    // Compression happens before any turn exists, so honor a `session/cancel`
+    // that arrives during it: flip the flag from cancel() and bail out here
+    // rather than launching a turn the client already asked to stop.
+    const pending = { aborted: false };
+    this.pendingPromptAborts.add(pending);
+    let parts: readonly PromptPart[];
+    try {
+      const sessionDir = this.session.summary?.sessionDir;
+      parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks), {
+        originalsDir:
+          sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
+      });
+    } finally {
+      this.pendingPromptAborts.delete(pending);
+    }
+    if (pending.aborted) {
+      return { stopReason: 'cancelled' };
+    }
     const sessionId = this.id;
     const conn = this.conn;
 
@@ -1314,7 +1339,7 @@ export class AcpSession {
         // event so dashboards stay coherent.
         this.emitTelemetry('question_dismissed');
       } else {
-        this.emitTelemetry('question_answered');
+        this.emitTelemetry('question_answered', { answered: Object.keys(answer).length });
       }
       return answer;
     } catch (err) {
@@ -1390,7 +1415,7 @@ function formatStatusReport(status: SessionStatus): string {
   return [
     'Session status:',
     `- Model: ${status.model ?? '(not set)'}`,
-    `- Thinking: ${status.thinkingLevel}`,
+    `- Thinking: ${status.thinkingEffort}`,
     `- Permission: ${status.permission}`,
     `- Plan mode: ${status.planMode ? 'on' : 'off'}`,
     `- Context: ${status.contextTokens.toLocaleString('en-US')} / ${maxTokens}${usage}`,
@@ -1553,17 +1578,12 @@ function authRequiredFromUnknown(err: unknown): RequestError | undefined {
 }
 
 /**
- * Effort-level strings passed to {@link Session.setThinking} when the
- * ACP `thinking` toggle flips. Phase 15 wired the ACP-side binary axis
- * (then a `SessionConfigBoolean`; Phase 16 reshaped it to a 2-entry
- * `select` `off` / `on` for Zed UI compatibility) to the SDK's
- * effort-level channel: `true` → `'high'` (kimi-code's typical default,
- * also `resolveThinkingEffort`'s fallback), `false` → `'off'`. The
- * granularity of `'low' | 'medium' | 'xhigh' | 'max'` is intentionally
- * not exposed — the ACP `thinking` axis is binary.
+ * Effort string passed to {@link Session.setThinking} when the ACP `thinking`
+ * toggle flips off. The on-state effort is resolved per-model via
+ * {@link AcpSession.thinkingOnEffort} (declared default effort / middle
+ * `support_efforts` / `'on'`), so only the off sentinel is a constant here.
  */
-const THINKING_ON_LEVEL = 'high';
-const THINKING_OFF_LEVEL = 'off';
+const THINKING_OFF_EFFORT = 'off';
 
 /**
  * Identifier the agent-core session emits for the main (user-facing)

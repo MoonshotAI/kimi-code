@@ -1,7 +1,8 @@
 <!-- apps/kimi-web/src/components/dialogs/BottomSheet.vue -->
 <!-- Reusable mobile bottom sheet: a fading scrim + a panel that slides up from -->
 <!-- the bottom (rounded top, grab handle). v-model controls open state; tapping -->
-<!-- the scrim or the grab handle closes it. Terminal Pro styling, no emoji. -->
+<!-- the scrim or the grab handle closes it. Restyled to the unified v2 dialog -->
+<!-- look (tokened scrim, surface-raised panel, UI font). -->
 <script setup lang="ts">
 import { onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -74,7 +75,7 @@ onUnmounted(() => {
 .sheet-root {
   position: fixed;
   inset: 0;
-  z-index: 300;
+  z-index: var(--z-overlay);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -83,19 +84,22 @@ onUnmounted(() => {
 .sheet-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(18, 22, 30, 0.4);
+  background: rgba(13, 17, 23, 0.45);
 }
 
 .sheet-panel {
   position: relative;
-  background: var(--bg);
-  border-radius: 20px 20px 0 0;
-  box-shadow: 0 -12px 40px rgba(18, 22, 30, 0.18);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-bottom: none;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  box-shadow: var(--shadow-xl);
   max-height: 86vh;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
+  color: var(--color-text);
 }
 
 /* Grab handle — also a tap target to close. */
@@ -119,8 +123,8 @@ onUnmounted(() => {
   transform: translateX(-50%);
   width: 38px;
   height: 5px;
-  border-radius: 3px;
-  background: var(--line);
+  border-radius: var(--radius-full);
+  background: var(--color-line);
 }
 
 .sheet-head {
@@ -131,9 +135,9 @@ onUnmounted(() => {
   padding: 6px 16px 10px;
 }
 .sheet-title {
-  font-size: var(--ui-font-size);
-  font-weight: 600;
-  color: var(--ink);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
 }
 
 .sheet-body {
@@ -147,11 +151,11 @@ onUnmounted(() => {
 /* Slide-up + fade transition for the whole sheet (scrim fades, panel slides). */
 .sheet-enter-active,
 .sheet-leave-active {
-  transition: opacity 0.26s ease;
+  transition: opacity var(--duration-slow) var(--ease-out);
 }
 .sheet-enter-active .sheet-panel,
 .sheet-leave-active .sheet-panel {
-  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform var(--duration-slow) var(--ease-out);
 }
 .sheet-enter-from,
 .sheet-leave-to {

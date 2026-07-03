@@ -2,6 +2,7 @@ import {
   APIConnectionError,
   APITimeoutError,
   ChatProviderError,
+  classifyBaseApiError,
   normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
@@ -37,6 +38,7 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
+import { mergeConsecutiveUserMessages } from './merge-user-messages';
 import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
@@ -91,6 +93,15 @@ export interface AnthropicOptions {
    * encode a parseable Claude version. Leave undefined to infer from the name.
    */
   adaptiveThinking?: boolean | undefined;
+  /**
+   * Use the Anthropic **beta** Messages API (`client.beta.messages.create`,
+   * `POST /v1/messages?beta=true`) instead of the standard Messages API.
+   *
+   * Beta features (`betaFeatures`) are then sent via the request `betas`
+   * field rather than the `anthropic-beta` header. Defaults to false, which
+   * keeps the standard endpoint + header behavior.
+   */
+  betaApi?: boolean | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
 }
 
@@ -103,6 +114,11 @@ interface AnthropicGenerationKwargs {
   output_config?: MessageCreateParams['output_config'] | undefined;
   betaFeatures?: string[] | undefined;
 }
+
+// Anthropic's native effort values. `ThinkingEffort` is an open string, so after
+// clamping (and ruling out 'off') we narrow to this concrete set before writing
+// `output_config.effort` / computing a token budget.
+type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
@@ -331,6 +347,18 @@ function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): 
   if (effort === 'max' && !adaptive) {
     return 'high';
   }
+  // 'on' (boolean models) or any effort Anthropic does not recognize: fall
+  // back to 'high' so budgetTokensForEffort / output_config.effort never see
+  // an unsupported value.
+  if (
+    effort !== 'low' &&
+    effort !== 'medium' &&
+    effort !== 'high' &&
+    effort !== 'xhigh' &&
+    effort !== 'max'
+  ) {
+    return 'high';
+  }
   return effort;
 }
 
@@ -384,15 +412,10 @@ function injectCacheControlOnLastBlock(messages: MessageParam[]): void {
 }
 
 /**
- * Check whether a MessageParam is a user message whose content consists
- * entirely of `tool_result` blocks.
- *
- * Used to detect adjacent tool-result-only messages that must be merged
- * before hitting the Anthropic wire. Per the Messages API parallel-tool-use
- * spec, all `tool_result` blocks answering parallel `tool_use` calls must
- * live in a single user message — splitting them across consecutive user
- * messages fails on strict Anthropic-compatible backends (HTTP 400) and
- * silently degrades parallel tool use on api.anthropic.com.
+ * Whether a user MessageParam consists solely of `tool_result` blocks. Used to
+ * keep tool results bundled with each other (parallel-tool-use spec) while
+ * not merging a tool-result user message into an adjacent plain-text user
+ * message — the two carry different semantics and must stay separate.
  */
 function isToolResultOnly(message: MessageParam): boolean {
   if (message.role !== 'user') return false;
@@ -630,8 +653,13 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
   if (error instanceof AnthropicError) {
     return new ChatProviderError(`Anthropic error: ${error.message}`);
   }
+  // Raw, non-SDK errors (e.g. undici's `TypeError: terminated` raised when a
+  // streaming response body is dropped mid-flight) are never wrapped by the
+  // Anthropic SDK during stream iteration. Route them through the shared
+  // transport-layer heuristic so genuine connection failures become retryable
+  // instead of fatal generic errors.
   if (error instanceof Error) {
-    return new ChatProviderError(`Error: ${error.message}`);
+    return classifyBaseApiError(error.message);
   }
   return new ChatProviderError(`Error: ${String(error)}`);
 }
@@ -908,6 +936,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
+  private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
 
   constructor(options: AnthropicOptions) {
@@ -915,6 +944,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
+    this._betaApi = options.betaApi ?? false;
     this._apiKey =
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
     this._baseUrl = options.baseUrl;
@@ -989,25 +1019,33 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
-    // Convert messages, merging consecutive tool-result-only user messages
-    // into a single user message (Anthropic parallel-tool-use spec).
-    const messages: MessageParam[] = [];
-    const normalizedHistory = normalizeToolCallIdsForProvider(
-      history,
-      ANTHROPIC_TOOL_CALL_ID_POLICY,
+    // Convert messages, then merge consecutive user messages into one. Strict
+    // Anthropic-compatible backends reject consecutive user messages with HTTP
+    // 400 ("roles must alternate"), and api.anthropic.com concatenates them
+    // anyway — so merging is safe for native Anthropic and required for strict
+    // backends. Consecutive plain-text user messages arise naturally after
+    // compaction (kept user prompts + user-role summary + injected reminders)
+    // and from back-to-back system messages converted to user role above; a
+    // tool-result user turn followed by a text turn arises from steering after
+    // a tool result. The shared helper applies the asymmetric merge rule (see
+    // mergeConsecutiveUserMessages) so this provider and Gemini/Vertex stay in
+    // step.
+    const messages = mergeConsecutiveUserMessages(
+      normalizeToolCallIdsForProvider(history, ANTHROPIC_TOOL_CALL_ID_POLICY).map((msg) =>
+        convertMessage(msg, this._model),
+      ),
+      {
+        isUser: (message) => message.role === 'user',
+        isToolResultOnly,
+        merge: (last, next) => ({
+          ...last,
+          content: [
+            ...(last.content as ContentBlockParam[]),
+            ...(next.content as ContentBlockParam[]),
+          ],
+        }),
+      },
     );
-    for (const msg of normalizedHistory) {
-      const converted = convertMessage(msg, this._model);
-      const last = messages.at(-1);
-      if (last !== undefined && isToolResultOnly(last) && isToolResultOnly(converted)) {
-        last.content = [
-          ...(last.content as ContentBlockParam[]),
-          ...(converted.content as ContentBlockParam[]),
-        ];
-      } else {
-        messages.push(converted);
-      }
-    }
 
     // Inject cache_control on last content block of last message (after merge,
     // so it lands on the final tool_result block in the merged user message).
@@ -1039,10 +1077,13 @@ export class AnthropicChatProvider implements ChatProvider {
       kwargs['output_config'] = this._generationKwargs.output_config;
     }
 
-    // Build beta headers
+    // Build the beta feature list. On the standard Messages API these travel
+    // via the `anthropic-beta` header; on the beta Messages API (`betaApi`) the
+    // SDK reads them from the request `betas` field and sets the header itself,
+    // so we must not also set the header (that would duplicate it).
     const betas = this._generationKwargs.betaFeatures ?? [];
     const extraHeaders: Record<string, string> = {};
-    if (betas.length > 0) {
+    if (!this._betaApi && betas.length > 0) {
       extraHeaders['anthropic-beta'] = betas.join(',');
     }
 
@@ -1074,6 +1115,10 @@ export class AnthropicChatProvider implements ChatProvider {
       createParams['metadata'] = this._metadata;
     }
 
+    if (this._betaApi && betas.length > 0) {
+      createParams['betas'] = betas;
+    }
+
     const requestOptions: Record<string, unknown> = {};
     const headers = mergeRequestHeaders(extraHeaders, options?.auth?.headers);
     if (headers !== undefined) {
@@ -1084,16 +1129,22 @@ export class AnthropicChatProvider implements ChatProvider {
     }
     const finalRequestOptions = Object.keys(requestOptions).length > 0 ? requestOptions : undefined;
     const client = this._createClient(options?.auth);
+    options?.onRequestSent?.();
 
     if (this._stream) {
       // Use the raw Messages stream instead of the SDK MessageStream helper.
       // The helper reparses accumulated input_json_delta buffers on every chunk,
       // which becomes synchronous O(n^2) work for large streamed tool arguments.
       try {
-        const stream = await client.messages.create(
-          { ...createParams, stream: true } as unknown as MessageCreateParamsStreaming,
-          finalRequestOptions,
-        );
+        const stream = this._betaApi
+          ? await client.beta.messages.create(
+              { ...createParams, stream: true } as unknown as MessageCreateParamsStreaming,
+              finalRequestOptions,
+            )
+          : await client.messages.create(
+              { ...createParams, stream: true } as unknown as MessageCreateParamsStreaming,
+              finalRequestOptions,
+            );
         return new AnthropicStreamedMessage(stream, true);
       } catch (error: unknown) {
         throw convertAnthropicError(error);
@@ -1102,10 +1153,15 @@ export class AnthropicChatProvider implements ChatProvider {
 
     // Non-streaming fallback
     try {
-      const response = await client.messages.create(
-        { ...createParams, stream: false } as unknown as MessageCreateParams,
-        finalRequestOptions,
-      );
+      const response = this._betaApi
+        ? await client.beta.messages.create(
+            { ...createParams, stream: false } as unknown as MessageCreateParams,
+            finalRequestOptions,
+          )
+        : await client.messages.create(
+            { ...createParams, stream: false } as unknown as MessageCreateParams,
+            finalRequestOptions,
+          );
       return new AnthropicStreamedMessage(response, false);
     } catch (error: unknown) {
       throw convertAnthropicError(error);
@@ -1193,10 +1249,11 @@ export class AnthropicChatProvider implements ChatProvider {
       return clone;
     }
 
-    const effectiveEffort = clampEffort(effort, this._model, adaptive);
-    if (effectiveEffort === 'off') {
+    const clamped = clampEffort(effort, this._model, adaptive);
+    if (clamped === 'off') {
       throw new Error('Non-off thinking effort unexpectedly clamped to off.');
     }
+    const effectiveEffort = clamped as AnthropicEffort;
 
     let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
 

@@ -94,7 +94,7 @@ export interface AppSession {
 export interface AppSessionRuntimeStatus {
   /** Current model alias, or null if the daemon couldn't resolve it. */
   model: string | null;
-  thinkingLevel: string;
+  thinkingEffort: string;
   permission: string;
   planMode: boolean;
   swarmMode: boolean;
@@ -308,11 +308,19 @@ export interface AppTask {
   outputPreview?: string;
   outputBytes?: number;
   outputLines?: string[]; // accumulated by eventReducer from task.progress chunks
+  /** The subagent's concatenated live output (assistant.delta), accumulated by
+   *  the event reducer from `taskProgress` chunks of kind `text`. Grows in the
+   *  right-side detail panel like a thinking block. */
+  text?: string;
   subagentPhase?: AppSubagentPhase;
   subagentType?: string;
   parentToolCallId?: string;
   suspendedReason?: string;
   swarmIndex?: number;
+  /** True only for subagents detached into the background task store. Drives
+   *  the dock: the dock lists background subagents, while foreground subagents
+   *  render inline in the message flow as the `Agent` tool card. */
+  runInBackground?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,10 +423,28 @@ export type AppEvent =
   | { type: 'questionAnswered'; sessionId: string; questionId: string; resolvedAt: string }
   | { type: 'questionDismissed'; sessionId: string; questionId: string; dismissedAt: string }
   | { type: 'taskCreated'; sessionId: string; task: AppTask }
-  | { type: 'taskProgress'; sessionId: string; taskId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
+  | {
+      type: 'taskProgress';
+      sessionId: string;
+      taskId: string;
+      outputChunk: string;
+      stream: 'stdout' | 'stderr';
+      /**
+       * `line` (default) appends a new progress line (tool-call / tool-progress).
+       * `text` concatenates onto the subagent's growing streamed output
+       * (`AppTask.text`), shown live in the detail panel like a thinking block.
+       */
+      kind?: 'line' | 'text';
+    }
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
   | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
+  | {
+      type: 'modelCatalogChanged';
+      changed: { providerId: string; providerName: string; added: number; removed: number }[];
+      unchanged: string[];
+      failed: { provider: string; reason: string }[];
+    }
   | { type: 'unknown'; raw: unknown };
 
 // ---------------------------------------------------------------------------
@@ -566,10 +592,9 @@ export interface AppConfig {
   defaultProvider?: string;
   defaultModel?: string;
   models?: Record<string, unknown>;
-  thinking?: unknown;
+  thinking?: { enabled?: boolean; effort?: string };
   planMode?: boolean;
   yolo?: boolean;
-  defaultThinking?: boolean;
   defaultPermissionMode?: string;
   defaultPlanMode?: boolean;
   permission?: unknown;
@@ -660,6 +685,7 @@ export interface KimiWebApi {
   // derived workspaces (cwds with sessions that were never explicitly registered).
   listWorkspaces(): Promise<AppWorkspace[]>;
   addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace>;
+  updateWorkspace(id: string, input: { name: string }): Promise<AppWorkspace>;
   deleteWorkspace(id: string): Promise<void>;
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
@@ -669,7 +695,8 @@ export interface KimiWebApi {
   listProviders(): Promise<AppProvider[]>;
   addProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<AppProvider>;
   deleteProvider(id: string): Promise<{ deleted: true }>;
-  refreshProvider(id: string): Promise<AppProvider>;
+  refreshProvider(id: string): Promise<ProviderRefreshResult>;
+  refreshAllProviders(): Promise<ProviderRefreshResult>;
   refreshOAuthProviderModels(): Promise<ProviderRefreshResult>;
 
   // File upload / download

@@ -7,9 +7,17 @@
  * and gates on the model's `image_in` / `video_in` capability.
  *
  * The leading `<system>` block summarizes mime type, byte size and (for
- * images) original pixel dimensions, guides the model to derive absolute
- * coordinates from that original size, and reminds it to re-read any media
+ * images) original pixel dimensions, states exactly how the image was
+ * delivered (untouched, downsampled, cropped, or native resolution) so
+ * compression is never silent, guides the model to derive absolute
+ * coordinates from the original size, and reminds it to re-read any media
  * it generates or edits.
+ *
+ * Images support two opt-in delivery controls: `region` cuts a rectangle
+ * (original-image pixel coordinates) out of the file so fine detail survives
+ * at full fidelity, and `full_resolution` skips the default downscale when
+ * the payload fits the per-image byte budget (refusing explicitly when it
+ * does not, instead of silently degrading).
  *
  * Path safety: goes through the shared path access resolver used by
  * Read/Write/Edit.
@@ -30,6 +38,13 @@ import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
+import {
+  IMAGE_BYTE_BUDGET,
+  compressImageForModel,
+  cropImageForModel,
+  formatByteSize,
+  type ImageCropRegion,
+} from '../../support/image-compress';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
@@ -53,6 +68,27 @@ export const ReadMediaFileInputSchema = z.object({
       'Path to an image or video file. Relative paths resolve against the working directory; ' +
         'a path outside the working directory must be absolute. ' +
         'Directories and text files are not supported.',
+    ),
+  region: z
+    .object({
+      x: z.number().int().min(0).describe('Left edge of the crop, in original-image pixels.'),
+      y: z.number().int().min(0).describe('Top edge of the crop, in original-image pixels.'),
+      width: z.number().int().min(1).describe('Crop width, in original-image pixels.'),
+      height: z.number().int().min(1).describe('Crop height, in original-image pixels.'),
+    })
+    .optional()
+    .describe(
+      'Images only: view just this rectangle of the image (original-image pixel coordinates). ' +
+        'Use after a downsampled full view to inspect fine detail — a region within the size ' +
+        'limits is delivered at full fidelity.',
+    ),
+  full_resolution: z
+    .boolean()
+    .optional()
+    .describe(
+      'Images only: skip the default downscaling and view at native resolution. Fails with an ' +
+        'explicit error when the payload would exceed the per-image byte limit; use region for ' +
+        'files that large.',
     ),
 });
 
@@ -86,18 +122,39 @@ function buildDescription(capabilities: ModelCapability): string {
 // ── System summary ───────────────────────────────────────────────────
 
 /**
+ * How the image payload placed after the summary relates to the file on disk.
+ * Reported verbatim so the model always knows when it is looking at a
+ * degraded copy (and how to get the detail back) — silent downsampling reads
+ * as "the image is just blurry" and quietly degrades the model's work.
+ */
+interface ImageDelivery {
+  readonly kind: 'untouched' | 'downsampled' | 'crop' | 'full';
+  /** Pixel size of the payload actually sent; 0 when unknown. */
+  readonly width: number;
+  readonly height: number;
+  readonly byteLength: number;
+  readonly mimeType: string;
+  /** The crop actually applied (clamped), for kind 'crop'. */
+  readonly region?: ImageCropRegion;
+  /** For kind 'crop': the crop was additionally downscaled to fit budgets. */
+  readonly resized?: boolean;
+}
+
+/**
  * Build the `<system>` summary that precedes the media content.
  *
  * Carries mime type, byte size and (for images) the original pixel
- * dimensions. When the dimensions are known it also guides the model to
- * derive absolute coordinates from that original size; it always reminds
- * the model to re-read any media it generates or edits.
+ * dimensions, plus the delivery note above. When the dimensions are known it
+ * also guides the model to derive absolute coordinates from that original
+ * size (crops get offset-mapping guidance instead); it always reminds the
+ * model to re-read any media it generates or edits.
  */
 function buildSystemSummary(input: {
   readonly kind: 'image' | 'video';
   readonly mimeType: string;
   readonly byteSize: number;
   readonly dimensions: { readonly width: number; readonly height: number } | null;
+  readonly delivery?: ImageDelivery | undefined;
 }): string {
   const parts: string[] = [
     `Read ${input.kind} file.`,
@@ -110,6 +167,34 @@ function buildSystemSummary(input: {
   if (input.kind === 'image' && input.dimensions) {
     parts.push(
       `Original dimensions: ${String(input.dimensions.width)}x${String(input.dimensions.height)} pixels.`,
+    );
+  }
+  const delivery = input.delivery;
+  if (delivery?.kind === 'downsampled') {
+    parts.push(
+      `The image below was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
+        `(${delivery.mimeType}, ${formatByteSize(delivery.byteLength)}) to fit model limits; ` +
+        'fine detail may be lost.',
+      'To inspect fine detail, call ReadMediaFile again with the region parameter ' +
+        '(original-image pixel coordinates) to view a crop at full fidelity.',
+    );
+  } else if (delivery?.kind === 'crop' && delivery.region) {
+    const { x, y, width, height } = delivery.region;
+    parts.push(
+      `Showing region (x=${String(x)}, y=${String(y)}, width=${String(width)}, height=${String(height)}) ` +
+        `of the original image${
+          delivery.resized === true
+            ? `, downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels`
+            : ' at native resolution'
+        }.`,
+      'To output coordinates in original-image pixels, locate them within this crop and add ' +
+        `the region offset (x=${String(x)}, y=${String(y)}).`,
+    );
+  } else if (delivery?.kind === 'full') {
+    parts.push('Shown at native resolution; no downscaling applied.');
+  }
+  if (input.kind === 'image' && input.dimensions && delivery?.kind !== 'crop') {
+    parts.push(
       'If you need to output coordinates, output relative coordinates first ' +
         'and compute absolute coordinates using the original image size.',
     );
@@ -221,14 +306,93 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
         };
       }
 
-      const data = await this.kaos.readBytes(safePath);
-      const base64 = data.toString('base64');
-      let mediaPart: ContentPart;
-      if (fileType.kind === 'image') {
-        mediaPart = {
-          type: 'image_url',
-          imageUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
+      if (fileType.kind === 'video' && (args.region !== undefined || args.full_resolution === true)) {
+        return {
+          isError: true,
+          output: 'region and full_resolution apply only to image files.',
         };
+      }
+
+      const data = await this.kaos.readBytes(safePath);
+      // The summary always reports the ORIGINAL pixel size and byte size: the
+      // model derives relative coordinates and scales them by the original
+      // dimensions, so it must see the pre-compression size even when the
+      // image_url below carries a downsampled copy.
+      let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
+      let mediaPart: ContentPart;
+      let delivery: ImageDelivery | undefined;
+      if (fileType.kind === 'image') {
+        if (args.region !== undefined) {
+          // Explicit crop: read a rectangle of the original back, typically at
+          // full fidelity, so a prior downsampled view can be zoomed into.
+          const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
+            skipResize: args.full_resolution === true,
+          });
+          if (!outcome.ok) {
+            return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
+          }
+          const base64 = Buffer.from(outcome.data).toString('base64');
+          mediaPart = {
+            type: 'image_url',
+            imageUrl: { url: `data:${outcome.mimeType};base64,${base64}` },
+          };
+          delivery = {
+            kind: 'crop',
+            width: outcome.width,
+            height: outcome.height,
+            byteLength: outcome.finalByteLength,
+            mimeType: outcome.mimeType,
+            region: outcome.region,
+            resized: outcome.resized,
+          };
+          // The decode knows the true size even when header sniffing does not.
+          dimensions ??= { width: outcome.originalWidth, height: outcome.originalHeight };
+        } else if (args.full_resolution === true) {
+          // Native resolution on request — but the provider's per-image byte
+          // ceiling is a hard limit, so refuse explicitly rather than degrade.
+          // Exact byte counts accompany the rounded sizes: a file a hair over
+          // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
+          if (data.length > IMAGE_BYTE_BUDGET) {
+            return {
+              isError: true,
+              output:
+                `"${args.path}" is ${String(data.length)} bytes (${formatByteSize(data.length)}), ` +
+                `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
+                'per-image limit, so full_resolution cannot be honored. ' +
+                'Use region to view a crop at full fidelity instead.',
+            };
+          }
+          const base64 = Buffer.from(data).toString('base64');
+          mediaPart = {
+            type: 'image_url',
+            imageUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
+          };
+          delivery = {
+            kind: 'full',
+            width: dimensions?.width ?? 0,
+            height: dimensions?.height ?? 0,
+            byteLength: data.length,
+            mimeType: fileType.mimeType,
+          };
+        } else {
+          // Shrink oversized images so a large screenshot neither wastes context
+          // tokens nor trips the provider's per-image byte ceiling. Best effort:
+          // on any failure compressImageForModel returns the original bytes, so
+          // the read still succeeds with the uncompressed image.
+          const compressed = await compressImageForModel(data, fileType.mimeType);
+          const base64 = Buffer.from(compressed.data).toString('base64');
+          mediaPart = {
+            type: 'image_url',
+            imageUrl: { url: `data:${compressed.mimeType};base64,${base64}` },
+          };
+          delivery = {
+            kind: compressed.changed ? 'downsampled' : 'untouched',
+            width: compressed.width,
+            height: compressed.height,
+            byteLength: compressed.finalByteLength,
+            mimeType: compressed.mimeType,
+          };
+        }
       } else if (this.videoUploader !== undefined) {
         mediaPart = await this.videoUploader({
           data,
@@ -236,6 +400,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           filename: safePath.split(/[\\/]/).at(-1),
         });
       } else {
+        const base64 = data.toString('base64');
         mediaPart = {
           type: 'video_url',
           videoUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
@@ -246,13 +411,12 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       const openText = `<${tag} path="${safePath}">`;
       const closeText = `</${tag}>`;
 
-      const dimensions =
-        fileType.kind === 'image' ? sniffImageDimensions(data) : null;
       const systemText = buildSystemSummary({
         kind: fileType.kind,
         mimeType: fileType.mimeType,
         byteSize: stat.stSize,
         dimensions,
+        delivery,
       });
 
       const output: ContentPart[] = [

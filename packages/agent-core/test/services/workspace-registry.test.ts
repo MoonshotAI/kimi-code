@@ -211,4 +211,47 @@ describe('WorkspaceRegistryService', () => {
 
     expect((await ctx.registry.list()).map((w) => w.id)).not.toContain(derivedId);
   });
+
+  it('collapses duplicate registered entries for the same root, preferring the canonical id', async () => {
+    const root = await makeProjectRoot('dup');
+    const canonicalId = encodeWorkDirKey(root);
+    // Simulate a registry that also holds a legacy id for the same folder (e.g.
+    // one produced by an older, realpath-based encodeWorkDirKey on Windows).
+    const legacyId = 'wd_duplegacy_deadbeef0000';
+    const registryPath = join(ctx.homeDir, 'workspaces.json');
+    const entry = { root, name: 'dup', created_at: '2026-01-01T00:00:00.000Z', last_opened_at: '2026-01-01T00:00:00.000Z' };
+    await writeFile(
+      registryPath,
+      JSON.stringify(
+        {
+          version: 1,
+          // Legacy first so the canonical entry must actively replace it.
+          workspaces: { [legacyId]: entry, [canonicalId]: entry },
+          deleted_workspace_ids: [],
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+    // One active session in the canonical bucket (via the index)...
+    await seedSessionBucket(root, 'sess-canonical-1');
+    // ...and one stranded in the legacy bucket. It is NOT counted: the returned
+    // workspace can only page the canonical bucket via GET /sessions, so the
+    // count stays consistent with what the list can retrieve.
+    const legacySessionDir = join(ctx.homeDir, 'sessions', legacyId, 'sess-legacy-1');
+    await mkdir(legacySessionDir, { recursive: true });
+    await writeFile(
+      join(legacySessionDir, 'state.json'),
+      JSON.stringify({ archived: false }),
+      'utf-8',
+    );
+
+    const list = await ctx.registry.list();
+    const matches = list.filter((w) => w.root === root);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.id).toBe(canonicalId);
+    // Count is scoped to the representative's (canonical) bucket only.
+    expect(matches[0]?.session_count).toBe(1);
+  });
 });

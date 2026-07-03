@@ -359,7 +359,11 @@ function transformProviderData(data: Record<string, unknown>): Record<string, un
 }
 
 function transformModelData(data: Record<string, unknown>): Record<string, unknown> {
-  return transformPlainObject(data);
+  const out = transformPlainObject(data);
+  if (isPlainObject(out['overrides'])) {
+    out['overrides'] = transformPlainObject(out['overrides']);
+  }
+  return out;
 }
 
 function transformPermissionData(data: Record<string, unknown>): Record<string, unknown> {
@@ -460,6 +464,8 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   delete out['default_yolo'];
   delete out['defaultYolo'];
   delete out['defaultPermissionMode'];
+  delete out['default_thinking'];
+  delete out['defaultThinking'];
 
   // Top-level scalar fields
   const scalarFields: (keyof KimiConfig)[] = [
@@ -467,7 +473,6 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'defaultModel',
     'planMode',
     'yolo',
-    'defaultThinking',
     'defaultPermissionMode',
     'defaultPlanMode',
     'mergeAllAvailableSkills',
@@ -553,6 +558,24 @@ function modelToToml(model: ModelAlias, rawModel: unknown): Record<string, unkno
   for (const [key, value] of Object.entries(model)) {
     if (key === 'capabilities' && Array.isArray(value)) {
       out[camelToSnake(key)] = [...value];
+    } else if (key === 'overrides' && isPlainObject(value)) {
+      const rawOverrides = isPlainObject(rawModel) ? rawModel['overrides'] : undefined;
+      out['overrides'] = modelOverridesToToml(value, rawOverrides);
+    } else {
+      setDefined(out, camelToSnake(key), value);
+    }
+  }
+  return out;
+}
+
+function modelOverridesToToml(
+  overrides: Record<string, unknown>,
+  rawOverrides: unknown,
+): Record<string, unknown> {
+  const out = cloneRecord(rawOverrides);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key === 'capabilities' && Array.isArray(value)) {
+      out[camelToSnake(key)] = [...value];
     } else {
       setDefined(out, camelToSnake(key), value);
     }
@@ -562,6 +585,7 @@ function modelToToml(model: ModelAlias, rawModel: unknown): Record<string, unkno
 
 function thinkingToToml(thinking: ThinkingConfig, rawThinking: unknown): Record<string, unknown> {
   const out = cloneRecord(rawThinking);
+  delete out['mode'];
   for (const [key, value] of Object.entries(thinking)) {
     setDefined(out, camelToSnake(key), value);
   }

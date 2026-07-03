@@ -11,6 +11,10 @@ export default {
   addWorkspace: '添加工作区…',
   noWorkspace: '暂无工作区',
   deleteHasSessions: '工作区内还有会话，请先归档这些会话再删除',
+  // 二次确认（弹窗）
+  removeWorkspaceConfirm: '移除工作区「{name}」？',
+  swarmEnableConfirm: '启用 swarm 模式？Agent 将并行运行多个子 agent。',
+  goalStartConfirm: '启动 goal：「{objective}」？Agent 将自主执行。',
   // Column-header scope toggle
   scopeCurrent: '当前工作区',
   scopeAll: '全部工作区',
@@ -24,6 +28,7 @@ export default {
   add: '添加',
   cancel: '取消',
   addHint: '粘贴一个绝对路径，或从最近用过的文件夹中选择。',
+  addFailed: '无法打开此文件夹，请检查路径后重试。',
   // Folder browser
   openThisFolder: '打开此文件夹',
   up: '上一级',

@@ -1,0 +1,73 @@
+{
+	"name": "@moonshot-ai/pi-tui",
+	"version": "0.80.4",
+	"private": true,
+	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
+	"license": "MIT",
+	"author": "Moonshot AI",
+	"homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/pi-tui#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/MoonshotAI/kimi-code.git",
+		"directory": "packages/pi-tui"
+	},
+	"bugs": {
+		"url": "https://github.com/MoonshotAI/kimi-code/issues"
+	},
+	"keywords": [
+		"tui",
+		"terminal",
+		"ui",
+		"text-editor",
+		"differential-rendering",
+		"typescript",
+		"cli"
+	],
+	"files": [
+		"dist",
+		"native",
+		"README.md"
+	],
+	"type": "module",
+	"imports": {
+		"#/*": [
+			"./src/*.ts",
+			"./src/*/index.ts"
+		]
+	},
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"default": "./src/index.ts"
+		},
+		"./package.json": "./package.json"
+	},
+	"publishConfig": {
+		"access": "public",
+		"exports": {
+			".": {
+				"types": "./dist/index.d.mts",
+				"import": "./dist/index.mjs",
+				"default": "./dist/index.mjs"
+			}
+		},
+		"provenance": true
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "node --test test/*.test.ts",
+		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"get-east-asian-width": "1.6.0",
+		"marked": "18.0.5"
+	},
+	"devDependencies": {
+		"@xterm/headless": "5.5.0",
+		"chalk": "^5.4.1"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}

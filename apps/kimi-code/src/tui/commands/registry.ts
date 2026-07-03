@@ -2,7 +2,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'pathe';
 
-import type { AutocompleteItem } from '@earendil-works/pi-tui';
+import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
@@ -182,6 +182,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Switch LLM model',
     priority: 100,
+    availability: 'always',
+  },
+  {
+    name: 'effort',
+    aliases: ['thinking'],
+    description: 'Switch thinking effort',
+    priority: 95,
     availability: 'always',
   },
   {

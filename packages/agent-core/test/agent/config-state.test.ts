@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { emptyUsage } from '@moonshot-ai/kosong';
 
 import { ProviderManager } from '../../src/session/provider-manager';
+import type { KimiConfig } from '../../src/config';
 import { testAgent } from './harness';
 
 describe('ConfigState model capabilities', () => {
@@ -113,7 +114,7 @@ describe('ConfigState model capabilities', () => {
     ctx.agent.config.update({
       modelAlias: 'deepseek/deepseek-v4-flash',
       systemPrompt: 'system',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     await ctx.agent.llm.chat({
       messages: [],
@@ -163,39 +164,44 @@ describe('ConfigState model capabilities', () => {
 
 describe('ConfigState thinking clamp for always-thinking models', () => {
   function alwaysThinkingAgent() {
-    return testAgent({
-      providerManager: new ProviderManager({
-        config: {
-          providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
-          models: {
-            'kimi-code/deep': {
-              provider: 'kimi',
-              model: 'kimi-deep-coder',
-              maxContextSize: 128_000,
-              capabilities: ['thinking', 'always_thinking', 'tool_use'],
-            },
-            'kimi-code/toggle': {
-              provider: 'kimi',
-              model: 'kimi-for-coding',
-              maxContextSize: 128_000,
-              capabilities: ['thinking'],
-            },
-          },
+    // The always_thinking clamp in ConfigState.update() reads the model from
+    // `agent.kimiConfig.models`, so the same config must back both the
+    // ProviderManager (provider resolution) and the agent's kimiConfig (the
+    // clamp's model lookup).
+    const config: KimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+      models: {
+        'kimi-code/deep': {
+          provider: 'kimi',
+          model: 'kimi-deep-coder',
+          maxContextSize: 128_000,
+          capabilities: ['thinking', 'always_thinking', 'tool_use'],
         },
-      }),
+        'kimi-code/toggle': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+        },
+      },
+    };
+    return testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
     });
   }
 
-  it('clamps thinkingLevel off to the configured effort', () => {
+  it('clamps thinkingEffort off to the model default effort', () => {
     const ctx = alwaysThinkingAgent();
-    ctx.agent.config.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
+    ctx.agent.config.update({ modelAlias: 'kimi-code/deep', thinkingEffort: 'off' });
 
-    expect(ctx.agent.config.thinkingLevel).toBe('high');
+    // boolean always-thinking model (no supportEfforts) defaults to 'on'.
+    expect(ctx.agent.config.thinkingEffort).toBe('on');
   });
 
   it('builds the provider with thinking enabled even after thinking was set off', () => {
     const ctx = alwaysThinkingAgent();
-    ctx.agent.config.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
+    ctx.agent.config.update({ modelAlias: 'kimi-code/deep', thinkingEffort: 'off' });
 
     const provider = ctx.agent.config.provider;
     const gen = Reflect.get(provider as object, '_generationKwargs') as {
@@ -206,18 +212,20 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
   it('keeps thinking off working for toggleable models', () => {
     const ctx = alwaysThinkingAgent();
-    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle', thinkingLevel: 'off' });
+    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle', thinkingEffort: 'off' });
 
-    expect(ctx.agent.config.thinkingLevel).toBe('off');
+    expect(ctx.agent.config.thinkingEffort).toBe('off');
   });
 
-  it('re-clamps when switching to an always-on model after thinking was off', () => {
+  it('re-clamps a stale off when switching onto an always-thinking model', () => {
     const ctx = alwaysThinkingAgent();
-    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle', thinkingLevel: 'off' });
-    expect(ctx.agent.config.thinkingLevel).toBe('off');
+    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle', thinkingEffort: 'off' });
+    expect(ctx.agent.config.thinkingEffort).toBe('off');
 
+    // A bare model switch re-applies the always_thinking clamp against the new
+    // model, so the previously stored 'off' is clamped back to the default.
     ctx.agent.config.update({ modelAlias: 'kimi-code/deep' });
-    expect(ctx.agent.config.thinkingLevel).toBe('high');
+    expect(ctx.agent.config.thinkingEffort).toBe('on');
   });
 });
 
@@ -254,7 +262,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
     try {
       const ctx = kimiAgent();
-      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
 
       const provider = ctx.agent.config.provider;
       const gen = Reflect.get(provider as object, '_generationKwargs') as {
@@ -270,13 +278,45 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
     try {
       const ctx = kimiAgent();
-      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'off' });
 
       const provider = ctx.agent.config.provider;
       const gen = Reflect.get(provider as object, '_generationKwargs') as {
         extra_body?: { thinking?: { keep?: unknown } };
       };
       expect(gen.extra_body?.thinking?.keep).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('injects KIMI_MODEL_THINKING_EFFORT into config.provider when thinking is on', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const ctx = kimiAgent();
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { type?: string; effort?: string } };
+      };
+      expect(gen.extra_body?.thinking).toEqual({ type: 'enabled', effort: 'max' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does NOT inject KIMI_MODEL_THINKING_EFFORT into config.provider when thinking is off', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const ctx = kimiAgent();
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'off' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { effort?: string } };
+      };
+      expect(gen.extra_body?.thinking?.effort).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();
     }

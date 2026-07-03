@@ -37,6 +37,27 @@ export function applyKimiEnvSamplingParams(
 }
 
 /**
+ * Force a specific thinking effort via `KIMI_MODEL_THINKING_EFFORT`, bypassing
+ * the model's declared `support_efforts`. Applied in `ConfigState.provider`
+ * after `withThinking`, and only while thinking is on — effort has no meaning
+ * when thinking is disabled. The value is forwarded verbatim as
+ * `thinking.effort`, so callers can target a model that accepts an effort but
+ * does not advertise one via `support_efforts`.
+ *
+ * Non-Kimi providers — and an unset/blank value — are returned unchanged.
+ */
+export function applyKimiEnvThinkingEffort(
+  provider: ChatProvider,
+  thinkingEffort: ThinkingEffort,
+  env: Env = process.env,
+): ChatProvider {
+  if (!(provider instanceof KimiChatProvider)) return provider;
+  const effort = env['KIMI_MODEL_THINKING_EFFORT']?.trim();
+  if (effort === undefined || effort.length === 0 || thinkingEffort === 'off') return provider;
+  return provider.withExtraBody({ thinking: { effort } });
+}
+
+/**
  * Apply the Moonshot preserved-thinking passthrough (`KIMI_MODEL_THINKING_KEEP`
  * -> `thinking.keep`) to a chat provider. Applied in `ConfigState.provider` after
  * `withThinking`, and only while thinking is on — otherwise the API would
@@ -47,11 +68,11 @@ export function applyKimiEnvSamplingParams(
  */
 export function applyKimiEnvThinkingKeep(
   provider: ChatProvider,
-  thinkingLevel: ThinkingEffort,
+  thinkingEffort: ThinkingEffort,
   env: Env = process.env,
 ): ChatProvider {
   if (!(provider instanceof KimiChatProvider)) return provider;
   const keep = env['KIMI_MODEL_THINKING_KEEP']?.trim();
-  if (keep === undefined || keep.length === 0 || thinkingLevel === 'off') return provider;
+  if (keep === undefined || keep.length === 0 || thinkingEffort === 'off') return provider;
   return provider.withExtraBody({ thinking: { keep } });
 }

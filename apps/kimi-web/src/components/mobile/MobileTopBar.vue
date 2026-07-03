@@ -8,6 +8,8 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '../../types';
+import IconButton from '../ui/IconButton.vue';
+import Icon from '../ui/Icon.vue';
 
 const { t } = useI18n();
 
@@ -73,20 +75,13 @@ const statusText = computed<string>(() =>
       </span>
     </button>
 
-    <button
-      type="button"
-      class="tb-set"
-      :aria-label="t('mobile.openSettings')"
+    <IconButton
+      size="lg"
+      :label="t('mobile.openSettings')"
       @click="emit('openSettings')"
     >
-      <!-- Sliders glyph (two horizontal sliders) -->
-      <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
-        <line x1="4" y1="8" x2="20" y2="8" />
-        <circle cx="10" cy="8" r="2.5" fill="var(--bg)" />
-        <line x1="4" y1="16" x2="20" y2="16" />
-        <circle cx="15" cy="16" r="2.5" fill="var(--bg)" />
-      </svg>
-    </button>
+      <Icon name="sliders" size="lg" />
+    </IconButton>
   </div>
 </template>
 
@@ -98,8 +93,9 @@ const statusText = computed<string>(() =>
   height: 50px;
   flex: none;
   padding: 0 12px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-bg);
+  font-family: var(--font-ui);
 }
 
 /* Workspace square */
@@ -107,14 +103,14 @@ const statusText = computed<string>(() =>
   flex: none;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: var(--ink);
-  color: var(--bg);
+  border-radius: var(--radius-md);
+  background: var(--color-text);
+  color: var(--color-bg);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--mono);
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
   font-size: var(--ui-font-size-sm);
 }
 
@@ -138,29 +134,28 @@ const statusText = computed<string>(() =>
   display: flex;
   align-items: center;
   gap: 5px;
-  font-family: var(--mono);
   font-size: var(--ui-font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tb-path .ws { color: var(--muted); }
-.tb-path .sl { color: var(--faint); }
+.tb-path .ws { color: var(--color-text); }
+.tb-path .sl { color: var(--color-text-faint); }
 .tb-path .se {
-  color: var(--ink);
-  font-weight: 600;
+  color: var(--color-text);
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tb-path .cv { color: var(--faint); flex: none; }
+.tb-path .cv { color: var(--color-text-faint); flex: none; }
 
 .tb-sub {
   display: flex;
   align-items: center;
   gap: 5px;
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  color: var(--faint);
+  color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -169,24 +164,10 @@ const statusText = computed<string>(() =>
   flex: none;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: var(--faint);
+  border-radius: var(--radius-full);
+  background: var(--color-text-faint);
 }
-.tb-sub .rd.on { background: var(--ok); }
+.tb-sub .rd.on { background: var(--color-success); }
 
-/* Sliders settings button — 44px tap target. */
-.tb-set {
-  flex: none;
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--muted);
-  border-radius: 10px;
-}
-.tb-set:active { background: var(--panel); }
+.topbar .tb-path { font-family: var(--sans); }
 </style>

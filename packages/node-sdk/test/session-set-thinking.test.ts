@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 describe('Session.setThinking', () => {
-  it('sends config.update with the new thinking level', async () => {
+  it('sends config.update with the new thinking effort', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-work-');
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
@@ -27,18 +27,18 @@ describe('Session.setThinking', () => {
           homeDir,
           session.id,
           'config.update',
-          (event) => event['thinkingLevel'] === 'low',
+          (event) => event['thinkingEffort'] === 'low',
         ),
       ).resolves.toMatchObject({
         type: 'config.update',
-        thinkingLevel: 'low',
+        thinkingEffort: 'low',
       });
     } finally {
       await harness.close();
     }
   });
 
-  it('rejects empty thinking levels', async () => {
+  it('rejects empty thinking efforts', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-work-');
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });

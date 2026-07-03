@@ -64,7 +64,12 @@ function assistantStep(uuid: string, text: string, time?: number): AgentRecord[]
   ];
 }
 
-function compaction(summary: string, compactedCount: number, time?: number): AgentRecord {
+function compaction(
+  summary: string,
+  compactedCount: number,
+  time?: number,
+  keptUserMessageCount?: number,
+): AgentRecord {
   return {
     type: 'context.apply_compaction',
     summary,
@@ -72,6 +77,7 @@ function compaction(summary: string, compactedCount: number, time?: number): Age
     tokensBefore: 1000,
     tokensAfter: 100,
     time,
+    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
   } as AgentRecord;
 }
 
@@ -92,27 +98,84 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(2);
   });
 
-  it('compaction keeps the prefix and inserts the summary at the fold point', () => {
+  it('compaction keeps the prefix and appends the user-role summary', () => {
     const { entries, foldedLength } = reduceWireRecords([
       appendMessage(userMessage('u1')),
       ...assistantStep('s1', 'a1'),
       appendMessage(userMessage('u2')),
       ...assistantStep('s2', 'a2'),
-      // folded history is [u1, a1, u2, a2]; compact the first 3, keep a2.
-      compaction('SUM', 3),
+      compaction('SUM', 4),
       appendMessage(userMessage('u3')),
     ]);
     expect(entries.map((e) => textOf(e.message))).toEqual([
       'u1',
       'a1',
       'u2',
-      'SUM',
       'a2',
+      'SUM',
       'u3',
     ]);
-    expect(entries[3]!.message.origin).toEqual({ kind: 'compaction_summary' });
-    // live folded view would be [SUM, a2, u3]
+    expect(entries[4]!.message.origin).toEqual({ kind: 'compaction_summary' });
+    expect(entries[4]!.message.role).toBe('user');
+    // live folded view would be [u1, u2, SUM, u3]
+    expect(foldedLength).toBe(4);
+  });
+
+  it('keeps shell and local-command output in the transcript but not foldedLength', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('! pwd', { kind: 'shell_command', phase: 'input' })),
+      appendMessage(userMessage('local output', { kind: 'injection', variant: 'local-command-stdout' })),
+      ...assistantStep('s1', 'a1'),
+      {
+        type: 'context.apply_compaction',
+        summary: 'SUM',
+        compactedCount: 4,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        keptUserMessageCount: 1,
+      } as AgentRecord,
+      appendMessage(userMessage('u2')),
+    ]);
+
+    expect(entries.map((e) => textOf(e.message))).toEqual([
+      'u1',
+      '! pwd',
+      'local output',
+      'a1',
+      'SUM',
+      'u2',
+    ]);
+    expect(entries.map((e) => e.message.role)).toEqual([
+      'user',
+      'user',
+      'user',
+      'assistant',
+      'user',
+      'user',
+    ]);
+    // 1 kept real user message + summary + u2 appended after compaction.
     expect(foldedLength).toBe(3);
+  });
+
+  it('accounts for the elision marker when the compaction record kept a head segment', () => {
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s1', 'a1'),
+      {
+        type: 'context.apply_compaction',
+        summary: 'SUM',
+        compactedCount: 3,
+        tokensBefore: 100_000,
+        tokensAfter: 20_000,
+        keptUserMessageCount: 2,
+        keptHeadUserMessageCount: 1,
+      } as AgentRecord,
+    ]);
+
+    // Live context: head user message + elision marker + tail user message + summary.
+    expect(foldedLength).toBe(4);
   });
 
   it('handles repeated compactions', () => {
@@ -120,11 +183,103 @@ describe('reduceWireRecords', () => {
       appendMessage(userMessage('u1')),
       compaction('S1', 1),
       appendMessage(userMessage('u2')),
-      // folded = [S1, u2]; compact both.
-      compaction('S2', 2),
+      compaction('S2', 3),
     ]);
     expect(entries.map((e) => textOf(e.message))).toEqual(['u1', 'S1', 'u2', 'S2']);
-    expect(foldedLength).toBe(1);
+    // live folded view would be [u1, u2, S2]
+    expect(foldedLength).toBe(3);
+  });
+
+  it('uses the recorded kept-user count for foldedLength when present', () => {
+    // The live context kept only the most recent real user message (e.g. the
+    // older ones were truncated in a prior compaction, or a clear dropped
+    // them). The full transcript still holds all three, so re-deriving from
+    // it would yield 3 and disagree with the live context. The reducer must
+    // trust the count recorded by ContextMemory.applyCompaction.
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      appendMessage(userMessage('u3')),
+      {
+        type: 'context.apply_compaction',
+        summary: 'SUM',
+        compactedCount: 3,
+        tokensBefore: 100,
+        tokensAfter: 20,
+        keptUserMessageCount: 1,
+      } as AgentRecord,
+      appendMessage(userMessage('u4')),
+    ]);
+    // 1 kept user message + summary + u4 appended after compaction.
+    expect(foldedLength).toBe(3);
+  });
+
+  it('drops a late tool result after compaction closes an open exchange', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
+      loopEvent({
+        type: 'tool.call',
+        uuid: 'c1',
+        turnId: 't',
+        step: 0,
+        stepUuid: 's1',
+        toolCallId: 'call_1',
+        name: 'Bash',
+        arguments: '{"command":"ls"}',
+      }),
+      compaction('SUM', 3),
+      loopEvent({
+        type: 'tool.result',
+        parentUuid: 'c1',
+        toolCallId: 'call_1',
+        result: { output: 'late result' },
+      }),
+      appendMessage(userMessage('u2')),
+    ]);
+
+    // Compaction closes the open exchange, so the late tool result is an
+    // orphan and dropped — matching ContextMemory — and the following user
+    // message is appended normally instead of being stranded in `deferred`.
+    expect(entries.map((e) => e.message.role)).toEqual(['user', 'assistant', 'user', 'user']);
+    expect(entries.map((e) => textOf(e.message))).toEqual(['u1', '', 'SUM', 'u2']);
+    // live folded view would be [u1, SUM, u2]
+    expect(foldedLength).toBe(3);
+  });
+
+  it('reproduces the legacy [summary, tail] fold length for records without keptUserMessageCount', () => {
+    // A pre-rework record (no keptUserMessageCount) kept history.slice(compactedCount)
+    // verbatim, and ContextMemory's legacy restore now reproduces [summary, ...tail].
+    // The reducer must track that same folded length — 1 + (preCompactionLength -
+    // compactedCount) — not the re-derived kept-user count, or MessageService's
+    // length comparison diverges from the live context for old sessions.
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s2', 'a2'),
+      compaction('SUM', 1),
+    ]);
+    // Pre-compaction live history = [u1, a1, u2, a2] (4); legacy restore keeps
+    // [SUM, ...slice(1)] = [SUM, a1, u2, a2] = 4. (Re-deriving kept users gives 3.)
+    expect(foldedLength).toBe(4);
+  });
+
+  it('ignores pre-clear prompts when re-deriving a legacy fold length', () => {
+    // Legacy record (no keptUserMessageCount) compacting after a /clear with no
+    // tail re-derives the kept-user count, but only from post-clear messages —
+    // the live context dropped u1/u2 at the clear. Counting them would overstate
+    // foldedLength and make MessageService skip the unflushed live tail.
+    const { foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      { type: 'context.clear' } as AgentRecord,
+      appendMessage(userMessage('u3')),
+      compaction('SUM', 1),
+    ]);
+    // Post-clear live history = [u3] (1); restore keeps [u3, SUM] = 2.
+    // (Re-deriving over the full transcript would wrongly give 4.)
+    expect(foldedLength).toBe(2);
   });
 
   it('undo removes through the last real user prompt and skips injections', () => {
@@ -424,8 +579,9 @@ describe('MessageService over a compacted wire log', () => {
       ...assistantStep('s1', 'a1', SESSION_CREATED_AT + 2_000),
       appendMessage(userMessage('u2'), SESSION_CREATED_AT + 3_000),
       ...assistantStep('s2', 'a2', SESSION_CREATED_AT + 4_000),
-      // folded = [u1, a1, u2, a2] → compact first 3.
-      compaction('SUM', 3, SESSION_CREATED_AT + 5_000),
+      // New-format record: the summary covered all 4 messages and 2 user
+      // prompts were kept verbatim, so the live fold is [u1, u2, SUM] below.
+      compaction('SUM', 4, SESSION_CREATED_AT + 5_000, 2),
     ];
     await mkdir(path.join(dir, 'agents', 'main'), { recursive: true });
     await writeFile(
@@ -433,18 +589,15 @@ describe('MessageService over a compacted wire log', () => {
       records.map((r) => JSON.stringify(r)).join('\n') + '\n',
       'utf8',
     );
-    // What getContext would return after the fold.
+    // What getContext would return after the fold: kept user messages + summary.
     liveHistory = [
+      userMessage('u1'),
+      userMessage('u2'),
       {
-        role: 'assistant',
+        role: 'user',
         content: [{ type: 'text', text: 'SUM' }],
         toolCalls: [],
         origin: { kind: 'compaction_summary' },
-      } as ContextMessage,
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'a2' }],
-        toolCalls: [],
       } as ContextMessage,
     ];
     const rpc: Partial<CoreRPC> = {
@@ -473,8 +626,8 @@ describe('MessageService over a compacted wire log', () => {
     const asc = [...page.items].reverse();
     expect(
       asc.map((m) => (m.content[0] as { text?: string }).text ?? '[non-text]'),
-    ).toEqual(['u1', 'a1', 'u2', 'SUM', 'a2']);
-    expect(asc[3]!.metadata).toEqual({ origin: { kind: 'compaction_summary' } });
+    ).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM']);
+    expect(asc[4]!.metadata).toEqual({ origin: { kind: 'compaction_summary' } });
   });
 
   it('uses wire record times for created_at, strictly increasing', async () => {
@@ -495,7 +648,7 @@ describe('MessageService over a compacted wire log', () => {
     const asc = [...page.items].reverse();
     expect(
       asc.map((m) => (m.content[0] as { text?: string }).text ?? '[non-text]'),
-    ).toEqual(['u1', 'a1', 'u2', 'SUM', 'a2', 'u3-live']);
+    ).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3-live']);
   });
 
   it('get() resolves ids against the same full transcript', async () => {
@@ -511,8 +664,9 @@ describe('MessageService over a compacted wire log', () => {
     const page = await impl.list(SESSION_ID, { page_size: 100 });
     const asc = [...page.items].reverse();
     expect(asc.map((m) => (m.content[0] as { text?: string }).text)).toEqual([
+      'u1',
+      'u2',
       'SUM',
-      'a2',
     ]);
   });
 
@@ -530,6 +684,6 @@ describe('MessageService over a compacted wire log', () => {
     const asc = [...page.items].reverse();
     expect(
       asc.map((m) => (m.content[0] as { text?: string }).text ?? '[non-text]'),
-    ).toEqual(['u1', 'a1', 'u2', 'SUM', 'a2', 'u3']);
+    ).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3']);
   });
 });

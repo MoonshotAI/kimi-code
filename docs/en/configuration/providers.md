@@ -119,6 +119,17 @@ type = "google-genai"
 api_key = "xxxxx"
 ```
 
+To route through a Gemini-compatible proxy or gateway, set `base_url` (or the `GOOGLE_GEMINI_BASE_URL` env var); when omitted, the SDK default `https://generativelanguage.googleapis.com` is used.
+
+> Give the **host root only**. The Google GenAI SDK appends the API version and path itself (e.g. `/v1beta/models/<model>:generateContent`), so a trailing `/v1beta` would produce a doubled `/v1beta/v1beta/…`.
+
+```toml
+[providers.gemini]
+type = "google-genai"
+api_key = "xxxxx"
+base_url = "https://your-gateway.example"
+```
+
 ## `vertexai`
 
 Shares the same implementation as `google-genai`; setting `type = "vertexai"` switches to the Vertex AI access path.
@@ -138,6 +149,8 @@ GOOGLE_CLOUD_LOCATION = "us-central1"
 gcloud auth application-default login   # one-time authentication
 kimi
 ```
+
+To route Vertex requests through a custom (e.g. proxied) endpoint, set `base_url` (or the `GOOGLE_VERTEX_BASE_URL` env var); when omitted, the SDK default regional `*-aiplatform.googleapis.com` host is used. As with `google-genai`, give the host root only — the SDK appends `/v1beta1/publishers/google/models/…` itself.
 
 ## OAuth and credential injection
 

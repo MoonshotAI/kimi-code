@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { subagentProgressText } from '../src/api/daemon/agentEventProjector';
+import { createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
 describe('subagentProgressText', () => {
   it('drops turn.step.started as noise', () => {
@@ -37,5 +37,26 @@ describe('subagentProgressText', () => {
 
   it('returns null for unknown event types', () => {
     expect(subagentProgressText('turn.delta', {})).toBeNull();
+  });
+});
+
+describe('subagent streaming text', () => {
+  it('forwards a subagent assistant.delta as a text-kind taskProgress', () => {
+    const projector = createAgentProjector();
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'Hello' }, 's1');
+    expect(events).toContainEqual({
+      type: 'taskProgress',
+      sessionId: 's1',
+      taskId: 'sub-1',
+      outputChunk: 'Hello',
+      stream: 'stdout',
+      kind: 'text',
+    });
+  });
+
+  it('drops an empty subagent assistant.delta', () => {
+    const projector = createAgentProjector();
+    const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: '' }, 's1');
+    expect(events).toEqual([]);
   });
 });

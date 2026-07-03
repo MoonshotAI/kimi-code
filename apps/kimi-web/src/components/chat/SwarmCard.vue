@@ -1,66 +1,97 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { AppSubagentPhase } from '../../api/types';
 import type { SwarmGroup, SwarmMember } from '../../composables/swarmGroups';
+import Icon from '../ui/Icon.vue';
+import Tooltip from '../ui/Tooltip.vue';
+import StatusDot from '../ui/StatusDot.vue';
 
 const props = defineProps<{ group: SwarmGroup }>();
 
+const open = ref(true);
+
 const total = computed(() => props.group.members.length);
 const done = computed(() => props.group.counts.completed + props.group.counts.failed);
+const running = computed(
+  () => props.group.counts.working + props.group.counts.queued + props.group.counts.suspended,
+);
+
+type AggregateStatus = 'running' | 'error' | 'done';
+
+const aggregateStatus = computed<AggregateStatus>(() => {
+  if (running.value > 0) return 'running';
+  if (props.group.counts.failed > 0) return 'error';
+  return 'done';
+});
+
+const aggregateLabel = computed(() => {
+  switch (aggregateStatus.value) {
+    case 'running':
+      return `${running.value} running`;
+    case 'error':
+      return 'has failures';
+    default:
+      return 'completed';
+  }
+});
 
 function phaseLabel(phase: AppSubagentPhase): string {
   switch (phase) {
-    case 'queued': return 'Queued';
-    case 'working': return 'Working';
-    case 'suspended': return 'Suspended';
-    case 'completed': return 'Completed';
-    case 'failed': return 'Failed';
-  }
-}
-
-function bar(member: SwarmMember): string {
-  switch (member.phase) {
-    case 'queued': return '......';
-    case 'working': return ':::...';
-    case 'suspended': return '::....';
-    case 'completed': return '::::::';
-    case 'failed': return '!!....';
+    case 'queued':
+      return 'Queued';
+    case 'working':
+      return 'Working';
+    case 'suspended':
+      return 'Suspended';
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed';
   }
 }
 
 function latestProgress(member: SwarmMember): string | undefined {
   return member.outputLines?.map((line) => line.trimEnd()).filter(Boolean).at(-1);
 }
+
+function activityText(member: SwarmMember): string | undefined {
+  return member.suspendedReason || latestProgress(member) || member.summary;
+}
+
+function toggle(): void {
+  open.value = !open.value;
+}
 </script>
 
 <template>
-  <section class="swarm-card" :id="`swarm-${group.id}`">
-    <header class="swarm-head">
-      <div class="swarm-title">
-        <span class="swarm-mark" aria-hidden="true"></span>
-        <span>Swarm</span>
-      </div>
-      <div class="swarm-count">{{ done }}/{{ total }}</div>
-    </header>
-    <div class="swarm-grid">
-      <article
+  <section class="swarm-card" :class="{ open }" :id="`swarm-${group.id}`">
+    <button class="swarm-head" type="button" :aria-expanded="open" @click="toggle">
+      <StatusDot :status="aggregateStatus" />
+      <Icon class="swarm-ic" name="git-pull-request" size="sm" />
+      <span class="swarm-title">Swarm</span>
+      <span class="swarm-meta">· {{ done }}/{{ total }}</span>
+      <span class="swarm-meta">· {{ aggregateLabel }}</span>
+      <Icon class="swarm-car" name="chevron-right" size="sm" />
+    </button>
+    <div v-show="open" class="swarm-body">
+      <div
         v-for="member in group.members"
         :key="member.id"
-        class="swarm-member"
+        class="swarm-row"
         :class="`phase-${member.phase}`"
       >
-        <div class="member-top">
-          <span class="member-name">{{ member.name }}</span>
-          <span class="member-phase">{{ phaseLabel(member.phase) }}</span>
-        </div>
-        <div class="member-mid">
-          <span class="member-bar">{{ bar(member) }}</span>
-          <span v-if="member.subagentType" class="member-type">{{ member.subagentType }}</span>
-        </div>
-        <div v-if="member.suspendedReason || latestProgress(member) || member.summary" class="member-bottom">
-          {{ member.suspendedReason || latestProgress(member) || member.summary }}
-        </div>
-      </article>
+        <StatusDot class="row-dot" :status="member.phase" />
+        <Tooltip :text="member.name">
+          <span class="row-name">{{ member.name }}</span>
+        </Tooltip>
+        <span v-if="member.subagentType" class="row-type">{{ member.subagentType }}</span>
+        <Tooltip :text="activityText(member)">
+          <span v-if="activityText(member)" class="row-activity">
+            {{ activityText(member) }}
+          </span>
+        </Tooltip>
+        <span class="row-phase">{{ phaseLabel(member.phase) }}</span>
+      </div>
     </div>
   </section>
 </template>
@@ -68,108 +99,110 @@ function latestProgress(member: SwarmMember): string | undefined {
 <style scoped>
 .swarm-card {
   margin: 12px 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
   overflow: hidden;
+  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
 }
+
+/* Operation-card head: 32px, flat, status dot + icon + title + meta + chevron.
+   Mirrors ToolGroup.vue so Swarm reads as a background operation, not an
+   attention card (no colored band). */
 .swarm-head {
-  min-height: 42px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--panel2);
-  border-bottom: 1px solid var(--line);
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 11px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+.swarm-head:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+.swarm-head:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--color-accent-soft);
+}
+.swarm-ic {
+  color: var(--color-text-faint);
+  flex: none;
 }
 .swarm-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 750;
-  color: var(--ink);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
 }
-.swarm-mark {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--blue);
-  box-shadow: 0 0 0 4px var(--bluebg);
+.swarm-meta {
+  color: var(--color-text-faint);
 }
-.swarm-count {
-  border-radius: 999px;
-  padding: 2px 8px;
-  background: var(--soft);
-  color: var(--blue2);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-}
-.swarm-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
-  gap: 8px;
-  padding: 10px;
-}
-.swarm-member {
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg);
-  padding: 8px 9px;
-}
-.member-top,
-.member-mid {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.member-top {
-  justify-content: space-between;
-}
-.member-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  font-weight: 650;
-}
-.member-phase,
-.member-type {
+.swarm-car {
+  margin-left: auto;
+  color: var(--color-text-faint);
   flex: none;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.swarm-card.open .swarm-car {
+  transform: rotate(90deg);
+}
+
+/* Stacked rows: the card owns the outer border, rows are flat and separated by
+   a 1px hairline — design-system §04 grouping. */
+.swarm-body {
+  display: flex;
+  flex-direction: column;
+}
+.swarm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 11px;
+  border-top: 1px solid var(--color-line);
+  color: var(--color-text);
+}
+.row-name {
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: 45%;
+  max-width: 46%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
 }
-.member-mid {
-  margin-top: 6px;
-  justify-content: space-between;
+.row-type {
+  flex: none;
+  color: var(--color-text-faint);
+  font: var(--text-xs) var(--font-mono);
 }
-.member-bar {
-  color: var(--blue2);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  letter-spacing: 0;
-}
-.phase-completed .member-bar { color: var(--ok); }
-.phase-failed .member-bar { color: var(--err); }
-.phase-suspended .member-bar { color: var(--warn); }
-.phase-queued .member-bar { color: var(--muted); }
-.member-bottom {
+.row-activity {
+  flex: 1;
   min-width: 0;
-  margin-top: 7px;
-  color: var(--dim);
-  font-size: calc(var(--ui-font-size) - 2.5px);
-  line-height: 1.45;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
 }
+.row-phase {
+  flex: none;
+  margin-left: auto;
+  font: var(--text-xs) var(--font-mono);
+  color: var(--color-text-faint);
+}
+
+/* Phase label color matches the dot for quick scanning. */
+.phase-completed .row-phase { color: var(--color-success); }
+.phase-failed .row-phase { color: var(--color-danger); }
+.phase-working .row-phase { color: var(--color-accent); }
+.phase-suspended .row-phase { color: var(--color-warning); }
+.phase-queued .row-phase { color: var(--color-text-faint); }
 </style>

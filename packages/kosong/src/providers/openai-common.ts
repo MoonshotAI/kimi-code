@@ -2,6 +2,7 @@ import {
   APIConnectionError,
   APITimeoutError,
   ChatProviderError,
+  classifyBaseApiError,
   normalizeAPIStatusError,
 } from '#/errors';
 import { extractText } from '#/message';
@@ -84,22 +85,6 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
     },
   };
 }
-// `terminated` is the undici signature for an SSE/HTTP body stream that is
-// dropped mid-flight (common with Node's native fetch on long reasoning
-// streams). It surfaces as a raw `TypeError: terminated`, so it must be
-// recognized here as a transport-layer connection failure.
-const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
-const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
-
-function classifyBaseApiError(message: string): ChatProviderError {
-  if (TIMEOUT_RE.test(message)) {
-    return new APITimeoutError(message);
-  }
-  if (NETWORK_RE.test(message)) {
-    return new APIConnectionError(message);
-  }
-  return new ChatProviderError(`Error: ${message}`);
-}
 
 /**
  * Convert an OpenAI SDK error (or raw Error) to a kosong `ChatProviderError`.
@@ -177,7 +162,10 @@ export function thinkingEffortToReasoningEffort(effort: ThinkingEffort): string 
     case 'max':
       return 'xhigh';
     default:
-      throw new Error(`Unknown thinking effort: ${String(effort)}`);
+      // 'on' (boolean models) or any model-declared effort OpenAI does not
+      // recognize: send no reasoning_effort and let the model use its own
+      // default, rather than throwing on a value the model itself advertised.
+      return undefined;
   }
 }
 

@@ -828,8 +828,8 @@ describe('runUpdatePreflight', () => {
     const track = vi.fn();
     await runUpdatePreflight('0.4.0', { ...options, track });
     expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
-      current: '0.4.0',
-      latest: '0.5.0',
+      current_version: '0.4.0',
+      target_version: '0.5.0',
       decision: 'prompt-install',
       source: 'npm-global',
     }));
@@ -915,7 +915,7 @@ describe('runUpdatePreflight', () => {
         expect.objectContaining({ target: { version: '0.5.0' } }),
       );
       expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
-        latest: '0.5.0',
+        target_version: '0.5.0',
         rollout_bucket: expect.any(Number),
         rollout_delay_seconds: 0,
         rollout_from_manifest: true,
@@ -945,7 +945,7 @@ describe('runUpdatePreflight', () => {
         expect.objectContaining({ target: { version: '0.7.0' } }),
       );
       expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
-        latest: '0.7.0',
+        target_version: '0.7.0',
         rollout_bucket: expect.any(Number),
         rollout_delay_seconds: 43_200,
         rollout_from_manifest: true,

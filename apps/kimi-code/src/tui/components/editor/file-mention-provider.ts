@@ -8,7 +8,7 @@ import {
   type AutocompleteProvider,
   type AutocompleteSuggestions,
   type SlashCommand,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 
 const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 const MAX_FALLBACK_SCAN = 2000;
@@ -44,6 +44,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly workDir: string,
     private readonly fdPath: string | null,
     additionalDirs: readonly string[] = [],
+    private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
   ) {
     this.additionalDirs = additionalDirs.map((dir) => normalizePath(resolve(workDir, dir)));
     // Build an expanded list that includes alias entries so that
@@ -67,20 +68,11 @@ export class FileMentionProvider implements AutocompleteProvider {
     const currentLine = lines[cursorLine] ?? '';
     const textBeforeCursor = currentLine.slice(0, cursorCol);
 
-    if (shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)) {
-      return null;
-    }
-
-    if (
-      shouldSuppressSlashArgumentCompletion(
-        textBeforeCursor,
-        currentLine.slice(cursorCol),
-        options.force,
-      )
-    ) {
-      return null;
-    }
-
+    // `@` file / folder mentions take priority over the slash-command guards
+    // below. Without this, typing `@` inside a slash command's argument text
+    // (e.g. `/goal Fix the @|checkout docs`) would be swallowed by
+    // `shouldSuppressSlashArgumentCompletion` before the mention branch ever
+    // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
       if (this.fdPath === null || this.additionalDirs.length > 0) {
@@ -102,6 +94,20 @@ export class FileMentionProvider implements AutocompleteProvider {
           options.signal,
         );
       }
+    }
+
+    if (shouldSuppressLeadingWhitespaceSlashPath(textBeforeCursor, options.force)) {
+      return null;
+    }
+
+    if (
+      shouldSuppressSlashArgumentCompletion(
+        textBeforeCursor,
+        currentLine.slice(cursorCol),
+        options.force,
+      )
+    ) {
+      return null;
     }
 
     // Handle slash-command name completion ourselves so that aliases are
@@ -164,13 +170,26 @@ export class FileMentionProvider implements AutocompleteProvider {
       }
     }
 
-    const slashArgumentSuggestions = await getSlashArgumentSuggestions(this.slashCommands, textBeforeCursor);
-    if (slashArgumentSuggestions !== null) {
-      return slashArgumentSuggestions;
+    // In bash mode `/` is a path separator, not a slash command. Skip slash
+    // command argument handling so an absolute path that happens to start with
+    // a command name (e.g. `/add-dir/...`) completes inside the path instead of
+    // returning the command's argument completions.
+    if (this.getInputMode() !== 'bash') {
+      const slashArgumentSuggestions = await getSlashArgumentSuggestions(this.slashCommands, textBeforeCursor);
+      if (slashArgumentSuggestions !== null) {
+        return slashArgumentSuggestions;
+      }
     }
 
     try {
-      return await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      const inner = await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      if (inner === null || this.getInputMode() !== 'bash') {
+        return inner;
+      }
+      // In bash mode `/` is a path separator; hide dot-prefixed entries to
+      // match the `/add-dir` directory completer (registry.ts skips any name
+      // starting with `.`). Ordinary prompt-mode path completion is left as-is.
+      return { ...inner, items: inner.items.filter((item) => !isDotPrefixedEntry(item)) };
     } catch {
       return null;
     }
@@ -183,6 +202,15 @@ export class FileMentionProvider implements AutocompleteProvider {
     item: AutocompleteItem,
     prefix: string,
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    // In bash mode a leading `/` is a path, but pi-tui's applyCompletion
+    // mistakes it for a slash command (prefix starts with `/`, nothing before
+    // it, no second `/`) and prepends another `/`, producing e.g.
+    // `//Applications/ ` with a trailing space that also blocks further
+    // completion. Handle path completion ourselves so the value replaces the
+    // prefix verbatim. `@` mentions keep pi-tui's behaviour.
+    if (this.getInputMode() === 'bash' && prefix.startsWith('/')) {
+      return applyPathCompletion(lines, cursorLine, cursorCol, item, prefix);
+    }
     return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
   }
 }
@@ -197,6 +225,48 @@ export function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+/**
+ * Match the `/add-dir` directory completer, which skips every entry whose name
+ * starts with `.` (see registry.ts). pi-tui's path completer sets `label` to
+ * the entry basename, with a trailing `/` for directories.
+ */
+function isDotPrefixedEntry(item: AutocompleteItem): boolean {
+  const name = item.label.endsWith('/') ? item.label.slice(0, -1) : item.label;
+  return name.startsWith('.');
+}
+
+/**
+ * Replace `prefix` with `item.value` verbatim, mirroring pi-tui's file-path
+ * branch (no trailing space, so a completed directory can be extended with the
+ * next `/`). Used in bash mode to avoid pi-tui's slash-command branch, which
+ * would prepend an extra `/` to a bare leading `/` path. For a quoted
+ * directory value (path contains spaces), the cursor stays inside the closing
+ * quote so follow-up `/` completion keeps working.
+ */
+function applyPathCompletion(
+  lines: string[],
+  cursorLine: number,
+  cursorCol: number,
+  item: AutocompleteItem,
+  prefix: string,
+): { lines: string[]; cursorLine: number; cursorCol: number } {
+  const currentLine = lines[cursorLine] ?? '';
+  const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+  const afterCursor = currentLine.slice(cursorCol);
+  const newLine = beforePrefix + item.value + afterCursor;
+  const newLines = [...lines];
+  newLines[cursorLine] = newLine;
+  const isDirectory = item.label.endsWith('/');
+  const hasTrailingQuote = item.value.endsWith('"');
+  const cursorOffset =
+    isDirectory && hasTrailingQuote ? item.value.length - 1 : item.value.length;
+  return {
+    lines: newLines,
+    cursorLine,
+    cursorCol: beforePrefix.length + cursorOffset,
+  };
 }
 
 function getFsMentionSuggestions(

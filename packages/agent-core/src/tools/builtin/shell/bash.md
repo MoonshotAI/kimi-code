@@ -23,7 +23,7 @@ If `run_in_background=true`, the command will be started as a background task an
 - Never run commands that require superuser privileges unless explicitly instructed to do so.
 
 **Guidelines for efficiency:**
-- For multiple related commands, use `&&` to chain them in a single call, e.g. `cd /path && ls -la`
+- Use `&&` to chain commands that genuinely depend on each other, e.g. `npm install && npm test`. Independent read-only commands (separate `git show`, `ls`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with `echo` separators.
 - Use `;` to run commands sequentially regardless of success/failure
 - Use `||` for conditional execution (run second command only if first fails)
 - Use pipe operations (`|`) and redirections (`>`, `>>`) to chain input and output between commands
@@ -38,6 +38,6 @@ The following common command categories are usually available. Availability stil
 - Text and data processing: `wc`, `sort`, `uniq`, `cut`, `tr`, `diff`, `xargs`
 - Archives and compression: `tar`, `gzip`, `gunzip`, `zip`, `unzip`
 - Networking and transfer: `curl`, `wget`, `ping`, `ssh`, `scp`
-- Version control: `git`
+- Version control: `git`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the `gh` CLI when installed — it carries the user's GitHub auth and can return structured JSON
 - Process and system: `ps`, `kill`, `top`, `env`, `date`, `uname`, `whoami`
 - Language and package toolchains: `node`, `npm`, `pnpm`, `yarn`, `python`, `pip` (use whichever the project actually relies on)

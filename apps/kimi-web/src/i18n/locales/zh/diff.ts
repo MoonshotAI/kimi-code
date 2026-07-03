@@ -1,8 +1,8 @@
 export default {
   title: '改动',
-  branch: 'branch',
-  aheadTitle: 'ahead of remote',
-  behindTitle: 'behind remote',
+  branch: '分支',
+  aheadTitle: '领先远程',
+  behindTitle: '落后远程',
   changeCount: '{count} 改动',
   empty: '无 git 改动 / daemon 未提供',
   clean: '工作区干净，无改动',

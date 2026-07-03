@@ -24,7 +24,6 @@ TOML 字段名一律用下划线（snake_case），如 `default_model`、`max_co
 
 ```toml
 default_model = "kimi-code/kimi-for-coding"
-default_thinking = true
 default_permission_mode = "manual"
 default_plan_mode = false
 merge_all_available_skills = true
@@ -41,7 +40,8 @@ model = "kimi-for-coding"
 max_context_size = 262144
 
 [thinking]
-mode = "auto"
+enabled = true
+effort = "high"
 
 [loop_control]
 max_retries_per_step = 3
@@ -51,8 +51,8 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-[experimental]
-micro_compaction = true
+# [experimental]
+# micro_compaction = false  # disabled: micro compaction has been removed
 
 [[permission.rules]]
 decision = "allow"
@@ -76,7 +76,6 @@ timeout = 5
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
-| `default_thinking` | `boolean` | `false` | 新会话是否默认开启 Thinking（深度推理）模式；可在会话内从模型菜单切换。即使设为 `true`，`[thinking].mode = "off"` 也会强制关闭 |
 | `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`auto`（自动批准读操作）、`yolo`（全部自动批准） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
@@ -128,6 +127,8 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `max_context_size` | `integer` | 是 | 最大上下文长度（token 数），必须 ≥ 1 |
 | `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens`）。目前仅 `anthropic` 供应商读取；已识别的 Claude 系列会自动限制在服务端允许的最大值内 |
 | `capabilities` | `array<string>` | 否 | 显式追加的能力标签：`thinking`、`image_in`、`video_in`、`audio_in`、`tool_use`。与供应商自动识别的能力取并集，只能追加不能移除 |
+| `support_efforts` | `array<string>` | 否 | 模型目录声明的 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
+| `default_effort` | `string` | 否 | 模型的默认 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] default_effort` |
 | `display_name` | `string` | 否 | UI 中显示的名称，未设时回退到 `model` |
 | `reasoning_key` | `string` | 否 | 仅 `openai` 供应商。当网关用非标准字段名返回推理内容时才需要设置；默认自动识别 `reasoning_content` / `reasoning_details` / `reasoning` |
 | `adaptive_thinking` | `boolean` | 否 | 仅 `anthropic` 供应商。强制开启或关闭 adaptive thinking，覆盖按模型名推断的逻辑。省略时自动推断（Claude ≥ 4.6 使用 adaptive） |
@@ -141,16 +142,42 @@ model = "gpt-4.1"
 max_context_size = 1047576
 ```
 
+### 模型覆盖项
+
+如果某些用户覆盖需要在 provider-model 刷新后保留，请写到 `[models."<alias>".overrides]`。运行时读取的是 effective 值：有 override 时用 override，否则用顶层字段。
+
+```toml
+[models."kimi-code/kimi-k2"]
+provider = "managed:kimi-code"
+model = "kimi-k2"
+max_context_size = 262144
+support_efforts = ["low", "high", "max"]
+default_effort = "max"
+
+[models."kimi-code/kimi-k2".overrides]
+support_efforts = ["low", "high"]
+default_effort = "high"
+```
+
+`[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts` 和 `default_effort`。不接受身份 / 路由字段：`provider`、`model`、`protocol` 和 `beta_api`。
+
 无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
 ## `thinking`
 
-`thinking` 设置 Thinking 模式的全局默认行为。`mode = "off"` 会强制关闭 Thinking，即使顶层 `default_thinking = true` 也不例外。
+`thinking` 设置 Thinking 模式的全局默认行为。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `mode` | `string` | — | 触发策略：`auto`（由模型决定）、`on`（始终开启）、`off`（强制关闭） |
-| `effort` | `string` | `high` | Thinking 强度：`low`、`medium`、`high`、`xhigh`、`max`，实际可用等级由供应商决定 |
+| `enabled` | `boolean` | `true` | 新会话是否默认开启 Thinking，设为 `false` 可强制关闭 |
+| `effort` | `string` | — | Thinking 强度（例如 `low`、`medium`、`high`、`xhigh`、`max`），实际可用等级取决于模型声明的 `support_efforts`，未识别的值会被供应商忽略 |
+
+### 已废弃字段
+
+| 字段 | 废弃版本 | 描述 |
+| --- | --- | --- |
+| `default_thinking` | 0.21.0 | 顶层布尔值，由 `[thinking] enabled` 取代。将 `default_thinking = true` 迁移为 `enabled = true`，`default_thinking = false` 迁移为 `enabled = false`。 |
+| `thinking.mode` | 0.21.0 | 可选值 `auto` / `on` / `off`，由 `[thinking] enabled` 取代。`mode = "off"` 改为 `enabled = false`；`mode = "on"` 和 `mode = "auto"` 等价于 `enabled = true`（默认值），可删除该行。 |
 
 ## `loop_control`
 
@@ -173,13 +200,15 @@ max_context_size = 1047576
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
 
+<!--
 ## `experimental`
 
-`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `true`；只有在需要关闭自动清理较旧的大型工具结果时，才需要把它设为 `false`。
+`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `false`；如需自动清理较旧的大型工具结果，把它设为 `true`。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `micro_compaction` | `boolean` | `true` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+| `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+-->
 
 ## `services`
 

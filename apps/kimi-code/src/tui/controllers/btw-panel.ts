@@ -1,4 +1,4 @@
-import { Spacer } from '@earendil-works/pi-tui';
+import { Spacer } from '@moonshot-ai/pi-tui';
 import type {
   Event,
   KimiHarness,

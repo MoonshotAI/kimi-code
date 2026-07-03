@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { PlanBoxComponent } from '#/tui/components/messages/plan-box';

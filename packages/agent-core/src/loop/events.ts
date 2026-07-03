@@ -22,6 +22,20 @@ export interface LoopStepEndEvent {
   readonly llmFirstTokenLatencyMs?: number | undefined;
   readonly llmStreamDurationMs?: number | undefined;
   /**
+   * Split of `llmFirstTokenLatencyMs`: in-process request-building time on the
+   * client vs. network + API-server time to the first token. Both `undefined`
+   * when the provider does not report the client/server boundary.
+   */
+  readonly llmRequestBuildMs?: number | undefined;
+  readonly llmServerFirstTokenMs?: number | undefined;
+  /**
+   * Split of `llmStreamDurationMs` (the decode window): time awaiting parts
+   * from the provider vs. time processing parts in-process. Both `undefined`
+   * when the provider stream did not report decode accounting.
+   */
+  readonly llmServerDecodeMs?: number | undefined;
+  readonly llmClientConsumeMs?: number | undefined;
+  /**
    * Provider diagnostics are optional and must not drive loop control.
    * Use `finishReason` for normalized behavior.
    */

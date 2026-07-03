@@ -382,6 +382,9 @@ export function toAppTask(wire: WireBackgroundTask): AppTask {
     parentToolCallId: wire.parent_tool_call_id,
     suspendedReason: wire.suspended_reason,
     swarmIndex: wire.swarm_index,
+    // The background task store only holds detached tasks, so any subagent it
+    // returns is a background subagent (foreground ones never persist here).
+    runInBackground: wire.kind === 'subagent' ? true : undefined,
     // outputLines starts undefined; populated by eventReducer via task.progress events
   };
 }
@@ -678,6 +681,21 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         config: toAppConfig(w.payload.config),
       };
 
+    case 'event.model_catalog.changed':
+      return {
+        type: 'modelCatalogChanged',
+        changed: w.payload.changed.map(
+          (item: { provider_id: string; provider_name: string; added: number; removed: number }) => ({
+            providerId: item.provider_id,
+            providerName: item.provider_name,
+            added: item.added,
+            removed: item.removed,
+          }),
+        ),
+        unchanged: w.payload.unchanged,
+        failed: w.payload.failed,
+      };
+
     default: {
       // Truly unknown event — record warning
       return { type: 'unknown', raw: wire };
@@ -728,10 +746,9 @@ export function toAppConfig(wire: WireConfig): AppConfig {
     defaultProvider: wire.default_provider,
     defaultModel: wire.default_model,
     models: wire.models,
-    thinking: wire.thinking,
+    thinking: wire.thinking as { enabled?: boolean; effort?: string } | undefined,
     planMode: wire.plan_mode,
     yolo: wire.yolo,
-    defaultThinking: wire.default_thinking,
     defaultPermissionMode: wire.default_permission_mode,
     defaultPlanMode: wire.default_plan_mode,
     permission: wire.permission,

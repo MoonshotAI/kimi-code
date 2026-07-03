@@ -78,7 +78,7 @@ interface ResumeStateSnapshot {
     readonly cwd: string;
     readonly provider: ProviderConfig | undefined;
     readonly profileName: string | undefined;
-    readonly thinkingLevel: string;
+    readonly thinkingEffort: string;
     readonly systemPrompt: string;
   };
   readonly context: ReturnType<Agent['context']['data']>;
@@ -224,7 +224,7 @@ export class AgentTestContext {
       cwd: process.cwd(),
       modelAlias: provider.model,
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
 
     if (tools.length > 0) {
@@ -1043,7 +1043,7 @@ function configStateSnapshot(agent: Agent): ResumeStateSnapshot['config'] {
     cwd: agent.config.cwd.replaceAll('\\', '/'),
     provider,
     profileName: agent.config.profileName,
-    thinkingLevel: agent.config.thinkingLevel,
+    thinkingEffort: agent.config.thinkingEffort,
     systemPrompt: agent.config.systemPrompt,
   };
 }

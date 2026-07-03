@@ -12,14 +12,17 @@ import type { FlagDefinitionInput } from './types';
  * not equal the master switch 'KIMI_CODE_EXPERIMENTAL_FLAG'; `id` must not be 'flag'.
  */
 export const FLAG_DEFINITIONS = [
-  {
-    id: 'micro_compaction',
-    title: 'Micro compaction',
-    description: 'Trim older large tool results from context while keeping recent conversation intact.',
-    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    default: true,
-    surface: 'core',
-  },
+  // Micro compaction has been disabled and removed: the capability cannot be
+  // enabled via env, config, or the master experimental switch. The entry is
+  // kept here commented out so it can be restored if the feature is revived.
+  // {
+  //   id: 'micro_compaction',
+  //   title: 'Micro compaction',
+  //   description: 'Trim older large tool results from context while keeping recent conversation intact.',
+  //   env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
+  //   default: false,
+  //   surface: 'core',
+  // },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

@@ -15,7 +15,7 @@ import {
   truncateToWidth,
   visibleWidth,
   type Focusable,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
@@ -49,6 +49,9 @@ export interface ChoicePickerOptions {
   /** Items per page. Lists longer than this paginate. */
   readonly pageSize?: number;
   readonly onSelect: (value: string) => void;
+  /** When provided, Alt+S invokes this with the selected value instead of
+   * onSelect — used to apply the choice to the current session only. */
+  readonly onSessionOnlySelect?: (value: string) => void;
   readonly onCancel: () => void;
 }
 
@@ -97,6 +100,11 @@ export class ChoicePickerComponent extends Container implements Focusable {
     if (matchesKey(data, Key.escape)) {
       if (this.list.clearQuery()) return;
       this.opts.onCancel();
+      return;
+    }
+    if (matchesKey(data, Key.alt('s')) && this.opts.onSessionOnlySelect !== undefined) {
+      const chosen = this.list.selected();
+      if (chosen !== undefined) this.opts.onSessionOnlySelect(chosen.value);
       return;
     }
     // Left/Right page through the list (this picker has no horizontal control).

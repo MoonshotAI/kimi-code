@@ -2,6 +2,8 @@ export default {
   openSwitcher: '切换会话 / 工作区',
   openSettings: '会话设置',
   settingsTitle: '会话设置',
+  groupSession: '当前会话',
+  groupApp: '应用偏好',
   sheetLabel: '面板',
   closeSheet: '关闭',
   tapToCycle: '点击切换',
@@ -12,6 +14,6 @@ export default {
   permManualSub: '每个工具都确认',
   permAutoSub: '自动批准编辑',
   permYoloSub: '全部自动批准',
-  planModeSub: 'Plan mode',
-  swarmModeSub: 'Swarm mode',
+  planModeSub: '计划模式',
+  swarmModeSub: 'Swarm 模式',
 } as const;

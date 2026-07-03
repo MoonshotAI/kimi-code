@@ -22,6 +22,7 @@
  *      allow-list (mirrors `kimi-cli/src/kimi_cli/llm.py:derive_model_capabilities`).
  */
 
+import { effectiveModelAlias } from '@moonshot-ai/agent-core';
 import type { KimiHarness, ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 /**
@@ -37,6 +38,13 @@ export interface AcpModelEntry {
   readonly thinkingSupported: boolean;
   /** Declared 'always_thinking' capability — thinking cannot be turned off. */
   readonly alwaysThinking?: boolean;
+  /**
+   * The thinking effort to send when the binary ACP toggle flips on: the
+   * model's declared `default_effort`, else the middle `support_efforts`
+   * entry, else `'on'` for boolean models. Mirrors agent-core's
+   * `defaultThinkingEffortFor` so the ACP on-state matches the TUI.
+   */
+  readonly defaultThinkingEffort: string;
 }
 
 /**
@@ -48,11 +56,12 @@ export interface AcpModelEntry {
 const TOGGLEABLE_THINKING_MODELS = new Set(['kimi-for-coding', 'kimi-code']);
 
 export function deriveThinkingSupported(alias: ModelAlias): boolean {
-  const declared = alias.capabilities ?? [];
+  const effective = effectiveModelAlias(alias);
+  const declared = effective.capabilities ?? [];
   if (declared.includes('thinking') || declared.includes('always_thinking')) return true;
-  const lower = alias.model.toLowerCase();
+  const lower = effective.model.toLowerCase();
   if (lower.includes('thinking') || lower.includes('reason')) return true;
-  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return true;
+  if (TOGGLEABLE_THINKING_MODELS.has(effective.model)) return true;
   return false;
 }
 
@@ -64,7 +73,21 @@ export function deriveThinkingSupported(alias: ModelAlias): boolean {
  * may remove the off option from the client.
  */
 export function deriveAlwaysThinking(alias: ModelAlias): boolean {
-  return (alias.capabilities ?? []).includes('always_thinking');
+  return (effectiveModelAlias(alias).capabilities ?? []).includes('always_thinking');
+}
+
+/**
+ * The effort a boolean "thinking on" toggle maps to for this model: declared
+ * `default_effort`, else the middle `support_efforts` entry, else `'on'` for
+ * boolean models (no `support_efforts`).
+ */
+export function deriveDefaultThinkingEffort(alias: ModelAlias): string {
+  const effective = effectiveModelAlias(alias);
+  const efforts = effective.supportEfforts;
+  if (efforts !== undefined && efforts.length > 0) {
+    return effective.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+  }
+  return 'on';
 }
 
 /**
@@ -89,11 +112,13 @@ export async function listModelsFromHarness(
   if (models === undefined) return [];
   const out: AcpModelEntry[] = [];
   for (const [id, alias] of Object.entries(models)) {
+    const effective = effectiveModelAlias(alias);
     out.push({
       id,
-      name: alias.displayName ?? alias.model ?? id,
+      name: effective.displayName ?? effective.model ?? id,
       thinkingSupported: deriveThinkingSupported(alias),
       alwaysThinking: deriveAlwaysThinking(alias),
+      defaultThinkingEffort: deriveDefaultThinkingEffort(alias),
     });
   }
   return out;

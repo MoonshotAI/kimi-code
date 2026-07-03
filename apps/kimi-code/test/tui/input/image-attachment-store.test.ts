@@ -59,4 +59,30 @@ describe('ImageAttachmentStore', () => {
     const next = s.addImage(new Uint8Array(), 'image/png', 10, 10);
     expect(next.id).toBe(1);
   });
+
+  it('remove() drops a single attachment without resetting ids', () => {
+    const s = new ImageAttachmentStore();
+    const a = s.addImage(new Uint8Array([1]), 'image/png', 10, 10);
+    const b = s.addImage(new Uint8Array([2]), 'image/png', 10, 10);
+    expect(s.size()).toBe(2);
+    s.remove(a.id);
+    expect(s.size()).toBe(1);
+    expect(s.get(a.id)).toBeUndefined();
+    expect(s.get(b.id)).toBe(b);
+    // Unlike clear(), remove() must not reset the id counter.
+    const next = s.addImage(new Uint8Array([3]), 'image/png', 10, 10);
+    expect(next.id).toBe(3);
+  });
+
+  it('removeMany() drops many attachments at once', () => {
+    const s = new ImageAttachmentStore();
+    const a = s.addImage(new Uint8Array([1]), 'image/png', 10, 10);
+    const b = s.addImage(new Uint8Array([2]), 'image/png', 10, 10);
+    const c = s.addImage(new Uint8Array([3]), 'image/png', 10, 10);
+    s.removeMany([a.id, c.id]);
+    expect(s.size()).toBe(1);
+    expect(s.get(b.id)).toBe(b);
+    expect(s.get(a.id)).toBeUndefined();
+    expect(s.get(c.id)).toBeUndefined();
+  });
 });

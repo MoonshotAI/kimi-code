@@ -299,6 +299,13 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 {String(isError)}
               </span>
             </FieldRow>
+            {event.result.truncated === true ? (
+              <FieldRow label="truncated">
+                <span className="text-[var(--color-sev-warning)]">
+                  true · output was paged or dropped before the model saw it
+                </span>
+              </FieldRow>
+            ) : null}
             {event.result.message !== undefined ? (
               <FieldRow label="message" wide>
                 <pre className="whitespace-pre-wrap break-words text-fg-1">
@@ -355,9 +362,29 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
                 <span className="text-fg-1">{event.llmFirstTokenLatencyMs} ms</span>
               </FieldRow>
             ) : null}
+            {event.llmServerFirstTokenMs !== undefined ? (
+              <FieldRow label="firstToken/api">
+                <span className="text-fg-1">{event.llmServerFirstTokenMs} ms</span>
+              </FieldRow>
+            ) : null}
+            {event.llmRequestBuildMs !== undefined ? (
+              <FieldRow label="firstToken/client">
+                <span className="text-fg-1">{event.llmRequestBuildMs} ms</span>
+              </FieldRow>
+            ) : null}
             {event.llmStreamDurationMs !== undefined ? (
               <FieldRow label="streamDuration">
                 <span className="text-fg-1">{event.llmStreamDurationMs} ms</span>
+              </FieldRow>
+            ) : null}
+            {event.llmServerDecodeMs !== undefined ? (
+              <FieldRow label="streamDuration/server">
+                <span className="text-fg-1">{event.llmServerDecodeMs} ms</span>
+              </FieldRow>
+            ) : null}
+            {event.llmClientConsumeMs !== undefined ? (
+              <FieldRow label="streamDuration/client">
+                <span className="text-fg-1">{event.llmClientConsumeMs} ms</span>
               </FieldRow>
             ) : null}
           </div>

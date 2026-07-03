@@ -1,4 +1,4 @@
-import { Text, visibleWidth } from '@earendil-works/pi-tui';
+import { Text, visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';

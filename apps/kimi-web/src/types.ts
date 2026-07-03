@@ -38,6 +38,10 @@ export interface Session {
   updatedAt?: string;
   /** Text of the most recent user prompt, used by sidebar search. */
   lastPrompt?: string;
+  /** Workspace id this session belongs to (resolved from cwd / daemon). */
+  workspaceId?: string;
+  /** Workspace display name, joined from workspacesView. */
+  workspaceName?: string;
 }
 
 export interface Workspace {
@@ -74,6 +78,10 @@ export interface WorkspaceGroup {
   hasMore: boolean;
   /** True while the next page of sessions is being fetched for this workspace. */
   loadingMore: boolean;
+  /** First-page capacity for the in-group show-less collapse target: the number
+   *  of sessions loaded on first paint, floored at one full page so a workspace
+   *  that was empty or sparse does not hide sessions created later. */
+  initialCount: number;
 }
 
 /** Sidebar session-list scope: only the active workspace, or all workspaces. */
@@ -117,6 +125,9 @@ export interface AgentMember {
   prompt?: string;
   summary?: string;
   outputLines?: string[];
+  /** The subagent's concatenated live output (assistant deltas) — grows in the
+   *  detail panel like a thinking block. */
+  text?: string;
   suspendedReason?: string;
   swarmIndex?: number;
 }
@@ -195,13 +206,15 @@ export interface ToolDiffTarget {
 
 /** One ordered piece of an assistant turn: a thinking segment, a text segment
  * OR a tool card. Built in call order so every piece renders inline where it
- * happened (a turn can think → act → think again — nothing is hoisted). */
+ * happened (a turn can think → act → think again — nothing is hoisted).
+ *
+ * Subagents render as the spawning `Agent` tool card here; their live progress
+ * streams in the right-side detail panel, sourced from the task rather than a
+ * dedicated block. */
 export type TurnBlock =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; thinking: string }
-  | { kind: 'tool'; tool: ToolCall }
-  | { kind: 'agent'; member: AgentMember }
-  | { kind: 'agentGroup'; members: AgentMember[] };
+  | { kind: 'tool'; tool: ToolCall };
 
 export interface ChatTurn {
   id: string;
@@ -229,6 +242,9 @@ export interface ChatTurn {
   /** Skill activation metadata: when a user turn was triggered by a slash
       command (/skill), this holds the skill name and args for display. */
   skillActivation?: { name: string; args?: string };
+  /** Plugin command metadata: when a user turn was triggered by a plugin slash
+      command (/plugin:command), this holds the command identity and args. */
+  pluginCommand?: { pluginId: string; commandName: string; args?: string };
 }
 
 /**
@@ -250,6 +266,13 @@ export interface TaskItem {
   timing: string;
   meta?: string;
   output?: string[];
+  /** Background subagents only — the dock lists these; foreground subagents
+   *  render inline as the `Agent` tool card instead. */
+  runInBackground?: boolean;
+  /** The spawning `Agent` tool-call id — used to resolve a subagent task back
+   *  to its inline tool card, so the card's "Open detail" button can be hidden
+   *  when the task is no longer available. */
+  parentToolCallId?: string;
 }
 
 export interface ConversationStatus {
@@ -277,11 +300,13 @@ export interface ActivationBadges {
   swarm: { done: number; total: number } | null;
 }
 
-/** A queued prompt as shown in the composer's queue strip. */
+/** A queued prompt as shown inline at the tail of the transcript. */
 export interface QueuedPromptView {
   text: string;
   /** Number of image attachments waiting with this prompt. */
   attachmentCount: number;
+  /** Image/video attachments waiting with this prompt, with resolved URLs for thumbnails. */
+  attachments?: { fileId: string; kind: 'image' | 'video'; url: string }[];
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */

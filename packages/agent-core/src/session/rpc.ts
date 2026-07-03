@@ -2,6 +2,7 @@ import { ErrorCodes, KimiError } from '#/errors';
 import type { SessionWarning } from '@moonshot-ai/protocol';
 import type {
   ActivateSkillPayload,
+  ActivatePluginCommandPayload,
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
   AgentAPI,
@@ -28,6 +29,7 @@ import type {
   SetPermissionPayload,
   SetThinkingPayload,
   SkillSummary,
+  PluginCommandDef,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -39,6 +41,7 @@ import type { PromisableMethods } from '#/utils/types';
 import type { Session, SessionMeta } from '.';
 import {
   promptMetadataTextFromPayload,
+  promptMetadataTextFromPluginCommand,
   promptMetadataTextFromSkill,
   titleFromPromptMetadataText,
 } from './prompt-metadata';
@@ -77,6 +80,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   listSkills(_payload: EmptyPayload): Promise<readonly SkillSummary[]> {
     return this.session.listSkills();
+  }
+
+  listPluginCommands(_payload: EmptyPayload): readonly PluginCommandDef[] {
+    return this.session.listPluginCommands();
   }
 
   listMcpServers(_payload: EmptyPayload): readonly McpServerInfo[] {
@@ -207,6 +214,16 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     await (await this.getAgent(agentId)).activateSkill(payload);
     if (agentId === 'main') {
       await this.updatePromptMetadata(promptMetadataTextFromSkill(payload));
+    }
+  }
+
+  async activatePluginCommand({
+    agentId,
+    ...payload
+  }: AgentScopedPayload<ActivatePluginCommandPayload>) {
+    await (await this.getAgent(agentId)).activatePluginCommand(payload);
+    if (agentId === 'main') {
+      await this.updatePromptMetadata(promptMetadataTextFromPluginCommand(payload));
     }
   }
 

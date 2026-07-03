@@ -1,5 +1,5 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -24,6 +24,23 @@ function model(displayName: string, capabilities: string[] = ['thinking']): Mode
   } as unknown as ModelAlias;
 }
 
+function effortModel(
+  displayName: string,
+  supportEfforts: string[],
+  defaultEffort?: string,
+  capabilities: string[] = ['thinking'],
+): ModelAlias {
+  return {
+    provider: 'managed:kimi-code',
+    model: displayName.toLowerCase().replaceAll(' ', '-'),
+    maxContextSize: 200_000,
+    displayName,
+    capabilities,
+    supportEfforts,
+    defaultEffort,
+  } as unknown as ModelAlias;
+}
+
 function text(component: ModelSelectorComponent, width = 120): string {
   return component.render(width).map(strip).join('\n');
 }
@@ -33,7 +50,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
-      currentThinking: true,
+      currentThinkingEffort: 'on',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -50,7 +67,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
-      currentThinking: true,
+      currentThinkingEffort: 'on',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -58,24 +75,24 @@ describe('ModelSelectorComponent', () => {
     // "/" no longer toggles thinking (it used to); here it is simply ignored.
     picker.handleInput('/');
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: true });
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'on' });
 
     // Right arrow flips the draft (true -> false).
     picker.handleInput(RIGHT);
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: false });
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'off' });
 
     // Left arrow flips it back.
     picker.handleInput(LEFT);
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: true });
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'on' });
   });
 
   it('shows the Left/Right thinking hint only for toggleable models', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
-      currentThinking: false,
+      currentThinkingEffort: 'off',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -90,7 +107,7 @@ describe('ModelSelectorComponent', () => {
         plain: model('Kimi Plain', ['tool_use']),
       },
       currentValue: 'always',
-      currentThinking: false,
+      currentThinkingEffort: 'off',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -101,7 +118,7 @@ describe('ModelSelectorComponent', () => {
     expect(alwaysOut).toContain('Off (Unsupported)');
     expect(alwaysOut).not.toContain('Always on');
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: true });
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: 'on' });
 
     // Unsupported: Off selected, On greyed out — same style, mirrored.
     picker.handleInput(DOWN);
@@ -110,7 +127,7 @@ describe('ModelSelectorComponent', () => {
     expect(plainOut).toContain('[ Off ]');
     expect(plainOut).not.toContain('] unsupported');
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: 'off' });
   });
 
   it('ignores Left/Right on always-on and unsupported models', () => {
@@ -121,26 +138,26 @@ describe('ModelSelectorComponent', () => {
         plain: model('Kimi Plain', ['tool_use']),
       },
       currentValue: 'always',
-      currentThinking: true,
+      currentThinkingEffort: 'on',
       onSelect,
       onCancel: vi.fn(),
     });
 
     picker.handleInput(RIGHT);
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: true });
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: 'on' });
 
     picker.handleInput(DOWN);
     picker.handleInput(LEFT);
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: 'off' });
   });
 
   it('renders the unavailable thinking segment muted', () => {
     const picker = new ModelSelectorComponent({
       models: { always: model('Kimi Thinking', ['always_thinking']) },
       currentValue: 'always',
-      currentThinking: true,
+      currentThinkingEffort: 'on',
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -157,7 +174,7 @@ describe('ModelSelectorComponent', () => {
         thinking: model('Kimi Thinking', ['thinking']),
       },
       currentValue: 'plain',
-      currentThinking: false,
+      currentThinkingEffort: 'off',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -168,7 +185,7 @@ describe('ModelSelectorComponent', () => {
     picker.handleInput(DOWN); // -> thinking (the Off override persists)
     picker.handleInput('\r');
 
-    expect(onSelect).toHaveBeenCalledWith({ alias: 'thinking', thinking: false });
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'thinking', thinking: 'off' });
   });
 
   it('defaults a thinking-capable model to On but keeps the current model state', () => {
@@ -179,7 +196,7 @@ describe('ModelSelectorComponent', () => {
         other: model('Kimi Other', ['thinking']),
       },
       currentValue: 'current',
-      currentThinking: false, // thinking deliberately off on the active model
+      currentThinkingEffort: 'off', // thinking deliberately off on the active model
       onSelect,
       onCancel: vi.fn(),
     });
@@ -190,7 +207,7 @@ describe('ModelSelectorComponent', () => {
     // A capable, non-active model defaults to On without any toggle.
     expect(text(picker)).toContain('[ On ]');
     picker.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: true });
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: 'on' });
   });
 
   it('fuzzy-filters by typing and reports a match count', () => {
@@ -198,7 +215,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { k2: model('Kimi K2'), turbo: model('Kimi Turbo') },
       currentValue: 'k2',
-      currentThinking: false,
+      currentThinkingEffort: 'off',
       searchable: true,
       onSelect: vi.fn(),
       onCancel,
@@ -225,7 +242,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models,
       currentValue: 'm0',
-      currentThinking: false,
+      currentThinkingEffort: 'off',
       searchable: true,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -242,7 +259,7 @@ describe('ModelSelectorComponent', () => {
         cjk: model('超长的中文模型名称需要被正确截断处理'),
       },
       currentValue: 'long',
-      currentThinking: false,
+      currentThinkingEffort: 'off',
       searchable: true,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -261,7 +278,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
-      currentThinking: true,
+      currentThinkingEffort: 'on',
       onSelect,
       onSessionOnlySelect,
       onCancel: vi.fn(),
@@ -270,7 +287,7 @@ describe('ModelSelectorComponent', () => {
     // Toggle thinking Off, then Alt+S applies the choice to the session only.
     picker.handleInput(RIGHT);
     picker.handleInput(`${ESC}s`);
-    expect(onSessionOnlySelect).toHaveBeenCalledWith({ alias: 'kimi', thinking: false });
+    expect(onSessionOnlySelect).toHaveBeenCalledWith({ alias: 'kimi', thinking: 'off' });
     expect(onSelect).not.toHaveBeenCalled();
   });
 
@@ -279,7 +296,7 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
-      currentThinking: true,
+      currentThinkingEffort: 'on',
       onSelect,
       onCancel: vi.fn(),
     });
@@ -293,11 +310,137 @@ describe('ModelSelectorComponent', () => {
     const picker = new ModelSelectorComponent({
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
-      currentThinking: true,
+      currentThinkingEffort: 'on',
       onSelect: vi.fn(),
       onSessionOnlySelect: vi.fn(),
       onCancel: vi.fn(),
     });
     expect(text(picker)).toContain('Alt+S session-only');
+  });
+
+  it('renders effort segments with the default effort highlighted', () => {
+    const picker = new ModelSelectorComponent({
+      models: { kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'high') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'high',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = text(picker);
+    // The default effort (high) is the active segment.
+    expect(out).toContain('[ High ]');
+    // All declared efforts plus the Off entry are present.
+    expect(out).toContain('Low');
+    expect(out).toContain('Max');
+    expect(out).toContain('Off');
+    // Multi-segment control advertises the switch hint.
+    expect(out).toContain('Thinking  (←→ to switch)');
+  });
+
+  it('cycles efforts with Left/Right and clamps at the ends', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: { kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'high') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'high',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // high -> max (Right), then clamp on a second Right.
+    picker.handleInput(RIGHT);
+    picker.handleInput(RIGHT);
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'max' });
+
+    // max -> high -> low -> off (Left x3), then clamp on another Left.
+    picker.handleInput(LEFT);
+    picker.handleInput(LEFT);
+    picker.handleInput(LEFT);
+    picker.handleInput(LEFT);
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'off' });
+  });
+
+  it('always-on effort models hide Off and clamp selection at the last effort', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        kimi: effortModel('Kimi K2', ['low', 'high', 'max'], 'high', ['always_thinking']),
+      },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'high',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    const raw = picker.render(120).join('\n');
+    // Off is not surfaced at all — the selectable segments are effort-only.
+    expect(raw).not.toContain('Off (Unsupported)');
+    // The active effort is still highlighted.
+    expect(strip(raw)).toContain('[ High ]');
+
+    // Cycling clamps at the last effort and never reaches Off.
+    picker.handleInput(RIGHT); // high -> max
+    picker.handleInput(RIGHT); // clamp at max
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'kimi', thinking: 'max' });
+  });
+
+  it('defaults an effort model without a current level to its defaultEffort', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        other: effortModel('Kimi Other', ['low', 'high', 'max'], 'max'),
+      },
+      currentValue: 'current',
+      currentThinkingEffort: 'off',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // Non-current effort model falls back to its declared defaultEffort.
+    expect(text(picker)).toContain('[ Max ]');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: 'max' });
+  });
+
+  it('falls back to the middle effort when an effort model has no defaultEffort', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        other: effortModel('Kimi Other', ['low', 'medium', 'high']),
+      },
+      currentValue: 'current',
+      currentThinkingEffort: 'off',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    // support_efforts present but default_effort absent -> default to the
+    // middle entry (medium), not a hardcoded level.
+    expect(text(picker)).toContain('[ Medium ]');
+  });
+});
+
+describe('ModelSelectorComponent overrides', () => {
+  it('uses overridden support_efforts for selectable efforts', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        kimi: {
+          ...effortModel('Kimi K2', ['low', 'high', 'max'], 'max'),
+          overrides: { supportEfforts: ['low', 'high'] },
+        },
+      },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'max',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = text(picker);
+    expect(out).toContain('Low');
+    expect(out).toContain('High');
+    expect(out).not.toContain('Max');
   });
 });

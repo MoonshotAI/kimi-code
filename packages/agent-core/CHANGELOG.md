@@ -1,5 +1,51 @@
 # @moonshot-ai/agent-core
 
+## 0.15.1
+
+### Patch Changes
+
+- [#1285](https://github.com/MoonshotAI/kimi-code/pull/1285) [`c434b4c`](https://github.com/MoonshotAI/kimi-code/commit/c434b4c3e658b686e5f0d0d7d3a2b4cfbfbcaffa) - Cap the output a single foreground shell command may stream so a runaway command can no longer crash the process. A command that produces a very large or unbounded amount of output (e.g. `b3sum --length 18446744073709551615`) previously grew the live-output buffer until Node aborted with a JavaScript heap out-of-memory error; it is now gracefully terminated once its output exceeds 16 MiB, and the result explains how to redirect large output to a file instead. The per-task output ring buffer is also maintained in O(1) per chunk rather than O(n²). Background tasks are unaffected.
+
+- [#1308](https://github.com/MoonshotAI/kimi-code/pull/1308) [`4dd926b`](https://github.com/MoonshotAI/kimi-code/commit/4dd926b0ac8f901030b012827a418274cd7434ae) - Drop orphan tool results at the projection boundary so a malformed history cannot brick a session. A `tool` result whose assistant `tool_call` is nowhere in the history (e.g. an older session whose compaction cut fell inside a tool exchange, restored via the legacy path) is now removed from every projected request, not only on the post-400 strict resend. The stored history is left faithful to the wire records — so consumers that model it, like the transcript fold length, stay in sync — while a strict provider (OpenAI / DeepSeek) always receives a valid request. The drop is surfaced via the projection-repair log rather than done silently.
+
+- [#1296](https://github.com/MoonshotAI/kimi-code/pull/1296) [`021de54`](https://github.com/MoonshotAI/kimi-code/commit/021de5433b43bf944ae77637e74581bf509d5d14) - Align model-facing prompts with actual tool behavior. Fix descriptions that drifted from the implementation (Grep `glob` matching against absolute paths, Glob accepting relative `path`, FetchURL extraction modes, files-only Glob results, cron pinned-date recurrence), disclose enforced-but-silent behavior (idle-only cron delivery, the 5-year no-fire rejection, VCS directories always excluded, sensitive-file exemptions, image downsampling, the subagent summary-length floor, background rejection before launch), resolve cross-surface contradictions (AskUserQuestion background polling guidance, AgentSwarm resume typing, `&&` chaining vs parallel calls, dangling optional-tool names in the shared system prompt), and add missing guidance (denied-call handling for the root agent, read-only role statement for the plan subagent, coder handoff requirements, web/`gh` routing, a dual-use content-safety boundary, scope discipline, and dependency-verification norms).
+
+- Updated dependencies [[`93ec6cb`](https://github.com/MoonshotAI/kimi-code/commit/93ec6cb6526021156a951f8c513c45f138bf5dbb), [`4dd926b`](https://github.com/MoonshotAI/kimi-code/commit/4dd926b0ac8f901030b012827a418274cd7434ae)]:
+  - @moonshot-ai/kosong@0.5.2
+
+## 0.15.0
+
+### Minor Changes
+
+- [#1260](https://github.com/MoonshotAI/kimi-code/pull/1260) [`e47ca10`](https://github.com/MoonshotAI/kimi-code/commit/e47ca10267e75d0b462f9f54e1ae6fc188521703) - WebSearch now sends only the query and returns lightweight result summaries (title, source site, date, URL, snippet) instead of inlined page content; fetch a result's full page content on demand with FetchURL. Both tools now include a citation reminder in their results.
+
+### Patch Changes
+
+- [#1258](https://github.com/MoonshotAI/kimi-code/pull/1258) [`b905dd4`](https://github.com/MoonshotAI/kimi-code/commit/b905dd49108c567d0fecd38a096808c121672795) - Show draft pull requests with a distinct draft status instead of displaying them as open.
+
+- [#1269](https://github.com/MoonshotAI/kimi-code/pull/1269) [`bf35f63`](https://github.com/MoonshotAI/kimi-code/commit/bf35f63c5d9b53625f3bf04f50b9a0bb49ced2c9) - Honor `base_url` for the `google-genai` and `vertexai` providers. A configured base URL was previously ignored and requests always went to `generativelanguage.googleapis.com`; it is now forwarded to the Google GenAI SDK (with `GOOGLE_GEMINI_BASE_URL` / `GOOGLE_VERTEX_BASE_URL` env fallbacks), so Gemini-compatible proxies and gateways can be used. Give the host root only — the SDK appends the API version segment itself.
+
+- Updated dependencies [[`b905dd4`](https://github.com/MoonshotAI/kimi-code/commit/b905dd49108c567d0fecd38a096808c121672795), [`bf35f63`](https://github.com/MoonshotAI/kimi-code/commit/bf35f63c5d9b53625f3bf04f50b9a0bb49ced2c9), [`074bb9b`](https://github.com/MoonshotAI/kimi-code/commit/074bb9ba1359dd3ea2a55eff81986f2bb4772793)]:
+  - @moonshot-ai/protocol@0.3.2
+  - @moonshot-ai/kosong@0.5.1
+
+## 0.14.3
+
+### Patch Changes
+
+- [#1221](https://github.com/MoonshotAI/kimi-code/pull/1221) [`a3f9cec`](https://github.com/MoonshotAI/kimi-code/commit/a3f9cec8a975f11e37e992e42f954789ed394207) - Fix duplicate workspaces showing in the web sidebar when the same folder is registered more than once.
+
+- Updated dependencies [[`ceb27f5`](https://github.com/MoonshotAI/kimi-code/commit/ceb27f5e449e177493f320d90e292487a8fc3410)]:
+  - @moonshot-ai/protocol@0.3.1
+
+## 0.14.2
+
+### Patch Changes
+
+- [#1068](https://github.com/MoonshotAI/kimi-code/pull/1068) [`c82dcf9`](https://github.com/MoonshotAI/kimi-code/commit/c82dcf9cd8276eddf6acbf1030d1712b83a38083) - Glob now uses ripgrep, so it respects .gitignore by default, supports brace patterns, returns only files, and keeps partial results with a warning when some directories are unreadable.
+
+- [#1209](https://github.com/MoonshotAI/kimi-code/pull/1209) [`0635387`](https://github.com/MoonshotAI/kimi-code/commit/063538744f64a1bd3da6f37ebd0643d10bfc068f) - Align malformed tool call argument handling with schema validation fallback.
+
 ## 0.14.1
 
 ### Patch Changes

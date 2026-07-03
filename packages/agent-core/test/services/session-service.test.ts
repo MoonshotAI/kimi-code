@@ -192,7 +192,7 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
       }),
     getConfig: vi.fn().mockResolvedValue({
       modelAlias: 'kimi-k2',
-      thinkingLevel: 'auto',
+      thinkingEffort: 'auto',
       modelCapabilities: { max_context_tokens: 100 },
     }),
     getPermission: vi.fn().mockResolvedValue({ mode: 'manual' }),

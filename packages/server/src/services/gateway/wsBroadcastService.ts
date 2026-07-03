@@ -245,6 +245,9 @@ function isGlobalSessionEvent(type: string): boolean {
     // when another client creates or renames a session.
     type === 'session.meta.updated' ||
     type === 'event.config.changed' ||
+    // Provider-model catalog is global (not session-scoped): every connected
+    // client must learn when a manual or scheduled refresh changes it.
+    type === 'event.model_catalog.changed' ||
     // Workspace registry is not session-scoped: workspace lifecycle events ride
     // the '__global__' watermark and fan out to every connection.
     type === 'event.workspace.created' ||

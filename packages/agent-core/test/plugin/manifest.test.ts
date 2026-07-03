@@ -218,7 +218,6 @@ describe('parseManifest', () => {
       'kimi.plugin.json': JSON.stringify({
         name: 'demo',
         tools: { foo: { description: 'x' } },
-        commands: ['x'],
         configFile: 'cfg.json',
         config_file: 'legacy-cfg.json',
         inject: { foo: 'bar' },
@@ -230,7 +229,6 @@ describe('parseManifest', () => {
     expect(result.manifest).toEqual(expect.objectContaining({ name: 'demo' }));
     for (const field of [
       'tools',
-      'commands',
       'configFile',
       'config_file',
       'inject',
@@ -417,6 +415,77 @@ describe('parseManifest', () => {
     });
     const result = await parseManifest(root);
     expect(result.manifest?.hooks).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warn' }));
+  });
+
+  it('resolves a commands directory to its .md files', async () => {
+    const root = await makePlugin(
+      {
+        'kimi.plugin.json': JSON.stringify({ name: 'demo', commands: ['./commands'] }),
+        'commands/deploy.md': '---\ndescription: Deploy\n---\nbody',
+        'commands/env.md': '---\ndescription: Env\n---\nbody',
+        'commands/notes.txt': 'ignored',
+      },
+      { dirs: ['commands'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest?.commands).toEqual([
+      { path: path.join(root, 'commands/deploy.md'), name: 'deploy' },
+      { path: path.join(root, 'commands/env.md'), name: 'env' },
+    ]);
+  });
+
+  it('recurses into nested command directories and preserves the namespace', async () => {
+    const root = await makePlugin(
+      {
+        'kimi.plugin.json': JSON.stringify({ name: 'demo', commands: ['./commands'] }),
+        'commands/deploy.md': '---\ndescription: Deploy\n---\nbody',
+        'commands/frontend/component.md': '---\ndescription: Component\n---\nbody',
+        'commands/frontend/deep/nested.md': '---\ndescription: Nested\n---\nbody',
+      },
+      { dirs: ['commands', 'commands/frontend', 'commands/frontend/deep'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest?.commands).toEqual([
+      { path: path.join(root, 'commands/deploy.md'), name: 'deploy' },
+      { path: path.join(root, 'commands/frontend/component.md'), name: 'frontend/component' },
+      { path: path.join(root, 'commands/frontend/deep/nested.md'), name: 'frontend/deep/nested' },
+    ]);
+  });
+
+  it('accepts a single command .md file', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', commands: ['./deploy.md'] }),
+      'deploy.md': '---\ndescription: Deploy\n---\nbody',
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.commands).toEqual([
+      { path: path.join(root, 'deploy.md'), name: 'deploy' },
+    ]);
+  });
+
+  it('warns when commands is not a string or string[]', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', commands: { nope: true } }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.commands).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warn',
+        message: '"commands" must be a string or string[]',
+      }),
+    );
+  });
+
+  it('warns when a commands entry resolves outside the plugin', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', commands: ['../outside.md'] }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.commands).toBeUndefined();
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warn' }));
   });
 });

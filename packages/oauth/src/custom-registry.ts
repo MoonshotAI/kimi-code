@@ -1,6 +1,7 @@
 import { readApiErrorMessage } from './api-error';
+import { CUSTOM_REGISTRY_MODEL_FIELDS, mergeRefreshedModelAlias } from './model-alias-merge';
 import { isRecord } from './utils';
-import type { ManagedKimiConfigShape } from './managed-kimi-code';
+import type { ManagedKimiConfigShape, ManagedKimiModelAlias } from './managed-kimi-code';
 
 export type { ManagedKimiConfigShape };
 
@@ -295,10 +296,15 @@ export function applyCustomRegistryProvider(
   };
 
   const existingModels = config.models ?? {};
-  // Drop stale aliases for the same provider before re-populating, mirroring
-  // applyOpenPlatformConfig's refresh semantics.
+  // Selectively merge upstream models into the existing config so any fields
+  // the user added by hand (or that upstream does not declare) survive a
+  // refresh. Models that upstream no longer lists are removed; the rest are
+  // merged field-by-field.
+  const upstreamKeys = new Set(
+    Object.keys(entry.models).map((modelKey) => `${providerKey}/${modelKey}`),
+  );
   for (const [key, alias] of Object.entries(existingModels)) {
-    if (isRecord(alias) && alias['provider'] === providerKey) {
+    if (isRecord(alias) && alias['provider'] === providerKey && !upstreamKeys.has(key)) {
       delete existingModels[key];
     }
   }
@@ -309,14 +315,20 @@ export function applyCustomRegistryProvider(
     const capabilities = resolveCapabilities(model);
     const displayName =
       typeof model.name === 'string' && model.name.length > 0 ? model.name : model.id;
+    const existing = isRecord(existingModels[aliasKey]) ? existingModels[aliasKey] : {};
 
-    existingModels[aliasKey] = {
+    const remoteAlias: ManagedKimiModelAlias = {
       provider: providerKey,
       model: model.id,
       maxContextSize,
       capabilities,
       displayName,
     };
+    existingModels[aliasKey] = mergeRefreshedModelAlias(
+      existing,
+      remoteAlias,
+      CUSTOM_REGISTRY_MODEL_FIELDS,
+    );
   }
 
   config.models = existingModels;

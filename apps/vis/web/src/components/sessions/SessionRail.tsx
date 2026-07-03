@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
-import { useDeleteSession, useSessions } from '../../hooks/useSession';
+import { useDeleteSession, useImportZip, useSessions } from '../../hooks/useSession';
 import type { SessionSummary, SessionHealth } from '../../types';
 import { SessionCard } from './SessionCard';
 import { SessionFilter } from './SessionFilter';
 
 export type SessionSortKey = 'recent' | 'oldest' | 'most_records' | 'most_subagents';
 export type HealthFilter = 'all' | SessionHealth;
+export type SourceFilter = 'all' | 'local' | 'imported';
 
 function workspaceKey(s: SessionSummary): string {
   if (!s.workDir) return '(no workspace)';
@@ -30,29 +31,45 @@ function sortSessions(sessions: readonly SessionSummary[], key: SessionSortKey):
 export function SessionRail() {
   const { data, isLoading, error } = useSessions();
   const deleteSession = useDeleteSession();
+  const importZip = useImportZip();
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SessionSortKey>('recent');
   const [healthFilter, setHealthFilter] = useState<HealthFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
 
   const filtered = useMemo(() => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
     return data.filter((s) => {
       if (healthFilter !== 'all' && s.health !== healthFilter) return false;
+      if (sourceFilter === 'local' && s.imported) return false;
+      if (sourceFilter === 'imported' && !s.imported) return false;
       if (!q) return true;
       const hay = [
         s.sessionId,
         s.title ?? '',
         s.lastPrompt ?? '',
         s.workDir ?? '',
+        s.importMeta?.originalName ?? '',
       ]
         .join(' ')
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [data, search, healthFilter]);
+  }, [data, search, healthFilter, sourceFilter]);
+
+  const importedCount = useMemo(() => (data ?? []).filter((s) => s.imported).length, [data]);
+
+  async function handleImport(file: File) {
+    try {
+      const result = await importZip.mutateAsync(file);
+      void navigate(`/sessions/${result.sessionId}`);
+    } catch (importError) {
+      window.alert(`Import failed: ${importError instanceof Error ? importError.message : String(importError)}`);
+    }
+  }
 
   const grouped = useMemo(() => {
     if (sortKey !== 'recent') return null;
@@ -107,8 +124,13 @@ export function SessionRail() {
         onSortChange={setSortKey}
         healthFilter={healthFilter}
         onHealthChange={setHealthFilter}
+        sourceFilter={sourceFilter}
+        onSourceChange={setSourceFilter}
         totalCount={data?.length ?? 0}
         filteredCount={filtered.length}
+        importedCount={importedCount}
+        onImport={(file) => { void handleImport(file); }}
+        importing={importZip.isPending}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading ? (

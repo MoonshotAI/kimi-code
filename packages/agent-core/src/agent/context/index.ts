@@ -3,10 +3,25 @@ import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
-import { estimateTokensForMessages } from '../../utils/tokens';
+import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
 import { escapeXml } from '../../utils/xml-escape';
-import type { CompactionResult } from '../compaction';
-import { project, trimTrailingOpenToolExchange } from './projector';
+import {
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  COMPACTION_ELISION_VARIANT,
+  buildCompactionElisionText,
+  collectCompactableUserMessages,
+  isRealUserInput,
+  selectCompactionUserMessages,
+  selectRecentUserMessages,
+  type CompactionInput,
+  type CompactionResult,
+} from '../compaction';
+import {
+  project,
+  type ProjectionAnomaly,
+  type ProjectOptions,
+  trimTrailingOpenToolExchange,
+} from './projector';
 import {
   USER_PROMPT_ORIGIN,
   type AgentContextData,
@@ -36,6 +51,9 @@ export class ContextMemory {
   private pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
   private _lastAssistantAt: number | null = null;
+  // Signature of the last logged set of projection repairs, so a repair that
+  // recurs identically on every send is logged once rather than per step.
+  private lastProjectionRepairSignature: string | null = null;
 
   constructor(protected readonly agent: Agent) {}
 
@@ -172,7 +190,7 @@ export class ContextMemory {
         this._tokenCount -= estimateTokensForMessages([message]);
       }
 
-      if (isRealUserPrompt(message)) {
+      if (isRealUserInput(message)) {
         removedUserCount++;
         if (removedUserCount >= count) break;
       }
@@ -205,7 +223,67 @@ export class ContextMemory {
     }
   }
 
-  applyCompaction(result: CompactionResult): void {
+  applyCompaction(input: CompactionInput): CompactionResult {
+    // Single derivation point for the post-compaction shape: the kept user
+    // messages (verbatim, within the token budget — the oldest head plus the
+    // most recent tail, with an elision marker between them when the pool
+    // overflowed), followed by a user-role summary. `tokensAfter` and the
+    // kept-count fields are derived here from the actual `_history` so the
+    // live context, the wire record, and the transcript reducer all agree —
+    // re-deriving them elsewhere (e.g. from the full transcript, which still
+    // holds the untruncated originals of messages the live context truncated)
+    // would diverge.
+    const compactableUserMessages = collectCompactableUserMessages(this._history);
+    // Records written before the head/tail split carry `keptUserMessageCount`
+    // but no `keptHeadUserMessageCount`; they were produced by the tail-only
+    // selection, so restore must reproduce that exact selection or the rebuilt
+    // history would diverge from the persisted counts the transcript reducer
+    // relies on. (A new-code record without elision restores identically under
+    // either selection, so gating on the head field alone is sufficient.)
+    const restoreTailOnly =
+      this.agent.records.restoring !== null && input.keptHeadUserMessageCount === undefined;
+    const selection = restoreTailOnly
+      ? {
+          head: [],
+          tail: selectRecentUserMessages(compactableUserMessages, COMPACT_USER_MESSAGE_MAX_TOKENS),
+          elided: false,
+          omittedTokens: 0,
+        }
+      : selectCompactionUserMessages(compactableUserMessages);
+    const elisionMessage: ContextMessage | null = selection.elided
+      ? {
+          role: 'user',
+          content: [{ type: 'text', text: buildCompactionElisionText(selection.omittedTokens) }],
+          toolCalls: [],
+          origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
+        }
+      : null;
+    const keptMessages: ContextMessage[] =
+      elisionMessage === null
+        ? [...selection.head, ...selection.tail]
+        : [...selection.head, elisionMessage, ...selection.tail];
+    // Live compaction omits these so they are derived from the actual
+    // `_history`; restore passes the persisted record so its historical values
+    // are preserved verbatim. Older wire records did not have `contextSummary`,
+    // so their `summary` remains the model-context text during restore.
+    const contextSummary = input.contextSummary ?? input.summary;
+    const tokensAfter =
+      input.tokensAfter ??
+      estimateTokens(contextSummary) + estimateTokensForMessages(keptMessages);
+    const keptUserMessageCount =
+      input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
+    const keptHeadUserMessageCount =
+      input.keptHeadUserMessageCount ?? (selection.elided ? selection.head.length : undefined);
+    const result: CompactionResult = {
+      summary: input.summary,
+      contextSummary,
+      compactedCount: input.compactedCount,
+      tokensBefore: input.tokensBefore,
+      tokensAfter,
+      keptUserMessageCount,
+      keptHeadUserMessageCount,
+      droppedCount: input.droppedCount,
+    };
     this.agent.records.logRecord({
       type: 'context.apply_compaction',
       ...result,
@@ -213,27 +291,53 @@ export class ContextMemory {
     this.agent.replayBuilder.patchLast('compaction', {
       result: {
         summary: result.summary,
+        contextSummary: result.contextSummary,
         compactedCount: result.compactedCount,
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
+        keptUserMessageCount: result.keptUserMessageCount,
+        keptHeadUserMessageCount: result.keptHeadUserMessageCount,
+        droppedCount: result.droppedCount,
       },
     });
-    this._history = [
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: result.summary }],
-        toolCalls: [],
-        origin: { kind: 'compaction_summary' },
-      },
-      ...this._history.slice(result.compactedCount),
-    ];
+    const summaryMessage: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: contextSummary }],
+      toolCalls: [],
+      origin: { kind: 'compaction_summary' },
+    };
+    // Wire backward-compat: a pre-rework `context.apply_compaction` record (which
+    // has no `keptUserMessageCount`) used `[summary, ...history.slice(compactedCount)]`
+    // semantics and kept a verbatim recent tail. Reproduce that shape on restore
+    // so resuming a session compacted by an older version does not silently drop
+    // the recent assistant/tool tail beyond `compactedCount`. Gated on
+    // `records.restoring`, so the live/forward path — which always sets
+    // `contextSummary` and `keptUserMessageCount` — is unaffected.
+    //
+    // The cut can land inside a tool exchange, leaving the tail starting with an
+    // orphan `tool` result whose assistant is now in the summarized prefix. The
+    // history is kept faithful to the wire records (so the transcript reducer's
+    // fold length stays in sync); the projector drops the orphan at the wire
+    // boundary — see `dropOrphanToolResults` — so a strict provider still gets a
+    // valid request without mutating the stored history here.
+    const isLegacyRestore =
+      this.agent.records.restoring !== null &&
+      input.keptUserMessageCount === undefined &&
+      input.compactedCount < this._history.length;
+    this._history = isLegacyRestore
+      ? [summaryMessage, ...this._history.slice(input.compactedCount)]
+      : [...keptMessages, summaryMessage];
     this.openSteps.clear();
-    this.flushDeferredMessagesIfToolExchangeClosed();
+    this.pendingToolResultIds.clear();
+    // Drop deferred messages (mostly injections/system reminders) instead of
+    // flushing them: initial context is rebuilt every turn.
+    this.deferredMessages = [];
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
-    this.agent.injection.onContextCompacted(result.compactedCount);
+    this.agent.injection.onContextCompacted();
     this.agent.emitStatusUpdated();
+    return result;
   }
 
   data(): AgentContextData {
@@ -256,12 +360,101 @@ export class ContextMemory {
     return this._history;
   }
 
-  project(messages: readonly ContextMessage[]): Message[] {
-    return project(this.agent.microCompaction.compact(messages));
+  project(messages: readonly ContextMessage[], options?: ProjectOptions): Message[] {
+    const anomalies: ProjectionAnomaly[] = [];
+    const result = project(this.agent.microCompaction.compact(messages), {
+      ...options,
+      onAnomaly: (anomaly) => {
+        anomalies.push(anomaly);
+        options?.onAnomaly?.(anomaly);
+      },
+    });
+    this.reportProjectionRepairs(anomalies);
+    return result;
+  }
+
+  // Surface the projector's wire-repairs so a silently-mangled history leaves a
+  // trace instead of being papered over. Deduped by signature: a repair that
+  // recurs identically every send (e.g. a persistently lost result re-synthesized
+  // each turn) logs once, not per step. Trailing-tail synthesis is excluded — it
+  // is the expected close of an in-flight call under `synthesizeMissing`
+  // (compaction / strict resend), not a defect.
+  private reportProjectionRepairs(anomalies: readonly ProjectionAnomaly[]): void {
+    const notable = anomalies.filter(
+      (anomaly) => !(anomaly.kind === 'tool_result_synthesized' && anomaly.trailing),
+    );
+    if (notable.length === 0) {
+      this.lastProjectionRepairSignature = null;
+      return;
+    }
+    const signature = notable
+      .map((anomaly) => ('toolCallId' in anomaly ? `${anomaly.kind}:${anomaly.toolCallId}` : anomaly.kind))
+      .toSorted()
+      .join('|');
+    if (signature === this.lastProjectionRepairSignature) return;
+    this.lastProjectionRepairSignature = signature;
+
+    let reordered = 0;
+    let synthesized = 0;
+    let droppedOrphan = 0;
+    let leadingDropped = 0;
+    let assistantsMerged = 0;
+    let whitespaceDropped = 0;
+    for (const anomaly of notable) {
+      if (anomaly.kind === 'tool_result_reordered') reordered += 1;
+      else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
+      else if (anomaly.kind === 'orphan_tool_result_dropped') droppedOrphan += 1;
+      else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
+      else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
+      else whitespaceDropped += 1;
+    }
+    const toolCallIds = [
+      ...new Set(
+        notable.flatMap((anomaly) => ('toolCallId' in anomaly ? [anomaly.toolCallId] : [])),
+      ),
+    ].slice(0, 5);
+    this.agent.log.warn('repaired the request to keep it wire-valid', {
+      reordered,
+      synthesized,
+      droppedOrphan,
+      leadingDropped,
+      assistantsMerged,
+      whitespaceDropped,
+      toolCallIds,
+    });
+    this.agent.telemetry.track('context_projection_repaired', {
+      reordered,
+      synthesized,
+      dropped_orphan: droppedOrphan,
+      leading_dropped: leadingDropped,
+      assistants_merged: assistantsMerged,
+      whitespace_dropped: whitespaceDropped,
+    });
   }
 
   get messages(): Message[] {
-    return this.project(this.history);
+    // The normal wire projection. `dropOrphanResults` is on for every
+    // request-building projection (here, `strictMessages`, and the compaction
+    // summarizer): a stray result with no matching call anywhere is wire-invalid
+    // on strict providers and useless to the model, so it never reaches the
+    // provider — while fragment projections (e.g. token estimation of a history
+    // slice) leave it alone.
+    return this.project(this.history, { dropOrphanResults: true });
+  }
+
+  // Last-resort projection for the post-400 strict resend: close every open tool
+  // call (including a trailing in-flight one), drop stray tool results, drop a
+  // leading non-user message, and merge consecutive assistant turns, so the
+  // request is wire-compliant for strict providers no matter how the history was
+  // mangled. Only used when the provider has already rejected the normal
+  // projection — see the adjacency fallback in `turn-step`.
+  get strictMessages(): Message[] {
+    return this.project(this.history, {
+      synthesizeMissing: true,
+      dropOrphanResults: true,
+      dropLeadingNonUser: true,
+      mergeConsecutiveAssistants: true,
+    });
   }
 
   useProjectedHistoryFrom(source: ContextMemory): void {
@@ -443,7 +636,12 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
     return isEmptyOutputText(output) ? TOOL_EMPTY_STATUS : output;
   }
 
-  if (output.length === 0) {
+  // Treat an array output with no sendable content (empty, or only empty/
+  // whitespace-only text blocks) the same as an empty string output: emit the
+  // placeholder. Otherwise projection would strip the blank text blocks, leave
+  // the tool message empty, and throw on every send — bricking the session. A
+  // non-text part (image/etc.) or any non-whitespace text keeps the real output.
+  if (isEmptyEquivalentContentArray(output)) {
     return [
       {
         type: 'text',
@@ -457,18 +655,12 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
   return output;
 }
 
-function isEmptyOutputText(output: string): boolean {
-  return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
+function isEmptyEquivalentContentArray(output: readonly ContentPart[]): boolean {
+  return output.every((part) => part.type === 'text' && part.text.trim().length === 0);
 }
 
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash';
-  }
-  return false;
+function isEmptyOutputText(output: string): boolean {
+  return output.trim().length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
 }
 
 function formatUndoUnavailableMessage(

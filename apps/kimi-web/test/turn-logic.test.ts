@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AppMessage, AppMessageContent } from '../src/api/types';
+import type { AppMessage, AppMessageContent, AppTask } from '../src/api/types';
 import { latestTodos } from '../src/composables/latestTodos';
 import { messagesToTurns } from '../src/composables/messagesToTurns';
 
@@ -16,6 +16,30 @@ function message(
     content,
     createdAt: '2026-01-01T00:00:00.000Z',
     ...extra,
+  };
+}
+
+function subagentTask(
+  id: string,
+  parentToolCallId: string,
+  swarmIndex: number,
+  subagentPhase: AppTask['subagentPhase'],
+): AppTask {
+  return {
+    id,
+    sessionId: 'session-1',
+    kind: 'subagent',
+    description: `subagent ${swarmIndex}`,
+    status:
+      subagentPhase === 'failed'
+        ? 'failed'
+        : subagentPhase === 'completed'
+          ? 'completed'
+          : 'running',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    parentToolCallId,
+    swarmIndex,
+    subagentPhase,
   };
 }
 
@@ -77,6 +101,105 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns).toMatchObject([{ role: 'compaction', text: 'summary' }]);
+  });
+
+  it('suppresses an inline tool card for a live multi-member swarm', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'run a swarm' }]),
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'swarm-1', toolName: 'AgentSwarm', input: {} },
+        ]),
+      ],
+      [],
+      undefined,
+      true,
+      [
+        subagentTask('a-1', 'swarm-1', 1, 'working'),
+        subagentTask('a-2', 'swarm-1', 2, 'queued'),
+        subagentTask('a-3', 'swarm-1', 3, 'completed'),
+      ],
+    );
+
+    const assistant = turns.at(-1);
+    expect(assistant?.tools ?? []).not.toContainEqual(
+      expect.objectContaining({ id: 'swarm-1' }),
+    );
+    expect(assistant?.blocks ?? []).not.toContainEqual(
+      expect.objectContaining({ kind: 'agentGroup' }),
+    );
+  });
+
+  it('renders a completed multi-member swarm inline as a tool card', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'run a swarm' }]),
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'swarm-2', toolName: 'AgentSwarm', input: {} },
+        ]),
+        message('t1', 'tool', [{ type: 'toolResult', toolCallId: 'swarm-2', output: 'all done' }]),
+      ],
+      [],
+      undefined,
+      false,
+      [
+        subagentTask('b-1', 'swarm-2', 1, 'completed'),
+        subagentTask('b-2', 'swarm-2', 2, 'completed'),
+        subagentTask('b-3', 'swarm-2', 3, 'failed'),
+      ],
+    );
+
+    const assistant = turns.at(-1);
+    expect(assistant?.tools).toContainEqual(
+      expect.objectContaining({ id: 'swarm-2', name: 'AgentSwarm', status: 'ok' }),
+    );
+    expect(assistant?.blocks ?? []).not.toContainEqual(
+      expect.objectContaining({ kind: 'agentGroup' }),
+    );
+  });
+
+  it('renders a single subagent spawn as a tool card, not an agent block', () => {
+    const singleSubagent: AppTask = {
+      id: 'sub-1',
+      sessionId: 'session-1',
+      kind: 'subagent',
+      description: 'explore the repo',
+      status: 'completed',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      parentToolCallId: 'agent-call-1',
+      subagentPhase: 'completed',
+      runInBackground: false,
+    };
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'go explore' }]),
+        message('a1', 'assistant', [
+          {
+            type: 'toolUse',
+            toolCallId: 'agent-call-1',
+            toolName: 'Agent',
+            input: { description: 'explore the repo', prompt: 'list the top-level dirs' },
+          },
+        ]),
+        message('t1', 'tool', [{ type: 'toolResult', toolCallId: 'agent-call-1', output: 'done' }]),
+      ],
+      [],
+      undefined,
+      false,
+      [singleSubagent],
+    );
+
+    const assistant = turns.at(-1);
+    // The spawning `Agent` call renders as a normal tool card (args + result)…
+    expect(assistant?.tools).toContainEqual(
+      expect.objectContaining({ id: 'agent-call-1', name: 'Agent', status: 'ok' }),
+    );
+    // …and never as an inline agent/agentGroup block (live progress moves to
+    // the right-side panel).
+    expect(assistant?.blocks ?? []).not.toContainEqual(expect.objectContaining({ kind: 'agent' }));
+    expect(assistant?.blocks ?? []).not.toContainEqual(
+      expect.objectContaining({ kind: 'agentGroup' }),
+    );
   });
 });
 

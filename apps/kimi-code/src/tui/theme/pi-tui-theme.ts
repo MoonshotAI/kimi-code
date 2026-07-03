@@ -8,7 +8,7 @@
  * instances reads the *current* palette via the singleton.
  */
 
-import type { MarkdownTheme, EditorTheme } from '@earendil-works/pi-tui';
+import type { MarkdownTheme, EditorTheme } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { highlight, supportsLanguage } from 'cli-highlight';
 

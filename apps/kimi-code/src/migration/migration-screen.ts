@@ -11,7 +11,7 @@
  * This file implements the ask, progress, and result phases. `beginMigration`
  * drives the real runMigration flow (injectable for tests).
  */
-import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@earendil-works/pi-tui';
+import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';

@@ -295,14 +295,33 @@ export function useModelProviderState(
     }
   }
 
-  /** Refresh a provider status */
+  /** Refresh a single provider's remote model metadata, then reload caches. */
   async function refreshProvider(id: string): Promise<void> {
     try {
-      const api = getKimiWebApi();
-      const updated = await api.refreshProvider(id);
-      providers.value = providers.value.map((p) => (p.id === id ? updated : p));
+      const result = await getKimiWebApi().refreshProvider(id);
+      for (const failure of result.failed) {
+        pushOperationFailure('refreshProvider', new Error(failure.reason), {
+          message: failure.provider,
+        });
+      }
+      await Promise.all([loadProviders(), loadModels()]);
     } catch (err) {
       pushOperationFailure('refreshProvider', err);
+    }
+  }
+
+  /** Refresh every refreshable provider's remote model metadata, then reload caches. */
+  async function refreshAllProviders(): Promise<void> {
+    try {
+      const result = await getKimiWebApi().refreshAllProviders();
+      for (const failure of result.failed) {
+        pushOperationFailure('refreshAllProviders', new Error(failure.reason), {
+          message: failure.provider,
+        });
+      }
+      await Promise.all([loadProviders(), loadModels()]);
+    } catch (err) {
+      pushOperationFailure('refreshAllProviders', err);
     }
   }
 
@@ -375,6 +394,7 @@ export function useModelProviderState(
     addProvider,
     deleteProvider,
     refreshProvider,
+    refreshAllProviders,
     startOAuthLogin,
     pollOAuthLogin,
     cancelOAuthLogin,

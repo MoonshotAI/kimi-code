@@ -61,3 +61,24 @@ export function moveInOrder(
   next.splice(insertIdx, 0, fromId);
   return next;
 }
+
+/** Sidebar workspace sort mode. `manual` keeps the user-defined (dragged)
+ *  order; `recent` orders by each workspace's most recent session activity. */
+export type WorkspaceSortMode = 'manual' | 'recent';
+
+/**
+ * Sort workspaces by their most recent session activity, newest first.
+ * `lastEditedAt` maps a workspace id to the latest `session.updatedAt`
+ * (epoch ms) among its sessions. Workspaces absent from the map (no sessions
+ * yet) sort to the end. The sort is stable and does not mutate the input.
+ */
+export function sortWorkspacesByRecent<T extends { id: string }>(
+  workspaces: T[],
+  lastEditedAt: ReadonlyMap<string, number>,
+): T[] {
+  return workspaces.toSorted(
+    (a, b) =>
+      (lastEditedAt.get(b.id) ?? Number.NEGATIVE_INFINITY) -
+      (lastEditedAt.get(a.id) ?? Number.NEGATIVE_INFINITY),
+  );
+}

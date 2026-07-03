@@ -2,12 +2,21 @@
 <!-- A single session row: status dot + title + time + attention pill + kebab. -->
 <!-- Inline rename (dblclick) and delete-confirm live here. -->
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
+import Spinner from './ui/Spinner.vue';
+import Badge from './ui/Badge.vue';
+import { useConfirmDialog } from '../composables/useConfirmDialog';
+import IconButton from './ui/IconButton.vue';
+import Menu from './ui/Menu.vue';
+import MenuItem from './ui/MenuItem.vue';
+import Icon from './ui/Icon.vue';
+import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -30,33 +39,81 @@ const emit = defineEmits<{
   fork: [id: string];
 }>();
 
+// Full, absolute timestamp shown on hover (the row's `time` is a short relative
+// string like "2h"/"1d" — see formatTime in useKimiWebClient).
+function formatFullTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const fullTime = computed(() =>
+  props.session.updatedAt ? formatFullTime(props.session.updatedAt) : props.session.time,
+);
+
 // Kebab menu
 const menuOpen = ref(false);
-const kebabRef = ref<HTMLButtonElement | null>(null);
-const menuRef = ref<HTMLElement | null>(null);
+const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
+const menuRef = ref<InstanceType<typeof Menu> | null>(null);
+// Fixed-position style for the teleported kebab menu, anchored to the ⋯ button.
+const menuStyle = ref<Record<string, string>>({});
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
-  if (menuRef.value?.contains(target) || kebabRef.value?.contains(target)) return;
+  if (menuRef.value?.el?.contains(target) || kebabRef.value?.el?.contains(target)) return;
   closeMenu();
 }
 
-function toggleMenu(e: Event): void {
-  e.stopPropagation();
-  if (!menuOpen.value) {
-    menuOpen.value = true;
-    // Defer so the current click doesn't immediately close the menu.
-    setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
-  } else {
-    closeMenu();
+// Anchor the menu to the ⋯ button with a viewport flip (open upward when there
+// isn't room below), mirroring the workspace kebab menu in Sidebar.vue. The menu
+// is rendered through a body teleport so ancestor `overflow: hidden` (notably the
+// collapsing `.group-sessions` list) can't clip it.
+function positionMenu(): void {
+  const btn = kebabRef.value?.el;
+  if (!btn) return;
+  const menu = menuRef.value?.el;
+  const r = btn.getBoundingClientRect();
+  const gap = 4;
+  const margin = 8;
+  const menuH = menu?.offsetHeight ?? 0;
+  const menuW = menu?.offsetWidth ?? 0;
+  let top = r.bottom + gap;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
   }
+  let left = r.right - menuW;
+  if (left < margin) left = margin;
+  menuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
+
+async function toggleMenu(e: Event): Promise<void> {
+  e.stopPropagation();
+  if (menuOpen.value) {
+    closeMenu();
+    return;
+  }
+  menuOpen.value = true;
+  // Defer so the current click doesn't immediately close the menu.
+  setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
+  window.addEventListener('resize', closeMenu);
+  // Wait for the teleported menu to mount so its size can be measured.
+  await nextTick();
+  positionMenu();
 }
 function closeMenu(): void {
   menuOpen.value = false;
   document.removeEventListener('mousedown', onDocClick);
+  window.removeEventListener('resize', closeMenu);
 }
 
-onUnmounted(() => document.removeEventListener('mousedown', onDocClick));
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocClick);
+  window.removeEventListener('resize', closeMenu);
+});
 
 // Inline rename
 const renaming = ref(false);
@@ -104,22 +161,22 @@ function forkRow(): void {
   emit('fork', props.session.id);
 }
 
-// Archive confirm
-const confirming = ref(false);
-function startArchive(): void {
+// Archive confirm — modal, consistent with remove-workspace.
+async function startArchive(): Promise<void> {
   closeMenu();
-  confirming.value = true;
-}
-function confirmArchive(): void {
-  emit('archive', props.session.id);
-  confirming.value = false;
-}
-function cancelArchive(): void {
-  confirming.value = false;
+  if (
+    await confirm({
+      title: t('sidebar.archive'),
+      message: t('sidebar.archiveConfirm'),
+      variant: 'danger',
+    })
+  ) {
+    emit('archive', props.session.id);
+  }
 }
 
 // Expose closeMenu so the parent can close on outside-click.
-defineExpose({ closeMenu, cancelArchive });
+defineExpose({ closeMenu });
 </script>
 
 <template>
@@ -127,132 +184,135 @@ defineExpose({ closeMenu, cancelArchive });
     <div class="row">
       <!-- Leading status slot (in the gutter left of the title): a spinner
            while the session runs, otherwise an unread blue dot. Fixed width
-           so the title start never shifts. It stays put in the archive-confirm
-           state too, so the confirm strip aligns with the title and never
-           spills past its left boundary. -->
+           so the title start never shifts. -->
       <span class="lead" aria-hidden="true">
-        <svg
-          v-if="session.busy"
-          class="run-ico"
-          viewBox="0 0 16 16"
-          width="12"
-          height="12"
-          fill="none"
-        >
-          <circle class="run-track" cx="8" cy="8" r="6" stroke-width="2" />
-          <path class="run-arc" d="M8 2 A6 6 0 1 1 2 8" stroke-width="2" stroke-linecap="round" />
-        </svg>
+        <Spinner v-if="session.busy" size="sm" />
         <span v-else-if="unread" class="unread-dot" />
       </span>
 
-      <!-- Archive confirm — replaces the title + controls but keeps the lead
-           gutter, so it aligns under the title (not the row's left edge). -->
-      <div v-if="confirming" class="archive-confirm" @click.stop>
-        <span class="archive-label">{{ t('sidebar.archiveConfirm') }}</span>
-        <button class="btn-confirm" @click.stop="confirmArchive">{{ t('sidebar.confirm') }}</button>
-        <button class="btn-cancel" @click.stop="cancelArchive">{{ t('sidebar.cancel') }}</button>
+      <div class="left">
+        <!-- Inline rename input -->
+        <input
+          v-if="renaming"
+          ref="renameInputRef"
+          v-model="renameValue"
+          class="rename-input"
+          @click.stop
+          @keydown.enter.stop="commitRename"
+          @keydown.esc.stop="cancelRename"
+          @blur="commitRename"
+        />
+        <span v-else class="t" @dblclick.stop="startRename">{{ session.title }}</span>
       </div>
 
-      <template v-else>
-        <div class="left">
-          <!-- Inline rename input -->
-          <input
-            v-if="renaming"
-            ref="renameInputRef"
-            v-model="renameValue"
-            class="rename-input"
-            @click.stop
-            @keydown.enter.stop="commitRename"
-            @keydown.esc.stop="cancelRename"
-            @blur="commitRename"
-          />
-          <span v-else class="t" @dblclick.stop="startRename">{{ session.title }}</span>
-        </div>
-
-        <span class="ts">{{ session.time }}</span>
-
-        <!-- Pending tags — coloured per kind, shown even when the row isn't
-             active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-             permission request is waiting. The session's lifecycle status drives
-             the same tags as a fallback for background sessions whose pending
-             lists aren't loaded yet (status known, counts not). -->
-        <span
+      <!-- Pending tags — coloured per kind, shown even when the row isn't
+           active. "Answer" = an askUserQuestion is waiting; "Approve" = a
+           permission request is waiting. The session's lifecycle status drives
+           the same tags as a fallback for background sessions whose pending
+           lists aren't loaded yet (status known, counts not). -->
+      <Tooltip :text="t('workspace.awaitingAnswerTitle')">
+        <Badge
           v-if="!renaming && (questionCount > 0 || session.status === 'awaitingQuestion')"
-          class="tag tag-ask"
-          :title="t('workspace.awaitingAnswerTitle')"
+          variant="info"
+          size="sm"
         >
-          <span class="tag-text">{{ t('workspace.awaitingAnswer') }}</span>
-        </span>
-        <span
+          {{ t('workspace.awaitingAnswer') }}
+        </Badge>
+      </Tooltip>
+      <Tooltip :text="t('workspace.awaitingPermissionTitle')">
+        <Badge
           v-if="!renaming && (approvalCount > 0 || session.status === 'awaitingApproval')"
-          class="tag tag-approve"
-          :title="t('workspace.awaitingPermissionTitle')"
+          variant="warning"
+          size="sm"
         >
-          <span class="tag-text">{{ t('workspace.awaitingPermission') }}</span>
-        </span>
-        <!-- Aborted: a distinct, low-key error tag (not collapsed into idle). -->
-        <span
+          {{ t('workspace.awaitingPermission') }}
+        </Badge>
+      </Tooltip>
+      <!-- Aborted: a distinct, low-key error tag (not collapsed into idle). -->
+      <Tooltip :text="t('workspace.abortedTitle')">
+        <Badge
           v-if="!renaming && session.status === 'aborted'"
-          class="tag tag-aborted"
-          :title="t('workspace.abortedTitle')"
+          variant="danger"
+          size="sm"
         >
-          <span class="tag-text">{{ t('workspace.aborted') }}</span>
-        </span>
+          {{ t('workspace.aborted') }}
+        </Badge>
+      </Tooltip>
 
-        <!-- Kebab button (visible on hover) -->
-        <button
+      <!-- Trailing action slot: the relative time and the kebab share one grid
+           cell and swap via `visibility` (never display:none), so the slot
+           width is identical in hover and rest. The badges and title therefore
+           don't reflow on hover — see design-system §07 "Session row". -->
+      <span class="act">
+        <span class="ts">{{ session.time }}</span>
+        <IconButton
           ref="kebabRef"
           v-if="!renaming"
           class="kebab"
           :class="{ open: menuOpen }"
-          :title="t('sidebar.options')"
+          size="sm"
+          :label="t('sidebar.options')"
           @click.stop="toggleMenu($event)"
         >
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
-            <circle cx="8" cy="3" r="1.3" />
-            <circle cx="8" cy="8" r="1.3" />
-            <circle cx="8" cy="13" r="1.3" />
-          </svg>
-        </button>
-      </template>
+          <Icon name="dots-horizontal" size="sm" />
+        </IconButton>
+      </span>
     </div>
 
-    <!-- Kebab dropdown -->
-    <div ref="menuRef" v-if="menuOpen" class="menu" @click.stop>
-      <button class="menu-item copy-id" :class="{ failed: copyFailed }" @click.stop="copySessionId">
-        {{
-          copyFailed
-            ? t('sidebar.copyFailed')
-            : copiedId
-              ? t('sidebar.copied')
-              : t('sidebar.copySessionId')
-        }}
-      </button>
-      <div class="menu-divider" />
-      <button class="menu-item" @click.stop="startRename">{{ t('sidebar.rename') }}</button>
-      <button class="menu-item" @click.stop="forkRow">{{ t('sidebar.fork') }}</button>
-      <button class="menu-item archive" @click.stop="startArchive">{{ t('sidebar.archive') }}</button>
-    </div>
+    <!-- Kebab dropdown — teleported to <body> and position:fixed so it escapes
+         the `overflow: hidden` on the collapsing `.group-sessions` list. -->
+    <Teleport to="body">
+      <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
+        <MenuItem :danger="copyFailed" @click="copySessionId">
+          {{
+            copyFailed
+              ? t('sidebar.copyFailed')
+              : copiedId
+                ? t('sidebar.copied')
+                : t('sidebar.copySessionId')
+          }}
+        </MenuItem>
+        <MenuItem separator />
+        <MenuItem @click="startRename">{{ t('sidebar.rename') }}</MenuItem>
+        <MenuItem @click="forkRow">{{ t('sidebar.fork') }}</MenuItem>
+        <MenuItem danger @click="startArchive">{{ t('sidebar.archive') }}</MenuItem>
+        <MenuItem separator />
+        <div class="menu-time">{{ fullTime }}</div>
+      </Menu>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .se {
   /* --sb-* vars come from .side in Sidebar.vue: the title starts at
-     --sb-pad-x + --sb-gutter + --sb-gap, exactly under the workspace name. */
+     --sb-pad-x + --sb-gutter + --sb-gap, exactly under the workspace name.
+     The row is an inset pill: a 6px horizontal margin + 10px padding lands the
+     leading icon at --sb-pad-x (16px), aligned with the workspace header. */
   display: block;
-  padding: 7px var(--sb-pad-x, 12px);
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  color: var(--color-text);
   cursor: pointer;
   position: relative;
 }
-.se:hover { background: var(--panel2); }
-.se.on { background: color-mix(in srgb, var(--blue) 7%, transparent); }
+.se:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+.se.on {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-hover);
+  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
+}
 
 .row {
   display: flex;
   align-items: center;
   gap: var(--sb-gap, 6px);
   min-width: 0;
+  /* Floor the row at the hover-kebab height (IconButton sm = 26px) so swapping
+     the timestamp for the kebab on hover doesn't grow the row. */
+  min-height: 26px;
 }
 
 .left {
@@ -272,184 +332,93 @@ defineExpose({ closeMenu, cancelArchive });
   align-items: center;
   justify-content: center;
 }
-.run-ico {
-  animation: row-spin 0.8s linear infinite;
-}
-.run-track { stroke: var(--line); }
-.run-arc { stroke: var(--blue); }
-@keyframes row-spin {
-  to { transform: rotate(360deg); }
-}
 .unread-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
-  background: var(--blue);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
 }
 
 .t {
-  color: var(--ink);
-  font-size: var(--ui-font-size);
-  font-weight: 400;
+  color: inherit;
+  font-size: 15px;
+  font-weight: var(--weight-regular);
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.se.on .t { font-weight: 500; }
 
-.ts { color: var(--muted); font-size: max(9px, calc(var(--ui-font-size) - 3.5px)); flex: none; }
-.se:hover .ts { display: none; }
-
-/* Pending tags — small coloured pills, one per kind. "Ask" reuses the Kimi-blue
-   accent; "Approve" uses the warn tone so the two read as distinct at a glance.
-   Fixed height + matching line-height keeps the text truly vertically centred
-   and prevents the pill from visually out-growing the session title. */
-.tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  flex: none;
-  box-sizing: border-box;
-  height: 18px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  font-size: var(--ui-font-size-xs);
-  line-height: 18px;
-  padding: 0 6px 0 5px;
-  font-family: var(--mono);
-  white-space: nowrap;
-  vertical-align: middle;
-}
-.tag svg { flex: none; display: block; }
-.tag-text { display: inline-flex; align-items: center; }
-.tag-ask {
-  background: var(--soft);
-  color: var(--blue2);
-  border-color: var(--bd);
-}
-.tag-approve {
-  background: color-mix(in srgb, var(--warn) 16%, var(--bg));
-  color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 38%, var(--bg));
-}
-.tag-aborted {
-  background: color-mix(in srgb, var(--err) 12%, var(--bg));
-  color: var(--err);
-  border-color: color-mix(in srgb, var(--err) 32%, var(--bg));
+.ts {
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
 }
 
-/* Kebab button — hidden until hover. Sits at the RIGHT of the timestamp
-   and attention badge so it is the right-most element. */
-.kebab {
-  display: none;
+/* Trailing action slot: time and kebab share one grid cell (grid-area:1/1).
+   Both stay in the layout and swap via `visibility` (never display:none), so
+   the slot width = max(time width, IconButton sm 26px) is identical in hover
+   and rest — the badges and title don't reflow, eliminating hover jitter.
+   `.act .kebab` out-specificities IconButton's own display so the hidden
+   default wins. */
+.act {
+  display: inline-grid;
   flex: none;
   align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 2px;
-  color: var(--muted);
-  border-radius: 4px;
+  justify-items: center;
 }
-.se:hover .kebab,
-.kebab.open {
-  display: inline-flex;
-}
-.kebab:hover,
-.kebab.open { color: var(--ink); background: var(--line2); }
+.act .ts,
+.act .kebab { grid-area: 1 / 1; }
+.act .kebab { visibility: hidden; }
+.se:hover .act .kebab,
+.act:has(.kebab.open) .kebab { visibility: visible; }
+.se:hover .act .ts,
+.act:has(.kebab.open) .ts { visibility: hidden; }
+.kebab.open { color: var(--color-text); background: var(--color-surface-sunken); }
 
+/* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu
+   is teleported to <body> so the collapsing list's `overflow: hidden` can't clip it. */
 .menu {
-  position: absolute;
-  right: 10px;
-  top: 30px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  z-index: 10;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  overflow: hidden;
-  min-width: 88px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-dropdown);
 }
-.menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--ink);
-  padding: 6px 12px;
-}
-.menu-item:hover { background: var(--panel2); }
-.menu-item.archive { color: var(--err); }
-.menu-item.failed { color: var(--err); }
-
-.menu-divider {
-  height: 1px;
-  background: var(--line);
-  margin: 2px 0;
+.menu-time {
+  padding: 6px 10px;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: default;
+  user-select: text;
 }
 
 .rename-input {
   flex: 1;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--blue);
-  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-xs);
   padding: 1px 4px;
   outline: none;
   min-width: 0;
 }
 
-.archive-confirm {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  font-size: calc(var(--ui-font-size) - 3px);
+.sessions .se {
+  margin: 0;
+  border-radius: var(--radius-md);
+  /* Trim the row padding by the inset margin so the title still starts at the
+     same x as the workspace name (whose header has no inset). */
+  padding: var(--space-1) calc(var(--sb-pad-x, 12px) - var(--space-2));
 }
-.archive-label {
-  color: var(--err);
-  /* Match the normal session title (.t) so the confirm text lines up with it
-     in size and baseline, not as a smaller note. */
-  font-size: var(--ui-font-size);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sessions .se:hover { background: var(--panel2); }
+.sessions .se.on {
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
 }
-.btn-confirm {
-  background: var(--err);
-  color: var(--bg);
-  border: none;
-  border-radius: 3px;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-}
-.btn-cancel {
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
-  color: var(--dim);
-}
-.btn-confirm:hover { opacity: 0.85; }
-.btn-cancel:hover { background: var(--panel2); }
-
-
+.sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
+.sessions .se .kebab { border-radius: var(--radius-sm); }
 </style>

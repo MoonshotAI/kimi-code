@@ -252,7 +252,7 @@ describe('SetGoalBudgetTool', () => {
 describe('UpdateGoalTool', () => {
   it('guards against premature blocked status', () => {
     const description = new UpdateGoalTool(fakeAgent()).description.toLowerCase();
-    // codex spec.rs:80 wording (without the 3-turn machinery kimi lacks).
+    // Reference spec wording (without the 3-turn machinery kimi lacks).
     expect(description).toContain('hard, slow');
     // UpdateGoal also injects the completion/blocked outcome prompt, so it does
     // more than "only record the status".

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { KimiConfig } from '../../src/config';
+import type { KimiConfig, ModelAlias } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
-import { resolveThinkingLevel } from '../../src/agent/config/thinking';
+import { resolveThinkingEffort } from '../../src/agent/config/thinking';
 
 // Thin wrapper that adapts the legacy `resolveRuntimeProvider(input)` shape to
 // the current ProviderManager API. Kept local so the existing test bodies do
@@ -338,6 +338,35 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.betaApi to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'kimi-alias': {
+            provider: 'anthropic',
+            model: 'kimi-for-coding',
+            maxContextSize: 200000,
+            protocol: 'anthropic',
+            betaApi: true,
+          },
+        },
+      },
+      model: 'kimi-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'kimi-for-coding',
+      betaApi: true,
+    });
+  });
+
   it('omits adaptiveThinking when alias.adaptiveThinking is unset', () => {
     const resolved = resolveRuntimeProvider({
       config: {
@@ -453,7 +482,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
     });
   });
 
-  it('does not apply kimiRequestHeaders to non-Kimi providers', () => {
+  it('applies only the User-Agent from kimiRequestHeaders to non-Kimi providers', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         defaultModel: 'gpt-alias',
@@ -479,8 +508,16 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
       type: 'openai',
       model: 'gpt-runtime',
       apiKey: 'sk-openai',
+      defaultHeaders: {
+        'User-Agent': TEST_KIMI_HEADERS['User-Agent'],
+      },
     });
-    expect('defaultHeaders' in resolved.provider).toBe(false);
+    // Device identity headers (`X-Msh-*`) stay Kimi-only — they must not leak
+    // to third-party providers.
+    const headers = (resolved.provider as { defaultHeaders?: Record<string, string> })
+      .defaultHeaders;
+    expect(headers).toBeDefined();
+    expect('X-Msh-Platform' in headers!).toBe(false);
     expect('generationKwargs' in resolved.provider).toBe(false);
   });
 });
@@ -747,91 +784,197 @@ describe('ProviderManager OAuth auth', () => {
   });
 });
 
-describe('resolveThinkingLevel', () => {
-  it('normalizes requested thinking into a concrete effort', () => {
-    expect(
-      resolveThinkingLevel('on', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('medium');
-    expect(
-      resolveThinkingLevel('off', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('low', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('low');
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('   ', {
-        defaultThinking: false,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('off');
+describe('resolveThinkingEffort', () => {
+  const booleanModel: ModelAlias = {
+    provider: 'p',
+    model: 'm',
+    maxContextSize: 1,
+    capabilities: ['thinking'],
+  };
+  const effortModel: ModelAlias = {
+    provider: 'p',
+    model: 'm',
+    maxContextSize: 1,
+    capabilities: ['thinking'],
+    supportEfforts: ['low', 'medium', 'high'],
+  };
+  const alwaysThinkingModel: ModelAlias = {
+    provider: 'p',
+    model: 'm',
+    maxContextSize: 1,
+    capabilities: ['thinking', 'always_thinking'],
+  };
 
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('medium');
-    expect(
-      resolveThinkingLevel('   ', {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'auto' },
-      }),
-    ).toBe('medium');
+  it('returns the requested effort verbatim when one is provided', () => {
+    expect(resolveThinkingEffort('on', { effort: 'medium' }, booleanModel)).toBe('on');
+    expect(resolveThinkingEffort('off', { effort: 'medium' }, booleanModel)).toBe('off');
+    expect(resolveThinkingEffort('low', { effort: 'medium' }, booleanModel)).toBe('low');
+    // No normalization: empty / whitespace strings are returned as-is.
+    expect(resolveThinkingEffort('', { enabled: false, effort: 'medium' }, booleanModel)).toBe('');
+    expect(resolveThinkingEffort('   ', { enabled: false, effort: 'medium' }, booleanModel)).toBe(
+      '   ',
+    );
+  });
 
+  it('treats config.enabled=false as off when no effort is requested', () => {
     expect(
-      resolveThinkingLevel('on', {
-        defaultThinking: true,
-        thinking: { mode: 'auto' },
-      }),
-    ).toBe('high');
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: true,
-        thinking: { mode: 'auto' },
-      }),
-    ).toBe('high');
-
-    expect(
-      resolveThinkingLevel(undefined, {
-        thinking: { mode: 'off' },
-      }),
+      resolveThinkingEffort(undefined, { enabled: false, effort: 'medium' }, booleanModel),
     ).toBe('off');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
+  });
 
-    expect(
-      resolveThinkingLevel(undefined, {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'off' },
-      }),
-    ).toBe('off');
-    expect(
-      resolveThinkingLevel('   ', {
-        defaultThinking: true,
-        thinking: { effort: 'medium', mode: 'off' },
-      }),
-    ).toBe('off');
+  it('uses config.effort as the default effort when enabled', () => {
+    expect(resolveThinkingEffort(undefined, { effort: 'medium' }, booleanModel)).toBe('medium');
+    expect(resolveThinkingEffort(undefined, { enabled: true, effort: 'medium' }, booleanModel)).toBe(
+      'medium',
+    );
+  });
 
-    expect(resolveThinkingLevel(undefined, {})).toBe('high');
+  it('falls back to the model default effort when no effort is set', () => {
+    // boolean thinking model -> 'on'
+    expect(resolveThinkingEffort(undefined, {}, booleanModel)).toBe('on');
+    // effort-capable model -> middle supportEfforts entry
+    expect(resolveThinkingEffort(undefined, {}, effortModel)).toBe('medium');
+    // no / non-thinking model -> 'off'
+    expect(resolveThinkingEffort(undefined, {}, undefined)).toBe('off');
+  });
+
+  it('forces always-thinking models back on even when off is requested', () => {
+    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+  });
+});
+
+describe('google base URL forwarding', () => {
+  it('forwards base_url to the google-genai provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          gemini: {
+            type: 'google-genai',
+            apiKey: 'g-key',
+            baseUrl: 'https://qianxun.example/v1beta',
+          },
+        },
+        models: {
+          gemini: { provider: 'gemini', model: 'gemini-2.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'google-genai',
+      model: 'gemini-2.5-pro',
+      baseUrl: 'https://qianxun.example/v1beta',
+    });
+  });
+
+  it('reads GOOGLE_GEMINI_BASE_URL from provider env as a fallback', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          gemini: {
+            type: 'google-genai',
+            apiKey: 'g-key',
+            env: { GOOGLE_GEMINI_BASE_URL: 'https://env.example/v1beta' },
+          },
+        },
+        models: {
+          gemini: { provider: 'gemini', model: 'gemini-2.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'google-genai',
+      baseUrl: 'https://env.example/v1beta',
+    });
+  });
+
+  it('forwards a custom proxy base_url to the vertexai provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: {
+            type: 'vertexai',
+            apiKey: 'v-key',
+            baseUrl: 'https://qianxun.example/vertex',
+          },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'vertexai',
+      model: 'gemini-1.5-pro',
+      baseUrl: 'https://qianxun.example/vertex',
+    });
+  });
+
+  it('forwards base_url to vertexai while still deriving location from an aiplatform host', () => {
+    // Backward compatibility: an aiplatform host must keep populating `location`
+    // (existing GCP behavior) while the base URL is now also forwarded so the
+    // SDK targets the configured endpoint verbatim.
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: {
+            type: 'vertexai',
+            apiKey: 'v-key',
+            baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+          },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'vertexai',
+      baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+      location: 'us-central1',
+    });
+  });
+
+  it('derives vertex location from the GOOGLE_VERTEX_BASE_URL env fallback so ADC mode is selected', () => {
+    // The env fallback must behave exactly like config `base_url`: when the
+    // regional endpoint is supplied via GOOGLE_VERTEX_BASE_URL (with a project
+    // but no explicit GOOGLE_CLOUD_LOCATION), location derivation must still see
+    // it, so the provider resolves to service-account (ADC) mode rather than
+    // silently downgrading to API-key Gemini routing.
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: {
+            type: 'vertexai',
+            env: {
+              GOOGLE_CLOUD_PROJECT: 'my-proj',
+              GOOGLE_VERTEX_BASE_URL: 'https://us-central1-aiplatform.googleapis.com',
+            },
+          },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'vertexai',
+      vertexai: true,
+      baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+      project: 'my-proj',
+      location: 'us-central1',
+    });
   });
 });
 
@@ -892,6 +1035,28 @@ describe('per-model protocol routing', () => {
       type: 'anthropic',
       model: 'claude-sonnet-4-5',
       baseUrl: 'https://api.anthropic.example/v1',
+    });
+  });
+});
+
+describe('resolveRuntimeProvider model overrides', () => {
+  it('passes overridden supportEfforts to the kimi provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        models: {
+          'kimi-code/kimi-for-coding': {
+            ...BASE_CONFIG.models!['kimi-code/kimi-for-coding']!,
+            supportEfforts: ['low', 'high', 'max'],
+            overrides: { supportEfforts: ['low', 'high'] },
+          },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'kimi',
+      supportEfforts: ['low', 'high'],
     });
   });
 });

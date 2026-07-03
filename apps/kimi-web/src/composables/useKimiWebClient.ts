@@ -6,16 +6,24 @@ import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
-import { reconcileWorkspaceOrder, sortByWorkspaceOrder } from '../lib/workspaceOrder';
+import {
+  reconcileWorkspaceOrder,
+  sortByWorkspaceOrder,
+  sortWorkspacesByRecent,
+  type WorkspaceSortMode,
+} from '../lib/workspaceOrder';
+import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
   loadWorkspaceOrder,
+  loadWorkspaceSort,
   safeGetString,
   safeRemove,
   safeSetString,
   saveUnread,
   saveWorkspaceOrder,
+  saveWorkspaceSort,
   STORAGE_KEYS,
 } from '../lib/storage';
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
@@ -25,7 +33,7 @@ import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
-import { useWorkspaceState } from './client/useWorkspaceState';
+import { SESSIONS_INITIAL_PAGE_SIZE, useWorkspaceState } from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
@@ -94,13 +102,17 @@ const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
-// existing `import type { Theme, ColorScheme, Accent } from './useKimiWebClient'`
+// existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
 // callers keep working.
-export type { Accent, ColorScheme, Theme } from './client/useAppearance';
+export type { Accent, ColorScheme } from './client/useAppearance';
 
 // The code-font setting was removed with its UI (b8a9e83). Clear the old
 // persisted key so users who once picked a font aren't frozen on it forever.
 safeRemove(STORAGE_KEYS.codeFont);
+// The UI theme (terminal / modern / kimi) was retired in favor of a single
+// look. Clear the old persisted key so users who once picked one aren't frozen
+// on a value the UI no longer reads.
+safeRemove(STORAGE_KEYS.theme);
 
 function loadPermissionFromStorage(): PermissionMode {
   try {
@@ -138,52 +150,50 @@ function saveThinkingToStorage(v: ThinkingLevel): void {
   }
 }
 
-function loadPlanModeFromStorage(): boolean {
+// Plan / swarm / goal modes are per-session. Each is persisted as a compact
+// JSON map of only the `true` entries (cleared sessions are dropped), keyed by
+// session id — mirroring the unread map. The legacy global format (a bare
+// 'true'/'false' string) is not an object and parses to an empty map, so it is
+// discarded on first load rather than misapplied to every session.
+
+function loadModeMapFromStorage(key: string): Record<string, boolean> {
+  const raw = safeGetString(key);
+  if (!raw) return {};
   try {
-    return safeGetString(PLAN_MODE_STORAGE_KEY) === 'true';
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, boolean> = {};
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value === true) out[id] = true;
+    }
+    return out;
   } catch {
-    return false;
+    return {};
   }
 }
 
-function savePlanModeToStorage(v: boolean): void {
+function saveModeMapToStorage(key: string, map: Record<string, boolean>): void {
   try {
-    safeSetString(PLAN_MODE_STORAGE_KEY, v ? 'true' : 'false');
+    const out: Record<string, true> = {};
+    for (const [id, value] of Object.entries(map)) {
+      if (value) out[id] = true;
+    }
+    safeSetString(key, JSON.stringify(out));
   } catch {
-    // ignore
+    // storage unavailable (private mode, quota, etc.) — ignore
   }
 }
 
-function loadSwarmModeFromStorage(): boolean {
-  try {
-    return safeGetString(SWARM_MODE_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
+function savePlanModeToStorage(): void {
+  saveModeMapToStorage(PLAN_MODE_STORAGE_KEY, rawState.planModeBySession);
 }
 
-function saveSwarmModeToStorage(v: boolean): void {
-  try {
-    safeSetString(SWARM_MODE_STORAGE_KEY, v ? 'true' : 'false');
-  } catch {
-    // ignore
-  }
+function saveSwarmModeToStorage(): void {
+  saveModeMapToStorage(SWARM_MODE_STORAGE_KEY, rawState.swarmModeBySession);
 }
 
-function loadGoalModeFromStorage(): boolean {
-  try {
-    return safeGetString(GOAL_MODE_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function saveGoalModeToStorage(v: boolean): void {
-  try {
-    safeSetString(GOAL_MODE_STORAGE_KEY, v ? 'true' : 'false');
-  } catch {
-    // ignore
-  }
+function saveGoalModeToStorage(): void {
+  saveModeMapToStorage(GOAL_MODE_STORAGE_KEY, rawState.goalModeBySession);
 }
 
 function loadActiveWorkspaceFromStorage(): string | null {
@@ -228,12 +238,6 @@ function saveActiveWorkspaceToStorage(id: string): void {
   }
 }
 
-/** basename of an absolute path (last non-empty segment), defaulting to the path. */
-function basename(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1]! : path;
-}
-
 /** Shorten a $HOME-prefixed absolute path to `~/…` for dim display. */
 function shortenHome(path: string, home: string | null): string {
   if (home && path.startsWith(home)) {
@@ -274,9 +278,13 @@ export interface ExtendedState extends KimiClientState {
   connection: ConnectionState;
   permission: PermissionMode;
   thinking: ThinkingLevel;
-  planMode: boolean;
-  swarmMode: boolean;
-  goalMode: boolean;
+  /** Plan-mode toggle per session. Bound to a session (not global) so toggling
+   *  it in one session does not affect another. */
+  planModeBySession: Record<string, boolean>;
+  /** Swarm-mode toggle per session. */
+  swarmModeBySession: Record<string, boolean>;
+  /** Goal-mode (one-shot "next send creates a goal") toggle per session. */
+  goalModeBySession: Record<string, boolean>;
   loading: boolean;
   sessionLoading: boolean;
   queuedBySession: Record<string, QueuedPrompt[]>;
@@ -326,6 +334,9 @@ export interface ExtendedState extends KimiClientState {
    *  the end of the last fetched page so a deep-linked older session appended
    *  out of band does not shift the cursor and skip intervening sessions. */
   sessionsCursorByWorkspace: Record<string, string | undefined>;
+  /** First-page capacity per workspace (sessions loaded on first paint, floored
+   *  at one full page). Drives the sidebar's in-group show-less collapse target. */
+  sessionsInitialCountByWorkspace: Record<string, number>;
   /** True once every session has been loaded (after a search-triggered full drain). */
   sessionsFullyLoaded: boolean;
 }
@@ -338,9 +349,9 @@ const rawState: ExtendedState = reactive({
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
   thinking: loadThinkingFromStorage(),
-  planMode: loadPlanModeFromStorage(),
-  swarmMode: loadSwarmModeFromStorage(),
-  goalMode: loadGoalModeFromStorage(),
+  planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
+  swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
+  goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
   loading: false,
   sessionLoading: false,
   queuedBySession: {},
@@ -367,7 +378,22 @@ const rawState: ExtendedState = reactive({
   sessionsHasMoreByWorkspace: {},
   sessionsLoadingMoreByWorkspace: {},
   sessionsCursorByWorkspace: {},
+  sessionsInitialCountByWorkspace: {},
   sessionsFullyLoaded: false,
+});
+
+// ---------------------------------------------------------------------------
+// Draft mode staging (no active session yet).
+// When the user toggles plan/swarm/goal in the empty composer before the first
+// message is sent, there is no session to bind the toggle to. These staged
+// values are transferred into the new session's per-session entry when the
+// first prompt is sent (see startSessionAndSendPrompt), then cleared. Not
+// persisted — the draft is ephemeral.
+// ---------------------------------------------------------------------------
+const draftModes = reactive<{ planMode: boolean; swarmMode: boolean; goalMode: boolean }>({
+  planMode: false,
+  swarmMode: false,
+  goalMode: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -481,6 +507,7 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  dropWsSubscription(sessionId);
   // Drain the streaming-event batcher too. unsubscribe() stops future server
   // frames, but events already queued for the next animation frame would
   // otherwise survive and be reduced AFTER the maps below are cleared —
@@ -510,6 +537,14 @@ function forgetSession(sessionId: string): void {
   delete rawState.queuedBySession[sessionId];
   delete rawState.promptIdBySession[sessionId];
   delete rawState.sendingBySession[sessionId];
+  // Drop per-session mode toggles and re-persist so a deleted session's entry
+  // doesn't linger in localStorage.
+  delete rawState.planModeBySession[sessionId];
+  delete rawState.swarmModeBySession[sessionId];
+  delete rawState.goalModeBySession[sessionId];
+  savePlanModeToStorage();
+  saveSwarmModeToStorage();
+  saveGoalModeToStorage();
 }
 
 // Models + Providers reactive state and helpers live in
@@ -548,8 +583,8 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
       contextLimit: st.maxContextTokens,
     },
   }));
-  rawState.swarmMode = st.swarmMode;
-  rawState.planMode = st.planMode;
+  rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sessionId]: st.swarmMode };
+  rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
 }
 
 /** Persist runtime controls to the active session via POST /profile, then
@@ -574,34 +609,36 @@ function persistSessionProfile(patch: {
 }
 
 // ---------------------------------------------------------------------------
-// Beta: proportional conversation TOC with viewport indicator and hover tooltip.
-// Default off; persisted per browser.
+// Conversation outline (TOC): proportional bubbles with a viewport indicator
+// and hover tooltip. On by default; users can turn it off in Settings.
+// Persisted per browser.
 // ---------------------------------------------------------------------------
-const BETA_TOC_STORAGE_KEY = STORAGE_KEYS.betaToc;
-function loadBetaTocFromStorage(): boolean {
+const CONVERSATION_TOC_STORAGE_KEY = STORAGE_KEYS.conversationToc;
+function loadConversationTocFromStorage(): boolean {
   try {
-    return safeGetString(BETA_TOC_STORAGE_KEY) === 'true';
+    const raw = safeGetString(CONVERSATION_TOC_STORAGE_KEY);
+    return raw === null ? true : raw === 'true';
   } catch {
-    return false;
+    return true;
   }
 }
-function saveBetaTocToStorage(v: boolean): void {
+function saveConversationTocToStorage(v: boolean): void {
   try {
-    safeSetString(BETA_TOC_STORAGE_KEY, v ? 'true' : 'false');
+    safeSetString(CONVERSATION_TOC_STORAGE_KEY, v ? 'true' : 'false');
   } catch {
     // ignore
   }
 }
-const betaToc = ref<boolean>(loadBetaTocFromStorage());
-function setBetaToc(v: boolean): void {
-  betaToc.value = v;
-  saveBetaTocToStorage(v);
+const conversationToc = ref<boolean>(loadConversationTocFromStorage());
+function setConversationToc(v: boolean): void {
+  conversationToc.value = v;
+  saveConversationTocToStorage(v);
 }
 
 // ---------------------------------------------------------------------------
 // Onboarding: a "has the user been onboarded" flag that gates the first-run
-// onboarding screen (preferences: language + theme). Persisted; can be reset to
-// re-open the screen from the settings popover.
+// onboarding screen (preference: language). Persisted; can be reset to re-open
+// the screen from the settings popover.
 // ---------------------------------------------------------------------------
 function loadStringFromStorage(key: string): string {
   try {
@@ -676,13 +713,21 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     rawState.defaultModel = event.config.defaultModel ?? null;
   }
 
-  if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.swarmMode !== undefined) {
-    rawState.swarmMode = event.swarmMode;
+  if (event.type === 'modelCatalogChanged') {
+    void modelProvider.loadModels();
+    void modelProvider.loadProviders();
   }
-  // Reflect the agent's live plan-mode state (e.g. it auto-entered plan mode)
-  // in the composer toggle.
-  if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.planMode !== undefined) {
-    rawState.planMode = event.planMode;
+
+  // Reflect the agent's live plan/swarm state per session (e.g. it auto-entered
+  // plan mode). Applied to the event's own session — not gated on the active
+  // session — so a background session keeps its own independent toggle state.
+  if (event.type === 'sessionUsageUpdated') {
+    if (event.swarmMode !== undefined) {
+      rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [event.sessionId]: event.swarmMode };
+    }
+    if (event.planMode !== undefined) {
+      rawState.planModeBySession = { ...rawState.planModeBySession, [event.sessionId]: event.planMode };
+    }
   }
 }
 
@@ -876,6 +921,9 @@ function warningDetail(labelKey: string, value: unknown): AppNoticeDetail | unde
 
 function formatDetailValue(value: unknown): string {
   if (value instanceof Error) {
+    // A stack already starts with "Name: message" and carries the frames the
+    // plain name/message would throw away, so prefer it when present.
+    if (typeof value.stack === 'string' && value.stack) return value.stack;
     return value.message ? `${value.name}: ${value.message}` : value.name;
   }
   if (typeof value === 'string') return value;
@@ -905,14 +953,40 @@ function errorMessage(err: unknown): string | undefined {
       : undefined;
 }
 
+function errorStack(err: unknown): string | undefined {
+  return err instanceof Error && typeof err.stack === 'string' && err.stack ? err.stack : undefined;
+}
+
+function formatTimestamp(ms: number | undefined): string | undefined {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return undefined;
+  return new Date(ms).toISOString();
+}
+
+function formatDuration(ms: number | undefined): string | undefined {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return undefined;
+  return `${Math.round(ms)}ms`;
+}
+
 function errorDetails(operation: string, err: unknown, sessionId?: string): AppNoticeDetail[] {
+  const network = isDaemonNetworkError(err);
+  const api = isDaemonApiError(err);
+  // Daemon errors carry the failure moment + round-trip time captured in the
+  // HTTP layer; fall back to "now" for client-side errors that have neither.
+  const timestamp = network || api ? err.timestamp : undefined;
+  const durationMs = network || api ? err.durationMs : undefined;
+
   const details: Array<AppNoticeDetail | undefined> = [
     warningDetail('operation', operation),
-    warningDetail('sessionId', sessionId),
+    // Many call sites don't pass a session id; the active session is the best
+    // guess and is what the user was looking at when the failure happened.
+    warningDetail('sessionId', sessionId ?? rawState.activeSessionId),
+    warningDetail('connection', rawState.connection),
+    warningDetail('timestamp', formatTimestamp(timestamp ?? Date.now())),
   ];
 
-  if (isDaemonNetworkError(err)) {
+  if (network) {
     details.push(
+      warningDetail('duration', formatDuration(durationMs)),
       warningDetail('request', `${err.method} ${err.path}`),
       warningDetail('endpoint', err.url),
       warningDetail('requestId', err.requestId),
@@ -923,8 +997,9 @@ function errorDetails(operation: string, err: unknown, sessionId?: string): AppN
       warningDetail('responsePreview', err.bodyPreview),
       warningDetail('cause', err.cause),
     );
-  } else if (isDaemonApiError(err)) {
+  } else if (api) {
     details.push(
+      warningDetail('duration', formatDuration(durationMs)),
       warningDetail('code', err.code),
       warningDetail('requestId', err.requestId),
       warningDetail('message', err.message),
@@ -934,6 +1009,7 @@ function errorDetails(operation: string, err: unknown, sessionId?: string): AppN
     details.push(
       warningDetail('errorName', errorName(err)),
       warningDetail('message', errorMessage(err) ?? formatDetailValue(err)),
+      warningDetail('stack', errorStack(err)),
     );
   }
 
@@ -1087,7 +1163,9 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       // before live deltas (aligned by wire offset) start appending to it.
       eventConn.seedSnapshot(sessionId, snap);
       eventConn.subscribe(sessionId, { seq: snap.asOfSeq, epoch: snap.epoch });
+      retainWsSubscription(sessionId);
     }
+    sessionsWithStaleCursor.delete(sessionId);
     void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
@@ -1110,6 +1188,65 @@ function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
 }
 
+// ---------------------------------------------------------------------------
+// WS subscription cap (LRU eviction)
+// ---------------------------------------------------------------------------
+//
+// Every opened session subscribes to its WS event stream, and the socket keeps
+// subscriptions across reconnects (re-sending them in `client_hello`). Without
+// a cap, a user who has opened hundreds of sessions stays subscribed to all of
+// them: every background session's status/meta/usage event then flows through
+// the reducer and dirties the sidebar computeds — the root cause of "the UI
+// gets sluggish once I have a lot of sessions".
+//
+// Keep only the most-recently-opened sessions subscribed (MRU order, index 0 =
+// newest). The active session is always retained.
+//
+// Eviction drops the live WS subscription but keeps the session's cursor so a
+// quick re-open can resume cheaply. However, a cursor kept across an eviction
+// can go stale: some session events (`event.session.status_changed`,
+// `session.meta.updated`, ...) are broadcast to EVERY connection (see
+// `isGlobalSessionEvent` on the server) and still advance `lastSeqBySession`
+// for an unsubscribed session. If a session emits per-session durable events
+// while evicted and then a global event, the cursor jumps past the missed
+// events. Evicted sessions are therefore tracked in `sessionsWithStaleCursor`;
+// when one is re-opened we rebuild from a snapshot (see `reopenSession`) rather
+// than resume from a cursor that may have skipped events.
+const MAX_WS_SUBSCRIPTIONS = 4;
+const wsSubscriptionOrder: string[] = [];
+const sessionsWithStaleCursor = new Set<string>();
+
+function retainWsSubscription(sessionId: string): void {
+  const idx = wsSubscriptionOrder.indexOf(sessionId);
+  if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
+  wsSubscriptionOrder.unshift(sessionId);
+  // Evict the oldest entries past the cap, skipping the active session. The
+  // active session is NOT guaranteed to sit at the front: first-time opens only
+  // retain after an awaited snapshot, so rapid clicks can complete out of order
+  // and leave the active session at the tail. Skipping it (rather than breaking
+  // when the tail is active) keeps the cap effective.
+  while (wsSubscriptionOrder.length > MAX_WS_SUBSCRIPTIONS) {
+    let victimIdx = -1;
+    for (let i = wsSubscriptionOrder.length - 1; i >= 0; i--) {
+      if (wsSubscriptionOrder[i] !== rawState.activeSessionId) {
+        victimIdx = i;
+        break;
+      }
+    }
+    if (victimIdx === -1) break;
+    const [victim] = wsSubscriptionOrder.splice(victimIdx, 1);
+    if (victim === undefined) break;
+    eventConn?.unsubscribe(victim);
+    sessionsWithStaleCursor.add(victim);
+  }
+}
+
+function dropWsSubscription(sessionId: string): void {
+  const idx = wsSubscriptionOrder.indexOf(sessionId);
+  if (idx !== -1) wsSubscriptionOrder.splice(idx, 1);
+  sessionsWithStaleCursor.delete(sessionId);
+}
+
 function subscribeToSessionEvents(sessionId: string): void {
   connectEventsIfNeeded();
   if (eventConn) {
@@ -1121,7 +1258,27 @@ function subscribeToSessionEvents(sessionId: string): void {
     const seq = rawState.lastSeqBySession[sessionId] ?? 0;
     const epoch = epochBySession[sessionId];
     eventConn.subscribe(sessionId, { seq, epoch });
+    retainWsSubscription(sessionId);
   }
+}
+
+/** Re-open an already-loaded session. If it was evicted from the subscription
+ *  cap since it was last open, rebuild from a snapshot: resuming from the kept
+ *  cursor would skip the per-session events that arrived while unsubscribed,
+ *  and replaying from seq 0 would make the projector regenerate message ids and
+ *  duplicate the already-loaded transcript. Otherwise just re-subscribe from the
+ *  tracked cursor.
+ *
+ * The stale marker is only read here; `syncSessionFromSnapshot` clears it once
+ * the snapshot succeeds. If the snapshot fails transiently the marker stays, so
+ * the next re-open retries the snapshot instead of falling back to a cursor
+ * that may have skipped events while unsubscribed. */
+async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
+  if (sessionsWithStaleCursor.has(sessionId)) {
+    return syncSessionFromSnapshot(sessionId);
+  }
+  subscribeToSessionEvents(sessionId);
+  return 'ok';
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,12 +1321,11 @@ function formatTime(iso: string, _status: string): string {
     if (diffMs < 60000) return i18n.global.t('sessions.justNow');
     if (diffH < 1) return `${Math.round(diffMs / 60000)}m`;
     if (diffH < 24) return `${Math.round(diffH)}h`;
-    return d.toLocaleDateString(i18n.global.locale.value, {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    const diffD = diffMs / 86400000;
+    if (diffD < 7) return `${Math.round(diffD)}d`;
+    if (diffD < 30) return `${Math.round(diffD / 7)}w`;
+    if (diffD < 365) return `${Math.round(diffD / 30)}m`;
+    return `${Math.round(diffD / 365)}y`;
   } catch {
     return iso;
   }
@@ -1425,6 +1581,8 @@ function toUiTask(task: AppTask): TaskItem {
     timing,
     meta,
     output,
+    runInBackground: task.runInBackground,
+    parentToolCallId: task.parentToolCallId,
   };
 }
 
@@ -1549,14 +1707,25 @@ const serverVersion = computed<string>(() => rawState.serverVersion);
 
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
-const planMode = computed<boolean>(() => rawState.planMode);
-const swarmMode = computed<boolean>(() => rawState.swarmMode);
-const goalMode = computed<boolean>(() => rawState.goalMode);
+// Mode toggles reflect the ACTIVE session (or the draft when no session is
+// open). Each session keeps its own value in the *BySession maps above.
+const planMode = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.planModeBySession[sid] ?? false) : draftModes.planMode;
+});
+const swarmMode = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.swarmModeBySession[sid] ?? false) : draftModes.swarmMode;
+});
+const goalMode = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.goalModeBySession[sid] ?? false) : draftModes.goalMode;
+});
 
 const activationBadges = computed<ActivationBadges>(() => {
   const swarmCounts = countSwarmMembers(swarms.value);
   return {
-    plan: rawState.planMode,
+    plan: planMode.value,
     goal: goal.value && goal.value.status !== 'complete'
       ? {
           status: goal.value.status,
@@ -1568,15 +1737,21 @@ const activationBadges = computed<ActivationBadges>(() => {
   };
 });
 
-/** Queued messages for the active session (text + attachment count for the
-    composer strip — an image-only prompt would otherwise render as an empty
-    string). */
+/** Queued messages for the active session, rendered inline at the tail of the
+    transcript. Carries attachment thumbnails (resolved via getFileUrl) so image
+    prompts don't render as empty bubbles. */
 const queued = computed<QueuedPromptView[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
+  const api = getKimiWebApi();
   return (rawState.queuedBySession[sid] ?? []).map((q) => ({
     text: q.text,
     attachmentCount: q.attachments?.length ?? 0,
+    attachments: q.attachments?.map((a) => ({
+      fileId: a.fileId,
+      kind: a.kind,
+      url: api.getFileUrl(a.fileId),
+    })),
   }));
 });
 
@@ -1756,67 +1931,16 @@ function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string
  * derived workspace (id = root = cwd). This makes the switcher + grouping work
  * immediately off existing sessions until /workspaces ships.
  */
-const mergedWorkspaces = computed<AppWorkspace[]>(() => {
-  const hidden = new Set(rawState.hiddenWorkspaceRoots);
-  const byRoot = new Map<string, AppWorkspace>();
-  // Real workspaces win on root (unless the user removed them from the sidebar).
-  for (const w of rawState.workspaces) {
-    if (hidden.has(w.root)) continue;
-    byRoot.set(w.root, { ...w });
-  }
-  // Derive from sessions for any cwd without a real workspace.
-  for (const s of rawState.sessions) {
-    const root = s.cwd;
-    if (!root) continue;
-    if (hidden.has(root)) continue; // removed from the sidebar — keep it hidden
-    if (!byRoot.has(root)) {
-      byRoot.set(root, {
-        // Use the session's REAL daemon workspace_id (wd_<slug>_<hash>) so
-        // createSession({ workspaceId }) is accepted; fall back to cwd only
-        // when the daemon hasn't tagged the session yet.
-        id: s.workspaceId ?? root,
-        root,
-        name: basename(root),
-        isGitRepo: false,
-        sessionCount: 0,
-      });
-    }
-  }
-  // Compute live session counts + a branch hint from the active session's git.
-  const counts = new Map<string, number>();
-  for (const s of rawState.sessions) {
-    const wid = workspaceIdForSession(s);
-    counts.set(wid, (counts.get(wid) ?? 0) + 1);
-  }
-  const activeGit = gitInfo.value;
-  const activeRoot = rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd;
-
-  // Order: real workspaces in listWorkspaces order, then derived workspaces
-  // sorted by root path so the order is stable (not tied to session activity).
-  // Hidden roots must be excluded here too — `byRoot` skips them, so a hidden
-  // real workspace would otherwise make `byRoot.get(root)` return undefined.
-  const realRoots = rawState.workspaces.filter((w) => !hidden.has(w.root)).map((w) => w.root);
-  const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
-  derivedRoots.sort((a, b) => a.localeCompare(b));
-
-  const result: AppWorkspace[] = [];
-  for (const root of [...realRoots, ...derivedRoots]) {
-    const w = byRoot.get(root)!;
-    // When a workspace's sessions are fully loaded (hasMore === false), the
-    // local count is exact — prefer it so archiving the last session drops the
-    // count to 0 immediately. While pages remain, the local count is only a
-    // lower bound, so keep the daemon session_count as a floor.
-    const localCount = counts.get(w.id) ?? counts.get(w.root) ?? 0;
-    const count =
-      rawState.sessionsHasMoreByWorkspace[w.id] === false
-        ? localCount
-        : Math.max(w.sessionCount, localCount);
-    let branch = w.branch;
-    if (!branch && activeGit && activeRoot === w.root) branch = activeGit.branch;
-    result.push({ ...w, sessionCount: count, branch });
-  }
-  return result;
-});
+const mergedWorkspaces = computed<AppWorkspace[]>(() =>
+  mergeWorkspaces({
+    workspaces: rawState.workspaces,
+    sessions: rawState.sessions,
+    hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
+    activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
+    activeBranch: gitInfo.value?.branch ?? null,
+    sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
+  }),
+);
 
 /**
  * User-defined display order of workspace ids, persisted to localStorage. The
@@ -1824,6 +1948,15 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
  * known, its position is fixed until the user drags it elsewhere.
  */
 const workspaceOrder = ref<string[]>(loadWorkspaceOrder());
+
+/**
+ * Sidebar workspace sort mode. `recent` (default) re-sorts by each workspace's
+ * most recent session activity and stays live as sessions update; `manual` keeps
+ * the persisted/dragged order. Persisted so the choice survives a refresh.
+ */
+const workspaceSortMode = ref<WorkspaceSortMode>(
+  loadWorkspaceSort() === 'manual' ? 'manual' : 'recent',
+);
 
 // Reconcile the persisted order with the set of currently-known workspaces:
 // drop ids that no longer exist, and prepend newly-seen ids (newest first,
@@ -1852,7 +1985,11 @@ watch(
   },
 );
 
-/** Sidebar-facing workspace list, ordered by the persisted/dragged order. */
+/** Sidebar-facing workspace list. Order follows `workspaceSortMode`: the
+ *  persisted/dragged order in `manual` mode, or most-recent-session-first in
+ *  `recent` mode. The recent map is only built (and `rawState.sessions` only
+ *  read) in the recent branch, so manual mode does not re-sort on every session
+ *  update. */
 const workspacesView = computed<WorkspaceView[]>(() => {
   const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
@@ -1862,6 +1999,18 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     branch: w.branch,
     sessionCount: w.sessionCount,
   }));
+  if (workspaceSortMode.value === 'recent') {
+    const lastEditedAt = new Map<string, number>();
+    for (const s of rawState.sessions) {
+      if (s.parentSessionId) continue;
+      const wid = workspaceIdForSession(s);
+      const t = new Date(s.updatedAt).getTime();
+      if (t > (lastEditedAt.get(wid) ?? Number.NEGATIVE_INFINITY)) {
+        lastEditedAt.set(wid, t);
+      }
+    }
+    return sortWorkspacesByRecent(views, lastEditedAt);
+  }
   return sortByWorkspaceOrder(views, workspaceOrder.value);
 });
 
@@ -1888,20 +2037,29 @@ const visibleWorkspace = computed<WorkspaceView | null>(() => {
 const sessionsForView = computed<Session[]>(() => {
   void sessionTimeClock.value;
   const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
+  // Join each session to its workspace name so the search dialog can show which
+  // workspace a hit belongs to. Built once per recompute (O(n+m)) instead of a
+  // per-session find.
+  const nameByWorkspaceId = new Map(workspacesView.value.map((w) => [w.id, w.name]));
   // Child ("side chat") sessions never appear in the main list — they live in
   // the side-chat panel only. Sessions under a removed (hidden) workspace are
   // excluded too, so this flat list matches what the grouped sidebar renders
   // and sidebar search can't resurrect sessions from a removed workspace.
   return rawState.sessions
     .filter((s) => !s.parentSessionId && visibleWorkspaceIds.has(workspaceIdForSession(s)))
-    .map((s) => ({
-      id: s.id,
-      title: s.title,
-      time: formatTime(s.updatedAt, s.status),
-      status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
-      lastPrompt: s.lastPrompt,
-    }));
+    .map((s) => {
+      const workspaceId = workspaceIdForSession(s);
+      return {
+        id: s.id,
+        title: s.title,
+        time: formatTime(s.updatedAt, s.status),
+        status: s.status,
+        busy: isSessionEffectivelyRunning(s.id),
+        lastPrompt: s.lastPrompt,
+        workspaceId,
+        workspaceName: nameByWorkspaceId.get(workspaceId),
+      };
+    });
 });
 
 /** Per-workspace groups for the 'all workspaces' scope. */
@@ -1930,6 +2088,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
     sessions: byId.get(w.id) ?? [],
     hasMore: rawState.sessionsHasMoreByWorkspace[w.id] ?? false,
     loadingMore: rawState.sessionsLoadingMoreByWorkspace[w.id] ?? false,
+    initialCount: rawState.sessionsInitialCountByWorkspace[w.id] ?? SESSIONS_INITIAL_PAGE_SIZE,
   }));
 });
 
@@ -1941,6 +2100,19 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
 function reorderWorkspaces(ids: string[]): void {
   workspaceOrder.value = ids;
   saveWorkspaceOrder(ids);
+  // A drag is an explicit manual ordering, so drop out of `recent` mode — the
+  // dragged order would otherwise be overwritten by the live recency sort.
+  if (workspaceSortMode.value !== 'manual') {
+    workspaceSortMode.value = 'manual';
+    saveWorkspaceSort('manual');
+  }
+}
+
+/** Switch the sidebar workspace sort mode and persist the choice. */
+function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
+  if (workspaceSortMode.value === mode) return;
+  workspaceSortMode.value = mode;
+  saveWorkspaceSort(mode);
 }
 
 /**
@@ -2035,7 +2207,7 @@ const workspaceState = useWorkspaceState(rawState, {
   nextOptimisticMsgId,
   getEventConn: () => eventConn,
   syncSessionFromSnapshot,
-  subscribeToSessionEvents,
+  reopenSession,
   hasLoadedMessages,
   refreshSessionStatus,
   persistSessionProfile,
@@ -2047,11 +2219,11 @@ const workspaceState = useWorkspaceState(rawState, {
   savePlanModeToStorage,
   saveSwarmModeToStorage,
   saveGoalModeToStorage,
+  draftModes,
   saveUnread,
   saveActiveWorkspaceToStorage,
   saveHiddenWorkspacesToStorage,
   goalErrorMessage,
-  basename,
   resetFastMoon: appearance.resetFastMoon,
   initialized,
   selectedDiffPath,
@@ -2167,6 +2339,7 @@ export function useKimiWebClient() {
 
     // Workspace view props
     workspacesView,
+    workspaceSortMode,
     visibleWorkspace,
     activeWorkspaceId,
     sessionsForView,
@@ -2179,6 +2352,9 @@ export function useKimiWebClient() {
 
     turns,
     tasks,
+    /** Live `AppTask[]` for the active session — the subagent detail panel
+     *  sources a subagent's streaming `outputLines` from here. */
+    activeAppTasks,
     todos,
     goal,
     swarms,
@@ -2223,16 +2399,12 @@ export function useKimiWebClient() {
     starredModelIds: modelProvider.starredModelIds,
     providers: modelProvider.providers,
 
-    // Theme
-    theme: appearance.theme,
-    setTheme: appearance.setTheme,
-    toggleTheme: appearance.toggleTheme,
     uiFontSize: appearance.uiFontSize,
     setUiFontSize: appearance.setUiFontSize,
 
-    // Beta features
-    betaToc,
-    setBetaToc,
+    // Conversation outline (TOC)
+    conversationToc,
+    setConversationToc,
 
     // Color scheme
     colorScheme: appearance.colorScheme,
@@ -2284,6 +2456,8 @@ export function useKimiWebClient() {
     respondApproval: workspaceState.respondApproval,
     respondQuestion: workspaceState.respondQuestion,
     dismissQuestion: workspaceState.dismissQuestion,
+    pendingQuestionActions: workspaceState.pendingQuestionActions,
+    pendingApprovalActions: workspaceState.pendingApprovalActions,
     cancelTask: workspaceState.cancelTask,
 
     // New Phase 1 actions
@@ -2303,6 +2477,7 @@ export function useKimiWebClient() {
     renameWorkspace: workspaceState.renameWorkspace,
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,
+    setWorkspaceSortMode,
     archiveSession: workspaceState.archiveSession,
     compact: workspaceState.compact,
     forkSession: workspaceState.forkSession,
@@ -2310,6 +2485,7 @@ export function useKimiWebClient() {
 
     // New Phase 4 actions
     unqueue: workspaceState.unqueue,
+    reorderQueue: workspaceState.reorderQueue,
     searchFiles: workspaceState.searchFiles,
     loadGitStatus: workspaceState.loadGitStatus,
     loadFileDiff: workspaceState.loadFileDiff,
@@ -2335,6 +2511,7 @@ export function useKimiWebClient() {
     addProvider: modelProvider.addProvider,
     deleteProvider: modelProvider.deleteProvider,
     refreshProvider: modelProvider.refreshProvider,
+    refreshAllProviders: modelProvider.refreshAllProviders,
 
     // Auth state
     authReady,

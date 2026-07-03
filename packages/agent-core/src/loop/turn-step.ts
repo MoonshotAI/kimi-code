@@ -9,10 +9,11 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TokenUsage } from '@moonshot-ai/kosong';
+import { isRecoverableRequestStructureError, type TokenUsage } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
+import { errorMessage } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 import { chatWithRetry } from './retry';
 import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
@@ -33,6 +34,7 @@ export interface ExecuteLoopStepDeps {
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly buildMessages: LoopMessageBuilder;
+  readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly llm: LLM;
   readonly tools?: readonly ExecutableTool[] | undefined;
@@ -51,6 +53,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     signal,
     buildMessages,
+    buildMessagesStrict,
     dispatchEvent,
     llm,
     tools,
@@ -110,16 +113,56 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       stepUuid,
     }),
   };
-  const response: LLMChatResponse = await chatWithRetry({
+  const retryInput = {
     llm,
-    params: chatParams,
     dispatchEvent,
     turnId,
     currentStep,
     stepUuid,
     maxAttempts: maxRetryAttempts,
     log,
-  });
+  } as const;
+  let response: LLMChatResponse;
+  try {
+    response = await chatWithRetry({ ...retryInput, params: chatParams });
+  } catch (error) {
+    // A structural request rejection (tool_use/tool_result pairing, empty or
+    // whitespace-only text, non-user first message, non-alternating roles) means
+    // the projected history is not wire-compliant for a strict provider — and
+    // since the same history is re-sent every turn, the session would stay stuck
+    // on this error forever. Resend ONCE with a strict, guaranteed-compliant
+    // rebuild (every open call closed, stray results dropped, leading non-user
+    // trimmed, consecutive assistants merged) as a last resort. Any other error,
+    // or a host that supplied no strict builder, propagates unchanged.
+    if (buildMessagesStrict === undefined || !isRecoverableRequestStructureError(error)) throw error;
+    signal.throwIfAborted();
+    log?.warn('provider rejected request structure; resending with strict projection', {
+      turnStep: `${turnId}.${String(currentStep)}`,
+      model: llm.modelName,
+    });
+    const strictMessages = await buildMessagesStrict();
+    signal.throwIfAborted();
+    try {
+      response = await chatWithRetry({
+        ...retryInput,
+        params: { ...chatParams, messages: strictMessages },
+      });
+    } catch (strictError) {
+      // The strictly-sanitized rebuild was still rejected — our wire-compliance
+      // repair did not cover this case. Surface it loudly: the session is stuck
+      // and this is the signal we need to diagnose the gap.
+      log?.error('strict resend still rejected by provider; request remains wire-invalid', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+        model: llm.modelName,
+        originalError: errorMessage(error),
+        strictError: errorMessage(strictError),
+      });
+      throw strictError;
+    }
+    log?.info('recovered after strict resend', {
+      turnStep: `${turnId}.${String(currentStep)}`,
+    });
+  }
   const usage = response.usage;
   const usageResult = await recordUsage(usage);
   const stopTurnAfterUsage = usageResult?.stopTurn === true;
@@ -149,8 +192,14 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     finishReason: effectiveStopReason,
     llmFirstTokenLatencyMs: response.streamTiming?.firstTokenLatencyMs,
     llmStreamDurationMs: response.streamTiming?.streamDurationMs,
+    llmRequestBuildMs: response.streamTiming?.requestBuildMs,
+    llmServerFirstTokenMs: response.streamTiming?.serverFirstTokenMs,
+    llmServerDecodeMs: response.streamTiming?.serverDecodeMs,
+    llmClientConsumeMs: response.streamTiming?.clientConsumeMs,
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
+
+  logStepTiming(log, turnId, currentStep, response);
 
   let stopTurnAfterStep = stopTurnAfterUsage;
   if (hooks?.afterStep !== undefined) {
@@ -174,6 +223,36 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     stopReason:
       stopTurnAfterStep && effectiveStopReason === 'tool_use' ? 'end_turn' : effectiveStopReason,
   };
+}
+
+/**
+ * Emit a per-step completion log with the LLM response timing. TTFT is split
+ * into the client-side request-build portion and the network + API-server
+ * portion, and the decode window is split into server (awaiting parts) vs.
+ * client (processing parts) time, so slow turns can be attributed without
+ * parsing the wire log.
+ */
+function logStepTiming(
+  log: Logger | undefined,
+  turnId: string,
+  step: number,
+  response: LLMChatResponse,
+): void {
+  if (log === undefined) return;
+  const timing = response.streamTiming;
+  if (timing === undefined) return;
+  log.info('llm response', {
+    turnStep: `${turnId}/${String(step)}`,
+    ttftMs: timing.firstTokenLatencyMs,
+    ...(timing.requestBuildMs !== undefined ? { requestBuildMs: timing.requestBuildMs } : {}),
+    ...(timing.serverFirstTokenMs !== undefined
+      ? { serverFirstTokenMs: timing.serverFirstTokenMs }
+      : {}),
+    streamDurationMs: timing.streamDurationMs,
+    ...(timing.serverDecodeMs !== undefined ? { serverDecodeMs: timing.serverDecodeMs } : {}),
+    ...(timing.clientConsumeMs !== undefined ? { clientConsumeMs: timing.clientConsumeMs } : {}),
+    outputTokens: response.usage.output,
+  });
 }
 
 function deriveStepStopReason(response: LLMChatResponse): LoopStepStopReason {

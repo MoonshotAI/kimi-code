@@ -7,12 +7,13 @@ import {
   deleteAllKittyImages,
   resetCapabilitiesCache,
   setCapabilities,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
@@ -150,7 +151,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
       model: 'k2',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       permission: 'manual',
       planMode: false,
       contextTokens: 0,
@@ -174,7 +175,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
         main: {
           status: {
             model: 'k2',
-            thinkingLevel: 'off',
+            thinkingEffort: 'off',
             permission: 'manual',
             planMode: false,
             contextTokens: 0,
@@ -399,7 +400,6 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     harness.track.mockClear();
 
-    driver.state.editor.handleInput('\u001B[106;5u');
     driver.state.editor.handleInput('\u001F');
     delete process.env['VISUAL'];
     delete process.env['EDITOR'];
@@ -407,7 +407,6 @@ describe('KimiTUI message flow', () => {
     driver.state.editor.onToggleToolExpand?.();
     driver.state.editor.onTextPaste?.();
 
-    expect(harness.track).toHaveBeenCalledWith('shortcut_newline', undefined);
     expect(harness.track).toHaveBeenCalledWith('undo', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_editor', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_expand', undefined);
@@ -912,7 +911,7 @@ command = "vim"
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: true,
         contextTokens: 0,
@@ -1374,6 +1373,49 @@ command = "vim"
     expect(transcript).not.toContain('Approved: Run shell command');
   });
 
+  it('removes debug timing status from undone turns', async () => {
+    const { driver, session } = await makeDriver();
+    const previousDebug = process.env['KIMI_CODE_DEBUG'];
+    process.env['KIMI_CODE_DEBUG'] = '1';
+    try {
+      driver.handleUserInput('hello');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          llmFirstTokenLatencyMs: 120,
+          llmStreamDurationMs: 800,
+        } as Event,
+        () => {},
+      );
+
+      await vi.waitFor(() => {
+        expect(stripSgr(renderTranscript(driver))).toContain('[Debug]');
+      });
+
+      driver.state.appState.streamingPhase = 'idle';
+      driver.handleUserInput('/undo');
+      await confirmUndoSelection(driver);
+
+      await vi.waitFor(() => {
+        expect(session.undoHistory).toHaveBeenCalledWith(1);
+      });
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).not.toContain('hello');
+      expect(transcript).not.toContain('[Debug]');
+    } finally {
+      if (previousDebug === undefined) {
+        delete process.env['KIMI_CODE_DEBUG'];
+      } else {
+        process.env['KIMI_CODE_DEBUG'] = previousDebug;
+      }
+    }
+  });
+
   it('undoes multiple turns when a count is provided', async () => {
     const { driver, session } = await makeDriver();
 
@@ -1620,7 +1662,7 @@ command = "vim"
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
-  it('does not persist bash input to input history', async () => {
+  it('persists bash input to input history with a leading !', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
     driver.state.appState.inputMode = 'bash';
@@ -1628,7 +1670,7 @@ command = "vim"
 
     driver.handleUserInput('ls');
 
-    expect(driver.persistInputHistory).not.toHaveBeenCalled();
+    expect(driver.persistInputHistory).toHaveBeenCalledWith('!ls');
   });
 
   it('persists normal input to input history', async () => {
@@ -1722,12 +1764,14 @@ command = "vim"
   it('echoes a bash command with a $ prompt in the transcript', async () => {
     const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
     const session = makeSession({ runShellCommand });
-    const { driver } = await makeDriver(session);
+    const { driver, harness } = await makeDriver(session);
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
 
     driver.handleUserInput('ls');
     await Promise.resolve();
+
+    expect(harness.track).toHaveBeenCalledWith('shell_command', undefined);
 
     const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
     expect(transcript).toContain('$ ls');
@@ -3441,7 +3485,7 @@ command = "vim"
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'high',
+        thinkingEffort: 'high',
         permission: 'auto',
         planMode: true,
         contextTokens: 25,
@@ -3461,7 +3505,7 @@ command = "vim"
       expect(output).toContain(' Status ');
       expect(output).toContain('>_ Kimi Code');
       expect(output).toContain('Model');
-      expect(output).toContain('thinking on');
+      expect(output).toContain('thinking high');
       expect(output).toContain('Permissions  auto');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');
@@ -4121,7 +4165,7 @@ command = "vim"
           },
         },
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       })),
       setConfig,
     });
@@ -4150,11 +4194,11 @@ command = "vim"
       expect(session.setThinking).toHaveBeenCalledWith('on');
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'turbo',
-        defaultThinking: true,
+        thinking: { enabled: true },
       });
     });
     expect(driver.state.appState.model).toBe('turbo');
-    expect(driver.state.appState.thinking).toBe(true);
+    expect(driver.state.appState.thinkingEffort).toBe('on');
   });
 
   it('applies /model selection to the session only on Alt+S without persisting', async () => {
@@ -4179,7 +4223,7 @@ command = "vim"
           },
         },
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       })),
       setConfig,
     });
@@ -4199,7 +4243,7 @@ command = "vim"
     });
     expect(setConfig).not.toHaveBeenCalled();
     expect(driver.state.appState.model).toBe('turbo');
-    expect(driver.state.appState.thinking).toBe(true);
+    expect(driver.state.appState.thinkingEffort).toBe('on');
   });
 
   it('persists /model selection even when runtime state is unchanged', async () => {
@@ -4217,7 +4261,7 @@ command = "vim"
           },
         },
         defaultModel: 'old-default',
-        defaultThinking: true,
+        thinking: { enabled: true },
       })),
       setConfig,
     });
@@ -4233,7 +4277,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       });
     });
     expect(session.setModel).not.toHaveBeenCalled();
@@ -4485,6 +4529,58 @@ command = "vim"
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
   });
 
+  it('keeps the waiting moon spinner while reasoning streams only empty (encrypted) thinking deltas', async () => {
+    const { driver } = await makeDriver();
+
+    // Turn begins -> waiting mode shows the moon spinner.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.livePane.mode).toBe('waiting');
+
+    // Encrypted reasoning: thinking.delta events whose visible text is empty.
+    for (let i = 0; i < 3; i++) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'thinking.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          delta: '',
+        } as Event,
+        vi.fn(),
+      );
+    }
+
+    // The moon must stay up: still waiting, no orphan thinking component, and
+    // the activity pane still renders a moon frame (no blank, spinner-less gap).
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.livePane.mode).toBe('waiting');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+    const activity = stripSgr(renderActivity(driver));
+    expect(MOON_SPINNER_FRAMES.some((frame) => activity.includes(frame))).toBe(true);
+
+    // Real thinking text finally arrives -> transition into thinking mode.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: 'actual reasoning',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(driver.state.appState.streamingPhase).toBe('thinking');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(true);
+  });
+
   it('finalizes an orphaned thinking component on turn end', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'thinking';
@@ -4586,5 +4682,83 @@ command = "vim"
     expect(transcript).toContain('UserPromptSubmit hook');
     expect(transcript).toContain('(empty)');
     expect(transcript).not.toContain('<hook_result');
+  });
+});
+
+describe('/model status displayName override', () => {
+  it('shows the overridden display name in the switch status', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Remote Turbo',
+            capabilities: ['thinking'],
+            overrides: { displayName: 'Custom Turbo' },
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: false },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true },
+      });
+    });
+
+    expect(renderTranscript(driver)).toContain('Switched to Custom Turbo with thinking on.');
+    expect(renderTranscript(driver)).not.toContain('Remote Turbo');
+  });
+});
+
+describe('/effort support_efforts override', () => {
+  it('rejects efforts hidden by support_efforts override', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            overrides: { supportEfforts: ['low', 'high'] },
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Unsupported thinking effort "max" for k2. Available: off, low, high');
+    });
+    expect(renderTranscript(driver)).not.toContain('Switched to Kimi K2 with thinking max.');
   });
 });

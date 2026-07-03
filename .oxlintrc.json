@@ -150,6 +150,7 @@
     "node_modules/",
     "apps/*/scripts/",
     "docs/smoke-archive/",
+    "packages/pi-tui/",
     "*.generated.ts"
   ]
 }

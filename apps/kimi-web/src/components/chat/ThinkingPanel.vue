@@ -6,6 +6,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import PanelHeader from '../ui/PanelHeader.vue';
 
 const props = defineProps<{
   text: string;
@@ -38,13 +39,12 @@ watch(
 
 <template>
   <div class="tp">
-    <div class="tp-header">
-      <span class="tp-title">{{ t('common.preview') }}</span>
-      <span class="tp-sub">{{ subtitle ?? t('thinking.panelTitle') }}</span>
-      <button type="button" class="tp-close" :title="t('thinking.close')" :aria-label="t('thinking.close')" @click="emit('close')">
-        <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-      </button>
-    </div>
+    <PanelHeader
+      :title="t('common.preview')"
+      :subtitle="subtitle ?? t('thinking.panelTitle')"
+      :close-label="t('thinking.close')"
+      @close="emit('close')"
+    />
     <pre ref="bodyEl" class="tp-body">{{ text }}</pre>
   </div>
 </template>
@@ -55,60 +55,7 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg);
-}
-
-/* Header height matches the conversation header (32px terminal / 40px modern
-   via --panel-head-h) so the hairline reads as one continuous line. */
-.tp-header {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--panel-head-h, 32px);
-  padding: 0 6px 0 12px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-.tp-title {
-  flex: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-}
-/* What is being previewed — supplementary, like the file path next door. */
-.tp-sub {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
-}
-.tp-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--muted);
-  cursor: pointer;
-}
-.tp-close:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.tp-close:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
+  background: var(--color-bg);
 }
 
 .tp-body {
@@ -117,10 +64,8 @@ watch(
   overflow-y: auto;
   margin: 0;
   padding: 12px 14px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  line-height: 1.7;
-  color: var(--dim);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-mono);
+  color: var(--color-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
 }
