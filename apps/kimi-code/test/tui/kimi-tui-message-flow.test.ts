@@ -2063,6 +2063,43 @@ command = "vim"
     expect(expanded).toContain('Keep the src/tui compaction notes.');
   });
 
+  it('honors existing tool output expansion when a compaction block is created', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.state.editor.onToggleToolExpand?.();
+    expect(driver.state.toolOutputExpanded).toBe(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        trigger: 'manual',
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: {
+          summary: 'Keep the src/tui compaction notes.',
+          compactedCount: 4,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+      } as Event,
+      sendQueued,
+    );
+
+    const transcript = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
+    expect(transcript).toContain('Compaction complete');
+    expect(transcript).toContain('Keep the src/tui compaction notes.');
+  });
+
   it('renders an error instead of prompting when no model is selected', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.model = '';

@@ -112,6 +112,23 @@ describe('CompactionComponent', () => {
     }
   });
 
+  it('preserves the expanded summary when invalidating with an instruction', () => {
+    const component = new CompactionComponent(undefined, 'keep the recent files only');
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      component.setExpanded(true);
+      component.invalidate();
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('keep the recent files only');
+      expect(text).toContain('Keep the src/tui compaction notes.');
+      expect(text.match(/keep the recent files only/g)).toHaveLength(1);
+    } finally {
+      component.dispose();
+    }
+  });
+
   it('repaints the header with the active palette on invalidate', () => {
     // Force truecolor so palette differences surface as ANSI codes even when
     // the test runner has no TTY.

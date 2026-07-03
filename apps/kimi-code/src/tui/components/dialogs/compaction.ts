@@ -24,6 +24,7 @@ const BLINK_INTERVAL = 500;
 export class CompactionComponent extends Container {
   private readonly ui: TUI | undefined;
   private readonly headerText: Text;
+  private instructionText: Text | undefined;
   private readonly instruction: string | undefined;
   private readonly tip: string | undefined;
   private blinkOn = true;
@@ -54,22 +55,26 @@ export class CompactionComponent extends Container {
 
   private addInstructionChild(): void {
     if (this.instruction !== undefined) {
-      this.addChild(new Text(currentTheme.dim(`  ${this.instruction}`), 0, 0));
+      this.instructionText = new Text(currentTheme.dim(`  ${this.instruction}`), 0, 0);
+      this.addChild(this.instructionText);
     }
+  }
+
+  private removeInstructionChild(): void {
+    if (this.instructionText === undefined) return;
+    const index = this.children.indexOf(this.instructionText);
+    if (index !== -1) {
+      this.children.splice(index, 1);
+    }
+    this.instructionText = undefined;
   }
 
   override invalidate(): void {
     // Repaint the header with the active palette (it caches ANSI codes).
     this.headerText.setText(this.buildHeader());
     // Rebuild instruction line with fresh theme colours.
-    if (this.instruction !== undefined) {
-      // Remove the last child if it is the instruction line (it is always
-      // added after headerText and Spacer).
-      if (this.children.length > 2) {
-        this.children.pop();
-      }
-      this.addInstructionChild();
-    }
+    this.removeInstructionChild();
+    this.addInstructionChild();
     super.invalidate();
   }
 

@@ -724,6 +724,9 @@ export class StreamingUIController {
     const block = new CompactionComponent(state.ui, instruction, currentWorkingTip()?.text);
     this._activeCompactionBlock = block;
     state.transcriptContainer.addChild(block);
+    if (state.toolOutputExpanded) {
+      block.setExpanded(true);
+    }
     state.ui.requestRender();
   }
 
