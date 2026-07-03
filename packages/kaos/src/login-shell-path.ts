@@ -73,9 +73,11 @@ export async function probeLoginShellPath(deps: LoginShellPathDeps): Promise<str
  * string is kept verbatim — including empty components, which POSIX
  * command lookup treats as the current directory — and login-shell
  * entries the current PATH lacks are appended in their own order. When
- * nothing is missing the current string is returned unchanged. Empty
- * login-shell components are never imported: appending a cwd lookup the
- * user did not already have would widen their search path.
+ * nothing is missing the current string is returned unchanged. Only
+ * absolute login-shell entries are imported: empty, `.`, and relative
+ * components are all cwd-dependent lookup, and appending one the user
+ * did not already have would widen their search path — LocalKaos runs
+ * commands from arbitrary workspace directories.
  */
 export function mergeLoginShellPath(
   currentPath: string | undefined,
@@ -85,7 +87,10 @@ export function mergeLoginShellPath(
   const seen = new Set(current.split(':').filter((entry) => entry.length > 0));
   const additions: string[] = [];
   for (const entry of loginShellPath.split(':')) {
-    if (entry.length === 0 || seen.has(entry)) continue;
+    // The probe only runs on POSIX (win32 bails before merging), so a
+    // leading slash is a sufficient absoluteness test. Empty components
+    // fail it too.
+    if (!entry.startsWith('/') || seen.has(entry)) continue;
     seen.add(entry);
     additions.push(entry);
   }

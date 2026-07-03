@@ -147,6 +147,14 @@ describe('mergeLoginShellPath', () => {
     // lookup the user did not already have would widen their search path.
     expect(mergeLoginShellPath('/a', ':/b::/a:')).toBe('/a:/b');
   });
+
+  it('skips relative login-shell entries', () => {
+    // `.` and relative components are cwd-dependent lookup with another
+    // spelling — LocalKaos runs commands from arbitrary workspace
+    // directories, so importing one would let a command name resolve from
+    // an untrusted project cwd. Only absolute entries may be appended.
+    expect(mergeLoginShellPath('/a', '.:bin:../x:/b')).toBe('/a:/b');
+  });
 });
 
 describe('applyLoginShellPath', () => {
