@@ -1,8 +1,7 @@
 <!-- apps/kimi-web/src/App.vue -->
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRoute } from 'vue-router';
 import Sidebar from './components/Sidebar.vue';
 import ResizeHandle from './components/ResizeHandle.vue';
 import ConversationPane from './components/chat/ConversationPane.vue';
@@ -42,10 +41,6 @@ import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
 
-const DesignSystemView = defineAsyncComponent(
-  () => import('./views/DesignSystemView.vue'),
-);
-
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
 const hasServerCredential = initServerAuth();
@@ -55,8 +50,6 @@ let offAuthRequired: (() => void) | null = null;
 const client = useKimiWebClient();
 provide('resolveImage', client.resolveImageUrl);
 const { t } = useI18n();
-const route = useRoute();
-const isDesignSystem = computed(() => route.name === 'design-system');
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.
 const debugEnabled = isTraceEnabled();
@@ -585,7 +578,6 @@ function openPr(url: string): void {
         </Button>
       </div>
     </section>
-    <DesignSystemView v-else-if="isDesignSystem" />
     <div
       v-else
       class="app"

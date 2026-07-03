@@ -208,9 +208,6 @@ importers:
       vue-i18n:
         specifier: ^11.4.5
         version: 11.4.5(vue@3.5.35(typescript@6.0.2))
-      vue-router:
-        specifier: ^4.6.4
-        version: 4.6.4(vue@3.5.35(typescript@6.0.2))
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^5.2.4
@@ -7348,11 +7345,6 @@ packages:
     engines: {node: '>= 22'}
     peerDependencies:
       vue: ^3.0.0
-
-  vue-router@4.6.4:
-    resolution: {integrity: sha512-Hz9q5sa33Yhduglwz6g9skT8OBPii+4bFn88w6J+J4MfEo4KRRpmiNG/hHHkdbRFlLBOqxN8y8gf2Fb0MTUgVg==}
-    peerDependencies:
-      vue: ^3.5.0
 
   vue-tsc@3.2.9:
     resolution: {integrity: sha512-qm8/nbo+9eZc1SCndm9wT+gq23pM+wRIdHY0wjm83B3lIginHTwcdrLUyTrKjDWXbMVNjKegNrnymhpdqnCL3A==}
@@ -14824,11 +14816,6 @@ snapshots:
       '@intlify/core-base': 11.4.5
       '@intlify/devtools-types': 11.4.5
       '@intlify/shared': 11.4.5
-      '@vue/devtools-api': 6.6.4
-      vue: 3.5.35(typescript@6.0.2)
-
-  vue-router@4.6.4(vue@3.5.35(typescript@6.0.2)):
-    dependencies:
       '@vue/devtools-api': 6.6.4
       vue: 3.5.35(typescript@6.0.2)
 

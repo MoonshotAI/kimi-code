@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Open the web design-system easter egg at its own `/design-system` URL so it stays in sync with the app's design tokens instead of drifting as a separate copy.
+Rebuild the web design-system easter egg as an in-app overlay that uses the app's real design tokens, so it stays in sync instead of drifting as a separate copy.

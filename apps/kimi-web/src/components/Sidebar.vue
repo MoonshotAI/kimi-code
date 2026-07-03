@@ -3,10 +3,8 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
-import { setDesignSystemReturnPath } from '../router';
 import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
 import {
@@ -511,10 +509,13 @@ function blinkOnce(): void {
   blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
 
-// Logo long-press easter-egg: holding the Kimi mark for 1 second navigates to
-// the design system route. A short click still just blinks. Pointer capture
-// keeps the hold alive even if the pointer drifts off the mark.
-const router = useRouter();
+// Logo long-press easter-egg: holding the Kimi mark for 1 second opens the
+// design system as a full-screen overlay. A short click still just blinks.
+// Pointer capture keeps the hold alive even if the pointer drifts off the mark.
+const DesignSystemView = defineAsyncComponent(
+  () => import('../views/DesignSystemView.vue'),
+);
+const showDesignSystem = ref(false);
 const EGG_HOLD_MS = 1000;
 let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
 let logoLongPressed = false;
@@ -525,9 +526,7 @@ function onLogoPointerDown(event: PointerEvent): void {
   (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
   logoPressTimer = setTimeout(() => {
     logoLongPressed = true;
-    const { pathname, search, hash } = window.location;
-    setDesignSystemReturnPath(`${pathname}${search}${hash}`);
-    void router.push('/design-system');
+    showDesignSystem.value = true;
   }, EGG_HOLD_MS);
 }
 
@@ -754,6 +753,9 @@ onBeforeUnmount(() => {
       @close="showSearch = false"
     />
   </aside>
+  <Teleport to="body">
+    <DesignSystemView v-if="showDesignSystem" @close="showDesignSystem = false" />
+  </Teleport>
 </template>
 
 <style scoped>

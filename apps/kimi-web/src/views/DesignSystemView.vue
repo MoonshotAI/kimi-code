@@ -1,20 +1,20 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
-import { designSystemReturnPath } from '../router';
 
-const router = useRouter();
+const emit = defineEmits<{ close: [] }>();
 
 function close(): void {
-  // Replace the current /design-system history entry with the URL captured at
-  // logo entry, so the browser Back button returns to the page before the
-  // easter egg rather than reopening /design-system.
-  void router.replace(designSystemReturnPath || '/');
+  emit('close');
 }
 
 let io: IntersectionObserver | null = null;
 
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') close();
+}
+
 onMounted(() => {
+  document.addEventListener('keydown', onKeydown);
   // Highlight the side-nav entry for the section currently in view while scrolling.
   const links = Array.prototype.slice.call(
     document.querySelectorAll<HTMLAnchorElement>('#nav a[href^="#"]'),
@@ -44,6 +44,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown);
   if (io) {
     io.disconnect();
     io = null;
@@ -2366,8 +2367,9 @@ onUnmounted(() => {
 
 /* ---- View shell + topbar (scoped, product tokens) ---- */
 .ds-page {
-  flex: 1;
-  min-height: 0;
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-max);
   overflow-y: auto;
 }
 .ds-topbar {
