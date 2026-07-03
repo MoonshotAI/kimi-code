@@ -198,18 +198,16 @@ async function copyPath(): Promise<void> {
       </Button>
     </Tooltip>
 
-    <Tooltip :text="t('header.chooseOpenApp')">
-      <IconButton
-        ref="triggerRef"
-        size="sm"
-        :class="{ open: menuOpen }"
-        :disabled="!hasWorkDir"
-        :label="t('header.chooseOpenApp')"
-        @click.stop="openMenu"
-      >
-        <Icon name="chevron-down" size="sm" />
-      </IconButton>
-    </Tooltip>
+    <IconButton
+      ref="triggerRef"
+      size="sm"
+      :class="{ open: menuOpen }"
+      :disabled="!hasWorkDir"
+      :label="t('header.chooseOpenApp')"
+      @click.stop="openMenu"
+    >
+      <Icon name="chevron-down" size="sm" />
+    </IconButton>
 
     <Menu
       v-if="menuOpen"

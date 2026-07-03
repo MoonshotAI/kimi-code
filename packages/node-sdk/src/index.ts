@@ -70,9 +70,15 @@ export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
 // Image compression — ingestion sites (e.g. the CLI's clipboard paste, the ACP
 // adapter) shrink oversized images while constructing the content part, before
 // it enters a prompt. Best effort: returns the original on any failure.
+// Compression is never silent: buildImageCompressionCaption renders the note
+// placed next to a compressed image, and persistOriginalImage keeps the
+// pre-compression bytes readable (ReadMediaFile + region) for detail.
 export {
+  buildImageCompressionCaption,
   compressImageForModel,
   compressBase64ForModel,
+  persistOriginalImage,
+  sessionMediaOriginalsDir,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
 } from '@moonshot-ai/agent-core';
@@ -80,6 +86,7 @@ export type {
   CompressImageOptions,
   CompressImageResult,
   CompressBase64Result,
+  ImageCompressionCaptionInput,
 } from '@moonshot-ai/agent-core';
 
 // Experimental feature flags — types only. Resolved values come from

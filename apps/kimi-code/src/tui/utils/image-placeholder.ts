@@ -22,6 +22,7 @@ import { copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
+import { buildImageCompressionCaption } from '@moonshot-ai/kimi-code-sdk';
 
 import { getCacheDir } from '#/utils/paths';
 
@@ -74,6 +75,11 @@ export function extractMediaAttachments(
       pushText(parts, formatMediaTag('video', cachePath));
       videoAttachmentIds.push(id);
     } else {
+      // Paste-time compression is announced next to the image so the model
+      // knows it received a downsampled copy and where the original lives.
+      if (attachment.original !== undefined) {
+        pushText(parts, captionForCompressedImage(attachment));
+      }
       parts.push(imagePartForAttachment(attachment));
       imageAttachmentIds.push(id);
     }
@@ -123,6 +129,26 @@ function materializeVideoToCache(att: VideoAttachment): string {
   const target = join(cacheDir, `${randomUUID()}-${att.label}`);
   copyFileSync(att.sourcePath, target);
   return target;
+}
+
+function captionForCompressedImage(att: ImageAttachment): string {
+  const original = att.original;
+  if (original === undefined) return '';
+  return buildImageCompressionCaption({
+    original: {
+      width: original.width,
+      height: original.height,
+      byteLength: original.byteLength,
+      mimeType: original.mime,
+    },
+    final: {
+      width: att.width,
+      height: att.height,
+      byteLength: att.bytes.length,
+      mimeType: att.mime,
+    },
+    originalPath: original.path,
+  });
 }
 
 function formatMediaTag(tag: 'image' | 'video', path: string): string {

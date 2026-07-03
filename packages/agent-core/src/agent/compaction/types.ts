@@ -21,6 +21,16 @@ export interface CompactionResult {
    */
   keptUserMessageCount?: number;
   /**
+   * Of `keptUserMessageCount`, how many messages form the HEAD segment (the
+   * oldest user input kept when the pool overflowed the budget). Present iff
+   * the selection split into head + tail, in which case the live context also
+   * holds one elision-marker message between the segments (so its length is
+   * `keptUserMessageCount + 2` including the summary). Its presence is also
+   * what tells restore to use the head/tail selection; records without it
+   * restore with the pre-split tail-only selection that produced them.
+   */
+  keptHeadUserMessageCount?: number;
+  /**
    * Number of oldest messages trimmed from the summarizer input when the
    * compaction request itself overflowed the model window. These messages are
    * not covered by the produced summary — a real-user message among them may
@@ -39,7 +49,12 @@ export interface CompactionResult {
  * historical values are preserved verbatim.
  */
 export type CompactionInput = Pick<CompactionResult, 'summary' | 'compactedCount' | 'tokensBefore'> &
-  Partial<Pick<CompactionResult, 'contextSummary' | 'tokensAfter' | 'keptUserMessageCount' | 'droppedCount'>>;
+  Partial<
+    Pick<
+      CompactionResult,
+      'contextSummary' | 'tokensAfter' | 'keptUserMessageCount' | 'keptHeadUserMessageCount' | 'droppedCount'
+    >
+  >;
 
 export type CompactionSource = 'manual' | 'auto';
 

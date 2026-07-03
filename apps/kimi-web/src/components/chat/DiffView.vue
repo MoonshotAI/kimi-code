@@ -220,12 +220,10 @@ function treePadding(depth: number): string {
       </PanelHeader>
 
       <div class="diff-head">
-        <Tooltip :text="t('diff.back')">
-          <Button v-if="!hideBack" variant="ghost" size="sm" @click="onBack">
-            <span aria-hidden="true">&#8592;</span>
-            <span class="back-label">{{ t('diff.back') }}</span>
-          </Button>
-        </Tooltip>
+        <Button v-if="!hideBack" variant="ghost" size="sm" @click="onBack">
+          <span aria-hidden="true">&#8592;</span>
+          <span class="back-label">{{ t('diff.back') }}</span>
+        </Button>
       </div>
 
       <div v-if="loading" class="empty-state">{{ t('diff.loading') }}</div>

@@ -1,5 +1,18 @@
 # @moonshot-ai/agent-core
 
+## 0.15.1
+
+### Patch Changes
+
+- [#1285](https://github.com/MoonshotAI/kimi-code/pull/1285) [`c434b4c`](https://github.com/MoonshotAI/kimi-code/commit/c434b4c3e658b686e5f0d0d7d3a2b4cfbfbcaffa) - Cap the output a single foreground shell command may stream so a runaway command can no longer crash the process. A command that produces a very large or unbounded amount of output (e.g. `b3sum --length 18446744073709551615`) previously grew the live-output buffer until Node aborted with a JavaScript heap out-of-memory error; it is now gracefully terminated once its output exceeds 16 MiB, and the result explains how to redirect large output to a file instead. The per-task output ring buffer is also maintained in O(1) per chunk rather than O(n²). Background tasks are unaffected.
+
+- [#1308](https://github.com/MoonshotAI/kimi-code/pull/1308) [`4dd926b`](https://github.com/MoonshotAI/kimi-code/commit/4dd926b0ac8f901030b012827a418274cd7434ae) - Drop orphan tool results at the projection boundary so a malformed history cannot brick a session. A `tool` result whose assistant `tool_call` is nowhere in the history (e.g. an older session whose compaction cut fell inside a tool exchange, restored via the legacy path) is now removed from every projected request, not only on the post-400 strict resend. The stored history is left faithful to the wire records — so consumers that model it, like the transcript fold length, stay in sync — while a strict provider (OpenAI / DeepSeek) always receives a valid request. The drop is surfaced via the projection-repair log rather than done silently.
+
+- [#1296](https://github.com/MoonshotAI/kimi-code/pull/1296) [`021de54`](https://github.com/MoonshotAI/kimi-code/commit/021de5433b43bf944ae77637e74581bf509d5d14) - Align model-facing prompts with actual tool behavior. Fix descriptions that drifted from the implementation (Grep `glob` matching against absolute paths, Glob accepting relative `path`, FetchURL extraction modes, files-only Glob results, cron pinned-date recurrence), disclose enforced-but-silent behavior (idle-only cron delivery, the 5-year no-fire rejection, VCS directories always excluded, sensitive-file exemptions, image downsampling, the subagent summary-length floor, background rejection before launch), resolve cross-surface contradictions (AskUserQuestion background polling guidance, AgentSwarm resume typing, `&&` chaining vs parallel calls, dangling optional-tool names in the shared system prompt), and add missing guidance (denied-call handling for the root agent, read-only role statement for the plan subagent, coder handoff requirements, web/`gh` routing, a dual-use content-safety boundary, scope discipline, and dependency-verification norms).
+
+- Updated dependencies [[`93ec6cb`](https://github.com/MoonshotAI/kimi-code/commit/93ec6cb6526021156a951f8c513c45f138bf5dbb), [`4dd926b`](https://github.com/MoonshotAI/kimi-code/commit/4dd926b0ac8f901030b012827a418274cd7434ae)]:
+  - @moonshot-ai/kosong@0.5.2
+
 ## 0.15.0
 
 ### Minor Changes

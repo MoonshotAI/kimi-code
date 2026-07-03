@@ -78,6 +78,10 @@ export interface WorkspaceGroup {
   hasMore: boolean;
   /** True while the next page of sessions is being fetched for this workspace. */
   loadingMore: boolean;
+  /** First-page capacity for the in-group show-less collapse target: the number
+   *  of sessions loaded on first paint, floored at one full page so a workspace
+   *  that was empty or sparse does not hide sessions created later. */
+  initialCount: number;
 }
 
 /** Sidebar session-list scope: only the active workspace, or all workspaces. */

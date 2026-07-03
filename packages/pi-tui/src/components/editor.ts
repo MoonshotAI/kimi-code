@@ -166,7 +166,18 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 
 			// The segment remains logically atomic for cursor
 			// movement / editing — the split is purely visual for word-wrap layout.
-			const subChunks = wordWrapLine(grapheme, maxWidth);
+			const subSegments = [...graphemeSegmenter.segment(grapheme)];
+			if (subSegments.length <= 1) {
+				// An indivisible grapheme wider than maxWidth (e.g. a CJK
+				// character at maxWidth 1) cannot be split further —
+				// re-wrapping it would recurse forever. Keep it as the
+				// current open chunk and let it overflow by one column;
+				// the TUI paint layer truncates overwide lines.
+				currentWidth = gWidth;
+				wrapOppIndex = -1;
+				continue;
+			}
+			const subChunks = wordWrapLine(grapheme, maxWidth, subSegments);
 			for (let j = 0; j < subChunks.length - 1; j++) {
 				const sc = subChunks[j]!;
 				chunks.push({ text: sc.text, startIndex: charIndex + sc.startIndex, endIndex: charIndex + sc.endIndex });
@@ -299,6 +310,8 @@ export class Editor implements Component, Focusable {
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
 	private historyDraft: EditorState | null = null;
+	private hostHistoryDraft: unknown = undefined;
+	private historyFilter: ((entry: string) => boolean) | null = null;
 
 	// Kill ring for Emacs-style kill/yank operations
 	private killRing = new KillRing();
@@ -322,6 +335,22 @@ export class Editor implements Component, Focusable {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	/**
+	 * Called when a history entry is recalled, before it is put into the buffer.
+	 * Return the text to display, or `undefined` to use the entry as-is. Lets the
+	 * host decorate entries (e.g. strip a marker) and react to recalls (e.g.
+	 * switch input mode) without touching editor internals.
+	 */
+	public onRecall?: (entry: string, direction: 1 | -1) => string | undefined;
+	/**
+	 * Called when entering history browsing, to capture host state that should be
+	 * saved alongside the editor draft. The returned value is passed to
+	 * `onHistoryDraftRestore` when the user navigates back to the draft, so the
+	 * host can restore state the editor does not own (e.g. an input mode).
+	 */
+	public onHistoryDraftSave?: () => unknown;
+	/** Called with the value from `onHistoryDraftSave` when the draft is restored. */
+	public onHistoryDraftRestore?: (state: unknown) => void;
 	public disableSubmit: boolean = false;
 
 	constructor(tui: TUI, theme: EditorTheme, options: EditorOptions = {}) {
@@ -375,6 +404,14 @@ export class Editor implements Component, Focusable {
 	}
 
 	/**
+	 * Limit which history entries ↑/↓ navigate. `null` (default) visits every
+	 * entry. The filter is evaluated against each stored entry as-is.
+	 */
+	setHistoryFilter(filter: ((entry: string) => boolean) | null): void {
+		this.historyFilter = filter;
+	}
+
+	/**
 	 * Add a prompt to history for up/down arrow navigation.
 	 * Called after successful submission.
 	 */
@@ -410,13 +447,41 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 		if (this.history.length === 0) return;
 
-		const newIndex = this.historyIndex - direction; // Up(-1) increases index, Down(1) decreases
-		if (newIndex < -1 || newIndex >= this.history.length) return;
+		// When entering browse, capture host state up front — before the filter
+		// runs — so the host's filter can read the browse-entry mode rather than a
+		// mode that changes as entries are recalled. The captured value is only
+		// committed to hostHistoryDraft once a matching entry is actually found.
+		const entering = this.historyIndex === -1;
+		const pendingHostDraft = entering ? this.onHistoryDraftSave?.() : undefined;
+
+		// Find the next index that passes the filter. Up(-1) increases index,
+		// Down(1) decreases. The draft (-1) is always reachable; stepping past
+		// either end is a no-op.
+		let newIndex = this.historyIndex;
+		let found = false;
+		while (true) {
+			newIndex = newIndex - direction;
+			if (newIndex === -1) {
+				found = true;
+				break;
+			}
+			if (newIndex < -1 || newIndex >= this.history.length) {
+				found = false;
+				break;
+			}
+			const candidate = this.history[newIndex];
+			if (!this.historyFilter || (candidate !== undefined && this.historyFilter(candidate))) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) return;
 
 		// Capture state when first entering history browsing mode
-		if (this.historyIndex === -1 && newIndex >= 0) {
+		if (entering && newIndex >= 0) {
 			this.pushUndoSnapshot();
 			this.historyDraft = structuredClone(this.state);
+			this.hostHistoryDraft = pendingHostDraft;
 		}
 
 		this.historyIndex = newIndex;
@@ -429,18 +494,25 @@ export class Editor implements Component, Focusable {
 				this.preferredVisualCol = null;
 				this.snappedFromCursorCol = null;
 				this.scrollOffset = 0;
+				if (this.hostHistoryDraft !== undefined) {
+					this.onHistoryDraftRestore?.(this.hostHistoryDraft);
+					this.hostHistoryDraft = undefined;
+				}
 				if (this.onChange) this.onChange(this.getText());
 			} else {
 				this.setTextInternal("");
 			}
 		} else {
-			this.setTextInternal(this.history[this.historyIndex] || "", direction === -1 ? "start" : "end");
+			const rawEntry = this.history[this.historyIndex] || "";
+			const entry = this.onRecall ? this.onRecall(rawEntry, direction) ?? rawEntry : rawEntry;
+			this.setTextInternal(entry, direction === -1 ? "start" : "end");
 		}
 	}
 
 	private exitHistoryBrowsing(): void {
 		this.historyIndex = -1;
 		this.historyDraft = null;
+		this.hostHistoryDraft = undefined;
 	}
 
 	/** Internal setText that doesn't reset history state - used by navigateHistory */
@@ -514,7 +586,7 @@ export class Editor implements Component, Focusable {
 				result.push(this.borderColor(truncateToWidth(indicator, width)));
 			}
 		} else {
-			result.push(horizontal.repeat(width));
+			result.push(horizontal.repeat(Math.max(0, width)));
 		}
 
 		// Render each visible layout line
@@ -572,7 +644,7 @@ export class Editor implements Component, Focusable {
 			const remaining = width - visibleWidth(indicator);
 			result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
 		} else {
-			result.push(horizontal.repeat(width));
+			result.push(horizontal.repeat(Math.max(0, width)));
 		}
 
 		// Add autocomplete list if active

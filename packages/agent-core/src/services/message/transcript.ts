@@ -3,10 +3,11 @@
  * agent from its `wire.jsonl` record log.
  *
  * Why: `ContextMemory.applyCompaction` rewrites the in-memory history as
- * `[...keptUserMessages, compaction_summary]` (the most recent real user
- * prompts, verbatim within a token budget, followed by a single user-role
- * summary), so `getContext().history` only reflects the model's CURRENT
- * context. The wire log, however, keeps every record. The TUI
+ * `[...keptUserMessages, compaction_summary]` (the kept real user prompts —
+ * oldest head plus most recent tail, verbatim within a token budget, with an
+ * elision marker between the segments when the pool overflowed — followed by
+ * a single user-role summary), so `getContext().history` only reflects the
+ * model's CURRENT context. The wire log, however, keeps every record. The TUI
  * shows the full transcript on resume because `ReplayBuilder` captures every
  * `pushHistory` during record replay and is never folded by compaction. This
  * module reproduces that exact view for daemon REST consumers (web), without
@@ -25,7 +26,7 @@
  *                                     user-role summary marker (origin
  *                                     `compaction_summary`), and recover
  *                                     `foldedLength` from the recorded
- *                                     `keptUserMessageCount`
+ *                                     kept-count fields
  *   - `context.undo`                → remove tail messages exactly like
  *                                     `ContextMemory.undo` (skip injections, stop at
  *                                     compaction summaries / `context.clear` floors)
@@ -250,9 +251,10 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         break;
       case 'context.apply_compaction': {
         // Mirrors ContextMemory.applyCompaction: the live context becomes the
-        // most recent user messages followed by a user-role summary. The
-        // transcript keeps the full history and appends the summary marker;
-        // foldedLength tracks the post-compaction live context length.
+        // kept user messages (head + tail, possibly separated by an elision
+        // marker) followed by a user-role summary. The transcript keeps the
+        // full history and appends the summary marker; foldedLength tracks the
+        // post-compaction live context length.
         transcript.push({
           message: {
             role: 'user',
@@ -270,7 +272,11 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         // longer has. Only fall back to re-deriving for legacy wire records
         // that predate the field.
         if (record.keptUserMessageCount !== undefined) {
-          foldedLength = record.keptUserMessageCount + 1;
+          // +1 for the summary message; +1 more when the selection split into
+          // head + tail, because the live context then also holds an elision
+          // marker message between the two segments.
+          foldedLength =
+            record.keptUserMessageCount + (record.keptHeadUserMessageCount === undefined ? 1 : 2);
         } else if (record.compactedCount < foldedLength) {
           // Legacy record (predates keptUserMessageCount) that kept
           // history.slice(compactedCount) verbatim. Mirror ContextMemory's

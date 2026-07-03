@@ -30,6 +30,9 @@ const props = defineProps<{
   /** When true, render the workspace root path as a stable subtitle line. */
   showPath: boolean;
   isCollapsed: (id: string) => boolean;
+  /** When true, render all loaded sessions; otherwise only the first page
+   *  (`group.initialCount`). Drives the in-group show-more / show-less toggle. */
+  isExpanded: (id: string) => boolean;
 }>();
 
 const emit = defineEmits<{
@@ -42,6 +45,7 @@ const emit = defineEmits<{
   archiveSession: [id: string];
   forkSession: [id: string];
   loadMore: [workspaceId: string];
+  toggleExpand: [workspaceId: string];
   confirmRename: [];
   cancelRename: [];
   updateRenameValue: [value: string];
@@ -56,6 +60,32 @@ const renameValueModel = computed<string>({
   get: () => props.renameValue,
   set: (value: string) => emit('updateRenameValue', value),
 });
+
+// Sessions to render: all when expanded, otherwise only the first page. The
+// collapse is a pure view-layer trim — data, cursor and hasMore stay intact, so
+// re-expanding never refetches. When collapsed, the active session is always
+// kept visible: an older session selected via Cmd/Ctrl-K search or a URL deep
+// link would otherwise be hidden past the first page, so navigation would land
+// on a missing row. It appends in newest-first order (older than the head).
+const visibleSessions = computed(() => {
+  if (props.isExpanded(props.group.workspace.id)) return props.group.sessions;
+  const head = props.group.sessions.slice(0, props.group.initialCount);
+  if (props.activeId && !head.some((s) => s.id === props.activeId)) {
+    const active = props.group.sessions.find((s) => s.id === props.activeId);
+    if (active) return [...head, active];
+  }
+  return head;
+});
+// True once more than the first page is loaded — gates the show-less/show-all toggle.
+const canToggleExpand = computed(
+  () => props.group.sessions.length > props.group.initialCount,
+);
+function showMoreCount(): number {
+  return Math.max(0, props.group.workspace.sessionCount - props.group.sessions.length);
+}
+function showAllCount(): number {
+  return props.group.sessions.length - props.group.initialCount;
+}
 
 // Hand the rename input element back to the parent's ref so Sidebar keeps
 // owning focus (startRenameWorkspace focuses renameInputRef on nextTick). Only
@@ -108,30 +138,26 @@ function onHeaderDragStart(event: DragEvent): void {
           @click.stop
         />
 
-        <Tooltip :text="t('sidebar.options')">
-          <IconButton
-            class="gh-more"
-            :class="{ open: wsMenuOpenId === group.workspace.id }"
-            size="sm"
-            :label="t('sidebar.options')"
-            aria-haspopup="menu"
-            :aria-expanded="wsMenuOpenId === group.workspace.id"
-            @click.stop="emit('toggleWsMenu', group.workspace, $event)"
-          >
-            <Icon name="dots-horizontal" size="sm" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          class="gh-more"
+          :class="{ open: wsMenuOpenId === group.workspace.id }"
+          size="sm"
+          :label="t('sidebar.options')"
+          aria-haspopup="menu"
+          :aria-expanded="wsMenuOpenId === group.workspace.id"
+          @click.stop="emit('toggleWsMenu', group.workspace, $event)"
+        >
+          <Icon name="dots-horizontal" size="sm" />
+        </IconButton>
 
-        <Tooltip :text="t('workspace.newInGroup')">
-          <IconButton
-            class="gh-add"
-            size="sm"
-            :label="t('workspace.newInGroup')"
-            @click.stop="emit('createInWorkspace', group.workspace.id)"
-          >
-            <Icon name="chat-new" />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          class="gh-add"
+          size="sm"
+          :label="t('workspace.newInGroup')"
+          @click.stop="emit('createInWorkspace', group.workspace.id)"
+        >
+          <Icon name="chat-new" />
+        </IconButton>
       </div>
 
       <Tooltip :text="group.workspace.root">
@@ -144,7 +170,7 @@ function onHeaderDragStart(event: DragEvent): void {
       :inert="isCollapsed(group.workspace.id)"
     >
       <SessionRow
-        v-for="s in group.sessions"
+        v-for="s in visibleSessions"
         :key="s.id"
         :session="s"
         :active="s.id === activeId"
@@ -162,11 +188,22 @@ function onHeaderDragStart(event: DragEvent): void {
         :disabled="group.loadingMore"
         @click.stop="emit('loadMore', group.workspace.id)"
       >
-        {{
-          group.loadingMore
-            ? t('sidebar.loadingMore')
-            : t('sidebar.showMore', { count: Math.max(0, group.workspace.sessionCount - group.sessions.length) })
-        }}
+        <span class="show-more-lead" aria-hidden="true"></span>
+        <span class="show-more-label">{{
+          group.loadingMore ? t('sidebar.loadingMore') : t('sidebar.showMore', { count: showMoreCount() })
+        }}</span>
+      </button>
+      <button
+        v-if="canToggleExpand"
+        class="show-more"
+        @click.stop="emit('toggleExpand', group.workspace.id)"
+      >
+        <span class="show-more-lead" aria-hidden="true"></span>
+        <span class="show-more-label">{{
+          isExpanded(group.workspace.id)
+            ? t('sidebar.showLess')
+            : t('sidebar.showAll', { count: showAllCount() })
+        }}</span>
       </button>
       <div v-if="group.sessions.length === 0" class="group-empty">{{ t('sidebar.noSessions') }}</div>
     </div>
@@ -285,21 +322,37 @@ function onHeaderDragStart(event: DragEvent): void {
   color: var(--color-text-faint);
   font-family: var(--font-mono);
 }
+/* Show-more / show-less — a session-row-shaped compact list control (§07). The
+   empty lead slot mirrors a session row's status gutter, so the label text lands
+   at the exact same x as the session titles (--sb-pad-x + --sb-gutter + --sb-gap
+   from the sidebar edge). Hover washes the row in the sunken surface, matching
+   New chat / session rows; no text recolor. */
 .show-more {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
   width: 100%;
-  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) + var(--sb-gutter) + var(--sb-gap));
-  background: none;
+  min-height: 26px;
+  margin: 0;
+  padding: var(--space-1) calc(var(--sb-pad-x) - var(--space-2));
   border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
   color: var(--color-text);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
-  font-family: var(--font-mono);
-  cursor: pointer;
   text-align: left;
+  cursor: pointer;
 }
-.show-more:hover {
-  color: var(--color-accent-hover);
-  background: var(--color-surface-sunken);
+.show-more:hover { background: var(--color-surface-sunken); }
+.show-more:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.show-more-lead { width: var(--sb-gutter); flex: none; }
+.show-more-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Inline workspace rename input */

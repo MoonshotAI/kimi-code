@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { normalizeTerminalOutput, truncateToWidth, visibleWidth } from "../src/utils.ts";
+import { asciiVisibleWidth, normalizeTerminalOutput, truncateToWidth, visibleWidth } from "../src/utils.ts";
 
 describe("truncateToWidth", () => {
 	it("keeps output within width for very large unicode input", () => {
@@ -72,5 +72,23 @@ describe("visibleWidth", () => {
 		assert.strictEqual(normalizeTerminalOutput("ຳ"), "ໍາ");
 		assert.strictEqual(visibleWidth(normalizeTerminalOutput("ำabc")), visibleWidth("ำabc"));
 		assert.strictEqual(visibleWidth(normalizeTerminalOutput("ຳabc")), visibleWidth("ຳabc"));
+	});
+});
+
+describe("asciiVisibleWidth", () => {
+	it("measures ASCII lines and skips ANSI sequences", () => {
+		assert.strictEqual(asciiVisibleWidth("hello", 80), 5);
+		assert.strictEqual(asciiVisibleWidth("\x1b[31mhello\x1b[0m", 80), 5);
+	});
+
+	it("returns undefined for non-ASCII, control chars, or lone ESC", () => {
+		assert.strictEqual(asciiVisibleWidth("你好", 80), undefined);
+		assert.strictEqual(asciiVisibleWidth("a\tb", 80), undefined);
+		assert.strictEqual(asciiVisibleWidth("a\x1b", 80), undefined);
+	});
+
+	it("early-exits once width exceeds the limit", () => {
+		const result = asciiVisibleWidth("x".repeat(100), 4);
+		assert.ok(result !== undefined && result > 4);
 	});
 });

@@ -1,5 +1,0 @@
----
-"@moonshot-ai/agent-core": patch
----
-
-Align model-facing prompts with actual tool behavior. Fix descriptions that drifted from the implementation (Grep `glob` matching against absolute paths, Glob accepting relative `path`, FetchURL extraction modes, files-only Glob results, cron pinned-date recurrence), disclose enforced-but-silent behavior (idle-only cron delivery, the 5-year no-fire rejection, VCS directories always excluded, sensitive-file exemptions, image downsampling, the subagent summary-length floor, background rejection before launch), resolve cross-surface contradictions (AskUserQuestion background polling guidance, AgentSwarm resume typing, `&&` chaining vs parallel calls, dangling optional-tool names in the shared system prompt), and add missing guidance (denied-call handling for the root agent, read-only role statement for the plan subagent, coder handoff requirements, web/`gh` routing, a dual-use content-safety boundary, scope discipline, and dependency-verification norms).

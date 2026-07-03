@@ -930,11 +930,11 @@ export class KimiTUI {
       this.showError('Cannot send input while session history is replaying.');
       return;
     }
-    // Shell commands (`! …`) are not prompts — keep them out of input history
-    // so ↑ recall never surfaces a bare command stripped of its `!`.
-    if (!wasBashMode) {
-      void this.persistInputHistory(text);
-    }
+    // Shell commands are stored with a leading `!` so ↑ recall can tell them
+    // apart from prompts and restore bash mode (see CustomEditor's mode-aware
+    // history navigation). The `!` is stripped again when the entry is recalled.
+    const historyText = wasBashMode ? `!${text}` : text;
+    void this.persistInputHistory(historyText);
     if (wasBashMode) {
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
@@ -1905,6 +1905,11 @@ export class KimiTUI {
     this.state.todoPanelContainer.clear();
     this.imageStore.clear();
     this.renderWelcome();
+    // Session resets (/new, /clear, session switch) want a pristine screen.
+    // Force a destructive full render: the renderer's collapse repaint
+    // intentionally preserves scrollback, which would leave the previous
+    // session's text above the welcome banner.
+    this.state.ui.requestRender(true);
   }
 
   private isTurnBoundaryComponent(child: Component): boolean {
@@ -2350,7 +2355,12 @@ export class KimiTUI {
       if (!isExpandable(child)) continue;
       child.setExpanded(this.state.toolOutputExpanded && i >= expandCutoff);
     }
-    this.state.ui.requestRender();
+    // Expanding/collapsing shifts content above the viewport; the clamped
+    // differential render would paint a second copy below the stale one in
+    // scrollback. This is a deliberate user action (like /clear), so do a
+    // destructive full render: scrollback holds exactly one copy and the
+    // expanded output can be read by scrolling up.
+    this.state.ui.requestRender(true);
   }
 
   toggleTodoPanelExpansion(): void {

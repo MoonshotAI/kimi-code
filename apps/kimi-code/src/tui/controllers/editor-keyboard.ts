@@ -1,5 +1,5 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
-import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
@@ -65,6 +65,43 @@ export class EditorKeyboardController {
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
       host.updateEditorBorderHighlight(text);
+    };
+
+    // bash mode recalls only shell (`!`-prefixed) history entries; prompt mode
+    // recalls everything. The filter is locked to the mode captured when the
+    // user first enters history browsing (see onHistoryDraftSave), so landing on
+    // a shell entry mid-browse doesn't switch the filter to shell-only.
+    let browseMode: 'prompt' | 'bash' | null = null;
+    editor.setHistoryFilter((entry: string) => {
+      const mode = browseMode ?? editor.inputMode;
+      return mode === 'bash' ? entry.startsWith('!') : true;
+    });
+
+    // Recalling a `!`-prefixed entry strips the marker and returns to bash
+    // mode; recalling a plain entry returns to prompt mode. The filter above
+    // guarantees bash mode only ever lands on `!` entries, so this never
+    // misfires on commands typed in bash mode.
+    editor.onRecall = (entry: string) => {
+      if (entry.startsWith('!')) {
+        editor.setInputMode('bash');
+        return entry.slice(1);
+      }
+      editor.setInputMode('prompt');
+      return undefined;
+    };
+
+    // Save/restore the input mode alongside pi-tui's history draft. Without
+    // this, recalling a shell entry and then pressing Down back to an empty
+    // draft would leave the editor stuck in bash mode, so the next typed
+    // message would be submitted as a shell command. Also locks the history
+    // filter (browseMode) for the duration of the browse session.
+    editor.onHistoryDraftSave = () => {
+      browseMode = editor.inputMode;
+      return editor.inputMode;
+    };
+    editor.onHistoryDraftRestore = (state: unknown) => {
+      editor.setInputMode(state as 'prompt' | 'bash');
+      browseMode = null;
     };
 
     editor.onNonEscapeInput = () => {
@@ -244,10 +281,6 @@ export class EditorKeyboardController {
       host.track('undo');
     };
 
-    editor.onInsertNewline = () => {
-      host.track('shortcut_newline');
-    };
-
     editor.onTextPaste = () => {
       host.track('shortcut_paste', { kind: 'text' });
     };
@@ -370,13 +403,29 @@ export class EditorKeyboardController {
     // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
     // and the submitted image all agree, and the agent core only ever sees an
     // already-compressed image. Best effort: originals pass through on failure.
+    // When compression changed the bytes, the original is persisted (into the
+    // session's media-originals dir when known, else the temp-dir fallback)
+    // and recorded on the attachment, so submit-time expansion can announce
+    // the compression and point the model at the full-fidelity copy.
     const compressed = await compressImageForModel(media.bytes, meta.mime);
+    const sessionDir = this.host.session?.summary?.sessionDir;
     const attachment = compressed.changed
       ? this.imageStore.addImage(
           compressed.data,
           compressed.mimeType,
           compressed.width,
           compressed.height,
+          {
+            path: await persistOriginalImage(
+              media.bytes,
+              meta.mime,
+              sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
+            ),
+            width: meta.width,
+            height: meta.height,
+            byteLength: media.bytes.length,
+            mime: meta.mime,
+          },
         )
       : this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
     this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);

@@ -2,11 +2,12 @@
 <!-- Design-system §03 Tooltip: hover/focus hint. Wrap the trigger in the default
      slot; text via prop. The wrapper is `display: contents` so it never alters the
      trigger's layout (safe for truncated/flex triggers); listeners are attached to
-     the real trigger element, which also anchors the bubble. The bubble is rendered
-     through a body teleport so it escapes ancestor overflow clipping, and positioned
-     with flip + viewport clamping. Short text stays on one line; long text wraps
-     within `maxWidth` and is clamped to `maxLines` lines with an ellipsis so the
-     bubble never grows too tall. -->
+     the real trigger element, which also anchors the bubble, and re-attached if that
+     element is removed or replaced (so an open tooltip can never strand on screen).
+     The bubble is rendered through a body teleport so it escapes ancestor overflow
+     clipping, and positioned with flip + viewport clamping. Short text stays on one
+     line; long text wraps within `maxWidth` and is clamped to `maxLines` lines with
+     an ellipsis so the bubble never grows too tall. -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 
@@ -39,6 +40,7 @@ const bubbleStyle = ref<Record<string, string>>({ maxWidth: `${props.maxWidth}px
 
 let showTimer: ReturnType<typeof setTimeout> | undefined;
 let target: HTMLElement | null = null;
+let observer: MutationObserver | undefined;
 
 function position(): void {
   const bub = bubble.value;
@@ -104,25 +106,47 @@ function onScrollOrResize(): void {
   if (open.value) hide();
 }
 
-onMounted(() => {
-  target = (trigger.value?.firstElementChild as HTMLElement | null) ?? trigger.value ?? null;
-  if (!target) return;
-  target.addEventListener('mouseenter', show);
-  target.addEventListener('mouseleave', hide);
-  target.addEventListener('focusin', show);
-  target.addEventListener('focusout', hide);
-  window.addEventListener('scroll', onScrollOrResize, true);
-  window.addEventListener('resize', onScrollOrResize);
-});
-
-onBeforeUnmount(() => {
-  window.clearTimeout(showTimer);
+function setTarget(el: HTMLElement | null): void {
+  if (el === target) return;
   if (target) {
     target.removeEventListener('mouseenter', show);
     target.removeEventListener('mouseleave', hide);
     target.removeEventListener('focusin', show);
     target.removeEventListener('focusout', hide);
   }
+  target = el;
+  if (target) {
+    target.addEventListener('mouseenter', show);
+    target.addEventListener('mouseleave', hide);
+    target.addEventListener('focusin', show);
+    target.addEventListener('focusout', hide);
+  }
+}
+
+onMounted(() => {
+  const root = trigger.value ?? null;
+  setTarget((root?.firstElementChild as HTMLElement | null) ?? root);
+  // Keep `target` in sync with the live slotted element: if it's removed or
+  // replaced while the tooltip is open (e.g. a v-if toggles on hover), the
+  // mouseleave we rely on never fires and the bubble would get stuck on screen.
+  if (root) {
+    observer = new MutationObserver(() => {
+      const next = (root.firstElementChild as HTMLElement | null) ?? null;
+      if (next !== target) {
+        hide();
+        setTarget(next ?? root);
+      }
+    });
+    observer.observe(root, { childList: true });
+  }
+  window.addEventListener('scroll', onScrollOrResize, true);
+  window.addEventListener('resize', onScrollOrResize);
+});
+
+onBeforeUnmount(() => {
+  window.clearTimeout(showTimer);
+  observer?.disconnect();
+  setTarget(null);
   window.removeEventListener('scroll', onScrollOrResize, true);
   window.removeEventListener('resize', onScrollOrResize);
 });

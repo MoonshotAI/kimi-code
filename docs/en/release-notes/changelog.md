@@ -6,6 +6,33 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.22.1 (2026-07-02)
+
+### Bug Fixes
+
+- Fix TUI rendering bugs that caused the screen to go blank and the input box to disappear.
+- Fix the TUI crashing when the terminal is resized to a very narrow width while the input contains CJK or emoji text.
+- Fix the web UI becoming sluggish after opening many sessions.
+- Clear the screen fully when starting a new session via /new, /clear, or a session switch.
+- Fix web tooltips that could get stuck on screen when their trigger element is removed while open.
+- Fix the sidebar session row shifting its title and status badges when hovered.
+- Fix the session search dialog showing a horizontal scrollbar for long session titles or snippets.
+
+### Polish
+
+- Improve compaction handoff summaries for more reliable resumed sessions. They now keep the latest intent, key tool results, decisions, open questions, and context to re-check.
+- Save shell commands to input history and recall them in bash mode. Press Up on an empty `!` prompt to browse previous shell commands.
+- When large images are compressed, tell the model the original and delivered image details. Keep the original image available, and support cropped or full-resolution reads for fine details.
+- Refresh the web UI icon set and unify the message copy and undo button hover states and tooltips.
+- Let the web sidebar collapse an expanded workspace session list back to its first page.
+- Trim redundant and incorrect tooltips in the web UI.
+- Show an up arrow on the web composer send button.
+
+### Refactors
+
+- Remove the experimental micro compaction feature and its toggle from the experiments panel.
+- Remove duplicate newline-shortcut handling from the prompt editor.
+
 ## 0.22.0 (2026-07-02)
 
 ### Features

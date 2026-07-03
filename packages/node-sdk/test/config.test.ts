@@ -329,32 +329,13 @@ describe('KimiHarness config API', () => {
 
   it('returns experimental feature metadata through the harness', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION', '');
     const homeDir = await makeTempDir();
-    await writeFile(
-      join(homeDir, 'config.toml'),
-      `
-[experimental]
-micro_compaction = false
-`,
-      'utf-8',
-    );
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
+    // No experimental features are currently registered, so the harness exposes
+    // an empty list.
     const features = await harness.getExperimentalFeatures();
-    const microCompaction = features.find((feature) => feature.id === 'micro_compaction');
-
-    expect(microCompaction).toMatchObject({
-      id: 'micro_compaction',
-      title: 'Micro compaction',
-      enabled: false,
-      source: 'config',
-      configValue: false,
-      env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    });
-    expect(features).toEqual([
-      expect.objectContaining({ id: 'micro_compaction', enabled: false }),
-    ]);
+    expect(features).toEqual([]);
   });
 
   it('can create the default config scaffold without selecting a model', async () => {

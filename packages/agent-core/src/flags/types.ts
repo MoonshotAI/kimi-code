@@ -26,7 +26,10 @@ export type ExperimentalFlagConfig = Partial<Record<FlagId, boolean>>;
 export type ExperimentalFlagSource = 'master-env' | 'env' | 'config' | 'default';
 
 export interface ExperimentalFeatureState {
-  readonly id: FlagId;
+  /** Feature id. Typed as `string` because this is a runtime snapshot that
+   * crosses the SDK/RPC boundary and must remain usable even when no flags are
+   * registered (in which case the internal `FlagId` union collapses to `never`). */
+  readonly id: string;
   readonly title: string;
   readonly description: string;
   readonly surface: FlagSurface;
