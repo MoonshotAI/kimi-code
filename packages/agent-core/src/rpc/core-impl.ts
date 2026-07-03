@@ -791,6 +791,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).getSessionWarnings(payload);
   }
 
+  waitForBackgroundTasksOnPrint({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<void> {
+    return this.sessionApi(sessionId).waitForBackgroundTasksOnPrint(payload);
+  }
+
   addAdditionalDir({
     sessionId,
     ...payload
