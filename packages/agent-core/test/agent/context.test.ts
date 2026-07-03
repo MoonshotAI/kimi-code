@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
+import { buildImageCompressionCaption } from '../../src/tools/support/image-compress';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
@@ -57,6 +58,79 @@ describe('Agent context', () => {
       { role: 'tool', origin: undefined },
     ]);
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it('reroutes an inline image-compression caption into a hidden system reminder', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    // The TUI merges the caption into the preceding text segment; the server
+    // route emits it as a standalone part. Cover the merged (harder) shape.
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: `能展示但是没有快捷键提示${caption}` },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'injection', variant: 'image_compression' } },
+      { role: 'user', origin: { kind: 'user' } },
+    ]);
+    const [reminder, userMessage] = ctx.agent.context.history;
+    expect(textOf(reminder!)).toContain('<system-reminder>');
+    expect(textOf(reminder!)).toContain('Image compressed to fit model limits');
+    expect(textOf(reminder!)).toContain('/tmp/originals/shot.png');
+    expect(textOf(reminder!)).not.toContain('<system>');
+    expect(textOf(userMessage!)).toBe('能展示但是没有快捷键提示');
+    expect(userMessage!.content.some((part) => part.type === 'image_url')).toBe(true);
+  });
+
+  it('drops a caption-only text part instead of leaving an empty user text part', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: caption },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+
+    const [, userMessage] = ctx.agent.context.history;
+    expect(userMessage!.content).toEqual([
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+  });
+
+  it('leaves caption-shaped text alone on non-user origins', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: caption }], {
+      kind: 'hook_result',
+      event: 'PostToolUse',
+    });
+
+    expect(ctx.agent.context.history).toHaveLength(1);
+    expect(ctx.agent.context.history[0]!.origin).toEqual({
+      kind: 'hook_result',
+      event: 'PostToolUse',
+    });
   });
 
   it('tracks conversation_undo when undoHistory reverts a user message', async () => {

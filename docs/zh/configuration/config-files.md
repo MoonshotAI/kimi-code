@@ -193,9 +193,12 @@ display_name = "Kimi for Coding (custom)"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数 |
-| `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务。默认情况下，Kimi Code 会在进程退出前请求停止所有后台任务；只有希望任务在会话结束后继续运行时才设为 `true` |
+| `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务。默认情况下，Kimi Code 会在进程退出前请求停止所有后台任务；只有希望任务在会话结束后继续运行时才设为 `true`。在 print 模式（`kimi -p`）下，设为 `true` 还会让进程在退出前等待所有后台任务跑完，使后台子代理得以完成工作 |
+| `print_wait_ceiling_s` | `integer` | `3600` | 在 print 模式（`kimi -p`）且 `keep_alive_on_exit = true` 时，主 agent 的 turn 结束后进程等待后台任务完成的最长秒数。在非 print 模式或 `keep_alive_on_exit` 为 `false` 时无效 |
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
+
+在 print 模式（`kimi -p "<prompt>"`）下，Kimi Code 只跑一个非交互的单轮 turn，主 agent 一结束就退出。如果你启动了后台任务（例如通过 `Agent(run_in_background=true)` 并发子代理）并希望它们跑完，请设置 `keep_alive_on_exit = true`：进程会在退出前等待所有后台任务进入终态，最长不超过 `print_wait_ceiling_s`。否则，单轮 turn 结束时后台任务会随进程一起被清理。
 
 <!--
 ## `experimental`
