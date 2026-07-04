@@ -535,6 +535,45 @@ export class BackgroundManager {
   }
 
   /**
+   * Wait until no active (non-terminal) task matching `predicate` remains.
+   *
+   * Used by print-mode (`kimi -p`) turn draining to hold a turn open while
+   * background subagents are still running. Re-enumerates after each batch
+   * settles so tasks registered during the wait (fan-out) are picked up.
+   * Resolves immediately when nothing matches. Bounded by `timeoutMs`; once
+   * the deadline passes the method returns without waiting for stragglers.
+   * Rejects with the abort reason when `signal` is aborted.
+   */
+  async waitForActiveTasks(
+    predicate: (info: BackgroundTaskInfo) => boolean,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const deadline =
+      options.timeoutMs !== undefined && options.timeoutMs > 0
+        ? Date.now() + options.timeoutMs
+        : undefined;
+    const signal = options.signal;
+    while (true) {
+      signal?.throwIfAborted();
+      const active = this.list(true).filter(predicate);
+      if (active.length === 0) return;
+      let perTaskTimeout: number | undefined;
+      if (deadline !== undefined) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return;
+        perTaskTimeout = remaining;
+      }
+      const batch = Promise.all(active.map((t) => this.wait(t.taskId, perTaskTimeout)));
+      if (signal === undefined) {
+        await batch;
+      } else {
+        await Promise.race([batch, abortRejecter(signal)]);
+      }
+      // Re-enumerate: settled tasks (and any fan-out) show up in the next list().
+    }
+  }
+
+  /**
    * Wait until a foreground task either detaches from the current tool call or
    * reaches a terminal state. Detached tasks return immediately.
    */
@@ -994,4 +1033,17 @@ function buildBackgroundTaskNotificationBody(info: BackgroundTaskInfo): string {
   ].join('\n');
 
   return `${baseLine}${recovery}`;
+}
+
+function abortRejecter(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new Error('Aborted'));
+  }
+  return new Promise<never>((_, reject) => {
+    signal.addEventListener(
+      'abort',
+      () => reject(signal.reason ?? new Error('Aborted')),
+      { once: true },
+    );
+  });
 }

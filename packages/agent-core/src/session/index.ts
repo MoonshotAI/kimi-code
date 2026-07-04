@@ -76,6 +76,12 @@ export interface SessionOptions {
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Print-mode (`kimi -p`) only: hold the main turn open while background
+   * subagents (`kind === 'agent'`) are still running, idle-waiting until they
+   * finish before the run exits. Set via the SDK `createSession` option.
+   */
+  readonly drainAgentTasksOnStop?: boolean;
 }
 
 export interface SessionSkillConfig {
@@ -293,6 +299,11 @@ export class Session {
     const { agent } = await this.createAgent({ type: 'main' }, {
       profile: DEFAULT_AGENT_PROFILES['agent'],
     });
+    if (this.options.drainAgentTasksOnStop) {
+      const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
+      agent.printDrainAgentTasksOnStop = true;
+      agent.printDrainDeadlineMs = Date.now() + ceilingS * 1000;
+    }
     await this.triggerSessionStart('startup');
     return agent;
   }

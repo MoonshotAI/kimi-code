@@ -2,8 +2,10 @@ import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
+import { Readable, type Writable } from 'node:stream';
 
 import type { Kaos } from '@moonshot-ai/kaos';
+import { createControlledPromise } from '@antfu/utils';
 import {
   APIConnectionError,
   APIEmptyResponseError,
@@ -18,6 +20,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HookEngine } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
 import type { AgentOptions, AgentRecord, AgentRecordPersistence } from '../../src/agent';
+import { ProcessBackgroundTask } from '../../src/agent/background';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import type { Logger, LogPayload } from '../../src/logging';
@@ -30,6 +33,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry'
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
+import { agentTask } from './background/helpers';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
 
@@ -71,6 +75,66 @@ describe('Agent turn flow', () => {
       event: 'turn_interrupted',
       properties: { mode: 'agent', at_step: 0 },
     });
+  });
+
+  it('holds the turn until a background subagent finishes, then runs a wrap-up step', async () => {
+    const ctx = testAgent();
+    ctx.agent.printDrainAgentTasksOnStop = true;
+    ctx.agent.printDrainDeadlineMs = Date.now() + 60_000;
+
+    const subDone = createControlledPromise<{ result: string }>();
+    ctx.agent.background.registerTask(agentTask(subDone, 'subagent'));
+
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'first' });
+    ctx.mockNextResponse({ type: 'text', text: 'wrap-up' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+
+    let turnEnded = false;
+    const turnEnd = ctx.untilTurnEnd().then(() => {
+      turnEnded = true;
+    });
+
+    // Let the first model step finish and the drain hold engage.
+    for (let i = 0; i < 100 && ctx.llmCalls.length < 1; i++) await delay(5);
+    await delay(20);
+    expect(turnEnded).toBe(false);
+
+    // Completing the subagent releases the hold; the model takes a wrap-up step.
+    subDone.resolve({ result: 'sub-result' });
+    await turnEnd;
+
+    expect(turnEnded).toBe(true);
+    expect(ctx.llmCalls.length).toBe(2);
+  });
+
+  it('does not hold the turn for a non-agent (process) background task', async () => {
+    const ctx = testAgent();
+    ctx.agent.printDrainAgentTasksOnStop = true;
+    ctx.agent.printDrainDeadlineMs = Date.now() + 60_000;
+
+    const proc: KaosProcess = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout: Readable.from([]),
+      stderr: Readable.from([]),
+      pid: 4242,
+      exitCode: null,
+      wait: vi.fn().mockReturnValue(new Promise<number>(() => {})) as unknown as KaosProcess['wait'],
+      kill: vi.fn().mockResolvedValue(undefined) as unknown as KaosProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as unknown as KaosProcess['dispose'],
+    };
+    ctx.agent.background.registerTask(new ProcessBackgroundTask(proc, 'sleep 60', 'proc'));
+
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'only step' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+    await ctx.untilTurnEnd();
+
+    // Process tasks do not trigger the subagent-only drain hold, so the turn
+    // ends after the single step.
+    expect(ctx.llmCalls.length).toBe(1);
   });
 
   it('tracks turn_ended telemetry with protocol props', async () => {
