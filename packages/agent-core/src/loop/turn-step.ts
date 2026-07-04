@@ -38,6 +38,13 @@ export interface ExecuteLoopStepDeps {
   readonly dispatchEvent: LoopEventDispatcher;
   readonly llm: LLM;
   readonly tools?: readonly ExecutableTool[] | undefined;
+  /**
+   * Per-step tool table builder; wins over the static `tools` snapshot.
+   * Evaluated after `beforeStep`, next to `buildMessages`, so the executable
+   * table and the request messages reflect the same state — `beforeStep` can
+   * run compaction, which trims loaded dynamic tool schemas.
+   */
+  readonly buildTools?: (() => readonly ExecutableTool[]) | undefined;
   /** See RunTurnInput.describeMissingTool. */
   readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
   readonly hooks?: LoopHooks | undefined;
@@ -59,6 +66,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     dispatchEvent,
     llm,
     tools,
+    buildTools,
     describeMissingTool,
     hooks,
     log,
@@ -81,13 +89,18 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
 
   signal.throwIfAborted();
 
+  // Resolve the tool table AFTER beforeStep so it reflects the same state as
+  // the messages built below (beforeStep can run compaction, which trims
+  // loaded dynamic tool schemas out of the context and the ledger — a table
+  // captured earlier would still dispatch a tool the model no longer has).
+  const stepTools = buildTools !== undefined ? buildTools() : tools;
   const messages = await buildMessages();
   signal.throwIfAborted();
 
   const stepUuid = randomUUID();
 
   const step: ToolCallStepContext = {
-    tools,
+    tools: stepTools,
     describeMissingTool,
     hooks,
     log,
@@ -108,7 +121,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
 
   const chatParams: LLMChatParams = {
     messages,
-    tools: tools ?? [],
+    tools: stepTools ?? [],
     signal,
     ...createChatStreamingCallbacks({
       dispatchEvent,

@@ -542,10 +542,11 @@ export class ToolManager {
       yield {
         name: tool.name,
         description: tool.description,
-        // select_tools is registered iff the disclosure gate is open — it is
-        // active by registration, not via the profile's enabled list.
+        // select_tools is always registered but only offered while the
+        // disclosure gate is open (see loopTools); report that live state.
         active:
-          this.enabledTools.has(tool.name) || tool.name === b.SELECT_TOOLS_TOOL_NAME,
+          this.enabledTools.has(tool.name) ||
+          (tool.name === b.SELECT_TOOLS_TOOL_NAME && this.agent.toolSelectEnabled),
         source: 'builtin',
       };
     }
@@ -609,10 +610,13 @@ export class ToolManager {
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
-        // Deliberately not main-only: subagents run their own disclosure and
-        // need select_tools just as much (their ToolManager computes its own
-        // loadable set from its profile's mcp__* patterns).
-        this.agent.toolSelectEnabled && new b.SelectToolsTool(this.agent),
+        // Registered unconditionally: the tool-select flag can flip at runtime
+        // (config reload calls setConfigOverrides) without this method
+        // re-running, so registration must not depend on the gate — exposure
+        // is decided per step in loopTools instead. Deliberately not
+        // main-only: subagents run their own disclosure and need select_tools
+        // just as much.
+        new b.SelectToolsTool(this.agent),
         // Goal tools are main-agent-only.
         goalToolsEnabled && new b.CreateGoalTool(this.agent),
         goalToolsEnabled && new b.GetGoalTool(this.agent),
@@ -731,9 +735,7 @@ export class ToolManager {
       loadedSet === undefined
         ? enabledMcpNames
         : enabledMcpNames.filter((name) => loadedSet.has(name));
-    const selectToolsName = disclosure && this.builtinTools.has(b.SELECT_TOOLS_TOOL_NAME)
-      ? [b.SELECT_TOOLS_TOOL_NAME]
-      : [];
+    const selectToolsName = disclosure ? [b.SELECT_TOOLS_TOOL_NAME] : [];
     // Mutation goal tools are only offered to the model while a goal exists.
     const hideGoalMutationTools = this.agent.goal.getGoal().goal === null;
     return uniq([...this.enabledTools, ...selectToolsName, ...mcpNames])
@@ -742,6 +744,11 @@ export class ToolManager {
         (name) =>
           !(hideGoalMutationTools && (name === 'SetGoalBudget' || name === 'UpdateGoal')),
       )
+      // select_tools is exposed exclusively through the disclosure gate — a
+      // profile or setActiveTools listing the name explicitly must not
+      // surface it in inline mode (it was silently dropped back when
+      // registration itself was gated; keep that contract).
+      .filter((name) => disclosure || name !== b.SELECT_TOOLS_TOOL_NAME)
       .map((name) => {
         const tool =
           this.userTools.get(name) ??

@@ -112,9 +112,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         buildMessagesStrict,
         dispatchEvent,
         llm,
-        // Fetch the tool table fresh each step so mid-turn loads are
-        // dispatchable immediately; fall back to the static snapshot.
-        tools: buildTools !== undefined ? buildTools() : tools,
+        tools,
+        // Passed through unresolved: the step evaluates it AFTER beforeStep,
+        // next to buildMessages, so the tool table and the request messages
+        // come from the same state (beforeStep can run compaction, which
+        // trims loaded schemas and rewrites the ledger).
+        buildTools,
         describeMissingTool,
         hooks,
         log,

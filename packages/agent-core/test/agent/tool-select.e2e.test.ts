@@ -503,6 +503,50 @@ describe('disclosure mode — compaction', () => {
     expect(internals.lastCompactedTokenCount).toBeNull();
   });
 
+  it('survives a runtime tool-select flag flip without a builtin refresh', async () => {
+    // Config reload calls FlagResolver.setConfigOverrides on the live
+    // resolver; initializeBuiltinTools does NOT re-run. select_tools must
+    // still be fully usable the moment the gate opens (it is registered
+    // unconditionally; only its exposure is gated), and flipping back off
+    // must restore the inline shape.
+    const callLog: Array<[string, unknown]> = [];
+    const resolver = toolSelectFlagOff();
+    const ctx = testAgent({ experimentalFlags: resolver });
+    ctx.configure({
+      tools: ['Read', 'mcp__*'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await registerGrafana(ctx, callLog);
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    // Flag off: inline.
+    ctx.mockNextResponse({ type: 'text', text: 'inline' });
+    await runTurn(ctx, 'first');
+    const inlineCall = ctx.llmCalls.at(-1)!;
+    expect(inlineCall.tools.map((t) => t.name)).toContain(GRAFANA_TOOL);
+    expect(inlineCall.tools.map((t) => t.name)).not.toContain('select_tools');
+
+    // Flip on at runtime: the full select → dispatch chain must work.
+    resolver.setConfigOverrides({ 'tool-select': true });
+    ctx.mockNextResponse({ type: 'text', text: 'loading' }, selectCall('call-1', [GRAFANA_TOOL]));
+    ctx.mockNextResponse({ type: 'text', text: 'querying' }, mcpCall('call-2', 'errors'));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await runTurn(ctx, 'now use the tool');
+    const disclosureCall = ctx.llmCalls.at(-3)!;
+    expect(disclosureCall.tools.map((t) => t.name)).toContain('select_tools');
+    expect(disclosureCall.tools.map((t) => t.name).some((n) => n.startsWith('mcp__'))).toBe(false);
+    expect(callLog).toEqual([['query_range', { query: 'errors' }]]);
+
+    // Flip back off: inline again, select_tools gone from the wire.
+    resolver.setConfigOverrides({});
+    ctx.mockNextResponse({ type: 'text', text: 'inline again' });
+    await runTurn(ctx, 'back');
+    const backCall = ctx.llmCalls.at(-1)!;
+    expect(backCall.tools.map((t) => t.name)).toContain(GRAFANA_TOOL);
+    expect(backCall.tools.map((t) => t.name)).not.toContain('select_tools');
+  });
+
   it('trims the schema rebuild instead of re-entering the compaction trigger band', async () => {
     // A trigger far below one fat schema: without the rebuild budget guard the
     // post-compaction floor (users + summary + schema) would sit permanently
@@ -548,11 +592,21 @@ describe('disclosure mode — compaction', () => {
         parameters: d.inputSchema as Record<string, unknown>,
       })),
     );
+    await ctx.rpc.setPermission({ mode: 'yolo' });
 
     // Step 1 loads the fat schema; step 2's boundary trips the trigger and
-    // blocks on auto-compaction (consuming the summary mock), then answers.
+    // blocks on auto-compaction (consuming the summary mock), which trims the
+    // rebuild. Step 2 then calls the MCP tool directly — the executable table
+    // is resolved AFTER the compaction (same state as the messages), so the
+    // now-unloaded tool must be rejected by preflight, not dispatched.
+    const fatCallLog: unknown[] = [];
+    (fatClient as { callTool: unknown }).callTool = async (...args: unknown[]) => {
+      fatCallLog.push(args);
+      return { content: [{ type: 'text', text: 'ok' }], isError: false };
+    };
     ctx.mockNextResponse({ type: 'text', text: 'loading' }, selectCall('call-1', [GRAFANA_TOOL]));
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'querying' }, mcpCall('call-2', 'errors'));
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await runTurn(ctx, 'load the fat tool');
 
@@ -560,6 +614,13 @@ describe('disclosure mode — compaction', () => {
     // empty again, and the tool is simply re-selectable on demand.
     expect(schemaMessages(ctx)).toHaveLength(0);
     expect(ctx.agent.tools.loadedDynamicToolNames().has(GRAFANA_TOOL)).toBe(false);
+
+    // The direct call after the trim was rejected with select guidance and
+    // never reached the MCP client.
+    expect(fatCallLog).toHaveLength(0);
+    expect(toolResultTexts(ctx).join('\n')).toContain(
+      `Tool "${GRAFANA_TOOL}" is available but not loaded.`,
+    );
 
     // Regression: the next turn must not re-compact. (No summary mock is
     // queued — an unexpected compaction would fail the scripted generate.)

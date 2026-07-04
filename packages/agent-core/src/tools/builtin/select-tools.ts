@@ -59,6 +59,16 @@ export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
       description: `Loading ${args.names.join(', ')}`,
       approvalRule: this.name,
       execute: async () => {
+        // The tool is registered unconditionally (the flag can flip at
+        // runtime without a builtin refresh) but only offered while the
+        // disclosure gate is open; guard the tiny window where the gate
+        // closed between table build and execution.
+        if (!this.agent.toolSelectEnabled) {
+          return {
+            output: 'select_tools is not available for the current model.',
+            isError: true,
+          };
+        }
         const manager = this.agent.tools;
         const loadable = new Set(manager.loadableDynamicToolNames());
         const loaded = manager.loadedDynamicToolNames();
