@@ -41,6 +41,7 @@ export interface SessionListQuery {
 
 export interface ISessionIndex {
   readonly _serviceBrand: undefined;
+
   /** List persisted sessions, optionally filtered by workspace. */
   list(query: SessionListQuery): Promise<Page<SessionSummary>>;
   /** Fetch a single persisted session by id. */

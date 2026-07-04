@@ -13,6 +13,7 @@ export interface GoalReasonInput {
 
 export interface IAgentGoalService {
   readonly _serviceBrand: undefined;
+
   getGoal(): GoalToolResult;
   createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
   pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;

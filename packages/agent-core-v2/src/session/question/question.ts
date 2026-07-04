@@ -53,6 +53,7 @@ export interface QuestionRequest {
 
 export interface ISessionQuestionService {
   readonly _serviceBrand: undefined;
+
   request(req: QuestionRequest): Promise<QuestionResult>;
   /**
    * Post a question without blocking on the answer. Returns the request with

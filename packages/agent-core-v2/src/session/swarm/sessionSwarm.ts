@@ -54,6 +54,7 @@ export interface SessionSwarmRunResult<T = unknown> {
 
 export interface ISessionSwarmService {
   readonly _serviceBrand: undefined;
+
   run<T>(args: SessionSwarmRunArgs<T>): Promise<readonly SessionSwarmRunResult<T>[]>;
   cancel(args: { readonly callerAgentId: string }): void;
 }

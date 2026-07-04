@@ -63,9 +63,9 @@ export interface WireRecordServiceOptions {
 
 export interface IAgentWireRecordService {
   readonly _serviceBrand: undefined;
+
   readonly restoring: WireRecordRestoringContext | null;
   readonly postRestoring: boolean;
-
   append(record: WireRecord): void;
   /**
    * Snapshot of every record currently held in memory (live-appended and

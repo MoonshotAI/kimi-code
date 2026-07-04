@@ -41,21 +41,13 @@ export interface IFileSystemStorageService {
   readonly _serviceBrand: undefined;
 
   read(scope: string, key: string): Promise<Uint8Array | undefined>;
-
   readStream(scope: string, key: string): AsyncIterable<Uint8Array>;
-
   write(scope: string, key: string, data: Uint8Array, options?: StorageWriteOptions): Promise<void>;
-
   append(scope: string, key: string, data: Uint8Array, options?: StorageAppendOptions): Promise<void>;
-
   list(scope: string, prefix?: string): Promise<readonly string[]>;
-
   delete(scope: string, key: string): Promise<void>;
-
   watch?(scope: string, key: string): Event<void>;
-
   flush(): Promise<void>;
-
   close(): Promise<void>;
 }
 

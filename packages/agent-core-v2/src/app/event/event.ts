@@ -16,6 +16,7 @@ export interface DomainEvent {
 
 export interface IEventService {
   readonly _serviceBrand: undefined;
+
   readonly onDidPublish: Event<DomainEvent>;
   publish(event: DomainEvent): void;
   subscribe(handler: (event: DomainEvent) => void): IDisposable;

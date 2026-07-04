@@ -36,6 +36,7 @@ export type ToolDedupResult = ToolDedupSuccessResult | ToolDedupErrorResult;
 
 export interface IAgentToolDedupeService {
   readonly _serviceBrand: undefined;
+
   readonly currentStreak: number;
 }
 

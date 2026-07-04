@@ -90,6 +90,7 @@ export interface ModelsChangedEvent {
 
 export interface IModelService {
   readonly _serviceBrand: undefined;
+
   readonly onDidChangeModels: Event<ModelsChangedEvent>;
   get(id: string): ModelConfig | undefined;
   list(): Readonly<Record<string, ModelConfig>>;

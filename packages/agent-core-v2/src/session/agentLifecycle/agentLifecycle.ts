@@ -86,6 +86,7 @@ export interface AgentListFilter {
 
 export interface IAgentLifecycleService {
   readonly _serviceBrand: undefined;
+
   /** Fires after an agent is created and registered, with its scope handle. */
   readonly onDidCreate: Event<IAgentScopeHandle>;
   /**

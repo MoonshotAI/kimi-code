@@ -35,9 +35,7 @@ export interface IFileService {
   readonly _serviceBrand: undefined;
 
   save(source: Readable, filename: string, options?: SaveOptions): Promise<FileMeta>;
-
   get(fileId: string): Promise<GetResult>;
-
   delete(fileId: string): Promise<void>;
 }
 

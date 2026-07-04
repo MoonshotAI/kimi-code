@@ -41,7 +41,6 @@ export interface IMessageLegacyService {
    * Throws `session.not_found` when `sid` is unknown.
    */
   list(sessionId: string, query: MessageListQuery): Promise<PageResponse<Message>>;
-
   /**
    * `GET /sessions/{sid}/messages/{mid}` — single message by id.
    * Throws `session.not_found` when `sid` is unknown, `message.not_found` when

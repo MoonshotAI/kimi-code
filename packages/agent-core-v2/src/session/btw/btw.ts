@@ -34,6 +34,7 @@ IMPORTANT:
 
 export interface ISessionBtwService {
   readonly _serviceBrand: undefined;
+
   /**
    * Fork the main agent into a side-question child agent (tools disabled,
    * side-channel reminder appended) and return the child's id.

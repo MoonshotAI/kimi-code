@@ -102,6 +102,7 @@ export interface AgentProfile {
 
 export interface IAgentProfileCatalogService {
   readonly _serviceBrand: undefined;
+
   /** Return the profile with the given name, or `undefined` when unknown. */
   get(name: string): AgentProfile | undefined;
   /**

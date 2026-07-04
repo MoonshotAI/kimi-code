@@ -43,9 +43,9 @@ export interface PermissionRule {
 
 export interface IAgentPermissionRulesService {
   readonly _serviceBrand: undefined;
+
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
-
   addRules(rules: readonly PermissionRule[]): void;
   recordApprovalResult(record: PermissionApprovalResultRecord): void;
 

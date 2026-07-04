@@ -35,6 +35,7 @@ export interface AgentTaskStopHookContext {
 
 export interface IAgentExternalHooksService {
   readonly _serviceBrand: undefined;
+
   /**
    * Run the blocking `SubagentStart` external hook for an agent task this
    * agent is launching (via the `Agent` tool / swarm). Called directly by the

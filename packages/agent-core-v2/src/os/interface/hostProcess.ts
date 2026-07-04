@@ -45,7 +45,6 @@ export interface IHostProcess {
   readonly stdin: Writable;
   readonly stdout: Readable;
   readonly stderr: Readable;
-
   /** Wait for the process to exit and return its exit code. */
   wait(): Promise<number>;
   /** Kill the process tree (not just the direct child) with the given signal. */

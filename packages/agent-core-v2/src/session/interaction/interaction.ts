@@ -51,6 +51,7 @@ export interface InteractionPendingChangedEvent {
 
 export interface ISessionInteractionService {
   readonly _serviceBrand: undefined;
+
   request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse>;
   /**
    * Park a request without blocking on its response. Returns the created

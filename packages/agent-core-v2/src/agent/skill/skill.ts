@@ -11,7 +11,6 @@ export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
 
   activate(input: SkillActivationInput): Promise<Turn>;
-
   /**
    * Records a model-tool skill activation (an inline skill loaded through the
    * `Skill` tool) without opening a new turn — the tool builds and steers its

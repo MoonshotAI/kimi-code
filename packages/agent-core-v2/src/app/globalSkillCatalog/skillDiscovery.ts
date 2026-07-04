@@ -26,7 +26,6 @@ export interface ISkillDiscovery {
     workDir: string,
     extraRoots?: readonly SkillRoot[],
   ): Promise<SkillDiscoveryResult>;
-
   discoverUser(homeDir: string, osHomeDir: string): Promise<SkillDiscoveryResult>;
 }
 

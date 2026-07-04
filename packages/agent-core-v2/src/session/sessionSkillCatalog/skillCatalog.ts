@@ -15,11 +15,8 @@ export interface ISessionSkillCatalog {
   readonly _serviceBrand: undefined;
 
   readonly catalog: SkillCatalog;
-
   readonly ready: Promise<void>;
-
   load(): Promise<void>;
-
   reload(): Promise<void>;
 }
 

@@ -98,16 +98,10 @@ export interface AgentTaskNotificationContext {
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
 
-  readonly hooks: Hooks<{
-    onDidNotify: AgentTaskNotificationContext;
-  }>;
-
   /** Track a `ITaskHandle` (from `taskService.run()`). */
   track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
-
   /** @deprecated Use `taskService.run()` + `track()` instead. */
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
-
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];
   persistOutput(taskId: string): void;
@@ -124,6 +118,10 @@ export interface IAgentTaskService {
   waitForForegroundRelease(
     taskId: string,
   ): Promise<ForegroundTaskReleaseReason | undefined>;
+
+  readonly hooks: Hooks<{
+    onDidNotify: AgentTaskNotificationContext;
+  }>;
 }
 
 export const IAgentTaskService =

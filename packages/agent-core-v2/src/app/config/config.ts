@@ -81,7 +81,6 @@ export interface IConfigRegistry {
 
   readonly onDidRegisterSection: Event<ConfigSectionRegisteredEvent>;
   readonly onDidRegisterOverlay: Event<ConfigOverlayRegisteredEvent>;
-
   registerSection<T>(domain: string, schema: ConfigSchema<T>, options?: RegisterSectionOptions<T>): void;
   getSection(domain: string): ConfigSection | undefined;
   listSections(): readonly ConfigSection[];
@@ -147,10 +146,10 @@ export interface ConfigInspectValue<T = unknown> {
 
 export interface IConfigService {
   readonly _serviceBrand: undefined;
+
   readonly ready: Promise<void>;
   readonly onDidChangeConfiguration: Event<ConfigChangedEvent>;
   readonly onDidSectionChange: Event<ConfigSectionChangedEvent>;
-
   get<T = unknown>(domain: string): T;
   inspect<T = unknown>(domain: string): ConfigInspectValue<T>;
   getAll(): ResolvedConfig;

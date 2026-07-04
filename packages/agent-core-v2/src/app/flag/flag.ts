@@ -61,6 +61,7 @@ export interface ExperimentalFeatureState {
 
 export interface IFlagService {
   readonly _serviceBrand: undefined;
+
   readonly registry: IFlagRegistry;
   enabled(id: FlagId): boolean;
   snapshot(): ExperimentalFlagMap;

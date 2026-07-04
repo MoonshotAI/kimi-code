@@ -32,6 +32,7 @@ export interface ApprovalResponse {
 
 export interface ISessionApprovalService {
   readonly _serviceBrand: undefined;
+
   request(req: ApprovalRequest): Promise<ApprovalResponse>;
   /**
    * Submit an approval request without blocking on the decision. Returns the

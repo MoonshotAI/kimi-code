@@ -46,25 +46,17 @@ export interface ISessionTerminalService {
   readonly _serviceBrand: undefined;
 
   create(input: CreateTerminalRequest): Promise<Terminal>;
-
   list(): Promise<readonly Terminal[]>;
-
   get(terminalId: string): Promise<Terminal>;
-
   attach(
     terminalId: string,
     sink: TerminalAttachSink,
     options?: TerminalAttachOptions,
   ): Promise<{ replayed: number }>;
-
   detach(terminalId: string, sinkId: string): void;
-
   detachAllForSink(sinkId: string): void;
-
   write(terminalId: string, data: string): Promise<void>;
-
   resize(terminalId: string, cols: number, rows: number): Promise<void>;
-
   close(terminalId: string): Promise<{ closed: true }>;
 }
 

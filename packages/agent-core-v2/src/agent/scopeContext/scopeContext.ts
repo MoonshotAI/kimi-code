@@ -14,8 +14,8 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 export interface IAgentScopeContext {
   readonly _serviceBrand: undefined;
-  readonly agentId: string;
 
+  readonly agentId: string;
   /**
    * Persistence scope rooted at this agent. `scope()` returns the agent
    * scope itself; `scope(subKey)` returns `${agentScope}/${subKey}` (e.g.

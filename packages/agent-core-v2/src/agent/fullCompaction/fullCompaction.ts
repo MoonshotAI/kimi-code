@@ -25,14 +25,15 @@ export interface FullCompactionDidCompactContext {
 
 export interface IAgentFullCompactionService {
   readonly _serviceBrand: undefined;
+
+  readonly isCompacting: boolean;
+  begin(input: CompactInput): boolean;
+  cancel(): void;
+
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionWillCompactContext;
     onDidCompact: FullCompactionDidCompactContext;
   }>;
-  readonly isCompacting: boolean;
-
-  begin(input: CompactInput): boolean;
-  cancel(): void;
 }
 
 export const IAgentFullCompactionService = createDecorator<IAgentFullCompactionService>('agentFullCompactionService');

@@ -10,6 +10,7 @@ export interface PermissionModeChangedContext {
 
 export interface IAgentPermissionModeService {
   readonly _serviceBrand: undefined;
+
   readonly mode: PermissionMode;
   setMode(mode: PermissionMode): void;
 

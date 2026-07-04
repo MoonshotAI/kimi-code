@@ -13,6 +13,7 @@ export type { SessionWarning };
 
 export interface ISessionWarningService {
   readonly _serviceBrand: undefined;
+
   /**
    * Compute the current session-level warnings. Recomputes the AGENTS.md size
    * warning on demand (preferring the main agent's cached value when the agent

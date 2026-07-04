@@ -100,6 +100,7 @@ export interface LLMRequestOverrides {
 
 export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
+
   request(
     overrides?: LLMRequestOverrides,
     onPart?: LLMRequestPartHandler,

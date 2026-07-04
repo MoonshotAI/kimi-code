@@ -38,6 +38,7 @@ export interface GetPluginInfoInput {
 
 export interface IPluginService {
   readonly _serviceBrand: undefined;
+
   listPlugins(): Promise<readonly PluginSummary[]>;
   installPlugin(input: InstallPluginInput): Promise<PluginSummary>;
   setPluginEnabled(input: SetPluginEnabledInput): Promise<void>;
@@ -47,7 +48,6 @@ export interface IPluginService {
   getPluginInfo(input: GetPluginInfoInput): Promise<PluginInfo | undefined>;
   listPluginCommands(): Promise<readonly PluginCommandDef[]>;
   checkUpdates(): Promise<readonly PluginUpdateStatus[]>;
-
   // --- consumption plane (loaded from enabled, error-free plugins) ---------
 
   /** Skill roots contributed by enabled plugins (fed into skill discovery). */
@@ -58,7 +58,6 @@ export interface IPluginService {
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
   /** Hooks contributed by enabled plugins (cwd + env already resolved). */
   enabledHooks(): Promise<readonly HookDef[]>;
-
   /** Fires after a successful `reloadPlugins()` with the reload summary. */
   readonly onDidReload: Event<ReloadSummary>;
 }

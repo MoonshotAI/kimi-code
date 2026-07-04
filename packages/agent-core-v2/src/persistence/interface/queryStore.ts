@@ -83,21 +83,13 @@ export interface IQueryStore {
   readonly _serviceBrand: undefined;
 
   put<T>(collection: string, key: string, value: T): Promise<void>;
-
   batch(ops: readonly WriteOp[]): Promise<void>;
-
   delete(collection: string, key: string): Promise<void>;
-
   get<T>(collection: string, key: string): Promise<T | undefined>;
-
   query<T>(collection: string): IQuery<T>;
-
   ensureIndex(collection: string, def: IndexDef): Promise<void>;
-
   getCheckpoint(source: string): Promise<Checkpoint | undefined>;
-
   setCheckpoint(source: string, checkpoint: Checkpoint): Promise<void>;
-
   close(): Promise<void>;
 }
 

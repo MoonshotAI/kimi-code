@@ -41,7 +41,6 @@ export interface IWorkspacePersistence {
    * - `Workspace[]` (possibly empty) → a materialized catalog; do not rebuild.
    */
   load(): Promise<Workspace[] | undefined>;
-
   /** Atomically replace the persisted catalog. */
   save(workspaces: readonly Workspace[]): Promise<void>;
 }

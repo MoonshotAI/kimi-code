@@ -34,15 +34,10 @@ export interface IAppendLogStore {
   readonly _serviceBrand: undefined;
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void;
-
   read<R>(scope: string, key: string): AsyncIterable<R>;
-
   rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void>;
-
   flush(): Promise<void>;
-
   close(): Promise<void>;
-
   acquire(scope: string, key: string): IDisposable;
 }
 

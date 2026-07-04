@@ -38,9 +38,7 @@ export interface IFlagRegistry {
   readonly _serviceBrand: undefined;
 
   register(definition: FlagDefinitionInput): IDisposable;
-
   get(id: FlagId): FlagDefinitionInput | undefined;
-
   list(): readonly FlagDefinitionInput[];
 }
 

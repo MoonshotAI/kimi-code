@@ -64,7 +64,6 @@ export interface IBootstrapService {
   readonly arch: string;
   readonly cwd: string;
   readonly osHomeDir: string;
-
   readonly homeDir: string;
   readonly configPath: string;
   readonly sessionsDir: string;
@@ -72,40 +71,33 @@ export interface IBootstrapService {
   readonly storeDir: string;
   readonly cacheDir: string;
   readonly logsDir: string;
-
   getEnv(name: string): string | undefined;
-
   /**
    * Scope string for a well-known top-level persistence area. Business code
    * passes this to `IFileSystemStorageService` / `IAtomicDocumentStore` / `IAppendLogStore`
    * — the backend layer converts it to concrete addressing.
    */
   scope(name: PersistenceScopeName): string;
-
   /**
    * Scope string for a session's persistence root.
    * Equivalent to `${scope('sessions')}/${workspaceId}/${sessionId}`.
    */
   sessionScope(workspaceId: string, sessionId: string): string;
-
   /**
    * Scope string for a specific agent's persistence root under a session.
    * Equivalent to `${sessionScope(wsId, sId)}/agents/${agentId}`.
    */
   agentScope(workspaceId: string, sessionId: string, agentId: string): string;
-
   /**
    * File-only: absolute on-disk directory for a session.
    * Prefer `sessionScope(...)` — this exists for legacy APIs (session logs,
    * task output files). Non-file bootstraps may throw.
    */
   sessionDir(workspaceId: string, sessionId: string): string;
-
   /**
    * File-only: absolute on-disk directory for a specific agent. Same caveat.
    */
   agentHomedir(workspaceId: string, sessionId: string, agentId: string): string;
-
   /** Key of the config document under `scope('config')` (file: `'config.toml'`). */
   readonly configKey: string;
 }

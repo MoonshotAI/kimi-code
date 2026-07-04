@@ -5,6 +5,7 @@ import type { ContextMessage } from './types';
 
 export interface IAgentContextMemoryService {
   readonly _serviceBrand: undefined;
+
   get(): readonly ContextMessage[];
   splice(
     start: number,

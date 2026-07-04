@@ -57,7 +57,6 @@ export interface IHostFolderBrowser {
    * target.
    */
   browse(absPath?: string): Promise<FsBrowseResponse>;
-
   /** `$HOME` plus the most recently opened workspace roots. */
   home(): Promise<FsHomeResponse>;
 }

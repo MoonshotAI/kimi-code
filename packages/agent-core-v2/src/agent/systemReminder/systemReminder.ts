@@ -10,7 +10,6 @@ export interface IAgentSystemReminderService {
    * Returns the created message.
    */
   appendSystemReminder(content: string, origin: PromptOrigin): ContextMessage;
-
   /**
    * Remove the last context message if it passes the supplied filter.
    * Returns `true` when a message was removed.

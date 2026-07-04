@@ -58,6 +58,7 @@ export interface SessionChildrenPage {
 
 export interface ISessionLegacyService {
   readonly _serviceBrand: undefined;
+
   fork(sessionId: string, body: ForkSessionRequest): Promise<SessionWireFields>;
   createChild(sessionId: string, body: CreateSessionChildRequest): Promise<SessionWireFields>;
   listChildren(sessionId: string, query: SessionChildrenQuery): Promise<SessionChildrenPage>;

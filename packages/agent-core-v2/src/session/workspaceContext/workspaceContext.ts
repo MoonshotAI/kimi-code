@@ -16,7 +16,6 @@ export interface ISessionWorkspaceContext {
 
   readonly workDir: string;
   readonly additionalDirs: readonly string[];
-
   setWorkDir(workDir: string): void;
   resolve(rel: string): string;
   isWithin(absPath: string): boolean;

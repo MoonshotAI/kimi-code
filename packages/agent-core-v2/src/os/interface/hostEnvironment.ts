@@ -47,7 +47,6 @@ export interface IHostEnvironment {
   readonly pathClass: PathClass;
   /** Absolute path of the current user's home directory (`os.homedir()`). */
   readonly homeDir: string;
-
   /**
    * Resolves once the probe has completed. Every field above is populated by
    * the time this promise settles. The composition root awaits this before

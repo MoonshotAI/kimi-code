@@ -22,6 +22,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 export interface IAgentPromptLegacyService {
   readonly _serviceBrand: undefined;
+
   list(): PromptListResponse;
   submit(body: PromptSubmission): Promise<PromptSubmitResult>;
   steer(promptIds: readonly string[]): Promise<PromptSteerResult>;

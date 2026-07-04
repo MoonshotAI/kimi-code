@@ -15,15 +15,10 @@ export interface IBlobStore {
   readonly _serviceBrand: undefined;
 
   put(scope: string, key: string, data: Uint8Array): Promise<void>;
-
   get(scope: string, key: string): Promise<Uint8Array | undefined>;
-
   getStream(scope: string, key: string): AsyncIterable<Uint8Array>;
-
   has(scope: string, key: string): Promise<boolean>;
-
   delete(scope: string, key: string): Promise<void>;
-
   list(scope: string, prefix?: string): Promise<readonly string[]>;
 }
 

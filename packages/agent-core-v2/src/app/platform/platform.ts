@@ -65,6 +65,7 @@ export interface PlatformsChangedEvent {
 
 export interface IPlatformService {
   readonly _serviceBrand: undefined;
+
   readonly onDidChangePlatforms: Event<PlatformsChangedEvent>;
   get(name: string): PlatformConfig | undefined;
   list(): Readonly<Record<string, PlatformConfig>>;

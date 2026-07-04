@@ -23,7 +23,6 @@ export interface IGitService {
    * tree or git itself fails.
    */
   status(cwd: string, pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse>;
-
   /**
    * `git diff HEAD -- <relPath>` for the repo at `cwd`. `relPath` is the
    * repo-relative posix path passed to git; `absPath` is the confined absolute

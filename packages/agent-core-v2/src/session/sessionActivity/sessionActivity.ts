@@ -14,6 +14,7 @@ export type SessionStatus = 'running' | 'idle' | 'awaiting_approval' | 'awaiting
 
 export interface ISessionActivity {
   readonly _serviceBrand: undefined;
+
   status(): SessionStatus;
   isIdle(): boolean;
 }

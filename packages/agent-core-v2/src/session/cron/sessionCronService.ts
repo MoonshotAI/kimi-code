@@ -20,18 +20,16 @@ export interface CronLoadOptions {
 
 export interface ISessionCronService {
   readonly _serviceBrand: undefined;
-  readonly isEnabled: boolean;
 
+  readonly isEnabled: boolean;
   addTask(init: CronTaskInit): CronTask;
   removeTasks(ids: readonly string[]): readonly string[];
   getTask(id: string): CronTask | undefined;
   list(): readonly CronTask[];
-
   now(): number;
   isStale(task: CronTask): boolean;
   getNextFireTime(): number | null;
   getNextFireForTask(taskId: string): number | null;
-
   loadFromStore(options?: CronLoadOptions): Promise<void>;
   start(): void;
   stop(): Promise<void>;
@@ -41,7 +39,6 @@ export interface ISessionCronService {
     tasks: readonly CronTask[],
     renderMissedNotification: (tasks: readonly CronTask[]) => readonly ContentPart[],
   ): Turn | undefined;
-
   emitScheduled(task: CronTask): void;
   emitDeleted(taskId: string): void;
 }

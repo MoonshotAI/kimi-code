@@ -14,7 +14,6 @@ export interface IGlobalSkillCatalog {
   readonly _serviceBrand: undefined;
 
   readonly catalog: SkillCatalog;
-
   load(): Promise<void>;
 }
 

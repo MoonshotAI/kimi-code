@@ -23,6 +23,7 @@ export interface WebFetchServiceOptions {
 
 export interface IWebFetchService {
   readonly _serviceBrand: undefined;
+
   getUrlFetcher(): UrlFetcher;
 }
 

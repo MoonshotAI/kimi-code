@@ -11,6 +11,7 @@ export interface UsageStatus {
 
 export interface IAgentUsageService {
   readonly _serviceBrand: undefined;
+
   record(model: string, usage: TokenUsage, source?: LLMRequestSource): void;
   status(): UsageStatus;
 }

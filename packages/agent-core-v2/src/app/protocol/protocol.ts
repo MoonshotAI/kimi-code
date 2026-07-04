@@ -48,6 +48,7 @@ export interface ProtocolAdapterConfig {
 
 export interface IProtocolAdapterRegistry {
   readonly _serviceBrand: undefined;
+
   /** Protocols this registry can build adapters for. */
   supportedProtocols(): readonly Protocol[];
 }

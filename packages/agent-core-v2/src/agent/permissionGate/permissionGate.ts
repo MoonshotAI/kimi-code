@@ -44,14 +44,16 @@ export type PermissionApprovalResultContext =
 
 export interface IAgentPermissionGate {
   readonly _serviceBrand: undefined;
-  readonly hooks: Hooks<{
-    onDidRequestApproval: PermissionApprovalRequestContext;
-    onDidResolveApproval: PermissionApprovalResultContext;
-  }>;
+
   data(): PermissionData;
   authorize(
     context: ResolvedToolExecutionHookContext,
   ): Promise<AuthorizeToolExecutionResult | undefined>;
+
+  readonly hooks: Hooks<{
+    onDidRequestApproval: PermissionApprovalRequestContext;
+    onDidResolveApproval: PermissionApprovalResultContext;
+  }>;
 }
 
 export const IAgentPermissionGate =

@@ -16,6 +16,7 @@ export interface PromptSteerHandle {
 
 export interface IAgentPromptService {
   readonly _serviceBrand: undefined;
+
   prompt(message: ContextMessage): Promise<Turn | undefined>;
   steer(message: ContextMessage): PromptSteerHandle;
   retry(trigger?: string): Turn | undefined;

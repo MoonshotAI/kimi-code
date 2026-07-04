@@ -31,6 +31,7 @@ export interface LogEntry {
 
 export interface ILogWriterService {
   readonly _serviceBrand: undefined;
+
   write(entry: LogEntry): void;
   flush?(): Promise<void>;
   close?(): Promise<void>;
@@ -49,6 +50,7 @@ export interface ILogger {
 
 export interface ILogService extends ILogger {
   readonly _serviceBrand: undefined;
+
   readonly level: LogLevel;
   setLevel(level: LogLevel): void;
   flush(): Promise<void>;
@@ -72,6 +74,7 @@ export function levelEnabled(level: LogLevel, configured: LogLevel): boolean {
 
 export interface ISessionLogService extends ILogger {
   readonly _serviceBrand: undefined;
+
   flush(): Promise<void>;
   close(): Promise<void>;
 }

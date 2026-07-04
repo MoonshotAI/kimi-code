@@ -10,6 +10,7 @@ export type PlanFilePath = string | null;
 
 export interface IAgentPlanService {
   readonly _serviceBrand: undefined;
+
   enter(id?: string, createFile?: boolean): Promise<void>;
   cancel(id?: string): void;
   clear(): Promise<void>;

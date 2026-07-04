@@ -13,6 +13,7 @@ import type { TelemetryProperties } from './telemetry';
 
 export interface IAgentTelemetryContextService {
   readonly _serviceBrand: undefined;
+
   /** Current ambient telemetry properties for this agent. */
   get(): TelemetryProperties;
   /** Merge a patch into the ambient telemetry context. */

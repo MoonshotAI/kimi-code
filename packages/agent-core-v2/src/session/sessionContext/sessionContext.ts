@@ -14,11 +14,11 @@ import type { ScopeSeed } from '#/_base/di/scope';
 
 export interface ISessionContext {
   readonly _serviceBrand: undefined;
+
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly sessionDir: string;
   readonly metaScope: string;
-
   /**
    * Persistence scope rooted at this session. `scope()` returns the session
    * scope itself; `scope(subKey)` returns `${sessionScope}/${subKey}`. The

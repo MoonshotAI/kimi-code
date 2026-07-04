@@ -26,15 +26,12 @@ export interface IExecContext {
 
   /** Absolute path to the session's working directory. */
   readonly cwd: string;
-
   /** Ordered list of env overlays applied on top of `process.env` when
    *  spawning a process. Later layers win. */
   readonly envLayers: readonly Record<string, string>[];
-
   /** Return a new `IExecContext` rooted at `cwd`, keeping the same env
    *  layers. Does not mutate this context. */
   withCwd(cwd: string): IExecContext;
-
   /** Return a new `IExecContext` with `env` appended to `envLayers`. Does
    *  not mutate this context. */
   withEnv(env: Record<string, string>): IExecContext;

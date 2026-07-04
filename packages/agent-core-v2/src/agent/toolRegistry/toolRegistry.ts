@@ -18,6 +18,7 @@ export interface ToolRegistrationOptions {
 
 export interface IAgentToolRegistryService {
   readonly _serviceBrand: undefined;
+
   register(tool: ExecutableTool, options?: ToolRegistrationOptions): IDisposable;
   list(): readonly ToolInfo[];
   resolve(name: string): ExecutableTool | undefined;

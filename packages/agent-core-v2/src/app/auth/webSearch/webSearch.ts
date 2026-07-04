@@ -24,6 +24,7 @@ export interface WebSearchProviderOptions {
 
 export interface IWebSearchProviderService {
   readonly _serviceBrand: undefined;
+
   getWebSearchProvider(): WebSearchProvider | undefined;
 }
 

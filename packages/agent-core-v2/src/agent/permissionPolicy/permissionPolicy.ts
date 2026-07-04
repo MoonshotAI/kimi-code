@@ -12,6 +12,7 @@ export interface PermissionPolicyEvaluation {
 
 export interface IAgentPermissionPolicyService {
   readonly _serviceBrand: undefined;
+
   evaluate(
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyEvaluation | undefined>;

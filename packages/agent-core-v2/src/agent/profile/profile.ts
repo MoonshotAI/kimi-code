@@ -109,6 +109,7 @@ export interface BindAgentInput {
 
 export interface IAgentProfileService {
   readonly _serviceBrand: undefined;
+
   configure(options: ProfileServiceOptions): void;
   update(changed: ProfileUpdateData): void;
   /**

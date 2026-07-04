@@ -18,6 +18,7 @@ export type ContextInjectionProvider = (
 
 export interface IAgentContextInjectorService {
   readonly _serviceBrand: undefined;
+
   register(
     variant: string,
     provider: ContextInjectionProvider,

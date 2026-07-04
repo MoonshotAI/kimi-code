@@ -43,12 +43,14 @@ export interface TurnResult {
 
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
+
+  run(options: RunOptions): Promise<TurnResult>;
+
   readonly hooks: Hooks<{
     beforeStep: TurnBeforeStepContext;
     afterStep: TurnAfterStepContext;
     onError: TurnErrorContext;
   }>;
-  run(options: RunOptions): Promise<TurnResult>;
 }
 
 export const IAgentLoopService = createDecorator<IAgentLoopService>('agentLoopService');

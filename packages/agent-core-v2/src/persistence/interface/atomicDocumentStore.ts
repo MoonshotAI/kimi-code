@@ -22,15 +22,10 @@ export interface IAtomicDocumentStore {
   readonly _serviceBrand: undefined;
 
   get<T>(scope: string, key: string): Promise<T | undefined>;
-
   set<T>(scope: string, key: string, value: T): Promise<void>;
-
   delete(scope: string, key: string): Promise<void>;
-
   list(scope: string, prefix?: string): Promise<readonly string[]>;
-
   watch(scope: string, key: string): Event<void>;
-
   acquire(scope: string, key: string): IDisposable;
 }
 

@@ -19,6 +19,7 @@ export interface AgentBlobServiceOptions {
 
 export interface IAgentBlobService {
   readonly _serviceBrand: undefined;
+
   offloadParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]>;
   rehydrateParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]>;
   isBlobRef(url: string): boolean;

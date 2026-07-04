@@ -57,7 +57,6 @@ export interface ITaskService {
    * State: pending → running → completed | failed | cancelled.
    */
   run<T>(fn: (signal: AbortSignal, output: (data: string) => void) => Promise<T>): ITaskHandle<T>;
-
   /**
    * Create a passive task whose settlement is controlled by the caller
    * through the returned `resolve` / `reject` methods.

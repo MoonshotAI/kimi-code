@@ -11,6 +11,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 export interface IRestGateway {
   readonly _serviceBrand: undefined;
+
   prompt(
     sessionId: string,
     agentId: string,
@@ -32,6 +33,7 @@ export const IRestGateway: ServiceIdentifier<IRestGateway> =
 
 export interface IWSGateway {
   readonly _serviceBrand: undefined;
+
   connect(connectionId: string): void;
   broadcast(sessionId: string, event: unknown): void;
 }

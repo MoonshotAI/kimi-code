@@ -24,6 +24,7 @@ export interface MicroCompactionEffect {
 
 export interface IAgentMicroCompactionService {
   readonly _serviceBrand: undefined;
+
   compact(messages: readonly ContextMessage[]): readonly ContextMessage[];
 }
 

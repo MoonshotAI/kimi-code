@@ -63,6 +63,7 @@ export interface SessionMetadataChangedEvent {
 
 export interface ISessionMetadata {
   readonly _serviceBrand: undefined;
+
   readonly ready: Promise<void>;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
   read(): Promise<SessionMeta>;

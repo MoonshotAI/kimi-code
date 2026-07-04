@@ -51,6 +51,7 @@ export interface SessionForkedEvent {
 
 export interface ISessionLifecycleService {
   readonly _serviceBrand: undefined;
+
   readonly onDidCreateSession: Event<SessionCreatedEvent>;
   readonly onDidCloseSession: Event<SessionClosedEvent>;
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;

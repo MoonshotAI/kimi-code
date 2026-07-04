@@ -37,6 +37,7 @@ export interface TelemetryServiceOptions {
 
 export interface ITelemetryService {
   readonly _serviceBrand: undefined;
+
   track(event: string, properties?: TelemetryProperties): void;
   withContext(patch: TelemetryContextPatch): ITelemetryService;
   setContext(patch: TelemetryContextPatch): void;

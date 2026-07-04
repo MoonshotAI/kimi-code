@@ -22,6 +22,7 @@ export interface TurnEndedContext {
 
 export interface IAgentTurnService {
   readonly _serviceBrand: undefined;
+
   launch(): Turn;
   getActiveTurn(): Turn | undefined;
 

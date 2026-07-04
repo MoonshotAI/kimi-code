@@ -36,6 +36,7 @@ export interface AuthStatus {
 
 export interface IOAuthService {
   readonly _serviceBrand: undefined;
+
   startLogin(provider?: string): Promise<OAuthFlowStart>;
   getFlow(provider?: string): OAuthFlowSnapshot | undefined;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
@@ -51,6 +52,7 @@ export const IOAuthService: ServiceIdentifier<IOAuthService> =
 
 export interface IOAuthToolkit {
   readonly _serviceBrand: undefined;
+
   login(providerName?: string, options?: KimiOAuthLoginOptions): Promise<KimiOAuthLoginResult>;
   logout(providerName?: string, oauthRef?: KimiOAuthTokenRef): Promise<KimiOAuthLogoutResult>;
   getCachedAccessToken(
@@ -65,6 +67,7 @@ export const IOAuthToolkit: ServiceIdentifier<IOAuthToolkit> =
 
 export interface IAuthSummaryService {
   readonly _serviceBrand: undefined;
+
   summarize(): Promise<readonly AuthStatus[]>;
   ensureReady(provider?: string): Promise<void>;
 }
