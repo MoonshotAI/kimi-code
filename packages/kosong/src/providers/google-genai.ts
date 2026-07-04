@@ -108,20 +108,20 @@ interface ThinkingConfig {
 interface GoogleFunctionDeclaration {
   name: string;
   description: string;
-  parameters_json_schema: Record<string, unknown>;
+  parametersJsonSchema: Record<string, unknown>;
 }
 
 interface GoogleTool {
-  function_declarations: GoogleFunctionDeclaration[];
+  functionDeclarations: GoogleFunctionDeclaration[];
 }
 
 function toolToGoogleGenAI(tool: Tool): GoogleTool {
   return {
-    function_declarations: [
+    functionDeclarations: [
       {
         name: tool.name,
         description: tool.description,
-        parameters_json_schema: tool.parameters,
+        parametersJsonSchema: tool.parameters,
       },
     ],
   };
@@ -133,13 +133,13 @@ interface GoogleContent {
 
 interface GooglePart {
   text?: string;
-  function_call?: { name: string; args: Record<string, unknown> };
-  function_response?: {
+  functionCall?: { name: string; args: Record<string, unknown> };
+  functionResponse?: {
     name: string;
     response: Record<string, string>;
     parts: unknown[];
   };
-  thought_signature?: string;
+  thoughtSignature?: string;
   [key: string]: unknown;
 }
 
@@ -274,7 +274,7 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
     }
 
     const functionCallPart: GooglePart = {
-      function_call: {
+      functionCall: {
         name: toolCall.name,
         args,
       },
@@ -282,7 +282,7 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
 
     // Restore thought_signature if available
     if (toolCall.extras && 'thought_signature_b64' in toolCall.extras) {
-      functionCallPart['thought_signature'] = toolCall.extras['thought_signature_b64'] as string;
+      functionCallPart['thoughtSignature'] = toolCall.extras['thought_signature_b64'] as string;
     }
 
     parts.push(functionCallPart);
@@ -335,7 +335,7 @@ function toolMessageToFunctionResponseParts(
   }
 
   const functionResponsePart: GooglePart = {
-    function_response: {
+    functionResponse: {
       name: toolCallIdToName(message.toolCallId, toolNameById),
       response: { output: textOutput },
       parts: [],
@@ -463,7 +463,7 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     isUser: (content) => content.role === 'user',
     isToolResultOnly: (content) =>
       content.parts.length > 0 &&
-      content.parts.every((part) => part.function_response !== undefined),
+      content.parts.every((part) => part.functionResponse !== undefined),
     merge: (last, next) => ({ ...last, parts: [...last.parts, ...next.parts] }),
   });
 }

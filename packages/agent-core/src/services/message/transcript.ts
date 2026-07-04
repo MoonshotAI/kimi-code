@@ -190,6 +190,7 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
           id: event.toolCallId,
           name: event.name,
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
+          ...(event.extras !== undefined ? { extras: event.extras } : {}),
         });
         pendingToolResultIds.add(event.toolCallId);
         return;
