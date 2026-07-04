@@ -1580,6 +1580,65 @@ export class TUI extends Container {
 		// and skip above-viewport changes: scrollback keeps stale bytes, but the
 		// user's scroll position is preserved.
 		if (firstChanged < prevViewportTop) {
+			// The anchor pins a buffer row index, but an above-viewport length
+			// change shifts the content living at every index below it: the
+			// pinned window would suddenly show content |delta| rows further
+			// along (visible upward creep), and the rows that slid above the
+			// window top would be lost — never committed, and scrollback holds
+			// older bytes at those indices. Decide which hypothesis explains
+			// the frame better: "window stayed put" vs "window content shifted
+			// by the length delta". If the shift wins, move the anchor with
+			// the content: the screen stays put and later growth commits rows
+			// in content order (no loss, no duplication — scrollback already
+			// ends exactly where the shifted anchor begins).
+			const lengthDelta = newLines.length - this.previousLines.length;
+			const shiftedTop = prevViewportTop + lengthDelta;
+			if (lengthDelta !== 0 && shiftedTop >= 0) {
+				let pinnedDiffs = 0;
+				let shiftedDiffs = 0;
+				for (let r = 0; r < height; r++) {
+					const prevIdx = prevViewportTop + r;
+					const prevLine = prevIdx < this.previousLines.length ? this.previousLines[prevIdx]! : "";
+					const pinnedLine = prevIdx < newLines.length ? newLines[prevIdx]! : "";
+					if (prevLine !== pinnedLine) pinnedDiffs++;
+					const shiftedIdx = shiftedTop + r;
+					const shiftedLine = shiftedIdx < newLines.length ? newLines[shiftedIdx]! : "";
+					if (prevLine !== shiftedLine) shiftedDiffs++;
+				}
+				if (shiftedDiffs < pinnedDiffs) {
+					if (shiftedDiffs === 0) {
+						// Pure shift: the visible window already shows exactly
+						// this content — re-anchor without painting anything.
+						logRedraw(
+							`anchor follows above-viewport shift (${this.previousLines.length} -> ${newLines.length}, viewportTop ${prevViewportTop} -> ${shiftedTop}, no repaint)`,
+						);
+						this.hardwareCursorRow += lengthDelta;
+						this.cursorRow = Math.max(0, newLines.length - 1);
+						this.previousViewportTop = shiftedTop;
+						this.positionHardwareCursor(cursorPos, newLines.length, shiftedTop, height);
+						this.previousLines = newLines;
+						this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+						this.previousWidth = width;
+						this.previousHeight = height;
+						return;
+					}
+					// Shift plus local in-window changes (spinner/timer rows):
+					// move the anchor with the content, then repaint the window
+					// there. Both anchor and cursor bookkeeping shift together,
+					// so the physical screen rows they map to are unchanged.
+					// (repaintViewport's kitty-image delete range still scans
+					// from the shifted index — a straddling image combined with
+					// a shift may be missed, but any image inside the paint
+					// range falls back to a destructive full render anyway.)
+					hardwareCursorRow += lengthDelta;
+					prevViewportTop = shiftedTop;
+					repaintViewport(
+						Math.max(desiredViewportTop, shiftedTop),
+						`anchor follows above-viewport shift (${this.previousLines.length} -> ${newLines.length}, viewportTop ${shiftedTop - lengthDelta} -> ${shiftedTop}, ${shiftedDiffs} in-window changes)`,
+					);
+					return;
+				}
+			}
 			let visibleFirstChanged = -1;
 			for (let i = prevViewportTop; i <= lastChanged; i++) {
 				const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";

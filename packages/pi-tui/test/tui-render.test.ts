@@ -755,16 +755,17 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
-		// Partial shrinks keep the viewport anchor pinned (rewinding would
-		// duplicate scrollback rows), so the remaining content sits at the
-		// top of the window with blank rows below. The stale "Chat 12/13/14"
-		// rows remain in scrollback but are not visible.
+		// The chat shrink is an above-viewport length change: the anchor
+		// follows the shifted content, so the window keeps showing the same
+		// rows (editor intact, nothing swallowed) with blank rows below.
+		// The stale "Chat 12/13/14" bytes remain in scrollback but are not
+		// visible.
 		assert.deepStrictEqual(viewport, [
+			"Chat 10",
+			"Chat 11",
+			"Editor 0",
 			"Editor 1",
 			"Editor 2",
-			"",
-			"",
-			"",
 			"",
 			"",
 			"",

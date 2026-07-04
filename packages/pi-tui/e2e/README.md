@@ -52,6 +52,7 @@ Accepted trade-offs (by design, not bugs):
 | [case04](./case04-oscillation-duplication.test.ts) | Transcript spans duplicated in scrollback during streaming (shrink/grow oscillation) | Shrink re-anchor rewound the viewport anchor; the next grow re-committed rows scrollback already held | Fixed (#1353) |
 | [case05](./case05-growth-past-anchor-row-loss.test.ts) | Transcript rows missing from scrollback after streaming | Growth past the anchor with an above-viewport change repainted in place without scrolling, so the skipped rows never got committed (invariant 2) | Fixed (#1353, review) |
 | [case06](./case06-cursor-above-pinned-window.test.ts) | Rows written to the wrong screen position after a pinned shrink | `repaintViewport()` positioned the cursor to a logical row above the painted window; `hardwareCursorRow` desynced from the real cursor (invariant 3) | Fixed (#1353, review) |
+| [case07](./case07-above-viewport-shift.test.ts) | Rows vanish and content creeps upward while streaming; blank area grows under the input box | The anchor pins a buffer row index; an above-viewport shrink shifts all content below it, so the pinned window jumped ahead and the rows sliding past its top were never committed | Fixed |
 
 A case for a not-yet-fixed bug is marked **Open** in the table and is
 expected to fail — it is the executable reproduction. Flip it to Fixed
