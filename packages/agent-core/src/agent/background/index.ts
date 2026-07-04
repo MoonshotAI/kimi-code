@@ -67,9 +67,8 @@ interface ManagedTask {
   /** Total UTF-8 bytes observed, including chunks dropped from the live ring buffer. */
   outputSizeBytes: number;
   /**
-   * True once a foreground command has crossed `MAX_FOREGROUND_OUTPUT_BYTES`
-   * and termination has been requested. One-shot guard so the ceiling fires
-   * exactly once.
+   * True once a command has crossed `MAX_TASK_OUTPUT_BYTES` and termination has
+   * been requested. One-shot guard so the ceiling fires exactly once.
    */
   outputLimitTripped: boolean;
   status: BackgroundTaskStatus;
@@ -123,20 +122,20 @@ const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 
 /**
- * Hard ceiling on the combined output a single *foreground* command may stream
- * before it is force-terminated (SIGTERM → grace → SIGKILL). It guards the
- * live-forward path — which has no memory bound of its own — from a runaway
- * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow the
- * process heap until Node aborts with an out-of-memory crash.
- *
- * Detached (background) tasks are exempt: their output is ring-buffered and
- * spilled to disk, so it never accumulates unbounded in memory.
+ * Hard ceiling on the combined output a single shell command may stream before
+ * it is force-terminated (SIGTERM → grace → SIGKILL). It guards both the
+ * live-forward path and the on-disk `output.log` write chain from a runaway
+ * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow
+ * without bound — filling the disk, or retaining each pending-write chunk until
+ * Node aborts with an out-of-memory crash. Scoped to process tasks (foreground
+ * and background); subagent and user-question results are appended once and must
+ * always be persisted, so they are intentionally not capped here.
  */
-const MAX_FOREGROUND_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
 
-/** Terminal `stopReason` recorded when a foreground command trips the output ceiling. */
-function foregroundOutputLimitReason(): string {
-  const mib = Math.floor(MAX_FOREGROUND_OUTPUT_BYTES / (1024 * 1024));
+/** Terminal `stopReason` recorded when a command trips the output ceiling. */
+function outputLimitReason(): string {
+  const mib = Math.floor(MAX_TASK_OUTPUT_BYTES / (1024 * 1024));
   return (
     `Output limit exceeded: the command produced more than ${mib} MiB and was ` +
     'terminated. Redirect large output to a file (e.g. `command > out.txt`) and ' +
@@ -642,18 +641,20 @@ export class BackgroundManager {
       entry.outputRingChars -= removed.length;
     }
 
-    // Foreground output ceiling: a single non-detached command must not grow
-    // the (unbounded) live-forward buffer until the process runs out of memory.
-    // Trip once, then request graceful termination through the shared stop path
-    // (SIGTERM → grace → SIGKILL). Detached tasks are exempt — their output is
-    // ring-buffered and spilled to disk, so it never accumulates in memory.
+    // Output ceiling: a single shell command must not grow the (unbounded)
+    // live-forward buffer or the on-disk write chain until the process runs out
+    // of memory or fills the disk. Trip once, then request graceful termination
+    // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
+    // process tasks (foreground and background): subagent and user-question tasks
+    // append their bounded result in one shot and must always persist it, so they
+    // are intentionally not capped here.
     if (
       !entry.outputLimitTripped &&
-      !this.isDetached(entry) &&
-      entry.outputSizeBytes > MAX_FOREGROUND_OUTPUT_BYTES
+      entry.task.kind === 'process' &&
+      entry.outputSizeBytes > MAX_TASK_OUTPUT_BYTES
     ) {
       entry.outputLimitTripped = true;
-      void this.stop(entry.taskId, foregroundOutputLimitReason());
+      void this.stop(entry.taskId, outputLimitReason());
     }
 
     // Once the cap has tripped the task is being terminated: keep only the
