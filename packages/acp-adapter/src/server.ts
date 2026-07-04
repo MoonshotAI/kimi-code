@@ -52,7 +52,6 @@ import { LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 import { TERMINAL_AUTH_METHOD, buildTerminalAuthMethod } from './auth-methods';
 import { redirectConsoleToStderr } from './log-guard';
 import { AcpKaos } from './kaos-acp';
-import { resolveCanonicalRoots } from './path-boundary';
 import { AcpSession, type TelemetryTrackFn } from './session';
 import { buildSessionConfigOptions } from './config-options';
 import { availableCommandsUpdateNotification } from './events-map';
@@ -285,7 +284,7 @@ export class AcpServer implements Agent {
     // the same reference, no AsyncLocalStorage needed.
     const sessionId = `session_${randomUUID()}`;
     const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
-    const acpKaos = await this.maybeBuildAcpKaos(sessionId, params.cwd, additionalDirs);
+    const acpKaos = await this.maybeBuildAcpKaos(sessionId);
     const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
     const session = await this.harness.createSession({
       id: sessionId,
@@ -460,11 +459,7 @@ export class AcpServer implements Agent {
     // `resumeSession` spreads `input` so unknown fields ride to the
     // kernel.
     const mcpServers = acpMcpServersToConfigs(params.mcpServers);
-    const acpKaos = await this.maybeBuildAcpKaos(
-      params.sessionId,
-      params.cwd,
-      params.additionalDirs,
-    );
+    const acpKaos = await this.maybeBuildAcpKaos(params.sessionId);
     const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
     let session: Session;
     try {
@@ -546,24 +541,8 @@ export class AcpServer implements Agent {
    * it. The resulting {@link AcpKaos} is captured by the kernel
    * `SessionImpl` ctor and every tool downstream sees the same
    * reference — no AsyncLocalStorage involved.
-   *
-   * @param sessionId   ACP-side session id (also used as the
-   *                    reverse-RPC session binding).
-   * @param additionalDirs  Optional additional workspace roots from
-   *                        `additionalDirectories`. Combined with
-   *                        `cwd` (supplied by the caller) to form
-   *                        the effective root set the {@link AcpKaos}
-   *                        enforces on every file operation.
-   *                        Missing / non-existent roots cause a
-   *                        structured `invalid_params` rejection —
-   *                        fail-closed at session-init time per the
-   *                        ACP `additionalDirectories` RFD.
    */
-  private async maybeBuildAcpKaos(
-    sessionId: string,
-    cwd: string,
-    additionalDirs?: readonly string[],
-  ): Promise<AcpKaos | undefined> {
+  private async maybeBuildAcpKaos(sessionId: string): Promise<AcpKaos | undefined> {
     const fs = this.clientCapabilities?.fs;
     if (!fs?.readTextFile && !fs?.writeTextFile) {
       return undefined;
@@ -572,22 +551,7 @@ export class AcpServer implements Agent {
       return undefined;
     }
     const innerKaos = await this.ensureInnerKaos();
-    const roots = [cwd, ...(additionalDirs ?? [])];
-    let canonical: string[];
-    try {
-      canonical = await resolveCanonicalRoots(roots);
-    } catch (err) {
-      // Fail-closed: a missing/unresolved root is a misconfigured
-      // session, not a transient condition. Surface it as a
-      // structured JSON-RPC `invalid_params` so the client sees a
-      // clear failure rather than a tool-time boundary error many
-      // turns later.
-      throw RequestError.invalidParams(
-        { additionalDirectories: additionalDirs ?? [] },
-        `cannot resolve additionalDirectories on disk: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    return new AcpKaos(this.conn, sessionId, innerKaos, canonical);
+    return new AcpKaos(this.conn, sessionId, innerKaos);
   }
 
   private async ensureInnerKaos(): Promise<Kaos> {
@@ -1185,3 +1149,4 @@ export function validateAdditionalDirectories(
   }
   return dirs;
 }
+

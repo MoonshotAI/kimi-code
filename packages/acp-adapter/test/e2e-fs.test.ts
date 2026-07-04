@@ -37,9 +37,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
-import { promises as fsp } from 'node:fs';
-import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
@@ -127,18 +125,8 @@ function makeReadingSession(
 const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 
 describe('end-to-end FS reverse-RPC', () => {
-  // The boundary check on `cwd` requires a realpath-able path; these
-  // e2e tests use mkdtemp'd scratch rather than the synthetic `/tmp/x`
-  // they used to carry. Set up once for the suite and tear it down.
-  let scratchWork: string;
-  beforeAll(async () => {
-    scratchWork = await fsp.mkdtemp(path.join('/tmp', 'acp-e2efs-'));
-  });
-  afterAll(async () => {
-    if (scratchWork) await fsp.rm(scratchWork, { recursive: true, force: true });
-  });
   it('routes a tool-time readText through the client when fs.readTextFile is advertised', async () => {
-    const targetPath = path.join(scratchWork, 'x.ts');
+    const targetPath = '/Users/test/x.ts';
     let createdSession: Session | undefined;
     let capturedSessionId: string | undefined;
     const harness = {
@@ -165,7 +153,7 @@ describe('end-to-end FS reverse-RPC', () => {
       },
     });
 
-    const newSession = await client.newSession({ cwd: scratchWork, mcpServers: [] });
+    const newSession = await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
     const response = await client.prompt({
       sessionId: newSession.sessionId,
@@ -250,7 +238,7 @@ describe('end-to-end FS reverse-RPC', () => {
       },
     });
 
-    const newSession = await client.newSession({ cwd: scratchWork, mcpServers: [] });
+    const newSession = await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
     const response = await client.prompt({
       sessionId: newSession.sessionId,

@@ -206,7 +206,7 @@ describe('AcpKaos', () => {
         readHandler: async () => ({ content: 'HELLO' }),
       });
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       const result = await kaos.readText('/a.ts');
 
@@ -223,7 +223,7 @@ describe('AcpKaos', () => {
           throw rpcErr;
         },
       });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
 
       await expect(kaos.readText('/x.ts')).rejects.toMatchObject({
         name: 'KaosError',
@@ -233,10 +233,10 @@ describe('AcpKaos', () => {
       try {
         await kaos.readText('/x.ts');
         throw new Error('should have thrown');
-      } catch (error) {
-        expect((error as Error & { cause?: unknown }).cause).toBe(rpcErr);
-        expect((error as Error).message).toContain('acp: readTextFile failed for /x.ts');
-        expect((error as Error).message).toContain('rpc died');
+      } catch (err) {
+        expect((err as Error & { cause?: unknown }).cause).toBe(rpcErr);
+        expect((err as Error).message).toContain('acp: readTextFile failed for /x.ts');
+        expect((err as Error).message).toContain('rpc died');
       }
     });
 
@@ -245,7 +245,7 @@ describe('AcpKaos', () => {
         readHandler: async () => ({ content: 'HELLO' }),
       });
       const inner = makeMockInner({ pathClass: 'win32' });
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       await kaos.readText('G:/python-code/render_with_mult_gpu/README.md');
       await kaos.writeText('G:/python-code/render_with_mult_gpu/README.md', 'updated');
@@ -274,7 +274,7 @@ describe('AcpKaos', () => {
         },
       });
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       const buf = await kaos.readBytes('/img.png', 4);
       expect(buf).toBeInstanceOf(Buffer);
@@ -288,7 +288,7 @@ describe('AcpKaos', () => {
     it('forwards omitted n to inner unchanged', async () => {
       const conn = makeMockConn({});
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       const buf = await kaos.readBytes('/img.png');
       expect(buf.byteLength).toBe(8);
@@ -305,20 +305,20 @@ describe('AcpKaos', () => {
 
     it('yields each line of "a\\nb\\nc" with terminators preserved', async () => {
       const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb\nc' }) });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\n', 'b\n', 'c']);
     });
 
     it('drops the trailing empty token when the file ends with a newline', async () => {
       // "a\nb\n" → ['a\n', 'b\n'] (NOT ['a\n', 'b\n', ''])
       const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb\n' }) });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\n', 'b\n']);
     });
 
     it('yields the final line without a trailing newline when missing', async () => {
       const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb' }) });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\n', 'b']);
     });
 
@@ -326,13 +326,13 @@ describe('AcpKaos', () => {
       // ReadTool depends on this — stripping \n would expose bare \r and
       // render visible carriage returns.
       const conn = makeMockConn({ readHandler: async () => ({ content: 'a\r\nb\r\n' }) });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\r\n', 'b\r\n']);
     });
 
     it('yields nothing for an empty file', async () => {
       const conn = makeMockConn({ readHandler: async () => ({ content: '' }) });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       expect(await collect(kaos.readLines('/a.ts'))).toEqual([]);
     });
   });
@@ -340,7 +340,7 @@ describe('AcpKaos', () => {
   describe('writeText', () => {
     it('forwards content to conn.writeTextFile and returns char count', async () => {
       const conn = makeMockConn({});
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       const n = await kaos.writeText('/a.ts', 'hello');
       expect(n).toBe(5);
       expect(conn.writeCalls).toEqual([{ sessionId: 's1', path: '/a.ts', content: 'hello' }]);
@@ -350,7 +350,7 @@ describe('AcpKaos', () => {
       const conn = makeMockConn({
         readHandler: async () => ({ content: 'old:' }),
       });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       const n = await kaos.writeText('/a.ts', 'new', { mode: 'a' });
       // Return value is the size of the appended data, not the merged size.
       expect(n).toBe(3);
@@ -367,7 +367,7 @@ describe('AcpKaos', () => {
           throw RequestError.resourceNotFound('/missing.ts');
         },
       });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       const n = await kaos.writeText('/missing.ts', 'fresh', { mode: 'a' });
       expect(n).toBe(5);
       expect(conn.writeCalls).toEqual([
@@ -384,7 +384,7 @@ describe('AcpKaos', () => {
           throw new Error('permission denied for /tmp/not found/file.txt');
         },
       });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
 
       await expect(kaos.writeText('/tmp/not found/file.txt', 'fresh', { mode: 'a' }))
         .rejects.toBeInstanceOf(KaosError);
@@ -400,7 +400,7 @@ describe('AcpKaos', () => {
           throw RequestError.internalError(undefined, 'transient transport blip');
         },
       });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       await expect(kaos.writeText('/a.ts', 'new', { mode: 'a' })).rejects.toBeInstanceOf(
         KaosError,
       );
@@ -415,15 +415,15 @@ describe('AcpKaos', () => {
           throw rpcErr;
         },
       });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
 
       await expect(kaos.writeText('/a.ts', 'hello')).rejects.toBeInstanceOf(KaosError);
       try {
         await kaos.writeText('/a.ts', 'hello');
-      } catch (error) {
-        expect((error as Error & { cause?: unknown }).cause).toBe(rpcErr);
-        expect((error as Error).message).toContain('acp: writeTextFile failed for /a.ts');
-        expect((error as Error).message).toContain('write rpc died');
+      } catch (err) {
+        expect((err as Error & { cause?: unknown }).cause).toBe(rpcErr);
+        expect((err as Error).message).toContain('acp: writeTextFile failed for /a.ts');
+        expect((err as Error).message).toContain('write rpc died');
       }
     });
   });
@@ -431,7 +431,7 @@ describe('AcpKaos', () => {
   describe('writeBytes', () => {
     it('forwards utf8-decoded content via conn.writeTextFile, returns byte count', async () => {
       const conn = makeMockConn({});
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner(), ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
       const n = await kaos.writeBytes('/a.ts', Buffer.from('hi'));
       expect(n).toBe(2);
       expect(conn.writeCalls).toEqual([{ sessionId: 's1', path: '/a.ts', content: 'hi' }]);
@@ -444,7 +444,7 @@ describe('AcpKaos', () => {
         readHandler: async () => ({ content: 'BRIDGED' }),
       });
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
       const child = kaos.withCwd('/new/cwd');
 
       expect(child).toBeInstanceOf(AcpKaos);
@@ -463,7 +463,7 @@ describe('AcpKaos', () => {
         readHandler: async () => ({ content: 'BRIDGED' }),
       });
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
       const env = { FOO: 'bar' };
       const child = kaos.withEnv(env);
 
@@ -479,7 +479,7 @@ describe('AcpKaos', () => {
     it('delegates pathClass, normpath, gethome, getcwd to inner', () => {
       const conn = makeMockConn({});
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       expect(kaos.pathClass()).toBe('posix');
       expect(kaos.normpath('/foo')).toBe('/foo');
@@ -495,7 +495,7 @@ describe('AcpKaos', () => {
     it('delegates chdir, stat, mkdir to inner', async () => {
       const conn = makeMockConn({});
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       await kaos.chdir('/x');
       await kaos.stat('/y', { followSymlinks: false });
@@ -509,7 +509,7 @@ describe('AcpKaos', () => {
     it('delegates iterdir and glob to inner', async () => {
       const conn = makeMockConn({});
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       // Just consume the generators — the inner spy records the call.
       for await (const _ of kaos.iterdir('/d')) {
@@ -528,7 +528,7 @@ describe('AcpKaos', () => {
     it('delegates exec and execWithEnv to inner', async () => {
       const conn = makeMockConn({});
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
       await kaos.exec('ls', '-la');
       await kaos.execWithEnv(['env'], { FOO: 'bar' });
@@ -542,7 +542,7 @@ describe('AcpKaos', () => {
     it('exposes a wrapping name and the inner osEnv', () => {
       const conn = makeMockConn({});
       const inner = makeMockInner();
-      const kaos = new AcpKaos(conn.asConn(), 's1', inner, ['/']);
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
       expect(kaos.name).toBe('acp(mock-inner)');
       expect(kaos.osEnv).toBe(inner.osEnv);
     });
