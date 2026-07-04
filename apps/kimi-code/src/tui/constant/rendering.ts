@@ -18,3 +18,10 @@ export const BRAILLE_SPINNER_INTERVAL_MS = 80;
 
 export const MOON_SPINNER_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
 export const MOON_SPINNER_INTERVAL_MS = 120;
+
+// The `/football` easter egg swaps the moon loader for a spinning football.
+// A single emoji can't rotate in place, so the ball itself rolls back and forth
+// within a fixed-width field — a rolling ball is a spinning ball. Every frame
+// stays the same width so the label never jitters.
+export const FOOTBALL_SPINNER_FRAMES = ['⚽  ', ' ⚽ ', '  ⚽', ' ⚽ '];
+export const FOOTBALL_SPINNER_INTERVAL_MS = 120;

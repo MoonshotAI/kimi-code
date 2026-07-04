@@ -1,15 +1,17 @@
 import type { TUI } from '@moonshot-ai/pi-tui';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { MoonLoader } from '#/tui/components/chrome/moon-loader';
+import { MoonLoader, type SpinnerStyle } from '#/tui/components/chrome/moon-loader';
+import { FOOTBALL_SPINNER_FRAMES } from '#/tui/constant/rendering';
 
 // MoonLoader starts a real setInterval in its constructor, so every loader
 // created in these tests must be stopped to avoid leaving live timers behind.
 const loaders: MoonLoader[] = [];
 
-function createLoader(): MoonLoader {
+function createLoader(style: SpinnerStyle = 'moon'): MoonLoader {
   const ui = { requestRender() {} } as unknown as TUI;
-  const loader = new MoonLoader(ui, 'moon');
+  const loader = new MoonLoader(ui, style);
   loaders.push(loader);
   return loader;
 }
@@ -38,5 +40,16 @@ describe('MoonLoader', () => {
 
     const row = loader.render(80).join('\n');
     expect(row).toContain('Tip: ctrl+s: steer mid-turn');
+  });
+
+  it('renders a football for the football style', () => {
+    const loader = createLoader('football');
+
+    expect(loader.renderInline()).toContain('⚽');
+  });
+
+  it('keeps every football frame the same width so the label never jitters', () => {
+    const widths = FOOTBALL_SPINNER_FRAMES.map((frame) => visibleWidth(frame));
+    expect(new Set(widths).size).toBe(1);
   });
 });

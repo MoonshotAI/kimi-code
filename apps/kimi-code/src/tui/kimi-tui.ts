@@ -106,6 +106,7 @@ import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
+import { disposeFootballKick, isFootballActive } from './easter-eggs/football';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
@@ -794,6 +795,7 @@ export class KimiTUI {
     } finally {
       this.sessionEventHandler.stopAllMcpServerStatusSpinners();
       this.uninstallRainbowDance();
+      disposeFootballKick();
       try {
         await this.state.terminal.drainInput();
       } catch {
@@ -2238,7 +2240,7 @@ export class KimiTUI {
         this.state.ui.requestRender();
         return;
       case 'waiting': {
-        const spinner = this.ensureActivitySpinner('moon');
+        const spinner = this.ensureActivitySpinner(this.moonStyle());
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
@@ -2270,7 +2272,7 @@ export class KimiTUI {
         break;
       }
       case 'tool': {
-        const spinner = this.ensureActivitySpinner('moon');
+        const spinner = this.ensureActivitySpinner(this.moonStyle());
         this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
         if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
@@ -2552,6 +2554,11 @@ export class KimiTUI {
     if (this.state.terminalState.progressActive === active) return;
     this.state.terminal.setProgress(active);
     this.state.terminalState.progressActive = active;
+  }
+
+  /** The `/football` easter egg swaps the moon loader for a spinning football. */
+  private moonStyle(): SpinnerStyle {
+    return isFootballActive() ? 'football' : 'moon';
   }
 
   private ensureActivitySpinner(

@@ -4,12 +4,14 @@ import type { TUI } from '@moonshot-ai/pi-tui';
 import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
+  FOOTBALL_SPINNER_FRAMES,
+  FOOTBALL_SPINNER_INTERVAL_MS,
   MOON_SPINNER_FRAMES,
   MOON_SPINNER_INTERVAL_MS,
 } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
-export type SpinnerStyle = 'moon' | 'braille';
+export type SpinnerStyle = 'moon' | 'braille' | 'football';
 
 export class MoonLoader extends Text {
   private currentFrame = 0;
@@ -37,8 +39,21 @@ export class MoonLoader extends Text {
   ) {
     super('', 1, 0);
     this.ui = ui;
-    this.frames = style === 'moon' ? [...MOON_SPINNER_FRAMES] : [...BRAILLE_SPINNER_FRAMES];
-    this.interval = style === 'moon' ? MOON_SPINNER_INTERVAL_MS : BRAILLE_SPINNER_INTERVAL_MS;
+    switch (style) {
+      case 'football':
+        this.frames = [...FOOTBALL_SPINNER_FRAMES];
+        this.interval = FOOTBALL_SPINNER_INTERVAL_MS;
+        break;
+      case 'braille':
+        this.frames = [...BRAILLE_SPINNER_FRAMES];
+        this.interval = BRAILLE_SPINNER_INTERVAL_MS;
+        break;
+      case 'moon':
+      default:
+        this.frames = [...MOON_SPINNER_FRAMES];
+        this.interval = MOON_SPINNER_INTERVAL_MS;
+        break;
+    }
     this.colorFn = colorFn;
     this.label = label;
     this.start();

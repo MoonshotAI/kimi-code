@@ -10,6 +10,7 @@ import type { BtwPanelController } from '../controllers/btw-panel';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
+import { tryHandleFootballCommand } from '../easter-eggs/football';
 import type { ResolvedTheme } from '../theme/colors';
 import type { TUIState } from '../tui-state';
 import type {
@@ -220,10 +221,13 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       return;
     }
     case 'message':
-      // Unknown slash command: let /dance claim it before it falls through to
-      // the model as a normal message. This runs *after* builtin and skill
-      // resolution, so a real command or a same-named skill always wins.
+      // Unknown slash command: let the easter eggs claim it before it falls
+      // through to the model as a normal message. This runs *after* builtin and
+      // skill resolution, so a real command or a same-named skill always wins.
       if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
+        return;
+      }
+      if (parsedCommand !== null && tryHandleFootballCommand(host, parsedCommand)) {
         return;
       }
       host.sendNormalUserInput(intent.input);
