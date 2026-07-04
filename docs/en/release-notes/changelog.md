@@ -12,7 +12,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Wait for background subagents to finish and respond to their results before exiting in `kimi -p`, instead of ending the turn early.
 - web: Fix uploaded videos failing to play in the web chat.
-- Revert the recent TUI transcript rendering changes to the original upstream behavior while rendering issues are reworked.
+- Revert the recent TUI transcript rendering changes to the original upstream behavior and fix related rendering issues.
 
 ### Polish
 

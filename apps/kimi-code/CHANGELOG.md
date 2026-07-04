@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- [#1367](https://github.com/MoonshotAI/kimi-code/pull/1367) [`23daf0f`](https://github.com/MoonshotAI/kimi-code/commit/23daf0f3c199b4aaa9bd9388a2903d7827f98d32) - Revert the recent TUI transcript rendering changes to the original upstream behavior while rendering issues are reworked.
+- [#1367](https://github.com/MoonshotAI/kimi-code/pull/1367) [`23daf0f`](https://github.com/MoonshotAI/kimi-code/commit/23daf0f3c199b4aaa9bd9388a2903d7827f98d32) - Revert the recent TUI transcript rendering changes to the original upstream behavior and fix related rendering issues.
 
 - [#1343](https://github.com/MoonshotAI/kimi-code/pull/1343) [`ec758c7`](https://github.com/MoonshotAI/kimi-code/commit/ec758c747a95555847b8a0275ed0809010c7d5e7) - Add click-to-enlarge for images uploaded in the web chat. Click an image in a message to open it.
 
