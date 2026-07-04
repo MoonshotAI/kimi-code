@@ -4,7 +4,7 @@ import { join } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Readable, type Writable } from 'node:stream';
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { createControlledPromise } from '@antfu/utils';
 import {
   APIConnectionError,
