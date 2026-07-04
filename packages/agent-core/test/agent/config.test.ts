@@ -186,7 +186,12 @@ describe('Agent config', () => {
       [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 50, "maxContextTokens": 1000000, "contextUsage": 0.00005, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                          { "turnId": 0, "reason": "completed" }
     `);
+    // Model and system prompt keep the turn-start snapshot for the rest of the
+    // turn. The tool table is deliberately different: it is re-read per step
+    // (so select_tools loads and goal-state visibility apply mid-turn), which
+    // makes the mid-turn setActiveTools([]) visible from step 2 on.
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
+      tools: []
       messages:
         <last>
         assistant: text "I will run Bash."  calls call_bash:Bash { "command": "printf original-result", "timeout": 60 }
@@ -212,7 +217,6 @@ describe('Agent config', () => {
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
       system: "Changed system prompt."
-      tools: []
       messages:
         <last>
         assistant: text "Still using the original turn config."

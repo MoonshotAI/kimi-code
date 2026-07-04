@@ -332,10 +332,20 @@ describe('KimiHarness config API', () => {
     const homeDir = await makeTempDir();
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
-    // No experimental features are currently registered, so the harness exposes
-    // an empty list.
     const features = await harness.getExperimentalFeatures();
-    expect(features).toEqual([]);
+    expect(features).toEqual([
+      {
+        id: 'tool-select',
+        title: 'Tool select (progressive tool disclosure)',
+        description:
+          'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares select_tools.',
+        surface: 'core',
+        env: 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT',
+        defaultEnabled: false,
+        enabled: false,
+        source: 'default',
+      },
+    ]);
   });
 
   it('can create the default config scaffold without selecting a model', async () => {

@@ -23,6 +23,7 @@ import {
   type ProjectOptions,
   trimTrailingOpenToolExchange,
 } from './projector';
+import { stripDynamicToolContext } from './dynamic-tools';
 import {
   USER_PROMPT_ORIGIN,
   type AgentContextData,
@@ -31,6 +32,7 @@ import {
 } from './types';
 
 export * from './types';
+export * from './dynamic-tools';
 
 const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
 const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
@@ -175,6 +177,7 @@ export class ContextMemory {
     this._lastAssistantAt = null;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
+    this.agent.tools.onContextCleared();
     this.agent.emitStatusUpdated();
   }
 
@@ -351,6 +354,7 @@ export class ContextMemory {
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextCompacted();
+    this.agent.tools.onContextCompacted();
     this.agent.emitStatusUpdated();
     return result;
   }
@@ -376,8 +380,15 @@ export class ContextMemory {
   }
 
   project(messages: readonly ContextMessage[], options?: ProjectOptions): Message[] {
+    // Shape for the current model BEFORE projecting: a model without the
+    // select_tools capability must not see dynamic-tool schema messages or
+    // loadable-tools announcements (the canonical history keeps them; only
+    // this outgoing view is shaped). Must run pre-projection — project()
+    // strips `origin`, the only anchor for the announcements. setModel never
+    // rewrites history, so a mid-session switch degrades/upgrades losslessly.
+    const shaped = this.agent.toolSelectEnabled ? messages : stripDynamicToolContext(messages);
     const anomalies: ProjectionAnomaly[] = [];
-    const result = project(this.agent.microCompaction.compact(messages), {
+    const result = project(this.agent.microCompaction.compact(shaped), {
       ...options,
       onAnomaly: (anomaly) => {
         anomalies.push(anomaly);

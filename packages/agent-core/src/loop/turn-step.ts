@@ -38,6 +38,8 @@ export interface ExecuteLoopStepDeps {
   readonly dispatchEvent: LoopEventDispatcher;
   readonly llm: LLM;
   readonly tools?: readonly ExecutableTool[] | undefined;
+  /** See RunTurnInput.describeMissingTool. */
+  readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
   readonly currentStep: number;
@@ -57,6 +59,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     dispatchEvent,
     llm,
     tools,
+    describeMissingTool,
     hooks,
     log,
     currentStep,
@@ -85,6 +88,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
 
   const step: ToolCallStepContext = {
     tools,
+    describeMissingTool,
     hooks,
     log,
     dispatchEvent,

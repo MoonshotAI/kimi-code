@@ -2,8 +2,10 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import {
+  estimateTokens,
   estimateTokensForContentPart,
   estimateTokensForMessage,
+  estimateTokensForTools,
   MEDIA_TOKEN_ESTIMATE,
 } from '../../src/utils/tokens';
 
@@ -57,5 +59,43 @@ describe('estimateTokensForContentPart — media parts', () => {
     };
     // The image must dominate the ~4-token text, not be free.
     expect(estimateTokensForMessage(message)).toBeGreaterThan(100);
+  });
+});
+
+// Dynamic tool schema messages (select_tools progressive disclosure) carry
+// full tool definitions in `message.tools`. If the estimator ignores them,
+// injected schemas are invisible to every compaction budget and the context
+// overflows before compaction triggers.
+describe('estimateTokensForMessage — message.tools', () => {
+  const tool = {
+    name: 'mcp__grafana__query_range',
+    description: 'Query a Prometheus-compatible range endpoint.',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string' }, minutes: { type: 'number' } },
+      required: ['query'],
+    },
+  };
+
+  it('counts injected tool schemas', () => {
+    const bare = { role: 'system', content: [] } as const;
+    const withTools = { role: 'system', content: [], tools: [tool] } as const;
+    expect(estimateTokensForMessage(withTools)).toBe(
+      estimateTokensForMessage(bare) + estimateTokensForTools([tool]),
+    );
+  });
+
+  it('leaves messages without tools byte-identical to the old estimate', () => {
+    const message = {
+      role: 'user',
+      content: [{ type: 'text', text: 'hello world' }] satisfies ContentPart[],
+      toolCalls: [{ name: 'Read', arguments: { file: 'a.ts' } }],
+    };
+    const expected =
+      estimateTokens('user') +
+      estimateTokens('hello world') +
+      estimateTokens('Read') +
+      estimateTokens(JSON.stringify({ file: 'a.ts' }));
+    expect(estimateTokensForMessage(message)).toBe(expected);
   });
 });

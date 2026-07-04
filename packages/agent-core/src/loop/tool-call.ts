@@ -63,6 +63,8 @@ function abortedToolOutput(toolName: string, signal: AbortSignal): string {
 
 export interface ToolCallStepContext {
   readonly tools?: readonly ExecutableTool[] | undefined;
+  /** See RunTurnInput.describeMissingTool. */
+  readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
@@ -174,7 +176,7 @@ export async function runToolCallBatch(
  * events. Validator compilation may populate the local cache.
  */
 function preflightToolCall(
-  step: Pick<ToolCallStepContext, 'tools' | 'log'>,
+  step: Pick<ToolCallStepContext, 'tools' | 'describeMissingTool' | 'log'>,
   toolCall: ToolCall,
 ): PreflightedToolCall {
   const toolName = toolCall.name;
@@ -186,7 +188,7 @@ function preflightToolCall(
       toolCall,
       toolName,
       args: parsedArgs.data,
-      output: `Tool "${toolName}" not found`,
+      output: step.describeMissingTool?.(toolName) ?? `Tool "${toolName}" not found`,
     };
   }
 
