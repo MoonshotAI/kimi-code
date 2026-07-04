@@ -1,5 +1,11 @@
 # @moonshot-ai/agent-core
 
+## 0.15.3
+
+### Patch Changes
+
+- [#1372](https://github.com/MoonshotAI/kimi-code/pull/1372) [`d111c02`](https://github.com/MoonshotAI/kimi-code/commit/d111c02ea08ee32b4c61225d29acd69ea3f256e8) - Apply the 16 MiB output cap to background shell commands too, so a runaway background command can no longer fill the disk or crash the process; it is now terminated with the same guidance to redirect large output to a file.
+
 ## 0.15.2
 
 ### Patch Changes
