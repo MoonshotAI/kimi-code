@@ -6,9 +6,9 @@
  * (Infinity start) and mirror each message into the replay read model;
  * `remove` splices out each resolved target and drops the matching replay
  * messages; `clear` drops the whole history and cuts a new replay segment;
- * legacy `replace` swaps one message in place for old migrated wire. Message
- * content is offloaded to the blob store through each operation's blob
- * selector. Bound at Agent scope.
+ * legacy `replace` swaps one message in place for old migrated wire. Structured
+ * message content is offloaded to the blob store through the operations that
+ * carry full messages. Bound at Agent scope.
  */
 
 import { Disposable } from "#/_base/di";
@@ -63,23 +63,26 @@ function messageContentBlobTarget<T extends readonly unknown[]>(
   };
 }
 
-function toSystemReminderMessage(message: ContextMessage): ContextMessage {
-  return {
-    ...message,
-    content: message.content.map((part) =>
-      part.type === 'text'
-        ? { ...part, text: toSystemReminderText(part.text) }
-        : part,
-    ),
-  };
-}
-
 function toSystemReminderText(content: string): string {
   const trimmed = content.trim();
   if (trimmed.startsWith('<system-reminder>') && trimmed.endsWith('</system-reminder>')) {
     return trimmed;
   }
   return `<system-reminder>\n${trimmed}\n</system-reminder>`;
+}
+
+function toSystemReminderMessage(content: string, origin: PromptOrigin): ContextMessage {
+  return ensureMessageId({
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: toSystemReminderText(content),
+      },
+    ],
+    toolCalls: [],
+    origin,
+  });
 }
 
 export class AgentContextOpsService extends Disposable implements IAgentContextOpsService {
@@ -121,19 +124,15 @@ export class AgentContextOpsService extends Disposable implements IAgentContextO
     this.appendSystemReminderOperation =
       context.defineOperation<ContextAppendSystemReminderArgs>({
         type: 'append_system_reminder',
-        apply: (splice, message) => {
-          splice(Number.POSITIVE_INFINITY, 0, [toSystemReminderMessage(message)]);
+        apply: (splice, message, origin) => {
+          splice(Number.POSITIVE_INFINITY, 0, [toSystemReminderMessage(message, origin)]);
         },
-        replay: (replay, message) => {
-          replay.push({ type: 'message', message: toSystemReminderMessage(message) });
+        replay: (replay, message, origin) => {
+          replay.push({
+            type: 'message',
+            message: toSystemReminderMessage(message, origin),
+          });
         },
-        blobs: ([message]) => [
-          messageContentBlobTarget<ContextAppendSystemReminderArgs>(
-            message,
-            (_current, next) => [next],
-            ([current]) => current,
-          ),
-        ],
       });
 
     this.removeOperation = context.defineOperation<ContextRemoveArgs>({
@@ -187,19 +186,8 @@ export class AgentContextOpsService extends Disposable implements IAgentContextO
   }
 
   appendSystemReminder(content: string, origin: PromptOrigin): ContextMessage {
-    const message = ensureMessageId({
-      role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: content.trim(),
-        },
-      ],
-      toolCalls: [],
-      origin,
-    });
-    this.appendSystemReminderOperation(message);
-    return message;
+    this.appendSystemReminderOperation(content.trim(), origin);
+    return this.context.get().at(-1)!;
   }
 
   remove(removals: readonly ContextRemovalTarget[]): void {

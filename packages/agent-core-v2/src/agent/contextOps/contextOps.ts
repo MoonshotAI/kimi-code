@@ -16,7 +16,7 @@ import { createDecorator } from "#/_base/di";
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory';
 
 export type ContextAppendArgs = readonly ContextMessage[];
-export type ContextAppendSystemReminderArgs = [message: ContextMessage];
+export type ContextAppendSystemReminderArgs = [message: string, origin: PromptOrigin];
 export type ContextReplaceArgs = [index: number, message: ContextMessage];
 
 /**
@@ -41,7 +41,7 @@ export interface IAgentContextOpsService {
 
   /**
    * Append a `<system-reminder>` message to the end of the history.
-   * Returns the raw message recorded by the wire operation.
+   * Returns the message inserted into history.
    */
   appendSystemReminder(content: string, origin: PromptOrigin): ContextMessage;
 

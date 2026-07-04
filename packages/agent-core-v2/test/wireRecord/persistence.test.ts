@@ -310,6 +310,10 @@ describe('AgentWireRecordService persistence', () => {
     expect(context.get()[0]?.content).toEqual([
       { type: 'text', text: '<system-reminder>\nRemember this.\n</system-reminder>' },
     ]);
+    expect(context.get()[0]?.origin).toEqual({
+      kind: 'injection',
+      variant: 'host',
+    });
 
     const records = await readPersistedWireRecords(storage);
     expect(records.map((record) => record.type)).toEqual([
@@ -318,9 +322,34 @@ describe('AgentWireRecordService persistence', () => {
     ]);
     const record = records[1] as {
       type: 'context.append_system_reminder';
-      args: readonly [ContextMessage];
+      args: readonly [string, ContextMessage['origin']];
     };
-    expect(record.args[0].content).toEqual([{ type: 'text', text: 'Remember this.' }]);
+    expect(record.args).toEqual(['Remember this.', { kind: 'injection', variant: 'host' }]);
+  });
+
+  it('restores string system reminder args with origin as wrapped context messages', async () => {
+    const { wire, context } = await createWireHarness();
+
+    await wire.restore([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'context.append_system_reminder',
+        args: ['Remember this.', { kind: 'injection', variant: 'host' }],
+      },
+    ]);
+
+    const message = context.get()[0];
+    expect(message?.content).toEqual([
+      { type: 'text', text: '<system-reminder>\nRemember this.\n</system-reminder>' },
+    ]);
+    expect(message?.origin).toEqual({
+      kind: 'injection',
+      variant: 'host',
+    });
   });
 
   it('offloads large content part data URIs to blobsDir during append', async () => {
