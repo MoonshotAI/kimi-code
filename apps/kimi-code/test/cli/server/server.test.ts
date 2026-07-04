@@ -374,6 +374,43 @@ describe('`kimi server run` background start', () => {
     expect(plain).not.toContain('Network:  http');
   });
 
+  it('keeps the token and skips the bypass notice when a daemon is reused', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+    const openUrl = vi.fn();
+
+    // The user requests bypass, but a daemon is already running — so the
+    // requested flag is NOT applied to the server actually serving requests.
+    await handleRunCommand(
+      { port: '58627', host: '127.0.0.1', dangerousBypassAuth: true, open: true },
+      {
+        startServerBackground: async () => ({
+          origin: 'http://127.0.0.1:58627',
+          reused: true,
+          host: '127.0.0.1',
+          port: 58627,
+        }),
+        resolveToken: () => 'tok',
+        openUrl,
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    // No false "bypass" claim for a server whose real auth mode is unknown.
+    expect(plain).not.toContain('DANGER');
+    // The token is preserved so the browser can auto-authenticate to the
+    // reused (token-protected) daemon.
+    expect(plain).toContain('#token=tok');
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/#token=tok');
+  });
+
   it('prints a TUI-style ready panel once the daemon is up', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';

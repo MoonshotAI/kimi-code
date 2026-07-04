@@ -130,6 +130,9 @@ onMounted(() => {
   document.addEventListener('keydown', onGlobalKeydown, true);
   offAuthRequired = onAuthRequired(() => {
     authRequired.value = true;
+    // The server now demands a token, so any cached "bypass" state from a
+    // previous mode is stale — drop it so the token prompt can show.
+    client.clearDangerousBypassAuth();
   });
 });
 

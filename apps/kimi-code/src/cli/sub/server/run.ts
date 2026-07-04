@@ -206,7 +206,14 @@ export async function handleRunCommand(
   const writeReady = (result: { origin: string; reused?: boolean; host?: string }): void => {
     const { origin } = result;
     const host = result.host ?? parsed.host;
-    const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
+    // When a daemon is reused, this command's flags were NOT applied to the
+    // already-running server. Don't trust the requested `--dangerous-bypass-auth`
+    // for display/open: treat the server as token-protected so we never hide a
+    // token the user actually needs, nor claim bypass for a server that is
+    // authenticating. (Probing the running server's `/meta` would give its real
+    // mode; we conservatively assume non-bypass on reuse.)
+    const effectiveBypass = result.reused === true ? false : parsed.dangerousBypassAuth;
+    const token = effectiveBypass ? undefined : deps.resolveToken?.();
     let output = '';
     if (result.reused === true) {
       // A daemon was already running, so this command's --host/--port/etc. did
@@ -219,9 +226,9 @@ export async function handleRunCommand(
         ? formatReadyBanner(origin, host, {
             token,
             networkAddresses: deps.networkAddresses,
-            dangerousBypassAuth: parsed.dangerousBypassAuth,
+            dangerousBypassAuth: effectiveBypass,
           })
-        : formatReadyLine(origin, token, parsed.dangerousBypassAuth);
+        : formatReadyLine(origin, token, effectiveBypass);
     deps.stdout.write(output);
     if (opts.open === true) {
       deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);

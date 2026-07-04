@@ -1719,6 +1719,16 @@ const loadMoreMessagesError = computed<boolean>(() => {
 const serverVersion = computed<string>(() => rawState.serverVersion);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
 
+/**
+ * Drop the cached `dangerous_bypass_auth` value read from `/meta`. Called when
+ * the server demands authentication (HTTP 401) so a stale "bypass" value from
+ * a previous server mode does not keep hiding the token prompt after the same
+ * origin is restarted without `--dangerous-bypass-auth`.
+ */
+function clearDangerousBypassAuth(): void {
+  rawState.dangerousBypassAuth = false;
+}
+
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
 // Mode toggles reflect the ACTIVE session (or the draft when no session is
@@ -2396,6 +2406,7 @@ export function useKimiWebClient() {
     loadMoreMessagesError,
     serverVersion,
     dangerousBypassAuth,
+    clearDangerousBypassAuth,
     initialized,
     permission,
     thinking,
