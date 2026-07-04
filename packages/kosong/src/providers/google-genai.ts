@@ -5,6 +5,7 @@ import {
   normalizeAPIStatusError,
 } from '#/errors';
 import type { Message, StreamedMessagePart, ToolCall } from '#/message';
+import { isToolDeclarationOnlyMessage } from '#/message';
 import type {
   ChatProvider,
   FinishReason,
@@ -353,6 +354,15 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
   while (i < messages.length) {
     const message = messages[i];
     if (message === undefined) break;
+
+    // Message-level tool declarations are a Kimi wire feature. The system
+    // branch below would already drop the empty leftover via its text-length
+    // check, but skip explicitly so the behavior does not hinge on that
+    // coincidence (and covers a non-system carrier defensively).
+    if (isToolDeclarationOnlyMessage(message)) {
+      i += 1;
+      continue;
+    }
 
     if (message.role === 'system') {
       // Google GenAI's `Content.role` only accepts "user" or "model", so a

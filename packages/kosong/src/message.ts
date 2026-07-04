@@ -122,6 +122,24 @@ export function isContentPart(part: StreamedMessagePart): part is ContentPart {
   );
 }
 
+/**
+ * True for a message whose only payload is `tools` — the dynamic tool-loading
+ * primitive (see {@link Message.tools}). Message-level tool declarations are a
+ * Kimi wire feature; every other provider must skip such a message entirely:
+ * their explicit field construction already keeps the `tools` field off the
+ * wire, but the leftover empty message would be rejected (OpenAI: system
+ * message without content) or serialized as a garbage `<system></system>`
+ * turn (Anthropic/Google system-to-user wrapping).
+ */
+export function isToolDeclarationOnlyMessage(message: Message): boolean {
+  return (
+    message.tools !== undefined &&
+    message.tools.length > 0 &&
+    message.content.length === 0 &&
+    message.toolCalls.length === 0
+  );
+}
+
 /** Check if a streamed part is a ToolCall. */
 export function isToolCall(part: StreamedMessagePart): part is ToolCall {
   return part.type === 'function';

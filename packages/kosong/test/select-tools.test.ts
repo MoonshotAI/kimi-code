@@ -13,8 +13,13 @@
 import { UNKNOWN_CAPABILITY, isUnknownCapability } from '#/capability';
 import { catalogModelToCapability } from '#/catalog';
 import { generate } from '#/generate';
+import { isToolDeclarationOnlyMessage } from '#/message';
 import type { Message, StreamedMessagePart } from '#/message';
+import { AnthropicChatProvider } from '#/providers/anthropic';
+import { messagesToGoogleGenAIContents } from '#/providers/google-genai';
 import { KimiChatProvider } from '#/providers/kimi';
+import { OpenAILegacyChatProvider } from '#/providers/openai-legacy';
+import { OpenAIResponsesChatProvider } from '#/providers/openai-responses';
 import type { ChatProvider, StreamedMessage, ThinkingEffort } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, expect, it, vi } from 'vitest';
@@ -199,6 +204,123 @@ describe('generate() deferred tool stripping', () => {
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
     ]);
     expect(seenTools()).toBe(tools);
+  });
+});
+
+describe('providers without message-level tool declarations', () => {
+  const TOOLS_ONLY_MESSAGE: Message = {
+    role: 'system',
+    content: [],
+    toolCalls: [],
+    tools: [ADD_TOOL],
+  };
+  const HISTORY: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    TOOLS_ONLY_MESSAGE,
+  ];
+
+  it('classifies tool-declaration-only messages', () => {
+    expect(isToolDeclarationOnlyMessage(TOOLS_ONLY_MESSAGE)).toBe(true);
+    expect(isToolDeclarationOnlyMessage(HISTORY[0]!)).toBe(false);
+    // A message that also carries content is NOT skipped wholesale (only the
+    // tools field stays off the wire via explicit field construction).
+    expect(
+      isToolDeclarationOnlyMessage({
+        ...TOOLS_ONLY_MESSAGE,
+        content: [{ type: 'text', text: 'x' }],
+      }),
+    ).toBe(false);
+  });
+
+  it('anthropic skips the message instead of emitting a <system></system> husk', async () => {
+    const provider = new AnthropicChatProvider({ model: 'k25', apiKey: 'test-key', stream: false });
+    let captured: Record<string, unknown> | undefined;
+    (provider as any)._client.messages.create = vi.fn().mockImplementation((params: unknown) => {
+      captured = params as Record<string, unknown>;
+      return Promise.resolve({
+        id: 'msg_test_123',
+        type: 'message',
+        role: 'assistant',
+        model: 'k25',
+        content: [{ type: 'text', text: 'Hello' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      });
+    });
+    const stream = await provider.generate('sys', [], HISTORY);
+    for await (const part of stream) void part;
+    expect(JSON.stringify(captured!['messages'])).not.toContain('<system>');
+    expect(captured!['messages'] as unknown[]).toHaveLength(1);
+  });
+
+  it('openai chat completions skips the message instead of sending a content-free system entry', async () => {
+    const provider = new OpenAILegacyChatProvider({ model: 'gpt-4.1', apiKey: 'test-key', stream: false });
+    let captured: Record<string, unknown> | undefined;
+    (provider as any)._client.chat.completions.create = vi
+      .fn()
+      .mockImplementation((params: unknown) => {
+        captured = params as Record<string, unknown>;
+        return Promise.resolve({
+          id: 'chatcmpl-test123',
+          object: 'chat.completion',
+          created: 1234567890,
+          model: 'gpt-4.1',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'Hello' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        });
+      });
+    const stream = await provider.generate('sys', [], HISTORY);
+    for await (const part of stream) void part;
+    const messages = captured!['messages'] as Array<Record<string, unknown>>;
+    // [system prompt, user] — no content-free leftover entry.
+    expect(messages).toHaveLength(2);
+    for (const message of messages) {
+      expect(message['content']).toBeDefined();
+    }
+  });
+
+  it('openai responses skips the message', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'test-key' });
+    (provider as any)._stream = false;
+    let captured: Record<string, unknown> | undefined;
+    ((provider as any)._client.responses as Record<string, unknown>)['create'] = vi
+      .fn()
+      .mockImplementation((params: unknown) => {
+        captured = params as Record<string, unknown>;
+        return Promise.resolve({
+          id: 'resp_test123',
+          object: 'response',
+          created_at: 1234567890,
+          status: 'completed',
+          model: 'gpt-4.1',
+          output: [
+            {
+              type: 'message',
+              id: 'msg_test',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'Hello', annotations: [] }],
+            },
+          ],
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        });
+      });
+    const stream = await provider.generate('sys', [], HISTORY);
+    for await (const part of stream) void part;
+    // The tools-only message contributes no input item at all.
+    expect(captured!['input'] as unknown[]).toHaveLength(1);
+    expect(JSON.stringify(captured!['input'])).not.toContain('"tools"');
+  });
+
+  it('google genai skips the message explicitly (not just via the empty-text coincidence)', () => {
+    const contents = messagesToGoogleGenAIContents(HISTORY);
+    expect(contents).toHaveLength(1);
+    expect(JSON.stringify(contents)).not.toContain('<system>');
   });
 });
 

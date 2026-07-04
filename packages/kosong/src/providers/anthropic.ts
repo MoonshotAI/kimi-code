@@ -6,6 +6,7 @@ import {
   normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
+import { isToolDeclarationOnlyMessage } from '#/message';
 import type {
   ChatProvider,
   FinishReason,
@@ -1031,7 +1032,13 @@ export class AnthropicChatProvider implements ChatProvider {
     // mergeConsecutiveUserMessages) so this provider and Gemini/Vertex stay in
     // step.
     const messages = mergeConsecutiveUserMessages(
-      normalizeToolCallIdsForProvider(history, ANTHROPIC_TOOL_CALL_ID_POLICY).map((msg) =>
+      normalizeToolCallIdsForProvider(
+        // Message-level tool declarations are a Kimi wire feature; here the
+        // whole message is skipped (an empty leftover would serialize as a
+        // garbage `<system></system>` user turn). See isToolDeclarationOnlyMessage.
+        history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
+        ANTHROPIC_TOOL_CALL_ID_POLICY,
+      ).map((msg) =>
         convertMessage(msg, this._model),
       ),
       {
