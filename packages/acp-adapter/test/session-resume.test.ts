@@ -165,6 +165,40 @@ describe('AcpServer.resumeSession', () => {
     });
   });
 
+  it('omits additionalDirs when additionalDirectories is absent on resume', async () => {
+    const sessionId = 'sess-resume-no-adddir';
+    const session = makeSessionWithMainConfig(sessionId);
+    const capturedResumeInputs: Array<Record<string, unknown>> = [];
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      resumeSession: async (input: Record<string, unknown>) => {
+        capturedResumeInputs.push(input);
+        return session;
+      },
+      getConfig: async () => ({
+        providers: {},
+        defaultModel: 'kimi-coder',
+        models: makeModelsMap([
+          { id: 'kimi-coder', name: 'Kimi Coder', thinkingSupported: true },
+        ]),
+      }),
+    } as unknown as KimiHarness;
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const clientConn = new ClientSideConnection((_a) => new CapturingClient(), clientStream);
+
+    await clientConn.resumeSession({
+      sessionId,
+      cwd: '/tmp/work',
+      mcpServers: [],
+    });
+
+    expect(capturedResumeInputs).toHaveLength(1);
+    expect(
+      (capturedResumeInputs[0] as { additionalDirs?: unknown }).additionalDirs,
+    ).toBeUndefined();
+  });
+
   it('returns configOptions matching the resumed session model + mode + thinking', async () => {
     const sessionId = 'sess-resume-model';
     // Resume state reports kimi-plain (thinking unsupported) so we can

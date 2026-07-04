@@ -16,7 +16,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
-import { AcpServer } from '../src/server';
+import { AcpServer, validateAdditionalDirectories } from '../src/server';
 import { TERMINAL_AUTH_METHOD } from '../src';
 
 /** Minimal Client that throws on every callback so tests fail loudly. */
@@ -201,5 +201,51 @@ describe('AcpServer + AgentSideConnection', () => {
       _meta?: { 'terminal-auth'?: unknown } | null;
     };
     expect(method._meta?.['terminal-auth']).toBeUndefined();
+  });
+});
+
+describe('validateAdditionalDirectories', () => {
+  it('returns undefined when dirs is undefined', () => {
+    expect(validateAdditionalDirectories(undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when dirs is null', () => {
+    expect(validateAdditionalDirectories(null)).toBeUndefined();
+  });
+
+  it('returns the array when dirs is a valid string array', () => {
+    const dirs = ['/home/user/projects', '/tmp/work'];
+    expect(validateAdditionalDirectories(dirs)).toEqual(dirs);
+  });
+
+  it('returns the empty array when dirs is an empty array', () => {
+    expect(validateAdditionalDirectories([])).toEqual([]);
+  });
+
+  it('throws when dirs is not an array', () => {
+    expect(() => validateAdditionalDirectories('not-an-array')).toThrow();
+    expect(() => validateAdditionalDirectories(42)).toThrow();
+    expect(() => validateAdditionalDirectories({})).toThrow();
+  });
+
+  it('throws when a dirs entry is not a string', () => {
+    expect(() => validateAdditionalDirectories(['/valid', 42])).toThrow();
+    expect(() => validateAdditionalDirectories(['/valid', null as unknown as string])).toThrow();
+    expect(() => validateAdditionalDirectories(['/valid', undefined as unknown as string])).toThrow();
+  });
+
+  it('throws when a dirs entry is an empty string', () => {
+    expect(() => validateAdditionalDirectories(['/valid', ''])).toThrow();
+  });
+
+  it('throws when a dirs entry is not an absolute path', () => {
+    expect(() => validateAdditionalDirectories(['/valid', 'relative/path'])).toThrow();
+    expect(() => validateAdditionalDirectories(['/valid', './relative'])).toThrow();
+  });
+
+  it('throws with a message that includes the invalid dirs and index', () => {
+    expect(() => validateAdditionalDirectories(['/valid', 42])).toThrow(/additionalDirectories\[1\]/);
+    expect(() => validateAdditionalDirectories(['/valid', ''])).toThrow(/additionalDirectories\[1\]/);
+    expect(() => validateAdditionalDirectories(['/valid', 'relative'])).toThrow(/additionalDirectories\[1\]/);
   });
 });

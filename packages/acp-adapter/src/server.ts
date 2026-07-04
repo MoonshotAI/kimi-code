@@ -8,6 +8,7 @@
 
 import { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 import {
   AgentSideConnection,
@@ -282,14 +283,15 @@ export class AcpServer implements Agent {
     // by the kernel `SessionImpl` ctor and every tool downstream sees
     // the same reference, no AsyncLocalStorage needed.
     const sessionId = `session_${randomUUID()}`;
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
     const acpKaos = await this.maybeBuildAcpKaos(sessionId);
     const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
     const session = await this.harness.createSession({
       id: sessionId,
       workDir: params.cwd,
-      additionalDirs: params.additionalDirectories,
       kaos: acpKaos,
       persistenceKaos,
+      additionalDirs,
       sessionStartedProperties: { mode: 'new' },
       // @ts-expect-error — `mcpServers` is a kernel-side extension
       // (agent-core `CreateSessionPayload`) the SDK transparently
@@ -357,11 +359,12 @@ export class AcpServer implements Agent {
    * deliberately skips it (per ACP spec G4 / plan gap-4.3).
    */
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
     const { session, acpSession, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
-      additionalDirectories: params.additionalDirectories,
       mcpServers: params.mcpServers,
+      additionalDirs,
       mode: 'load',
     });
     // Synchronously replay history — the response must not settle
@@ -394,11 +397,12 @@ export class AcpServer implements Agent {
    * rationale, and gap-4.1 for the matching capability advertisement.
    */
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
     const { session, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
-      additionalDirectories: params.additionalDirectories,
       mcpServers: params.mcpServers,
+      additionalDirs,
       mode: 'resume',
     });
     this.scheduleAvailableCommandsUpdate(session.id);
@@ -431,8 +435,8 @@ export class AcpServer implements Agent {
   private async setupSessionFromExisting(params: {
     cwd: string;
     sessionId: string;
-    additionalDirectories?: readonly string[];
     mcpServers?: ReadonlyArray<McpServer>;
+    additionalDirs?: readonly string[];
     mode: 'load' | 'resume';
   }): Promise<{
     session: Session;
@@ -461,9 +465,9 @@ export class AcpServer implements Agent {
     try {
       session = await this.harness.resumeSession({
         id: params.sessionId,
-        additionalDirs: params.additionalDirectories,
         kaos: acpKaos,
         persistenceKaos,
+        additionalDirs: params.additionalDirs,
         sessionStartedProperties: { mode: params.mode },
         // @ts-expect-error — see block comment above; mcpServers is a
         // kernel-only field that the SDK forwards via spread.
@@ -1103,3 +1107,46 @@ function sessionSummaryToSessionInfo(summary: SessionSummary): SessionInfo {
     updatedAt,
   };
 }
+
+/**
+ * Validate the ACP `additionalDirectories` field per protocol spec.
+ *
+ * Returns the validated string array when the field is present, or
+ * `undefined` when the field is absent (`null` or `undefined`).
+ * Throws {@link RequestError.invalidParams} for non-array values,
+ * non-string entries, empty strings, or non-absolute paths.
+ */
+export function validateAdditionalDirectories(
+  dirs: unknown,
+): string[] | undefined {
+  if (dirs === undefined || dirs === null) return undefined;
+  if (!Array.isArray(dirs)) {
+    throw RequestError.invalidParams(
+      { additionalDirectories: dirs },
+      'additionalDirectories must be an array',
+    );
+  }
+  for (let i = 0; i < dirs.length; i++) {
+    const entry = dirs[i];
+    if (typeof entry !== 'string') {
+      throw RequestError.invalidParams(
+        { additionalDirectories: dirs },
+        `additionalDirectories[${i}] must be a string`,
+      );
+    }
+    if (entry === '') {
+      throw RequestError.invalidParams(
+        { additionalDirectories: dirs },
+        `additionalDirectories[${i}] must not be empty`,
+      );
+    }
+    if (!path.isAbsolute(entry)) {
+      throw RequestError.invalidParams(
+        { additionalDirectories: dirs },
+        `additionalDirectories[${i}] must be an absolute path`,
+      );
+    }
+  }
+  return dirs;
+}
+

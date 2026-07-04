@@ -155,6 +155,41 @@ describe('AcpServer session/load replay', () => {
     });
   });
 
+  it('omits additionalDirs when additionalDirectories is absent on load', async () => {
+    const sessionId = 'sess-load-no-adddir';
+    const session = makeSessionWithHistory(sessionId, []);
+    const capturedResumeInputs: Array<Record<string, unknown>> = [];
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      resumeSession: async (input: Record<string, unknown>) => {
+        capturedResumeInputs.push(input);
+        return session;
+      },
+      getConfig: async () => ({
+        providers: {},
+        defaultModel: 'kimi-coder',
+        models: makeModelsMap([
+          { id: 'kimi-coder', name: 'Kimi Coder', thinkingSupported: true },
+        ]),
+      }),
+    } as unknown as KimiHarness;
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const clientConn = new ClientSideConnection((_a) => new CapturingClient(), clientStream);
+
+    await clientConn.loadSession({
+      sessionId,
+      cwd: '/tmp/work',
+      mcpServers: [],
+    });
+
+    expect(capturedResumeInputs).toHaveLength(1);
+    expect(
+      (capturedResumeInputs[0] as { additionalDirs?: unknown }).additionalDirs,
+    ).toBeUndefined();
+  });
+
   it('replays a single assistant text-only turn as agent_message_chunk updates', async () => {
     const sessionId = 'sess-text-only';
     const history = [
