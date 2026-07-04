@@ -138,7 +138,7 @@ describe('Agent loop', () => {
     const controller = new AbortController();
     controller.abort(new Error('stop'));
 
-    const result = await loop.runTurn(0, { signal: controller.signal });
+    const result = await loop.run({ turnId: 0, signal: controller.signal });
 
     expect(result.reason).toBe('cancelled');
     expect(called).toBe(false);
@@ -150,7 +150,7 @@ describe('Agent loop', () => {
       throw recoveryError;
     });
 
-    const result = await loop.runTurn(0);
+    const result = await loop.run({ turnId: 0 });
 
     expect(result.reason).toBe('failed');
     if (result.reason === 'failed') {

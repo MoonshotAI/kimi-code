@@ -60,13 +60,13 @@ describe('AgentTurnService ready', () => {
       events.push('after');
       beforeStepDone.resolve();
     });
-    loop.runTurn = async (turnId, options) => {
+    loop.run = async (options) => {
       events.push('loop');
-      const signal = options?.signal ?? new AbortController().signal;
+      const { turnId, signal = new AbortController().signal } = options;
       await loop.hooks.beforeStep.run({ turnId, step: 1, signal });
       await responseEvent;
       events.push('response');
-      options?.onStepStarted?.(1);
+      options.onStarted?.(1);
       await release;
       events.push('done');
       return { reason: 'completed', steps: 1 };
@@ -98,7 +98,7 @@ describe('AgentTurnService ready', () => {
 
   it('rejects with an Error when the turn ends before the first step starts', async () => {
     const cause = new Error('loop failed before first step');
-    loop.runTurn = async () => ({ reason: 'failed', error: cause, steps: 0 });
+    loop.run = async () => ({ reason: 'failed', error: cause, steps: 0 });
 
     const turn = ix.get(IAgentTurnService).launch();
     let readyError: unknown;
@@ -114,7 +114,7 @@ describe('AgentTurnService ready', () => {
 
   it('throws a KimiError when launching while a turn is active', async () => {
     const release = createControlledPromise<void>();
-    loop.runTurn = async () => {
+    loop.run = async () => {
       await release;
       return { reason: 'completed', steps: 1 };
     };
@@ -139,7 +139,7 @@ describe('AgentTurnService ready', () => {
   });
 });
 
-describe('AgentLoopService onStepStarted', () => {
+describe('AgentLoopService onStarted', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
 
@@ -189,8 +189,9 @@ describe('AgentLoopService onStepStarted', () => {
       },
     });
 
-    const result = ix.get(IAgentLoopService).runTurn(1, {
-      onStepStarted: (step) => {
+    const result = ix.get(IAgentLoopService).run({
+      turnId: 1,
+      onStarted: (step) => {
         expect(step).toBe(1);
         started = true;
         stepStarted.resolve();
@@ -232,8 +233,9 @@ describe('AgentLoopService onStepStarted', () => {
       },
     });
 
-    const result = ix.get(IAgentLoopService).runTurn(1, {
-      onStepStarted: (step) => {
+    const result = ix.get(IAgentLoopService).run({
+      turnId: 1,
+      onStarted: (step) => {
         expect(step).toBe(1);
         started = true;
         stepStarted.resolve();
@@ -262,8 +264,9 @@ describe('AgentLoopService onStepStarted', () => {
     });
 
     await expect(
-      ix.get(IAgentLoopService).runTurn(1, {
-        onStepStarted: () => {
+      ix.get(IAgentLoopService).run({
+        turnId: 1,
+        onStarted: () => {
           started = true;
         },
       }),

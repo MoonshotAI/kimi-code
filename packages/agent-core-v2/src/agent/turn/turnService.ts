@@ -89,9 +89,10 @@ export class AgentTurnService implements IAgentTurnService {
         type: 'turn.started',
         turnId: turn.id,
       });
-      result = await this.loop.runTurn(turn.id, {
+      result = await this.loop.run({
+        turnId: turn.id,
         signal: turn.abortController.signal,
-        onStepStarted: () => ready.resolve(),
+        onStarted: () => ready.resolve(),
       });
       return result;
     } catch (error) {

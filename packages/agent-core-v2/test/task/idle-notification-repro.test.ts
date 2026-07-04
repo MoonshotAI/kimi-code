@@ -219,7 +219,7 @@ describe('task notification → main agent (real Agent instance)', () => {
 
     it('RACE: bg completion fires AFTER LLM returns but BEFORE activeTurn is cleared', async () => {
       // We're hunting a window: shouldContinueAfterStop reads an empty
-      // steerBuffer → returns { continue: false } → runTurn unwinds →
+      // steerBuffer → returns { continue: false } → loop.run unwinds →
       // finally block hasn't yet set activeTurn = null. If a steer()
       // lands in this window, it gets buffered, then activeTurn=null
       // and the buffer is never flushed until the next user prompt.

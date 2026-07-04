@@ -27,7 +27,7 @@ import {
 } from './errors';
 import {
   IAgentLoopService,
-  type RunTurnOptions,
+  type RunOptions,
   type TurnAfterStepContext,
   type TurnResult,
 } from './loop';
@@ -57,10 +57,8 @@ export class AgentLoopService implements IAgentLoopService {
     @IConfigService private readonly config: IConfigService,
   ) { }
 
-  async runTurn(
-    turnId: number,
-    options: RunTurnOptions = {},
-  ): Promise<TurnResult> {
+  async run(options: RunOptions): Promise<TurnResult> {
+    const { turnId } = options;
     const signal = options.signal ?? new AbortController().signal;
 
     let steps = 0;
@@ -82,7 +80,7 @@ export class AgentLoopService implements IAgentLoopService {
           turnId,
           signal,
           steps,
-          options.onStepStarted,
+          options.onStarted,
         );
         activeStep = undefined;
 
@@ -134,7 +132,7 @@ export class AgentLoopService implements IAgentLoopService {
     turnId: number,
     signal: AbortSignal,
     currentStep: number,
-    onStepStarted: ((step: number) => void) | undefined,
+    onStarted: ((step: number) => void) | undefined,
   ): Promise<{
     readonly stopReason: FinishReason;
     readonly continue: boolean;
@@ -150,7 +148,7 @@ export class AgentLoopService implements IAgentLoopService {
     const markStepStarted = (): void => {
       if (stepStarted) return;
       stepStarted = true;
-      onStepStarted?.(currentStep);
+      onStarted?.(currentStep);
     };
     const emitStreamPart = this.createStreamPartHandler(turnId, markStepStarted);
     const response = await this.llmRequester.request(
