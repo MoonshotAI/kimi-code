@@ -45,10 +45,15 @@ import Icon from './components/ui/Icon.vue';
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
 const hasServerCredential = initServerAuth();
-const showServerAuth = ref(!hasServerCredential);
+const authRequired = ref(!hasServerCredential);
 let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
+// When the server runs with `--dangerous-bypass-auth`, `/meta` advertises it
+// and we skip the token prompt entirely — there is no credential to enter.
+const showServerAuth = computed(
+  () => !client.dangerousBypassAuth.value && authRequired.value,
+);
 provide('resolveImage', client.resolveImageUrl);
 const { t } = useI18n();
 
@@ -124,7 +129,7 @@ onMounted(() => {
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
   offAuthRequired = onAuthRequired(() => {
-    showServerAuth.value = true;
+    authRequired.value = true;
   });
 });
 

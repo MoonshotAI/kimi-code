@@ -280,6 +280,12 @@ interface QueuedPrompt {
 export interface ExtendedState extends KimiClientState {
   connected: boolean;
   serverVersion: string;
+  /**
+   * True when the connected server reports `dangerous_bypass_auth` in `/meta`,
+   * meaning its bearer-token gate is disabled. The UI skips the server-token
+   * prompt and connects without a credential.
+   */
+  dangerousBypassAuth: boolean;
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
@@ -351,6 +357,7 @@ const rawState: ExtendedState = reactive({
   ...createInitialState(),
   connected: false,
   serverVersion: '',
+  dangerousBypassAuth: false,
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
@@ -1710,6 +1717,7 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
 
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
@@ -2387,6 +2395,7 @@ export function useKimiWebClient() {
     hasMoreMessages,
     loadMoreMessagesError,
     serverVersion,
+    dangerousBypassAuth,
     initialized,
     permission,
     thinking,

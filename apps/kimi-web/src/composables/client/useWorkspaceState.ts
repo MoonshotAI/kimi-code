@@ -544,6 +544,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         api.getMeta().then((m) => {
           rawState.serverVersion = m.serverVersion;
           rawState.availableOpenInApps = m.openInApps;
+          rawState.dangerousBypassAuth = m.dangerousBypassAuth;
         }).catch(() => null),
         modelProvider.loadModels(),
       ]);

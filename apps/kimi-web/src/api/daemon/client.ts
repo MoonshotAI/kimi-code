@@ -98,6 +98,7 @@ interface WireMeta {
   started_at: string;
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
+  dangerous_bypass_auth?: boolean;
 }
 
 interface WireAbortResult {
@@ -270,6 +271,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     startedAt: string;
     capabilities: Record<string, boolean>;
     openInApps: string[];
+    dangerousBypassAuth: boolean;
   }> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
@@ -278,6 +280,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       startedAt: data.started_at,
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
+      dangerousBypassAuth: data.dangerous_bypass_auth === true,
     };
   }
 

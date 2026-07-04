@@ -50,8 +50,18 @@ export interface ParsedServerOptions {
   allowRemoteShutdown: boolean;
   /** Allow PTY `/api/v1/terminals/*` routes on a non-loopback bind. */
   allowRemoteTerminals: boolean;
+  /** Disable bearer-token auth on every route (`--dangerous-bypass-auth`). */
+  dangerousBypassAuth: boolean;
   /** Extra `Host` header values to allow through the DNS-rebinding check. */
   allowedHosts: readonly string[];
+  /**
+   * Keep the server running instead of idle-killing it after 60s with no
+   * connected clients (`--keep-alive`). Also implied automatically by a
+   * non-default bind (`--host`) or a proxy/tunnel setup (`--allowed-host`),
+   * and always on in `--foreground` mode. Only the daemon mode consults this —
+   * foreground never idle-kills regardless.
+   */
+  keepAlive: boolean;
   /** Internal: run as an idle-exiting background daemon instead of foreground. */
   daemon: boolean;
   /** Internal: idle-shutdown grace in ms (daemon mode only). */
@@ -69,8 +79,12 @@ export interface ServerCliOptions {
   allowRemoteShutdown?: boolean;
   /** Allow remote terminals on a non-loopback bind (`--allow-remote-terminals`). */
   allowRemoteTerminals?: boolean;
+  /** Disable bearer-token auth on every route (`--dangerous-bypass-auth`). */
+  dangerousBypassAuth?: boolean;
   /** Extra `Host` header values to allow (`--allowed-host`). */
   allowedHost?: string[];
+  /** Keep the server running instead of idle-killing it (`--keep-alive`). */
+  keepAlive?: boolean;
   /** Internal flag set by the daemon spawner (`kimi web`). */
   daemon?: boolean;
   /** Internal flag set by the daemon spawner / tests. */
@@ -78,15 +92,24 @@ export interface ServerCliOptions {
 }
 
 export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions {
+  const host = parseHost(opts.host);
+  const allowedHosts = parseAllowedHostArgs(opts.allowedHost);
+  // `--keep-alive` is explicit, but also implied by a non-default bind
+  // (`--host`) or a proxy/tunnel setup (`--allowed-host`). Foreground mode is
+  // forced keep-alive later in `handleRunCommand`.
+  const keepAlive =
+    opts.keepAlive === true || host !== DEFAULT_SERVER_HOST || allowedHosts.length > 0;
   return {
-    host: parseHost(opts.host),
+    host,
     port: parsePort(opts.port, '--port', DEFAULT_SERVER_PORT),
     logLevel: parseLogLevel(opts.logLevel ?? DEFAULT_FOREGROUND_LOG_LEVEL),
     debugEndpoints: opts.debugEndpoints === true,
     insecureNoTls: opts.insecureNoTls !== false,
     allowRemoteShutdown: opts.allowRemoteShutdown === true,
     allowRemoteTerminals: opts.allowRemoteTerminals === true,
-    allowedHosts: parseAllowedHostArgs(opts.allowedHost),
+    dangerousBypassAuth: opts.dangerousBypassAuth === true,
+    allowedHosts,
+    keepAlive,
     daemon: opts.daemon === true,
     idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
   };
