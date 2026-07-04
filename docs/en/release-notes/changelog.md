@@ -6,6 +6,19 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.22.3 (2026-07-04)
+
+### Bug Fixes
+
+- Wait for background subagents to finish and respond to their results before exiting in `kimi -p`, instead of ending the turn early.
+- web: Fix uploaded videos failing to play in the web chat.
+- Revert the recent TUI transcript rendering changes to the original upstream behavior while rendering issues are reworked.
+
+### Polish
+
+- Add `--dangerous-bypass-auth` and `--keep-alive` flags to `kimi server run`, so the server can run without a token on trusted networks and stay alive past the idle timeout.
+- web: Add click-to-enlarge for images uploaded in the web chat. Click an image in a message to open it.
+
 ## 0.22.2 (2026-07-03)
 
 ### Bug Fixes
