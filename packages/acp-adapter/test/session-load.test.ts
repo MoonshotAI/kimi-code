@@ -187,7 +187,7 @@ describe('AcpServer session/load replay', () => {
     expect(capturedResumeInputs).toHaveLength(1);
     expect(
       (capturedResumeInputs[0] as { additionalDirs?: unknown }).additionalDirs,
-    ).toBeUndefined();
+    ).toEqual([]);
   });
 
   it('replays a single assistant text-only turn as agent_message_chunk updates', async () => {
