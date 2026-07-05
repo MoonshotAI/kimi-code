@@ -12,12 +12,13 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import {
   setTelemetryContext,
+  shutdownTelemetry,
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
 
-import { CLI_UI_MODE } from '#/constant/app';
-import { createCliTelemetryBootstrap } from '#/cli/telemetry';
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
+import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
 import { createKimiCodeHostIdentity } from '#/cli/version';
 import {
   addRegistry,
@@ -123,9 +124,9 @@ export async function handlePluginsInstall(
   deps: PluginsDeps,
   options: { source: string } & InstallOptions,
 ): Promise<void> {
-  const source = resolvePluginInstallSource(options.source, deps.cwd());
-  const official = isOfficialPluginSource(source);
   try {
+    const source = resolvePluginInstallSource(options.source, deps.cwd());
+    const official = isOfficialPluginSource(source);
     if (!official && !options.yes) {
       const confirmed = await deps.confirm(
         `Install plugin from third-party source "${source}"? [y/N] `,
@@ -264,6 +265,17 @@ export async function handlePluginsRegistryRemove(
 }
 
 export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDeps>): void {
+  const runWithLifecycle = async (fn: (d: DefaultPluginsDeps) => Promise<void>): Promise<void> => {
+    const d = createDefaultPluginsDeps(deps);
+    try {
+      await d.initializeDefaultTelemetry();
+      await fn(d);
+    } finally {
+      await d.shutdownDefaultTelemetry();
+      await d.closeDefaultHarness();
+    }
+  };
+
   const program = parent.command('plugins').description('Manage Kimi Code plugins.');
 
   program
@@ -271,7 +283,7 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
     .description('List installed plugins.')
     .option('--json', 'Output as JSON.')
     .action(async (options: { json?: boolean }) => {
-      await handlePluginsList(createDefaultPluginsDeps(deps), options);
+      await runWithLifecycle((d) => handlePluginsList(d, options));
     });
 
   program
@@ -279,7 +291,7 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
     .description('Show details of an installed plugin.')
     .option('--json', 'Output as JSON.')
     .action(async (id: string, options: { json?: boolean }) => {
-      await handlePluginsInfo(createDefaultPluginsDeps(deps), id, options);
+      await runWithLifecycle((d) => handlePluginsInfo(d, id, options));
     });
 
   program
@@ -287,7 +299,7 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
     .description('Install a plugin from a local path, zip URL, or GitHub URL.')
     .option('-y, --yes', 'Skip trust confirmation for third-party sources.')
     .action(async (source: string, options: { yes?: boolean }) => {
-      await handlePluginsInstall(createDefaultPluginsDeps(deps), { source, yes: options.yes });
+      await runWithLifecycle((d) => handlePluginsInstall(d, { source, yes: options.yes }));
     });
 
   program
@@ -295,21 +307,21 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
     .description('Remove an installed plugin.')
     .option('-y, --yes', 'Skip confirmation.')
     .action(async (id: string, options: { yes?: boolean }) => {
-      await handlePluginsRemove(createDefaultPluginsDeps(deps), { id, yes: options.yes });
+      await runWithLifecycle((d) => handlePluginsRemove(d, { id, yes: options.yes }));
     });
 
   program
     .command('enable <id>')
     .description('Enable an installed plugin.')
     .action(async (id: string) => {
-      await handlePluginsEnable(createDefaultPluginsDeps(deps), { id, enabled: true });
+      await runWithLifecycle((d) => handlePluginsEnable(d, { id, enabled: true }));
     });
 
   program
     .command('disable <id>')
     .description('Disable an installed plugin.')
     .action(async (id: string) => {
-      await handlePluginsEnable(createDefaultPluginsDeps(deps), { id, enabled: false });
+      await runWithLifecycle((d) => handlePluginsEnable(d, { id, enabled: false }));
     });
 
   program
@@ -318,7 +330,7 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
     .option('--registry <name-or-url>', 'Use a specific registry.')
     .option('--json', 'Output as JSON.')
     .action(async (options: { registry?: string; json?: boolean }) => {
-      await handlePluginsMarketplace(createDefaultPluginsDeps(deps), options);
+      await runWithLifecycle((d) => handlePluginsMarketplace(d, options));
     });
 
   const registry = program.command('registry').description('Manage custom plugin registries.');
@@ -328,7 +340,7 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
     .description('List custom registries.')
     .option('--json', 'Output as JSON.')
     .action(async (options: { json?: boolean }) => {
-      await handlePluginsRegistryList(createDefaultPluginsDeps(deps), options);
+      await runWithLifecycle((d) => handlePluginsRegistryList(d, options));
     });
 
   registry
@@ -336,20 +348,28 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
     .description('Add a custom registry.')
     .option('--name <name>', 'Optional display name.')
     .action(async (url: string, options: { name?: string }) => {
-      await handlePluginsRegistryAdd(createDefaultPluginsDeps(deps), { url, name: options.name });
+      await runWithLifecycle((d) => handlePluginsRegistryAdd(d, { url, name: options.name }));
     });
 
   registry
     .command('remove <name-or-url>')
     .description('Remove a custom registry by name or URL.')
     .action(async (nameOrUrl: string) => {
-      await handlePluginsRegistryRemove(createDefaultPluginsDeps(deps), { nameOrUrl });
+      await runWithLifecycle((d) => handlePluginsRegistryRemove(d, { nameOrUrl }));
     });
 }
 
-function createDefaultPluginsDeps(overrides: Partial<PluginsDeps> = {}): PluginsDeps {
+interface DefaultPluginsDeps extends PluginsDeps {
+  readonly initializeDefaultTelemetry: () => Promise<void>;
+  readonly shutdownDefaultTelemetry: () => Promise<void>;
+  readonly closeDefaultHarness: () => Promise<void>;
+}
+
+function createDefaultPluginsDeps(overrides: Partial<PluginsDeps> = {}): DefaultPluginsDeps {
   let harness: KimiHarness | undefined;
   let telemetryBootstrap: ReturnType<typeof createCliTelemetryBootstrap> | undefined;
+  let telemetryInitialized = false;
+  let telemetryShutdown = false;
   const identity = createKimiCodeHostIdentity();
   const telemetryClient: TelemetryClient = {
     track,
@@ -370,6 +390,32 @@ function createDefaultPluginsDeps(overrides: Partial<PluginsDeps> = {}): Plugins
     });
     return harness;
   };
+  const initializeDefaultTelemetry = async (): Promise<void> => {
+    if (telemetryInitialized) return;
+    const currentTelemetryBootstrap = getTelemetryBootstrap();
+    const currentHarness = getHarness();
+    await currentHarness.ensureConfigFile();
+    const config = await currentHarness.getConfig();
+    initializeCliTelemetry({
+      harness: currentHarness,
+      bootstrap: currentTelemetryBootstrap,
+      config,
+      version: identity.version,
+      uiMode: CLI_UI_MODE,
+    });
+    telemetryInitialized = true;
+  };
+  const shutdownDefaultTelemetry = async (): Promise<void> => {
+    if (!telemetryInitialized || telemetryShutdown) return;
+    telemetryShutdown = true;
+    await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+  };
+  const closeDefaultHarness = async (): Promise<void> => {
+    if (harness === undefined) return;
+    const currentHarness = harness;
+    harness = undefined;
+    await currentHarness.close();
+  };
   const getHomeDir = (): string => getTelemetryBootstrap().homeDir;
   return {
     getHarness: overrides.getHarness ?? getHarness,
@@ -385,6 +431,9 @@ function createDefaultPluginsDeps(overrides: Partial<PluginsDeps> = {}): Plugins
     resolveRegistryUrl: overrides.resolveRegistryUrl ?? resolveRegistryUrl,
     loadPluginMarketplace: overrides.loadPluginMarketplace ?? loadPluginMarketplace,
     loadMergedMarketplace: overrides.loadMergedMarketplace ?? loadMergedMarketplace,
+    initializeDefaultTelemetry,
+    shutdownDefaultTelemetry,
+    closeDefaultHarness,
   };
 }
 
