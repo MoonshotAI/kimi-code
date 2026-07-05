@@ -7,6 +7,7 @@ import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
+import { registerPluginsCommand } from './sub/plugins';
 import { registerProviderCommand } from './sub/provider';
 import { registerServerCommand } from './sub/server';
 import { registerVisCommand } from './sub/vis';
@@ -94,6 +95,7 @@ export function createProgram(
   registerDoctorCommand(program);
   registerVisCommand(program);
   registerMigrateCommand(program, onMigrate);
+  registerPluginsCommand(program);
   program
     .command('upgrade')
     .alias('update')
