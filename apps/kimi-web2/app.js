@@ -517,9 +517,11 @@
 
   /* ----------------------------- server auth ---------------------------- */
   function connectToken() {
-    S.set({ authed: true });
-    closeOverlays();
-    toast('已连接（stub）', 'success');
+    var inp = $('[data-token-input]');
+    var v = inp && inp.value.trim();
+    if (!v) { toast('请输入 Token', 'error'); return; }
+    try { localStorage.setItem('kimi2-token', v); } catch (err) {}
+    location.reload();
   }
 
   /* ----------------------------- delegated clicks ----------------------- */

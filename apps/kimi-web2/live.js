@@ -64,7 +64,11 @@
   if (qsToken) { try { localStorage.setItem('kimi2-token', qsToken); } catch (e) {} }
 
   var token = qsToken || safeGet('kimi2-token');
-  if (!token) return; // no token → stay in stub mode, untouched.
+  var httpPage = location.protocol.indexOf('http') === 0;
+  // file:// without a token stays pure stub; an http(s) page always tries the
+  // server — the same origin may be unprotected, and a 401 opens the token
+  // dialog (wired in app.js) so the server-hosted build works out of the box.
+  if (!token && !httpPage) return;
 
   // Prefer explicit ?server=; else same-origin (proxy-friendly, no CORS need);
   // else the default local server (e.g. when opened via file://).
@@ -77,18 +81,27 @@
   function toast(msg, kind) { if (window.KP && window.KP.toast) window.KP.toast(msg, kind); }
 
   /* ------------------------------ REST ---------------------------------- */
+  function authHeaders(extra) {
+    var h = extra || {};
+    if (token) h.Authorization = 'Bearer ' + token;
+    return h;
+  }
   function get(path) {
-    return fetch(api(path), { headers: { Authorization: 'Bearer ' + token } })
-      .then(unwrap);
+    return fetch(api(path), { headers: authHeaders() }).then(unwrap);
   }
   function post(path, body) {
     return fetch(api(path), {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body || {}),
     }).then(unwrap);
   }
   function unwrap(res) {
+    if (res.status === 401 || res.status === 403) {
+      var e = new Error('未授权（需要服务器 Token）');
+      e.auth = true;
+      throw e;
+    }
     return res.json().then(function (env) {
       if (env.code !== 0) throw new Error(env.msg || ('服务端错误 ' + env.code));
       return env.data;
@@ -228,6 +241,13 @@
       toast('已连接服务器 ' + origin.replace(/^https?:\/\//, ''), 'success');
     })
     .catch(function (err) {
+      if (err && err.auth) {
+        // Protected server, no/invalid token → ask for one (app.js persists it
+        // to localStorage and reloads).
+        console.warn('[live] 服务器需要 Token');
+        if (window.KP && window.KP.openOverlay) window.KP.openOverlay('serverauth');
+        return;
+      }
       console.warn('[live] 连接服务器失败，保持离线模式：', err);
       toast('连接服务器失败，使用离线数据', 'error');
     });
@@ -296,7 +316,7 @@
   }
   function connectWs() {
     var url = origin.replace(/^http/, 'ws') + '/api/v1/ws?client_id=' + encodeURIComponent(clientId);
-    try { ws = new WebSocket(url, ['kimi-code.bearer.' + token]); }
+    try { ws = new WebSocket(url, token ? ['kimi-code.bearer.' + token] : undefined); }
     catch (e) { console.warn('[live] WS 创建失败：', e); return; }
     ws.onmessage = function (ev) {
       var f;
