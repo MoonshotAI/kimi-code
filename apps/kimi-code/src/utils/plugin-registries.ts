@@ -121,6 +121,8 @@ function isUrlLike(value: string): boolean {
     value.startsWith('http://') ||
     value.startsWith('https://') ||
     value.startsWith('file://') ||
+    value.startsWith('./') ||
+    value.startsWith('../') ||
     value === '~' ||
     value.startsWith('~/') ||
     isAbsolute(value)

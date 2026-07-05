@@ -47,7 +47,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       throw new Error(`exit:${code}`);
     }) as (code: number) => never,
     getHarness: vi.fn(),
-    getHomeDir: () => '/home/cyijun/.kimi-code',
+    getHomeDir: () => '/home/example/.kimi-code',
     ...overrides,
   };
 }
@@ -249,7 +249,7 @@ describe('handlePluginsMarketplace', () => {
     await handlePluginsMarketplace(deps as never, { json: true });
 
     expect(loadMergedMarketplace).toHaveBeenCalledWith({
-      kimiHomeDir: '/home/cyijun/.kimi-code',
+      kimiHomeDir: '/home/example/.kimi-code',
       workDir: '/tmp/work',
     });
     expect(getWritten(deps.stdout)).toContain('"id": "market-demo"');
@@ -262,7 +262,7 @@ describe('handlePluginsMarketplace', () => {
 
     await handlePluginsMarketplace(deps as never, { registry: 'custom', json: true });
 
-    expect(resolveRegistryUrl).toHaveBeenCalledWith('/home/cyijun/.kimi-code', 'custom');
+    expect(resolveRegistryUrl).toHaveBeenCalledWith('/home/example/.kimi-code', 'custom');
     expect(loadPluginMarketplace).toHaveBeenCalledWith({
       workDir: '/tmp/work',
       source: 'https://custom.example.com/m.json',
@@ -280,7 +280,7 @@ describe('handlePluginsRegistryList', () => {
 
     await handlePluginsRegistryList(deps as never, { json: true });
 
-    expect(readRegistries).toHaveBeenCalledWith('/home/cyijun/.kimi-code');
+    expect(readRegistries).toHaveBeenCalledWith('/home/example/.kimi-code');
     expect(getWritten(deps.stdout)).toContain('https://custom.example.com/m.json');
   });
 
@@ -301,7 +301,7 @@ describe('handlePluginsRegistryAdd', () => {
 
     await handlePluginsRegistryAdd(deps as never, { url: 'https://example.com/m.json', name: 'example' });
 
-    expect(addRegistry).toHaveBeenCalledWith('/home/cyijun/.kimi-code', {
+    expect(addRegistry).toHaveBeenCalledWith('/home/example/.kimi-code', {
       url: 'https://example.com/m.json',
       name: 'example',
     });
@@ -315,7 +315,7 @@ describe('handlePluginsRegistryRemove', () => {
 
     await handlePluginsRegistryRemove(deps as never, { nameOrUrl: 'custom' });
 
-    expect(removeRegistry).toHaveBeenCalledWith('/home/cyijun/.kimi-code', 'custom');
+    expect(removeRegistry).toHaveBeenCalledWith('/home/example/.kimi-code', 'custom');
     expect(getWritten(deps.stdout)).toContain('Removed registry custom.');
   });
 });

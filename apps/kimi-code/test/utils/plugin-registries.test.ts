@@ -71,6 +71,8 @@ describe('plugin-registries', () => {
     expect(await resolveRegistryUrl(homeDir, 'https://direct.com/m.json')).toBe(
       'https://direct.com/m.json',
     );
+    expect(await resolveRegistryUrl(homeDir, './marketplace.json')).toBe('./marketplace.json');
+    expect(await resolveRegistryUrl(homeDir, '../marketplace.json')).toBe('../marketplace.json');
     await expect(resolveRegistryUrl(homeDir, 'missing')).rejects.toThrow(/not found/);
   });
 });
