@@ -136,27 +136,6 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	/**
-	 * Simulate the user scrolling the terminal window (negative = up into scrollback).
-	 */
-	scrollViewport(lines: number): void {
-		this.xterm.scrollLines(lines);
-	}
-
-	/**
-	 * Current scroll position of the user-visible window (buffer.viewportY).
-	 */
-	getScrollPosition(): number {
-		return this.xterm.buffer.active.viewportY;
-	}
-
-	/**
-	 * Scroll the user-visible window back to the bottom of the buffer.
-	 */
-	scrollToBottom(): void {
-		this.xterm.scrollToBottom();
-	}
-
-	/**
 	 * Flush and get viewport - convenience method for tests
 	 */
 	async flushAndGetViewport(): Promise<string[]> {

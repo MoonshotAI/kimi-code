@@ -9,6 +9,15 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
+import {
+  coerceThinkingForModel,
+  commitLevel,
+  defaultThinkingLevelFor,
+  effortLabel,
+  modelThinkingAvailability,
+  segmentsFor,
+} from '../src/lib/modelThinking';
+import type { AppModel } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
@@ -229,5 +238,134 @@ describe('createCoalescedAsyncRunner', () => {
     resolvers[1]!();
     await Promise.resolve();
     expect(runs).toBe(2);
+  });
+});
+
+describe('modelThinking', () => {
+  const effortModel = (over: Partial<AppModel> = {}): AppModel => ({
+    id: 'k',
+    provider: 'p',
+    model: 'k',
+    maxContextSize: 1,
+    capabilities: ['thinking'],
+    supportEfforts: ['low', 'high', 'max'],
+    defaultEffort: 'high',
+    ...over,
+  });
+  const booleanModel = (capabilities: string[] = ['thinking']): AppModel => ({
+    id: 'b',
+    provider: 'p',
+    model: 'b',
+    maxContextSize: 1,
+    capabilities,
+  });
+  const unsupportedModel = (): AppModel => ({
+    id: 'u',
+    provider: 'p',
+    model: 'u',
+    maxContextSize: 1,
+    capabilities: [],
+  });
+
+  describe('modelThinkingAvailability', () => {
+    it('toggle when model has thinking capability', () => {
+      expect(modelThinkingAvailability(booleanModel())).toBe('toggle');
+    });
+    it('always-on when model has always_thinking', () => {
+      expect(modelThinkingAvailability(booleanModel(['always_thinking']))).toBe('always-on');
+    });
+    it('unsupported when model lacks thinking capability', () => {
+      expect(modelThinkingAvailability(unsupportedModel())).toBe('unsupported');
+    });
+    it('toggle when adaptiveThinking is set', () => {
+      expect(modelThinkingAvailability({ ...unsupportedModel(), adaptiveThinking: true })).toBe('toggle');
+    });
+  });
+
+  describe('defaultThinkingLevelFor', () => {
+    it('effort model returns defaultEffort', () => {
+      expect(defaultThinkingLevelFor(effortModel())).toBe('high');
+    });
+    it('effort model without defaultEffort returns middle effort', () => {
+      expect(defaultThinkingLevelFor(effortModel({ defaultEffort: undefined }))).toBe('high');
+    });
+    it('boolean model returns on', () => {
+      expect(defaultThinkingLevelFor(booleanModel())).toBe('on');
+    });
+    it('unsupported model returns off', () => {
+      expect(defaultThinkingLevelFor(unsupportedModel())).toBe('off');
+    });
+  });
+
+  describe('segmentsFor', () => {
+    it('effort toggle → off + efforts (off left)', () => {
+      expect(segmentsFor(effortModel())).toEqual(['off', 'low', 'high', 'max']);
+    });
+    it('effort always-on → efforts only (no off)', () => {
+      expect(segmentsFor(effortModel({ capabilities: ['thinking', 'always_thinking'] }))).toEqual([
+        'low',
+        'high',
+        'max',
+      ]);
+    });
+    it('boolean toggle → on/off (on left)', () => {
+      expect(segmentsFor(booleanModel())).toEqual(['on', 'off']);
+    });
+    it('boolean always-on → on', () => {
+      expect(segmentsFor(booleanModel(['always_thinking']))).toEqual(['on']);
+    });
+    it('unsupported → off', () => {
+      expect(segmentsFor(unsupportedModel())).toEqual(['off']);
+    });
+  });
+
+  describe('commitLevel', () => {
+    it('on normalizes to the model default', () => {
+      expect(commitLevel(effortModel(), 'on')).toBe('high');
+      expect(commitLevel(booleanModel(), 'on')).toBe('on');
+    });
+    it('off stays off', () => {
+      expect(commitLevel(effortModel(), 'off')).toBe('off');
+    });
+    it('concrete effort passes through', () => {
+      expect(commitLevel(effortModel(), 'max')).toBe('max');
+    });
+  });
+
+  describe('coerceThinkingForModel', () => {
+    it('undefined model preserves the requested level (catalog not loaded yet)', () => {
+      expect(coerceThinkingForModel(undefined, 'high')).toBe('high');
+      expect(coerceThinkingForModel(undefined, 'max')).toBe('max');
+      expect(coerceThinkingForModel(undefined, 'on')).toBe('on');
+      expect(coerceThinkingForModel(undefined, 'off')).toBe('off');
+    });
+    it('unsupported model → off', () => {
+      expect(coerceThinkingForModel(unsupportedModel(), 'high')).toBe('off');
+    });
+    it('always-on + off → default level', () => {
+      expect(
+        coerceThinkingForModel(effortModel({ capabilities: ['thinking', 'always_thinking'] }), 'off'),
+      ).toBe('high');
+    });
+    it('effort model + undeclared level → default', () => {
+      expect(coerceThinkingForModel(effortModel(), 'xhigh')).toBe('high');
+    });
+    it('effort model + declared level → kept', () => {
+      expect(coerceThinkingForModel(effortModel(), 'max')).toBe('max');
+    });
+    it('boolean model + non-off level → on', () => {
+      expect(coerceThinkingForModel(booleanModel(), 'high')).toBe('on');
+    });
+    it('toggle + off → off', () => {
+      expect(coerceThinkingForModel(booleanModel(), 'off')).toBe('off');
+    });
+  });
+
+  describe('effortLabel', () => {
+    it('capitalizes the first letter', () => {
+      expect(effortLabel('max')).toBe('Max');
+      expect(effortLabel('off')).toBe('Off');
+      expect(effortLabel('xhigh')).toBe('Xhigh');
+    });
   });
 });

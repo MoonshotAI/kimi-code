@@ -24,6 +24,7 @@ export default {
   binaryNoPreview: 'Binary file · {mime} · {size} bytes · preview unavailable',
   unknownType: 'unknown type',
   copyCode: 'Copy code',
+  enlargeImage: 'Enlarge image',
   errors: {
     emptyPath: 'File path is empty',
     unsupportedPath: 'URLs and remote paths cannot be previewed',

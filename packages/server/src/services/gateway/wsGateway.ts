@@ -93,6 +93,12 @@ export interface WSGatewayOptions {
   authTokenService?: IAuthTokenService;
 
   /**
+   * Disable WS upgrade auth entirely (`--dangerous-bypass-auth`). When true,
+   * the token check is skipped even if an `authTokenService` is configured.
+   */
+  dangerousBypassAuth?: boolean;
+
+  /**
    * Optional Host-header allowlist enforced on the WS upgrade path (ROADMAP
    * M4.3). When set, upgrades whose `Host` is not allowed are rejected with
    * `403 Forbidden` before token validation. When unset (tests / pre-M5.1

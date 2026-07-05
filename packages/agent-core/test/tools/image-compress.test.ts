@@ -36,6 +36,7 @@ import {
   compressImageContentParts,
   compressImageForModel,
   cropImageForModel,
+  extractImageCompressionCaptions,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
 } from '../../src/tools/support/image-compress';
@@ -589,6 +590,54 @@ describe('buildImageCompressionCaption', () => {
     expect(caption).toContain('image/png (5.0 MB)');
     expect(caption).toContain('image/jpeg (1.0 MB)');
     expect(caption).toMatch(/not preserved/i);
+  });
+});
+
+describe('extractImageCompressionCaptions', () => {
+  const caption = buildImageCompressionCaption({
+    original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+    final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+    originalPath: '/tmp/originals/shot.png',
+  });
+
+  it('extracts a standalone caption, unwrapping the <system> tag', () => {
+    const result = extractImageCompressionCaptions(caption);
+    expect(result.captions).toHaveLength(1);
+    expect(result.captions[0]).toContain('Image compressed to fit model limits');
+    expect(result.captions[0]).toContain('/tmp/originals/shot.png');
+    expect(result.captions[0]).not.toContain('<system>');
+    expect(result.text).toBe('');
+  });
+
+  it('extracts a caption merged into surrounding user text', () => {
+    const result = extractImageCompressionCaptions(`能展示但是没有快捷键提示${caption}`);
+    expect(result.captions).toHaveLength(1);
+    expect(result.text).toBe('能展示但是没有快捷键提示');
+  });
+
+  it('extracts multiple captions from one text', () => {
+    const other = buildImageCompressionCaption({
+      original: { width: 4000, height: 3000, byteLength: 9 * 1024 * 1024, mimeType: 'image/jpeg' },
+      final: { width: 2000, height: 1500, byteLength: 1024 * 1024, mimeType: 'image/jpeg' },
+      originalPath: '/tmp/originals/photo.jpg',
+    });
+    const result = extractImageCompressionCaptions(`看这两张图${caption}${other}`);
+    expect(result.captions).toHaveLength(2);
+    expect(result.captions[0]).toContain('/tmp/originals/shot.png');
+    expect(result.captions[1]).toContain('/tmp/originals/photo.jpg');
+    expect(result.text).toBe('看这两张图');
+  });
+
+  it('leaves non-caption <system> blocks and plain text untouched', () => {
+    const toolStatus = '<system>ERROR: Tool execution failed.</system>';
+    expect(extractImageCompressionCaptions(toolStatus)).toEqual({
+      captions: [],
+      text: toolStatus,
+    });
+    expect(extractImageCompressionCaptions('just some text')).toEqual({
+      captions: [],
+      text: 'just some text',
+    });
   });
 });
 

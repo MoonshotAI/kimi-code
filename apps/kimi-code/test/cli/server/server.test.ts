@@ -374,6 +374,43 @@ describe('`kimi server run` background start', () => {
     expect(plain).not.toContain('Network:  http');
   });
 
+  it('keeps the token and skips the bypass notice when a daemon is reused', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+    const openUrl = vi.fn();
+
+    // The user requests bypass, but a daemon is already running — so the
+    // requested flag is NOT applied to the server actually serving requests.
+    await handleRunCommand(
+      { port: '58627', host: '127.0.0.1', dangerousBypassAuth: true, open: true },
+      {
+        startServerBackground: async () => ({
+          origin: 'http://127.0.0.1:58627',
+          reused: true,
+          host: '127.0.0.1',
+          port: 58627,
+        }),
+        resolveToken: () => 'tok',
+        openUrl,
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: { write: () => true },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    // No false "bypass" claim for a server whose real auth mode is unknown.
+    expect(plain).not.toContain('DANGER');
+    // The token is preserved so the browser can auto-authenticate to the
+    // reused (token-protected) daemon.
+    expect(plain).toContain('#token=tok');
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/#token=tok');
+  });
+
   it('prints a TUI-style ready panel once the daemon is up', async () => {
     const { handleRunCommand } = await import('#/cli/sub/server/run');
     let stdout = '';
@@ -462,6 +499,79 @@ describe('`kimi server run` background start', () => {
     expect(stdout).toContain(color.hex(darkColors.accent)('http://127.0.0.1:58627/'));
     expect(stdout).toContain(color.bold.hex(darkColors.textDim)('Local:    '));
     expect(stdout).toContain(color.hex(darkColors.textMuted)('off'));
+  });
+
+  it('prints a red danger notice and suppresses the token when auth is bypassed', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+    const openUrl = vi.fn();
+
+    await handleRunCommand(
+      { port: '58627', host: '127.0.0.1', dangerousBypassAuth: true, open: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        resolveToken: () => 'tok',
+        openUrl,
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: {
+          write() {
+            return true;
+          },
+        },
+      },
+    );
+
+    const plain = stripAnsi(stdout);
+    // Red, impossible-to-miss danger notice.
+    expect(plain).toContain('DANGER: authentication is DISABLED');
+    expect(plain).toContain('--dangerous-bypass-auth');
+    expect(plain).toContain('kimi server kill');
+    // The token is irrelevant when bypassed — neither printed nor carried in
+    // any URL (so it cannot leak via copy/paste of the banner).
+    expect(plain).not.toContain('tok');
+    expect(plain).not.toContain('#token=');
+    // The opened browser URL carries no token fragment either.
+    expect(openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627');
+  });
+
+  it('renders the bypass danger notice in the error color', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let stdout = '';
+    const previousChalkLevel = chalk.level;
+    chalk.level = 3;
+
+    try {
+      await handleRunCommand(
+        { port: '58627', host: '127.0.0.1', dangerousBypassAuth: true },
+        {
+          startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+          openUrl: vi.fn(),
+          stdout: {
+            write(chunk: string | Uint8Array) {
+              stdout += String(chunk);
+              return true;
+            },
+          },
+          stderr: {
+            write() {
+              return true;
+            },
+          },
+        },
+      );
+    } finally {
+      chalk.level = previousChalkLevel;
+    }
+
+    const color = new Chalk({ level: 3 });
+    expect(stdout).toContain(
+      color.bold.hex(darkColors.error)('⚠ DANGER: authentication is DISABLED (--dangerous-bypass-auth).'),
+    );
   });
 });
 
@@ -735,6 +845,81 @@ describe('--allowed-host threading', () => {
     );
 
     expect(parsed).toMatchObject({ allowedHosts: ['.example.com'] });
+  });
+});
+
+describe('--keep-alive (no 60s idle-kill)', () => {
+  it('defaults to off for the plain loopback daemon', async () => {
+    const { parseServerOptions } = await import('#/cli/sub/server/shared');
+    expect(parseServerOptions({}).keepAlive).toBe(false);
+  });
+
+  it('is implied by a bare --host (default LAN host)', async () => {
+    const { parseServerOptions } = await import('#/cli/sub/server/shared');
+    expect(parseServerOptions({ host: true }).keepAlive).toBe(true);
+  });
+
+  it('is implied by an explicit --host value', async () => {
+    const { parseServerOptions } = await import('#/cli/sub/server/shared');
+    expect(parseServerOptions({ host: '0.0.0.0' }).keepAlive).toBe(true);
+    expect(parseServerOptions({ host: '192.168.1.5' }).keepAlive).toBe(true);
+  });
+
+  it('stays off for an explicit loopback --host with no allowed-hosts', async () => {
+    const { parseServerOptions } = await import('#/cli/sub/server/shared');
+    expect(parseServerOptions({ host: '127.0.0.1' }).keepAlive).toBe(false);
+  });
+
+  it('is implied by --allowed-host (proxy/tunnel)', async () => {
+    const { parseServerOptions } = await import('#/cli/sub/server/shared');
+    expect(parseServerOptions({ allowedHost: ['.example.com'] }).keepAlive).toBe(true);
+  });
+
+  it('can be set explicitly on a loopback daemon', async () => {
+    const { parseServerOptions } = await import('#/cli/sub/server/shared');
+    expect(parseServerOptions({ keepAlive: true }).keepAlive).toBe(true);
+  });
+
+  it('is forced on in --foreground mode even on the default loopback host', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+
+    await handleRunCommand(
+      { port: '58627', foreground: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://127.0.0.1:58627' }),
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(foregroundOptions).toMatchObject({ keepAlive: true });
+  });
+
+  it('threads keepAlive to the foreground runner when implied by --host', async () => {
+    const { handleRunCommand } = await import('#/cli/sub/server/run');
+    let foregroundOptions: unknown;
+
+    await handleRunCommand(
+      { port: '58627', host: '0.0.0.0', foreground: true },
+      {
+        startServerBackground: async () => ({ origin: 'http://0.0.0.0:58627' }),
+        startServerForeground: async (options) => {
+          foregroundOptions = options;
+          return undefined as unknown as never;
+        },
+        openUrl: vi.fn(),
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      },
+    );
+
+    expect(foregroundOptions).toMatchObject({ keepAlive: true });
   });
 });
 
@@ -1026,6 +1211,19 @@ describe('spawnDaemonChild', () => {
 
     const [, args] = spawnMock.mock.calls[0]!;
     expect(args).toEqual(expect.arrayContaining(['--allowed-host', '.example.com']));
+  });
+
+  it('passes --keep-alive through to the daemon child args', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ port: 58627, logLevel: 'info', keepAlive: true });
+
+    const [, args] = spawnMock.mock.calls[0]!;
+    expect(args).toEqual(expect.arrayContaining(['--keep-alive']));
   });
 });
 

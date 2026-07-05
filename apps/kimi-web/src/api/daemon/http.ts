@@ -98,6 +98,82 @@ export class DaemonHttpClient {
     return this.request<T>('GET', path, undefined, query);
   }
 
+  /** Authenticated raw-binary GET (no envelope). Used for file downloads that
+   *  must carry the Bearer token — e.g. <video>/<img> src, which the browser
+   *  fetches natively and cannot authorize on its own. Returns the body as a
+   *  Blob on 2xx; otherwise parses the daemon envelope and throws. */
+  async getBlob(path: string): Promise<Blob> {
+    const url = buildRestUrl(this.origin, path);
+    const requestId = createRequestId();
+    const headers: Record<string, string> = { 'X-Request-Id': requestId };
+    this.addClientHeaders(headers);
+    const startedAt = Date.now();
+    traceRestRequest({ method: 'GET', path, url, requestId });
+    let response: Response;
+    try {
+      response = await fetch(url, { method: 'GET', headers, signal: timeoutSignal() });
+    } catch (err) {
+      traceRestFailure({
+        method: 'GET',
+        path,
+        requestId,
+        phase: 'fetch',
+        durationMs: Date.now() - startedAt,
+        error: err,
+      });
+      throw new DaemonNetworkError({
+        message: `Network error calling GET ${path}`,
+        cause: err,
+        method: 'GET',
+        path,
+        url,
+        requestId,
+        phase: 'fetch',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    if (response.ok) {
+      traceRestResponse({
+        method: 'GET',
+        path,
+        requestId,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        code: 0,
+        msg: '',
+      });
+      return response.blob();
+    }
+    // Error path: the daemon sends a JSON envelope (401/404/413…).
+    let envelope: WireEnvelope<unknown> | undefined;
+    try {
+      envelope = (await response.clone().json()) as WireEnvelope<unknown>;
+    } catch {
+      // not JSON — fall back to the HTTP status below
+    }
+    this.checkAuthRequired(response, envelope?.code ?? 0);
+    traceRestResponse({
+      method: 'GET',
+      path,
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      code: envelope?.code ?? response.status,
+      msg: envelope?.msg ?? response.statusText,
+      envelopeRequestId: envelope?.request_id,
+    });
+    throw new DaemonApiError({
+      code: envelope?.code ?? response.status,
+      msg: envelope?.msg ?? response.statusText,
+      requestId: envelope?.request_id ?? requestId,
+      details: envelope?.details,
+      timestamp: Date.now(),
+      durationMs: Date.now() - startedAt,
+    });
+  }
+
   async post<T>(path: string, body?: unknown, opts?: { allowCodes?: number[] }): Promise<T> {
     return this.request<T>('POST', path, body, undefined, opts?.allowCodes);
   }

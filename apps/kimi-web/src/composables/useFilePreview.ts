@@ -2,8 +2,9 @@
 // File preview: download / path normalization / request-sequence guard. Claims
 // the 'file' slot of the shared right-side detail layer.
 
-import { computed, ref, type Ref } from 'vue';
+import { computed, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { getKimiWebApi } from '../api';
 import type { FileData, FilePreviewRequest, ToolMedia } from '../types';
 import type { useKimiWebClient } from './useKimiWebClient';
 
@@ -31,6 +32,16 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
   // Incremented on every openFilePreview call so a slower earlier request can't
   // overwrite the result of a later one (request-sequence guard).
   let previewRequestSeq = 0;
+  // Authenticated blob URL backing the current media preview, when the media
+  // came from the file store (a bare getFileUrl 401s in <img> under daemon
+  // auth). Revoked when the preview is replaced or closed.
+  let mediaObjectUrl: string | null = null;
+  function revokeMediaObjectUrl(): void {
+    if (mediaObjectUrl !== null) {
+      URL.revokeObjectURL(mediaObjectUrl);
+      mediaObjectUrl = null;
+    }
+  }
 
   const previewDownloadUrl = computed(() => {
     const path = previewNormalizedPath.value;
@@ -99,6 +110,7 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
       return;
     }
     const requestSeq = ++previewRequestSeq;
+    revokeMediaObjectUrl();
     detailTarget.value = 'file';
     previewFile.value = null;
     previewError.value = null;
@@ -148,30 +160,72 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
 
   function openMediaPreview(media: ToolMedia): void {
     if (media.kind !== 'image') return;
+    const seq = ++previewRequestSeq;
+    revokeMediaObjectUrl();
     detailTarget.value = 'file';
     previewTarget.value = null;
     previewNormalizedPath.value = null;
     previewError.value = null;
-    previewLoading.value = false;
-    previewFile.value = {
+    const base = {
       path: media.path ?? 'ReadMediaFile image',
       content: '',
-      encoding: 'utf-8',
+      encoding: 'utf-8' as const,
       mime: media.mimeType ?? mimeFromDataUrl(media.url) ?? 'image/*',
-      sourceUrl: media.url,
       isBinary: true,
       size: media.bytes ?? 0,
     };
+    if (media.fileId) {
+      // The raw getFileUrl 401s under daemon auth (browsers load <img> without
+      // the Bearer token), so fetch the bytes with auth and preview a blob URL.
+      previewLoading.value = true;
+      previewFile.value = base;
+      void getKimiWebApi().getFileBlob(media.fileId).then((blob) => {
+        if (seq !== previewRequestSeq) return;
+        // The user may have switched to another detail panel while this was in
+        // flight — don't create (and leak) a blob URL for a hidden panel.
+        if (detailTarget.value !== 'file' || !previewFile.value) {
+          previewLoading.value = false;
+          return;
+        }
+        mediaObjectUrl = URL.createObjectURL(blob);
+        previewFile.value = { ...previewFile.value, sourceUrl: mediaObjectUrl };
+        previewLoading.value = false;
+      }).catch(() => {
+        if (seq !== previewRequestSeq) return;
+        // Fall back to the raw URL so the user sees an honest broken state.
+        if (previewFile.value) previewFile.value = { ...previewFile.value, sourceUrl: media.url };
+        previewLoading.value = false;
+      });
+    } else {
+      previewLoading.value = false;
+      previewFile.value = { ...base, sourceUrl: media.url };
+    }
   }
 
-  function closeFilePreview(): void {
+  function resetFilePreview(): void {
+    // Invalidate any in-flight authenticated media fetch so it doesn't create a
+    // blob URL after the panel is gone (which would leak until the next preview).
+    previewRequestSeq += 1;
     previewTarget.value = null;
     previewNormalizedPath.value = null;
     previewFile.value = null;
     previewError.value = null;
     previewLoading.value = false;
+    revokeMediaObjectUrl();
+  }
+
+  function closeFilePreview(): void {
+    resetFilePreview();
     if (detailTarget.value === 'file') detailTarget.value = null;
   }
+
+  // Revoke/close the preview when the user switches to another detail panel
+  // (useDetailPanel only flips detailTarget and does not call closeFilePreview),
+  // so an in-flight or already-shown blob URL isn't held while the file panel
+  // is hidden.
+  watch(detailTarget, (target, oldTarget) => {
+    if (oldTarget === 'file' && target !== 'file') resetFilePreview();
+  });
 
   function openPreviewInEditor(): void {
     const path = previewFile.value?.path ?? previewTarget.value?.path;

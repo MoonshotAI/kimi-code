@@ -93,6 +93,16 @@ export interface ServerStartOptions {
    */
   allowRemoteTerminals?: boolean;
 
+  /**
+   * Disable bearer-token auth on EVERY REST and WebSocket route. Default
+   * false. Pass `--dangerous-bypass-auth` (or set this) only on a trusted
+   * network / behind your own authenticating proxy: with this set, anyone who
+   * can reach the server gets full session, filesystem, and shell access with
+   * no credential. The `/api/v1/meta` payload advertises the state so the web
+   * UI can connect without a token.
+   */
+  dangerousBypassAuth?: boolean;
+
   webAssetsDir?: string;
 
   /**
@@ -258,6 +268,19 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
 
+  // `--dangerous-bypass-auth` (ROADMAP M5.1 escape hatch): the operator
+  // explicitly disabled the bearer-token gate on every REST and WebSocket
+  // route. Warn loudly — especially on a non-loopback bind, where this grants
+  // unauthenticated remote session / filesystem / shell access to anyone who
+  // can reach the port. The `/api/v1/meta` payload advertises the state so the
+  // web UI can connect without a token.
+  if (opts.dangerousBypassAuth === true) {
+    pinoLogger.warn(
+      { host: opts.host, bindClass },
+      'DANGEROUS: bearer-token auth is DISABLED (--dangerous-bypass-auth) — every REST and WebSocket route accepts unauthenticated requests',
+    );
+  }
+
   const services = createServerServiceCollection({
     server: {
       ...opts,
@@ -275,6 +298,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         },
         allowedOrigins:
           opts.wsGatewayOptions?.allowedOrigins ?? parseCorsOrigins(process.env),
+        // Mirror the HTTP bypass on the WS upgrade path so a token-less web
+        // client can open a socket when `--dangerous-bypass-auth` is set.
+        dangerousBypassAuth: opts.dangerousBypassAuth === true,
       },
       serviceOverrides: [
         [IAuthTokenService, defaultAuth],
@@ -297,7 +323,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const authTokenService = ix.invokeFunction((a) => a.get(IAuthTokenService));
   const authFailureLimiter =
     bindClass !== 'loopback' ? createAuthFailureLimiter() : undefined;
-  app.addHook('onRequest', createAuthHook(authTokenService, { limiter: authFailureLimiter }));
+  app.addHook(
+    'onRequest',
+    createAuthHook(authTokenService, {
+      limiter: authFailureLimiter,
+      disabled: opts.dangerousBypassAuth === true,
+    }),
+  );
 
   // Security response headers (ROADMAP M6.6): only on a non-loopback bind.
   // TLS is terminated by a reverse proxy in this phase, so HSTS is omitted
@@ -331,6 +363,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     debugEndpoints: opts.debugEndpoints === true && bindClass === 'loopback',
     enableShutdown: bindClass === 'loopback' || allowRemoteShutdown,
     enableTerminals: bindClass === 'loopback' || allowRemoteTerminals,
+    dangerousBypassAuth: opts.dangerousBypassAuth === true,
   });
 
   app.get('/asyncapi.json', async (_req, reply) => {

@@ -377,6 +377,18 @@ export class Session {
     });
   }
 
+  /**
+   * Block until every still-running background task (across all agents in this
+   * session) reaches a terminal state. Used by `kimi -p` after the main agent's
+   * turn finishes when `background.keep_alive_on_exit` is `true`, so background
+   * subagents get a chance to complete before the process exits. No-op when
+   * `keep_alive_on_exit` is not enabled. Bounded by `background.print_wait_ceiling_s`.
+   */
+  async waitForBackgroundTasksOnPrint(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.waitForBackgroundTasksOnPrint({ sessionId: this.id });
+  }
+
   // --- Goal lifecycle ---------------------------------------------------
   // Deterministic user/host control surface. There is intentionally no
   // `updateGoal`: the goal's terminal status is decided by the model via the

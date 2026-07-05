@@ -127,12 +127,22 @@ function sameMessageContent(a: AppMessage, b: AppMessage): boolean {
     shape of a user message. The daemon's echo carries images as a resolved
     URL/base64 while our optimistic copy carries `{kind:'file',fileId}`, so the
     raw content never matches; comparing (text, image-count) does. */
+// Matches the self-contained media path tag the server substitutes for an
+// uploaded image/video/audio in a prompt (e.g. `<video path="/cache/f.mp4"></video>`).
+// A tag is its own text part, so anchoring keeps ordinary prose from matching.
+const MEDIA_PATH_TAG_SHAPE_RE = /^<(image|video|audio)\s+path="[^"]+"><\/\1>$/;
+
 function userMessageShape(m: AppMessage): { text: string; media: number } {
   let text = '';
   let media = 0;
   for (const c of m.content) {
-    if (c.type === 'text') text += c.text;
-    else if (c.type === 'image' || c.type === 'file') media += 1;
+    if (c.type === 'text') {
+      // A video/image upload reaches us (after the server resolves it) as a
+      // `<video path=…></video>` text tag, not a media part — count it as media
+      // and drop it from the text so the echo reconciles with our optimistic copy.
+      if (MEDIA_PATH_TAG_SHAPE_RE.test(c.text.trim())) media += 1;
+      else text += c.text;
+    } else if (c.type === 'image' || c.type === 'video' || c.type === 'file') media += 1;
   }
   return { text, media };
 }

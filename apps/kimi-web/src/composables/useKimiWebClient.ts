@@ -99,7 +99,13 @@ const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
-const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
+// A persisted thinking level may be any non-empty effort string: the reserved
+// 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max'). Since the
+// set of legal levels comes from each model's support_efforts, we can't
+// whitelist values — only guard against corrupted localStorage with a charset
+// + length check. coerceThinkingForModel adapts the loaded value to the active
+// model once the catalog is available.
+const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
 // existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
@@ -135,7 +141,7 @@ function savePermissionToStorage(mode: PermissionMode): void {
 function loadThinkingFromStorage(): ThinkingLevel {
   try {
     const v = safeGetString(THINKING_STORAGE_KEY);
-    if (v && (THINKING_LEVELS as readonly string[]).includes(v)) return v as ThinkingLevel;
+    if (v && PERSISTED_THINKING_LEVEL_RE.test(v)) return v as ThinkingLevel;
   } catch {
     // ignore
   }
@@ -274,6 +280,12 @@ interface QueuedPrompt {
 export interface ExtendedState extends KimiClientState {
   connected: boolean;
   serverVersion: string;
+  /**
+   * True when the connected server reports `dangerous_bypass_auth` in `/meta`,
+   * meaning its bearer-token gate is disabled. The UI skips the server-token
+   * prompt and connects without a credential.
+   */
+  dangerousBypassAuth: boolean;
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
@@ -345,6 +357,7 @@ const rawState: ExtendedState = reactive({
   ...createInitialState(),
   connected: false,
   serverVersion: '',
+  dangerousBypassAuth: false,
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
@@ -1704,6 +1717,17 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
+
+/**
+ * Drop the cached `dangerous_bypass_auth` value read from `/meta`. Called when
+ * the server demands authentication (HTTP 401) so a stale "bypass" value from
+ * a previous server mode does not keep hiding the token prompt after the same
+ * origin is restarted without `--dangerous-bypass-auth`.
+ */
+function clearDangerousBypassAuth(): void {
+  rawState.dangerousBypassAuth = false;
+}
 
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
@@ -2381,6 +2405,8 @@ export function useKimiWebClient() {
     hasMoreMessages,
     loadMoreMessagesError,
     serverVersion,
+    dangerousBypassAuth,
+    clearDangerousBypassAuth,
     initialized,
     permission,
     thinking,

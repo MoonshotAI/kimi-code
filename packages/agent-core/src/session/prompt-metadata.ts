@@ -1,4 +1,5 @@
 import type { ActivatePluginCommandPayload, ActivateSkillPayload, PromptPayload } from '#/rpc';
+import { extractImageCompressionCaptions } from '#/tools/support/image-compress';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 const MAX_TITLE_LENGTH = 200;
@@ -38,8 +39,13 @@ export function promptMetadataTextFromPluginCommand(
 
 function promptPartText(part: ContentPart): string | undefined {
   switch (part.type) {
-    case 'text':
-      return part.text;
+    case 'text': {
+      // Prompt ingestion may have annotated a compressed image with an inline
+      // caption (see buildImageCompressionCaption). It is harness metadata,
+      // not something the user typed, so keep it out of titles/lastPrompt.
+      const { text } = extractImageCompressionCaptions(part.text);
+      return text.trim().length === 0 ? undefined : text;
+    }
     case 'image_url':
       return '[image]';
     case 'audio_url':

@@ -6,6 +6,43 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.22.3 (2026-07-04)
+
+### Bug Fixes
+
+- Wait for background subagents to finish and respond to their results before exiting in `kimi -p`, instead of ending the turn early.
+- web: Fix uploaded videos failing to play in the web chat.
+- Revert the recent TUI transcript rendering changes to the original upstream behavior and fix related rendering issues.
+
+### Polish
+
+- Add `--dangerous-bypass-auth` and `--keep-alive` flags to `kimi server run`, so the server can run without a token on trusted networks and stay alive past the idle timeout.
+- web: Add click-to-enlarge for images uploaded in the web chat. Click an image in a message to open it.
+
+## 0.22.2 (2026-07-03)
+
+### Bug Fixes
+
+- Fix sessions silently dropping later user messages after a turn was interrupted between a tool call and its result.
+- Fix requests being rejected by strict providers when the model emits duplicate tool call ids.
+- Fix `kimi upgrade` failing on Windows with a spawn error when installing the new version.
+- Fix duplicated transcript content appearing in scrollback during streaming.
+- Fix compressed-image prompts leaking an internal `<system>` compression note into the visible message and the session title.
+- Keep automatic background updates from flashing a console window on Windows.
+
+### Polish
+
+- Have context-compaction notes capture a forward plan for the remaining work — upcoming steps, settled decisions, and foreseeable obstacles — instead of only the immediate next step, so the agent continues more coherently after auto-compaction.
+- Enrich PATH from the user's login shell at startup, so shell commands find user-installed tools (e.g. Homebrew's `gh`) even when kimi-code was launched without the full profile PATH.
+- Promote the language-matching rule to a dedicated section in the system prompt, so replies and reasoning consistently follow the user's language through long English tool output, while repository artifacts keep project conventions.
+- Add a TUI preference to keep rapid multi-line pastes from submitting line by line when bracketed paste is unavailable. Set `disable_paste_burst = true` in `tui.toml` to turn it off.
+- Keep subagent cards at a stable height and show a live status spinner with a compact two-row activity window.
+- In `kimi -p` runs, wait for background subagents to finish before exiting when `background.keep_alive_on_exit` is enabled. Set `keep_alive_on_exit = true` to let concurrent background subagents complete.
+
+### Refactors
+
+- Record model response ids in session wire logs to make individual model requests easier to trace.
+
 ## 0.22.1 (2026-07-02)
 
 ### Bug Fixes

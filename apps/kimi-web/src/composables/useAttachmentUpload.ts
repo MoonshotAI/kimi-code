@@ -10,6 +10,7 @@
 // paste listener + object-URL cleanup lifecycle.
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { getKimiWebApi } from '../api';
 
 export interface Attachment {
   /** Unique local id (used as :key) */
@@ -208,6 +209,99 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     setForSession(sid, []);
   }
 
+  function patchAttachment(sid: string, localId: string, patch: Partial<Attachment>): void {
+    const current = attachmentsBySession.value[sid] ?? [];
+    if (!current.some((a) => a.localId === localId)) return;
+    setForSession(
+      sid,
+      current.map((a) => (a.localId === localId ? { ...a, ...patch } : a)),
+    );
+  }
+
+  function urlToBlob(url: string): Promise<Blob> {
+    return fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`fetch failed: ${r.status}`);
+      return r.blob();
+    });
+  }
+
+  /** Refill the attachment strip from already-uploaded files (used when a queued
+   *  prompt or an undone message is loaded back into the composer). The fileIds
+   *  are reused directly (no re-upload); for a protected getFileUrl preview we
+   *  fetch an authenticated blob URL so the thumbnail doesn't 401. Replaces any
+   *  unsent draft attachments (mirroring loadForEdit(text), which overwrites) so
+   *  a later submit sends exactly the edited message's files, not a mix. */
+  function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+    const sid = sessionId() ?? '';
+    for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
+    setForSession(sid, []);
+    for (const att of atts) {
+      const localId = nextLocalId();
+      const isData = /^data:/i.test(att.url);
+      const isBlob = /^blob:/i.test(att.url);
+      const name = att.name ?? att.kind;
+
+      if (att.fileId) {
+        // Ready as-is; fetch an authenticated thumbnail for protected URLs.
+        const entry: Attachment = {
+          localId,
+          name,
+          kind: att.kind,
+          previewUrl: att.url,
+          uploading: false,
+          fileId: att.fileId,
+        };
+        setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
+        if (!isData && !isBlob) {
+          void getKimiWebApi().getFileBlob(att.fileId).then((blob) => {
+            const blobUrl = URL.createObjectURL(blob);
+            const current = attachmentsBySession.value[sid] ?? [];
+            if (!current.some((a) => a.localId === localId)) {
+              URL.revokeObjectURL(blobUrl);
+              return;
+            }
+            patchAttachment(sid, localId, { previewUrl: blobUrl });
+          }).catch(() => {
+            // Keep the fallback previewUrl (honest broken state if it 401s).
+          });
+        }
+      } else {
+        // No fileId (e.g. a server-base64-inlined image, or a URL-backed source
+        // from the wire/REST prompt path): re-upload the URL so the chip is
+        // actually resendable — otherwise handleSubmit silently drops it. If the
+        // URL can't be fetched (CORS / non-2xx) or upload is unavailable, skip
+        // the chip rather than show a misleading ready attachment.
+        const upload = uploadImage();
+        if (!upload) continue;
+        const entry: Attachment = {
+          localId,
+          name,
+          kind: att.kind,
+          previewUrl: att.url,
+          uploading: true,
+        };
+        setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
+        void urlToBlob(att.url)
+          .then((blob) => {
+            const fname = name.includes('.') ? name : `${name}.${blob.type.split('/')[1] ?? 'bin'}`;
+            return upload(blob, fname);
+          })
+          .then((result) => {
+            if (result === null) {
+              const current = attachmentsBySession.value[sid] ?? [];
+              setForSession(sid, current.filter((a) => a.localId !== localId));
+              return;
+            }
+            patchAttachment(sid, localId, { uploading: false, fileId: result.fileId });
+          })
+          .catch(() => {
+            const current = attachmentsBySession.value[sid] ?? [];
+            setForSession(sid, current.filter((a) => a.localId !== localId));
+          });
+      }
+    }
+  }
+
   // Close the preview lightbox when switching sessions — it may reference an
   // attachment that belongs to the previous session.
   watch(sessionId, () => {
@@ -241,5 +335,6 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     handleDragLeave,
     handleDrop,
     clearAfterSubmit,
+    loadAttachments,
   };
 }

@@ -98,6 +98,7 @@ interface WireMeta {
   started_at: string;
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
+  dangerous_bypass_auth?: boolean;
 }
 
 interface WireAbortResult {
@@ -270,6 +271,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     startedAt: string;
     capabilities: Record<string, boolean>;
     openInApps: string[];
+    dangerousBypassAuth: boolean;
   }> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
@@ -278,6 +280,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       startedAt: data.started_at,
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
+      dangerousBypassAuth: data.dangerous_bypass_auth === true,
     };
   }
 
@@ -1228,6 +1231,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   getFileUrl(fileId: string): string {
     return buildRestUrl(this.config.serverHttpUrl, `/files/${encodeURIComponent(fileId)}`);
+  }
+
+  /** Fetch a file's bytes with the Bearer credential attached. Use this (not
+   *  getFileUrl) when the bytes feed a <video>/<img> src: the browser loads
+   *  those natively without the Authorization header, so the URL alone 401s. */
+  async getFileBlob(fileId: string): Promise<Blob> {
+    return this.http.getBlob(`/files/${encodeURIComponent(fileId)}`);
   }
 
   // -------------------------------------------------------------------------

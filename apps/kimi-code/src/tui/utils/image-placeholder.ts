@@ -8,15 +8,23 @@
  *     the text (we can't hallucinate files for it).
  *   - Order is preserved for text/image/video segments. Image placeholders
  *     expand to image content parts so the prompt reaches the provider
- *     without relying on a model tool call. Video placeholders still expand
- *     to file-path tags so `ReadMediaFile` can own video upload behavior.
+ *     without relying on a model tool call. Video placeholders are copied
+ *     into the shared cache (`getCacheDir()`) and expand to file-path tags,
+ *     so `ReadMediaFile` — and the provider's `VideoUploader` — own video
+ *     upload behavior instead of base64-inlining here.
  *   - Adjacent text segments are flattened — empty / whitespace-only
  *     segments drop out so we never emit `{type:'text', text:' '}`
  *     noise between two media parts.
  */
 
+import { randomUUID } from 'node:crypto';
+import { copyFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
 import { buildImageCompressionCaption } from '@moonshot-ai/kimi-code-sdk';
+
+import { getCacheDir } from '#/utils/paths';
 
 import type {
   ImageAttachment,
@@ -63,8 +71,8 @@ export function extractMediaAttachments(
     const before = text.slice(cursor, match.index);
     pushText(parts, before);
     if (attachment.kind === 'video') {
-      const mediaText = tagTextForVideo(attachment);
-      pushText(parts, mediaText);
+      const cachePath = materializeVideoToCache(attachment);
+      pushText(parts, formatMediaTag('video', cachePath));
       videoAttachmentIds.push(id);
     } else {
       // Paste-time compression is announced next to the image so the model
@@ -115,6 +123,14 @@ function imagePartForAttachment(att: ImageAttachment): PromptPart {
   };
 }
 
+function materializeVideoToCache(att: VideoAttachment): string {
+  const cacheDir = getCacheDir();
+  mkdirSync(cacheDir, { recursive: true });
+  const target = join(cacheDir, `${randomUUID()}-${att.label}`);
+  copyFileSync(att.sourcePath, target);
+  return target;
+}
+
 function captionForCompressedImage(att: ImageAttachment): string {
   const original = att.original;
   if (original === undefined) return '';
@@ -133,10 +149,6 @@ function captionForCompressedImage(att: ImageAttachment): string {
     },
     originalPath: original.path,
   });
-}
-
-function tagTextForVideo(att: VideoAttachment): string {
-  return formatMediaTag('video', att.sourcePath);
 }
 
 function formatMediaTag(tag: 'image' | 'video', path: string): string {

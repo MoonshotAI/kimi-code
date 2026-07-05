@@ -8,6 +8,7 @@ import ToolGroup from './ToolGroup.vue';
 import Markdown from './Markdown.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
+import AuthMedia from './AuthMedia.vue';
 import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
 import Icon from '../ui/Icon.vue';
@@ -198,7 +199,7 @@ const emit = defineEmits<{
   /** Show an Edit/Write tool call's diff in the right-side panel. */
   openToolDiff: [id: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
-  editMessage: [text: string];
+  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
   loadOlderMessages: [];
   /** Remove a queued message by index. */
@@ -219,10 +220,10 @@ function hasImages(item: QueuedPromptView): boolean {
   return (item.attachments?.length ?? 0) > 0;
 }
 
-function onQueueEdit(index: number, item: QueuedPromptView): void {
-  // Image-carrying prompts can't be round-tripped through the text composer, so
-  // they are remove-only (matches the previous dock queue behaviour).
-  if (hasImages(item)) return;
+function onQueueEdit(index: number): void {
+  // Image/video attachments round-trip through the composer now (the composer
+  // can hold fileIds), so a queued prompt can be loaded back for edit whether or
+  // not it carries media.
   emit('editQueued', index);
 }
 
@@ -352,7 +353,7 @@ async function onUndo(turn: ChatTurn): Promise<void> {
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   undoingTurnId.value = turn.id;
-  emit('editMessage', turn.text);
+  emit('editMessage', { text: turn.text, images: turn.images });
   // Fallback: if the server rewind never removes the turn (e.g. it failed),
   // release the guard so the user can retry.
   undoFallbackTimer = setTimeout(() => {
@@ -487,6 +488,14 @@ function copyUserMessage(turn: ChatTurn): void {
   }).catch(() => {/* ignore */});
 }
 
+function userImageMedia(img: { url: string; alt?: string; fileId?: string }): ToolMedia {
+  // User-uploaded images carry no path/mime metadata; the preview panel falls
+  // back to a generic label and sniffs the mime from the URL when needed. When
+  // a fileId is present the preview fetches the bytes with auth (a bare
+  // getFileUrl src 401s under daemon auth).
+  return { kind: 'image', url: img.url, path: img.alt, fileId: img.fileId };
+}
+
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
   if (turn.id !== streamingTurnId.value) return false;
   return block.sourceIndex === turnBlocks(turn).length - 1;
@@ -537,21 +546,28 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             <!-- Image / video attachments -->
             <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
               <template v-for="(img, ii) in turn.images" :key="ii">
-                <video
+                <AuthMedia
                   v-if="img.kind === 'video'"
-                  class="u-img"
-                  :src="img.url"
-                  controls
-                  playsinline
-                  preload="metadata"
+                  :url="img.url"
+                  kind="video"
+                  :file-id="img.fileId"
+                  media-class="u-img"
                 />
-                <img
+                <button
                   v-else
-                  class="u-img"
-                  :src="img.url"
-                  :alt="img.alt || ''"
-                  loading="lazy"
-                />
+                  type="button"
+                  class="u-img-btn"
+                  :aria-label="t('filePreview.enlargeImage')"
+                  @click="emit('openMedia', userImageMedia(img))"
+                >
+                  <AuthMedia
+                    :url="img.url"
+                    kind="image"
+                    :alt="img.alt"
+                    :file-id="img.fileId"
+                    media-class="u-img"
+                  />
+                </button>
               </template>
             </div>
             <!-- Skill activation card (replaces raw XML) -->
@@ -705,9 +721,8 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           <button
             type="button"
             class="q-body"
-            :title="hasImages(item) ? t('composer.queuedHasImage', { n: item.attachments?.length ?? 0 }) : t('composer.editQueued')"
-            :disabled="hasImages(item)"
-            @click="onQueueEdit(qi, item)"
+            :title="t('composer.editQueued')"
+            @click="onQueueEdit(qi)"
           >
             <span v-if="item.text" class="u-text q-text">{{ item.text }}</span>
             <span v-else class="q-text q-text-placeholder">
@@ -716,10 +731,16 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             </span>
           </button>
           <div v-if="hasImages(item)" class="q-imgs">
-            <template v-for="(att, ai) in item.attachments" :key="ai">
-              <video v-if="att.kind === 'video'" class="q-img" :src="att.url" muted playsinline preload="metadata" />
-              <img v-else class="q-img" :src="att.url" alt="" loading="lazy" />
-            </template>
+            <AuthMedia
+              v-for="(att, ai) in item.attachments"
+              :key="ai"
+              :url="att.url"
+              :kind="att.kind"
+              :file-id="att.fileId"
+              media-class="q-img"
+              :controls="false"
+              muted
+            />
           </div>
           <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
           <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
@@ -1077,6 +1098,27 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   max-height: 200px;
   border-radius: 8px;
   object-fit: cover;
+}
+/* Clickable image thumbnail — reset button chrome so it looks like the plain
+   image it replaced, while still opening the preview on click. */
+.u-img-btn {
+  display: block;
+  flex: none;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.u-img-btn .u-img {
+  display: block;
+}
+.u-img-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
 }
 
 /* NOTE: Chat/bubble styles live in src/style.css (global). Scoped `.u-bub`

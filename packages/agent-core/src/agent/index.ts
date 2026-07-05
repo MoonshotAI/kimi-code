@@ -144,6 +144,22 @@ export class Agent {
   readonly goal: GoalMode;
   readonly replayBuilder: ReplayBuilder;
 
+  /**
+   * Print-mode (`kimi -p`) only: when true and the agent ends a turn while
+   * background subagents (`kind === 'agent'`) are still running, the turn loop
+   * holds the turn open and idle-waits until they finish, flushing their
+   * completions into the turn so the model can react before the run exits. Set
+   * by the session for print runs; defaults to false everywhere else.
+   */
+  printDrainAgentTasksOnStop = false;
+  /**
+   * Absolute deadline (ms epoch) bounding all print-mode drain waits for this
+   * agent, derived from `background.printWaitCeilingS`. `Infinity` when the
+   * drain is disabled. Shared across every drain hold within a single print
+   * run so backfill rounds cannot exceed the ceiling in aggregate.
+   */
+  printDrainDeadlineMs = Number.POSITIVE_INFINITY;
+
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;
   private brandHome?: string;

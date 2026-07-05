@@ -1425,80 +1425,6 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Re-anchor the viewport when content shrinks. previousViewportTop
-		// only ever grows during normal rendering, so after a shrink the
-		// content bottom can sit above the screen bottom, leaving dead rows
-		// that nothing repaints (upstream masked this by frequently doing
-		// destructive full redraws, which re-anchored as a side effect).
-		// Repaint the visible viewport in place with the tail of the new
-		// content: the input area snaps back to the screen bottom (or the
-		// content top-anchors when shorter than the screen), while scrollback
-		// and the user's scroll position stay intact (no ESC[3J).
-		const desiredViewportTop = Math.max(0, newLines.length - height);
-		if (prevViewportTop > desiredViewportTop) {
-			// Kitty image lines need multi-row placement; fall back to a
-			// destructive full render for that rare combination.
-			for (let r = 0; r < height; r++) {
-				const idx = desiredViewportTop + r;
-				if (idx < newLines.length && isImageLine(newLines[idx]!)) {
-					logRedraw(`viewport repaint hit kitty image at line ${idx}`);
-					fullRender(true);
-					return;
-				}
-			}
-			logRedraw(
-				`viewport repaint: re-anchor after shrink (viewportTop ${prevViewportTop} -> ${desiredViewportTop}, newLines=${newLines.length})`,
-			);
-			let repaint = "\x1b[?2026h"; // Begin synchronized output
-			// Delete kitty images placed in the old visible viewport; images
-			// above it live in scrollback and are left alone. A multi-row
-			// image can straddle the viewport top: its id lives on the image
-			// line above prevViewportTop while its reserved rows are still
-			// visible, so widen the range to include such blocks — otherwise
-			// the stale overlay would survive the repaint and its id would
-			// drop out of previousKittyImageIds, never to be cleaned up.
-			let deleteFrom = prevViewportTop;
-			for (let k = 0; k < prevViewportTop; k++) {
-				const prevLine = this.previousLines[k] ?? "";
-				if (!isImageLine(prevLine)) continue;
-				const blockEnd = k + this.getKittyImageReservedRows(this.previousLines, k) - 1;
-				if (blockEnd >= prevViewportTop) {
-					deleteFrom = k;
-					break;
-				}
-			}
-			repaint += this.deleteChangedKittyImages(deleteFrom, this.previousLines.length - 1);
-			// Move the cursor to the top of the screen (old anchor still valid).
-			const cursorScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
-			if (cursorScreenRow > 0) {
-				repaint += `\x1b[${cursorScreenRow}A`;
-			}
-			repaint += "\r";
-			// Rewrite every screen row; the last row gets no trailing \r\n,
-			// so this never scrolls the terminal.
-			for (let r = 0; r < height; r++) {
-				if (r > 0) repaint += "\r\n";
-				repaint += "\x1b[2K";
-				const idx = desiredViewportTop + r;
-				if (idx < newLines.length) {
-					repaint += newLines[idx]!;
-				}
-			}
-			repaint += "\x1b[?2026l"; // End synchronized output
-			this.terminal.write(repaint);
-			// Re-anchor: screen row r now shows newLines[desiredViewportTop + r].
-			this.cursorRow = Math.max(0, newLines.length - 1);
-			this.hardwareCursorRow = desiredViewportTop + height - 1;
-			this.previousViewportTop = desiredViewportTop;
-			this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
-			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousLines = newLines;
-			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
-			this.previousWidth = width;
-			this.previousHeight = height;
-			return;
-		}
-
 		// All changes are in deleted lines (nothing to render, just clear)
 		if (firstChanged >= newLines.length) {
 			if (this.previousLines.length > newLines.length) {
@@ -1549,47 +1475,11 @@ export class TUI extends Container {
 		}
 
 		// Differential rendering can only touch what was actually visible.
-		// If the first changed line is above the viewport, a destructive full
-		// redraw would clear scrollback and yank the user's viewport (on Windows
-		// Terminal, ESC[3J while scrolled into scrollback jumps to the absolute
-		// top — microsoft/Terminal#20370). Clamp the diff to the visible viewport
-		// and skip above-viewport changes: scrollback keeps stale bytes, but the
-		// user's scroll position is preserved.
+		// If the first changed line is above the previous viewport, we need a full redraw.
 		if (firstChanged < prevViewportTop) {
-			let visibleFirstChanged = -1;
-			for (let i = prevViewportTop; i <= lastChanged; i++) {
-				const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
-				const newLine = i < newLines.length ? newLines[i] : "";
-				if (oldLine !== newLine) {
-					visibleFirstChanged = i;
-					break;
-				}
-			}
-			if (visibleFirstChanged === -1) {
-				logRedraw(`all changes above viewport (firstChanged=${firstChanged} < ${prevViewportTop})`);
-				this.positionHardwareCursor(cursorPos, newLines.length);
-				this.previousLines = newLines;
-				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
-				this.previousWidth = width;
-				this.previousHeight = height;
-				this.previousViewportTop = prevViewportTop;
-				return;
-			}
-			// The remaining visible changes would be entirely in the deleted
-			// tail region. The shrink re-anchor repaint above handles every
-			// case where the content bottom moves off the screen bottom, so
-			// this should be unreachable; keep a destructive fallback rather
-			// than let the differential path below desync on an empty render
-			// range (empty loop + untracked tail-clear scrolling).
-			if (visibleFirstChanged >= newLines.length) {
-				logRedraw(
-					`unexpected deleted-tail clamp (visibleFirstChanged=${visibleFirstChanged} >= ${newLines.length})`,
-				);
-				fullRender(true);
-				return;
-			}
-			logRedraw(`clamped firstChanged ${firstChanged} -> ${visibleFirstChanged} (viewportTop=${prevViewportTop})`);
-			firstChanged = visibleFirstChanged;
+			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+			fullRender(true);
+			return;
 		}
 
 		// Render from first changed line to end
@@ -1665,20 +1555,12 @@ export class TUI extends Container {
 				buffer += `\x1b[${moveDown}B`;
 				finalCursorRow = newLines.length - 1;
 			}
-			// Only clear what is actually on screen: writing \r\n past the
-			// bottom row would scroll the terminal without updating
-			// viewportTop/hardwareCursorRow, desyncing every later render.
-			// Rows below the screen bottom are invisible and need no clearing.
 			const extraLines = this.previousLines.length - newLines.length;
-			const rowsBelowCursor = height - 1 - (finalCursorRow - viewportTop);
-			const clearLines = Math.max(0, Math.min(extraLines, rowsBelowCursor));
-			for (let i = 0; i < clearLines; i++) {
+			for (let i = newLines.length; i < this.previousLines.length; i++) {
 				buffer += "\r\n\x1b[2K";
 			}
 			// Move cursor back to end of new content
-			if (clearLines > 0) {
-				buffer += `\x1b[${clearLines}A`;
-			}
+			buffer += `\x1b[${extraLines}A`;
 		}
 
 		buffer += "\x1b[?2026l"; // End synchronized output

@@ -41,6 +41,7 @@ export interface LoopStepEndEvent {
    */
   readonly providerFinishReason?: FinishReason | undefined;
   readonly rawFinishReason?: string | undefined;
+  readonly messageId?: string | undefined;
 }
 
 export interface LoopStepRetryingEvent {

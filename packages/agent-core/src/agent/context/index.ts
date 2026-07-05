@@ -3,6 +3,7 @@ import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
+import { extractImageCompressionCaptions } from '../../tools/support/image-compress';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
 import { escapeXml } from '../../utils/xml-escape';
 import {
@@ -66,9 +67,23 @@ export class ContextMemory {
     origin: PromptOrigin = USER_PROMPT_ORIGIN,
   ): void {
     if (content.length === 0) return;
+    // Prompt ingestion (server upload/base64 route, TUI paste, ACP) annotates
+    // a compressed image with an inline `<system>` caption next to the image.
+    // Left inside the user message, that raw markup is user-visible in every
+    // history projection (TUI replay, vis, export). Reroute each caption
+    // through the built-in system-reminder injection — hidden by its
+    // `injection` origin — and keep only the real user content here.
+    const { captions, parts } =
+      origin.kind === 'user'
+        ? splitImageCompressionCaptions(content)
+        : { captions: [], parts: [...content] };
+    for (const caption of captions) {
+      this.appendSystemReminder(caption, { kind: 'injection', variant: 'image_compression' });
+    }
+    if (parts.length === 0) return;
     this.appendMessage({
       role: 'user',
-      content: [...content],
+      content: parts,
       toolCalls: [],
       origin,
     });
@@ -700,6 +715,35 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
 
 function isEmptyEquivalentContentArray(output: readonly ContentPart[]): boolean {
   return output.every((part) => part.type === 'text' && part.text.trim().length === 0);
+}
+
+// Split inline image-compression captions (see buildImageCompressionCaption)
+// out of user prompt content. A caption may be a standalone text part (server
+// route, ACP) or merged into an adjacent text segment (TUI paste), so each
+// text part is scanned rather than matched whole. Text left empty once its
+// captions are removed is dropped entirely.
+function splitImageCompressionCaptions(content: readonly ContentPart[]): {
+  captions: readonly string[];
+  parts: ContentPart[];
+} {
+  const captions: string[] = [];
+  const parts: ContentPart[] = [];
+  for (const part of content) {
+    if (part.type !== 'text') {
+      parts.push(part);
+      continue;
+    }
+    const extracted = extractImageCompressionCaptions(part.text);
+    if (extracted.captions.length === 0) {
+      parts.push(part);
+      continue;
+    }
+    captions.push(...extracted.captions);
+    if (extracted.text.trim().length > 0) {
+      parts.push({ type: 'text', text: extracted.text });
+    }
+  }
+  return { captions, parts };
 }
 
 function isEmptyOutputText(output: string): boolean {

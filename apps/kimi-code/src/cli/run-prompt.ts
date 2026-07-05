@@ -338,6 +338,7 @@ async function resolvePromptSession(
     model,
     permission: 'auto',
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    drainAgentTasksOnStop: true,
   });
   installHeadlessHandlers(session);
   return {
@@ -510,7 +511,19 @@ function runPromptTurn(
           return;
         case 'turn.ended':
           if (event.reason === 'completed') {
-            finish();
+            void (async () => {
+              // Flush the buffered assistant message before draining background
+              // tasks: in stream-json mode the final message is only emitted by
+              // finish(), so a long background wait would otherwise withhold the
+              // main turn's result until the drain settles.
+              outputWriter.flushAssistant();
+              try {
+                await session.waitForBackgroundTasksOnPrint();
+              } catch (error) {
+                log.warn('waitForBackgroundTasksOnPrint failed', { error });
+              }
+              finish();
+            })();
             return;
           }
           finish(new Error(formatTurnEndedFailure(event)));

@@ -58,6 +58,11 @@ export interface RegisterApiV1RoutesOptions {
    * `--allow-remote-terminals`.
    */
   readonly enableTerminals?: boolean;
+  /**
+   * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
+   * from the `--dangerous-bypass-auth` CLI flag.
+   */
+  readonly dangerousBypassAuth?: boolean;
 }
 
 export async function registerApiV1Routes(
@@ -74,6 +79,7 @@ export async function registerApiV1Routes(
       serverVersion: opts.serverVersion,
       serverId: ulid(),
       startedAt: new Date().toISOString(),
+      dangerousBypassAuth: opts.dangerousBypassAuth === true,
     });
 
     registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], ix);

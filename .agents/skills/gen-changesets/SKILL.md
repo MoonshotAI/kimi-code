@@ -147,6 +147,7 @@ Clarify session status typing for internal SDK callers.
 
 `@moonshot-ai/kimi-web` is ignored by changesets and must **never** appear in a changeset frontmatter. Because the web app is bundled into the CLI release artifact, any web change that ships must list `@moonshot-ai/kimi-code` instead and describe the actual web-facing change in the text.
 
+- Prefix the changelog entry text with `web: ` (for example `web: Fix the chat not scrolling to the bottom after sending a message.`) so the synced docs changelog can mark web UI entries. Apply this whenever the change is to the web project (`@moonshot-ai/kimi-web`).
 - If a PR contains both web UI changes and server API changes, split them into separate changesets so each entry has a focused description.
 - Do not enumerate every micro-tweak; keep it to one sentence that captures what the web user gets.
 
@@ -157,7 +158,7 @@ Web-only fix:
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix the web chat not scrolling to the bottom after sending a message.
+web: Fix the chat not scrolling to the bottom after sending a message.
 ```
 
 Web UI plus server APIs in the same PR (split into two changesets):
@@ -167,7 +168,7 @@ Web UI plus server APIs in the same PR (split into two changesets):
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add the server-hosted web UI, including chat layout and session list behaviors.
+web: Add the server-hosted web UI, including chat layout and session list behaviors.
 ```
 
 ```markdown
@@ -226,3 +227,4 @@ Fix the transcript jumping to the top when scrolling up through history during s
 - The CLI wording mentions internal package names, class names, or PR numbers.
 - The entry includes real internal identifiers instead of neutral placeholders.
 - A change that only touches `@moonshot-ai/pi-tui` lists `@moonshot-ai/kimi-code` instead of `@moonshot-ai/pi-tui`, or mixes both packages in one frontmatter.
+- A web app change entry is missing the `web: ` prefix.

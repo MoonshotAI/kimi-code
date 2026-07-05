@@ -9,8 +9,15 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
-import type { ThinkingLevel } from '../../api/types';
+import type { AppModel, ThinkingLevel } from '../../api/types';
 import type { ColorScheme } from '../../composables/useKimiWebClient';
+import {
+  coerceThinkingForModel,
+  commitLevel,
+  effortLabel,
+  modelThinkingAvailability,
+  segmentsFor,
+} from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
@@ -30,8 +37,16 @@ const props = withDefaults(
     conversationToc?: boolean;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
+    /** Available models — used to derive the current model's thinking segments. */
+    models?: AppModel[];
   }>(),
-  { colorScheme: 'system', uiFontSize: 14, authReady: false, serverVersion: '' },
+  {
+    colorScheme: 'system',
+    uiFontSize: 14,
+    authReady: false,
+    serverVersion: '',
+    models: () => [],
+  },
 );
 
 const emit = defineEmits<{
@@ -54,7 +69,32 @@ function onColorScheme(v: string): void {
 
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
 
-const thinkingLevel = computed<ThinkingLevel>(() => props.thinking ?? 'high');
+const currentModel = computed<AppModel | undefined>(() => {
+  const raw = props.status?.modelId ?? props.status?.model ?? '';
+  return props.models?.find(
+    (m) => m.id === raw || m.model === raw || m.displayName === props.status?.model,
+  );
+});
+const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
+const thinkingSegments = computed(() => segmentsFor(currentModel.value));
+// The persisted level can be stale relative to the active model (e.g. 'on'
+// from a boolean model, or 'off' while viewing an always-on effort model).
+// Coerce it before computing the active segment so the mobile sheet shows and
+// selects the same model-aware default the composer and prompt submission use.
+const coercedThinkingLevel = computed(() =>
+  coerceThinkingForModel(currentModel.value, props.thinking ?? 'off'),
+);
+// Runtime level clamped to the segments this model actually offers.
+const activeThinkingSegment = computed<string>(() => {
+  const segs = thinkingSegments.value;
+  const level = coercedThinkingLevel.value;
+  if (segs.includes(level)) return level;
+  if (segs.includes('on')) return 'on';
+  return segs[0] ?? 'off';
+});
+const thinkingOptions = computed(() =>
+  thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
+);
 const planOn = computed<boolean>(() => props.planMode === true);
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
 
@@ -82,9 +122,8 @@ const ctxValue = computed<string>(() =>
   props.status.ctxMax > 0 ? `${kFmt(props.status.ctxUsed)}/${kFmt(props.status.ctxMax)}` : t('status.statusNone'),
 );
 
-function cycleThinking(): void {
-  // On/off toggle (TUI parity). 'high' = the backend default effort.
-  emit('setThinking', thinkingLevel.value === 'off' ? 'high' : 'off');
+function setThinkingSegment(value: string): void {
+  emit('setThinking', commitLevel(currentModel.value, value));
 }
 
 function cyclePermission(): void {
@@ -126,14 +165,28 @@ function onLogout(): void {
       <span class="chev">›</span>
     </button>
 
-    <!-- Thinking level → inline cycle (value + chevron) -->
-    <button type="button" class="srow" @click="cycleThinking">
+    <!-- Thinking level → segmented control (or read-only value when single/unsupported) -->
+    <div class="srow read-only">
       <span class="srow-main">
         <span class="srow-label">{{ t('status.statusThinking') }}</span>
+        <span
+          v-if="thinkingAvailability === 'unsupported'"
+          class="srow-sub"
+        >{{ t('status.modeNotSupported') }}</span>
       </span>
-      <span class="srow-val">{{ thinkingLevel === 'off' ? t('status.planOff') : t('status.planOn') }}</span>
-      <span class="chev">›</span>
-    </button>
+      <SegmentedControl
+        v-if="thinkingSegments.length > 1"
+        :model-value="activeThinkingSegment"
+        :options="thinkingOptions"
+        size="sm"
+        @update:model-value="setThinkingSegment"
+      />
+      <span
+        v-else
+        class="srow-val"
+        :class="{ dim: activeThinkingSegment === 'off' }"
+      >{{ activeThinkingSegment === 'off' ? t('status.planOff') : effortLabel(activeThinkingSegment) }}</span>
+    </div>
 
     <!-- Plan mode → real toggle switch -->
     <button type="button" class="srow" @click="emit('togglePlan')">
