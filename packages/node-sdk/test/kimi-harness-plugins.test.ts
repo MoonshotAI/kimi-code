@@ -24,7 +24,6 @@ async function makeTempDir(): Promise<string> {
 describe('KimiHarness plugin management', () => {
   it('lists, installs, enables, disables, and removes plugins', async () => {
     const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
     const harness = createKimiHarness({
       identity: TEST_IDENTITY,
