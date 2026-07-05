@@ -83,6 +83,7 @@ const emit = defineEmits<{
 // Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
 const showSearch = ref(false);
+const sessionSearchShortcut = isAppleShortcutPlatform() ? '⌘K' : 'Ctrl K';
 
 function openSearch(): void {
   // Sessions are loaded per-workspace (first page only); lazily drain the rest
@@ -100,6 +101,14 @@ function onSearchKeydown(e: KeyboardEvent): void {
 
 onMounted(() => window.addEventListener('keydown', onSearchKeydown));
 onBeforeUnmount(() => window.removeEventListener('keydown', onSearchKeydown));
+
+function isAppleShortcutPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (/Mac|iPod|iPhone|iPad/.test(navigator.platform)) return true;
+
+  const userAgentData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  return userAgentData?.platform === 'macOS' || userAgentData?.platform === 'iOS';
+}
 
 // Scroll-linked header seam: the .btn-wrap bottom border/shadow only appears
 // once the session list has actually scrolled, so an unscrolled list shows no
@@ -590,7 +599,7 @@ onBeforeUnmount(() => {
       <!-- Session search — opens the Spotlight-style search dialog -->
       <button class="search" type="button" @click="openSearch">
         <Icon class="search-icon" name="search" />
-        <span class="search-input">{{ t('sidebar.searchShortcut') }}</span>
+        <span class="search-input">{{ t('sidebar.searchShortcut', { shortcut: sessionSearchShortcut }) }}</span>
       </button>
 
       <!-- New chat + new workspace buttons -->
