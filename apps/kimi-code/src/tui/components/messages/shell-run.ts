@@ -4,6 +4,8 @@ import { currentTheme } from '#/tui/theme';
 
 import { formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
 
+import { FixedHeightWindow } from './fixed-height-window';
+
 const RUNNING_TAIL_LINES = 5;
 const TIMER_INTERVAL_MS = 1000;
 // Cap the live running buffer so a command that spews output for minutes can't
@@ -105,26 +107,47 @@ export class ShellRunComponent extends Container {
       if (this.backgrounded) {
         return `  ${currentTheme.fg('textDim', 'Moved to background.')}`;
       }
-      if (!this.running) {
-        return formatBashOutputForDisplay(this.finalStdout, this.finalStderr, this.finalIsError)
-          .split('\n')
-          .map((line) => `  ${line}`)
-          .join('\n');
-      }
       const elapsed = Math.floor((Date.now() - this.startedAt) / 1000);
       const dim = (s: string): string => currentTheme.fg('textDim', s);
-      const trimmed = sanitizeShellOutput(this.combined).trimEnd();
-      let body: string;
-      let extra = 0;
-      if (trimmed.length === 0) {
-        body = `  ${dim('Running…')}`;
-      } else {
-        const lines = trimmed.split('\n');
-        const tail = lines.slice(-RUNNING_TAIL_LINES);
-        extra = Math.max(0, lines.length - RUNNING_TAIL_LINES);
-        body = tail.map((line) => `  ${dim(line)}`).join('\n');
+
+      if (!this.running) {
+        // Finished: show the tail of the final output in the same fixed
+        // window as the running view so the card height does not change.
+        const allLines = formatBashOutputForDisplay(
+          this.finalStdout,
+          this.finalStderr,
+          this.finalIsError,
+        ).split('\n');
+        const window = new FixedHeightWindow({
+          height: RUNNING_TAIL_LINES,
+          tail: true,
+          lines: allLines,
+        });
+        const body = window
+          .render(80)
+          .map((line) => `  ${line}`)
+          .join('\n');
+        const hidden = Math.max(0, allLines.length - RUNNING_TAIL_LINES);
+        const status = `  ${dim(
+          `completed${hidden > 0 ? ` · +${String(hidden)} lines` : ''} · ctrl+o to expand`,
+        )}`;
+        return `${body}\n${status}\n `;
       }
-      const timing = `  ${dim(`${extra > 0 ? `+${extra} lines ` : ''}(${elapsed}s)`)}`;
+
+      // Running: dim tail of the combined output + timing + hint.
+      const trimmed = sanitizeShellOutput(this.combined).trimEnd();
+      const allLines = trimmed.length === 0 ? ['Running…'] : trimmed.split('\n');
+      const window = new FixedHeightWindow({
+        height: RUNNING_TAIL_LINES,
+        tail: true,
+        lines: allLines,
+      });
+      const body = window
+        .render(80)
+        .map((line) => `  ${dim(line)}`)
+        .join('\n');
+      const extra = Math.max(0, allLines.length - RUNNING_TAIL_LINES);
+      const timing = `  ${dim(`${extra > 0 ? `+${String(extra)} lines ` : ''}(${String(elapsed)}s)`)}`;
       const hint = `  ${dim('(ctrl+b to run in background)')}`;
       return `${body}\n${timing}\n${hint}`;
     } catch {

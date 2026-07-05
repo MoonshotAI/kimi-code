@@ -120,6 +120,7 @@ interface CustomEditorOptions {
 
 export class CustomEditor extends Editor {
   public onEscape?: () => void;
+  private wasShowingAutocomplete = false;
   /**
    * Fired for every input that is not a lone Escape. Used to disarm a pending
    * double-Esc so only two consecutive Escape presses trigger the shortcut.
@@ -259,6 +260,13 @@ export class CustomEditor extends Editor {
 
   override render(width: number): string[] {
     const lines = super.render(width);
+    const showing = this.isShowingAutocomplete();
+    if (this.wasShowingAutocomplete && !showing) {
+      // Autocomplete dropdown just closed: the editor returned fewer lines,
+      // which would pull the footer up and leave stale rows in scrollback.
+      this.tui.requestRender(true);
+    }
+    this.wasShowingAutocomplete = showing;
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;
     const isBash = this.inputMode === 'bash';

@@ -114,27 +114,35 @@ export class ThinkingComponent implements Component {
         spinner + currentTheme.fg('textDim', 'thinking...'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
-    } else {
+    } else if (this.expanded) {
       const lines: string[] = [''];
       for (let i = 0; i < contentLines.length; i++) {
         const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
         lines.push(p + contentLines[i]);
       }
-
-      if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
-        rendered = lines;
-      } else {
-        // Leading blank + first PREVIEW_LINES content lines + hint line.
-        const truncated = lines.slice(0, 1 + THINKING_PREVIEW_LINES);
-        const remaining = contentLines.length - THINKING_PREVIEW_LINES;
-        const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
-        const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
-        const hintWidth = Math.max(0, width - indentWidth);
-        truncated.push(
-          ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…')),
-        );
-        rendered = truncated;
+      rendered = lines;
+    } else if (contentLines.length > THINKING_PREVIEW_LINES) {
+      // Finalized, collapsed, long content: 2 content rows + hint (4 rows
+      // total), matching the live mode's collapsed height.
+      const first = contentLines[0] ?? '';
+      const second = contentLines[1] ?? '';
+      const header =
+        (this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT) + first;
+      const remaining = contentLines.length - THINKING_PREVIEW_LINES;
+      const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
+      const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
+      const hintWidth = Math.max(0, width - indentWidth);
+      const tailLine =
+        ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…'));
+      rendered = ['', header, MESSAGE_INDENT + second, tailLine];
+    } else {
+      // Finalized, collapsed, short content: natural height, no blank padding.
+      const lines: string[] = [''];
+      for (let i = 0; i < contentLines.length; i++) {
+        const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
+        lines.push(p + contentLines[i]);
       }
+      rendered = lines;
     }
 
     if (isRenderCacheEnabled()) {

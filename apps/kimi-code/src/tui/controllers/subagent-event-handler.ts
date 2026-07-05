@@ -554,6 +554,7 @@ export class SubAgentEventHandler {
     if (index >= 0) {
       children.splice(index, 1);
       this.host.state.transcriptContainer.invalidate();
+      this.host.state.ui.requestRender(true);
     }
     this.host.updateActivityPane();
   }

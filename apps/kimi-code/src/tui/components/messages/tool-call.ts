@@ -30,6 +30,7 @@ import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
+import { FixedHeightWindow } from './fixed-height-window';
 import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
@@ -599,6 +600,9 @@ export class ToolCallComponent extends Container {
   // authoritative final state.
   private progressLines: string[] = [];
   private static readonly MAX_PROGRESS_LINES = 24;
+  // Height of the live progress window while a tool is running. Kept small so
+  // the card does not grow a tall progress region that snaps away on result.
+  private static readonly PROGRESS_WINDOW_LINES = 6;
   private liveOutput = '';
 
   /**
@@ -1518,21 +1522,27 @@ export class ToolCallComponent extends Container {
   private buildProgressBlock(): void {
     if (this.progressLines.length === 0) return;
     if (this.result !== undefined) return;
-    for (const raw of this.progressLines) {
-      if (raw.length === 0) {
-        this.addChild(new Text('', 2, 0));
-        continue;
-      }
-      PROGRESS_URL_RE.lastIndex = 0;
-      const styled = PROGRESS_URL_RE.test(raw)
-        ? raw.replace(PROGRESS_URL_RE, (url) => {
-          const visible = currentTheme.underlineFg('warning', url);
-          return `\u001B]8;;${url}\u001B\\${visible}\u001B]8;;\u001B\\`;
-        })
-        : currentTheme.dim(raw);
-      PROGRESS_URL_RE.lastIndex = 0;
-      this.addChild(new Text(styled, 2, 0));
-    }
+    const styled = this.progressLines.map((raw) => this.styleProgressLine(raw));
+    this.addChild(
+      new FixedHeightWindow({
+        height: ToolCallComponent.PROGRESS_WINDOW_LINES,
+        tail: true,
+        lines: styled,
+      }),
+    );
+  }
+
+  private styleProgressLine(raw: string): string {
+    if (raw.length === 0) return '';
+    PROGRESS_URL_RE.lastIndex = 0;
+    const styled = PROGRESS_URL_RE.test(raw)
+      ? raw.replace(PROGRESS_URL_RE, (url) => {
+        const visible = currentTheme.underlineFg('warning', url);
+        return `\u001B]8;;${url}\u001B\\${visible}\u001B]8;;\u001B\\`;
+      })
+      : currentTheme.dim(raw);
+    PROGRESS_URL_RE.lastIndex = 0;
+    return `  ${styled}`;
   }
 
   private buildLiveOutputBlock(): void {
@@ -1921,7 +1931,6 @@ export class ToolCallComponent extends Container {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
     }
-    const shouldCap = this.result !== undefined && !this.expanded;
     if (name === 'Write') {
       const content = str(this.toolCall.args['content']);
       if (content.length === 0) return;
@@ -1955,9 +1964,10 @@ export class ToolCallComponent extends Container {
       const newStr = str(this.toolCall.args['new_string']);
       if (oldStr.length === 0 && newStr.length === 0) return;
       const filePath = str(this.toolCall.args['file_path'] ?? this.toolCall.args['path']);
+      const editShouldCap = !this.expanded;
       const lines = renderDiffLinesClustered(oldStr, newStr, filePath, {
         contextLines: 3,
-        ...(shouldCap ? { maxLines: COMMAND_PREVIEW_LINES } : {}),
+        ...(editShouldCap ? { maxLines: COMMAND_PREVIEW_LINES, tail: true } : {}),
       });
       for (const line of lines) {
         this.addChild(new Text(line, 2, 0));
@@ -2013,6 +2023,18 @@ export class ToolCallComponent extends Container {
             : i;
         const lineNum = currentTheme.dim(String(originalLineNumber + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
+      }
+      if (allLines.length > maxLines) {
+        const remaining = allLines.length - scrollLines.length;
+        this.addChild(
+          new Text(
+            currentTheme.dim(
+              `... (${String(remaining)} more lines, ${String(allLines.length)} total, ctrl+o to expand)`,
+            ),
+            2,
+            0,
+          ),
+        );
       }
       return;
     }

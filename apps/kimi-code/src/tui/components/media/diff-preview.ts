@@ -156,6 +156,8 @@ export interface ClusteredDiffOptions {
   readonly maxLines?: number;
   readonly isIncomplete?: boolean;
   readonly expandKeyHint?: string;
+  /** When set, keep the tail of the body (latest changes) instead of the head. */
+  readonly tail?: boolean;
 }
 
 interface Cluster {
@@ -254,7 +256,8 @@ export function renderDiffLinesClustered(
 
   if (clusters.length === 0) return output;
 
-  const cap = maxLines !== undefined && maxLines >= 0 ? maxLines : Number.POSITIVE_INFINITY;
+  const cap =
+    maxLines !== undefined && maxLines >= 0 && !opts.tail ? maxLines : Number.POSITIVE_INFINITY;
   let body = 0;
   let prevEnd = -1;
   let truncated = false;
@@ -303,6 +306,19 @@ export function renderDiffLinesClustered(
         ),
       );
     }
+  }
+
+  if (opts.tail && maxLines !== undefined && maxLines >= 0 && output.length > maxLines) {
+    const header = output[0]!;
+    const bodyLines = output.slice(1);
+    const keep = Math.max(1, maxLines - 1);
+    const hidden = bodyLines.length - keep;
+    const hint = opts.expandKeyHint ?? 'ctrl+o';
+    return [
+      header,
+      s.meta(`     … ${String(hidden)} earlier lines hidden (${hint} to expand)`),
+      ...bodyLines.slice(bodyLines.length - keep),
+    ];
   }
 
   return output;

@@ -381,3 +381,33 @@ describe('formatHiddenCounts', () => {
     expect(formatHiddenCounts({ done: 0, in_progress: 0, pending: 0 })).toBe('');
   });
 });
+
+describe('TodoPanelComponent placeholder', () => {
+  it('holds placeholder lines at the last height after clearing', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos([
+      { title: 'a', status: 'done' },
+      { title: 'b', status: 'in_progress' },
+    ]);
+    const before = panel.render(80).length; // border + header + 2 rows
+    panel.setTodos([]); // cleared
+    const after = panel.render(80);
+    expect(after).toHaveLength(before); // placeholder at last height
+    expect(after.every((line) => line.trim() === '')).toBe(true);
+  });
+
+  it('returns no lines when empty before any todos were shown', () => {
+    const panel = new TodoPanelComponent();
+    expect(panel.render(80)).toEqual([]);
+  });
+
+  it('clearPlaceholder removes the placeholder lines', () => {
+    const panel = new TodoPanelComponent();
+    panel.setTodos([{ title: 'a', status: 'done' }]);
+    panel.render(80);
+    panel.setTodos([]);
+    expect(panel.render(80).length).toBeGreaterThan(0);
+    panel.clearPlaceholder();
+    expect(panel.render(80)).toEqual([]);
+  });
+});

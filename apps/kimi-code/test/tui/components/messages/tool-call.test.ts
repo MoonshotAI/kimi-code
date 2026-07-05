@@ -1525,7 +1525,9 @@ describe('ToolCallComponent', () => {
     // Line numbers should reflect actual file positions.
     expect(out).toContain('  21');
     expect(out).toContain('  30');
-    expect(out).not.toContain('ctrl+o to expand');
+    // Streaming preview now appends the same hint as the finalized preview
+    // so the row count stays stable across the streaming -> finalized switch.
+    expect(out).toContain('ctrl+o to expand');
   });
 
   it('switches a streaming tool call to Truncated when the step ended with max_tokens', () => {
@@ -1828,5 +1830,42 @@ describe('ToolCallComponent', () => {
     } finally {
       stderr.restore();
     }
+  });
+
+  it('caps progress lines at a fixed window while running', () => {
+    const tc = new ToolCallComponent(
+      { id: 'bash1', name: 'Bash', args: { command: 'echo hi' } },
+      undefined,
+      stubTui(40),
+    );
+    for (let i = 0; i < 20; i++) {
+      tc.appendProgress(`progress line ${i}`);
+    }
+    const out = tc.render(120);
+    const progressLines = out.filter((line) => line.includes('progress line'));
+    expect(progressLines.length).toBeLessThanOrEqual(6);
+    expect(progressLines.at(-1) ?? '').toContain('progress line 19');
+  });
+
+  it('caps Edit preview at args finalize, before result lands', () => {
+    const many = (n: number): string =>
+      Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n');
+    const tc = new ToolCallComponent(
+      {
+        id: 'e1',
+        name: 'Edit',
+        args: {
+          file_path: 'a.ts',
+          old_string: many(40),
+          new_string: many(40),
+        },
+      },
+      undefined,
+      stubTui(40),
+    );
+    const argsLines = tc.render(120).length; // args finalized, result not yet
+    tc.setResult({ tool_call_id: 'e1', output: 'ok', is_error: false });
+    const resultLines = tc.render(120).length;
+    expect(Math.abs(resultLines - argsLines)).toBeLessThanOrEqual(1);
   });
 });

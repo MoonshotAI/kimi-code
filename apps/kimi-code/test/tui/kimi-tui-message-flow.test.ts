@@ -1318,6 +1318,8 @@ command = "vim"
     expect(transcript).toContain('Review changed files');
 
     driver.state.appState.streamingPhase = 'idle';
+    const requestRender = vi.mocked(driver.state.ui.requestRender);
+    requestRender.mockClear();
     driver.handleUserInput('/undo');
     await confirmUndoSelection(driver);
 
@@ -1329,6 +1331,7 @@ command = "vim"
     expect(transcript).not.toContain('launch swarm');
     expect(transcript).not.toContain('Agent Swarm');
     expect(transcript).not.toContain('Review changed files');
+    expect(requestRender.mock.calls.some((call) => call[0] === true)).toBe(true);
   });
 
   it('removes approval notices from undone turns', async () => {
@@ -4761,5 +4764,25 @@ describe('/effort support_efforts override', () => {
       expect(renderTranscript(driver)).toContain('Unsupported thinking effort "max" for k2. Available: off, low, high');
     });
     expect(renderTranscript(driver)).not.toContain('Switched to Kimi K2 with thinking max.');
+  });
+});
+
+describe('restoreEditor', () => {
+  it('forces a full render to clear dialog residue', async () => {
+    const { driver } = await makeDriver();
+    const requestRender = vi.mocked(driver.state.ui.requestRender);
+    requestRender.mockClear();
+    driver.restoreEditor();
+    expect(requestRender).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('toggleTodoPanelExpansion', () => {
+  it('forces a full render', async () => {
+    const { driver } = await makeDriver();
+    const requestRender = vi.mocked(driver.state.ui.requestRender);
+    requestRender.mockClear();
+    (driver as any).toggleTodoPanelExpansion();
+    expect(requestRender).toHaveBeenCalledWith(true);
   });
 });

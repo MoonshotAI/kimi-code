@@ -2366,7 +2366,10 @@ export class KimiTUI {
 
   toggleTodoPanelExpansion(): void {
     this.state.todoPanel.toggleExpanded();
-    this.state.ui.requestRender();
+    // Expanding/collapsing the todo panel shifts the editor vertically; the
+    // clamped differential render leaves stale rows in scrollback. Force a full
+    // render, matching the Ctrl+O toggle a few lines above.
+    this.state.ui.requestRender(true);
   }
 
   private async detachRunningShellCommand(): Promise<void> {
@@ -2598,7 +2601,10 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
-    this.state.ui.requestRender();
+    // Closing a dialog/selector shrinks the editor area; differential rendering
+    // leaves stale bytes in scrollback and a misplaced footer. Force a full
+    // render, matching the Ctrl+O expansion toggle.
+    this.state.ui.requestRender(true);
   }
 
   restoreInputText(text: string): void {

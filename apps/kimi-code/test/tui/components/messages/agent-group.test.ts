@@ -231,3 +231,30 @@ describe('AgentGroupComponent', () => {
     b.dispose();
   });
 });
+
+describe('AgentGroupComponent height stability', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps a stable two-row body per agent after completion', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const ui = stubTui();
+    const group = new AgentGroupComponent(ui);
+    const a = createAgent('call_agent_1', 'inspect project', 'explore', ui);
+    startAgent(a, 'call_agent_1', 'explore');
+    a.appendSubToolCall({ id: 'sub_call_agent_1:read', name: 'Read', args: { path: 'src/a.ts' } });
+    group.attach('call_agent_1', a);
+
+    const runningLines = group.render(120).length;
+
+    a.onSubagentCompleted({ resultSummary: 'Done' });
+    vi.advanceTimersByTime(250);
+    const doneLines = group.render(120).length;
+
+    expect(doneLines).toBe(runningLines);
+    group.dispose();
+    a.dispose();
+  });
+});

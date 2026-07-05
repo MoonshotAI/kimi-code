@@ -89,4 +89,21 @@ describe('ThinkingComponent', () => {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);
     }
   });
+
+  it('keeps the same line count in live and finalized modes for long content', () => {
+    const live = new ThinkingComponent(longThinking, true, 'live');
+    const liveLines = live.render(80).length;
+    live.finalize();
+    const finalLines = live.render(80).length;
+    expect(finalLines).toBe(liveLines);
+    expect(finalLines).toBe(4);
+  });
+
+  it('does not pad short finalized thinking with blank lines', () => {
+    const c = new ThinkingComponent('one line', true, 'live');
+    c.finalize();
+    const lines = c.render(80);
+    expect(lines.length).toBeLessThanOrEqual(3);
+    expect(lines.at(-1)?.trim()).not.toBe('');
+  });
 });

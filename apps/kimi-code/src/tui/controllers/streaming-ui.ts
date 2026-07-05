@@ -582,6 +582,7 @@ export class StreamingUIController {
 
   onStreamingTextStart(): void {
     const { state } = this.host;
+    state.todoPanel.clearPlaceholder();
     this._pendingAgentGroup = null;
     this._pendingReadGroup = null;
     const entry = {
@@ -619,6 +620,7 @@ export class StreamingUIController {
     if (fullText.length === 0 && this._activeThinkingComponent === undefined) return;
     const { state } = this.host;
     if (this._activeThinkingComponent === undefined) {
+      state.todoPanel.clearPlaceholder();
       this._pendingAgentGroup = null;
       this._pendingReadGroup = null;
       this._activeThinkingComponent = new ThinkingComponent(
@@ -647,6 +649,7 @@ export class StreamingUIController {
     if (toolCall.name === 'AskUserQuestion') return;
 
     const { state } = this.host;
+    state.todoPanel.clearPlaceholder();
     const tc = new ToolCallComponent(
       toolCall,
       undefined,

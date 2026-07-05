@@ -114,9 +114,19 @@ export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
 export class TodoPanelComponent implements Component {
   private todos: readonly TodoItem[] = [];
   private expanded = false;
+  private lastRenderedLines = 0;
+  private placeholderLines = 0;
 
   setTodos(todos: readonly TodoItem[]): void {
+    const wasEmpty = this.todos.length === 0;
     this.todos = todos.map((t) => ({ title: t.title, status: t.status }));
+    if (!wasEmpty && this.todos.length === 0) {
+      // Cleared from non-empty: hold a placeholder at the last rendered
+      // height until the next AI output starts (clearPlaceholder).
+      this.placeholderLines = this.lastRenderedLines;
+    } else if (this.todos.length > 0) {
+      this.placeholderLines = 0;
+    }
   }
 
   getTodos(): readonly TodoItem[] {
@@ -126,6 +136,11 @@ export class TodoPanelComponent implements Component {
   clear(): void {
     this.todos = [];
     this.expanded = false;
+    this.placeholderLines = 0;
+  }
+
+  clearPlaceholder(): void {
+    this.placeholderLines = 0;
   }
 
   isEmpty(): boolean {
@@ -148,7 +163,12 @@ export class TodoPanelComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    if (this.todos.length === 0) return [];
+    if (this.todos.length === 0) {
+      if (this.placeholderLines > 0) {
+        return Array.from({ length: this.placeholderLines }, () => '');
+      }
+      return [];
+    }
     const c = currentTheme.palette;
     const lines: string[] = [
       chalk.hex(c.border)('─'.repeat(width)),
@@ -178,6 +198,7 @@ export class TodoPanelComponent implements Component {
       }
     }
 
+    this.lastRenderedLines = lines.length;
     return lines.map((line) => truncateToWidth(line, width));
   }
 }

@@ -756,3 +756,26 @@ describe('CustomEditor bash mode file completion', () => {
     expect(calls.every((call) => call.force === true)).toBe(true);
   });
 });
+
+describe('CustomEditor autocomplete full render on close', () => {
+  it('forces a full render when the autocomplete dropdown closes', async () => {
+    const tui = {
+      requestRender: vi.fn(),
+      terminal: { rows: 40, cols: 120 },
+    } as unknown as TUI;
+    const editor = new CustomEditor(tui);
+    editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    editor.render(80);
+    vi.mocked(tui.requestRender).mockClear();
+
+    editor.handleInput(''); // Escape closes the dropdown
+    expect(editor.isShowingAutocomplete()).toBe(false);
+    editor.render(80);
+
+    expect(tui.requestRender).toHaveBeenCalledWith(true);
+  });
+});

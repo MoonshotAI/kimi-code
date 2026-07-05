@@ -135,6 +135,10 @@ export class AgentGroupComponent extends Container {
     });
     if (this.shouldShowDetachHint(snapshots)) {
       this.bodyContainer.addChild(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0));
+    } else {
+      // Keep a placeholder row so the group height does not shrink when the
+      // last running agent finishes and the hint disappears.
+      this.bodyContainer.addChild(new Spacer(1));
     }
 
     this.lastFlushPhases.clear();
@@ -200,7 +204,13 @@ export class AgentGroupComponent extends Container {
       return;
     }
     if (snap.phase === 'done' || snap.phase === 'backgrounded') {
-      // Terminal states omit the second line.
+      // Keep the second line so the row count stays stable across the
+      // running -> done transition. latestActivity falls back to the last
+      // finished sub-tool ("Used {name} ({keyArg})") in terminal states, so
+      // it shows what the agent did last.
+      const activity =
+        snap.latestActivity ?? (snap.phase === 'done' ? 'Completed' : 'Backgrounded');
+      this.bodyContainer.addChild(new Text(`  ${branch2}    ${dim(activity)}`, 0, 0));
       return;
     }
     // Running or not-yet-started agents show latest activity, with a fallback.

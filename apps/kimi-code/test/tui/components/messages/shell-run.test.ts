@@ -67,4 +67,13 @@ describe('ShellRunComponent hardening', () => {
       c.render(100);
     }).not.toThrow();
   });
+
+  it('keeps a stable height between running and finished', () => {
+    const c = create();
+    c.append('line1\nline2\nline3');
+    const runningLines = c.render(100).length;
+    c.finish('out1\nout2\nout3\nout4\nout5\nout6\nout7', '', false);
+    const finishedLines = c.render(100).length;
+    expect(finishedLines).toBe(runningLines);
+  });
 });
