@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Command } from 'commander';
 
 import {
   handlePluginsEnable,
@@ -10,9 +11,32 @@ import {
   handlePluginsRegistryList,
   handlePluginsRegistryRemove,
   handlePluginsRemove,
+  registerPluginsCommand,
 } from '#/cli/sub/plugins';
 import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 import type { PluginMarketplace } from '#/utils/plugin-marketplace';
+
+const mocks = vi.hoisted(() => ({
+  shutdownTelemetry: vi.fn(),
+  createCliTelemetryBootstrap: vi.fn(() => ({
+    homeDir: '/tmp/kimi-home',
+    deviceId: 'device-id',
+    firstLaunch: false,
+  })),
+  initializeCliTelemetry: vi.fn(),
+}));
+
+vi.mock('@moonshot-ai/kimi-telemetry', () => ({
+  track: vi.fn(),
+  setTelemetryContext: vi.fn(),
+  withTelemetryContext: vi.fn(),
+  shutdownTelemetry: mocks.shutdownTelemetry,
+}));
+
+vi.mock('../../../src/cli/telemetry', () => ({
+  createCliTelemetryBootstrap: mocks.createCliTelemetryBootstrap,
+  initializeCliTelemetry: mocks.initializeCliTelemetry,
+}));
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
@@ -297,7 +321,7 @@ describe('handlePluginsRegistryRemove', () => {
 });
 
 describe('handler errors', () => {
-  it('exits when getting plugin info fails', async () => {
+  it('throws when getting plugin info fails', async () => {
     const deps = makeDeps({
       getHarness: vi.fn(() => ({
         getPluginInfo: vi.fn(async () => {
@@ -306,7 +330,64 @@ describe('handler errors', () => {
       })),
     });
 
-    await expect(handlePluginsInfo(deps as never, 'demo', { json: true })).rejects.toThrow('exit:1');
-    expect(getWritten(deps.stderr)).toContain('Failed to get plugin info: boom');
+    await expect(handlePluginsInfo(deps as never, 'demo', { json: true })).rejects.toThrow(
+      'Failed to get plugin info: boom',
+    );
+    expect(deps.exit).not.toHaveBeenCalled();
+  });
+});
+
+describe('registerPluginsCommand', () => {
+  function makeHarness(overrides: Record<string, unknown> = {}) {
+    return {
+      listPlugins: vi.fn(async () => []),
+      ensureConfigFile: vi.fn(async () => undefined),
+      getConfig: vi.fn(async () => ({ telemetry: false, defaultModel: 'kimi' })),
+      close: vi.fn(async () => undefined),
+      ...overrides,
+    };
+  }
+
+  it('cleans up and exits 1 when a handler throws', async () => {
+    const harness = makeHarness({
+      listPlugins: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+    });
+    const exit = vi.fn((code: number) => {
+      throw new Error(`exit:${code}`);
+    }) as (code: number) => never;
+    const stderr = { write: vi.fn() };
+    const parent = new Command();
+    registerPluginsCommand(parent, {
+      getHarness: () => harness as never,
+      stderr,
+      exit,
+      cwd: () => '/tmp/work',
+      getHomeDir: () => '/tmp/kimi-home',
+    });
+
+    await expect(parent.parseAsync(['node', 'test', 'plugins', 'list'])).rejects.toThrow('exit:1');
+
+    expect(mocks.shutdownTelemetry).toHaveBeenCalled();
+    expect(getWritten(stderr)).toContain('Failed to list plugins: boom');
+  });
+
+  it('exits 0 after cleanup on success', async () => {
+    const harness = makeHarness();
+    const exit = vi.fn((code: number) => {
+      throw new Error(`exit:${code}`);
+    }) as (code: number) => never;
+    const parent = new Command();
+    registerPluginsCommand(parent, {
+      getHarness: () => harness as never,
+      exit,
+      cwd: () => '/tmp/work',
+      getHomeDir: () => '/tmp/kimi-home',
+    });
+
+    await expect(parent.parseAsync(['node', 'test', 'plugins', 'list'])).rejects.toThrow('exit:0');
+
+    expect(mocks.shutdownTelemetry).toHaveBeenCalled();
   });
 });

@@ -81,6 +81,8 @@ export interface RegistryListOptions {
   readonly json?: boolean;
 }
 
+class PluginsCommandError extends Error {}
+
 export async function handlePluginsList(
   deps: PluginsDeps,
   options: ListOptions,
@@ -97,8 +99,7 @@ export async function handlePluginsList(
     }
     deps.stdout.write(formatPluginsTable(plugins));
   } catch (error) {
-    deps.stderr.write(`Failed to list plugins: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to list plugins: ${errorMessage(error)}`);
   }
 }
 
@@ -115,8 +116,7 @@ export async function handlePluginsInfo(
     }
     deps.stdout.write(formatPluginInfo(info));
   } catch (error) {
-    deps.stderr.write(`Failed to get plugin info: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to get plugin info: ${errorMessage(error)}`);
   }
 }
 
@@ -139,8 +139,7 @@ export async function handlePluginsInstall(
     const summary = await deps.getHarness().installPlugin(source);
     deps.stdout.write(`Installed ${summary.displayName} (${summary.id}).\n`);
   } catch (error) {
-    deps.stderr.write(`Failed to install plugin: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to install plugin: ${errorMessage(error)}`);
   }
 }
 
@@ -162,8 +161,7 @@ export async function handlePluginsRemove(
     await deps.getHarness().removePlugin(options.id);
     deps.stdout.write(`Removed ${options.id}.\n`);
   } catch (error) {
-    deps.stderr.write(`Failed to remove plugin: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to remove plugin: ${errorMessage(error)}`);
   }
 }
 
@@ -175,8 +173,7 @@ export async function handlePluginsEnable(
     await deps.getHarness().setPluginEnabled(options.id, options.enabled);
     deps.stdout.write(`${options.enabled ? 'Enabled' : 'Disabled'} ${options.id}.\n`);
   } catch (error) {
-    deps.stderr.write(`Failed to ${options.enabled ? 'enable' : 'disable'} plugin: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to ${options.enabled ? 'enable' : 'disable'} plugin: ${errorMessage(error)}`);
   }
 }
 
@@ -209,8 +206,7 @@ export async function handlePluginsMarketplace(
     }
     deps.stdout.write(formatMarketplaceTable(marketplace.plugins));
   } catch (error) {
-    deps.stderr.write(`Failed to load marketplace: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to load marketplace: ${errorMessage(error)}`);
   }
 }
 
@@ -230,8 +226,7 @@ export async function handlePluginsRegistryList(
     }
     deps.stdout.write(formatRegistriesTable(file.registries));
   } catch (error) {
-    deps.stderr.write(`Failed to list registries: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to list registries: ${errorMessage(error)}`);
   }
 }
 
@@ -246,8 +241,7 @@ export async function handlePluginsRegistryAdd(
     });
     deps.stdout.write(`Added registry ${options.name ?? options.url}.\n`);
   } catch (error) {
-    deps.stderr.write(`Failed to add registry: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to add registry: ${errorMessage(error)}`);
   }
 }
 
@@ -259,21 +253,25 @@ export async function handlePluginsRegistryRemove(
     await deps.removeRegistry(deps.getHomeDir(), options.nameOrUrl);
     deps.stdout.write(`Removed registry ${options.nameOrUrl}.\n`);
   } catch (error) {
-    deps.stderr.write(`Failed to remove registry: ${errorMessage(error)}\n`);
-    deps.exit(1);
+    throw new PluginsCommandError(`Failed to remove registry: ${errorMessage(error)}`);
   }
 }
 
 export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDeps>): void {
   const runWithLifecycle = async (fn: (d: DefaultPluginsDeps) => Promise<void>): Promise<void> => {
     const d = createDefaultPluginsDeps(deps);
+    let failed = false;
     try {
       await d.initializeDefaultTelemetry();
       await fn(d);
+    } catch (error) {
+      failed = true;
+      d.stderr.write(`${errorMessage(error)}\n`);
     } finally {
       await d.shutdownDefaultTelemetry();
       await d.closeDefaultHarness();
     }
+    d.exit(failed ? 1 : 0);
   };
 
   const program = parent.command('plugins').description('Manage Kimi Code plugins.');
