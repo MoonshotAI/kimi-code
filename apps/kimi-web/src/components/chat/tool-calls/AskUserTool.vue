@@ -12,6 +12,7 @@
      failure reason is not hidden behind an empty option list. -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
 import { toolGlyph, toolLabel } from '../../../lib/toolMeta';
 import {
@@ -37,11 +38,13 @@ defineEmits<{
   openToolDiff: [id: string];
 }>();
 
+const { t } = useI18n();
+
 const SUMMARY_MAX = 80;
 
 function clip(s: string, max = SUMMARY_MAX): string {
-  const t = s.trim();
-  return t.length > max ? t.slice(0, max - 1) + '…' : t;
+  const trimmed = s.trim();
+  return trimmed.length > max ? trimmed.slice(0, max - 1) + '…' : trimmed;
 }
 
 const questions = computed(() => parseAskInput(props.tool.arg));
@@ -70,18 +73,20 @@ function glyphFor(multiSelect: boolean, on: boolean): string {
 
 const summary = computed(() => {
   if (!recognized.value) return clip(props.tool.output?.[0] ?? '');
-  if (isDismissed.value) return 'Dismissed';
+  if (isDismissed.value) return t('tools.ask.dismissed');
   const first = questions.value[0]?.question ?? '';
   const base = clip(first);
   if (questions.value.length <= 1) return base;
-  return `${base}  (+${questions.value.length - 1} more)`;
+  return `${base}  ${t('tools.ask.more', { count: questions.value.length - 1 })}`;
 });
 
 const chip = computed(() => {
   if (!recognized.value) return '';
-  if (isDismissed.value) return 'Dismissed';
+  if (isDismissed.value) return t('tools.ask.dismissed');
   if (answeredCount.value === 0) return '';
-  return `${answeredCount.value} ${answeredCount.value === 1 ? 'answer' : 'answers'}`;
+  return answeredCount.value === 1
+    ? t('tools.ask.answer', { count: 1 })
+    : t('tools.ask.answers', { count: answeredCount.value });
 });
 
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
@@ -148,7 +153,7 @@ watch(
           </div>
           <div v-if="isIndeterminate(qi)" class="au-opt sel">
             <span class="au-glyph">●</span>
-            <span class="au-label">Answered</span>
+            <span class="au-label">{{ t('tools.ask.answered') }}</span>
           </div>
         </div>
       </div>

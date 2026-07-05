@@ -26,4 +26,11 @@ export default {
     error: 'failed',
     done: 'done',
   },
+  ask: {
+    dismissed: 'Dismissed',
+    answer: '{count} answer',
+    answers: '{count} answers',
+    answered: 'Answered',
+    more: '(+{count} more)',
+  },
 } as const;

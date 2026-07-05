@@ -26,4 +26,11 @@ export default {
     error: '有失败',
     done: '已完成',
   },
+  ask: {
+    dismissed: '已忽略',
+    answer: '{count} 个回答',
+    answers: '{count} 个回答',
+    answered: '已回答',
+    more: '（还有 {count} 个）',
+  },
 } as const;
