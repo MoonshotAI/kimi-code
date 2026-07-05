@@ -508,7 +508,7 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.markdown-renderer blockquote),
 .md :deep(.markdown-renderer td),
 .md :deep(.markdown-renderer th) {
-  font-size: 15px;
+  font-size: var(--content-font-size);
 }
 
 /* Emphasis — bold steps up from the body (medium/500) to semibold (700). */

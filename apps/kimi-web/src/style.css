@@ -197,12 +197,14 @@ summary {
   --r-sm: var(--radius-md);
   --r-md: var(--radius-lg);
   --r-lg: var(--radius-xl);
-  --ui-font-size: 14px;
+  --base-ui-font-size: 14px;
+  --ui-font-size: var(--base-ui-font-size);
   --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
   --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
   --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
   --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
-  --content-font-size: 15px;
+  --content-font-size: calc(var(--base-ui-font-size) + 1px);
+  --sidebar-ui-font-size: calc(var(--base-ui-font-size) + 1px);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Body/UI font follows the design-system canonical token (system UI font
      first; Inter intentionally NOT in the body chain — it stays reserved for

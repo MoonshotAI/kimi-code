@@ -1294,7 +1294,7 @@ function selectModel(modelId: string): void {
   outline: none;
   resize: none;
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--content-font-size);
   background: transparent;
   min-height: 36px;
   max-height: calc(100vh / 4);
