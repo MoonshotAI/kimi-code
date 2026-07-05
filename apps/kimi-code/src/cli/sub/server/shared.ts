@@ -129,10 +129,16 @@ function parseHost(raw: string | boolean | undefined): string {
   return raw;
 }
 
+function parseDecimalInteger(raw: string): number | undefined {
+  if (!/^\d+$/.test(raw)) return undefined;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
 function parseIdleGraceMs(raw: string | undefined): number {
   if (raw === undefined) return DEFAULT_IDLE_GRACE_MS;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 0) {
+  const n = parseDecimalInteger(raw);
+  if (n === undefined) {
     throw new Error(`error: invalid --idle-grace-ms value: ${raw}`);
   }
   return n;
@@ -140,8 +146,8 @@ function parseIdleGraceMs(raw: string | undefined): number {
 
 export function parsePort(raw: string | undefined, label: string, fallback: number): number {
   if (raw === undefined) return fallback;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 0 || n > 65535) {
+  const n = parseDecimalInteger(raw);
+  if (n === undefined || n > 65535) {
     throw new Error(`error: invalid ${label} value: ${raw}`);
   }
   return n;

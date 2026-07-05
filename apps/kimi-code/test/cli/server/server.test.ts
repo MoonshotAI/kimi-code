@@ -663,6 +663,27 @@ describe('shared parsers stay strict', () => {
     expect(parsePort('8080', '--port', 58627)).toBe(8080);
   });
 
+  it('rejects --port values that are not complete decimal integers', async () => {
+    const { parsePort } = await import('#/cli/sub/server/shared');
+    expect(() => parsePort('123abc', '--port', 58627)).toThrow(/invalid --port/);
+    expect(() => parsePort('1.5', '--port', 58627)).toThrow(/invalid --port/);
+    expect(() => parsePort('10ms', '--port', 58627)).toThrow(/invalid --port/);
+  });
+
+  it('rejects --idle-grace-ms values that are not complete decimal integers', async () => {
+    const { parseServerOptions } = await import('#/cli/sub/server/shared');
+    expect(() => parseServerOptions({ idleGraceMs: '123abc' })).toThrow(
+      /invalid --idle-grace-ms/,
+    );
+    expect(() => parseServerOptions({ idleGraceMs: '1.5' })).toThrow(
+      /invalid --idle-grace-ms/,
+    );
+    expect(() => parseServerOptions({ idleGraceMs: '10ms' })).toThrow(
+      /invalid --idle-grace-ms/,
+    );
+    expect(parseServerOptions({ idleGraceMs: '1000' }).idleGraceMs).toBe(1000);
+  });
+
   it('rejects unknown --log-level values', async () => {
     const { parseLogLevel } = await import('#/cli/sub/server/shared');
     expect(() => parseLogLevel('shout')).toThrow(/invalid --log-level/);
