@@ -526,10 +526,10 @@ function copyDiff(code: string, idx: number) {
   margin: 0.85em 0 0.35em;
   line-height: var(--leading-tight);
 }
-.md :deep(h1) { font-size: var(--text-xl); border-bottom: 1px solid var(--color-line); padding-bottom: 4px; }
-.md :deep(h2) { font-size: var(--text-lg); }
-.md :deep(h3) { font-size: var(--text-lg); }
-.md :deep(h4) { font-size: var(--text-base); color: var(--color-text-muted); }
+.md :deep(h1) { font-size: max(var(--text-xl), calc(var(--content-font-size) + 3px)); border-bottom: 1px solid var(--color-line); padding-bottom: 4px; }
+.md :deep(h2) { font-size: max(var(--text-lg), calc(var(--content-font-size) + 2px)); }
+.md :deep(h3) { font-size: max(var(--text-lg), calc(var(--content-font-size) + 1px)); }
+.md :deep(h4) { font-size: max(var(--text-base), calc(var(--content-font-size) + 1px)); color: var(--color-text-muted); }
 
 /* Paragraphs */
 .md :deep(p) {
