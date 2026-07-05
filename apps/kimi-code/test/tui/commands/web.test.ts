@@ -146,6 +146,15 @@ describe('webSessionUrl', () => {
     );
   });
 
+  it('encodes bearer token fragments so URLSearchParams can read them back', () => {
+    const token = 'a&b a%20b #token';
+    const url = webSessionUrl('http://127.0.0.1:58627', 'abc123', token);
+    expect(url).toBe(
+      `http://127.0.0.1:58627/sessions/abc123#token=${encodeURIComponent(token)}`,
+    );
+    expect(new URLSearchParams(new URL(url).hash.slice(1)).get('token')).toBe(token);
+  });
+
   it('omits the fragment when no token is available', () => {
     expect(webSessionUrl('http://127.0.0.1:58627', 'abc123', undefined)).toBe(
       'http://127.0.0.1:58627/sessions/abc123',

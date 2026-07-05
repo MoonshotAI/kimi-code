@@ -88,5 +88,5 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
  */
 export function webSessionUrl(origin: string, sessionId: string, token?: string): string {
   const base = `${origin.replace(/\/+$/, '')}/sessions/${encodeURIComponent(sessionId)}`;
-  return token === undefined ? base : `${base}#token=${token}`;
+  return token === undefined ? base : `${base}#token=${encodeURIComponent(token)}`;
 }

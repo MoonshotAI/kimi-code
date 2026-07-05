@@ -16,7 +16,7 @@ import { formatHostForUrl, listNetworkAddresses, type NetworkAddress } from './n
  */
 export function buildOpenableUrl(bareOrigin: string, token: string | undefined): string {
   const base = bareOrigin.endsWith('/') ? bareOrigin.slice(0, -1) : bareOrigin;
-  return token === undefined ? `${base}/` : `${base}/#token=${token}`;
+  return token === undefined ? `${base}/` : `${base}/#token=${encodeURIComponent(token)}`;
 }
 
 /**

@@ -1585,6 +1585,14 @@ describe('buildWebUrl', () => {
     expect(parsed.search).not.toContain('abc123');
   });
 
+  it('encodes token fragment values before Web UI parsing', async () => {
+    const { buildWebUrl } = await import('#/cli/sub/server/run');
+    const token = 'a&b a%20b #token';
+    const url = buildWebUrl('http://127.0.0.1:58627', token);
+    expect(url).toBe(`http://127.0.0.1:58627/#token=${encodeURIComponent(token)}`);
+    expect(new URLSearchParams(new URL(url).hash.slice(1)).get('token')).toBe(token);
+  });
+
   it('normalizes a trailing slash', async () => {
     const { buildWebUrl } = await import('#/cli/sub/server/run');
     expect(buildWebUrl('http://127.0.0.1:58627/', 't')).toBe(
@@ -1610,6 +1618,18 @@ describe('accessUrlLines', () => {
     const lines = accessUrlLines('127.0.0.1', 58627, 'tok');
     expect(lines).toEqual([
       { label: 'Local:    ', url: 'http://127.0.0.1:58627/#token=tok' },
+    ]);
+  });
+
+  it('encodes token fragments in access URL lines', async () => {
+    const { accessUrlLines } = await import('#/cli/sub/server/access-urls');
+    const token = 'a&b%20c';
+    const lines = accessUrlLines('127.0.0.1', 58627, token);
+    expect(lines).toEqual([
+      {
+        label: 'Local:    ',
+        url: `http://127.0.0.1:58627/#token=${encodeURIComponent(token)}`,
+      },
     ]);
   });
 
