@@ -669,6 +669,13 @@ describe('shared parsers stay strict', () => {
     expect(parseLogLevel(undefined)).toBe('info');
     expect(parseLogLevel('debug')).toBe('debug');
   });
+
+  it('wraps IPv6 hosts when formatting server origins', async () => {
+    const { serverOrigin } = await import('#/cli/sub/server/shared');
+    expect(serverOrigin('::1', 58627)).toBe('http://[::1]:58627');
+    expect(serverOrigin('127.0.0.1', 58627)).toBe('http://127.0.0.1:58627');
+    expect(serverOrigin('[::1]', 58627)).toBe('http://[::1]:58627');
+  });
 });
 
 describe('server web asset directory resolution', () => {

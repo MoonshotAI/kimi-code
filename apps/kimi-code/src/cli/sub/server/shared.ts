@@ -10,6 +10,8 @@ import { join } from 'node:path';
 
 import type { ServerLogLevel } from '@moonshot-ai/server';
 
+import { formatHostForUrl } from './networks';
+
 export const LOCAL_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_LAN_HOST = '0.0.0.0';
 export const DEFAULT_SERVER_HOST = LOCAL_SERVER_HOST;
@@ -158,7 +160,11 @@ export function parseLogLevel(raw: string | undefined): ServerLogLevel {
 }
 
 export function serverOrigin(host: string, port: number): string {
-  return `http://${host}:${port}`;
+  const formattedHost =
+    host.startsWith('[') && host.endsWith(']')
+      ? host
+      : formatHostForUrl(host, host.includes(':') ? 'IPv6' : 'IPv4');
+  return `http://${formattedHost}:${port}`;
 }
 
 /** Strip `/api/v1` and trailing slashes so user-supplied origins are uniform. */
