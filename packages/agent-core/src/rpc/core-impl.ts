@@ -303,6 +303,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         ...session.metadata,
         createdAt: new Date(summary.createdAt).toISOString(),
         updatedAt: new Date(summary.updatedAt).toISOString(),
+        workDir,
         ...(summary.title !== undefined
           ? {
               title: summary.title,

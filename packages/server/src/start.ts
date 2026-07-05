@@ -1,4 +1,4 @@
-import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
+import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, SessionStore, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
 import { ErrorCode, createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify from 'fastify';
 import { promises as fspPromises } from 'node:fs';
@@ -216,6 +216,18 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       configPath: opts.coreProcessOptions?.configPath,
     }),
   };
+
+  // Rebuild the global session index from disk once at boot. The request path
+  // (`GET /sessions/:id`, global list) trusts the index and does not scan
+  // directories, so sessions whose index line is missing or stale are invisible
+  // to the web UI even though their directory still exists. Repairing here keeps
+  // the request path scan-free. Best-effort: never blocks startup on failure.
+  try {
+    const stats = await new SessionStore(envService.homeDir).reindex();
+    pinoLogger.info(stats, 'session index rebuilt');
+  } catch (error) {
+    pinoLogger.warn({ err: String(error) }, 'session index rebuild failed (best-effort)');
+  }
 
   // Token auth (ROADMAP M5.1). The real `IAuthTokenService` needs an
   // async-built `TokenStore` over the persistent `<homeDir>/server.token`

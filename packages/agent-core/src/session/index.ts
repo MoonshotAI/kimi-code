@@ -123,6 +123,10 @@ export interface SessionMeta {
   isCustomTitle: boolean;
   lastPrompt?: string;
   forkedFrom?: string;
+  /** Absolute working directory the session was created in. Persisted so the
+   *  session directory is self-describing and the global session index does not
+   *  have to be trusted for the (one-way-hashed) workDir. */
+  workDir?: string;
   agents: Record<string, AgentMeta>;
   custom: Record<string, any>;
 }
@@ -989,6 +993,7 @@ export class Session {
 }
 
 export * from './subagent-host';
+export * from './store';
 
 function initCompletionReminder(agentsMd: string): string {
   const latest =
