@@ -20,6 +20,8 @@ import type {
   KimiConfigPatch,
   KimiHostIdentity,
   ListSessionsOptions,
+  PluginInfo,
+  PluginSummary,
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
@@ -244,6 +246,26 @@ export class KimiHarness {
 
   async removeProvider(providerId: string): Promise<KimiConfig> {
     return this.rpc.removeProvider(providerId);
+  }
+
+  async listPlugins(): Promise<readonly PluginSummary[]> {
+    return this.rpc.listPlugins();
+  }
+
+  async installPlugin(source: string): Promise<PluginSummary> {
+    return this.rpc.installPlugin(source);
+  }
+
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    await this.rpc.setPluginEnabled(id, enabled);
+  }
+
+  async removePlugin(id: string): Promise<void> {
+    await this.rpc.removePlugin(id);
+  }
+
+  async getPluginInfo(id: string): Promise<PluginInfo> {
+    return this.rpc.getPluginInfo(id);
   }
 
   async close(): Promise<void> {
