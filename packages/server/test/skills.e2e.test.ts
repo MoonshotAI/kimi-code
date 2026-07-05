@@ -129,6 +129,19 @@ async function createSession(r: RunningServer): Promise<string> {
   return env.data.id;
 }
 
+async function registerWorkspace(r: RunningServer): Promise<string> {
+  const res = await appOf(r).inject({
+    method: 'POST',
+    url: '/api/v1/workspaces',
+    payload: { root: workspaceDir },
+  });
+  const env = envelopeOf<{ id: string }>(res.json());
+  if (env.code !== 0 || env.data === null) {
+    throw new Error(`register workspace failed: ${JSON.stringify(env)}`);
+  }
+  return env.data.id;
+}
+
 /** Seed a project skill bundle at `<cwd>/.kimi-code/skills/<name>/SKILL.md`. */
 function seedProjectSkill(name: string, frontmatterType?: string): void {
   const dir = join(workspaceDir, '.kimi-code', 'skills', name);
@@ -259,5 +272,52 @@ describe('POST /api/v1/sessions/{sid}/skills/{name}:activate', () => {
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40001);
+  });
+});
+
+describe('GET /api/v1/workspaces/{wid}/skills', () => {
+  it('lists skills for a workspace without creating a session', async () => {
+    seedProjectSkill('e2e-greeting');
+    const r = await bootDaemon();
+    const wid = await registerWorkspace(r);
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/workspaces/${wid}/skills`,
+    });
+    expect(res.statusCode).toBe(200);
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(0);
+    const parsed = listSkillsResponseSchema.parse(env.data);
+    const seeded = parsed.skills.find((s) => s.name === 'e2e-greeting');
+    expect(seeded).toBeDefined();
+    expect(seeded?.source).toBe('project');
+    expect(seeded?.description).toBe('e2e test skill e2e-greeting');
+  });
+
+  it('matches the session listing for the same cwd', async () => {
+    seedProjectSkill('e2e-greeting');
+    const r = await bootDaemon();
+    const wid = await registerWorkspace(r);
+    const sid = await createSession(r);
+    const [wsRes, sessRes] = await Promise.all([
+      appOf(r).inject({ method: 'GET', url: `/api/v1/workspaces/${wid}/skills` }),
+      appOf(r).inject({ method: 'GET', url: `/api/v1/sessions/${sid}/skills` }),
+    ]);
+    const wsSkills = listSkillsResponseSchema.parse(envelopeOf<unknown>(wsRes.json()).data).skills;
+    const sessSkills = listSkillsResponseSchema.parse(
+      envelopeOf<unknown>(sessRes.json()).data,
+    ).skills;
+    const names = (xs: readonly { name: string }[]) => xs.map((s) => s.name).toSorted();
+    expect(names(wsSkills)).toEqual(names(sessSkills));
+  });
+
+  it('returns 40410 for an unknown workspace', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/workspaces/wd_does-not-exist_000000000000/skills',
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40410);
   });
 });

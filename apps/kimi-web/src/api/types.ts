@@ -675,6 +675,8 @@ export interface KimiWebApi {
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<{ resolved: true; resolvedAt: string }>;
   dismissQuestion(sessionId: string, questionId: string): Promise<{ dismissed: true; dismissedAt: string }>;
   listSkills(sessionId: string): Promise<AppSkill[]>;
+  /** List skills for a workspace (no session required) — GET /workspaces/{id}/skills. */
+  listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]>;
   activateSkill(sessionId: string, skillName: string, args?: string): Promise<{ activated: true; skillName: string }>;
   listTasks(sessionId: string, status?: AppTaskStatus): Promise<AppTask[]>;
   getTask(sessionId: string, taskId: string, input?: { withOutput?: boolean; outputBytes?: number }): Promise<AppTask>;

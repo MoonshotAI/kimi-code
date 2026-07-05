@@ -717,14 +717,26 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   // -------------------------------------------------------------------------
-  // Skills — session-scoped slash-invocable skills
+  // Skills — slash-invocable skills (session- or workspace-scoped)
   // GET  /sessions/{id}/skills              → { skills: WireSkillDescriptor[] }
+  // GET  /workspaces/{id}/skills            → { skills: WireSkillDescriptor[] } (no session)
   // POST /sessions/{id}/skills/{name}:activate body { args? } → { activated, skill_name }
   // -------------------------------------------------------------------------
 
   async listSkills(sessionId: string): Promise<AppSkill[]> {
     const data = await this.http.get<{ skills: WireSkillDescriptor[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/skills`,
+    );
+    return (data.skills ?? []).map((s) => ({
+      name: s.name,
+      description: s.description,
+      source: s.source,
+    }));
+  }
+
+  async listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]> {
+    const data = await this.http.get<{ skills: WireSkillDescriptor[] }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/skills`,
     );
     return (data.skills ?? []).map((s) => ({
       name: s.name,

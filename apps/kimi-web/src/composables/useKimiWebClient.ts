@@ -1627,11 +1627,13 @@ const sessions = computed<Session[]>(() => {
 
 const activeSessionId = computed<string>(() => rawState.activeSessionId ?? '');
 
-/** Slash-invocable skills for the active session (feeds the composer `/` menu). */
+/** Slash-invocable skills for the composer `/` menu — the active session's skills,
+ *  or, before a session exists, the active workspace's skills. */
 const skills = computed<AppSkill[]>(() => {
   const sid = rawState.activeSessionId;
-  if (!sid) return [];
-  return modelProvider.skillsBySession.value[sid] ?? [];
+  if (sid) return modelProvider.skillsBySession.value[sid] ?? [];
+  const wid = activeWorkspaceId.value;
+  return wid ? (modelProvider.skillsByWorkspace.value[wid] ?? []) : [];
 });
 
 const isSending = computed<boolean>(() => {
@@ -2047,6 +2049,21 @@ const activeWorkspaceId = computed<string | null>(() => {
   if (id && list.some((w) => w.id === id)) return id;
   return list[0]?.id ?? null;
 });
+
+// Pre-warm workspace-scoped skills so the onboarding composer's `/` menu is
+// populated before a session exists. Loaded once per workspace (guard mirrors
+// the per-session guard in refreshSessionSidecars); session skills take over
+// via refreshSessionSidecars once a session is created.
+watch(
+  activeWorkspaceId,
+  (id) => {
+    if (!id) return;
+    if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsByWorkspace.value, id)) {
+      void modelProvider.loadSkillsForWorkspace(id);
+    }
+  },
+  { immediate: true },
+);
 
 /** The active workspace as a sidebar view (or null when none). */
 const visibleWorkspace = computed<WorkspaceView | null>(() => {

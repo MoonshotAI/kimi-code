@@ -7,18 +7,23 @@
  *
  * **CoreAPI surface used**:
  *   - `core.rpc.listSkills({sessionId}) => readonly SkillSummary[]`
- *     (packages/agent-core/src/rpc/core-api.ts:347, SessionAPI).
+ *     (packages/agent-core/src/rpc/core-api.ts, SessionAPI) — session-scoped.
+ *   - `core.rpc.listWorkspaceSkills({workDir}) => Promise<readonly SkillSummary[]>`
+ *     (CoreAPI) — workspace-cwd-scoped, no session required; mirrors the roots
+ *     a new session would scan.
  *   - `core.rpc.activateSkill({sessionId, agentId, name, args})`
- *     (line 324, AgentAPI) — renders the skill prompt and starts a turn with a
+ *     (AgentAPI) — renders the skill prompt and starts a turn with a
  *     `skill_activation` origin (trigger 'user-slash'), mirroring the TUI's
  *     slash-command path. It does NOT go through `IPromptService`, so no
  *     `prompt_id` is minted; clients observe progress via `skill.activated` +
  *     `turn.*` events on the WS stream.
  *
- * **Session scoping**: the skill registry is per-session (project skills are
- * discovered from the session cwd), so both methods are session-scoped and the
- * impl resumes the session before dispatching — sessions that exist on disk
- * but are not in the active map after a daemon restart still resolve.
+ * **Scoping**: the skill registry is per-session (project skills are
+ * discovered from the session cwd). `list`/`activate` are session-scoped, so
+ * the impl resumes the session before dispatching — sessions that exist on
+ * disk but are not in the active map after a daemon restart still resolve.
+ * `listForWorkDir` is workspace-cwd-scoped instead: it scans the same roots a
+ * new session would, without creating or resuming one.
  *
  * **Error model**:
  *   - `SkillSessionNotFoundError` is NOT defined here — the impl throws the
@@ -67,6 +72,13 @@ export interface ISkillService {
    * builtin). Throws `SessionNotFoundError` (→ 40401) for unknown sessions.
    */
   list(sessionId: string): Promise<readonly SkillDescriptor[]>;
+
+  /**
+   * Return the skills available for a workspace working directory (project +
+   * user + extra + builtin) without requiring a session. Used to populate the
+   * composer skill menu before a session is created.
+   */
+  listForWorkDir(workDir: string): Promise<readonly SkillDescriptor[]>;
 
   /**
    * Activate a skill by name in a session — the REST analogue of typing
