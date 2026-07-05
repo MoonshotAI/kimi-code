@@ -13,6 +13,7 @@ import {
   GoogleGenAIStreamedMessage,
   messagesToGoogleGenAIContents,
 } from '#/providers/google-genai';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -50,6 +51,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -69,7 +71,7 @@ async function captureRequestBody(
     return Promise.resolve(makeGenerateContentResponse());
   });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -129,6 +131,33 @@ describe('GoogleGenAIChatProvider', () => {
       expect(body['contents']).toEqual([{ parts: [{ text: 'Hello!' }], role: 'user' }]);
       const config = body['config'] as Record<string, unknown>;
       expect(config['systemInstruction']).toBe('You are helpful.');
+    });
+
+    it('maps json_schema response format to response config', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(config['responseMimeType']).toBe('application/json');
+      expect(config['responseJsonSchema']).toEqual(schema);
     });
 
     it('system messages in history are wrapped and emitted as user content', () => {

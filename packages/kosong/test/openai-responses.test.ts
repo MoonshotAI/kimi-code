@@ -10,6 +10,7 @@ import {
   OpenAIResponsesChatProvider,
   OpenAIResponsesStreamedMessage,
 } from '#/providers/openai-responses';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -45,6 +46,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -57,7 +59,7 @@ async function captureRequestBody(
       return Promise.resolve(makeResponsesAPIResponse());
     });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -908,6 +910,39 @@ describe('OpenAIResponsesChatProvider', () => {
 
       expect(provider).not.toBe(original);
       expect(body['max_output_tokens']).toBe(1024);
+    });
+
+    it('maps json_schema response format to text.format', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['text']).toEqual({
+        format: {
+          type: 'json_schema',
+          name: 'contact',
+          schema,
+          strict: true,
+          description: undefined,
+        },
+      });
     });
   });
 

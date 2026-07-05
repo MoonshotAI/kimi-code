@@ -11,6 +11,7 @@ import type {
   FinishReason,
   GenerateOptions,
   ProviderRequestAuth,
+  ResponseFormat,
   StreamedMessage,
   ThinkingEffort,
 } from '#/provider';
@@ -362,6 +363,22 @@ interface ResponseToolParam {
   parameters: Record<string, unknown>;
   strict: boolean;
 }
+
+function responseFormatToResponsesText(format: ResponseFormat): Record<string, unknown> {
+  if (format.type === 'json_object') {
+    return { format: { type: 'json_object' } };
+  }
+  return {
+    format: {
+      type: 'json_schema',
+      name: format.jsonSchema.name,
+      schema: format.jsonSchema.schema,
+      strict: format.jsonSchema.strict,
+      description: format.jsonSchema.description,
+    },
+  };
+}
+
 // The Responses API has no input type for video, and only mp3/wav audio can
 // be inlined as input_file data. Degrade such parts to placeholder text so
 // the model still learns an attachment existed instead of silently losing it.
@@ -1073,6 +1090,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       };
       if (systemPrompt) {
         createParams['instructions'] = systemPrompt;
+      }
+      if (options?.responseFormat !== undefined) {
+        createParams['text'] = responseFormatToResponsesText(options.responseFormat);
       }
 
       if (

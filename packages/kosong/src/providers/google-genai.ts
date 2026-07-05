@@ -10,6 +10,7 @@ import type {
   FinishReason,
   GenerateOptions,
   ProviderRequestAuth,
+  ResponseFormat,
   StreamedMessage,
   ThinkingEffort,
 } from '#/provider';
@@ -125,6 +126,17 @@ function toolToGoogleGenAI(tool: Tool): GoogleTool {
       },
     ],
   };
+}
+
+function applyResponseFormat(
+  config: Record<string, unknown>,
+  format: ResponseFormat | undefined,
+): void {
+  if (format === undefined) return;
+  config['responseMimeType'] = 'application/json';
+  if (format.type === 'json_schema') {
+    config['responseJsonSchema'] = format.jsonSchema.schema;
+  }
 }
 interface GoogleContent {
   role: string;
@@ -804,6 +816,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       systemInstruction: systemPrompt,
       ...(tools.length > 0 ? { tools: tools.map((t) => toolToGoogleGenAI(t)) } : {}),
     };
+    applyResponseFormat(config, options?.responseFormat);
 
     try {
       const client = this._createClient(options?.auth);

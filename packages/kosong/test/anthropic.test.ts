@@ -1,6 +1,7 @@
 import { ChatProviderError } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { AnthropicChatProvider, resolveDefaultMaxTokens } from '#/providers/anthropic';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -62,6 +63,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedParams: Record<string, unknown> | undefined;
   let capturedOptions: Record<string, unknown> | undefined;
@@ -74,7 +76,7 @@ async function captureRequestBody(
       return Promise.resolve(makeAnthropicResponse());
     });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -279,6 +281,50 @@ describe('AnthropicChatProvider', () => {
       expect(body['system']).toEqual([
         { type: 'text', text: 'You are helpful.', cache_control: { type: 'ephemeral' } },
       ]);
+    });
+
+    it('maps json_schema response format to output_config.format', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['output_config']).toEqual({
+        format: {
+          type: 'json_schema',
+          schema,
+        },
+      });
+    });
+
+    it('rejects json_object response format because Anthropic requires a schema', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+
+      await expect(
+        provider.generate('', [], history, {
+          responseFormat: { type: 'json_object' },
+        }),
+      ).rejects.toThrow('Anthropic provider requires a JSON schema for structured response output.');
     });
 
     it('multi-turn conversation', async () => {

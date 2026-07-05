@@ -2,6 +2,24 @@ import type { Message, StreamedMessagePart, VideoURLPart } from './message';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
+export type JsonSchemaObject = Record<string, unknown>;
+
+export interface JsonObjectResponseFormat {
+  readonly type: 'json_object';
+}
+
+export interface JsonSchemaResponseFormat {
+  readonly type: 'json_schema';
+  readonly jsonSchema: {
+    readonly name: string;
+    readonly schema: JsonSchemaObject;
+    readonly strict?: boolean | undefined;
+    readonly description?: string | undefined;
+  };
+}
+
+export type ResponseFormat = JsonObjectResponseFormat | JsonSchemaResponseFormat;
+
 /**
  * Thinking effort passed to {@link ChatProvider.withThinking}.
  *
@@ -118,6 +136,11 @@ export interface GenerateOptions {
    * each request/retry so providers never retain mutable credential state.
    */
   auth?: ProviderRequestAuth;
+  /**
+   * Optional model-output format constraint. Providers map this to their native
+   * structured-output field when supported.
+   */
+  responseFormat?: ResponseFormat;
   /**
    * Host-side instrumentation hook fired immediately before invoking the
    * provider adapter's generate call.
