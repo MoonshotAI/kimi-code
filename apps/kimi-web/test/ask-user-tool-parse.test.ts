@@ -54,28 +54,45 @@ describe('parseAskInput', () => {
 });
 
 describe('parseAskOutput', () => {
-  it('reads answers and note', () => {
+  it('recognizes an answer payload and reads answers', () => {
     const out = parseAskOutput([JSON.stringify({ answers: { q_0: 'opt_0_1' }, note: '' })]);
+    expect(out.recognized).toBe(true);
     expect(out.answers).toEqual({ q_0: 'opt_0_1' });
   });
 
   it('keeps string and true values, drops others', () => {
     const out = parseAskOutput([JSON.stringify({ answers: { a: 'x', b: true, c: 3, d: null } })]);
+    expect(out.recognized).toBe(true);
     expect(out.answers).toEqual({ a: 'x', b: true });
   });
 
-  it('treats empty answers + note as dismissed', () => {
+  it('recognizes the dismissed payload (empty answers + note)', () => {
     const out = parseAskOutput([
       JSON.stringify({ answers: {}, note: 'User dismissed the question without answering.' }),
     ]);
+    expect(out.recognized).toBe(true);
     expect(Object.keys(out.answers)).toHaveLength(0);
     expect(out.note).toContain('dismissed');
   });
 
-  it('tolerates missing / malformed output', () => {
-    expect(parseAskOutput(undefined)).toEqual({ answers: {}, note: '' });
-    expect(parseAskOutput([])).toEqual({ answers: {}, note: '' });
-    expect(parseAskOutput(['{not json'])).toEqual({ answers: {}, note: '' });
+  it('does not recognize plain-text background output', () => {
+    const out = parseAskOutput(['task_id: abc\ndescription: run it\nstatus: running']);
+    expect(out.recognized).toBe(false);
+  });
+
+  it('does not recognize plain-text error output', () => {
+    expect(parseAskOutput(['Interactive questions are not supported in this session.']).recognized).toBe(false);
+  });
+
+  it('does not recognize JSON that is not the answer payload', () => {
+    expect(parseAskOutput([JSON.stringify({ foo: 'bar' })]).recognized).toBe(false);
+    expect(parseAskOutput([JSON.stringify({ answers: 'nope' })]).recognized).toBe(false);
+    expect(parseAskOutput([JSON.stringify(['x'])]).recognized).toBe(false);
+  });
+
+  it('tolerates missing output', () => {
+    expect(parseAskOutput(undefined)).toEqual({ recognized: false, answers: {}, note: '' });
+    expect(parseAskOutput([])).toEqual({ recognized: false, answers: {}, note: '' });
   });
 });
 

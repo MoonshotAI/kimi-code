@@ -4,11 +4,14 @@
 // Wire shape (from agent-core SCHEMAS §6.4):
 //   tool.arg      : JSON { questions: [{ question, header, options[{label,description}], multi_select }] }
 //                   Input questions carry NO id — order === broker order.
-//   tool.output[0]: JSON { answers: Record<qid, string|true>, note? }
+//   tool.output[0]: on a successful answer, JSON { answers: Record<qid, string|true>, note? }
 //                   qid  = `q_<index>`; value = `opt_<q>_<o>` (single),
 //                   `opt_<q>_<o>,opt_<q>_<o>` (multi, comma-joined), free-text
 //                   (Other), or `opt_…,<text>` (multi+Other). skipped → omitted.
 //                   Dismissed → { answers: {}, note }.
+//                 : on a background launch, plain text (`task_id: …\nstatus: …`);
+//                   on an error (e.g. unsupported interactive questions), plain
+//                   text. Those are NOT the answer payload and must be shown raw.
 
 export interface AskOption {
   label: string;
@@ -23,6 +26,9 @@ export interface AskQuestion {
 }
 
 export interface AskOutput {
+  /** True only when the output parsed as the answer payload (`{ answers: {...} }`).
+   *  False for background / error plain-text output, which the card must show raw. */
+  recognized: boolean;
   answers: Record<string, string | true>;
   note: string;
 }
@@ -69,26 +75,35 @@ export function parseAskInput(arg: string): AskQuestion[] {
   }
 }
 
+const EMPTY: AskOutput = { recognized: false, answers: {}, note: '' };
+
 export function parseAskOutput(output: string[] | undefined): AskOutput {
   const line = output?.[0];
-  if (!line) return { answers: {}, note: '' };
+  if (!line) return EMPTY;
+  let obj: unknown;
   try {
-    const obj = JSON.parse(line) as Record<string, unknown>;
-    const answers: Record<string, string | true> = {};
-    const raw = obj['answers'];
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-        if (typeof v === 'string') answers[k] = v;
-        else if (v === true) answers[k] = true;
-      }
-    }
-    return {
-      answers,
-      note: typeof obj['note'] === 'string' ? obj['note'] : '',
-    };
+    obj = JSON.parse(line);
   } catch {
-    return { answers: {}, note: '' };
+    // Plain-text output (background `task_id/status`, error message) — show raw.
+    return EMPTY;
   }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return EMPTY;
+  const raw = (obj as Record<string, unknown>)['answers'];
+  // The answer payload is the only shape we render specially; anything else
+  // (a JSON object without an `answers` record) falls back to raw output.
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return EMPTY;
+  const answers: Record<string, string | true> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string') answers[k] = v;
+    else if (v === true) answers[k] = true;
+  }
+  return {
+    recognized: true,
+    answers,
+    note: typeof (obj as Record<string, unknown>)['note'] === 'string'
+      ? ((obj as Record<string, unknown>)['note'] as string)
+      : '',
+  };
 }
 
 const OPT_ID = /^opt_\d+_(\d+)$/;

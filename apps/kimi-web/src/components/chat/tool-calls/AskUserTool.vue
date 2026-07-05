@@ -1,11 +1,15 @@
 <!-- apps/kimi-web/src/components/chat/tool-calls/AskUserTool.vue
-     Result card for the AskUserQuestion tool. The tool's output arrives as a
-     single JSON line ({ answers, note? }); answers are keyed by synthesized
-     question id (`q_<index>`) and the values are synthesized option ids
-     (`opt_<q>_<o>`, comma-joined for multi-select) or free-text (Other). We
+     Result card for the AskUserQuestion tool. On a successful answer the
+     output is a single JSON line ({ answers, note? }); answers are keyed by
+     synthesized question id (`q_<index>`) and the values are synthesized option
+     ids (`opt_<q>_<o>`, comma-joined for multi-select) or free-text (Other). We
      zip answers back to the input questions by index and echo the full option
      list, marking the picked option(s) selected and the rest faint — so the
-     transcript shows both what was chosen and what was passed over. -->
+     transcript shows both what was chosen and what was passed over.
+
+     Background launches and error cases return plain-text output instead of
+     the answer JSON; those fall back to a raw output view so the task id /
+     failure reason is not hidden behind an empty option list. -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
@@ -42,8 +46,9 @@ function clip(s: string, max = SUMMARY_MAX): string {
 
 const questions = computed(() => parseAskInput(props.tool.arg));
 const output = computed(() => parseAskOutput(props.tool.output));
+const recognized = computed(() => output.value.recognized);
 const isDismissed = computed(
-  () => Object.keys(output.value.answers).length === 0 && output.value.note.length > 0,
+  () => recognized.value && Object.keys(output.value.answers).length === 0 && output.value.note.length > 0,
 );
 const resolved = computed(() =>
   questions.value.map((_, i) => resolveAnswer(output.value.answers[`q_${i}`])),
@@ -64,6 +69,7 @@ function glyphFor(multiSelect: boolean, on: boolean): string {
 }
 
 const summary = computed(() => {
+  if (!recognized.value) return clip(props.tool.output?.[0] ?? '');
   if (isDismissed.value) return 'Dismissed';
   const first = questions.value[0]?.question ?? '';
   const base = clip(first);
@@ -72,13 +78,16 @@ const summary = computed(() => {
 });
 
 const chip = computed(() => {
+  if (!recognized.value) return '';
   if (isDismissed.value) return 'Dismissed';
   if (answeredCount.value === 0) return '';
   return `${answeredCount.value} ${answeredCount.value === 1 ? 'answer' : 'answers'}`;
 });
 
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
-const canExpand = computed(() => questions.value.length > 0 || isDismissed.value || hasOutput.value);
+const canExpand = computed(
+  () => (recognized.value && (questions.value.length > 0 || isDismissed.value)) || hasOutput.value,
+);
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
 const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
@@ -116,7 +125,7 @@ watch(
 
     <div v-if="isDismissed" class="au-dismissed">{{ output.note }}</div>
 
-    <div v-else class="au-list">
+    <div v-else-if="recognized" class="au-list">
       <div v-for="(q, qi) in questions" :key="qi" class="au-block">
         <div class="au-q">
           <span v-if="q.header" class="au-hdr">{{ q.header }}</span>
@@ -143,6 +152,12 @@ watch(
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Not the answer payload (background launch / error): show the raw tool
+         output instead of an empty option list. -->
+    <div v-else class="au-raw">
+      <div v-for="(line, i) in tool.output ?? []" :key="i">{{ line }}</div>
     </div>
   </ToolRow>
 </template>
@@ -232,5 +247,15 @@ watch(
 }
 .au-opt.sel .au-desc {
   color: var(--color-text-muted);
+}
+
+.au-raw {
+  padding: 11px 13px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  font: var(--text-sm)/1.65 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
