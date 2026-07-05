@@ -20,6 +20,7 @@ import { copyTextToClipboard } from '../../lib/clipboard';
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
 import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
 import Tooltip from '../ui/Tooltip.vue';
+import Icon from '../ui/Icon.vue';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
@@ -443,8 +444,8 @@ function copyDiff(code: string, idx: number) {
         <div class="diff-bar">
           <span class="diff-lang">diff</span>
           <Tooltip :text="t('filePreview.copyCode')">
-            <button class="diff-copy" @click="copyDiff(seg.code, i)">
-              {{ copiedDiff === i ? '✓' : '⧉' }}
+            <button class="diff-copy" :aria-label="t('filePreview.copyCode')" @click="copyDiff(seg.code, i)">
+              <Icon :name="copiedDiff === i ? 'check' : 'copy'" size="sm" />
             </button>
           </Tooltip>
         </div>
@@ -787,14 +788,15 @@ function copyDiff(code: string, idx: number) {
 /* Copy button — mirrors the §03 IconButton / code-block action: muted glyph,
    sunken hover, soft radius, shared focus ring. */
 .diff-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-muted);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font: var(--text-sm) var(--font-mono);
-  line-height: 1;
-  padding: 1px 6px;
+  padding: 2px 6px;
   transition: background var(--duration-base) var(--ease-out),
     color var(--duration-base) var(--ease-out);
 }
