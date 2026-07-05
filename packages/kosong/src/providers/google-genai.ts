@@ -92,36 +92,36 @@ export interface GoogleGenAIOptions {
 }
 
 export interface GoogleGenAIGenerationKwargs {
-  max_output_tokens?: number | undefined;
+  maxOutputTokens?: number | undefined;
   temperature?: number | undefined;
-  top_k?: number | undefined;
-  top_p?: number | undefined;
-  thinking_config?: ThinkingConfig | undefined;
+  topK?: number | undefined;
+  topP?: number | undefined;
+  thinkingConfig?: ThinkingConfig | undefined;
   [key: string]: unknown;
 }
 
 interface ThinkingConfig {
-  include_thoughts?: boolean;
-  thinking_budget?: number;
-  thinking_level?: string;
+  includeThoughts?: boolean;
+  thinkingBudget?: number;
+  thinkingLevel?: string;
 }
 interface GoogleFunctionDeclaration {
   name: string;
   description: string;
-  parameters_json_schema: Record<string, unknown>;
+  parametersJsonSchema: Record<string, unknown>;
 }
 
 interface GoogleTool {
-  function_declarations: GoogleFunctionDeclaration[];
+  functionDeclarations: GoogleFunctionDeclaration[];
 }
 
 function toolToGoogleGenAI(tool: Tool): GoogleTool {
   return {
-    function_declarations: [
+    functionDeclarations: [
       {
         name: tool.name,
         description: tool.description,
-        parameters_json_schema: tool.parameters,
+        parametersJsonSchema: tool.parameters,
       },
     ],
   };
@@ -133,13 +133,13 @@ interface GoogleContent {
 
 interface GooglePart {
   text?: string;
-  function_call?: { name: string; args: Record<string, unknown> };
-  function_response?: {
+  functionCall?: { name: string; args: Record<string, unknown> };
+  functionResponse?: {
     name: string;
     response: Record<string, string>;
     parts: unknown[];
   };
-  thought_signature?: string;
+  thoughtSignature?: string;
   [key: string]: unknown;
 }
 
@@ -274,15 +274,15 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
     }
 
     const functionCallPart: GooglePart = {
-      function_call: {
+      functionCall: {
         name: toolCall.name,
         args,
       },
     };
 
-    // Restore thought_signature if available
+    // Restore thoughtSignature if available
     if (toolCall.extras && 'thought_signature_b64' in toolCall.extras) {
-      functionCallPart['thought_signature'] = toolCall.extras['thought_signature_b64'] as string;
+      functionCallPart['thoughtSignature'] = toolCall.extras['thought_signature_b64'] as string;
     }
 
     parts.push(functionCallPart);
@@ -335,7 +335,7 @@ function toolMessageToFunctionResponseParts(
   }
 
   const functionResponsePart: GooglePart = {
-    function_response: {
+    functionResponse: {
       name: toolCallIdToName(message.toolCallId, toolNameById),
       response: { output: textOutput },
       parts: [],
@@ -361,7 +361,7 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
       // the content by wrapping it in a `<system>` tag and attaching it as
       // a user turn — mirrors the Anthropic provider's behavior. The
       // dedicated top-level `systemPrompt` still flows into
-      // `system_instruction` separately; only historical system messages
+      // `systemInstruction` separately; only historical system messages
       // come through here.
       const text = message.content
         .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
@@ -463,7 +463,7 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     isUser: (content) => content.role === 'user',
     isToolResultOnly: (content) =>
       content.parts.length > 0 &&
-      content.parts.every((part) => part.function_response !== undefined),
+      content.parts.every((part) => part.functionResponse !== undefined),
     merge: (last, next) => ({ ...last, parts: [...last.parts, ...next.parts] }),
   });
 }
@@ -746,16 +746,16 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    const thinkingConfig = this._generationKwargs.thinking_config;
+    const thinkingConfig = this._generationKwargs.thinkingConfig;
     if (thinkingConfig === undefined) return null;
 
-    // For gemini-3 models that use thinking_level
-    if (thinkingConfig.thinking_level !== undefined) {
-      switch (thinkingConfig.thinking_level) {
+    // For gemini-3 models that use thinkingLevel
+    if (thinkingConfig.thinkingLevel !== undefined) {
+      switch (thinkingConfig.thinkingLevel) {
         case 'MINIMAL':
           // MINIMAL + suppressed thoughts is how 'off' is encoded for Gemini 3,
           // which has no true "disabled" level.
-          return thinkingConfig.include_thoughts === false ? 'off' : 'low';
+          return thinkingConfig.includeThoughts === false ? 'off' : 'low';
         case 'LOW':
           return 'low';
         case 'MEDIUM':
@@ -767,11 +767,11 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       }
     }
 
-    // For other models that use thinking_budget
-    if (thinkingConfig.thinking_budget !== undefined) {
-      if (thinkingConfig.thinking_budget === 0) return 'off';
-      if (thinkingConfig.thinking_budget <= 1024) return 'low';
-      if (thinkingConfig.thinking_budget <= 4096) return 'medium';
+    // For other models that use thinkingBudget
+    if (thinkingConfig.thinkingBudget !== undefined) {
+      if (thinkingConfig.thinkingBudget === 0) return 'off';
+      if (thinkingConfig.thinkingBudget <= 1024) return 'low';
+      if (thinkingConfig.thinkingBudget <= 4096) return 'medium';
       return 'high';
     }
 
@@ -801,7 +801,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
 
     const config: Record<string, unknown> = {
       ...this._generationKwargs,
-      system_instruction: systemPrompt,
+      systemInstruction: systemPrompt,
       ...(tools.length > 0 ? { tools: tools.map((t) => toolToGoogleGenAI(t)) } : {}),
     };
 
@@ -866,53 +866,53 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): GoogleGenAIChatProvider {
-    const thinkingConfig: ThinkingConfig = { include_thoughts: true };
+    const thinkingConfig: ThinkingConfig = { includeThoughts: true };
 
     if (this._model.includes('gemini-3')) {
-      // Gemini 3 models use thinking_level (MINIMAL/LOW/MEDIUM/HIGH). The SDK
+      // Gemini 3 models use thinkingLevel (MINIMAL/LOW/MEDIUM/HIGH). The SDK
       // does not expose a "disabled" level, so 'off' maps to MINIMAL with
       // thought output suppressed — the lowest thinking intensity available.
       switch (effort) {
         case 'off':
-          thinkingConfig.thinking_level = 'MINIMAL';
-          thinkingConfig.include_thoughts = false;
+          thinkingConfig.thinkingLevel = 'MINIMAL';
+          thinkingConfig.includeThoughts = false;
           break;
         case 'low':
-          thinkingConfig.thinking_level = 'LOW';
+          thinkingConfig.thinkingLevel = 'LOW';
           break;
         case 'medium':
-          thinkingConfig.thinking_level = 'MEDIUM';
+          thinkingConfig.thinkingLevel = 'MEDIUM';
           break;
         case 'high':
         case 'xhigh':
         case 'max':
-          thinkingConfig.thinking_level = 'HIGH';
+          thinkingConfig.thinkingLevel = 'HIGH';
           break;
       }
     } else {
       switch (effort) {
         case 'off':
-          thinkingConfig.thinking_budget = 0;
-          thinkingConfig.include_thoughts = false;
+          thinkingConfig.thinkingBudget = 0;
+          thinkingConfig.includeThoughts = false;
           break;
         case 'low':
-          thinkingConfig.thinking_budget = 1024;
-          thinkingConfig.include_thoughts = true;
+          thinkingConfig.thinkingBudget = 1024;
+          thinkingConfig.includeThoughts = true;
           break;
         case 'medium':
-          thinkingConfig.thinking_budget = 4096;
-          thinkingConfig.include_thoughts = true;
+          thinkingConfig.thinkingBudget = 4096;
+          thinkingConfig.includeThoughts = true;
           break;
         case 'high':
         case 'xhigh':
         case 'max':
-          thinkingConfig.thinking_budget = 32_000;
-          thinkingConfig.include_thoughts = true;
+          thinkingConfig.thinkingBudget = 32_000;
+          thinkingConfig.includeThoughts = true;
           break;
       }
     }
 
-    return this.withGenerationKwargs({ thinking_config: thinkingConfig });
+    return this.withGenerationKwargs({ thinkingConfig });
   }
 
   withGenerationKwargs(kwargs: GoogleGenAIGenerationKwargs): GoogleGenAIChatProvider {
@@ -922,7 +922,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   }
 
   withMaxCompletionTokens(maxCompletionTokens: number): GoogleGenAIChatProvider {
-    return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
+    return this.withGenerationKwargs({ maxOutputTokens: maxCompletionTokens });
   }
 
   private _clone(): GoogleGenAIChatProvider {

@@ -60,6 +60,55 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
   });
 
+  it('preserves tool call extras (Gemini thought_signature) through to projection', () => {
+    // Regression: Gemini 3 requires the thought_signature returned on a
+    // functionCall to be echoed back when the call is re-sent in the next turn.
+    // The signature travels as ToolCall.extras.thought_signature_b64; it must
+    // survive the loop tool.call event -> context recording -> projection so
+    // the provider can put it back on the outbound functionCall part.
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 'sig-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'sig-tool',
+        turnId: '',
+        step: 1,
+        stepUuid: 'sig-step',
+        toolCallId: 'call_sig',
+        name: 'Bash',
+        args: { command: 'echo hi' },
+        extras: { thought_signature_b64: 'c2lnbmF0dXJl' },
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.end', uuid: 'sig-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'sig-tool',
+        toolCallId: 'call_sig',
+        result: { output: 'hi' },
+      },
+    });
+
+    const expectedExtras = { thought_signature_b64: 'c2lnbmF0dXJl' };
+    const recorded = ctx.agent.context.history.find((m) => m.role === 'assistant');
+    expect(recorded?.toolCalls[0]?.extras).toEqual(expectedExtras);
+    const projected = ctx.agent.context.messages.find((m) => m.role === 'assistant');
+    expect(projected?.toolCalls[0]?.extras).toEqual(expectedExtras);
+  });
+
   it('reroutes an inline image-compression caption into a hidden system reminder', () => {
     const ctx = testAgent();
     ctx.configure();

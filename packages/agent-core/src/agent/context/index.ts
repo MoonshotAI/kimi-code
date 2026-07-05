@@ -620,6 +620,7 @@ export class ContextMemory {
           id: event.toolCallId,
           name: event.name,
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
+          extras: event.extras,
         });
         this.pendingToolResultIds.add(event.toolCallId);
         return;
