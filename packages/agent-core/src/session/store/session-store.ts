@@ -242,7 +242,13 @@ export class SessionStore {
         if (resolve(sessionDir) !== resolve(expectedDir)) continue;
 
         const existing = index.get(id);
-        if (existing !== undefined && resolve(existing.sessionDir) === resolve(sessionDir)) continue;
+        if (
+          existing !== undefined &&
+          resolve(existing.sessionDir) === resolve(sessionDir) &&
+          existing.workDir === workDir
+        ) {
+          continue;
+        }
 
         await appendSessionIndexEntry(this.homeDir, { sessionId: id, sessionDir, workDir });
         index.set(id, { sessionId: id, sessionDir, workDir });

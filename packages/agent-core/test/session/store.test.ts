@@ -106,6 +106,37 @@ describe('SessionStore', () => {
       expect(index.get(sessionId)?.sessionDir).toBe(realDir);
     });
 
+    it('repairs an index entry whose sessionDir is correct but workDir is stale', async () => {
+      const workDir = await trackWorkDir('staleworkdir');
+      const sessionId = 'session_staleworkdir';
+      // Legacy state: no top-level workDir, only custom.cwd, so summaryFromDir
+      // falls back to the index entry's workDir.
+      const realDir = join(homeDir, 'sessions', encodeWorkDirKey(workDir), sessionId);
+      await mkdir(realDir, { recursive: true });
+      await writeFile(
+        join(realDir, 'state.json'),
+        JSON.stringify({ custom: { cwd: workDir } }),
+        'utf-8',
+      );
+
+      // Index points at the right dir but carries a bogus workDir.
+      await appendSessionIndexEntry(homeDir, {
+        sessionId,
+        sessionDir: realDir,
+        workDir: '/totally/bogus/path',
+      });
+
+      // Before reindex the summary surfaces the bogus index workDir.
+      expect((await store.get(sessionId)).workDir).toBe('/totally/bogus/path');
+
+      const stats = await store.reindex();
+      expect(stats).toEqual({ scanned: 1, added: 0, repaired: 1 });
+
+      // Reindex appended a corrected line, so the summary now uses the recovered
+      // workDir instead of the stale index value.
+      expect((await store.get(sessionId)).workDir).toBe(workDir);
+    });
+
     it('leaves a session unindexed when it records no recoverable workDir', async () => {
       const workDir = await trackWorkDir('noworkdir');
       const sessionId = 'session_noworkdir';
