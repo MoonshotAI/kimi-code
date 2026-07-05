@@ -624,5 +624,19 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
     min-height: 46px;
   }
   .qfoot-main { order: -1; }
+
+  /* Constrain the card height so long questions stay reachable on small screens.
+     The header and footer stay pinned; the scrollable area is Card.vue's body
+     wrapper, which is the flex child under .qcard. */
+  .qcard {
+    display: flex;
+    flex-direction: column;
+    max-height: min(520px, 70vh);
+  }
+  .qcard :deep(.ui-card__body) {
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 </style>
