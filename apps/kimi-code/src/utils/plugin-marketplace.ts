@@ -9,6 +9,7 @@ import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
 } from '#/constant/app';
+import { readRegistries } from '#/utils/plugin-registries';
 
 export const PLUGIN_MARKETPLACE_TIERS = ['official', 'curated'] as const;
 
@@ -93,6 +94,53 @@ export async function loadPluginMarketplace(
     return withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
   }
   return withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
+}
+
+export interface LoadMergedMarketplaceOptions {
+  readonly kimiHomeDir: string;
+  readonly workDir: string;
+  readonly fetchImpl?: typeof fetch;
+}
+
+export async function loadMergedMarketplace(
+  options: LoadMergedMarketplaceOptions,
+): Promise<PluginMarketplace> {
+  const registries = await readRegistries(options.kimiHomeDir);
+  const configuredSource = process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
+  const defaultSource = configuredSource ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL;
+  const defaultMarketplace = await loadPluginMarketplace({
+    workDir: options.workDir,
+    source: defaultSource,
+    fetchImpl: options.fetchImpl,
+  });
+
+  const merged = new Map<string, PluginMarketplaceEntry>();
+  for (const entry of defaultMarketplace.plugins) {
+    merged.set(entry.id, entry);
+  }
+
+  for (const registry of registries.registries) {
+    try {
+      const marketplace = await loadPluginMarketplace({
+        workDir: options.workDir,
+        source: registry.url,
+        fetchImpl: options.fetchImpl,
+      });
+      for (const entry of marketplace.plugins) {
+        if (!merged.has(entry.id)) {
+          merged.set(entry.id, entry);
+        }
+      }
+    } catch {
+      // Best-effort: skip unreachable custom registries.
+    }
+  }
+
+  return {
+    source: defaultMarketplace.source,
+    version: defaultMarketplace.version,
+    plugins: [...merged.values()].toSorted((a, b) => a.id.localeCompare(b.id)),
+  };
 }
 
 async function withLatestVersions(
