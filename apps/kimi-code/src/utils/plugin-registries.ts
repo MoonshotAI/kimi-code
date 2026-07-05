@@ -52,6 +52,11 @@ export async function addRegistry(
     throw new Error(`Registry URL is already registered: ${trimmedUrl}`);
   }
   const trimmedName = registry.name?.trim();
+  if (trimmedName !== undefined && trimmedName.length > 0) {
+    if (file.registries.some((r) => r.name === trimmedName)) {
+      throw new Error(`Registry name is already registered: ${trimmedName}`);
+    }
+  }
   const next: RegistriesFile = {
     ...file,
     registries: [

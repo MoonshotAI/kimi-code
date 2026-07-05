@@ -41,6 +41,14 @@ describe('plugin-registries', () => {
     );
   });
 
+  it('rejects duplicate names', async () => {
+    const homeDir = await makeTempDir();
+    await addRegistry(homeDir, { url: 'https://a.com/m.json', name: 'team' });
+    await expect(
+      addRegistry(homeDir, { url: 'https://b.com/m.json', name: 'team' }),
+    ).rejects.toThrow(/already registered/);
+  });
+
   it('removes by name then by URL fallback', async () => {
     const homeDir = await makeTempDir();
     await addRegistry(homeDir, { url: 'https://a.com/m.json', name: 'a' });
