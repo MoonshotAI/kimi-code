@@ -82,6 +82,13 @@ export interface SessionOptions {
    * finish before the run exits. Set via the SDK `createSession` option.
    */
   readonly drainAgentTasksOnStop?: boolean;
+  /**
+   * Print-mode (`kimi -p`) only: hold the main turn open while background bash
+   * (`kind === 'process'`) tasks are still running, idle-waiting until they
+   * finish before the run exits. Shares the deadline and wait path with
+   * `drainAgentTasksOnStop`. Set via the SDK `createSession` option.
+   */
+  readonly drainProcessTasksOnStop?: boolean;
 }
 
 export interface SessionSkillConfig {
@@ -300,8 +307,13 @@ export class Session {
       profile: DEFAULT_AGENT_PROFILES['agent'],
     });
     if (this.options.drainAgentTasksOnStop) {
-      const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
       agent.printDrainAgentTasksOnStop = true;
+    }
+    if (this.options.drainProcessTasksOnStop) {
+      agent.printDrainProcessTasksOnStop = true;
+    }
+    if (agent.printDrainAgentTasksOnStop || agent.printDrainProcessTasksOnStop) {
+      const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
       agent.printDrainDeadlineMs = Date.now() + ceilingS * 1000;
     }
     await this.triggerSessionStart('startup');

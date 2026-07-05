@@ -153,6 +153,16 @@ export class Agent {
    */
   printDrainAgentTasksOnStop = false;
   /**
+   * Print-mode (`kimi -p`) only: when true and the agent ends a turn while
+   * background bash (`kind === 'process'`) tasks are still running, the turn
+   * loop holds the turn open and idle-waits until they finish, flushing their
+   * completions into the turn so the model can react before the run exits.
+   * Shares `printDrainDeadlineMs` and the wait path with
+   * `printDrainAgentTasksOnStop`. Set by the session for print runs; defaults
+   * to false everywhere else.
+   */
+  printDrainProcessTasksOnStop = false;
+  /**
    * Absolute deadline (ms epoch) bounding all print-mode drain waits for this
    * agent, derived from `background.printWaitCeilingS`. `Infinity` when the
    * drain is disabled. Shared across every drain hold within a single print

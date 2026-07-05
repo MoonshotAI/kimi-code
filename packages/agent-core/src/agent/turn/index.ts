@@ -37,6 +37,7 @@ import type { AgentEvent, TurnEndedEvent, TurnEndReason } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
+import type { BackgroundTaskInfo } from '../background';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
@@ -730,22 +731,29 @@ export class TurnFlow {
               signal.throwIfAborted();
 
               // Print-mode drain: when `kimi -p` ends a turn while background
-              // subagents are still running, hold the turn open and idle-wait
-              // until they finish (or the drain deadline is reached). Their
-              // completions steer into the buffer during the wait and are
-              // flushed afterward, so the model gets one wrap-up step to react
-              // (nominate, backfill, ...) before the turn ends. Gated on a
-              // session flag so interactive / goal modes are unaffected.
-              if (this.agent.printDrainAgentTasksOnStop) {
+              // tasks enabled for draining (subagents via `kind === 'agent'`,
+              // bash via `kind === 'process'`) are still running, hold the turn
+              // open and idle-wait until they finish (or the shared drain
+              // deadline is reached). Their completions steer into the buffer
+              // during the wait and are flushed afterward, so the model gets
+              // one wrap-up step to react (nominate, backfill, ...) before the
+              // turn ends. Gated on per-kind session flags so interactive /
+              // goal modes are unaffected, while agent and process draining
+              // stay independently controlled yet share one wait path and one
+              // aggregate deadline.
+              const drainKinds = new Set<BackgroundTaskInfo['kind']>();
+              if (this.agent.printDrainAgentTasksOnStop) drainKinds.add('agent');
+              if (this.agent.printDrainProcessTasksOnStop) drainKinds.add('process');
+              if (drainKinds.size > 0) {
                 const remaining = this.agent.printDrainDeadlineMs - Date.now();
-                const hasActiveAgentTask = this.agent.background
-                  .list(true)
-                  .some((task) => task.kind === 'agent');
-                if (hasActiveAgentTask && remaining > 0) {
-                  await this.agent.background.waitForActiveTasks(
-                    (task) => task.kind === 'agent',
-                    { timeoutMs: remaining, signal },
-                  );
+                const matchesDrain = (task: BackgroundTaskInfo): boolean =>
+                  drainKinds.has(task.kind);
+                const hasActiveTask = this.agent.background.list(true).some(matchesDrain);
+                if (hasActiveTask && remaining > 0) {
+                  await this.agent.background.waitForActiveTasks(matchesDrain, {
+                    timeoutMs: remaining,
+                    signal,
+                  });
                   this.flushSteerBuffer();
                   return { continue: true };
                 }

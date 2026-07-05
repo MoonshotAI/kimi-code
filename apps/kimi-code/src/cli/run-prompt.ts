@@ -339,6 +339,7 @@ async function resolvePromptSession(
     permission: 'auto',
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
     drainAgentTasksOnStop: true,
+    drainProcessTasksOnStop: true,
   });
   installHeadlessHandlers(session);
   return {

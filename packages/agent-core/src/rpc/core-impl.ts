@@ -297,6 +297,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       appVersion: this.appVersion,
       additionalDirs,
       drainAgentTasksOnStop: options.drainAgentTasksOnStop,
+      drainProcessTasksOnStop: options.drainProcessTasksOnStop,
     });
     try {
       session.metadata = {

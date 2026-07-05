@@ -422,6 +422,27 @@ describe('Session lifecycle hooks', () => {
     await session.close();
   });
 
+  it('createMain enables process print drain and shares the deadline when drainProcessTasksOnStop is true', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const before = Date.now();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-drain-proc',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true, printWaitCeilingS: 42 },
+      drainProcessTasksOnStop: true,
+    });
+    const agent = await session.createMain();
+
+    expect(agent.printDrainProcessTasksOnStop).toBe(true);
+    expect(agent.printDrainAgentTasksOnStop).toBe(false);
+    expect(agent.printDrainDeadlineMs).toBeGreaterThanOrEqual(before + 42 * 1000 - 50);
+    expect(agent.printDrainDeadlineMs).toBeLessThanOrEqual(Date.now() + 42 * 1000 + 50);
+    await session.close();
+  });
+
   it('createMain leaves print drain disabled by default', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({

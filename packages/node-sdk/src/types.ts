@@ -112,6 +112,15 @@ export interface CreateSessionOptions {
    * interactive / SDK sessions.
    */
   readonly drainAgentTasksOnStop?: boolean;
+  /**
+   * Print-mode (`kimi -p`) only: when the main agent ends a turn while
+   * background bash (`kind === 'process'`) tasks are still running, hold the
+   * turn open and idle-wait until they all finish, flushing their completions
+   * into the turn so the model can react before the run exits. Shares the
+   * deadline and wait path with `drainAgentTasksOnStop`. Ignored by
+   * interactive / SDK sessions.
+   */
+  readonly drainProcessTasksOnStop?: boolean;
 }
 
 export interface RenameSessionInput {

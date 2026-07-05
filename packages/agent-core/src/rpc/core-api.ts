@@ -61,6 +61,7 @@ export interface CreateSessionPayload {
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
   readonly drainAgentTasksOnStop?: boolean;
+  readonly drainProcessTasksOnStop?: boolean;
 }
 
 export interface CloseSessionPayload {

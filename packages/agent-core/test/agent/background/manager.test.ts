@@ -899,4 +899,22 @@ describe('waitForActiveTasks', () => {
     await expect(wait).rejects.toThrow('stop');
     done.resolve({ result: 'late' });
   });
+
+  it('waits until a matching process task reaches a terminal state', async () => {
+    const { manager } = createBackgroundManager();
+    const { proc, resolve } = manuallyResolvedProcess();
+    registerProcess(manager, proc, 'sleep 60', 'proc');
+    const isProcess = (info: BackgroundTaskInfo): boolean => info.kind === 'process';
+
+    let settled = false;
+    const wait = manager.waitForActiveTasks(isProcess).then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setImmediate(r));
+    expect(settled).toBe(false);
+
+    resolve(0);
+    await wait;
+    expect(settled).toBe(true);
+  });
 });

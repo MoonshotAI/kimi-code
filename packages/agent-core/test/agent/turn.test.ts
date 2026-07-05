@@ -109,7 +109,7 @@ describe('Agent turn flow', () => {
     expect(ctx.llmCalls.length).toBe(2);
   });
 
-  it('does not hold the turn for a non-agent (process) background task', async () => {
+  it('does not hold the turn for a process task when process drain is disabled', async () => {
     const ctx = testAgent();
     ctx.agent.printDrainAgentTasksOnStop = true;
     ctx.agent.printDrainDeadlineMs = Date.now() + 60_000;
@@ -132,9 +132,51 @@ describe('Agent turn flow', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
     await ctx.untilTurnEnd();
 
-    // Process tasks do not trigger the subagent-only drain hold, so the turn
-    // ends after the single step.
+    // Process tasks do not trigger the agent-only drain hold, so the turn ends
+    // after the single step.
     expect(ctx.llmCalls.length).toBe(1);
+  });
+
+  it('holds the turn until a background bash task finishes, then runs a wrap-up step', async () => {
+    const ctx = testAgent();
+    ctx.agent.printDrainProcessTasksOnStop = true;
+    ctx.agent.printDrainDeadlineMs = Date.now() + 60_000;
+
+    const procDone = createControlledPromise<number>();
+    const proc: KaosProcess = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout: Readable.from([]),
+      stderr: Readable.from([]),
+      pid: 4242,
+      exitCode: null,
+      wait: vi.fn().mockReturnValue(procDone) as unknown as KaosProcess['wait'],
+      kill: vi.fn().mockResolvedValue(undefined) as unknown as KaosProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as unknown as KaosProcess['dispose'],
+    };
+    ctx.agent.background.registerTask(new ProcessBackgroundTask(proc, 'npm test', 'proc'));
+
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'first' });
+    ctx.mockNextResponse({ type: 'text', text: 'wrap-up' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+
+    let turnEnded = false;
+    const turnEnd = ctx.untilTurnEnd().then(() => {
+      turnEnded = true;
+    });
+
+    // Let the first model step finish and the drain hold engage.
+    for (let i = 0; i < 100 && ctx.llmCalls.length < 1; i++) await delay(5);
+    await delay(20);
+    expect(turnEnded).toBe(false);
+
+    // Completing the bash releases the hold; the model takes a wrap-up step.
+    procDone.resolve(0);
+    await turnEnd;
+
+    expect(turnEnded).toBe(true);
+    expect(ctx.llmCalls.length).toBe(2);
   });
 
   it('tracks turn_ended telemetry with protocol props', async () => {
