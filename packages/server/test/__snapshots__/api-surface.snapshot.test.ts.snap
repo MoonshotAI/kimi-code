@@ -179,6 +179,10 @@ exports[`API surface snapshot > matches the documented v1 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/{workspace_id}/skills",
+    ],
+    [
+      "GET",
       "/asyncapi.json",
     ],
     [
