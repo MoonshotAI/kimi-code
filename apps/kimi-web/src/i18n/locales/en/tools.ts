@@ -11,6 +11,7 @@ export default {
     search: 'Search',
     todo: 'Todo',
     task: 'Task',
+    ask_user: 'Question',
   },
   chip: {
     lines: '{count} lines',

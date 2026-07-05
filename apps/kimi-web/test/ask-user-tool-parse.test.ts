@@ -1,0 +1,125 @@
+import { describe, expect, it } from 'vitest';
+import {
+  parseAskInput,
+  parseAskOutput,
+  resolveAnswer,
+} from '../src/components/chat/tool-calls/askUserToolParse';
+
+const ARG = JSON.stringify({
+  questions: [
+    {
+      question: 'Which auth provider?',
+      header: 'Auth',
+      multi_select: false,
+      options: [
+        { label: 'Clerk', description: 'Native Vercel Marketplace' },
+        { label: 'Auth0', description: 'Enterprise SSO' },
+      ],
+    },
+    {
+      question: 'Where to deploy?',
+      header: 'Deploy',
+      multi_select: true,
+      options: [
+        { label: 'Vercel', description: 'Zero-config' },
+        { label: 'Fly.io', description: 'Edge' },
+        { label: 'AWS', description: 'Full control' },
+      ],
+    },
+  ],
+});
+
+describe('parseAskInput', () => {
+  it('reads questions, options, header and multi_select', () => {
+    const qs = parseAskInput(ARG);
+    expect(qs).toHaveLength(2);
+    expect(qs[0]).toMatchObject({ header: 'Auth', multiSelect: false });
+    expect(qs[0].options.map(o => o.label)).toEqual(['Clerk', 'Auth0']);
+    expect(qs[1]).toMatchObject({ header: 'Deploy', multiSelect: true });
+    expect(qs[1].options).toHaveLength(3);
+  });
+
+  it('defaults missing optional fields and tolerates malformed input', () => {
+    expect(parseAskInput('')).toEqual([]);
+    expect(parseAskInput('not json')).toEqual([]);
+    expect(parseAskInput('{}')).toEqual([]);
+    expect(parseAskInput(JSON.stringify({ questions: 'nope' }))).toEqual([]);
+    // partial option entries degrade to empty strings, not a throw
+    const qs = parseAskInput(JSON.stringify({ questions: [{ options: [{ label: 'A' }, null] }] }));
+    expect(qs[0].options).toEqual([
+      { label: 'A', description: '' },
+      { label: '', description: '' },
+    ]);
+  });
+});
+
+describe('parseAskOutput', () => {
+  it('reads answers and note', () => {
+    const out = parseAskOutput([JSON.stringify({ answers: { q_0: 'opt_0_1' }, note: '' })]);
+    expect(out.answers).toEqual({ q_0: 'opt_0_1' });
+  });
+
+  it('keeps string and true values, drops others', () => {
+    const out = parseAskOutput([JSON.stringify({ answers: { a: 'x', b: true, c: 3, d: null } })]);
+    expect(out.answers).toEqual({ a: 'x', b: true });
+  });
+
+  it('treats empty answers + note as dismissed', () => {
+    const out = parseAskOutput([
+      JSON.stringify({ answers: {}, note: 'User dismissed the question without answering.' }),
+    ]);
+    expect(Object.keys(out.answers)).toHaveLength(0);
+    expect(out.note).toContain('dismissed');
+  });
+
+  it('tolerates missing / malformed output', () => {
+    expect(parseAskOutput(undefined)).toEqual({ answers: {}, note: '' });
+    expect(parseAskOutput([])).toEqual({ answers: {}, note: '' });
+    expect(parseAskOutput(['{not json'])).toEqual({ answers: {}, note: '' });
+  });
+});
+
+describe('resolveAnswer', () => {
+  it('decodes a single-select option id to its index', () => {
+    const r = resolveAnswer('opt_0_1');
+    expect([...r.selected]).toEqual([1]);
+    expect(r.otherText).toBe('');
+    expect(r.indeterminate).toBe(false);
+  });
+
+  it('decodes a comma-joined multi-select into several indices', () => {
+    const r = resolveAnswer('opt_1_0,opt_1_2');
+    expect(r.selected).toEqual(new Set([0, 2]));
+  });
+
+  it('treats a free-text value as an Other answer', () => {
+    const r = resolveAnswer('Use OIDC instead of static keys');
+    expect(r.selected.size).toBe(0);
+    expect(r.otherText).toBe('Use OIDC instead of static keys');
+  });
+
+  it('splits a multi+Other value into options plus the free-text segment', () => {
+    const r = resolveAnswer('opt_0_0,opt_0_2,Custom thing');
+    expect(r.selected).toEqual(new Set([0, 2]));
+    expect(r.otherText).toBe('Custom thing');
+  });
+
+  it('joins non-id segments back so Other text containing a comma survives', () => {
+    const r = resolveAnswer('opt_0_1,alpha,beta');
+    expect([...r.selected]).toEqual([1]);
+    expect(r.otherText).toBe('alpha,beta');
+  });
+
+  it('marks the literal true as indeterminate', () => {
+    const r = resolveAnswer(true);
+    expect(r.indeterminate).toBe(true);
+    expect(r.selected.size).toBe(0);
+  });
+
+  it('returns an empty result for skipped / unanswered questions', () => {
+    const r = resolveAnswer(undefined);
+    expect(r.selected.size).toBe(0);
+    expect(r.otherText).toBe('');
+    expect(r.indeterminate).toBe(false);
+  });
+});

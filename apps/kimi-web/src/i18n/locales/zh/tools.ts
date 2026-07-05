@@ -11,6 +11,7 @@ export default {
     search: '搜索',
     todo: '待办',
     task: '任务',
+    ask_user: '提问',
   },
   chip: {
     lines: '{count} 行',

@@ -23,6 +23,7 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   search: 'tools.label.search',
   todo: 'tools.label.todo',
   task: 'tools.label.task',
+  askuserquestion: 'tools.label.ask_user',
 };
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ const TOOL_GLYPH: Record<string, IconName> = {
   web_fetch: 'globe',
   todo: 'check-list',
   task: 'sparkles',
+  askuserquestion: 'help-circle',
 };
 
 export function toolGlyph(name: string): string {
