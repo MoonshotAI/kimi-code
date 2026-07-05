@@ -2132,7 +2132,7 @@ onUnmounted(() => {
   .p-tool-row.expanded .tr-car { transform: rotate(90deg); }
 
   /* Detail after a row is expanded (code / output) */
-  .p-tool-detail { padding: 0 11px 11px 36px; background: var(--p-surface-sunken); border-top: 1px solid var(--p-line); }
+  .p-tool-detail { padding: 0 11px 11px; background: var(--p-surface-sunken); border-top: 1px solid var(--p-line); }
   .p-tool-detail .p-code { margin-top: 10px; }
 
   /* ===== Chat: Composer ===== */
