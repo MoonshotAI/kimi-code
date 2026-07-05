@@ -1,5 +1,6 @@
-import { readdirSync, statSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { readdirSync, statSync, type Dirent } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 
 import {
   CombinedAutocompleteProvider,
@@ -10,7 +11,11 @@ import {
   type SlashCommand,
 } from '@moonshot-ai/pi-tui';
 
-const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
+import { MENTION_DELIMITERS } from '../../utils/file-mention';
+
+// Token boundaries shared with submit-time mention resolution so that a
+// token the autocomplete inserts is tokenized identically on submit.
+const PATH_DELIMITERS = MENTION_DELIMITERS;
 const MAX_FALLBACK_SCAN = 2000;
 const MAX_FALLBACK_SUGGESTIONS = 50;
 
@@ -75,6 +80,13 @@ export class FileMentionProvider implements AutocompleteProvider {
     // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
+      // A `/` in the mention is the user spelling out a hierarchy — list
+      // that directory shell-style instead of fuzzy-searching the whole
+      // base, which surfaces deep junk (`~/.Trash/**`) above `~/Downloads`.
+      // Falls through to the fuzzy paths when the directory part does not
+      // resolve or nothing in it matches.
+      const navigation = getDirectoryNavigationSuggestions(this.workDir, atPrefix);
+      if (navigation !== null) return navigation;
       if (this.fdPath === null || this.additionalDirs.length > 0) {
         return getFsMentionSuggestions(
           this.workDir,
@@ -225,6 +237,97 @@ export function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+/**
+ * Shell-style directory navigation for scoped `@` mentions.
+ *
+ * A `/` in the query means the user is navigating a path hierarchy:
+ * treat the token as `<dir>/<fragment>`, list that single directory, and
+ * rank entries basename-prefix first, then substring (CJK file names are
+ * often matched mid-name). Hidden entries follow the shell convention —
+ * shown only when the fragment itself starts with `.`. The typed dir
+ * part (`~/`, relative, absolute) is preserved in the inserted value;
+ * submit-time resolution expands it.
+ *
+ * Returns null when the query has no `/`, the directory part does not
+ * resolve, or nothing matches — callers fall back to fuzzy search.
+ */
+export function getDirectoryNavigationSuggestions(
+  workDir: string,
+  atPrefix: string,
+): AutocompleteSuggestions | null {
+  const query = atPrefix.slice(1);
+  const lastSlash = query.lastIndexOf('/');
+  if (lastSlash === -1) return null;
+
+  const dirPartAsTyped = query.slice(0, lastSlash + 1);
+  const fragment = query.slice(lastSlash + 1);
+  const absoluteDir = expandMentionDir(dirPartAsTyped, workDir);
+
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(absoluteDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const lowerFragment = fragment.toLowerCase();
+  const showHidden = fragment.startsWith('.');
+  const scored: Array<{ name: string; isDirectory: boolean; score: number }> = [];
+  for (const entry of entries) {
+    if (!showHidden && entry.name.startsWith('.')) continue;
+    let score = 0;
+    if (lowerFragment.length === 0) score = 1;
+    else {
+      const lowerName = entry.name.toLowerCase();
+      if (lowerName.startsWith(lowerFragment)) score = 2;
+      else if (lowerName.includes(lowerFragment)) score = 1;
+    }
+    if (score === 0) continue;
+    scored.push({
+      name: entry.name,
+      isDirectory: isDirectoryEntry(entry, absoluteDir),
+      score,
+    });
+  }
+  if (scored.length === 0) return null;
+
+  scored.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return {
+    prefix: atPrefix,
+    items: scored.slice(0, MAX_FALLBACK_SUGGESTIONS).map((entry) => {
+      const valuePath = `${dirPartAsTyped}${entry.name}${entry.isDirectory ? '/' : ''}`;
+      return {
+        value: valuePath.includes(' ') ? `@"${valuePath}"` : `@${valuePath}`,
+        label: `${entry.name}${entry.isDirectory ? '/' : ''}`,
+        description: normalizePath(join(absoluteDir, entry.name)),
+      };
+    }),
+  };
+}
+
+function expandMentionDir(dirPart: string, workDir: string): string {
+  if (dirPart === '~' || dirPart.startsWith('~/')) {
+    return resolve(homedir(), dirPart.slice(2));
+  }
+  if (isAbsolute(dirPart)) return resolve(dirPart);
+  return resolve(workDir, dirPart);
+}
+
+function isDirectoryEntry(entry: Dirent, parentDir: string): boolean {
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return statSync(join(parentDir, entry.name)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
