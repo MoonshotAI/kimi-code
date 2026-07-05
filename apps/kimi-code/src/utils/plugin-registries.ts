@@ -13,15 +13,13 @@ export interface RegistriesFile {
 
 const REGISTRIES_REL = join('plugins', 'registries.json');
 
-const EMPTY: RegistriesFile = { version: 1, registries: [] };
-
 export async function readRegistries(kimiHomeDir: string): Promise<RegistriesFile> {
   const filePath = join(kimiHomeDir, REGISTRIES_REL);
   let text: string;
   try {
     text = await readFile(filePath, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return EMPTY;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, registries: [] };
     throw error;
   }
   const parsed = JSON.parse(text) as unknown;
@@ -60,7 +58,7 @@ export async function addRegistry(
       ...file.registries,
       {
         url: trimmedUrl,
-        ...(trimmedName !== undefined && trimmedName.length > 0 ? { name: trimmedName } : {}),
+        name: trimmedName || undefined,
       },
     ],
   };
