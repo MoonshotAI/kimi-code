@@ -1,14 +1,21 @@
 /**
- * `/sessions/{session_id}/skills*` REST routes.
+ * `/skills` REST routes (session- and workspace-scoped).
  *
- * 2 endpoints:
+ * 3 endpoints:
  *
  *   GET  /sessions/{session_id}/skills                       data: {skills: SkillDescriptor[]}
+ *   GET  /workspaces/{workspace_id}/skills                   data: {skills: SkillDescriptor[]}
  *   POST /sessions/{session_id}/skills/{skill_name}:activate body: {args?}  data: {activated: true, skill_name}
  *
- * Skills are session-scoped: the registry is built per session (project
- * skills are discovered from the session cwd), so the list lives under
+ * The session list is session-scoped: the registry is built per session
+ * (project skills are discovered from the session cwd), so it lives under
  * `/sessions/{session_id}` rather than as a global collection like `/tools`.
+ *
+ * The workspace list (`/workspaces/{workspace_id}/skills`) is the
+ * session-less counterpart: it scans the same roots a new session in that
+ * workspace cwd would, so clients can populate the composer skill menu before
+ * a session exists. The workspace id is resolved to its root via
+ * `IWorkspaceRegistry.resolveRoot`.
  *
  * Activation is the REST analogue of typing `/<skill> <args>` in the TUI: it
  * renders the skill prompt and starts a turn on the session's main agent with
@@ -17,6 +24,7 @@
  * `turn.*` events on the WS stream.
  *
  * **Error mapping**:
+ *   - `WorkspaceNotFoundError`    → envelope `code: 40410 workspace.not_found`.
  *   - `SessionNotFoundError`      → envelope `code: 40401 session.not_found`.
  *   - `SkillNotFoundError`        → envelope `code: 40415 skill.not_found`.
  *   - `SkillNotActivatableError`  → envelope `code: 40912 skill.not_activatable`.
@@ -34,8 +42,9 @@ import {
   activateSkillRequestSchema,
   activateSkillResultSchema,
   listSkillsResponseSchema,
+  workspaceIdParamSchema,
 } from '@moonshot-ai/protocol';
-import { ISkillService, SessionNotFoundError, SkillNotActivatableError, SkillNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
+import { ISkillService, IWorkspaceRegistry, SessionNotFoundError, SkillNotActivatableError, SkillNotFoundError, WorkspaceNotFoundError, type IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -100,6 +109,45 @@ export function registerSkillsRoutes(
     listSkillsRoute.path,
     listSkillsRoute.options,
     listSkillsRoute.handler as Parameters<SkillsRouteHost['get']>[2],
+  );
+
+  // GET /workspaces/{workspace_id}/skills --------------------------------
+  const listWorkspaceSkillsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/workspaces/{workspace_id}/skills',
+      params: workspaceIdParamSchema,
+      success: { data: listSkillsResponseSchema },
+      errors: {
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+      },
+      description: 'List the skills available to a workspace (no session required)',
+      tags: ['skills'],
+      operationId: 'listWorkspaceSkills',
+    },
+    async (req, reply) => {
+      try {
+        const { workspace_id } = req.params;
+        // Resolve both services from the accessor synchronously: the DI
+        // accessor is only valid during the synchronous invocation of the
+        // callback, so no `a.get(...)` may follow an `await`.
+        const skills = await ix.invokeFunction((a) => {
+          const registry = a.get(IWorkspaceRegistry);
+          const skillService = a.get(ISkillService);
+          return registry.resolveRoot(workspace_id).then((workDir) =>
+            skillService.listForWorkDir(workDir),
+          );
+        });
+        reply.send(okEnvelope({ skills }, req.id));
+      } catch (err) {
+        sendMappedError(reply, req.id, err);
+      }
+    },
+  );
+  app.get(
+    listWorkspaceSkillsRoute.path,
+    listWorkspaceSkillsRoute.options,
+    listWorkspaceSkillsRoute.handler as Parameters<SkillsRouteHost['get']>[2],
   );
 
   // POST /sessions/{session_id}/skills/{skill_name}:activate --------------
@@ -169,6 +217,10 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
+  if (err instanceof WorkspaceNotFoundError) {
+    reply.send(errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, err.message, requestId));
+    return;
+  }
   if (err instanceof SessionNotFoundError) {
     reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
     return;
