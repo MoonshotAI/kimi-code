@@ -1,0 +1,16 @@
+
+LEGACY DATABASE DETECTED!
+
+This database was created before version 0.17.5 and lacks a repository fingerprint.
+To continue using this database, you must explicitly set its repository ID:
+
+  bd migrate --update-repo-id
+
+This ensures the database is bound to this repository and prevents accidental
+database sharing between different repositories.
+
+If this is a fresh clone, run:
+  rm -rf .beads && bd init
+
+Note: Auto-claiming legacy databases is intentionally disabled to prevent
+silent corruption when databases are copied between repositories.
