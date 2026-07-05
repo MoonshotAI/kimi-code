@@ -359,7 +359,7 @@ export class AcpServer implements Agent {
    * deliberately skips it (per ACP spec G4 / plan gap-4.3).
    */
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories) ?? [];
     const { session, acpSession, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
@@ -397,7 +397,7 @@ export class AcpServer implements Agent {
    * rationale, and gap-4.1 for the matching capability advertisement.
    */
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories);
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories) ?? [];
     const { session, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
@@ -1112,14 +1112,14 @@ function sessionSummaryToSessionInfo(summary: SessionSummary): SessionInfo {
  * Validate the ACP `additionalDirectories` field per protocol spec.
  *
  * Returns the validated string array when the field is present, or
- * `undefined` when the field is absent (`null` or `undefined`).
+ * `undefined` when the field is absent (`undefined`).
  * Throws {@link RequestError.invalidParams} for non-array values,
  * non-string entries, empty strings, or non-absolute paths.
  */
 export function validateAdditionalDirectories(
   dirs: unknown,
 ): string[] | undefined {
-  if (dirs === undefined || dirs === null) return undefined;
+  if (dirs === undefined) return undefined;
   if (!Array.isArray(dirs)) {
     throw RequestError.invalidParams(
       { additionalDirectories: dirs },

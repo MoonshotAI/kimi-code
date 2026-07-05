@@ -209,8 +209,8 @@ describe('validateAdditionalDirectories', () => {
     expect(validateAdditionalDirectories(undefined)).toBeUndefined();
   });
 
-  it('returns undefined when dirs is null', () => {
-    expect(validateAdditionalDirectories(null)).toBeUndefined();
+  it('throws when dirs is null (present non-array value)', () => {
+    expect(() => validateAdditionalDirectories(null)).toThrow();
   });
 
   it('returns the array when dirs is a valid string array', () => {

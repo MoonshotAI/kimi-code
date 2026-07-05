@@ -196,7 +196,7 @@ describe('AcpServer.resumeSession', () => {
     expect(capturedResumeInputs).toHaveLength(1);
     expect(
       (capturedResumeInputs[0] as { additionalDirs?: unknown }).additionalDirs,
-    ).toBeUndefined();
+    ).toEqual([]);
   });
 
   it('returns configOptions matching the resumed session model + mode + thinking', async () => {
