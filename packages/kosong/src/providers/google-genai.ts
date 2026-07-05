@@ -134,6 +134,8 @@ function applyResponseFormat(
 ): void {
   if (format === undefined) return;
   config['responseMimeType'] = 'application/json';
+  delete config['responseSchema'];
+  delete config['responseJsonSchema'];
   if (format.type === 'json_schema') {
     config['responseJsonSchema'] = format.jsonSchema.schema;
   }

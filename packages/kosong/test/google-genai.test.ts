@@ -160,6 +160,39 @@ describe('GoogleGenAIChatProvider', () => {
       expect(config['responseJsonSchema']).toEqual(schema);
     });
 
+    it('replaces native responseSchema when applying json_schema response format', async () => {
+      const provider = createProvider().withGenerationKwargs({
+        responseSchema: {
+          type: 'object',
+          properties: { old: { type: 'string' } },
+        },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(config['responseSchema']).toBeUndefined();
+      expect(config['responseJsonSchema']).toEqual(schema);
+    });
+
     it('system messages in history are wrapped and emitted as user content', () => {
       // Regression: Google GenAI's Content.role only accepts "user" or
       // "model", so a `system` message sitting in the replay history (from
