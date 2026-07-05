@@ -107,10 +107,9 @@ export async function loadMergedMarketplace(
 ): Promise<PluginMarketplace> {
   const registries = await readRegistries(options.kimiHomeDir);
   const configuredSource = process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
-  const defaultSource = configuredSource ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL;
   const defaultMarketplace = await loadPluginMarketplace({
     workDir: options.workDir,
-    source: defaultSource,
+    source: configuredSource,
     fetchImpl: options.fetchImpl,
   });
 

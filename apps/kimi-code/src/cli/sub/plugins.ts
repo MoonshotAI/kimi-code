@@ -271,7 +271,9 @@ export function registerPluginsCommand(parent: Command, deps?: Partial<PluginsDe
       await d.shutdownDefaultTelemetry();
       await d.closeDefaultHarness();
     }
-    d.exit(failed ? 1 : 0);
+    if (failed) {
+      d.exit(1);
+    }
   };
 
   const program = parent.command('plugins').description('Manage Kimi Code plugins.');

@@ -373,7 +373,7 @@ describe('registerPluginsCommand', () => {
     expect(getWritten(stderr)).toContain('Failed to list plugins: boom');
   });
 
-  it('exits 0 after cleanup on success', async () => {
+  it('cleans up and returns normally on success', async () => {
     const harness = makeHarness();
     const exit = vi.fn((code: number) => {
       throw new Error(`exit:${code}`);
@@ -386,8 +386,9 @@ describe('registerPluginsCommand', () => {
       getHomeDir: () => '/tmp/kimi-home',
     });
 
-    await expect(parent.parseAsync(['node', 'test', 'plugins', 'list'])).rejects.toThrow('exit:0');
+    await expect(parent.parseAsync(['node', 'test', 'plugins', 'list'])).resolves.not.toThrow();
 
+    expect(exit).not.toHaveBeenCalled();
     expect(mocks.shutdownTelemetry).toHaveBeenCalled();
   });
 });
