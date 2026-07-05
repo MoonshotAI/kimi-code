@@ -37,6 +37,7 @@ const cwdStdioFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const slowStdioFixture = join(here, 'fixtures', 'slow-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
+const dynamicToolsFixture = join(here, 'fixtures', 'dynamic-tools-stdio-server.mjs');
 const MOCK_PROVIDER: ProviderConfig = {
   type: 'kimi',
   apiKey: 'test-key',
@@ -163,6 +164,54 @@ describe('McpConnectionManager', () => {
       expect([...(resolved?.enabledNames ?? [])]).toEqual(['echo']);
       const entry = cm.get('filtered');
       expect(entry?.toolCount).toBe(1);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('refreshes connected tools when the server sends tools/list_changed', async () => {
+    const cm = new McpConnectionManager();
+    const seen: Array<{ name: string; status: McpServerEntry['status']; toolCount: number }> = [];
+    cm.onStatusChange((e) => {
+      seen.push({ name: e.name, status: e.status, toolCount: e.toolCount });
+    });
+    try {
+      await cm.connectAll({ dynamic: stdioConfig([dynamicToolsFixture]) });
+      expect(cm.get('dynamic')).toMatchObject({
+        status: 'connected',
+        toolCount: 1,
+      });
+
+      const firstResolved = cm.resolved('dynamic');
+      expect(firstResolved?.tools.map((tool) => tool.name)).toEqual(['enable_extra_tool']);
+      if (firstResolved === undefined) {
+        throw new Error('Expected dynamic MCP server to be connected');
+      }
+      await firstResolved.client.callTool('enable_extra_tool', {});
+
+      for (let i = 0; i < 50; i++) {
+        if (cm.get('dynamic')?.toolCount === 2) break;
+        await sleep(50);
+      }
+
+      expect(cm.get('dynamic')).toMatchObject({
+        status: 'connected',
+        toolCount: 2,
+      });
+      const refreshed = cm.resolved('dynamic');
+      expect(refreshed?.tools.map((tool) => tool.name).toSorted()).toEqual([
+        'dynamic_echo',
+        'enable_extra_tool',
+      ]);
+      expect([...(refreshed?.enabledNames ?? [])].toSorted()).toEqual([
+        'dynamic_echo',
+        'enable_extra_tool',
+      ]);
+      expect(seen.filter((e) => e.name === 'dynamic')).toEqual([
+        { name: 'dynamic', status: 'pending', toolCount: 0 },
+        { name: 'dynamic', status: 'connected', toolCount: 1 },
+        { name: 'dynamic', status: 'connected', toolCount: 2 },
+      ]);
     } finally {
       await cm.shutdown();
     }
@@ -949,6 +998,75 @@ describe('Session MCP startup', () => {
         (e) => e.type === 'tool.list.updated' && e.reason === 'mcp.connected',
       );
       expect(disconnects.length).toBeGreaterThanOrEqual(1);
+      expect(connects.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await session.close();
+      await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  }, 10_000);
+
+  it('updates the main agent tool list when an MCP server reports new tools', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-dynamic-tools-'));
+    const events: SessionRpcEvent[] = [];
+    const session = new Session({
+      id: 'test-mcp-dynamic-tools',
+      kaos: testKaos.withCwd(tmp),
+      homedir: join(tmp, 'session'),
+      rpc: sessionRpc({ events }),
+      mcpConfig: {
+        servers: {
+          dynamic: {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [dynamicToolsFixture],
+            startupTimeoutMs: 4_000,
+          },
+        },
+      },
+    });
+
+    try {
+      const agent = await session.createMain();
+      for (let i = 0; i < 50; i++) {
+        if (
+          [...agent.tools.toolInfos()].some(
+            (tool) => tool.name === 'mcp__dynamic__enable_extra_tool',
+          )
+        ) {
+          break;
+        }
+        await sleep(50);
+      }
+      expect([...agent.tools.toolInfos()].map((tool) => tool.name)).toContain(
+        'mcp__dynamic__enable_extra_tool',
+      );
+      expect([...agent.tools.toolInfos()].map((tool) => tool.name)).not.toContain(
+        'mcp__dynamic__dynamic_echo',
+      );
+
+      events.length = 0;
+      const resolved = session.mcp.resolved('dynamic');
+      if (resolved === undefined) {
+        throw new Error('Expected dynamic MCP server to be connected');
+      }
+      await resolved.client.callTool('enable_extra_tool', {});
+      for (let i = 0; i < 50; i++) {
+        if (
+          [...agent.tools.toolInfos()].some(
+            (tool) => tool.name === 'mcp__dynamic__dynamic_echo',
+          )
+        ) {
+          break;
+        }
+        await sleep(50);
+      }
+
+      expect([...agent.tools.toolInfos()].map((tool) => tool.name)).toContain(
+        'mcp__dynamic__dynamic_echo',
+      );
+      const connects = events.filter(
+        (e) => e.type === 'tool.list.updated' && e.reason === 'mcp.connected',
+      );
       expect(connects.length).toBeGreaterThanOrEqual(1);
     } finally {
       await session.close();

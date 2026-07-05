@@ -1,4 +1,5 @@
 import { getCoreVersion } from '#/version';
+import type { ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
 
 import type { MCPToolDefinition, MCPToolResult } from './types';
 
@@ -26,6 +27,11 @@ export interface UnexpectedCloseReason {
 
 export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
 
+export type ToolsChangedListener = (
+  error: Error | null,
+  tools: MCPToolDefinition[] | null,
+) => void;
+
 export interface McpRequestOptions {
   readonly timeout?: number;
   readonly signal?: AbortSignal;
@@ -43,6 +49,22 @@ export function buildRequestOptions(
 ): McpRequestOptions | undefined {
   if (toolCallTimeoutMs === undefined && signal === undefined) return undefined;
   return { timeout: toolCallTimeoutMs, signal };
+}
+
+export function buildListChangedClientOptions(
+  getToolsChangedListener: () => ToolsChangedListener | undefined,
+): Pick<ClientOptions, 'listChanged'> {
+  return {
+    listChanged: {
+      tools: {
+        onChanged: (error, tools) => {
+          const listener = getToolsChangedListener();
+          if (listener === undefined) return;
+          listener(error, tools?.map(toMcpToolDefinition) ?? null);
+        },
+      },
+    },
+  };
 }
 
 interface SdkListedTool {

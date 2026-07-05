@@ -8,10 +8,10 @@ import { abortable } from '../utils/abort';
 import { HttpMcpClient } from './client-http';
 import { isRemoteMcpConfig } from './client-remote';
 import { SseMcpClient } from './client-sse';
-import type { UnexpectedCloseReason } from './client-shared';
+import type { ToolsChangedListener, UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from './oauth';
-import { assertMcpInputSchema, type MCPClient } from './types';
+import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
 
@@ -263,6 +263,7 @@ export class McpConnectionManager {
       const startupClient = this.createClient(entry.config, entry.name);
       client = startupClient;
       entry.client = startupClient;
+      this.watchForToolsChanged(entry, startupClient, attemptId);
       const tools = await withTimeout(
         this.connectAndDiscoverTools(startupClient),
         timeoutMs,
@@ -324,6 +325,57 @@ export class McpConnectionManager {
     });
   }
 
+  private watchForToolsChanged(
+    entry: InternalEntry,
+    client: RuntimeMcpClient,
+    attemptId: number,
+  ): void {
+    const listener: ToolsChangedListener = (error, mcpTools) => {
+      this.handleToolsChanged(entry, client, attemptId, error, mcpTools);
+    };
+    client.onToolsChanged(listener);
+  }
+
+  private handleToolsChanged(
+    entry: InternalEntry,
+    client: RuntimeMcpClient,
+    attemptId: number,
+    error: Error | null,
+    mcpTools: MCPToolDefinition[] | null,
+  ): void {
+    if (!this.isCurrent(entry, attemptId)) return;
+    if (entry.client !== client) return;
+    if (entry.status !== 'connected') return;
+    if (error !== null) {
+      this.log.warn('mcp tools refresh failed', {
+        server: entry.name,
+        transport: entry.config.transport,
+        error,
+      });
+      return;
+    }
+    if (mcpTools === null) return;
+
+    let tools: Tool[];
+    try {
+      tools = this.mcpToolsToTools(mcpTools);
+    } catch (refreshError) {
+      this.log.warn('mcp tools refresh failed', {
+        server: entry.name,
+        transport: entry.config.transport,
+        error: refreshError,
+      });
+      return;
+    }
+    if (!this.isCurrent(entry, attemptId)) return;
+    if (entry.client !== client) return;
+    if (entry.status !== 'connected') return;
+    entry.tools = tools;
+    entry.enabledNames = computeEnabledNames(entry.config, tools);
+    entry.error = undefined;
+    this.emit(entry);
+  }
+
   private beginConnectAttempt(entry: InternalEntry): number {
     entry.attemptId += 1;
     return entry.attemptId;
@@ -379,6 +431,10 @@ export class McpConnectionManager {
   private async connectAndDiscoverTools(client: RuntimeMcpClient): Promise<Tool[]> {
     await client.connect();
     const mcpTools = await client.listTools();
+    return this.mcpToolsToTools(mcpTools);
+  }
+
+  private mcpToolsToTools(mcpTools: readonly MCPToolDefinition[]): Tool[] {
     return mcpTools.map((mcpTool) => ({
       name: mcpTool.name,
       description: mcpTool.description,
