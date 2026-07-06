@@ -984,7 +984,11 @@ export class SessionEventHandler {
     event: CompactionCompletedEvent,
     sendQueued: (item: QueuedMessage) => void,
   ): void {
-    this.host.streamingUI.endCompaction(event.result.tokensBefore, event.result.tokensAfter);
+    this.host.streamingUI.endCompaction(
+      event.result.tokensBefore,
+      event.result.tokensAfter,
+      event.result.summary,
+    );
     this.finishCompaction(sendQueued);
   }
 

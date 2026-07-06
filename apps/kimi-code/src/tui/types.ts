@@ -119,6 +119,7 @@ export interface BackgroundAgentStatusData {
 
 export interface CompactionTranscriptData {
   readonly result?: 'cancelled';
+  readonly summary?: string;
   readonly tokensBefore?: number;
   readonly tokensAfter?: number;
   readonly instruction?: string;

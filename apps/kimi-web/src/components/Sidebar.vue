@@ -761,10 +761,13 @@ onBeforeUnmount(() => {
       @select="onSelectSession"
       @close="showSearch = false"
     />
+    <!-- Keep inside <aside>: a top-level <Teleport> makes Sidebar multi-root,
+         which breaks v-show on the host (Vue can't apply display:none to a
+         Fragment). Teleport still renders to body regardless of placement. -->
+    <Teleport to="body">
+      <DesignSystemView v-if="showDesignSystem" @close="showDesignSystem = false" />
+    </Teleport>
   </aside>
-  <Teleport to="body">
-    <DesignSystemView v-if="showDesignSystem" @close="showDesignSystem = false" />
-  </Teleport>
 </template>
 
 <style scoped>

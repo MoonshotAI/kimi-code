@@ -67,9 +67,9 @@ Pressing `Ctrl-S` causes the model to see your message at the next interruptible
 
 | Shortcut | Function |
 | --- | --- |
-| `Ctrl-O` | Expand or collapse tool output |
+| `Ctrl-O` | Expand or collapse tool output and compaction summaries |
 
-When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views.
+When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views. After compaction, the same shortcut shows or hides the compaction summary in the compaction block.
 
 ## Approval Panel
 
