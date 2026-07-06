@@ -78,12 +78,16 @@ function parseKeepValue(raw: string | undefined): KeepResolution {
 }
 
 /**
- * Resolve the Moonshot Preserved Thinking passthrough (`thinking.keep`) with
- * precedence env (`KIMI_MODEL_THINKING_KEEP`) > config (`thinking.keep`) >
- * default `"all"`. Only meaningful while thinking is on — otherwise the API
- * would receive a `thinking.keep` with no accompanying `thinking.type` it
- * honors. (Compaction uses a raw provider with thinking off, so it correctly
- * resolves to `undefined`.)
+ * Resolve the Preserved Thinking passthrough (Kimi `thinking.keep` / Anthropic
+ * `context_management` `clear_thinking_20251015`) with precedence env
+ * (`KIMI_MODEL_THINKING_KEEP`) > config (`thinking.keep`) > default `"all"`.
+ * Only meaningful while thinking is on — otherwise the API would receive a keep
+ * directive with no accompanying `thinking.type` it honors, so it resolves to
+ * `undefined`. Applied via `ConfigState.provider`, which is shared by the main
+ * loop AND full-history compaction, so compaction intentionally carries the
+ * same keep (and, for Anthropic, the beta endpoint) when thinking is on;
+ * `keep:"all"` prunes nothing and a consistent request shape maximizes KV-cache
+ * reuse.
  *
  * Returns `undefined` when Preserved Thinking should be disabled.
  */

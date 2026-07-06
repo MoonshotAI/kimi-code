@@ -1322,8 +1322,14 @@ export class AnthropicChatProvider implements ChatProvider {
       contextManagement: { edits },
       betaFeatures,
     });
-    // clear_thinking_20251015 is only honored on the beta Messages API
-    // (client.beta.messages.create), so force the beta endpoint when keep is on.
+    // clear_thinking_20251015 is honored only on the beta Messages API
+    // (client.beta.messages.create), so enabling keep forces the beta endpoint
+    // here even when the provider was constructed with betaApi: false. Setting
+    // `[thinking] keep` to an off-value (or KIMI_MODEL_THINKING_KEEP=off) is the
+    // escape hatch that disables keep and returns requests to the standard
+    // endpoint. This also routes adaptive models (whose withThinking would
+    // otherwise drop the interleaved-thinking beta and leave betaFeatures empty)
+    // onto the beta endpoint with a body `betas=[context-management-...]`.
     clone._betaApi = true;
     return clone;
   }
