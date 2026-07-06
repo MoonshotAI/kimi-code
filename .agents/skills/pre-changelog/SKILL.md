@@ -37,7 +37,7 @@ If the CLI changelog is not in the diff (for example an SDK-only release), stop 
 
 Process the version block exactly as `sync-changelog` does for the docs site, but only in memory:
 
-- **Strip** (`sync-changelog` step 3): drop the H1, the `### Patch Changes` / `### Minor Changes` / `### Major Changes` subheadings, PR links, and commit-hash links; keep only each entry's body text.
+- **Strip** (`sync-changelog` step 3): drop the H1, the `### Patch Changes` / `### Minor Changes` / `### Major Changes` subheadings, PR links, commit-hash links, and the `Thanks [@user](...)!` credit (including the multi-author form); keep only each entry's body text.
 - **Classify** (`sync-changelog` step 4): bucket into Features / Bug Fixes / Polish / Refactors / Other; order within each section by reader value.
 - **Translate** (`sync-changelog` step 6): translate entry bodies to Chinese; section headings become 新功能 / 修复 / 优化 / 重构 / 其他.
 

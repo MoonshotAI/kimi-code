@@ -90,16 +90,16 @@ Use upstream order: newest version first.
 
 ### 3. Strip Decorations And Extract Entry Text
 
-Upstream entries look like this:
+Upstream entries look like this (with the changelog thanks feature enabled, each entry carries a `Thanks ...!` credit):
 
 ```markdown
-- [#317](https://github.com/...) [`2f51db4`](https://github.com/...) - Clean up lint warnings ...
+- [#317](https://github.com/...) [`2f51db4`](https://github.com/...) Thanks [@user](https://github.com/...)! - Clean up lint warnings ...
 ```
 
 Keep:
 
 - Version headings such as `## 0.2.0`.
-- Only the body text of each entry, after the PR/hash decoration.
+- Only the body text of each entry, after the PR/hash/thanks decoration.
 
 Remove:
 
@@ -107,6 +107,7 @@ Remove:
 - Changesets subheadings such as `### Patch Changes`, `### Minor Changes`, and `### Major Changes`.
 - PR links such as `[#317](...)`.
 - Commit hash links such as ``[`2f51db4`](...)``.
+- The `Thanks [@user](...)!` credit, including the multi-author form `Thanks [@a](...), [@b](...)!`. Drop the whole `Thanks ...!` segment so only the body text remains.
 
 After stripping, each entry should be only:
 
@@ -299,7 +300,7 @@ Check:
 - Each version has the same section set and order on both pages.
 - Each section has the same number of entries on both pages.
 - Within each section, the most valuable, obvious, and larger entries appear before smaller or narrower entries.
-- PR links and commit hashes were stripped.
+- PR links, commit hashes, and the `Thanks ...!` credit were stripped.
 - Real internal identifiers were replaced with neutral placeholders.
 - There are no empty sections.
 - Markdown indentation and blank lines are intact.
@@ -415,7 +416,7 @@ Return the PR URL to the user when done.
 | Mistake | Fix |
 |---|---|
 | Adding entries directly to the English docs page without reading upstream | Use `apps/kimi-code/CHANGELOG.md` as the source |
-| Copying PR links or commit hashes into docs | Strip them; keep only body text |
+| Copying PR links, commit hashes, or the `Thanks ...!` credit into docs | Strip them; keep only body text |
 | Rewording upstream English entries | Upstream is frozen; copy the body text unless the user explicitly asks otherwise |
 | Leaving English text untranslated in the Chinese page | The Chinese page must be fully Chinese except preserved technical terms |
 | Editing upstream changelog text | Do not edit upstream |
