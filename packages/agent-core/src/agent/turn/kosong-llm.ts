@@ -37,7 +37,6 @@ import type {
 } from '../../loop';
 import {
   applyCompletionBudget,
-  appliedCompletionBudgetCap,
   type CompletionBudgetConfig,
 } from '../../utils/completion-budget';
 import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
@@ -123,14 +122,7 @@ export class KosongLLM implements LLM {
       onRequestStart: markRequestStart,
       onRequestSent: markRequestSent,
       onStreamEnd: markStreamEnd,
-      requestLogFields: {
-        ...params.requestLogFields,
-        maxTokens: appliedCompletionBudgetCap({
-          provider: this.provider,
-          budget: this.completionBudgetConfig,
-          capability: this.capability,
-        }),
-      },
+      requestLogFields: params.requestLogFields,
     };
 
     const result = await this.generate(

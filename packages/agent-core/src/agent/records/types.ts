@@ -146,7 +146,11 @@ export interface AgentRecordEvents {
     /** Effective env-driven sampling overrides (Kimi provider only). */
     temperature?: number;
     topP?: number;
-    /** Client-computed completion budget cap passed to the provider. */
+    /**
+     * Effective completion-token cap the provider sends on the wire — read
+     * from the provider after budget application, so provider-side clamping
+     * (remaining context window, transport ceilings) is included.
+     */
     maxTokens?: number;
     betaApi?: boolean;
     /** Progressive tool disclosure in effect (env flag × model capability). */

@@ -79,7 +79,7 @@ export class LlmRequestRecorder {
       topP: isKimiProvider
         ? parseFloatEnv(process.env['KIMI_MODEL_TOP_P'], 'KIMI_MODEL_TOP_P')
         : undefined,
-      maxTokens: fields.maxTokens,
+      maxTokens: provider.maxCompletionTokens,
       betaApi:
         modelAlias === undefined
           ? undefined

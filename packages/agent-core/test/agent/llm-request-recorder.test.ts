@@ -54,6 +54,10 @@ describe('llm request trace records', () => {
       expect(request.model).toBe('mock-model');
       expect(request.toolSelect).toBe(false);
     }
+    // maxTokens is the provider-clamped wire value: the second request has
+    // consumed context, so its remaining-context cap is strictly smaller.
+    expect(requests[0]!.maxTokens).toBe(1_000_000);
+    expect(requests[1]!.maxTokens!).toBeLessThan(requests[0]!.maxTokens!);
   });
 
   it('writes a new snapshot when the active tool table changes', async () => {

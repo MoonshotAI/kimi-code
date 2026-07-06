@@ -654,6 +654,9 @@ describe('OpenAILegacyChatProvider', () => {
 
       // 1000000 - 30000 = 970000, clamped to 131072
       expect(body['max_tokens']).toBe(131072);
+      // The exposed effective cap matches the ceiling-clamped wire value —
+      // the request trace records this field.
+      expect(provider.maxCompletionTokens).toBe(131072);
     });
   });
 

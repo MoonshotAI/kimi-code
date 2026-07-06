@@ -373,6 +373,8 @@ class KimiStreamedMessage implements StreamedMessage {
 }
 export class KimiChatProvider implements ChatProvider {
   readonly name: string = 'kimi';
+  /** See {@link ChatProvider.maxCompletionTokens}. */
+  maxCompletionTokens?: number;
 
   private _model: string;
   private _stream: boolean;
@@ -563,7 +565,10 @@ export class KimiChatProvider implements ChatProvider {
     ) {
       cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
     }
-    return this._withGenerationKwargs({ max_completion_tokens: Math.max(1, cap) });
+    const effectiveCap = Math.max(1, cap);
+    const clone = this._withGenerationKwargs({ max_completion_tokens: effectiveCap });
+    clone.maxCompletionTokens = effectiveCap;
+    return clone;
   }
 
   withExtraBody(extraBody: ExtraBody): KimiChatProvider {

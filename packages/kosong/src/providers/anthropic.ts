@@ -926,6 +926,8 @@ class AnthropicStreamedMessage implements StreamedMessage {
 }
 export class AnthropicChatProvider implements ChatProvider {
   readonly name: string = 'anthropic';
+  /** See {@link ChatProvider.maxCompletionTokens}. */
+  maxCompletionTokens?: number;
 
   private _model: string;
   private _stream: boolean;
@@ -1296,13 +1298,13 @@ export class AnthropicChatProvider implements ChatProvider {
   withMaxCompletionTokens(maxCompletionTokens: number): AnthropicChatProvider {
     const requestedCap = resolveDefaultMaxTokens(this._model, maxCompletionTokens);
     const existingCap = this._generationKwargs.max_tokens;
-    const clone = this._withGenerationKwargs({
-      max_tokens:
-        existingCap === undefined || this._explicitMaxTokens
-          ? existingCap ?? requestedCap
-          : Math.min(existingCap, requestedCap),
-    });
+    const effectiveCap =
+      existingCap === undefined || this._explicitMaxTokens
+        ? existingCap ?? requestedCap
+        : Math.min(existingCap, requestedCap);
+    const clone = this._withGenerationKwargs({ max_tokens: effectiveCap });
     clone._explicitMaxTokens = this._explicitMaxTokens;
+    clone.maxCompletionTokens = effectiveCap;
     return clone;
   }
 

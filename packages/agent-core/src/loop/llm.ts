@@ -35,8 +35,6 @@ export interface LLMRequestLogFields {
   readonly kind?: 'loop' | 'compaction';
   /** Set when the messages are the strict wire-compliant rebuild resend. */
   readonly projection?: 'strict';
-  /** Client-computed completion budget cap applied to this request. */
-  readonly maxTokens?: number;
   /** Compaction only: messages dropped so far by overflow/empty shrinking. */
   readonly droppedCount?: number;
 }

@@ -2650,6 +2650,7 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
 
     expect(provider).not.toBe(original);
     expect(body['max_tokens']).toBe(2048);
+    expect(provider.maxCompletionTokens).toBe(2048);
   });
 
   it('withMaxCompletionTokens lowers the inferred model default cap', async () => {
@@ -2679,6 +2680,9 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     const body = await captureRequestBody(provider, '', [], history);
 
     expect(body['max_tokens']).toBe(1024);
+    // The exposed effective cap tracks the preserved existing value, not the
+    // requested budget — the request trace records this field.
+    expect(provider.maxCompletionTokens).toBe(1024);
   });
 
   it('withMaxCompletionTokens preserves an existing higher max_tokens cap', async () => {

@@ -449,6 +449,8 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 }
 export class OpenAILegacyChatProvider implements ChatProvider {
   readonly name: string = 'openai';
+  /** See {@link ChatProvider.maxCompletionTokens}. */
+  maxCompletionTokens?: number;
 
   private _model: string;
   private _stream: boolean;
@@ -613,7 +615,10 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
     }
     cap = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
-    return this.withGenerationKwargs(completionTokenKwargs(this._model, Math.max(1, cap)));
+    const effectiveCap = Math.max(1, cap);
+    const clone = this.withGenerationKwargs(completionTokenKwargs(this._model, effectiveCap));
+    clone.maxCompletionTokens = effectiveCap;
+    return clone;
   }
 
   private _clone(): OpenAILegacyChatProvider {

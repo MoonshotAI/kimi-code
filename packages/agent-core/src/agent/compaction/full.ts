@@ -42,11 +42,9 @@ import {
   estimateTokensForTools,
 } from '../../utils/tokens';
 import {
-  appliedCompletionBudgetCap,
   applyCompletionBudget,
   resolveCompletionBudget,
-} from '../../utils/completion-budget';
-import { renderPrompt } from '../../utils/render-prompt';
+} from '../../utils/completion-budget';import { renderPrompt } from '../../utils/render-prompt';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
@@ -474,19 +472,12 @@ export class FullCompaction {
         maxContextTokens > 0
           ? Math.min(maxContextTokens, DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS)
           : undefined;
-      const baseProvider = this.agent.config.provider;
-      const compactionBudget = resolveCompletionBudget({
-        maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
-        reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
-      });
       const provider = applyCompletionBudget({
-        provider: baseProvider,
-        budget: compactionBudget,
-        capability,
-      });
-      const maxTokens = appliedCompletionBudgetCap({
-        provider: baseProvider,
-        budget: compactionBudget,
+        provider: this.agent.config.provider,
+        budget: resolveCompletionBudget({
+          maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
+          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+        }),
         capability,
       });
       const instruction = this.buildInstruction(data.instruction);
@@ -525,7 +516,7 @@ export class FullCompaction {
         try {
           const generateOptions: GenerateOptionsWithRequestLogFields = {
             signal,
-            requestLogFields: { kind: 'compaction', maxTokens, droppedCount },
+            requestLogFields: { kind: 'compaction', droppedCount },
           };
           const response = await this.agent.generate(
             provider,
