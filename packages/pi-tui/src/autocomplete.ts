@@ -757,59 +757,63 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				baseDir: string;
 				pathRoot: string;
 				displayBase: string;
+				fdQuery: string;
 				isAdditional: boolean;
 				absolute: boolean;
 			};
 			const targets: RootTarget[] = [];
-			let fdQuery = query;
 
-			const pushRootTargets = (displayBase: string) => {
-				for (const root of this.searchRoots()) {
-					targets.push({
-						baseDir: displayBase ? join(root, displayBase) : root,
-						pathRoot: root,
-						displayBase,
-						isAdditional: root !== this.basePath,
-						absolute: false,
-					});
-				}
+			const pushFullPathTarget = (root: string) => {
+				// Whole-tree search for this root using the original query (which
+				// contains "/", so fd runs in --full-path mode).
+				targets.push({
+					baseDir: root,
+					pathRoot: root,
+					displayBase: "",
+					fdQuery: query,
+					isAdditional: root !== this.basePath,
+					absolute: false,
+				});
 			};
 
 			if (scoped?.kind === "absolute") {
-				fdQuery = scoped.query;
 				targets.push({
 					baseDir: scoped.baseDir,
 					pathRoot: scoped.baseDir,
 					displayBase: scoped.displayBase,
+					fdQuery: scoped.query,
 					isAdditional: false,
 					absolute: true,
 				});
 			} else if (scoped?.kind === "relative") {
-				fdQuery = scoped.query;
 				for (const root of this.searchRoots()) {
 					const baseDir = join(root, scoped.displayBase);
+					let isDir = false;
 					try {
-						if (!statSync(baseDir).isDirectory()) continue;
+						isDir = statSync(baseDir).isDirectory();
 					} catch {
-						continue;
+						isDir = false;
 					}
-					targets.push({
-						baseDir,
-						pathRoot: root,
-						displayBase: scoped.displayBase,
-						isAdditional: root !== this.basePath,
-						absolute: false,
-					});
-				}
-				// If the relative scope is not a real directory under any root, fall
-				// back to a whole-tree search with the original query (which contains
-				// "/", so fd runs in --full-path mode).
-				if (targets.length === 0) {
-					fdQuery = query;
-					pushRootTargets("");
+					if (isDir) {
+						targets.push({
+							baseDir,
+							pathRoot: root,
+							displayBase: scoped.displayBase,
+							fdQuery: scoped.query,
+							isAdditional: root !== this.basePath,
+							absolute: false,
+						});
+					} else {
+						// This root does not have the scoped directory. Fall back to a
+						// per-root full-path search so another root having the prefix
+						// does not hide matches that only exist under this root.
+						pushFullPathTarget(root);
+					}
 				}
 			} else {
-				pushRootTargets("");
+				for (const root of this.searchRoots()) {
+					pushFullPathTarget(root);
+				}
 			}
 
 			if (targets.length === 0) {
@@ -818,7 +822,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 			const perRoot = await Promise.all(
 				targets.map(async (target) => {
-					const entries = await walkDirectoryWithFd(target.baseDir, fdPath, fdQuery, 100, options.signal);
+					const entries = await walkDirectoryWithFd(target.baseDir, fdPath, target.fdQuery, 100, options.signal);
 					return entries.map((entry) => ({ entry, target }));
 				}),
 			);
@@ -836,7 +840,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const bestByAbs = new Map<string, Scored>();
 			for (const group of perRoot) {
 				for (const { entry, target } of group) {
-					const score = fdQuery ? this.scoreEntry(entry.path, fdQuery, entry.isDirectory) : 1;
+					const score = target.fdQuery ? this.scoreEntry(entry.path, target.fdQuery, entry.isDirectory) : 1;
 					if (score <= 0) continue;
 					const pathWithoutSlash = entry.isDirectory ? entry.path.slice(0, -1) : entry.path;
 					const absPath = target.absolute

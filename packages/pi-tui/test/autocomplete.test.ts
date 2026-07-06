@@ -292,6 +292,23 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(count > 0);
 		});
 
+		test("falls back to full-path per root when another root has the scoped directory", async () => {
+			setupFolder(baseDir, {
+				files: { "packages/tui/src/autocomplete.ts": "export {};" },
+			});
+			// outsideDir has a top-level src/ but no matching file; a global fallback
+			// would skip cwd's full-path search entirely and hide the cwd match.
+			setupFolder(outsideDir, {
+				files: { "src/other.ts": "export {};" },
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir]);
+			const result = await getSuggestions(provider, ["@src/auto"], 0, 9);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.ok(values.includes("@packages/tui/src/autocomplete.ts"));
+		});
+
 		test("matches directory in middle of path with --full-path", async () => {
 			setupFolder(baseDir, {
 				files: {
