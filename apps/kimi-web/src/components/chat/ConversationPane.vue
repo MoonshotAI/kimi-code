@@ -867,6 +867,7 @@ let contentObserver: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let observedContent: Element | null = null;
 let observedDock: HTMLElement | null = null;
+let lastObservedScrollHeight = 0;
 let lastObservedClientHeight = 0;
 let scrollRaf = 0;
 let pillEligible = false;
@@ -922,6 +923,7 @@ function rebindScrollObservers(): void {
     ensureContentObserved();
     ensureDockObserved();
   }
+  lastObservedScrollHeight = el?.scrollHeight ?? 0;
   lastObservedClientHeight = el?.clientHeight ?? 0;
 }
 
@@ -974,16 +976,17 @@ onMounted(() => {
         updatePanesScrollbarWidth();
         const el = panesRef.value;
         if (!el) return;
-        const { clientHeight } = el;
+        const { scrollHeight, clientHeight } = el;
+        const grew = scrollHeight > lastObservedScrollHeight + 1;
         const viewportShrank = clientHeight < lastObservedClientHeight - 1;
+        lastObservedScrollHeight = scrollHeight;
         lastObservedClientHeight = clientHeight;
-        // Data-driven growth (new turns, streaming) is already chased by the
-        // scrollKey watcher, so a content resize must not move the viewport on its
-        // own. Expanding/collapsing a tool row only changes content height: the row
-        // header stays put while its body opens downward or collapses upward in
-        // place. The only resize we still follow is a shrinking viewport (e.g. the
-        // composer dock growing and hiding the last message).
-        if (viewportShrank) scheduleFollow(false);
+        // Follow the tail on genuine growth (new turns, streaming, or late-loading
+        // media that gain height after scrollKey has already run) or a shrinking
+        // viewport (composer dock growing and hiding the last message). While a tool
+        // row/group is being toggled (the pinned window) suppress follow entirely,
+        // so the row opens downward / collapses upward without moving the viewport.
+        if (!isPinned() && (grew || viewportShrank)) scheduleFollow(false);
       });
     }
     rebindScrollObservers();
