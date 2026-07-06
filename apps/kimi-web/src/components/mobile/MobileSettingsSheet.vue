@@ -21,6 +21,7 @@ import {
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 
 const { t } = useI18n();
@@ -167,8 +168,9 @@ const archiveSort = ref<'archived-desc' | 'created-desc' | 'name-asc'>('archived
 const ARCHIVED_PAGE_SIZE = 100;
 
 async function loadAllArchived(): Promise<void> {
-  if (archivedLoading.value || archivedLoaded.value) return;
+  if (archivedLoading.value) return;
   archivedLoading.value = true;
+  archivedLoaded.value = false;
   try {
     const all: AppSession[] = [];
     let beforeId: string | undefined;
@@ -191,7 +193,8 @@ async function loadAllArchived(): Promise<void> {
 
 function openArchived(): void {
   view.value = 'archived';
-  if (!archivedLoaded.value) void loadAllArchived();
+  archiveQuery.value = '';
+  void loadAllArchived();
 }
 
 function backToMain(): void {
@@ -406,10 +409,13 @@ watch(
       </div>
 
       <div class="arch-tools">
-        <label class="arch-search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-          <input v-model="archiveQuery" :placeholder="t('settings.archivedSearch')" />
-        </label>
+        <Input
+          class="arch-search-input"
+          :model-value="archiveQuery"
+          size="sm"
+          :placeholder="t('settings.archivedSearch')"
+          @update:model-value="archiveQuery = $event"
+        />
         <SegmentedControl
           size="sm"
           :model-value="archiveSort"
@@ -653,23 +659,7 @@ watch(
   padding: var(--space-2) var(--space-3);
   flex-wrap: wrap;
 }
-.arch-search {
-  flex: 1;
-  min-width: 160px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  color: var(--color-text-faint);
-  font-size: var(--text-sm);
-}
-.arch-search:focus-within { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); color: var(--color-text-muted); }
-.arch-search svg { width: 15px; height: 15px; flex: none; }
-.arch-search input { width: 100%; border: none; outline: none; background: transparent; font: inherit; color: var(--color-text); }
+.arch-search-input { flex: 1; min-width: 160px; }
 .arch-row {
   display: flex;
   align-items: center;
