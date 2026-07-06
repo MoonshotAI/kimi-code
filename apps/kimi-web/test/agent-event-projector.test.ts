@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
+import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
 describe('subagentProgressText', () => {
   it('drops turn.step.started as noise', () => {
@@ -95,5 +95,44 @@ describe('cron.fired', () => {
     const projector = createAgentProjector();
     expect(projector.project('cron.fired', { origin: { kind: 'cron_job' } }, 's1')).toEqual([]);
     expect(projector.project('cron.fired', { prompt: 'hi' }, 's1')).toEqual([]);
+  });
+});
+
+describe('cron.fired prompt id isolation', () => {
+  it('does not reuse the active user promptId for a synthesized cron message', () => {
+    const projector = createAgentProjector();
+    projector.project(
+      'prompt.submitted',
+      { promptId: 'pr_user', userMessageId: 'u1', content: [{ type: 'text', text: 'hi' }] },
+      's1',
+    );
+    const events = projector.project(
+      'cron.fired',
+      {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'j',
+          cron: '* * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: 'Check the deploy status',
+      },
+      's1',
+    );
+    const created = events.find((e) => e.type === 'messageCreated');
+    expect(created).toBeDefined();
+    const promptId = (created as { message: { promptId?: string } }).message.promptId;
+    expect(promptId).toBeDefined();
+    expect(promptId).not.toBe('pr_user');
+  });
+});
+
+describe('classifyFrame cron.fired', () => {
+  it('routes both raw and event.-prefixed cron.fired to the agent projector', () => {
+    const payload = { origin: { kind: 'cron_job' }, prompt: 'x' };
+    expect(classifyFrame('cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
+    expect(classifyFrame('event.cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
   });
 });

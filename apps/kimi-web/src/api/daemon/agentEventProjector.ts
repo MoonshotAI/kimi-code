@@ -1224,7 +1224,9 @@ export function createAgentProjector(): AgentProjector {
         // but turn.steer() does NOT broadcast a prompt.submitted / message.created
         // for it — synthesize one here so the notice shows up live too. A later
         // snapshot reload replaces the message log wholesale, so this synthesized
-        // copy never duplicates the persisted one.
+        // copy never duplicates the persisted one. A fresh promptId keeps the
+        // reducer from reconciling this into an optimistic user echo on the active
+        // promptId, so a fire mid-turn never hides the user's own message.
         const origin = p?.origin;
         const promptText = stringField(p ?? {}, 'prompt');
         if (
@@ -1239,7 +1241,7 @@ export function createAgentProjector(): AgentProjector {
             role: 'user',
             content: [{ type: 'text', text: promptText }],
             createdAt: new Date().toISOString(),
-            promptId: s.currentPromptId ?? ulid('pr_'),
+            promptId: ulid('cron_pr_'),
             metadata: { origin: origin as Record<string, unknown> },
           };
           s.messages.push(msg);
@@ -1331,6 +1333,7 @@ const KNOWN_AGENT_CORE_TYPES = new Set([
   'subagent.failed',
   'background.task.started',
   'background.task.terminated',
+  'cron.fired',
 ]);
 
 /**
