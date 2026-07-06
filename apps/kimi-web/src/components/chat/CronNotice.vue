@@ -4,21 +4,29 @@
      card distinct from the chat around it; the header carries the glyph, title,
      a humanized schedule ("Every 5 minutes") and a dimmed job id; the fired
      prompt is collapsed to its first line with an expand toggle so long prompts
-     don't swamp the transcript. stale/missed fires switch the accent to warning. -->
+     don't swamp the transcript. stale/missed fires switch the accent to warning.
+
+     Renders either as a standalone turn (pass turnId for the scroll anchor) or
+     embedded inside an assistant turn's blocks (a cron steered into an in-flight
+     turn) — in both cases it takes the same text + cron data. -->
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { humanizeCron, collapsePrompt } from '../../lib/cronHumanize';
-import type { ChatTurn } from '../../types';
+import type { CronTurnData } from '../../types';
 
 const props = defineProps<{
-  turn: ChatTurn;
+  text: string;
+  cron?: CronTurnData;
+  /** Scroll-anchor id for a standalone cron turn; omitted when embedded in an
+   *  assistant turn's blocks (the assistant turn already carries the anchor). */
+  turnId?: string;
 }>();
 
 const { t } = useI18n();
 
-const cron = computed(() => props.turn.cron);
+const cron = computed(() => props.cron);
 const missed = computed(() => cron.value?.missedCount !== undefined);
 const warning = computed(() => cron.value?.stale === true || missed.value);
 
@@ -50,7 +58,7 @@ const statusDetail = computed(() => {
 });
 
 const expanded = ref(false);
-const text = computed(() => props.turn.text ?? '');
+const text = computed(() => props.text ?? '');
 const collapsed = computed(() => collapsePrompt(text.value));
 const hasMore = computed(() => collapsed.value.hasMore);
 const shownText = computed(() => (expanded.value ? text.value : collapsed.value.text));
@@ -58,9 +66,9 @@ const shownText = computed(() => (expanded.value ? text.value : collapsed.value.
 
 <template>
   <div
-    class="cron-notice turn-anchor"
-    :class="{ 'is-warning': warning }"
-    :data-turn-id="turn.id"
+    class="cron-notice"
+    :class="{ 'is-warning': warning, 'turn-anchor': !!turnId }"
+    :data-turn-id="turnId"
     role="status"
   >
     <div class="cn-head">

@@ -207,6 +207,18 @@ export interface ToolDiffTarget {
   output?: string[];
 }
 
+/** Metadata carried by a cron fire — shared by a standalone cron turn and by a
+ *  cron notice embedded inside an assistant turn's blocks. Mirrors the TUI's
+ *  CronTranscriptData. `missedCount` present means a missed-fire catch-up. */
+export interface CronTurnData {
+  jobId?: string;
+  cron?: string;
+  recurring?: boolean;
+  coalescedCount?: number;
+  stale?: boolean;
+  missedCount?: number;
+}
+
 /** One ordered piece of an assistant turn: a thinking segment, a text segment
  * OR a tool card. Built in call order so every piece renders inline where it
  * happened (a turn can think → act → think again — nothing is hoisted).
@@ -217,7 +229,8 @@ export interface ToolDiffTarget {
 export type TurnBlock =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; thinking: string }
-  | { kind: 'tool'; tool: ToolCall };
+  | { kind: 'tool'; tool: ToolCall }
+  | { kind: 'cron'; text: string; cron: CronTurnData };
 
 export interface ChatTurn {
   id: string;
@@ -251,14 +264,7 @@ export interface ChatTurn {
   /** Cron fire metadata (role 'cron'): set when an agent turn was triggered by a
       scheduled reminder rather than a real user. Mirrors the TUI's
       CronTranscriptData. `missedCount` present means a missed-fire catch-up. */
-  cron?: {
-    jobId?: string;
-    cron?: string;
-    recurring?: boolean;
-    coalescedCount?: number;
-    stale?: boolean;
-    missedCount?: number;
-  };
+  cron?: CronTurnData;
 }
 
 /**

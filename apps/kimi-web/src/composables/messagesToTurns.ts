@@ -11,7 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
 import { phaseForTask } from './swarmGroups';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
@@ -394,25 +394,20 @@ function cronPromptText(msg: AppMessage): string {
   return extractCronPrompt(raw);
 }
 
-function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_missed'): ChatTurn {
+function buildCronData(
+  msg: AppMessage,
+  kind: 'cron_job' | 'cron_missed',
+): { text: string; cron: CronTurnData } {
   const origin = (msg.metadata?.['origin'] ?? {}) as Record<string, unknown>;
   const text = cronPromptText(msg);
   if (kind === 'cron_missed') {
     return {
-      id: msg.id,
-      role: 'cron',
-      no,
       text,
-      createdAt: msg.createdAt,
       cron: { missedCount: typeof origin['count'] === 'number' ? origin['count'] : undefined },
     };
   }
   return {
-    id: msg.id,
-    role: 'cron',
-    no,
     text,
-    createdAt: msg.createdAt,
     cron: {
       jobId: typeof origin['jobId'] === 'string' ? origin['jobId'] : undefined,
       cron: typeof origin['cron'] === 'string' ? origin['cron'] : undefined,
@@ -421,6 +416,16 @@ function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_mis
       stale: typeof origin['stale'] === 'boolean' ? origin['stale'] : undefined,
     },
   };
+}
+
+function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_missed'): ChatTurn {
+  const { text, cron } = buildCronData(msg, kind);
+  return { id: msg.id, role: 'cron', no, text, createdAt: msg.createdAt, cron };
+}
+
+function buildCronBlock(msg: AppMessage, kind: 'cron_job' | 'cron_missed'): TurnBlock {
+  const { text, cron } = buildCronData(msg, kind);
+  return { kind: 'cron', text, cron };
 }
 
 /**
@@ -681,11 +686,18 @@ export function messagesToTurns(
 
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
-      flushGroup();
-      // Cron injections are persisted as user-role messages but render as their
-      // own in-transcript notice (TUI parity), not as a user bubble. They still
-      // act as a hard turn boundary (flushGroup above), like a real user turn.
       const cronKind = cronOriginKind(msg);
+      // A cron injection steered into an in-flight turn lands inside that
+      // turn's message sequence (between a tool use and its result). It must
+      // NOT flush the pending assistant group — flushing would orphan the next
+      // tool.result, which only folds into a pending group, leaving the tool
+      // rendered without output. Embed it as a block in the group instead. A
+      // cron at a turn boundary (fired while idle) still becomes its own turn.
+      if (cronKind !== undefined && pendingGroup !== null) {
+        pendingGroup.blocks.push(buildCronBlock(msg, cronKind));
+        continue;
+      }
+      flushGroup();
       if (cronKind !== undefined) {
         turns.push(buildCronTurn(msg, no++, cronKind));
         continue;
