@@ -2014,18 +2014,22 @@ describe('FullCompaction', () => {
     const providerManager = ctx.agent.modelProvider;
     if (providerManager === undefined) throw new Error('Expected provider manager');
     const resolveProviderConfig = providerManager.resolveProviderConfig.bind(providerManager);
-    vi.spyOn(providerManager, 'resolveProviderConfig').mockImplementation((model) => ({
+    const spy = vi.spyOn(providerManager, 'resolveProviderConfig').mockImplementation((model) => ({
       ...resolveProviderConfig(model),
       maxOutputSize: 32768,
     }));
-    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
-    ctx.newEvents();
+    try {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.newEvents();
 
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with model output cap' }] });
-    await ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with model output cap' }] });
+      await ctx.untilTurnEnd();
 
-    expect(callCount).toBe(3);
-    expect(compactionMaxCompletionTokens).toEqual([32768]);
+      expect(callCount).toBe(3);
+      expect(compactionMaxCompletionTokens).toEqual([32768]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('honors completion budget env opt-out during compaction', async () => {
