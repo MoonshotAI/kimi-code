@@ -539,12 +539,19 @@ export function reduceAppEvent(
         next.tasksBySession[sid] = [...list, event.task];
       } else {
         const patched = [...list];
+        const previous = list[idx]!;
         // The projected task does not carry reducer-owned accumulated progress;
         // preserve it across the replacement so subagent output keeps growing.
+        // A resync also rebuilds skeleton tasks without their identity metadata,
+        // so keep the previous value when the projected task omits it.
         patched[idx] = {
           ...event.task,
-          outputLines: list[idx]!.outputLines,
-          text: list[idx]!.text,
+          outputLines: previous.outputLines,
+          text: previous.text,
+          swarmIndex: event.task.swarmIndex ?? previous.swarmIndex,
+          parentToolCallId: event.task.parentToolCallId ?? previous.parentToolCallId,
+          subagentType: event.task.subagentType ?? previous.subagentType,
+          runInBackground: event.task.runInBackground ?? previous.runInBackground,
         };
         next.tasksBySession[sid] = patched;
       }

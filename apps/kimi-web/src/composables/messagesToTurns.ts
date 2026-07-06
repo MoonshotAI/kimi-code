@@ -12,7 +12,6 @@
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
 import type { AgentMember, ApprovalBlock, ChatTurn, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
-import { phaseForTask } from './swarmGroups';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -187,13 +186,6 @@ export function toAgentMember(task: AppTask): AgentMember {
     suspendedReason: task.suspendedReason,
     swarmIndex: task.swarmIndex,
   };
-}
-
-function sortAgentTasks(a: AppTask, b: AppTask): number {
-  const ai = a.swarmIndex ?? Number.MAX_SAFE_INTEGER;
-  const bi = b.swarmIndex ?? Number.MAX_SAFE_INTEGER;
-  if (ai !== bi) return ai - bi;
-  return a.createdAt.localeCompare(b.createdAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,7 +404,6 @@ export function messagesToTurns(
    * spinning forever after the turn already finished.
    */
   sessionActive = true,
-  subagentTasks: AppTask[] = [],
   /** Preserved `plan_review` displays keyed by toolCallId — used to link the
    *  ExitPlanMode tool card back to the plan file after the approval resolves. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
@@ -424,20 +415,6 @@ export function messagesToTurns(
   const approvalByTool = new Map<string, AppApprovalRequest>();
   for (const a of approvals) {
     approvalByTool.set(a.toolCallId, a);
-  }
-
-  const subagentsByTool = new Map<string, AppTask[]>();
-  for (const task of subagentTasks) {
-    if (task.kind !== 'subagent') continue;
-    const keys = [task.parentToolCallId, task.id].filter((key): key is string => typeof key === 'string' && key.length > 0);
-    for (const key of keys) {
-      const list = subagentsByTool.get(key) ?? [];
-      list.push(task);
-      subagentsByTool.set(key, list);
-    }
-  }
-  for (const [key, list] of subagentsByTool.entries()) {
-    subagentsByTool.set(key, list.toSorted(sortAgentTasks));
   }
 
   let pendingGroup: Group | null = null;
@@ -497,24 +474,6 @@ export function messagesToTurns(
           else g.blocks.push({ kind: 'thinking', thinking: c.thinking });
         }
       } else if (c.type === 'toolUse') {
-        // A multi-member LIVE swarm renders as its OWN SwarmCard footer while
-        // any member is still active (see buildSwarmGroups / activeSwarms).
-        // Don't ALSO render it inline, or the swarm shows up twice. Once every
-        // member has finished, the footer is removed and we fall through to
-        // render the AgentSwarm call as a normal tool card — the same thing a
-        // refresh shows, when the live subagent tasks are gone.
-        const agentTasks = subagentsByTool.get(c.toolCallId);
-        if (agentTasks && agentTasks.length > 0) {
-          const swarmMembers = agentTasks.filter((t) => t.swarmIndex !== undefined);
-          if (swarmMembers.length > 1) {
-            const live = swarmMembers.some((t) => {
-              const phase = phaseForTask(t);
-              return phase !== 'completed' && phase !== 'failed';
-            });
-            if (live) continue;
-          }
-        }
-
         // Single `Agent` subagent spawns and all other tools render as a normal
         // tool card: the card shows the fixed args (prompt / description) plus
         // the final result when expanded, while a subagent's live progress

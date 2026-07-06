@@ -1669,7 +1669,6 @@ const turns = computed<ChatTurn[]>(() => {
     approvals,
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
-    activeAppTasks.value,
     rawState.planReviewByToolCallId,
   );
 });

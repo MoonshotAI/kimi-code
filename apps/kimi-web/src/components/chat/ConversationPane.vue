@@ -4,12 +4,10 @@ import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type C
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
-import type { SwarmGroup } from '../../composables/swarmGroups';
 import type { FileItem } from './MentionMenu.vue';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
-import SwarmCard from './SwarmCard.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import Icon from '../ui/Icon.vue';
@@ -26,7 +24,6 @@ const props = defineProps<{
   /** Model-maintained todo list (TodoList tool) — shown as a floating card. */
   todos?: TodoView[];
   goal?: AppGoal | null;
-  swarms?: SwarmGroup[];
   activationBadges?: ActivationBadges;
   status: ConversationStatus;
   thinking?: ThinkingLevel;
@@ -159,18 +156,6 @@ watch(wsPickOpen, (open) => {
   if (!open) wsPickExpanded.value = false;
 });
 
-/** Swarm cards are live progress indicators: keep the bottom stack only while
-    at least one member is still queued, working, or suspended. Once every
-    member has finished (completed or failed), the card is no longer useful as
-    a persistent footer and is removed from the stack. */
-const activeSwarms = computed<SwarmGroup[]>(() => {
-  return (
-    props.swarms?.filter((group) =>
-      group.members.some((member) => member.phase !== 'completed' && member.phase !== 'failed'),
-    ) ?? []
-  );
-});
-
 function pickWorkspace(id: string): void {
   wsPickOpen.value = false;
   if (id !== props.activeWorkspaceId) emit('selectWorkspace', id);
@@ -221,13 +206,6 @@ function handleCopyConversationCopied(): void {
 
 function focusGoal(): void {
   goalExpandSignal.value++;
-}
-
-function focusSwarm(): void {
-  void nextTick(() => {
-    const first = panesRef.value?.querySelector<HTMLElement>('.swarm-card');
-    first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
 }
 
 const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
@@ -1097,7 +1075,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @create-goal="emit('createGoal', $event)"
               @control-goal="emit('controlGoal', $event)"
               @focus-goal="focusGoal"
-              @focus-swarm="focusSwarm"
               @compact="emit('compact')"
               @pick-model="emit('pickModel')"
               @select-model="emit('selectModel', $event)"
@@ -1134,9 +1111,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @edit-queued="handleEditQueued"
               @reorder-queue="handleReorderQueue"
             />
-            <div v-if="activeSwarms.length > 0" class="swarm-stack">
-              <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
-            </div>
           </template>
         </div>
       </div>
@@ -1193,7 +1167,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
           @open-btw="emit('command', '/btw')"
           @create-goal="emit('createGoal', $event)"
           @focus-goal="focusGoal"
-          @focus-swarm="focusSwarm"
           @compact="emit('compact')"
           @pick-model="emit('pickModel')"
           @select-model="emit('selectModel', $event)"
@@ -1269,6 +1242,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 .content-wrap.align-center { margin-left: auto; margin-right: auto; }
 .content-wrap.align-left { margin-left: 0; margin-right: auto; }
@@ -1287,12 +1261,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
     width: 100%;
     min-width: 0;
   }
-}
-.swarm-stack {
-  padding: 0 18px 16px;
-}
-.content-wrap.align-mobile .swarm-stack {
-  padding: 0 14px 18px;
 }
 
 /* Empty-workspace spacers: push the centred Composer to the vertical middle. */
