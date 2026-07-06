@@ -99,7 +99,7 @@ describe('cron.fired', () => {
 });
 
 describe('cron.fired prompt id isolation', () => {
-  it('does not reuse the active user promptId for a synthesized cron message', () => {
+  it('omits promptId so the synthesized notice does not clobber the abort cache', () => {
     const projector = createAgentProjector();
     projector.project(
       'prompt.submitted',
@@ -123,9 +123,7 @@ describe('cron.fired prompt id isolation', () => {
     );
     const created = events.find((e) => e.type === 'messageCreated');
     expect(created).toBeDefined();
-    const promptId = (created as { message: { promptId?: string } }).message.promptId;
-    expect(promptId).toBeDefined();
-    expect(promptId).not.toBe('pr_user');
+    expect((created as { message: { promptId?: string } }).message.promptId).toBeUndefined();
   });
 });
 
