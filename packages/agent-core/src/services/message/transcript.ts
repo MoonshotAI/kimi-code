@@ -20,8 +20,9 @@
  *   - `context.append_message`      → append (deferred while a tool exchange is open)
  *   - `context.append_loop_event`   → step.begin/content.part/tool.call mutate the
  *                                     open assistant message; tool.result appends a
- *                                     tool message with the same `<system>` status
- *                                     wrapping as `toolResultOutputForModel`
+ *                                     tool message with the raw output plus the
+ *                                     structured isError/note fields, exactly like
+ *                                     `ContextMemory` history
  *   - `context.apply_compaction`    → keep the full history, append the
  *                                     user-role summary marker (origin
  *                                     `compaction_summary`), and recover
@@ -63,13 +64,6 @@ type ContentPart = ContextMessage['content'][number];
 const BLOBREF_PROTOCOL = 'blobref:';
 const MISSING_MEDIA_PLACEHOLDER = '[media missing]';
 
-// Status strings must match agent-core's toolResultOutputForModel so the
-// transcript renders tool results byte-identically to getContext().history.
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
@@ -95,6 +89,7 @@ interface MutableMessage {
   toolCalls: { type: 'function'; id: string; name: string; arguments: string | null }[];
   toolCallId?: string;
   isError?: boolean | undefined;
+  note?: string | undefined;
   origin?: ContextMessage['origin'];
 }
 
@@ -139,10 +134,7 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
       push({
         message: {
           role: 'tool',
-          content: toolResultContent({
-            output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
-            isError: true,
-          }),
+          content: [{ type: 'text', text: TOOL_INTERRUPTED_ON_RESUME_OUTPUT }],
           toolCalls: [],
           toolCallId,
           isError: true,
@@ -201,10 +193,11 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
         push({
           message: {
             role: 'tool',
-            content: toolResultContent(event.result),
+            content: rawToolResultContent(event.result.output),
             toolCalls: [],
             toolCallId: event.toolCallId,
             isError: event.result.isError,
+            note: event.result.note,
           },
           time,
         });
@@ -325,35 +318,14 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
   return { entries: transcript as TranscriptEntry[], foldedLength };
 }
 
-/** Mirrors agent-core's `toolResultOutputForModel` + `createToolMessage`. */
-function toolResultContent(result: ExecutableToolResult): ContentPart[] {
-  const output = result.output;
-  if (typeof output === 'string') {
-    let text: string;
-    if (result.isError === true) {
-      if (output.length === 0) text = TOOL_EMPTY_ERROR_STATUS;
-      else if (output.trimStart().startsWith('<system>ERROR:')) text = output;
-      else text = `${TOOL_ERROR_STATUS}\n${output}`;
-    } else {
-      text =
-        output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT
-          ? TOOL_EMPTY_STATUS
-          : output;
-    }
-    return [{ type: 'text', text }];
-  }
-  if (output.length === 0) {
-    return [
-      {
-        type: 'text',
-        text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS,
-      },
-    ];
-  }
-  if (result.isError === true) {
-    return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
-  }
-  return [...output];
+/**
+ * Mirrors agent-core's `createToolMessage`: the stored message carries the
+ * tool's raw output verbatim (plus the structured isError/note fields).
+ * Model-facing status text is a projection concern
+ * (`renderToolResultForModel`), not part of the transcript.
+ */
+function rawToolResultContent(output: ExecutableToolResult['output']): ContentPart[] {
+  return typeof output === 'string' ? [{ type: 'text', text: output }] : [...output];
 }
 
 /**

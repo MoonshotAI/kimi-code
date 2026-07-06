@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix tool-result `<system>` notes being rendered as plain text in the terminal and web UIs.
+Stop showing tool-produced `<system>` metadata in tool outputs; failed tools now show their own error text. Existing sessions are migrated automatically.

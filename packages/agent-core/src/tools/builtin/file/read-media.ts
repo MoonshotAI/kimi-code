@@ -1,17 +1,18 @@
 /**
  * ReadMediaFileTool — read image/video files as multi-modal content.
  *
- * Returns a 4-part wrap:
- * `[TextPart('<system>…</system>'), TextPart('<image|video path="…">'),
- *   ImageContent|VideoContent, TextPart('</image|video>')]`
- * and gates on the model's `image_in` / `video_in` capability.
+ * Returns a 3-part wrap as `output`:
+ * `[TextPart('<image|video path="…">'), ImageContent|VideoContent,
+ *   TextPart('</image|video>')]`
+ * plus a `note` side channel (rendered to the model, never to UIs), and
+ * gates on the model's `image_in` / `video_in` capability.
  *
- * The leading `<system>` block summarizes mime type, byte size and (for
- * images) original pixel dimensions, states exactly how the image was
- * delivered (untouched, downsampled, cropped, or native resolution) so
- * compression is never silent, guides the model to derive absolute
- * coordinates from the original size, and reminds it to re-read any media
- * it generates or edits.
+ * The note — this tool wraps it in a `<system>` block as its own wording
+ * choice — summarizes mime type, byte size and (for images) original pixel
+ * dimensions, states exactly how the image was delivered (untouched,
+ * downsampled, cropped, or native resolution) so compression is never
+ * silent, guides the model to derive absolute coordinates from the original
+ * size, and reminds it to re-read any media it generates or edits.
  *
  * Images support two opt-in delivery controls: `region` cuts a rectangle
  * (original-image pixel coordinates) out of the file so fine detail survives
@@ -141,7 +142,9 @@ interface ImageDelivery {
 }
 
 /**
- * Build the `<system>` summary that precedes the media content.
+ * Build the media summary returned as the tool result's `note` (model-only
+ * side channel). The `<system>` wrapping is this tool's wording choice; the
+ * note channel itself adds nothing.
  *
  * Carries mime type, byte size and (for images) the original pixel
  * dimensions, plus the delivery note above. When the dimensions are known it
@@ -149,7 +152,7 @@ interface ImageDelivery {
  * size (crops get offset-mapping guidance instead); it always reminds the
  * model to re-read any media it generates or edits.
  */
-function buildSystemSummary(input: {
+function buildMediaNote(input: {
   readonly kind: 'image' | 'video';
   readonly mimeType: string;
   readonly byteSize: number;
@@ -172,7 +175,7 @@ function buildSystemSummary(input: {
   const delivery = input.delivery;
   if (delivery?.kind === 'downsampled') {
     parts.push(
-      `The image below was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
+      `The image above was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
         `(${delivery.mimeType}, ${formatByteSize(delivery.byteLength)}) to fit model limits; ` +
         'fine detail may be lost.',
       'To inspect fine detail, call ReadMediaFile again with the region parameter ' +
@@ -411,7 +414,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       const openText = `<${tag} path="${safePath}">`;
       const closeText = `</${tag}>`;
 
-      const systemText = buildSystemSummary({
+      const note = buildMediaNote({
         kind: fileType.kind,
         mimeType: fileType.mimeType,
         byteSize: stat.stSize,
@@ -420,13 +423,12 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       });
 
       const output: ContentPart[] = [
-        { type: 'text', text: systemText },
         { type: 'text', text: openText },
         mediaPart,
         { type: 'text', text: closeText },
       ];
 
-      return { output, isError: false };
+      return { output, note, isError: false };
     } catch (error) {
       return {
         isError: true,

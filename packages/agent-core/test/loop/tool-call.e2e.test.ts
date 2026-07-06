@@ -97,6 +97,26 @@ describe('runTurn — tool-call behaviour', () => {
     expect(trs[0]?.result.isError).toBeUndefined();
   });
 
+  it('preserves a tool result note through normalization into the recorded event', async () => {
+    const blocks = new ContentBlocksTool({
+      output: 'payload',
+      note: '<system>meta for the model</system>',
+    });
+    const { context } = await runTurn({
+      tools: [blocks],
+      responses: [
+        makeToolUseResponse([makeToolCall('blocks', {}, 'tc-note')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const result = context.toolResults()[0]?.result;
+    expect(result?.output).toBe('payload');
+    // note is part of the persisted result contract (unlike stopTurn/message,
+    // which normalization drops before the record is written).
+    expect(result?.note).toBe('<system>meta for the model</system>');
+  });
+
   it('skips side-effecting tools when usage recording stops the turn', async () => {
     const echo = new EchoTool();
     const { result, sink, llm } = await runTurn({

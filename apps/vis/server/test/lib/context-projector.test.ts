@@ -149,10 +149,9 @@ describe('context-projector', () => {
   // that normalization so the model-view shows the content the model actually
   // received for failed / empty tool calls.
 
-  const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-  const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-  const TOOL_EMPTY_ERROR_STATUS =
-    '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
+  const TOOL_ERROR_STATUS = 'ERROR: Tool execution failed.';
+  const TOOL_EMPTY_STATUS = 'Tool output is empty.';
+  const TOOL_EMPTY_ERROR_STATUS = 'ERROR: Tool execution failed. Tool output is empty.';
 
   /** Build a minimal wire fixture: one assistant step with a tool call, then a
    *  `tool.result` loop event carrying `result`. Returns the projected tool
@@ -215,8 +214,8 @@ describe('context-projector', () => {
     ]);
   });
 
-  it('tool.result: error string already starting with <system>ERROR: is passed through (no double prefix)', () => {
-    const text = '<system>ERROR: already wrapped</system>\ndetails here';
+  it('tool.result: error string already starting with ERROR: is passed through (no double prefix)', () => {
+    const text = 'ERROR: already wrapped\ndetails here';
     const msg = projectToolResult({ output: text, isError: true });
     expect(msg.content).toEqual([{ type: 'text', text }]);
   });

@@ -558,8 +558,9 @@ export interface ImageCompressionCaptionInput {
  * back (via ReadMediaFile `region`) for full-fidelity detail.
  *
  * Two channels consume this note differently:
- *  - Tool results (MCP images) keep it inline — `<system>` status text inside
- *    tool output is the established convention there.
+ *  - Tool results (MCP images): the MCP output pipeline splits the inline
+ *    captions out into the result's `note` side channel (rendered to the
+ *    model at projection time, never to UIs).
  *  - User prompts must not render raw `<system>` markup in the UI, so the
  *    context layer detects the caption via
  *    {@link extractImageCompressionCaptions} and reroutes it through the

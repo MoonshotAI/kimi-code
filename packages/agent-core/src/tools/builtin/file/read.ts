@@ -527,15 +527,13 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   }
 
   private finishReadResult(input: FinishReadResultInput): ExecutableToolResult {
+    // The status line rides the `note` side channel (model-only); `output` is
+    // the rendered file content and nothing else. The `<system>` wrapping is
+    // this tool's wording choice.
     return {
-      output: this.finishOutput(input.renderedLines, this.finishMessage(input)),
+      output: input.renderedLines.join('\n'),
+      note: `<system>${this.finishMessage(input)}</system>`,
     };
-  }
-
-  private finishOutput(renderedLines: readonly string[], message: string): string {
-    const rendered = renderedLines.join('\n');
-    const status = `<system>${message}</system>`;
-    return rendered.length > 0 ? `${rendered}\n${status}` : status;
   }
 
   private finishMessage(input: FinishReadResultInput): string {

@@ -359,7 +359,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(joined).not.toContain('image_url dropped');
   });
 
-  test('annotates a downsampled image with a caption and a readable original', async () => {
+  test('annotates a downsampled image with a caption note and a readable original', async () => {
     const bigBytes = Buffer.from(
       await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
     );
@@ -369,19 +369,19 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__shot',
     );
 
+    // The caption rides the `note` side channel (model-only), keeping its
+    // `<system>` wrapping; the output itself carries only the media.
+    expect(out.note).toContain('Image compressed');
+    expect(out.note).toContain('2600x2600');
     const parts = out.output as ContentPart[];
-    const captionIndex = parts.findIndex(
-      (p) => p.type === 'text' && p.text.includes('Image compressed'),
+    expect(parts.some((p) => p.type === 'text' && p.text.includes('Image compressed'))).toBe(
+      false,
     );
-    expect(captionIndex).toBeGreaterThanOrEqual(0);
-    const caption = (parts[captionIndex] as { text: string }).text;
-    expect(caption).toContain('2600x2600');
-    // The caption sits immediately before the image it describes.
-    expect(parts[captionIndex + 1]?.type).toBe('image_url');
+    expect(parts.some((p) => p.type === 'image_url')).toBe(true);
 
     // The caption points at a persisted copy of the ORIGINAL bytes, so the
     // model can read fine detail back with ReadMediaFile + region.
-    const pathMatch = /saved at "([^"]+)"/.exec(caption);
+    const pathMatch = /saved at "([^"]+)"/.exec(out.note ?? '');
     expect(pathMatch).not.toBeNull();
     const persisted = await readFile(pathMatch![1]!);
     expect(persisted.equals(bigBytes)).toBe(true);
@@ -398,6 +398,7 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__shot',
     );
 
+    expect(out.note).toBeUndefined();
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('Image compressed');
@@ -415,10 +416,7 @@ describe('mcpResultToExecutableOutput', () => {
       { originalsDir: dir },
     );
 
-    const parts = out.output as ContentPart[];
-    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
-    if (caption?.type !== 'text') throw new Error('expected a compression caption');
-    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
+    const pathMatch = /saved at "([^"]+)"/.exec(out.note ?? '');
     expect(pathMatch).not.toBeNull();
     // The original lands inside the session-scoped dir, not the tmp cache.
     expect(pathMatch![1]!.startsWith(dir)).toBe(true);
@@ -453,11 +451,11 @@ describe('mcpResultToExecutableOutput', () => {
     const toolText = parts[0];
     if (toolText?.type !== 'text') throw new Error('expected the tool text part first');
     expect(toolText.text).toContain('Output truncated');
-    // …and the caption survives INTACT, still pointing at the original.
-    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
-    if (caption?.type !== 'text') throw new Error('expected a compression caption');
-    expect(caption.text).toMatch(/<\/system>$/);
-    expect(caption.text).toContain('saved at');
+    // …and the caption survives INTACT in the note, still pointing at the
+    // original — the note channel is exempt from the text budget by
+    // construction.
+    expect(out.note).toMatch(/<\/system>$/);
+    expect(out.note).toContain('saved at');
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -482,11 +480,9 @@ describe('mcpResultToExecutableOutput', () => {
     const parts = out.output as ContentPart[];
     // The tool text fits — nothing is truncated at all.
     expect(out.truncated).toBeUndefined();
-    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
-    if (caption?.type !== 'text') throw new Error('expected a compression caption');
-    expect(caption.text).toMatch(/^<system>Image compressed/);
-    expect(caption.text).toMatch(/<\/system>$/);
-    expect(caption.text).toContain('saved at');
+    expect(out.note).toMatch(/^<system>Image compressed/);
+    expect(out.note).toMatch(/<\/system>$/);
+    expect(out.note).toContain('saved at');
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('Output truncated');
     await rm(dir, { recursive: true, force: true });

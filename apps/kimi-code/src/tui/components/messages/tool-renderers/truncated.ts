@@ -1,4 +1,3 @@
-import { stripSystemTags } from '@moonshot-ai/kimi-code-sdk';
 import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
@@ -52,7 +51,7 @@ export class TruncatedOutputComponent implements Component {
     this.indent = options.indent ?? DEFAULT_INDENT;
     this.expandHint = options.expandHint ?? true;
     this.tail = options.tail ?? false;
-    const cleaned = stripSystemTags(trimTrailingEmptyLines(output.split('\n')).join('\n'));
+    const cleaned = trimTrailingEmptyLines(output.split('\n')).join('\n');
     this.textComponent = new Text(
       options.isError ? currentTheme.fg('error', cleaned) : currentTheme.dim(cleaned),
       this.indent,

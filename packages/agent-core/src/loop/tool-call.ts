@@ -657,12 +657,16 @@ function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
+  // Rebuild keeps the persisted contract only: `note` rides into the record
+  // (the model reads it at projection), while `stopTurn`/`message` are
+  // loop/UI-local and are dropped here.
+  const base: { output: typeof output; note?: string; truncated?: true } = { output };
+  if (r.note !== undefined) base.note = r.note;
+  if (r.truncated === true) base.truncated = true;
   if (r.isError === true) {
-    return r.truncated === true
-      ? { output, isError: true, truncated: true }
-      : { output, isError: true };
+    return { ...base, isError: true };
   }
-  return r.truncated === true ? { output, truncated: true } : { output };
+  return base;
 }
 
 function makeToolResult(

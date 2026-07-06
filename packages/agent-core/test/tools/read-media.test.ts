@@ -77,6 +77,14 @@ function outputParts(result: ExecutableToolResult): ContentPart[] {
   return result.output as ContentPart[];
 }
 
+// The media summary rides the result's `note` side channel (rendered to the
+// model at projection time, never to UIs); the tool keeps its own `<system>`
+// wrapping as a wording choice.
+function noteText(result: ExecutableToolResult): string {
+  expect(typeof result.note).toBe('string');
+  return result.note as string;
+}
+
 describe('ReadMediaFileTool', () => {
   it('has name, parameters, and path-scoped resource accesses', () => {
     const tool = makeReadMediaTool();
@@ -123,7 +131,7 @@ describe('ReadMediaFileTool', () => {
     ).toThrow(/image_in or video_in/);
   });
 
-  it('returns a system/text/image/text wrap for PNG files', async () => {
+  it('returns a text/image/text wrap plus a <system> note for PNG files', async () => {
     const data = Buffer.concat([PNG_HEADER, Buffer.from('pngdata')]);
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
@@ -137,16 +145,15 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
+    expect(noteText(result)).toMatch(/^<system>.*<\/system>$/s);
     const parts = outputParts(result);
-    expect(parts).toHaveLength(4);
-    expect(parts[0]).toMatchObject({ type: 'text' });
-    expect((parts[0] as { text: string }).text).toMatch(/^<system>.*<\/system>$/s);
-    expect(parts[1]).toEqual({ type: 'text', text: '<image path="/workspace/sample.png">' });
-    expect(parts[2]).toMatchObject({ type: 'image_url' });
-    expect((parts[2] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '<image path="/workspace/sample.png">' });
+    expect(parts[1]).toMatchObject({ type: 'image_url' });
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
       `data:image/png;base64,${data.toString('base64')}`,
     );
-    expect(parts[3]).toEqual({ type: 'text', text: '</image>' });
+    expect(parts[2]).toEqual({ type: 'text', text: '</image>' });
   });
 
   it('emits a <system> summary with mime type and byte size for images', async () => {
@@ -163,8 +170,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('image/png');
     expect(systemText).toContain(`${String(data.length)} bytes`);
     // The re-read reminder is included regardless of dimensions.
@@ -190,8 +196,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('4x2');
     // With the original size known, the coordinate guidance is included.
     expect(systemText).toMatch(/relative coordinates first/i);
@@ -215,8 +220,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     // mime type and byte size are still reported …
     expect(systemText).toContain('image/png');
     expect(systemText).toContain(`${String(data.length)} bytes`);
@@ -243,8 +247,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('video/mp4');
     expect(systemText).toContain(`${String(MP4_HEADER.length)} bytes`);
     // The re-read reminder is included for videos too.
@@ -266,8 +269,8 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    expect(parts[1]).toEqual({ type: 'text', text: '<image path="/workspace/sample">' });
-    expect((parts[2] as { imageUrl: { url: string } }).imageUrl.url).toContain('image/png');
+    expect(parts[0]).toEqual({ type: 'text', text: '<image path="/workspace/sample">' });
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toContain('image/png');
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {
@@ -288,7 +291,7 @@ describe('ReadMediaFileTool', () => {
     const parts = outputParts(result);
     expect(readBytes).toHaveBeenCalledWith('/home/test/images/sample.png', MEDIA_SNIFF_BYTES);
     expect(readBytes).toHaveBeenCalledWith('/home/test/images/sample.png');
-    expect(parts[1]).toEqual({ type: 'text', text: '<image path="/home/test/images/sample.png">' });
+    expect(parts[0]).toEqual({ type: 'text', text: '<image path="/home/test/images/sample.png">' });
   });
 
   it('returns a text/video/text wrap for MP4 files', async () => {
@@ -307,16 +310,15 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
+    expect(noteText(result)).toMatch(/^<system>.*<\/system>$/s);
     const parts = outputParts(result);
-    expect(parts).toHaveLength(4);
-    expect(parts[0]).toMatchObject({ type: 'text' });
-    expect((parts[0] as { text: string }).text).toMatch(/^<system>.*<\/system>$/s);
-    expect(parts[1]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mp4">' });
-    expect(parts[2]).toMatchObject({ type: 'video_url' });
-    expect((parts[2] as { videoUrl: { url: string } }).videoUrl.url).toBe(
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mp4">' });
+    expect(parts[1]).toMatchObject({ type: 'video_url' });
+    expect((parts[1] as { videoUrl: { url: string } }).videoUrl.url).toBe(
       `data:video/mp4;base64,${MP4_HEADER.toString('base64')}`,
     );
-    expect(parts[3]).toEqual({ type: 'text', text: '</video>' });
+    expect(parts[2]).toEqual({ type: 'text', text: '</video>' });
   });
 
   it('falls back to a media extension when the header cannot be sniffed', async () => {
@@ -334,8 +336,8 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    expect(parts[1]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mpg">' });
-    expect((parts[2] as { videoUrl: { url: string } }).videoUrl.url).toBe(
+    expect(parts[0]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mpg">' });
+    expect((parts[1] as { videoUrl: { url: string } }).videoUrl.url).toBe(
       `data:video/mpeg;base64,${data.toString('base64')}`,
     );
   });
@@ -371,7 +373,7 @@ describe('ReadMediaFileTool', () => {
       filename: 'sample.mp4',
     });
     const parts = outputParts(result);
-    expect(parts[2]).toEqual({
+    expect(parts[1]).toEqual({
       type: 'video_url',
       videoUrl: { url: 'ms://file-123', id: 'file-123' },
     });
@@ -493,8 +495,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('Read image file');
     expect(systemText).toContain('image/png');
     expect(systemText).toContain('3x4 pixels');
@@ -517,8 +518,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('Read image file');
     expect(systemText).toContain('image/png');
     expect(systemText).toContain(`${String(data.length)} bytes`);
@@ -602,7 +602,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    expect((parts[2] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
       `data:image/jpeg;base64,${data.toString('base64')}`,
     );
   });
@@ -625,7 +625,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    expect((parts[2] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
       `data:image/bmp;base64,${data.toString('base64')}`,
     );
   });
@@ -672,7 +672,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    const url = (parts[2] as { imageUrl: { url: string } }).imageUrl.url;
+    const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
     expect(match).not.toBeNull();
     // The image actually sent to the model is downsampled to the edge cap.
@@ -680,8 +680,8 @@ describe('ReadMediaFileTool', () => {
     const sentDims = sniffImageDimensions(sentBytes);
     expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
 
-    // The <system> summary keeps the ORIGINAL size so coordinate mapping holds.
-    const systemText = (parts[0] as { text: string }).text;
+    // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
+    const systemText = noteText(result);
     expect(systemText).toContain('2600x2600');
     expect(systemText).toContain(`${String(big.length)} bytes`);
   });
@@ -733,10 +733,11 @@ describe('ReadMediaFileTool', () => {
         signal,
       });
 
-      const parts = outputParts(result);
-      const systemText = (parts[0] as { text: string }).text;
+      const systemText = noteText(result);
       expect(systemText).toContain('2600x2600');
-      expect(systemText).toMatch(/downsampled to 2000x2000/);
+      // The note trails the media content in the projected message, so the
+      // wording must point up at the image, not down.
+      expect(systemText).toMatch(/The image above was downsampled to 2000x2000/);
       expect(systemText).toMatch(/fine detail/i);
       expect(systemText).toContain('region');
     });
@@ -756,8 +757,7 @@ describe('ReadMediaFileTool', () => {
         args: { path: '/workspace/small.png' },
         signal,
       });
-      const parts = outputParts(result);
-      const systemText = (parts[0] as { text: string }).text;
+      const systemText = noteText(result);
       expect(systemText).not.toMatch(/downsampled/i);
     });
 
@@ -771,12 +771,12 @@ describe('ReadMediaFileTool', () => {
       });
 
       const parts = outputParts(result);
-      const url = (parts[2] as { imageUrl: { url: string } }).imageUrl.url;
+      const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
       const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
       const sentDims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
       expect(sentDims).toEqual({ width: 400, height: 300 });
 
-      const systemText = (parts[0] as { text: string }).text;
+      const systemText = noteText(result);
       expect(systemText).toContain('2600x2600');
       expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
       expect(systemText).toMatch(/native resolution/);
@@ -805,10 +805,10 @@ describe('ReadMediaFileTool', () => {
       });
 
       const parts = outputParts(result);
-      expect((parts[2] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+      expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
         `data:image/png;base64,${big.toString('base64')}`,
       );
-      const systemText = (parts[0] as { text: string }).text;
+      const systemText = noteText(result);
       expect(systemText).toMatch(/native resolution/);
     });
 

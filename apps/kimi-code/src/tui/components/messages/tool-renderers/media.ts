@@ -27,11 +27,9 @@ export interface ReadMediaSummary {
   mimeType?: string;
   bytes?: number;
   url?: string;
-  originalSize?: string;
 }
 
 const PATH_TAG_RE = /^<(image|video)\s+path="([^"]+)">$/;
-const ORIGINAL_SIZE_RE = /Original dimensions:\s*(\d+x\d+)\s*pixels/;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
 
 function bytesFromBase64(b64: string): number {
@@ -55,7 +53,6 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
   let mimeType: string | undefined;
   let bytes: number | undefined;
   let url: string | undefined;
-  let originalSize: string | undefined;
   let foundMedia = false;
 
   for (const raw of parsed) {
@@ -64,15 +61,11 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
     const type = part['type'];
 
     if (type === 'text' && typeof part['text'] === 'string') {
-      const text = part['text'];
-      const tag = PATH_TAG_RE.exec(text);
+      const tag = PATH_TAG_RE.exec(part['text']);
       if (tag) {
         kind = tag[1] as 'image' | 'video';
         path = tag[2];
-        continue;
       }
-      const size = ORIGINAL_SIZE_RE.exec(text);
-      if (size) originalSize = `${size[1]}px`;
       continue;
     }
 
@@ -103,7 +96,6 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
   if (mimeType !== undefined) summary.mimeType = mimeType;
   if (bytes !== undefined) summary.bytes = bytes;
   if (url !== undefined) summary.url = url;
-  if (originalSize !== undefined) summary.originalSize = originalSize;
   return summary;
 }
 
@@ -117,7 +109,6 @@ function metaSegments(summary: ReadMediaSummary): string[] {
   const segs: string[] = [];
   if (summary.mimeType !== undefined) segs.push(summary.mimeType);
   if (summary.bytes !== undefined) segs.push(formatBytes(summary.bytes));
-  if (summary.originalSize !== undefined) segs.push(summary.originalSize);
   return segs;
 }
 

@@ -161,6 +161,75 @@ describe('AgentRecords persistence metadata', () => {
     expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
   });
 
+  it('migrates 1.4 tool-baked <system> metadata into note during replay', async () => {
+    const summary =
+      '<system>Read image file. Mime type: image/png. Size: 70 bytes. ' +
+      'Original dimensions: 4x2 pixels.</system>';
+    const persistence = new RecordingInMemoryAgentRecordPersistence([
+      {
+        type: 'metadata',
+        protocol_version: '1.4',
+        created_at: 1,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+      } as unknown as AgentRecord,
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call_media',
+          turnId: 't',
+          step: 1,
+          stepUuid: 's1',
+          toolCallId: 'call_media',
+          name: 'ReadMediaFile',
+          args: {},
+        },
+      } as unknown as AgentRecord,
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call_media',
+          toolCallId: 'call_media',
+          result: {
+            output: [
+              { type: 'text', text: summary },
+              { type: 'text', text: '<image path="/tmp/a.png">' },
+              { type: 'image_url', imageUrl: { url: 'data:image/png;base64,A' } },
+              { type: 'text', text: '</image>' },
+            ],
+          },
+        },
+      } as unknown as AgentRecord,
+    ]);
+    const agent = testAgent({ persistence }).agent;
+
+    await agent.records.replay();
+
+    // History carries the fact: clean output plus the structured note.
+    const stored = agent.context.history.find((m) => m.toolCallId === 'call_media')!;
+    expect(stored.note).toBe(summary);
+    expect(stored.content).toEqual([
+      { type: 'text', text: '<image path="/tmp/a.png">' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,A' } },
+      { type: 'text', text: '</image>' },
+    ]);
+
+    // The LLM projection re-appends the note, so the model still sees it.
+    const projected = agent.context.messages.find((m) => m.toolCallId === 'call_media')!;
+    expect(projected.content.at(-1)).toEqual({ type: 'text', text: summary });
+
+    // The wire file is rewritten in the migrated 1.5 shape.
+    expect(persistence.rewrites).toHaveLength(1);
+    const migrated = persistence.records[3] as unknown as {
+      readonly event: { readonly result: { readonly note?: string } };
+    };
+    expect(migrated.event.result.note).toBe(summary);
+  });
+
   it('warns but continues when replaying records from a newer wire version', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       {

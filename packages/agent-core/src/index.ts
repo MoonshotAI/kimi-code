@@ -18,7 +18,6 @@ export {
 export { resolveLoggingConfig } from './logging/resolve-config';
 export type { ResolveLoggingInput } from './logging/resolve-config';
 export { installGlobalProxyDispatcher } from './utils/proxy';
-export { stripSystemTags, stripSystemFromOutput } from './utils/strip-system-tags';
 export type {
   LogContext,
   LogEntry,
@@ -31,6 +30,8 @@ export type {
   SessionLogHandle,
 } from './logging/types';
 export { USER_PROMPT_ORIGIN } from './agent/context';
+export { renderToolResultForModel } from './agent/context/tool-result-render';
+export type { RenderableToolResult } from './agent/context/tool-result-render';
 export type {
   AgentContextData,
   ContextMessage,

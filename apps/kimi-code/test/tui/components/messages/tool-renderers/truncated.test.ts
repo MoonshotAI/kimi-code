@@ -75,14 +75,16 @@ describe('TruncatedOutputComponent', () => {
     }
   });
 
-  it('strips <system> blocks from output before rendering', () => {
+  it('renders output verbatim, including literal <system> text in file content', () => {
+    // Tool metadata no longer travels inside `output` (it rides the result's
+    // `note` side channel), so the renderer must not eat user data that
+    // merely contains the literal tag.
     const component = new TruncatedOutputComponent(
-      '<system>Read image file. Mime type: image/png.</system>\n<image path="/tmp/x.png">',
+      '<system>literal text from a user file</system>\n<image path="/tmp/x.png">',
       { expanded: true, isError: false },
     );
     const out = strip(component.render(80).join('\n'));
-    expect(out).not.toContain('<system>');
-    expect(out).not.toContain('Read image file');
+    expect(out).toContain('<system>literal text from a user file</system>');
     expect(out).toContain('<image path="/tmp/x.png">');
   });
 });

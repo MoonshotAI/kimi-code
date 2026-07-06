@@ -14,7 +14,9 @@
  *     would silently reintroduce the very degradation the caption reports.
  *  4. Compress oversized inline images, announcing each compression with a
  *     caption (original vs. sent size, readback path to the persisted
- *     original) so downsampling is never silent.
+ *     original) so downsampling is never silent. The captions are collected
+ *     into the result's `note` side channel — rendered to the model at
+ *     projection time, never to UIs.
  *  5. Apply the per-part 10 MB binary cap: oversized binary parts
  *     (image/audio/video URLs) collapse to a notice, so a single
  *     screenshot cannot evict every text part.
@@ -27,7 +29,10 @@
 
 import type { ContentPart } from '@moonshot-ai/kosong';
 
-import { compressImageContentParts } from '../tools/support/image-compress';
+import {
+  compressImageContentParts,
+  extractImageCompressionCaptions,
+} from '../tools/support/image-compress';
 import { persistOriginalImage } from '../tools/support/image-originals';
 import type { MCPContentBlock, MCPToolResult } from './types';
 
@@ -151,7 +156,12 @@ export async function mcpResultToExecutableOutput(
   result: MCPToolResult,
   qualifiedToolName: string,
   options: McpOutputOptions = {},
-): Promise<{ output: string | ContentPart[]; isError: boolean; truncated?: true }> {
+): Promise<{
+  output: string | ContentPart[];
+  isError: boolean;
+  note?: string;
+  truncated?: true;
+}> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
     const part = convertMCPContentBlock(block);
@@ -161,10 +171,11 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  // Text budget FIRST, on the tool's own text only: captions inserted by the
-  // compression step below must never compete with a chatty tool's text for
-  // the budget — an evicted or mid-string-sliced caption silently
-  // reintroduces the downsampling this pipeline promises to announce.
+  // Text budget FIRST, on the tool's own text only: captions produced by the
+  // compression step below ride the `note` side channel and never compete
+  // with a chatty tool's text for the budget — an evicted or mid-string-
+  // sliced caption would silently reintroduce the downsampling this pipeline
+  // promises to announce.
   const budgeted = applyTextBudget(wrapped);
   // Shrink oversized images BEFORE the per-part byte cap, so a large but
   // compressible screenshot is downsampled and kept rather than dropped to a
@@ -183,12 +194,46 @@ export async function mcpResultToExecutableOutput(
         ),
     },
   });
-  const capped = applyBinaryPartCap(compressed);
+  // The compression helper inserts each caption inline (the prompt-ingestion
+  // caller depends on that); here the captions move to the `note` side
+  // channel so the tool output stays pure data.
+  const split = splitCompressionCaptions(compressed);
+  const capped = applyBinaryPartCap(split.parts);
   const truncated = budgeted.truncated || capped.truncated;
   const output = collapseSingleText(capped.parts);
-  return truncated
-    ? { output, isError: result.isError, truncated: true }
-    : { output, isError: result.isError };
+  return {
+    output,
+    isError: result.isError,
+    ...(split.note === undefined ? {} : { note: split.note }),
+    ...(truncated ? { truncated: true as const } : {}),
+  };
+}
+
+/**
+ * Pull the inline image-compression captions out of `parts` and join them
+ * into a single `note` string (re-wrapped in `<system>`, one caption per
+ * line). Returns `note: undefined` when nothing was compressed.
+ */
+function splitCompressionCaptions(parts: readonly ContentPart[]): {
+  parts: ContentPart[];
+  note?: string | undefined;
+} {
+  const kept: ContentPart[] = [];
+  const captions: string[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      const extracted = extractImageCompressionCaptions(part.text);
+      if (extracted.captions.length > 0) {
+        captions.push(...extracted.captions.map((body) => `<system>${body}</system>`));
+        if (extracted.text.trim().length > 0) {
+          kept.push({ type: 'text', text: extracted.text });
+        }
+        continue;
+      }
+    }
+    kept.push(part);
+  }
+  return captions.length > 0 ? { parts: kept, note: captions.join('\n') } : { parts: kept };
 }
 
 /**
