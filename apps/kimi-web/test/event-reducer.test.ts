@@ -233,6 +233,38 @@ describe('reduceAppEvent taskProgress', () => {
     );
     expect(next.tasksBySession['s1']?.[0]?.text).toBe('partial');
   });
+
+  it('preserves subagent identity metadata across a taskCreated replacement with omitted fields', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: {
+        's1': [
+          {
+            ...makeSubagentTask('t1', 's1'),
+            parentToolCallId: 'call-1',
+            swarmIndex: 2,
+            subagentType: 'explore',
+            runInBackground: true,
+            outputLines: ['old line'],
+            text: 'partial',
+          },
+        ],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: 's1', task: makeSubagentTask('t1', 's1') },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]).toMatchObject({
+      parentToolCallId: 'call-1',
+      swarmIndex: 2,
+      subagentType: 'explore',
+      runInBackground: true,
+      outputLines: ['old line'],
+      text: 'partial',
+    });
+  });
 });
 
 describe('reduceAppEvent sessions reference stability', () => {

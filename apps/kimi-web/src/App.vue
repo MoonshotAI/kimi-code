@@ -34,6 +34,7 @@ import { useFilePreview, type DetailTarget } from './composables/useFilePreview'
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
 import { openDialogCount } from './composables/dialogStack';
+import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
@@ -55,6 +56,15 @@ const showServerAuth = computed(
   () => !client.dangerousBypassAuth.value && authRequired.value,
 );
 provide('resolveImage', client.resolveImageUrl);
+// Live swarm member roster for the inline AgentSwarm tool card. Sourced from the
+// AppTask store so the card shows each subagent's live phase; on refresh the
+// tasks are gone and the card falls back to the parsed tool result. Includes
+// single-member "swarms" (e.g. AgentSwarm with one resume_agent_ids entry),
+// which buildSwarmGroups filters out for the badge counter.
+provide(
+  'resolveSwarmMembers',
+  (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
+);
 const { t } = useI18n();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.
@@ -681,7 +691,6 @@ function openPr(url: string): void {
       :tasks="client.tasks.value"
       :todos="client.todos.value"
       :goal="client.goal.value"
-      :swarms="client.swarms.value"
       :activation-badges="client.activationBadges.value"
       :status="client.status.value"
       :thinking="client.thinking.value"
