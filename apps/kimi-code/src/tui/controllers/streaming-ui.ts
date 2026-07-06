@@ -724,13 +724,16 @@ export class StreamingUIController {
     const block = new CompactionComponent(state.ui, instruction, currentWorkingTip()?.text);
     this._activeCompactionBlock = block;
     state.transcriptContainer.addChild(block);
+    if (state.toolOutputExpanded) {
+      block.setExpanded(true);
+    }
     state.ui.requestRender();
   }
 
-  endCompaction(tokensBefore?: number, tokensAfter?: number): void {
+  endCompaction(tokensBefore?: number, tokensAfter?: number, summary?: string): void {
     const block = this._activeCompactionBlock;
     if (block === undefined) return;
-    block.markDone(tokensBefore, tokensAfter);
+    block.markDone(tokensBefore, tokensAfter, summary);
     this._activeCompactionBlock = undefined;
     this.host.state.ui.requestRender();
   }

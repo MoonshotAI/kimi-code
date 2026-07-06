@@ -155,7 +155,7 @@ Kimi Code CLI 会规划步骤、修改代码、运行测试，并在每一步告
 | `Ctrl-C` | 中断输出；空闲时连按两次退出 |
 | `Shift-Tab` | 切换 Plan 模式 |
 | `Ctrl-S` | 输出中途插入消息，无需等待结束 |
-| `Ctrl-O` | 折叠 / 展开工具输出 |
+| `Ctrl-O` | 折叠 / 展开工具输出和压缩摘要 |
 
 想看完整列表，输入 `/help` 或访问[斜杠命令参考](../reference/slash-commands.md)和[键盘快捷键](../reference/keyboard.md)。
 

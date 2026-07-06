@@ -1030,15 +1030,43 @@ describe('KimiTUI resume message replay', () => {
       (entry) => entry.compactionData !== undefined,
     );
     expect(compactionEntry?.compactionData).toEqual({
+      summary: 'Compacted transcript summary.',
       tokensBefore: 120,
       tokensAfter: 24,
       instruction: 'preserve implementation notes',
     });
+    const collapsed = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(collapsed).toContain('Compaction complete');
+    expect(collapsed).toContain('120 → 24 tokens');
+    expect(collapsed).toContain('preserve implementation notes');
+    expect(collapsed).not.toContain('Compacted transcript summary.');
+
+    driver.state.editor.onToggleToolExpand?.();
+    const expanded = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(expanded).toContain('Compacted transcript summary.');
+  });
+
+  it('initializes replayed compaction blocks as expanded when tool output is already expanded', async () => {
+    const initial = makeSession([]);
+    const resumed = makeSession([
+      {
+        time: REPLAY_TIME,
+        type: 'compaction',
+        result: {
+          summary: 'Compacted transcript summary.',
+          compactedCount: 4,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+      },
+    ]);
+    const driver = await makeDriver(initial);
+    driver.state.toolOutputExpanded = true;
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
     const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
     expect(transcript).toContain('Compaction complete');
-    expect(transcript).toContain('120 → 24 tokens');
-    expect(transcript).toContain('preserve implementation notes');
-    expect(transcript).not.toContain('Compacted transcript summary.');
+    expect(transcript).toContain('Compacted transcript summary.');
   });
 
   it('renders replayed cancelled compaction records as cancelled compaction blocks', async () => {
