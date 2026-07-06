@@ -63,7 +63,7 @@ function loadUiFontSize(): number {
 
 function applyUiFontSize(value: number): void {
   if (typeof document === 'undefined' || !document.documentElement) return;
-  document.documentElement.style.setProperty('--ui-font-size', `${clampUiFontSize(value)}px`);
+  document.documentElement.style.setProperty('--base-ui-font-size', `${clampUiFontSize(value)}px`);
 }
 
 const colorScheme = ref<ColorScheme>(loadColorScheme());
