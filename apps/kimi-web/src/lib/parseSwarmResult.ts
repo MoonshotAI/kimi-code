@@ -26,11 +26,12 @@ export interface SwarmResult {
 
 const SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/;
 const RESUME_HINT_RE = /<resume_hint>([\s\S]*?)<\/resume_hint>/;
-// Opening tag for a subagent row. Body parsing is done manually below so a
-// literal `</subagent>` inside a subagent's output (e.g. the subagent is
-// analyzing or emitting an AgentSwarm snippet) does not terminate the row
-// early — producer writes body text unescaped.
-const SUBAGENT_START_RE = /<subagent\b([^>]*)>/g;
+// Marks either a subagent opening tag (captures attributes) or a `</subagent>`
+// closing tag. Body parsing tracks a depth so literal `<subagent ..>` /
+// `</subagent>` text inside a row's body (e.g. a subagent emitting an
+// AgentSwarm snippet) does not register as a top-level row — producer writes
+// body unescaped.
+const TOKEN_RE = /<subagent\b([^>]*)>|<\/subagent>/g;
 const SUBAGENT_CLOSE = '</subagent>';
 const COUNT_RE = /(completed|failed|aborted):\s*(\d+)/g;
 const ATTR_RE = /([a-z_]+)="([^"]*)"/g;
@@ -64,32 +65,42 @@ function parseCounts(summary: string): Pick<SwarmResult, 'completed' | 'failed' 
   return counts;
 }
 
+type RowFrame = { attrs: string; bodyStart: number };
+
+function parseSubagent(attrs: string, body: string): SwarmResultSubagent {
+  const parsed = parseAttrs(attrs);
+  return {
+    outcome: parsed['outcome'] ?? 'completed',
+    item: parsed['item'],
+    agentId: parsed['agent_id'],
+    mode: parsed['mode'],
+    state: parsed['state'],
+    body: body.trim(),
+  };
+}
+
 function parseSubagents(text: string): SwarmResultSubagent[] {
   const subs: SwarmResultSubagent[] = [];
-  SUBAGENT_START_RE.lastIndex = 0;
-  const opens: { attrs: string; start: number; openEnd: number }[] = [];
+  // Each stack frame is either a real top-level row (carries attrs + the body
+  // start offset) or `null` for a nested literal `<subagent ..>` matched inside
+  // another row's body so nested tags don't register as their own result row.
+  const stack: (RowFrame | null)[] = [];
+  TOKEN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = SUBAGENT_START_RE.exec(text)) !== null) {
-    opens.push({ attrs: m[1] ?? '', start: m.index, openEnd: SUBAGENT_START_RE.lastIndex });
-  }
-  for (let i = 0; i < opens.length; i++) {
-    const open = opens[i]!;
-    // Close tag: the last `</subagent>` before the next row's opening tag (or
-    // document end), so embedded `</subagent>` text in the body is preserved
-    // instead of truncating this subagent's output.
-    const nextStart = opens[i + 1]?.start ?? text.length;
-    const windowClose = text.lastIndexOf(SUBAGENT_CLOSE, nextStart - 1);
-    const close = windowClose > open.openEnd ? windowClose : text.indexOf(SUBAGENT_CLOSE, open.openEnd);
-    const body = close === -1 ? text.slice(open.openEnd) : text.slice(open.openEnd, close);
-    const attrs = parseAttrs(open.attrs);
-    subs.push({
-      outcome: attrs['outcome'] ?? 'completed',
-      item: attrs['item'],
-      agentId: attrs['agent_id'],
-      mode: attrs['mode'],
-      state: attrs['state'],
-      body: body.trim(),
-    });
+  while ((m = TOKEN_RE.exec(text)) !== null) {
+    if (m[0] === SUBAGENT_CLOSE) {
+      if (stack.length === 0) continue;
+      const frame = stack.pop()!;
+      // Pop balances this close with its matching opening. A frame is real only
+      // when it sits on a then-empty stack, i.e. a top-level row.
+      if (frame && stack.length === 0) {
+        subs.push(parseSubagent(frame.attrs, text.slice(frame.bodyStart, m.index)));
+      }
+    } else if (stack.length === 0) {
+      stack.push({ attrs: m[1] ?? '', bodyStart: TOKEN_RE.lastIndex });
+    } else {
+      stack.push(null);
+    }
   }
   return subs;
 }

@@ -46,28 +46,27 @@ describe('parseSwarmResult', () => {
     expect(result?.subagents[0]?.state).toBe('started');
   });
 
-  it('does not truncate the body on a literal "</subagent>" inside it', () => {
-    // Producer writes subagent body unescaped. A naive non-greedy regex treats
-    // the embedded `</subagent>` as the row's close, losing " after".
-    const body = 'before</subagent> after';
-    const text = `<agent_swarm_result><summary>completed: 1</summary><subagent item="xml" outcome="completed">${body}</subagent></agent_swarm_result>`;
+  it('does not count a literal "<subagent>" tag inside a body as a top-level row', () => {
+    const snippet = '<subagent item="nested" outcome="completed">inner body</subagent>';
+    const body = 'example result below: ' + snippet;
+    const text = `<agent_swarm_result><summary>completed: 1</summary><subagent item="outer" outcome="completed">${body}</subagent></agent_swarm_result>`;
     const result = parseSwarmResult(text);
     expect(result?.subagents).toHaveLength(1);
-    expect(result?.subagents[0]?.item).toBe('xml');
-    expect(result?.subagents[0]?.body).toBe(body);
+    expect(result?.subagents[0]?.item).toBe('outer');
+    expect(result?.subagents[0]?.body).toContain(snippet);
   });
 
-  it('keeps sibling rows intact when an earlier body has a "</subagent>" inside it', () => {
+  it('keeps sibling top-level rows when one body contains a nested subagent snippet', () => {
     const text = [
       '<agent_swarm_result><summary>completed: 2</summary>',
-      '<subagent item="a" outcome="completed">row one</subagent>and more</subagent>',
-      '<subagent item="b" outcome="completed">row two</subagent>',
+      '<subagent item="a" outcome="completed">A snippet: <subagent item="x" outcome="completed">inner</subagent> done</subagent>',
+      '<subagent item="b" outcome="completed">just B</subagent>',
       '</agent_swarm_result>',
     ].join('');
     const result = parseSwarmResult(text);
     expect(result?.subagents.map((s) => s.item)).toEqual(['a', 'b']);
-    expect(result?.subagents[0]?.body).toContain('row one');
-    expect(result?.subagents[0]?.body).toContain('and more');
-    expect(result?.subagents[1]?.body).toBe('row two');
+    expect(result?.subagents[0]?.body).toContain('<subagent item="x"');
+    expect(result?.subagents[0]?.body).toContain('inner');
+    expect(result?.subagents[1]?.body).toBe('just B');
   });
 });
