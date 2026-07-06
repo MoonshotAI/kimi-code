@@ -40,6 +40,9 @@
  * **Synthesizing stable ids** (SDK has no per-item / per-option `id`):
  *   - `QuestionItem.id`     ← `q_<index>` (e.g. `q_0`, `q_1`, ...)
  *   - `QuestionOption.id`   ← `opt_<parent_idx>_<option_idx>` (e.g. `opt_0_0`)
+ *   Ids are a wire-only concern: clients answer with them, and
+ *   `toAgentCoreResponse` translates them back to question text / option
+ *   labels so the flattened record the model sees is self-explanatory.
  *
  * **Anti-corruption**: this is the ONLY place protocol↔SDK shape translation
  * happens for question.
@@ -172,33 +175,54 @@ export function toBrokerRequest(
  * Protocol REST response body → in-process SDK `QuestionResponse` (with
  * `answers` flattened to `Record<string, string | true>`).
  *
- * Normalization rules from SCHEMAS §6.4:
- *   - single            → option_id
- *   - multi             → option_ids.join(',')
+ * The wire keeps synthesized ids (`q_<idx>` / `opt_<q>_<o>`) so clients can
+ * answer unambiguously, but the flattened record is what the ask-user tool
+ * feeds back to the model — so ids are translated back to text here using
+ * the original broker `request`:
+ *   - key               → the question's text (falls back to the raw qid
+ *                         when the request is unavailable or the qid is
+ *                         unknown — stale client, defensive)
+ *   - single            → option label
+ *   - multi             → labels.join(',')
  *   - other             → text
- *   - multi_with_other  → [...option_ids, other_text].join(',')
+ *   - multi_with_other  → [...labels, other_text].join(',')
  *   - skipped           → OMIT entry
+ *
+ * Unknown option ids are kept verbatim rather than dropped so a stale
+ * client's answer stays diagnosable.
  */
 export function toAgentCoreResponse(
   resp: ProtocolQuestionResponse,
+  request?: ProtocolQuestionRequest,
 ): InProcessQuestionResponse {
+  const itemsById = new Map<string, ProtocolQuestionItem>();
+  // Option ids embed their question index (`opt_<q>_<o>`), so a single flat
+  // map across all questions cannot collide.
+  const labelsByOptionId = new Map<string, string>();
+  for (const item of request?.questions ?? []) {
+    itemsById.set(item.id, item);
+    for (const opt of item.options) labelsByOptionId.set(opt.id, opt.label);
+  }
+  const optionText = (id: string): string => labelsByOptionId.get(id) ?? id;
+
   const flattened: InProcessQuestionAnswers = {};
   for (const [qid, ans] of Object.entries(resp.answers)) {
+    const key = itemsById.get(qid)?.question ?? qid;
     switch (ans.kind) {
       case 'single':
-        flattened[qid] = ans.option_id;
+        flattened[key] = optionText(ans.option_id);
         break;
       case 'multi':
-        flattened[qid] = ans.option_ids.join(',');
+        flattened[key] = ans.option_ids.map(optionText).join(',');
         break;
       case 'other':
-        flattened[qid] = ans.text;
+        flattened[key] = ans.text;
         break;
       case 'multi_with_other':
-        flattened[qid] = [...ans.option_ids, ans.other_text].join(',');
+        flattened[key] = [...ans.option_ids.map(optionText), ans.other_text].join(',');
         break;
       case 'skipped':
-        // Omitted from the record — matches SCHEMAS §6.4 ("if skipped continue").
+        // Omitted from the record — skipped questions carry no answer.
         break;
       default: {
         // Defensive: never-reached if Zod schema is the SOT, but TS narrowing
