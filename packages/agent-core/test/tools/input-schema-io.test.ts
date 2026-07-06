@@ -95,4 +95,35 @@ describe('builtin tool input JSON Schema', () => {
     // The closed-object guard must hold at every nesting level.
     expect(validateToolArgs(validator, { questions: [question] })).not.toBeNull();
   });
+
+  it('rejects an empty option label through runtime validation (minLength reaches AJV)', () => {
+    const tool = askUserQuestionTool();
+    const validator = compileToolArgsValidator(tool.parameters);
+    const question = {
+      question: 'Which?',
+      options: [
+        { label: '', description: '' },
+        { label: 'B', description: '' },
+      ],
+    };
+    expect(validateToolArgs(validator, { questions: [question] })).not.toBeNull();
+  });
+
+  it('keeps the AskUserQuestion JSON Schema valid despite the zod uniqueness refine', () => {
+    // The uniqueness constraint (unique question texts, unique labels per
+    // question) is a zod refine — unrepresentable in JSON Schema, so AJV must
+    // still ACCEPT duplicates here. Enforcement lives in the tool's execution
+    // path, not in the model-facing schema.
+    const tool = askUserQuestionTool();
+    expect(tool.parameters).toMatchObject({ type: 'object' });
+    const validator = compileToolArgsValidator(tool.parameters);
+    const question = {
+      question: 'Which?',
+      options: [
+        { label: 'A', description: '' },
+        { label: 'A', description: '' },
+      ],
+    };
+    expect(validateToolArgs(validator, { questions: [question] })).toBeNull();
+  });
 });

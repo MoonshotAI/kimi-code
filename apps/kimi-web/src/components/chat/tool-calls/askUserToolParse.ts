@@ -1,14 +1,16 @@
 // Pure parsers for the AskUserQuestion tool card. Kept separate from the SFC so
-// the index-zip / id-decode logic is unit-testable without a DOM.
+// the answer-resolution logic is unit-testable without a DOM.
 //
-// Wire shape (from agent-core SCHEMAS §6.4):
+// Wire shape:
 //   tool.arg      : JSON { questions: [{ question, header, options[{label,description}], multi_select }] }
 //                   Input questions carry NO id — order === broker order.
-//   tool.output[0]: on a successful answer, JSON { answers: Record<qid, string|true>, note? }
-//                   qid  = `q_<index>`; value = `opt_<q>_<o>` (single),
-//                   `opt_<q>_<o>,opt_<q>_<o>` (multi, comma-joined), free-text
-//                   (Other), or `opt_…,<text>` (multi+Other). skipped → omitted.
-//                   Dismissed → { answers: {}, note }.
+//   tool.output[0]: on a successful answer, JSON { answers: Record<question text, string|true>, note? }
+//                   value = the chosen option's label (single), labels joined
+//                   with ', ' (multi), free-text (Other), or labels+text
+//                   (multi+Other). skipped → omitted. Dismissed → { answers: {}, note }.
+//                   LEGACY (transcripts from before the label form): keys are
+//                   `q_<index>` and values are synthesized `opt_<q>_<o>` ids —
+//                   still decoded so old sessions keep rendering.
 //                 : on a background launch, plain text (`task_id: …\nstatus: …`);
 //                   on an error (e.g. unsupported interactive questions), plain
 //                   text. Those are NOT the answer payload and must be shown raw.
@@ -106,21 +108,59 @@ export function parseAskOutput(output: string[] | undefined): AskOutput {
   };
 }
 
+/** Look up one question's flattened answer: current transcripts key by the
+ *  question text; legacy transcripts key by `q_<index>`. */
+export function answerFor(
+  answers: Record<string, string | true>,
+  questionText: string,
+  index: number,
+): string | true | undefined {
+  return answers[questionText] ?? answers[`q_${index}`];
+}
+
 const OPT_ID = /^opt_\d+_(\d+)$/;
 
 /** Decode one question's flattened answer into picked option indices plus any
- *  free-text "Other" segment. Option ids carry their own index, so this is
- *  exact rather than a label match; non-`opt_` segments are treated as the
- *  Other text (joined back with `,` in case the free text itself contained one). */
-export function resolveAnswer(value: string | true | undefined): Resolved {
+ *  free-text "Other" segment.
+ *
+ *  Current form: the value is option label text — matched exactly against
+ *  `options` (whole-string first, so a single-select label containing a comma
+ *  still resolves; then per comma-segment for multi-select). Segments are
+ *  trimmed before matching because joiners vary by client (', ' from the
+ *  server translator and TUI, ',' in older transcripts). Legacy form: the
+ *  value is `opt_<q>_<o>` ids whose trailing index is decoded directly.
+ *  Segments that are neither a label nor an id are the Other free text
+ *  (rejoined with ', ' in case the text itself contained a comma). */
+export function resolveAnswer(
+  value: string | true | undefined,
+  options: readonly AskOption[] = [],
+): Resolved {
   if (value === undefined) return { selected: new Set(), otherText: '', indeterminate: false };
   if (value === true) return { selected: new Set(), otherText: '', indeterminate: true };
+
+  const indexByLabel = new Map<string, number>();
+  // First occurrence wins on (out-of-contract) duplicate labels.
+  options.forEach((o, i) => {
+    if (o.label.length > 0 && !indexByLabel.has(o.label)) indexByLabel.set(o.label, i);
+  });
+
+  const whole = indexByLabel.get(value);
+  if (whole !== undefined) {
+    return { selected: new Set([whole]), otherText: '', indeterminate: false };
+  }
+
   const selected = new Set<number>();
   const others: string[] = [];
-  for (const seg of value.split(',')) {
+  for (const rawSeg of value.split(',')) {
+    const seg = rawSeg.trim();
+    const byLabel = indexByLabel.get(seg);
+    if (byLabel !== undefined) {
+      selected.add(byLabel);
+      continue;
+    }
     const m = OPT_ID.exec(seg);
     if (m) selected.add(Number(m[1]));
     else if (seg.length > 0) others.push(seg);
   }
-  return { selected, otherText: others.join(','), indeterminate: false };
+  return { selected, otherText: others.join(', '), indeterminate: false };
 }
