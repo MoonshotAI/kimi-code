@@ -15,8 +15,6 @@
  * need to filter MUST run before `project()` — projection strips `origin`.
  */
 
-import type { Tool } from '@moonshot-ai/kosong';
-
 import type { ContextMessage } from './types';
 
 /** Origin variant of an injected dynamic tool schema message (undo keeps it). */
