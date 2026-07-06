@@ -1126,9 +1126,22 @@ async function pullSessionWarnings(sessionId: string): Promise<void> {
 }
 
 async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
+  // Preconditions captured before the await, used to detect a newer local
+  // prompt/seq that appears while the snapshot is in flight (see guard below).
+  const seqBefore = rawState.lastSeqBySession[sessionId] ?? 0;
+  const promptBefore = rawState.promptIdBySession[sessionId];
   try {
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
+
+    // Discard a snapshot that went stale because a newer local prompt/seq
+    // arrived while it was in flight. On the re-open path `sessionLoading` is
+    // false and the composer stays usable, so a send can race this GET: the
+    // snapshot's `asOfSeq` predates the new prompt, and replacing messages here
+    // would wipe a live turn whose volatile deltas are not replayable. The live
+    // stream will populate messages; a later re-open reconciles again if needed.
+    if ((rawState.lastSeqBySession[sessionId] ?? 0) !== seqBefore) return 'ok';
+    if (rawState.promptIdBySession[sessionId] !== promptBefore) return 'ok';
 
     // Drain any queued streaming deltas before the snapshot replaces
     // messagesBySession[sessionId]. The snapshot is authoritative (it already
