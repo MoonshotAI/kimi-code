@@ -4,6 +4,10 @@ import { renderToolResultForModel } from '../../src/agent/context/tool-result-re
 
 const text = (t: string) => ({ type: 'text', text: t }) as const;
 
+const ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
+const EMPTY_STATUS = '<system>Tool output is empty.</system>';
+const EMPTY_ERROR_STATUS = '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
+
 describe('renderToolResultForModel', () => {
   describe('string output (and its single-text-part history form)', () => {
     it('passes successful output through unchanged', () => {
@@ -11,34 +15,38 @@ describe('renderToolResultForModel', () => {
       expect(renderToolResultForModel({ output: [text('hello')] })).toEqual([text('hello')]);
     });
 
-    it('prefixes the error status on a newline', () => {
+    it('prefixes the wrapped error status on a newline', () => {
       expect(renderToolResultForModel({ output: 'permission denied', isError: true })).toEqual([
-        text('ERROR: Tool execution failed.\npermission denied'),
+        text(`${ERROR_STATUS}\npermission denied`),
       ]);
     });
 
-    it('does not double-prefix output that already starts with ERROR:', () => {
+    it('adds the status uniformly, even when tool output already starts with ERROR:', () => {
+      // The <system> wrapper is the harness verdict; the tool's own "ERROR:"
+      // text is data. Every failed call gets exactly one wrapped status, so
+      // the model never has to guess whether a failure was flagged.
       expect(renderToolResultForModel({ output: 'ERROR: no such file', isError: true })).toEqual([
-        text('ERROR: no such file'),
+        text(`${ERROR_STATUS}\nERROR: no such file`),
       ]);
     });
 
     it('replaces an empty error output with the combined status', () => {
       expect(renderToolResultForModel({ output: '', isError: true })).toEqual([
-        text('ERROR: Tool execution failed. Tool output is empty.'),
+        text(EMPTY_ERROR_STATUS),
       ]);
     });
 
     it('replaces empty or whitespace-only success output with the placeholder', () => {
-      expect(renderToolResultForModel({ output: '' })).toEqual([text('Tool output is empty.')]);
-      expect(renderToolResultForModel({ output: '  \n ' })).toEqual([
-        text('Tool output is empty.'),
-      ]);
+      expect(renderToolResultForModel({ output: '' })).toEqual([text(EMPTY_STATUS)]);
+      expect(renderToolResultForModel({ output: '  \n ' })).toEqual([text(EMPTY_STATUS)]);
     });
 
-    it('is idempotent over the already-placeheld output', () => {
+    it('recognizes the plain record placeholder and emits the wrapped form', () => {
+      // The loop layer writes the plain placeholder into records
+      // (normalizeToolResult); the projection upgrades it to the wrapped
+      // system status rather than double-wrapping or passing it as data.
       expect(renderToolResultForModel({ output: 'Tool output is empty.' })).toEqual([
-        text('Tool output is empty.'),
+        text(EMPTY_STATUS),
       ]);
     });
   });
@@ -52,21 +60,21 @@ describe('renderToolResultForModel', () => {
       expect(renderToolResultForModel({ output: parts })).toEqual(parts);
     });
 
-    it('prepends the error status as its own part on a multi-part error', () => {
+    it('prepends the wrapped error status as its own part on a multi-part error', () => {
       const parts = [text('a'), text('b')];
       expect(renderToolResultForModel({ output: parts, isError: true })).toEqual([
-        text('ERROR: Tool execution failed.'),
+        text(ERROR_STATUS),
         ...parts,
       ]);
     });
 
     it('collapses an empty-equivalent array to the placeholder', () => {
-      expect(renderToolResultForModel({ output: [] })).toEqual([text('Tool output is empty.')]);
+      expect(renderToolResultForModel({ output: [] })).toEqual([text(EMPTY_STATUS)]);
       expect(renderToolResultForModel({ output: [text('   \n')] })).toEqual([
-        text('Tool output is empty.'),
+        text(EMPTY_STATUS),
       ]);
       expect(renderToolResultForModel({ output: [text('')], isError: true })).toEqual([
-        text('ERROR: Tool execution failed. Tool output is empty.'),
+        text(EMPTY_ERROR_STATUS),
       ]);
     });
   });
@@ -97,12 +105,12 @@ describe('renderToolResultForModel', () => {
       ).toEqual([...parts, text('<system>meta</system>')]);
     });
 
-    it('joins the note after the error prefix and after the empty placeholder', () => {
+    it('joins the note after the error status and after the empty placeholder', () => {
       expect(
         renderToolResultForModel({ output: 'oops', isError: true, note: 'n' }),
-      ).toEqual([text('ERROR: Tool execution failed.\noops\nn')]);
+      ).toEqual([text(`${ERROR_STATUS}\noops\nn`)]);
       expect(renderToolResultForModel({ output: '', note: 'n' })).toEqual([
-        text('Tool output is empty.\nn'),
+        text(`${EMPTY_STATUS}\nn`),
       ]);
     });
 

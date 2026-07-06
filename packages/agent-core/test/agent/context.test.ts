@@ -347,7 +347,7 @@ describe('Agent context', () => {
       { role: 'assistant', toolCalls: [{ id: 'call_ws' }] },
       {
         role: 'tool',
-        content: [{ type: 'text', text: 'Tool output is empty.' }],
+        content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
         toolCallId: 'call_ws',
       },
     ]);
@@ -400,13 +400,16 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [
-          { type: 'text', text: 'ERROR: Tool execution failed.\npermission denied' },
+          {
+            type: 'text',
+            text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
+          },
         ],
         toolCallId: 'call_error',
       },
       {
         role: 'tool',
-        content: [{ type: 'text', text: 'Tool output is empty.' }],
+        content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
         toolCallId: 'call_empty',
       },
     ]);
@@ -452,7 +455,10 @@ describe('Agent context', () => {
 
     const projected = ctx.agent.context.messages.find((m) => m.toolCallId === 'call_raw')!;
     expect(projected.content).toEqual([
-      { type: 'text', text: 'ERROR: Tool execution failed.\npermission denied' },
+      {
+        type: 'text',
+        text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
+      },
     ]);
   });
 
@@ -595,7 +601,7 @@ describe('Agent context', () => {
       { role: 'assistant' },
       {
         role: 'tool',
-        content: [{ type: 'text', text: 'Tool output is empty.' }],
+        content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
         toolCallId: 'call_empty',
       },
     ]);

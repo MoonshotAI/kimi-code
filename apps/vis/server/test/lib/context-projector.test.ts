@@ -149,9 +149,10 @@ describe('context-projector', () => {
   // that normalization so the model-view shows the content the model actually
   // received for failed / empty tool calls.
 
-  const TOOL_ERROR_STATUS = 'ERROR: Tool execution failed.';
-  const TOOL_EMPTY_STATUS = 'Tool output is empty.';
-  const TOOL_EMPTY_ERROR_STATUS = 'ERROR: Tool execution failed. Tool output is empty.';
+  const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
+  const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
+  const TOOL_EMPTY_ERROR_STATUS =
+    '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
 
   /** Build a minimal wire fixture: one assistant step with a tool call, then a
    *  `tool.result` loop event carrying `result`. Returns the projected tool
@@ -214,10 +215,12 @@ describe('context-projector', () => {
     ]);
   });
 
-  it('tool.result: error string already starting with ERROR: is passed through (no double prefix)', () => {
+  it('tool.result: error string starting with ERROR: still gets the wrapped status', () => {
+    // The <system>-wrapped status is the harness verdict; the tool's own
+    // "ERROR:" text is data, so the status is added unconditionally.
     const text = 'ERROR: already wrapped\ndetails here';
     const msg = projectToolResult({ output: text, isError: true });
-    expect(msg.content).toEqual([{ type: 'text', text }]);
+    expect(msg.content).toEqual([{ type: 'text', text: `${TOOL_ERROR_STATUS}\n${text}` }]);
   });
 
   it('tool.result: empty string output (non-error) becomes the empty sentinel', () => {
