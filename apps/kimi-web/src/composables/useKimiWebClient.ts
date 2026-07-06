@@ -1118,41 +1118,10 @@ async function pullSessionWarnings(sessionId: string): Promise<void> {
   }
 }
 
-async function syncSessionFromSnapshot(
-  sessionId: string,
-  opts?: { force?: boolean },
-): Promise<SyncSessionResult> {
-  // Preconditions captured before the await, used to detect an optimistic send
-  // or prompt change that appears while the snapshot is in flight (see guard
-  // below).
-  const promptBefore = rawState.promptIdBySession[sessionId];
-  const inFlightBefore = inFlightPromptSessions.has(sessionId);
-  const wasLoaded = hasLoadedMessages(sessionId);
+async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
   try {
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
-
-    // Staleness guard, scoped to the re-open path (session already loaded AND
-    // not evicted from the subscription cap): there the composer stays usable, so
-    // a send can race this GET — replacing messages with a snapshot whose
-    // `asOfSeq` predates newer local state would wipe a live turn (volatile
-    // deltas are not replayable) or the just-sent optimistic user message.
-    //   - seq: discard only when the LOCAL cursor is ahead of `snap.asOfSeq` —
-    //     a durable event that raced the GET but is already included in the
-    //     snapshot must not cancel the install (that would skip the repair this
-    //     path exists for).
-    //   - prompt / optimistic send: a submission that started mid-fetch is not
-    //     in the snapshot yet, so discard.
-    // First opens always install + subscribe, even if events advanced lastSeq
-    // during the await; an evicted session is already unsubscribed, so it must
-    // always rebuild + re-subscribe; and a forced resync (delta-gap recovery) or
-    // post-undo sync must always apply the authoritative snapshot. When
-    // discarded, the live stream / next re-open reconciles.
-    if (!opts?.force && wasLoaded && !sessionsWithStaleCursor.has(sessionId)) {
-      if ((rawState.lastSeqBySession[sessionId] ?? 0) > snap.asOfSeq) return 'ok';
-      if (rawState.promptIdBySession[sessionId] !== promptBefore) return 'ok';
-      if (inFlightPromptSessions.has(sessionId) !== inFlightBefore) return 'ok';
-    }
 
     // Drain any queued streaming deltas before the snapshot replaces
     // messagesBySession[sessionId]. The snapshot is authoritative (it already
@@ -1226,11 +1195,7 @@ async function syncSessionFromSnapshot(
   }
 }
 
-// Resync (delta-gap recovery) must always apply the authoritative snapshot, so
-// it bypasses the staleness guard that only the re-open path needs.
-const snapshotSyncRunner = createCoalescedAsyncRunner((sid) =>
-  syncSessionFromSnapshot(sid, { force: true }),
-);
+const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
 
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
@@ -1295,31 +1260,18 @@ function dropWsSubscription(sessionId: string): void {
   sessionsWithStaleCursor.delete(sessionId);
 }
 
-/** Re-open an already-loaded session: rebuild from a fresh snapshot.
+/** Re-open an already-loaded session: always rebuild from a fresh snapshot.
  *
  *  Volatile `assistant.delta` frames are never journaled or replayed: if a
  *  transport hiccup covered the tail of a turn while the user was away, the
  *  local transcript silently lost the model's final text, and a cursor
- *  resubscribe has nothing to recover it with. Fetching the authoritative
- *  snapshot on every re-open keeps the logic trivially correct (no freshness
- *  heuristics); the snapshot is cheap server-side (LRU on the wire file), and
- *  the staleness guard inside syncSessionFromSnapshot discards the fetched
- *  snapshot if newer local activity (a send / live events) raced the GET.
- *
- *  Exception: a RUNNING session that is still subscribed keeps its live stream.
- *  Rebuilding mid-stream can drop volatile deltas that arrived after the
- *  snapshot was assembled (queued deltas are flushed onto the old transcript and
- *  then overwritten, with no replay path). The live stream is already feeding
- *  this session; any lost tail is repaired on the next idle re-open. Evicted
- *  sessions are NOT exempt — they have no live stream, so the snapshot (with its
- *  seeded in-flight turn) is strictly better than staying unsubscribed. */
+ *  resubscribe has nothing to recover it with. Always fetching the authoritative
+ *  snapshot keeps the logic trivially correct (no freshness heuristics, no
+ *  races to reason about); the snapshot is cheap server-side (LRU on the wire
+ *  file). Trade-off: a snapshot GET in flight during a steep local send can
+ *  momentarily overwrite that optimistic message — the user notices immediately
+ *  and the next re-open (or a refresh) reconciles. */
 async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
-  const running =
-    rawState.sessions.find((s) => s.id === sessionId)?.status === 'running' ||
-    inFlightPromptSessions.has(sessionId);
-  if (running && !sessionsWithStaleCursor.has(sessionId)) {
-    return 'ok';
-  }
   return syncSessionFromSnapshot(sessionId);
 }
 
