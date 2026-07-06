@@ -9,7 +9,7 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
-import { humanizeCron } from '../src/lib/cronHumanize';
+import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
   coerceThinkingForModel,
   commitLevel,
@@ -402,5 +402,29 @@ describe('humanizeCron', () => {
   it('falls back to the raw expression for unrecognized shapes', () => {
     expect(humanizeCron('0 9 1 * *', t)).toBe('0 9 1 * *');
     expect(humanizeCron('bad', t)).toBe('bad');
+  });
+});
+
+describe('collapsePrompt', () => {
+  it('keeps a short single-line prompt intact with no expand toggle', () => {
+    expect(collapsePrompt('Check the deploy status')).toEqual({
+      text: 'Check the deploy status',
+      hasMore: false,
+    });
+  });
+
+  it('truncates a long one-line prompt with an ellipsis and reports hasMore', () => {
+    const long = 'a'.repeat(150);
+    const result = collapsePrompt(long, 120);
+    expect(result.hasMore).toBe(true);
+    expect(result.text.length).toBeLessThan(long.length);
+    expect(result.text.endsWith('…')).toBe(true);
+  });
+
+  it('shows only the first line for a multi-line prompt', () => {
+    expect(collapsePrompt('first line\nsecond line\nthird line')).toEqual({
+      text: 'first line',
+      hasMore: true,
+    });
   });
 });

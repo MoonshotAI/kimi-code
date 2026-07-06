@@ -9,7 +9,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
-import { humanizeCron } from '../../lib/cronHumanize';
+import { humanizeCron, collapsePrompt } from '../../lib/cronHumanize';
 import type { ChatTurn } from '../../types';
 
 const props = defineProps<{
@@ -51,9 +51,9 @@ const statusDetail = computed(() => {
 
 const expanded = ref(false);
 const text = computed(() => props.turn.text ?? '');
-const firstLine = computed(() => text.value.split('\n')[0] ?? '');
-const hasMore = computed(() => text.value.includes('\n') || text.value.length > 120);
-const shownText = computed(() => (expanded.value ? text.value : firstLine.value));
+const collapsed = computed(() => collapsePrompt(text.value));
+const hasMore = computed(() => collapsed.value.hasMore);
+const shownText = computed(() => (expanded.value ? text.value : collapsed.value.text));
 </script>
 
 <template>
