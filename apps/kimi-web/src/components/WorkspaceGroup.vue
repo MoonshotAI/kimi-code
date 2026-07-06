@@ -296,13 +296,16 @@ function onHeaderDragStart(event: DragEvent): void {
   opacity: 1;
 }
 
-/* More + add buttons — hidden until hover (or while the more menu is open /
-   focused). `.gh .gh-more` / `.gh .gh-add` out-specificity IconButton's display
-   so the hidden default wins. */
+/* More + add buttons — taken out of the layout until hover (or while the more
+   menu is open / focused). `display: none` (not `opacity: 0`) reserves no width
+   when hidden, so the workspace name fills the row and only truncates once the
+   buttons actually appear. `.gh .gh-more` / `.gh .gh-add` out-specificity
+   IconButton's `display: inline-flex` so the hidden default wins. The same
+   actions stay reachable for keyboard/touch via the right-click menu and the
+   section kebab, so hiding these from the tab order is acceptable. */
 .gh .gh-more,
 .gh .gh-add {
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
 .gh:hover .gh-more,
 .gh:hover .gh-add,
@@ -311,8 +314,7 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh-more.open,
 .gh-more:focus-visible,
 .gh-add:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
+  display: inline-flex;
 }
 .gh-more.open { color: var(--color-text); background: var(--color-line); }
 
