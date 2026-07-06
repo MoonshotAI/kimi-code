@@ -50,7 +50,7 @@ type AnthropicGenerationState = {
     | undefined;
   output_config?: { effort: string } | undefined;
   betaFeatures?: string[] | undefined;
-  contextManagement?: { edits: Array<{ type: string; keep?: string }> } | undefined;
+  contextManagement?: { edits: Array<{ type: string; keep?: unknown }> } | undefined;
 };
 
 function getGenerationState(provider: AnthropicChatProvider): AnthropicGenerationState {
@@ -224,44 +224,45 @@ describe('withThinkingKeep (context_management)', () => {
     { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
   ];
 
-  it('emits context_management clear_thinking keep and the context-management beta', async () => {
+  it('forces the beta endpoint and emits context_management clear_thinking keep with the context-management beta', async () => {
+    // betaApi is left at its default (false); withThinkingKeep must force it on.
     const provider = createProvider().withThinkingKeep('all');
-    const body = await captureRequestBody(provider, '', [], history);
-
-    expect(body['context_management']).toEqual({
-      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
-    });
-    const headers = body['_extra_headers'] as Record<string, string> | undefined;
-    expect(headers?.['anthropic-beta']).toContain('context-management-2025-06-27');
-    expect(headers?.['anthropic-beta']).toContain('interleaved-thinking-2025-05-14');
-  });
-
-  it('keeps context_management on the betaApi body (no beta header)', async () => {
-    const provider = new AnthropicChatProvider({
-      model: 'kimi-for-coding',
-      apiKey: 'test-key',
-      defaultMaxTokens: 1024,
-      stream: false,
-      betaApi: true,
-    }).withThinkingKeep('all');
     const body = await captureBetaRequestBody(provider, '', [], history);
 
     expect(body['context_management']).toEqual({
       edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
     });
     expect(body['betas']).toContain('context-management-2025-06-27');
+    expect(body['betas']).toContain('interleaved-thinking-2025-05-14');
     const headers = body['_extra_headers'] as Record<string, string> | undefined;
     expect(headers?.['anthropic-beta']).toBeUndefined();
   });
 
-  it('emits no context_management when withThinkingKeep is not applied', async () => {
+  it('prepends clear_thinking before existing context-management edits and keeps them', () => {
+    const provider = createProvider()
+      .withGenerationKwargs({
+        contextManagement: {
+          edits: [{ type: 'clear_tool_uses_20250919', keep: { type: 'tool_uses', value: 2 } }],
+        },
+      })
+      .withThinkingKeep('all');
+    const state = getGenerationState(provider);
+    expect(state.contextManagement).toEqual({
+      edits: [
+        { type: 'clear_thinking_20251015', keep: 'all' },
+        { type: 'clear_tool_uses_20250919', keep: { type: 'tool_uses', value: 2 } },
+      ],
+    });
+  });
+
+  it('emits no context_management and stays off the beta endpoint when withThinkingKeep is not applied', async () => {
     const body = await captureRequestBody(createProvider(), '', [], history);
     expect(body['context_management']).toBeUndefined();
     const headers = body['_extra_headers'] as Record<string, string> | undefined;
     expect(headers?.['anthropic-beta']).not.toContain('context-management-2025-06-27');
   });
 
-  it('does not duplicate the context-management beta across repeated calls', () => {
+  it('does not duplicate the context-management beta or the clear_thinking edit across repeated calls', () => {
     const provider = createProvider().withThinkingKeep('all').withThinkingKeep('all');
     const state = getGenerationState(provider);
     const betas = state.betaFeatures ?? [];

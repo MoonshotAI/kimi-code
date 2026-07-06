@@ -124,7 +124,7 @@ interface AnthropicGenerationKwargs {
  * not used because the shared `[thinking] keep` config is a string.
  */
 interface AnthropicContextManagement {
-  edits: Array<{ type: string; keep?: string }>;
+  edits: Array<{ type: string; keep?: unknown }>;
 }
 
 // Anthropic's native effort values. `ThinkingEffort` is an open string, so after
@@ -1310,10 +1310,22 @@ export class AnthropicChatProvider implements ChatProvider {
     const betaFeatures = current.includes(CONTEXT_MANAGEMENT_BETA)
       ? current
       : [...current, CONTEXT_MANAGEMENT_BETA];
-    return this._withGenerationKwargs({
-      contextManagement: { edits: [{ type: CLEAR_THINKING_EDIT, keep }] },
+    // Preserve any existing context-management edits (e.g. clear_tool_uses) and
+    // keep clear_thinking first, as Anthropic requires when combining edits. Drop
+    // a previous clear_thinking edit so re-applying stays idempotent.
+    const existingEdits = this._generationKwargs.contextManagement?.edits ?? [];
+    const edits = [
+      { type: CLEAR_THINKING_EDIT, keep },
+      ...existingEdits.filter((edit) => edit.type !== CLEAR_THINKING_EDIT),
+    ];
+    const clone = this._withGenerationKwargs({
+      contextManagement: { edits },
       betaFeatures,
     });
+    // clear_thinking_20251015 is only honored on the beta Messages API
+    // (client.beta.messages.create), so force the beta endpoint when keep is on.
+    clone._betaApi = true;
+    return clone;
   }
 
   withGenerationKwargs(kwargs: Partial<AnthropicGenerationKwargs>): AnthropicChatProvider {
