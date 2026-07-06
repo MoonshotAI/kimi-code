@@ -2105,10 +2105,14 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    // Outputs that start with a `<system…>` tag are harness-injected
-    // reminders piggy-backing on a tool result. They are noise for the
-    // user, so suppress the body while keeping the header chip intact.
-    if (result.output.trimStart().startsWith('<system')) {
+    // Outputs that start with a `<system-reminder>` tag are harness-injected
+    // reminders piggy-backing on a tool result (e.g. a finalize hook rewrote
+    // the output). They are noise for the user, so suppress the body while
+    // keeping the header chip intact. Match the full reminder tag only: tool
+    // metadata no longer travels inside `output` (it rides the result's
+    // `note` side channel), so real output starting with a literal `<system>`
+    // is user data and must stay visible.
+    if (result.output.trimStart().startsWith('<system-reminder>')) {
       return;
     }
 

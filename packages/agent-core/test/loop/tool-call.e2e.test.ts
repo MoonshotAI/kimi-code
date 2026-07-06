@@ -117,6 +117,38 @@ describe('runTurn — tool-call behaviour', () => {
     expect(result?.note).toBe('<system>meta for the model</system>');
   });
 
+  it('enforces the note contract (string | undefined) at the normalization boundary', async () => {
+    // Tools are arbitrary JS: a malformed note (null, number, object, empty
+    // string) must never reach the record — everything downstream (history,
+    // projection, vis) trusts the contract instead of re-validating.
+    const malformed = [null, 42, { text: 'x' }, ''];
+    const tools = malformed.map(
+      (note, i) =>
+        new ContentBlocksTool({ output: `payload-${String(i)}`, note } as never),
+    );
+    for (const [i, tool] of tools.entries()) {
+      Object.defineProperty(tool, 'name', { value: `blocks${String(i)}` });
+    }
+
+    const { context } = await runTurn({
+      tools,
+      responses: [
+        makeToolUseResponse(
+          tools.map((tool, i) => makeToolCall(tool.name, {}, `tc-bad-${String(i)}`)),
+        ),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const results = context.toolResults();
+    expect(results).toHaveLength(malformed.length);
+    for (const [i, entry] of results.entries()) {
+      expect(entry.result.output).toBe(`payload-${String(i)}`);
+      expect(entry.result.isError).toBeUndefined();
+      expect('note' in entry.result).toBe(false);
+    }
+  });
+
   it('skips side-effecting tools when usage recording stops the turn', async () => {
     const echo = new EchoTool();
     const { result, sink, llm } = await runTurn({
