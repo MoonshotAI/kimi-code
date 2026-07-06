@@ -254,6 +254,9 @@ function onHeaderDragStart(event: DragEvent): void {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
+  /* Lock the row to the sm IconButton height (26px) so revealing the hover
+     actions does not grow the row and nudge the path line / groups below. */
+  min-height: 26px;
 }
 
 .gh-folder {
