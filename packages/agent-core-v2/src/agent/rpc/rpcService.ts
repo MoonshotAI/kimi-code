@@ -13,6 +13,7 @@ import type {
   ShellStartedEvent,
 } from '@moonshot-ai/protocol';
 import { IAgentWireService, type IWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 import { ErrorCodes, KimiError } from '#/errors';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentPermissionGate } from '#/agent/permissionGate';
@@ -72,6 +73,14 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'shell.output': Omit<ShellOutputEvent, 'type'>;
+    'shell.started': Omit<ShellStartedEvent, 'type'>;
+    'plugin_command.activated': Omit<PluginCommandActivatedEvent, 'type'>;
+  }
+}
+
 const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 
 export class AgentRPCService implements IAgentRPCService {
@@ -98,6 +107,7 @@ export class AgentRPCService implements IAgentRPCService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentGoalService private readonly goal: IAgentGoalService,
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
   ) { }
@@ -148,11 +158,13 @@ export class AgentRPCService implements IAgentRPCService {
           else if (update.kind === 'stderr') stderr += update.text ?? '';
           else return;
           if (payload.commandId !== undefined) {
+            this.eventBus.publish({ type: 'shell.output', commandId: payload.commandId, update });
             this.wire.signal({ type: 'shell.output', commandId: payload.commandId, update });
           }
         },
         onForegroundTaskStart: (taskId: string) => {
           if (payload.commandId !== undefined) {
+            this.eventBus.publish({ type: 'shell.started', commandId: payload.commandId, taskId });
             this.wire.signal({ type: 'shell.started', commandId: payload.commandId, taskId });
           }
         },
@@ -315,6 +327,14 @@ export class AgentRPCService implements IAgentRPCService {
       commandArgs: payload.args,
       trigger: 'user-slash' as const,
     };
+    this.eventBus.publish({
+      type: 'plugin_command.activated',
+      activationId: origin.activationId,
+      pluginId: origin.pluginId,
+      commandName: origin.commandName,
+      commandArgs: origin.commandArgs,
+      trigger: origin.trigger,
+    });
     this.wire.signal({
       type: 'plugin_command.activated',
       activationId: origin.activationId,

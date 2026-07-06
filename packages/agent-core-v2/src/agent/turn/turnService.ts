@@ -5,9 +5,12 @@
  * `TurnModel` (advanced only through the `turn.launch` Op via `wire.dispatch`,
  * read through `wire.getModel`), while the per-turn runtime (the active `Turn`,
  * its `AbortController` and `ready`/`result` promises, and the `turn.started` /
- * `turn.ended` / `error` signals) stays live-only and is emitted through
- * `wire.signal`. `wire.replay` rebuilds the counter silently so resumed sessions
- * keep allocating fresh ids without re-firing any signal. Bound at Agent scope.
+ * `turn.ended` / `error` events) stays live-only. `turn.started` is derived from
+ * the `turn.launch` Op's `toEvent` onto `IEventBus`; `turn.ended` / `error`
+ * publish to `IEventBus` directly. Each is also emitted through `wire.signal`
+ * (legacy channel, until Phase 3). `wire.replay` rebuilds the counter silently so
+ * resumed sessions keep allocating fresh ids without re-firing anything. Bound at
+ * Agent scope.
  */
 
 import { createControlledPromise } from '@antfu/utils';
@@ -19,6 +22,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, KimiError, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentLoopService } from '#/agent/loop';
+import { IEventBus } from '#/app/event';
 import { IAgentTelemetryContextService, ITelemetryService } from '#/app/telemetry';
 import { IAgentWireService, type IWireService } from '#/wire';
 import type { Turn, TurnEndedContext, TurnResult } from './turn';
@@ -27,6 +31,15 @@ import { launchTurn, TurnModel } from './turnOps';
 
 declare module '#/wire' {
   interface SignalMap {
+    'turn.started': Omit<TurnStartedEvent, 'type'>;
+    'turn.ended': Omit<TurnEndedEvent, 'type'>;
+    // `error` is declared by the `mcp` domain (interface-merge); reused here, not
+    // re-declared.
+  }
+}
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
     'turn.started': Omit<TurnStartedEvent, 'type'>;
     'turn.ended': Omit<TurnEndedEvent, 'type'>;
     // `error` is declared by the `mcp` domain (interface-merge); reused here, not
@@ -46,6 +59,7 @@ export class AgentTurnService implements IAgentTurnService {
   constructor(
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
   ) {}
@@ -113,6 +127,14 @@ export class AgentTurnService implements IAgentTurnService {
       }
       if (result !== undefined) {
         const error = result.error !== undefined ? toKimiErrorPayload(result.error) : undefined;
+        this.eventBus.publish({
+          type: 'turn.ended',
+          turnId: turn.id,
+          reason: result.reason,
+          error,
+          durationMs: Date.now() - startedAt,
+        });
+        // Legacy channel (kept until Phase 3 cuts consumers to `IEventBus`).
         this.wire.signal({
           type: 'turn.ended',
           turnId: turn.id,
@@ -121,6 +143,8 @@ export class AgentTurnService implements IAgentTurnService {
           durationMs: Date.now() - startedAt,
         });
         if (error !== undefined) {
+          this.eventBus.publish({ type: 'error', ...error });
+          // Legacy channel (kept until Phase 3).
           this.wire.signal({ type: 'error', ...error });
         }
         if (result.reason !== 'completed') {

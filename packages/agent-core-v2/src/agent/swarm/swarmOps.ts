@@ -19,8 +19,10 @@ export const SwarmModel = defineModel<SwarmModeTrigger | null>('swarm', () => nu
 
 export const swarmEnter = defineOp(SwarmModel, 'swarm_mode.enter', {
   apply: (_s, p: { trigger: SwarmModeTrigger }) => p.trigger,
+  toEvent: () => ({ type: 'agent.status.updated' as const, swarmMode: true }),
 });
 
 export const swarmExit = defineOp(SwarmModel, 'swarm_mode.exit', {
   apply: () => null,
+  toEvent: () => ({ type: 'agent.status.updated' as const, swarmMode: false }),
 });

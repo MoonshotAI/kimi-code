@@ -3,10 +3,10 @@
  *
  * Resolves skills from the session catalog, renders the activation prompt,
  * records the activation as a `skill.activate` fact through `wire.dispatch`
- * (a stateless, identity-apply Op), publishes the `skill.activated` signal
- * through `wire.signal`, drives user-slash activations into a new turn via
+ * (a stateless, identity-apply Op), derives the `skill.activated` event
+ * through the Op's `toEvent`, drives user-slash activations into a new turn via
  * `prompt`, and reports `skill_invoked` / `flow_invoked` through `telemetry`.
- * `wire.replay` reapplies the fact as a no-op, so neither the signal nor
+ * `wire.replay` reapplies the fact as a no-op, so neither the event nor
  * telemetry fires on resume (matching the former `restoring` guard). Bound at
  * Agent scope.
  */
@@ -122,6 +122,9 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   }
 
   private publishActivation(origin: SkillActivationOrigin): void {
+    // Legacy channel (kept until Phase 3 cuts consumers to `IEventBus`): the
+    // canonical `skill.activated` event is now also derived from the Op's
+    // `toEvent` onto `IEventBus` at `wire.dispatch` time.
     this.wire.signal({
       type: 'skill.activated',
       activationId: origin.activationId,

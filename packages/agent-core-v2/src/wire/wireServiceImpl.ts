@@ -11,7 +11,8 @@
  * `WireRecordServiceOptions`. `dispatch` and `replay` both lower to one
  * primitive, `execute(OpGroup)` — apply-all THEN onChange-all, so a subscriber
  * never observes a partially-applied group — with `dispatch` adding persistence
- * + emission (`silent: false`) and `replay` staying silent (apply only, skipping
+ * + emission + Op-derived `IEventBus` events (`silent: false`) and `replay`
+ * staying silent (apply only, skipping
  * unknown record types, then `onRestored`). A reentrancy guard (`dispatching` +
  * `queue` + `drain`, capped by `MAX_DRAIN = 100`) lets onChange handlers enqueue
  * further ops without reentering `execute`; a cascade past the cap throws
@@ -48,6 +49,7 @@ import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Emitter } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob';
+import { type DomainEvent, IEventBus } from '#/app/event';
 import type { ContentPart } from '#/app/llmProtocol';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 
@@ -120,6 +122,7 @@ export class WireService extends Disposable implements IWireService {
     private readonly options: WireServiceOptions,
     @IAppendLogStore private readonly log?: IAppendLogStore,
     @IAgentBlobService private readonly blobService?: IAgentBlobService,
+    @IEventBus private readonly eventBus?: IEventBus,
   ) {
     super();
     if (this.log !== undefined) {
@@ -242,6 +245,10 @@ export class WireService extends Disposable implements IWireService {
         const record = this.toRecord(op);
         this.appendToWireLog(record);
         this.emissionEmitter.fire({ type: 'record', record });
+        const event = op.descriptor.toEvent?.(op.payload, inst.state);
+        if (event !== undefined && this.eventBus !== undefined) {
+          this.eventBus.publish(event as DomainEvent);
+        }
       }
       if (inst.state !== prev) {
         changes.push({ inst, change: { state: inst.state, prev } });

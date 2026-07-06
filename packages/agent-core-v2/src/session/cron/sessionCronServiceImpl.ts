@@ -49,6 +49,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle';
 import type { ContextMessage } from '#/agent/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt';
 import { IAgentWireService, type Op, type Signal } from '#/wire';
+import { type DomainEvent, IEventBus } from '#/app/event';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { Turn } from '#/agent/turn';
 import { IAgentTurnService } from '#/agent/turn';
@@ -470,6 +471,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   private signalCron(signal: Signal): void {
     const mainHandle = this.agentLifecycle.getHandle('main');
     if (!mainHandle) return;
+    mainHandle.accessor.get(IEventBus).publish(signal as DomainEvent);
     mainHandle.accessor.get(IAgentWireService).signal(signal);
   }
 

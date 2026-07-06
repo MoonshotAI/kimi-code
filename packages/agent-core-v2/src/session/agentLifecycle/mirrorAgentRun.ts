@@ -30,12 +30,22 @@ import type {
   SubagentStartedEvent,
 } from '@moonshot-ai/protocol';
 import { IAgentWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 import { isAbortError } from '#/agent/loop/errors';
 
 import type { AgentRunHandle } from './agentLifecycle';
 
 declare module '#/wire' {
   interface SignalMap {
+    'subagent.spawned': Omit<SubagentSpawnedEvent, 'type'>;
+    'subagent.started': Omit<SubagentStartedEvent, 'type'>;
+    'subagent.completed': Omit<SubagentCompletedEvent, 'type'>;
+    'subagent.failed': Omit<SubagentFailedEvent, 'type'>;
+  }
+}
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
     'subagent.spawned': Omit<SubagentSpawnedEvent, 'type'>;
     'subagent.started': Omit<SubagentStartedEvent, 'type'>;
     'subagent.completed': Omit<SubagentCompletedEvent, 'type'>;
@@ -82,6 +92,17 @@ export function emitAgentRunSpawned(
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
+  requester.accessor.get(IEventBus)?.publish({
+    type: 'subagent.spawned',
+    subagentId: targetAgentId,
+    subagentName: meta.profileName,
+    parentToolCallId: meta.parentToolCallId ?? '',
+    parentToolCallUuid: meta.parentToolCallUuid,
+    callerAgentId: requester.id,
+    description: meta.description,
+    swarmIndex: meta.swarmIndex,
+    runInBackground: meta.runInBackground ?? false,
+  });
   requester.accessor.get(IAgentWireService)?.signal({
     type: 'subagent.spawned',
     subagentId: targetAgentId,
@@ -110,7 +131,9 @@ export async function mirrorAgentRun(
   options: MirrorAgentRunOptions,
 ): Promise<{ summary: string; usage?: TokenUsage }> {
   const wire = requester.accessor.get(IAgentWireService);
+  const eventBus = requester.accessor.get(IEventBus);
   const externalHooks = requester.accessor.get(IAgentExternalHooksService);
+  eventBus?.publish({ type: 'subagent.started', subagentId: run.agentId });
   wire?.signal({ type: 'subagent.started', subagentId: run.agentId });
   if (options.prompt !== undefined) {
     try {
@@ -133,6 +156,12 @@ export async function mirrorAgentRun(
   }
   try {
     const result = await run.completion;
+    eventBus?.publish({
+      type: 'subagent.completed',
+      subagentId: run.agentId,
+      resultSummary: result.summary,
+      usage: result.usage,
+    });
     wire?.signal({
       type: 'subagent.completed',
       subagentId: run.agentId,
@@ -146,6 +175,11 @@ export async function mirrorAgentRun(
     return result;
   } catch (error) {
     if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
+      eventBus?.publish({
+        type: 'subagent.failed',
+        subagentId: run.agentId,
+        error: errorMessage(error),
+      });
       wire?.signal({
         type: 'subagent.failed',
         subagentId: run.agentId,

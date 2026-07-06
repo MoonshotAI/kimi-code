@@ -2,7 +2,7 @@
  * `task` domain (L5) — wire Model (`TaskModel`) and the `task.started`
  * (`taskStarted`) / `task.terminated` (`taskTerminated`) Ops that record the
  * durable task-info registry, plus the `task.started` / `task.terminated` edge
- * signals declared on the wire `SignalMap`.
+ * events declared on `DomainEventMap` and derived from the Ops via `toEvent`.
  *
  * The Model is the replayable map of `taskId -> AgentTaskInfo` (initial empty)
  * that rebuilds the restored "ghost" tasks from the persisted `task.*` records
@@ -32,6 +32,13 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'task.started': { readonly info: AgentTaskInfo };
+    'task.terminated': { readonly info: AgentTaskInfo };
+  }
+}
+
 export interface TaskInfoPayload {
   readonly info: AgentTaskInfo;
 }
@@ -42,6 +49,7 @@ export const taskStarted = defineOp(TaskModel, 'task.started', {
     next.set(p.info.taskId, p.info);
     return next;
   },
+  toEvent: (p) => ({ type: 'task.started' as const, info: p.info }),
 });
 
 export const taskTerminated = defineOp(TaskModel, 'task.terminated', {
@@ -50,4 +58,5 @@ export const taskTerminated = defineOp(TaskModel, 'task.terminated', {
     next.set(p.info.taskId, p.info);
     return next;
   },
+  toEvent: (p) => ({ type: 'task.terminated' as const, info: p.info }),
 });

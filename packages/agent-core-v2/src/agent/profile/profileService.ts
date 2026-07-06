@@ -53,6 +53,7 @@ import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry';
 import type { ToolSource } from '#/agent/tool';
 import { IAgentWireService, type IWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 import { prepareSystemPromptContext } from './context';
 import type {
   ApplyProfileOptions,
@@ -94,6 +95,13 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    // `warning` is owned by `profile`; mirrors the `SignalMap` declaration above.
+    warning: Omit<WarningEvent, 'type'>;
+  }
+}
+
 export class AgentProfileService implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
@@ -115,6 +123,7 @@ export class AgentProfileService implements IAgentProfileService {
 
   constructor(
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IConfigService private readonly config: IConfigService,
     @IModelResolver private readonly modelFactory: IModelResolver,
@@ -172,6 +181,11 @@ export class AgentProfileService implements IAgentProfileService {
     });
 
     if (agentsMdWarning !== undefined) {
+      this.eventBus.publish({
+        type: 'warning',
+        message: agentsMdWarning,
+        code: 'agents-md-oversized',
+      });
       this.wire.signal({
         type: 'warning',
         message: agentsMdWarning,
@@ -229,6 +243,11 @@ export class AgentProfileService implements IAgentProfileService {
     const { agentsMdWarning } = context;
     this.agentsMdWarning = agentsMdWarning;
     if (agentsMdWarning !== undefined) {
+      this.eventBus.publish({
+        type: 'warning',
+        message: agentsMdWarning,
+        code: 'agents-md-oversized',
+      });
       this.wire.signal({
         type: 'warning',
         message: agentsMdWarning,
@@ -384,6 +403,11 @@ export class AgentProfileService implements IAgentProfileService {
       return;
     }
     if (!this.hasModel()) return;
+    this.eventBus.publish({
+      type: 'agent.status.updated',
+      model: this.modelAlias,
+      maxContextTokens: this.getModelCapabilities().max_context_tokens,
+    });
     this.wire.signal({
       type: 'agent.status.updated',
       model: this.modelAlias,

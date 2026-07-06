@@ -20,9 +20,24 @@ import type { UsageStatus } from './usage';
 
 declare module '#/wire' {
   interface SignalMap {
-    // Canonical declaration for the agent status-bar signal. Each domain emits a
-    // subset; the full shape lives here so every `wire.signal({ type:
-    // 'agent.status.updated', ... })` call site resolves the same merged type.
+    // Canonical declaration for the agent status-bar signal (legacy channel). Each
+    // domain emits a subset; the full shape lives here so every `wire.signal({
+    // type: 'agent.status.updated', ... })` call site resolves the same merged type.
+    'agent.status.updated': {
+      usage?: UsageStatus;
+      swarmMode?: boolean;
+      planMode?: boolean;
+      model?: string;
+      maxContextTokens?: number;
+      contextTokens?: number;
+    };
+  }
+}
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    // Canonical declaration for the agent status-bar event (`IEventBus`). Mirrors
+    // the `SignalMap` slice above; each domain derives/publishes a subset.
     'agent.status.updated': {
       usage?: UsageStatus;
       swarmMode?: boolean;
@@ -68,8 +83,37 @@ export const recordUsage = defineOp(UsageModel, 'usage.record', {
         s.currentTurn === undefined ? copyUsage(p.usage) : addUsage(s.currentTurn, p.usage),
     };
   },
+  toEvent: (_p, state) => ({
+    type: 'agent.status.updated' as const,
+    usage: usageStatusFromState(state),
+  }),
 });
 
 function copyUsage(usage: TokenUsage): TokenUsage {
   return { ...usage };
+}
+
+export function usageStatusFromState(model: UsageModelState): UsageStatus {
+  const byModel = byModelSnapshot(model.byModel);
+  const hasByModel = Object.keys(byModel).length > 0;
+  const currentTurn = model.currentTurn;
+  return {
+    byModel: hasByModel ? byModel : undefined,
+    total: hasByModel ? totalUsage(byModel) : undefined,
+    currentTurn: currentTurn === undefined ? undefined : copyUsage(currentTurn),
+  };
+}
+
+function byModelSnapshot(byModel: Record<string, TokenUsage>): Record<string, TokenUsage> {
+  return Object.fromEntries(
+    Object.entries(byModel).map(([model, usage]) => [model, copyUsage(usage)]),
+  );
+}
+
+function totalUsage(byModel: Record<string, TokenUsage>): TokenUsage | undefined {
+  let total: TokenUsage | undefined;
+  for (const usage of Object.values(byModel)) {
+    total = total === undefined ? copyUsage(usage) : addUsage(total, usage);
+  }
+  return total;
 }

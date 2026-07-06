@@ -27,4 +27,5 @@ export const launchTurn = defineOp(TurnModel, 'turn.launch', {
     }
     return s;
   },
+  toEvent: (p) => ({ type: 'turn.started' as const, turnId: p.turnId }),
 });

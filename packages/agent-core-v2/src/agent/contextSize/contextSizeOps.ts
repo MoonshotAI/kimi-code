@@ -42,6 +42,10 @@ export const contextSizeMeasured = defineOp(ContextSizeModel, 'context_size.meas
     if (s.length === length && s.tokens === tokens) return s;
     return { length, tokens };
   },
+  toEvent: (_p, state) => ({
+    type: 'agent.status.updated' as const,
+    contextTokens: state.tokens,
+  }),
 });
 
 function normalizeMeasuredLength(length: number): number {

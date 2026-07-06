@@ -18,6 +18,7 @@ import { PathSecurityError } from '#/_base/tools/policies/path-access';
 import { isUserCancellation } from "#/_base/utils/abort";
 import { isAbortError } from '#/agent/loop/errors';
 import { IAgentWireService, type IWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 import {
   ToolAccesses,
   type ExecutableTool,
@@ -43,6 +44,14 @@ import { ToolScheduler } from './toolScheduler';
 
 declare module '#/wire' {
   interface SignalMap {
+    'tool.call.started': Omit<ToolCallStartedEvent, 'type'>;
+    'tool.result': Omit<ToolResultEvent, 'type'>;
+    'tool.progress': Omit<ToolProgressEvent, 'type'>;
+  }
+}
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
     'tool.call.started': Omit<ToolCallStartedEvent, 'type'>;
     'tool.result': Omit<ToolResultEvent, 'type'>;
     'tool.progress': Omit<ToolProgressEvent, 'type'>;
@@ -95,6 +104,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log?: ILogService,
   ) {}
@@ -440,6 +450,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       display: execution?.display ?? normalized.display,
       approvalRule: execution?.approvalRule,
       stopBatchAfterThis: normalized.stopBatchAfterThis ?? execution?.stopBatchAfterThis,
+      delivery: coerced.delivery,
     };
   }
 
@@ -449,6 +460,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
     displayFields?: ToolCallDisplayFields,
   ): void {
+    this.eventBus.publish({
+      type: 'tool.call.started',
+      turnId: options.turnId,
+      toolCallId: call.toolCall.id,
+      name: call.toolName,
+      args,
+      description: displayFields?.description,
+      display: displayFields?.display,
+    });
     this.wire.signal({
       type: 'tool.call.started',
       turnId: options.turnId,
@@ -465,6 +485,13 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
   ): void {
+    this.eventBus.publish({
+      type: 'tool.result',
+      turnId: options.turnId,
+      toolCallId: call.toolCall.id,
+      output: result.output,
+      isError: result.isError,
+    });
     this.wire.signal({
       type: 'tool.result',
       turnId: options.turnId,
@@ -479,6 +506,12 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     update: ToolUpdate,
     options: ToolExecutorExecuteOptions,
   ): void {
+    this.eventBus.publish({
+      type: 'tool.progress',
+      turnId: options.turnId,
+      toolCallId: call.toolCall.id,
+      update,
+    });
     this.wire.signal({
       type: 'tool.progress',
       turnId: options.turnId,
@@ -535,6 +568,10 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         didCtx.stopTurn === true ||
         effectiveResult.stopTurn === true,
       stopBatchAfterThis: result.stopBatchAfterThis,
+      // Thread the declared delivery through to the yielded result. An
+      // `onDidExecuteTool` hook (the agent/L4 layer) may have already consumed
+      // it by stripping it from `didCtx.result`; in that case this is undefined.
+      delivery: coercedResult.delivery,
     };
   }
 }

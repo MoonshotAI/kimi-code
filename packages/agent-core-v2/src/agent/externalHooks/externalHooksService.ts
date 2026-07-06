@@ -35,6 +35,7 @@ import {
 } from '#/agent/prompt';
 import type { HookResultEvent } from '@moonshot-ai/protocol';
 import { IAgentWireService, type IWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 import type {
   ExecutableToolResult,
   ToolDidExecuteContext,
@@ -69,6 +70,12 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'hook.result': Omit<HookResultEvent, 'type'>;
+  }
+}
+
 const SUBAGENT_HOOK_TEXT_PREVIEW_LENGTH = 500;
 
 function fireAndForget(
@@ -95,6 +102,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     private readonly options: ExternalHooksServiceOptions = {},
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IConfigService private readonly config: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -326,6 +334,12 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         toolCalls: [],
         origin: { kind: 'hook_result', event: block.event, blocked: true },
       }]);
+      this.eventBus.publish({
+        type: 'hook.result',
+        hookEvent: block.event,
+        content: block.message,
+        blocked: true,
+      });
       this.wire.signal({
         type: 'hook.result',
         hookEvent: block.event,
@@ -343,6 +357,11 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         toolCalls: [],
         origin: { kind: 'hook_result', event: append.event },
       }]);
+      this.eventBus.publish({
+        type: 'hook.result',
+        hookEvent: append.event,
+        content: append.message,
+      });
       this.wire.signal({
         type: 'hook.result',
         hookEvent: append.event,

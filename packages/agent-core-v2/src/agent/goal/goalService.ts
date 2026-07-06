@@ -48,6 +48,7 @@ import type { TelemetryProperties } from '#/app/telemetry';
 import { ITelemetryService } from '#/app/telemetry';
 import { ErrorCodes, KimiError, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { IAgentWireService, type IWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 
 import { IAgentGoalService, type GoalReasonInput } from './goal';
 import { clearGoal, createGoal, GoalModel, updateGoal, type GoalState } from './goalOps';
@@ -139,6 +140,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   constructor(
     private readonly options: GoalServiceOptions = {},
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
@@ -517,6 +519,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
+    this.eventBus.publish({ type: 'goal.updated', snapshot, change });
     this.wire.signal({ type: 'goal.updated', snapshot, change });
   }
 

@@ -26,6 +26,7 @@ import {
   type Message,
   type TokenUsage
 } from '#/app/llmProtocol';
+import { IEventBus } from '#/app/event';
 import { ITelemetryService } from '#/app/telemetry';
 import { ErrorCodes, KimiError, isKimiError, toKimiErrorPayload } from "#/errors";
 import { IAgentWireService, type IWireService } from '#/wire';
@@ -127,6 +128,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     @ISessionTodoService private readonly todo: ISessionTodoService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @IAgentTurnService turnService: IAgentTurnService,
     @IAgentLoopService loopService: IAgentLoopService,
   ) {
@@ -203,6 +205,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     this.wire.dispatch(fullCompactionCancel({}));
     active.abortController.abort();
     this.compacting = null;
+    this.eventBus.publish({ type: 'compaction.cancelled' });
+    // Legacy channel (kept until Phase 3). `normalizeAfterReplay` dispatches the
+    // same Op without publishing, so resume stays quiet on both channels.
     this.wire.signal({ type: 'compaction.cancelled' });
   }
 
@@ -307,6 +312,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         }
       }, { once: true });
     }
+    this.eventBus.publish({ type: 'compaction.blocked', turnId });
+    // Legacy channel (kept until Phase 3).
     this.wire.signal({ type: 'compaction.blocked', turnId });
     await active.promise;
   }
@@ -345,6 +352,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       if (this.compacting !== active) return;
       this.lastCompactedTokenCount = finalResult.tokensAfter;
       this.markCompleted(completeData(finalResult));
+      this.eventBus.publish({ type: 'compaction.completed', result: finalResult });
+      // Legacy channel (kept until Phase 3).
       this.wire.signal({ type: 'compaction.completed', result: finalResult });
       void this.hooks.onDidCompact.run({
         trigger: data.source,
@@ -359,6 +368,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       if (blockedByTurn) {
         throw error;
       }
+      this.eventBus.publish({
+        type: 'error',
+        ...toKimiErrorPayload(error),
+      });
+      // Legacy channel (kept until Phase 3).
       this.wire.signal({
         type: 'error',
         ...toKimiErrorPayload(error),

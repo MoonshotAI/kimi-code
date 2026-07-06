@@ -54,6 +54,15 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'goal.updated': {
+      snapshot: GoalSnapshot | null;
+      change?: GoalChange;
+    };
+  }
+}
+
 export interface GoalCreatePayload {
   readonly goalId: string;
   readonly objective: string;

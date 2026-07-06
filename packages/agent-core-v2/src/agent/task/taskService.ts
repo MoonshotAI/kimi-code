@@ -776,6 +776,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private recordTaskStarted(info: AgentTaskInfo): void {
     this.wire.dispatch(taskStarted({ info }));
+    // Legacy channel (kept until Phase 3): the canonical `task.started` event is
+    // now also derived from the Op's `toEvent` onto `IEventBus` at dispatch.
     this.wire.signal({ type: 'task.started', info });
     this.telemetry.track('task_created', {
       kind: info.kind === 'process' ? 'bash' : info.kind,
@@ -784,6 +786,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private recordTaskTerminated(info: AgentTaskInfo): void {
     this.wire.dispatch(taskTerminated({ info }));
+    // Legacy channel (kept until Phase 3): see `taskStarted` above.
     this.wire.signal({ type: 'task.terminated', info });
     this.telemetry.track('task_completed', {
       kind: info.kind,

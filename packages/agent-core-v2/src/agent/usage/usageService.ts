@@ -8,7 +8,7 @@
  * signal is a Phase 5 concern). Bound at Agent scope.
  */
 
-import { addUsage, type TokenUsage } from '#/app/llmProtocol';
+import { type TokenUsage } from '#/app/llmProtocol';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -17,7 +17,7 @@ import type { LLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { IAgentWireService, type IWireService } from '#/wire';
 import type { UsageStatus } from './usage';
 import { IAgentUsageService } from './usage';
-import { recordUsage, UsageModel } from './usageOps';
+import { recordUsage, UsageModel, usageStatusFromState } from './usageOps';
 
 export class AgentUsageService extends Disposable implements IAgentUsageService {
   declare readonly _serviceBrand: undefined;
@@ -32,38 +32,12 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
   }
 
   status(): UsageStatus {
-    const model = this.wire.getModel(UsageModel);
-    const byModel = byModelSnapshot(model.byModel);
-    const hasByModel = Object.keys(byModel).length > 0;
-    const currentTurn = model.currentTurn;
-    return {
-      byModel: hasByModel ? byModel : undefined,
-      total: hasByModel ? totalUsage(byModel) : undefined,
-      currentTurn: currentTurn === undefined ? undefined : copyUsage(currentTurn),
-    };
+    return usageStatusFromState(this.wire.getModel(UsageModel));
   }
 
   private publishChanged(): void {
     this.wire.signal({ type: 'agent.status.updated', usage: this.status() });
   }
-}
-
-function copyUsage(usage: TokenUsage): TokenUsage {
-  return { ...usage };
-}
-
-function byModelSnapshot(byModel: Record<string, TokenUsage>): Record<string, TokenUsage> {
-  return Object.fromEntries(
-    Object.entries(byModel).map(([model, usage]) => [model, copyUsage(usage)]),
-  );
-}
-
-function totalUsage(byModel: Record<string, TokenUsage>): TokenUsage | undefined {
-  let total: TokenUsage | undefined;
-  for (const usage of Object.values(byModel)) {
-    total = total === undefined ? copyUsage(usage) : addUsage(total, usage);
-  }
-  return total;
 }
 
 registerScopedService(

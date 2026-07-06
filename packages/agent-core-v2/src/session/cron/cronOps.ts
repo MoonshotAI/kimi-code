@@ -36,6 +36,12 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'cron.fired': { readonly origin: CronJobOrigin; readonly prompt: string };
+  }
+}
+
 export interface CronAddPayload {
   readonly task: CronTask;
 }

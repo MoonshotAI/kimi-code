@@ -13,6 +13,7 @@ import type {
   ToolListUpdatedEvent,
 } from '@moonshot-ai/protocol';
 import { IAgentWireService, type IWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
@@ -26,6 +27,16 @@ declare module '#/wire' {
   interface SignalMap {
     'mcp.server.status': Omit<McpServerStatusEvent, 'type'>;
     'tool.list.updated': Omit<ToolListUpdatedEvent, 'type'>;
+    error: Omit<ErrorEvent, 'type'>;
+  }
+}
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'mcp.server.status': Omit<McpServerStatusEvent, 'type'>;
+    'tool.list.updated': Omit<ToolListUpdatedEvent, 'type'>;
+    // Canonical home of the shared `error` event (`IEventBus`); other domains
+    // (`turn`, `fullCompaction`) reuse it via interface-merge, not re-declared.
     error: Omit<ErrorEvent, 'type'>;
   }
 }
@@ -52,6 +63,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     private readonly options: McpServiceOptions = {},
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
@@ -116,6 +128,16 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   }
 
   private handleMcpServerStatusChange(entry: McpServerEntry): void {
+    this.eventBus.publish({
+      type: 'mcp.server.status',
+      server: {
+        name: entry.name,
+        transport: entry.transport,
+        status: entry.status,
+        toolCount: entry.toolCount,
+        error: entry.error,
+      },
+    });
     this.wire.signal({
       type: 'mcp.server.status',
       server: {
@@ -136,6 +158,11 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     }
     if (entry.status === 'failed') {
       this.unregisterMcpServer(entry.name);
+      this.eventBus.publish({
+        type: 'tool.list.updated',
+        reason: 'mcp.failed',
+        serverName: entry.name,
+      });
       this.wire.signal({
         type: 'tool.list.updated',
         reason: 'mcp.failed',
@@ -146,6 +173,11 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     if (entry.status === 'disabled' || entry.status === 'pending') {
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
+        this.eventBus.publish({
+          type: 'tool.list.updated',
+          reason: 'mcp.disconnected',
+          serverName: entry.name,
+        });
         this.wire.signal({
           type: 'tool.list.updated',
           reason: 'mcp.disconnected',
@@ -165,6 +197,11 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       resolved.enabledNames,
     );
     this.emitMcpToolCollisions(entry.name, result.collisions);
+    this.eventBus.publish({
+      type: 'tool.list.updated',
+      reason: 'mcp.connected',
+      serverName: entry.name,
+    });
     this.wire.signal({
       type: 'tool.list.updated',
       reason: 'mcp.connected',
@@ -186,6 +223,11 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
     this.mcpTools.set(tool.name, { disposable, serverName: entry.name });
     this.mcpToolsByServer.set(entry.name, [tool.name]);
+    this.eventBus.publish({
+      type: 'tool.list.updated',
+      reason: 'mcp.connected',
+      serverName: entry.name,
+    });
     this.wire.signal({
       type: 'tool.list.updated',
       reason: 'mcp.connected',
@@ -265,6 +307,16 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
           : `"${collision.toolName}" -> ${collision.qualified} (collides with server "${collision.collidesWith.serverName}")`,
       )
       .join('; ');
+    this.eventBus.publish({
+      type: 'error',
+      ...makeErrorPayload(
+        ErrorCodes.MCP_TOOL_NAME_COLLISION,
+        `MCP server "${serverName}" registered ${collisions.length} tool name` +
+          `${collisions.length === 1 ? '' : 's'} ` +
+          `that collide with existing qualified names; the losing tools were dropped: ${summary}`,
+        { details: { serverName, collisions: collisions as readonly unknown[] } },
+      ),
+    });
     this.wire.signal({
       type: 'error',
       ...makeErrorPayload(

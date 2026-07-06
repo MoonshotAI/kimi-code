@@ -38,6 +38,7 @@ export const planModeEnter = defineOp(PlanModel, 'plan_mode.enter', {
     s.active && s.id === p.id && s.planFilePath === p.planFilePath
       ? s
       : { active: true, id: p.id, planFilePath: p.planFilePath },
+  toEvent: () => ({ type: 'agent.status.updated' as const, planMode: true }),
 });
 
 export interface PlanModeIdPayload {
@@ -46,8 +47,10 @@ export interface PlanModeIdPayload {
 
 export const planModeCancel = defineOp(PlanModel, 'plan_mode.cancel', {
   apply: (s, _p: PlanModeIdPayload): PlanState => (s.active === false ? s : { active: false }),
+  toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
 });
 
 export const planModeExit = defineOp(PlanModel, 'plan_mode.exit', {
   apply: (s, _p: PlanModeIdPayload): PlanState => (s.active === false ? s : { active: false }),
+  toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
 });

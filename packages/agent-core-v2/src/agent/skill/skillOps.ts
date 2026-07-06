@@ -7,8 +7,9 @@
  * skill was activated") whose only effect is persistence — `wire.replay`
  * applies it as a no-op. The `randomUUID()` activation id is generated at the
  * dispatch call site (`skillService.recordActivation`) and carried inside
- * `origin`, keeping `apply` free of non-determinism. Also augments `SignalMap`
- * with `skill.activated`. Consumed by the Agent-scope `skillService`.
+ * `origin`, keeping `apply` free of non-determinism. Also augments `DomainEventMap`
+ * with `skill.activated`, derived from the Op via `toEvent`. Consumed by the
+ * Agent-scope `skillService`.
  */
 
 import { defineModel, defineOp } from '#/wire';
@@ -28,8 +29,30 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'skill.activated': {
+      activationId: string;
+      skillName: string;
+      trigger: string;
+      skillArgs?: string;
+      skillPath?: string;
+      skillSource?: SkillSource;
+    };
+  }
+}
+
 export const SkillModel = defineModel<null>('skill', () => null);
 
 export const skillActivate = defineOp(SkillModel, 'skill.activate', {
   apply: (s, _p: { origin: SkillActivationOrigin }) => s,
+  toEvent: (p) => ({
+    type: 'skill.activated' as const,
+    activationId: p.origin.activationId,
+    skillName: p.origin.skillName,
+    trigger: p.origin.trigger,
+    skillArgs: p.origin.skillArgs,
+    skillPath: p.origin.skillPath,
+    skillSource: p.origin.skillSource,
+  }),
 });

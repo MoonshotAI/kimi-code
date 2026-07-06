@@ -3,9 +3,10 @@
  * `full_compaction.begin` (`fullCompactionBegin`) / `full_compaction.cancel`
  * (`fullCompactionCancel`) / `full_compaction.complete`
  * (`fullCompactionComplete`) Ops that mirror the full-compaction lifecycle into
- * a persisted, replayable phase, plus the `compaction.*` edge signals
- * (`started` / `blocked` / `cancelled` / `completed`) declared on the wire
- * `SignalMap`.
+ * a persisted, replayable phase, plus the `compaction.*` edge events
+ * (`started` / `blocked` / `cancelled` / `completed`) declared on `DomainEventMap`
+ * (`compaction.started` is derived from the `full_compaction.begin` Op's
+ * `toEvent`; the rest publish directly from the service).
  *
  * The Model is intentionally phase-only — `{ phase }` (initial `idle`). The
  * richer per-compaction data (`instruction`, `compactedCount`, `tokensBefore`,
@@ -26,9 +27,11 @@
  * A `running` phase stranded by a crash is reset to `idle` by the service's
  * `wire.onRestored` handler (mirroring `goal`'s post-replay normalization).
  *
- * The `compaction.*` signals are emitted live through `wire.signal`; they are
- * declared here via interface-merge (`error` is already declared by `mcp`, so it
- * is not re-declared). The `full_compaction.*` record shapes stay declared in
+ * The `compaction.*` events publish to `IEventBus` (`compaction.started` via the
+ * `begin` Op's `toEvent`; the rest directly) and also emit live through
+ * `wire.signal` (legacy channel, until Phase 3); they are declared here via
+ * interface-merge (`error` is already declared by `mcp`, so it is not
+ * re-declared). The `full_compaction.*` record shapes stay declared in
  * `WireRecordMap` (see `fullCompactionService.ts`) because the records still
  * ride the shared `'wire'` log read by `wireRecord.restore()` / `getRecords()`
  * — `microCompaction` registers a `full_compaction.complete` resumer against
@@ -65,11 +68,25 @@ declare module '#/wire' {
   }
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'compaction.started': Omit<CompactionStartedEvent, 'type'>;
+    'compaction.blocked': Omit<CompactionBlockedEvent, 'type'>;
+    'compaction.cancelled': Omit<CompactionCancelledEvent, 'type'>;
+    'compaction.completed': Omit<CompactionCompletedEvent, 'type'>;
+  }
+}
+
 export type FullCompactionBeginPayload = CompactionBeginData;
 
 export const fullCompactionBegin = defineOp(CompactionModel, 'full_compaction.begin', {
   apply: (s, _p: FullCompactionBeginPayload): CompactionState =>
     s.phase === 'running' ? s : { phase: 'running' },
+  toEvent: (p) => ({
+    type: 'compaction.started' as const,
+    trigger: p.source,
+    instruction: p.instruction,
+  }),
 });
 
 export const fullCompactionCancel = defineOp(CompactionModel, 'full_compaction.cancel', {

@@ -22,6 +22,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile';
 import type { SubagentSuspendedEvent } from '@moonshot-ai/protocol';
 import { IAgentWireService } from '#/wire';
+import { IEventBus } from '#/app/event';
 import {
   applyProfilePromptPrefix,
   IAgentProfileCatalogService,
@@ -52,6 +53,12 @@ import {
 
 declare module '#/wire' {
   interface SignalMap {
+    'subagent.suspended': Omit<SubagentSuspendedEvent, 'type'>;
+  }
+}
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
     'subagent.suspended': Omit<SubagentSuspendedEvent, 'type'>;
   }
 }
@@ -90,6 +97,11 @@ export class SessionSwarmService implements ISessionSwarmService {
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
         const caller = this.lifecycle.getHandle(callerAgentId);
+        caller?.accessor.get(IEventBus)?.publish({
+          type: 'subagent.suspended',
+          subagentId: event.agentId,
+          reason: event.reason,
+        });
         caller?.accessor.get(IAgentWireService)?.signal({
           type: 'subagent.suspended',
           subagentId: event.agentId,
