@@ -601,8 +601,11 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
 }
 
-/** Persist runtime controls to the active session via POST /profile, then
- *  re-read /status. Fire-and-forget: the UI already updated optimistically. */
+/** Persist runtime controls to a session via POST /profile, then re-read
+ *  /status. Fire-and-forget: the UI already updated optimistically. `sessionId`
+ *  overrides the active session — used when creating a session and immediately
+ *  persisting its draft modes, so a concurrent session switch can't write the
+ *  patch to the wrong session. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -611,8 +614,8 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
-}): void {
-  const sid = rawState.activeSessionId;
+}, sessionId?: string): void {
+  const sid = sessionId ?? rawState.activeSessionId;
   if (!sid) return;
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   void Promise.resolve(getKimiWebApi().updateSession(sid, patch))

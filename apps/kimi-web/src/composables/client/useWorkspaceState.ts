@@ -126,7 +126,7 @@ export interface UseWorkspaceStateDeps {
   reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch) => void;
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => void;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
@@ -798,6 +798,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (draftModes.goalMode) {
       rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
       saveGoalModeToStorage();
+    }
+    // Persist plan/swarm onto the new session's profile so non-prompt origins
+    // (e.g. a skill activation, which carries only `args`) run with the same
+    // modes the UI shows. Plain prompts already send planMode/swarmMode on the
+    // prompt request itself, so this is redundant but harmless there. Sent by
+    // id (not via the active-session setter) for the same race reason as the
+    // map writes above. Goal mode is a one-shot flag consumed per send, not a
+    // profile field, so there is nothing to persist for it.
+    if (draftModes.planMode || draftModes.swarmMode) {
+      persistSessionProfile(
+        {
+          planMode: draftModes.planMode,
+          swarmMode: draftModes.swarmMode,
+        },
+        sid,
+      );
     }
     draftModes.planMode = false;
     draftModes.swarmMode = false;

@@ -608,6 +608,32 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('write-goal', 'ship it', 'sess_new');
   });
 
+  it('persists draft plan/swarm modes to the new session before activation', async () => {
+    // Skill activation only carries `args`, so the daemon never sees the per-
+    // prompt planMode/swarmMode flags. Persisting them to the new session's
+    // profile keeps the first skill turn in the modes the UI shows.
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const persistSessionProfile = vi.fn();
+    const deps = {
+      ...skillDeps(activateSkill),
+      persistSessionProfile,
+      draftModes: { planMode: true, swarmMode: true, goalMode: false },
+    };
+    const ws = useWorkspaceState(createState(), deps);
+
+    await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+
+    expect(persistSessionProfile).toHaveBeenCalledWith(
+      { planMode: true, swarmMode: true },
+      'sess_new',
+    );
+    // Ordering: profile is persisted (synchronously, even if the POST is async)
+    // before the skill activation is issued.
+    expect(persistSessionProfile.mock.invocationCallOrder[0]).toBeLessThan(
+      activateSkill.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it('is a no-op for an unknown workspace', async () => {
     const activateSkill = vi.fn().mockResolvedValue(undefined);
     const deps = skillDeps(activateSkill);
