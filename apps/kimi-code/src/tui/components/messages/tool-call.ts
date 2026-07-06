@@ -1921,7 +1921,14 @@ export class ToolCallComponent extends Container {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
     }
-    const shouldCap = this.result !== undefined && !this.expanded;
+    // Cap Edit's diff as soon as args finalize, not only when the result
+    // lands — mirroring Write's writeShouldCap below. Otherwise the render
+    // tick between finalized args (streamingArguments cleared by the
+    // `tool.call.started` payload) and the result draws the full diff, then
+    // snaps back to the cap: a height collapse that triggers pi-tui's full
+    // redraw and wipes scrollback. Streaming frames (streamingArguments set)
+    // still take buildStreamingPreview above and never reach here.
+    const shouldCap = !this.expanded;
     if (name === 'Write') {
       const content = str(this.toolCall.args['content']);
       if (content.length === 0) return;
