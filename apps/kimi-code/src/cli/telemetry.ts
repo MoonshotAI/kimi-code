@@ -32,6 +32,7 @@ export interface InitializeCliTelemetryOptions {
   readonly version: string;
   readonly uiMode: string;
   readonly model?: string;
+  readonly sessionId?: string;
 }
 
 export function createCliTelemetryBootstrap(): CliTelemetryBootstrap {
@@ -54,6 +55,7 @@ export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): 
     version: options.version,
     uiMode: options.uiMode,
     model: options.model ?? options.config.defaultModel,
+    sessionId: options.sessionId,
     getAccessToken: async () =>
       (await options.harness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
   });
