@@ -213,6 +213,7 @@ describe('runShell', () => {
       version: '1.2.3-test',
       uiMode: 'shell',
       model: 'k2',
+      sessionId: undefined,
       getAccessToken: expect.any(Function),
     });
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
