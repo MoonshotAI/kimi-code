@@ -50,6 +50,26 @@ describe('isOriginAllowed', () => {
   it('treats a malformed origin as absent (allowed)', () => {
     expect(isOriginAllowed('not a url', 'h', [])).toBe(true);
   });
+
+  it('treats localhost origin vs 127.0.0.1 host as same-origin (dev proxy)', () => {
+    expect(isOriginAllowed('http://localhost:5175', '127.0.0.1:58627', [])).toBe(true);
+  });
+
+  it('treats 127.0.0.1 origin vs localhost host as same-origin', () => {
+    expect(isOriginAllowed('http://127.0.0.1:5175', 'localhost:58627', [])).toBe(true);
+  });
+
+  it('treats [::1] origin vs localhost host as same-origin (IPv6 loopback)', () => {
+    expect(isOriginAllowed('http://[::1]:5175', 'localhost:58627', [])).toBe(true);
+  });
+
+  it('still denies a non-loopback cross-origin that is not whitelisted', () => {
+    expect(isOriginAllowed('http://evil.com', 'localhost:80', [])).toBe(false);
+  });
+
+  it('does not widen to a public host even when the origin is loopback', () => {
+    expect(isOriginAllowed('http://localhost:5175', 'example.com:80', [])).toBe(false);
+  });
 });
 
 describe('parseCorsOrigins', () => {
