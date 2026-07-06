@@ -21,6 +21,7 @@ import {
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 
@@ -436,7 +437,7 @@ watch(
             <div class="arch-name">{{ s.title }}</div>
             <div class="arch-time">{{ t('settings.archivedAt', { time: archiveTime(s.updatedAt) }) }}</div>
           </div>
-          <button type="button" class="arch-restore" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</button>
+          <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
         </div>
       </template>
 
@@ -683,21 +684,6 @@ watch(
   font-size: var(--text-xs);
   color: var(--color-text-faint);
 }
-.arch-restore {
-  flex: none;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
-  color: var(--color-text);
-  font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  padding: var(--space-1) var(--space-3);
-  min-height: 32px;
-  cursor: pointer;
-}
-.arch-restore:hover { background: var(--color-line); }
-.arch-restore:active { background: var(--color-surface-sunken); }
 .arch-empty {
   padding: var(--space-6) var(--space-4);
   text-align: center;
