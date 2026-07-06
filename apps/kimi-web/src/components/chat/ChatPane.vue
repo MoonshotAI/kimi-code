@@ -1258,12 +1258,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
   padding: 11px 15px;
   box-shadow: var(--shc);
-  animation: kimi-bubble-in 0.24s ease-out both;
 }
 .a-msg {
   max-width: 100%;
   width: 100%;
-  animation: kimi-bubble-in 0.24s ease-out both;
 }
 
 /* ---- Inline queue: pending user messages at the tail of the transcript ----
