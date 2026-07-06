@@ -271,6 +271,75 @@ describe('withThinkingKeep (context_management)', () => {
       edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
     });
   });
+
+  // Capture a streaming (stream: true) beta-endpoint request by mocking
+  // client.beta.messages.create to return a minimal valid stream.
+  async function captureBetaStreamBody(
+    provider: AnthropicChatProvider,
+    history: Message[],
+  ): Promise<Record<string, unknown>> {
+    let capturedParams: Record<string, unknown> | undefined;
+    let capturedOptions: Record<string, unknown> | undefined;
+    (provider as any)._client.beta.messages.create = vi
+      .fn()
+      .mockImplementation((params: unknown, options?: unknown) => {
+        capturedParams = params as Record<string, unknown>;
+        capturedOptions = options as Record<string, unknown> | undefined;
+        return Promise.resolve(
+          mockStream([
+            {
+              type: 'message_start',
+              message: { id: 'm', usage: { input_tokens: 1, output_tokens: 0 } },
+            },
+            { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+            { type: 'content_block_stop', index: 0 },
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn' },
+              usage: { output_tokens: 1 },
+            },
+            { type: 'message_stop' },
+          ]),
+        );
+      });
+    const stream = await provider.generate('', [], history);
+    for await (const part of stream) void part;
+    if (capturedParams === undefined) {
+      throw new Error('Expected provider.generate() to call beta.messages.create');
+    }
+    const result = { ...capturedParams };
+    if (capturedOptions !== undefined && capturedOptions['headers'] !== undefined) {
+      result['_extra_headers'] = capturedOptions['headers'];
+    }
+    return result;
+  }
+
+  it('emits context_management on the streaming beta endpoint too', async () => {
+    const provider = createStreamProvider().withThinkingKeep('all');
+    const body = await captureBetaStreamBody(provider, history);
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toBeUndefined();
+  });
+
+  it('forces the beta endpoint even when constructed with betaApi: false', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'kimi-for-coding',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+      betaApi: false,
+    }).withThinkingKeep('all');
+    const body = await captureBetaRequestBody(provider, '', [], history);
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+  });
 });
 
 describe('AnthropicChatProvider', () => {
