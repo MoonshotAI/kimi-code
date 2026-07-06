@@ -73,7 +73,59 @@ describe('Agent turn flow', () => {
     });
     expect(records).toContainEqual({
       event: 'turn_interrupted',
-      properties: { mode: 'agent', at_step: 0 },
+      properties: { mode: 'agent', at_step: 0, interrupt_reason: 'error' },
+    });
+  });
+
+  it('reports turn_interrupted telemetry as user_cancelled on manual abort', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('should-not-run'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    // User presses stop: the RPC cancel carries no explicit reason, which the
+    // turn treats as a deliberate user cancellation.
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    const interrupted = records.find((candidate) => candidate.event === 'turn_interrupted');
+    expect(interrupted).toEqual({
+      event: 'turn_interrupted',
+      properties: expect.objectContaining({
+        mode: 'agent',
+        interrupt_reason: 'user_cancelled',
+      }),
+    });
+  });
+
+  it('reports turn_interrupted telemetry as aborted on programmatic abort', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('should-not-run'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    // A programmatic abort (e.g. a subagent deadline timeout) carries a plain
+    // AbortError as its reason, not a UserCancellationError, so telemetry must
+    // not report it as a user cancellation.
+    ctx.agent.turn.cancel(0, abortError());
+    await ctx.untilTurnEnd();
+
+    const interrupted = records.find((candidate) => candidate.event === 'turn_interrupted');
+    expect(interrupted).toEqual({
+      event: 'turn_interrupted',
+      properties: expect.objectContaining({ mode: 'agent', interrupt_reason: 'aborted' }),
     });
   });
 
