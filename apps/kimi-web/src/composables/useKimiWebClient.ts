@@ -541,7 +541,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.messagesHasMoreBySession[sessionId];
   delete rawState.messagesLoadMoreErrorBySession[sessionId];
   delete epochBySession[sessionId];
-  lastLoadedUpdatedAt.delete(sessionId);
+  lastLoadedSeq.delete(sessionId);
   sessionsKnownEmpty.delete(sessionId);
   // In-flight / queued prompt state: drop these too so a queued follow-up
   // can't be submitted to a session that was just archived when its turn later
@@ -905,11 +905,13 @@ function connectEventsIfNeeded(): void {
 // reactive — only consulted when building the subscribe cursor.
 const epochBySession: Record<string, string> = {};
 
-// Session `updatedAt` (ISO string) captured the last time we loaded this
+// Durable `seq` (event journal offset) captured the last time we loaded this
 // session's messages from a snapshot. Compared on re-open to skip the snapshot
-// fetch + transcript remount when the session has not changed since. Not
-// reactive — only read inside reopenSession.
-const lastLoadedUpdatedAt = new Map<string, string>();
+// fetch + transcript remount when nothing durable happened since. Not reactive
+// — only read inside reopenSession. Preferred over `updatedAt`: every durable
+// event (including `turn.ended`, which does not bump `updatedAt`) advances seq,
+// so it can never miss a change that matters here.
+const lastLoadedSeq = new Map<string, number>();
 
 // Sessions created locally in this client instance are known to be empty until
 // they receive their first message. This is more reliable than the daemon's
@@ -1203,7 +1205,7 @@ async function syncSessionFromSnapshot(
       [sessionId]: snap.asOfSeq,
     };
     epochBySession[sessionId] = snap.epoch;
-    lastLoadedUpdatedAt.set(sessionId, snap.session.updatedAt);
+    lastLoadedSeq.set(sessionId, snap.asOfSeq);
 
     connectEventsIfNeeded();
     if (eventConn) {
@@ -1326,18 +1328,20 @@ function resubscribeSessionEvents(sessionId: string): void {
  *
  *  But rebuilding on EVERY re-open remounts the transcript (scroll reset +
  *  entrance-animation replay) even when nothing changed — a daily annoyance.
- *  The session `updatedAt` is a zero-fetch, always-fresh signal: it advances on
- *  the durable `turn.ended` at the latest, so it can never miss a content
- *  change that matters here. Gate on it:
+ *  Gate on the durable event `seq` captured at the last snapshot load: every
+ *  durable event (including `turn.ended`, which does NOT bump `updatedAt`)
+ *  advances it, so unlike `updatedAt` it can never miss a content change —
+ *  including a mid-turn snapshot followed by a lost tail whose reconnect replay
+ *  is only `turn.ended`.
  *    - evicted subscription  → cursor untrustworthy, always rebuild;
- *    - updatedAt unchanged   → cheap cursor resubscribe, no remount;
- *    - updatedAt advanced    → rebuild from snapshot, restoring any lost tail. */
+ *    - seq unchanged         → cheap cursor resubscribe, no remount;
+ *    - seq advanced          → rebuild from snapshot, restoring any lost tail. */
 async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
   if (sessionsWithStaleCursor.has(sessionId)) {
     return syncSessionFromSnapshot(sessionId);
   }
-  const current = rawState.sessions.find((s) => s.id === sessionId)?.updatedAt;
-  if (current !== undefined && current === lastLoadedUpdatedAt.get(sessionId)) {
+  const currentSeq = rawState.lastSeqBySession[sessionId] ?? 0;
+  if (currentSeq === (lastLoadedSeq.get(sessionId) ?? 0)) {
     resubscribeSessionEvents(sessionId);
     return 'ok';
   }
