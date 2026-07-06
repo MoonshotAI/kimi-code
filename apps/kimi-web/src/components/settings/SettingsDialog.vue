@@ -221,61 +221,42 @@ const client = useKimiWebClient();
 const archivedItems = ref<AppSession[]>([]);
 const archivedLoading = ref(false);
 const archivedLoaded = ref(false);
-const archivedHasMore = ref(false);
-const archivedBeforeId = ref<string | undefined>(undefined);
 const archiveQuery = ref('');
 const archiveWsFilter = ref<string>('all'); // 'all' | cwd
 const archiveSort = ref<'archived-desc' | 'created-desc' | 'name-asc'>('archived-desc');
 
-const ARCHIVED_PAGE_SIZE = 50;
+// Load every archived session once when the tab opens (no frontend pagination).
+// Search, sort and the workspace filter then run client-side over the full set,
+// so results are always global and there is no empty-page / cursor bookkeeping
+// to get wrong. The user waits a moment on first open in exchange for simplicity.
+const ARCHIVED_PAGE_SIZE = 100;
 
-async function loadArchived(reset: boolean): Promise<void> {
-  if (archivedLoading.value) return;
+async function loadAllArchived(): Promise<void> {
+  if (archivedLoading.value || archivedLoaded.value) return;
   archivedLoading.value = true;
   try {
-    const page = await client.loadArchivedSessions({
-      beforeId: reset ? undefined : archivedBeforeId.value,
-      pageSize: ARCHIVED_PAGE_SIZE,
-    });
-    archivedItems.value = reset ? page.items : [...archivedItems.value, ...page.items];
-    archivedHasMore.value = page.hasMore;
-    const lastId = page.items.at(-1)?.id;
-    if (lastId !== undefined) archivedBeforeId.value = lastId;
+    const all: AppSession[] = [];
+    let beforeId: string | undefined;
+    for (;;) {
+      const page = await client.loadArchivedSessions({ beforeId, pageSize: ARCHIVED_PAGE_SIZE });
+      all.push(...page.items);
+      if (!page.hasMore || page.items.length === 0) break;
+      const next = page.items.at(-1)?.id;
+      if (next === undefined) break;
+      beforeId = next;
+    }
+    archivedItems.value = all;
     archivedLoaded.value = true;
+  } catch (err) {
+    console.warn('loadAllArchived failed', err);
   } finally {
     archivedLoading.value = false;
   }
 }
 
-// When the user searches, sorts, or changes the workspace filter, drain every
-// remaining archived page first so the client-side filter/sort runs over the
-// full set — not just the pages loaded so far. Simpler and correct over fast:
-// the user waits a moment in exchange for a global result.
-const drainingAll = ref(false);
-async function drainAllArchived(): Promise<void> {
-  if (drainingAll.value) return;
-  drainingAll.value = true;
-  try {
-    while (archivedHasMore.value) {
-      await loadArchived(false);
-    }
-  } catch (err) {
-    // Keep whatever is already loaded; the user can retry via Load more.
-    console.warn('drainAllArchived failed', err);
-  } finally {
-    drainingAll.value = false;
-  }
-}
-
 watch(activeTab, (tab) => {
   if (tab === 'archived' && !archivedLoaded.value) {
-    void loadArchived(true);
-  }
-});
-
-watch([archiveQuery, archiveSort, archiveWsFilter], () => {
-  if (activeTab.value === 'archived' && archivedHasMore.value && !drainingAll.value) {
-    void drainAllArchived();
+    void loadAllArchived();
   }
 });
 
@@ -624,10 +605,8 @@ function archiveTime(iso: string): string {
             />
           </div>
 
-          <div v-if="drainingAll" class="archive-draining">{{ t('settings.archivedLoadingAll') }}</div>
-
-          <div v-if="archivedLoading && !archivedLoaded" class="archive-empty">
-            {{ t('settings.archivedLoading') }}
+          <div v-if="archivedLoading" class="archive-empty">
+            {{ t('settings.archivedLoadingAll') }}
           </div>
 
           <template v-else>
@@ -651,11 +630,6 @@ function archiveTime(iso: string): string {
             </div>
             <div v-else class="archive-empty">
               {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
-            </div>
-            <div v-if="archivedHasMore" class="archive-more">
-              <Button variant="secondary" size="sm" :loading="archivedLoading" @click="loadArchived(false)">
-                {{ t('settings.archivedLoadMore') }}
-              </Button>
             </div>
           </template>
         </section>
@@ -833,7 +807,6 @@ function archiveTime(iso: string): string {
 .archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-mono); }
 .archive-draining { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-accent-hover); font-size: var(--text-sm); }
 .archive-empty { padding: var(--space-6) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-xl); color: var(--color-text-faint); font-size: var(--text-sm); text-align: center; background: var(--color-bg); }
-.archive-more { display: flex; justify-content: center; margin-top: var(--space-4); }
 @media (max-width: 640px) {
   .archive-toolbar { flex-direction: column; align-items: stretch; }
   .archive-search { min-width: 0; }
