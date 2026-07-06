@@ -48,6 +48,13 @@ describe('parseDeepSeekInlineToolCalls', () => {
     expect(calls.map((c) => c.name)).toEqual(['Grep']);
   });
 
+  it('parses a call whose JSON string argument contains a triple-backtick fence', () => {
+    const args = '{"content":"```js\\nconsole.log(1)\\n```"}';
+    const calls = parseDeepSeekInlineToolCalls(wrap(callBlock('write_file', args)));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.arguments).toBe(args);
+  });
+
   it('parses the full-width (U+FF5C) sentinel form raw vLLM leaks emit', () => {
     const fw = `<｜tool${SEP}calls${SEP}begin｜>${callBlock('read_file', '{"path":"a.js"}', '｜')}<｜tool${SEP}calls${SEP}end｜>`;
     const calls = parseDeepSeekInlineToolCalls(fw);
@@ -82,13 +89,17 @@ describe('DeepSeekInlineToolCallFilter', () => {
 
   it('emits text before the block and suppresses the tokens', () => {
     const f = new DeepSeekInlineToolCallFilter();
-    const content = `Reading now. ${wrap(callBlock('read_file', '{"path":"a.js"}'))}`;
+    const block = wrap(callBlock('read_file', '{"path":"a.js"}'));
+    const content = `Reading now. ${block}`;
     let out = '';
     out += f.push(content);
     out += f.flush();
     expect(out).toBe('Reading now. ');
     expect(f.sawToolBlock).toBe(true);
-    expect(f.content).toBe(content);
+    // `content` only accumulates from the block boundary onward (the pre-marker
+    // prefix is dropped) since parsing never needs it — see the memory-retention
+    // note on DeepSeekInlineToolCallFilter.push.
+    expect(f.content).toBe(block);
     expect(parseDeepSeekInlineToolCalls(f.content)).toHaveLength(1);
   });
 

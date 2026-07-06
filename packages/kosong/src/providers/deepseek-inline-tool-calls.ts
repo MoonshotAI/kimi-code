@@ -35,10 +35,14 @@ const BAR = '[|｜]'; // ASCII U+007C or full-width U+FF5C
 /** First block boundary: a calls-begin OR a call-begin token, either bar. */
 const BLOCK_START = new RegExp(`<${BAR}tool${SEP}calls?${SEP}begin${BAR}>`);
 
-// One call: <…call▁begin…>[function]<…sep…>NAME ```[json] {ARGS} ```
+// One call: <…call▁begin…>[function]<…sep…>NAME ```[json] {ARGS} ```<…call▁end…>
+// The closing fence is anchored to the call-end sentinel (not just the next
+// ```) so a JSON string argument that itself contains a triple-backtick fence
+// doesn't truncate the capture early — the lazy match backtracks past any
+// ``` not immediately followed by the end token.
 const CALL_RE = new RegExp(
   `<${BAR}tool${SEP}call${SEP}begin${BAR}>\\s*(?:function)?\\s*<${BAR}tool${SEP}sep${BAR}>\\s*([A-Za-z0-9_.-]+)\\s*` +
-    '```(?:json)?\\s*([\\s\\S]*?)```',
+    `\`\`\`(?:json)?\\s*([\\s\\S]*?)\`\`\`\\s*<${BAR}tool${SEP}call${SEP}end${BAR}>`,
   'g',
 );
 
@@ -98,14 +102,21 @@ export class DeepSeekInlineToolCallFilter {
 
   /** Feed a content delta; returns the text safe to yield now (possibly empty). */
   push(delta: string): string {
-    this.full += delta;
     if (this.passthrough) return delta;
-    if (this.suppressing) return '';
+    // Only accumulate `full` once a block boundary is actually found — before
+    // that, and for the common case where no boundary ever appears, keeping a
+    // second copy of the entire stream is pure waste since `content` is only
+    // read when `sawToolBlock` is true.
+    if (this.suppressing) {
+      this.full += delta;
+      return '';
+    }
     this.buffer += delta;
     const idx = firstBlockStart(this.buffer);
     if (idx >= 0) {
       const out = this.buffer.slice(0, idx);
       this.suppressing = true;
+      this.full = this.buffer.slice(idx);
       this.buffer = '';
       return out;
     }
