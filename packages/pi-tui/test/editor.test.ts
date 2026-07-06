@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, wordWrapLine } from "../src/components/editor.ts";
@@ -525,24 +525,34 @@ describe("Editor component", () => {
 
 	describe("Paste burst fallback", () => {
 		it("inserts a newline instead of submitting during a rapid burst", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-			let submitted = false;
-			editor.onSubmit = () => {
-				submitted = true;
-			};
+			// Freeze the clock so the 8 synchronous keystrokes are all seen as one
+			// burst regardless of host speed or scheduler jitter (the production
+			// heuristic uses an 8ms inter-char interval, which a slow CI runner can
+			// exceed between synchronous calls).
+			mock.timers.enable({ apis: ["Date"] });
+			mock.timers.setTime(1000);
+			try {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				let submitted = false;
+				editor.onSubmit = () => {
+					submitted = true;
+				};
 
-			editor.handleInput("a");
-			editor.handleInput("b");
-			editor.handleInput("c");
-			editor.handleInput("d");
-			editor.handleInput("e");
-			editor.handleInput("f");
-			editor.handleInput("g");
-			editor.handleInput("h");
-			editor.handleInput("\r");
+				editor.handleInput("a");
+				editor.handleInput("b");
+				editor.handleInput("c");
+				editor.handleInput("d");
+				editor.handleInput("e");
+				editor.handleInput("f");
+				editor.handleInput("g");
+				editor.handleInput("h");
+				editor.handleInput("\r");
 
-			assert.strictEqual(submitted, false);
-			assert.strictEqual(editor.getText(), "abcdefgh\n");
+				assert.strictEqual(submitted, false);
+				assert.strictEqual(editor.getText(), "abcdefgh\n");
+			} finally {
+				mock.timers.reset();
+			}
 		});
 
 		it("can be disabled", () => {
