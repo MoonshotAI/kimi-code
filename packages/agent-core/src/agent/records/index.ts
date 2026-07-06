@@ -129,6 +129,17 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'goal.clear':
       agent.goal.restoreClear(input);
       return;
+    // Observability records: no state to rebuild; only restore the
+    // write-dedup cursors so a resumed session does not re-log snapshots
+    // that are already durable in this wire log.
+    case 'llm.tools_snapshot':
+      agent.llmRequestRecorder.restoreToolsSnapshot(input.hash);
+      return;
+    case 'llm.request':
+      return;
+    case 'mcp.tools_discovered':
+      agent.tools.restoreMcpDiscovery(input.serverName, input.hash);
+      return;
   }
 }
 

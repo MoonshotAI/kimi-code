@@ -12,9 +12,10 @@ import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
-import type { MCPClient } from '../../mcp/types';
+import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { DEFAULT_AGENT_PROFILES } from '../../profile';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
+import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
 import type {
@@ -55,6 +56,12 @@ export class ToolManager {
   private readonly pendingLoadedDynamicTools = new Set<string>();
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
+  /**
+   * `serverName\nhash` keys of `mcp.tools_discovered` records already durable
+   * in this wire log. Restored on replay; reconnects with an unchanged raw
+   * tool list and allow-list do not re-log.
+   */
+  private readonly seenMcpDiscoveries = new Set<string>();
 
   /** Abort controllers for in-flight `!` shell commands, keyed by commandId so
    *  the TUI can cancel (Esc / Ctrl+C) a running command. */
@@ -386,11 +393,47 @@ export class ToolManager {
       resolved.tools,
       resolved.enabledNames,
     );
+    this.recordMcpToolsDiscovered(
+      entry.name,
+      resolved.rawTools,
+      resolved.enabledNames,
+      result.collisions,
+    );
     this.emitMcpToolCollisions(entry.name, result.collisions);
     this.agent.emitEvent({
       type: 'tool.list.updated',
       reason: 'mcp.connected',
       serverName: entry.name,
+    });
+  }
+
+  /** Replay: a discovery with this hash is already durable; never re-log it. */
+  restoreMcpDiscovery(serverName: string, hash: string): void {
+    this.seenMcpDiscoveries.add(`${serverName}\n${hash}`);
+  }
+
+  /**
+   * Observability record: the server's verbatim `tools/list` result plus how
+   * this agent gated it (allow-list, collisions). See `records/types.ts`.
+   */
+  private recordMcpToolsDiscovered(
+    serverName: string,
+    rawTools: readonly MCPToolDefinition[],
+    enabledNames: ReadonlySet<string>,
+    collisions: readonly McpToolCollision[],
+  ): void {
+    const sortedEnabled = [...enabledNames].toSorted((a, b) => a.localeCompare(b));
+    const hash = fingerprint(JSON.stringify({ tools: rawTools, enabledNames: sortedEnabled }));
+    const key = `${serverName}\n${hash}`;
+    if (this.seenMcpDiscoveries.has(key)) return;
+    this.seenMcpDiscoveries.add(key);
+    this.agent.records.logRecord({
+      type: 'mcp.tools_discovered',
+      serverName,
+      hash,
+      tools: rawTools,
+      enabledNames: sortedEnabled,
+      collisions: collisions.length > 0 ? collisions : undefined,
     });
   }
 

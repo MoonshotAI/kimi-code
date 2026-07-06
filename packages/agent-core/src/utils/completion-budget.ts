@@ -66,6 +66,25 @@ export function computeCompletionBudgetCap(args: {
 }
 
 /**
+ * The cap `applyCompletionBudget` will pass to the provider, or `undefined`
+ * when no budget is configured or the provider opts out. Exposed separately
+ * so the request trace can record the applied value without changing the
+ * apply path.
+ */
+export function appliedCompletionBudgetCap(args: {
+  readonly provider: ChatProvider;
+  readonly budget: CompletionBudgetConfig | undefined;
+  readonly capability: ModelCapability | undefined;
+}): number | undefined {
+  if (args.budget === undefined) return undefined;
+  if (args.provider.withMaxCompletionTokens === undefined) return undefined;
+  return computeCompletionBudgetCap({
+    budget: args.budget,
+    capability: args.capability,
+  });
+}
+
+/**
  * Apply a completion budget to a provider via its optional
  * `withMaxCompletionTokens` capability. Returns the original provider
  * unchanged when no budget is configured or the provider opts out.
@@ -81,13 +100,9 @@ export function applyCompletionBudget(args: {
   readonly capability: ModelCapability | undefined;
   readonly usedContextTokens?: number;
 }): ChatProvider {
-  if (args.budget === undefined) return args.provider;
-  if (args.provider.withMaxCompletionTokens === undefined) return args.provider;
-  const cap = computeCompletionBudgetCap({
-    budget: args.budget,
-    capability: args.capability,
-  });
-  return args.provider.withMaxCompletionTokens(cap, {
+  const cap = appliedCompletionBudgetCap(args);
+  if (cap === undefined) return args.provider;
+  return args.provider.withMaxCompletionTokens!(cap, {
     usedContextTokens: args.usedContextTokens,
     maxContextTokens: args.capability?.max_context_tokens,
   });

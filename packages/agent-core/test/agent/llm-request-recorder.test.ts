@@ -1,0 +1,241 @@
+import { describe, expect, it } from 'vitest';
+
+import type { AgentRecord } from '../../src/agent';
+import {
+  InMemoryAgentRecordPersistence,
+  type AgentRecordOf,
+} from '../../src/agent/records';
+import type { McpConnectionManager, McpServerEntry, McpStatusListener } from '../../src/mcp';
+import type { MCPClient, MCPToolDefinition } from '../../src/mcp/types';
+import { testAgent, type TestAgentContext } from './harness/agent';
+
+function recordsOf<T extends AgentRecord['type']>(
+  persistence: InMemoryAgentRecordPersistence,
+  type: T,
+): AgentRecordOf<T>[] {
+  return persistence.records.filter(
+    (record): record is AgentRecordOf<T> => record.type === type,
+  );
+}
+
+async function runTurn(ctx: TestAgentContext, prompt: string): Promise<void> {
+  await ctx.rpc.prompt({ input: [{ type: 'text', text: prompt }] });
+  await ctx.untilTurnEnd();
+}
+
+describe('llm request trace records', () => {
+  it('writes one tools snapshot per unique table and one llm.request per request', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure({ tools: ['Read'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'one' });
+    await runTurn(ctx, 'first');
+    ctx.mockNextResponse({ type: 'text', text: 'two' });
+    await runTurn(ctx, 'second');
+
+    const snapshots = recordsOf(persistence, 'llm.tools_snapshot');
+    expect(snapshots).toHaveLength(1);
+    const snapshot = snapshots[0]!;
+    expect(snapshot.tools.map((tool) => tool.name)).toEqual(['Read']);
+    expect(snapshot.tools[0]!.description.length).toBeGreaterThan(0);
+    expect(snapshot.tools[0]!.parameters).toMatchObject({ type: 'object' });
+
+    const requests = recordsOf(persistence, 'llm.request');
+    expect(requests).toHaveLength(2);
+    expect(requests.map((request) => request.turnStep)).toEqual(['0.1', '1.1']);
+    for (const request of requests) {
+      expect(request.kind).toBe('loop');
+      expect(request.toolsHash).toBe(snapshot.hash);
+      expect(request.systemPromptHash).toMatch(/^[0-9a-f]{64}$/);
+      // The request used the config system prompt, so no inline copy.
+      expect(request.systemPrompt).toBeUndefined();
+      expect(request.messageCount).toBeGreaterThan(0);
+      expect(request.model).toBe('mock-model');
+      expect(request.toolSelect).toBe(false);
+    }
+  });
+
+  it('writes a new snapshot when the active tool table changes', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure({ tools: ['Read'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'one' });
+    await runTurn(ctx, 'first');
+    await ctx.rpc.setActiveTools({ names: ['Read', 'Glob'] });
+    ctx.mockNextResponse({ type: 'text', text: 'two' });
+    await runTurn(ctx, 'second');
+
+    const snapshots = recordsOf(persistence, 'llm.tools_snapshot');
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[0]!.hash).not.toBe(snapshots[1]!.hash);
+    expect(snapshots[1]!.tools.map((tool) => tool.name)).toEqual(['Glob', 'Read']);
+
+    const requests = recordsOf(persistence, 'llm.request');
+    expect(requests.map((request) => request.toolsHash)).toEqual([
+      snapshots[0]!.hash,
+      snapshots[1]!.hash,
+    ]);
+  });
+
+  it('does not re-log a durable snapshot after resume', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure({ tools: ['Read'] });
+    ctx.mockNextResponse({ type: 'text', text: 'one' });
+    await runTurn(ctx, 'first');
+
+    const resumedPersistence = new InMemoryAgentRecordPersistence(
+      structuredClone(persistence.records),
+    );
+    const resumed = testAgent({ persistence: resumedPersistence });
+    await resumed.agent.resume();
+    resumed.mockNextResponse({ type: 'text', text: 'after resume' });
+    await runTurn(resumed, 'again');
+
+    const snapshots = recordsOf(resumedPersistence, 'llm.tools_snapshot');
+    expect(snapshots).toHaveLength(1);
+    const requests = recordsOf(resumedPersistence, 'llm.request');
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.toolsHash).toBe(requests[0]!.toolsHash);
+  });
+
+  it('inlines the system prompt when a request bypasses the config prompt', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure();
+
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.agent.generate(
+      ctx.agent.config.provider,
+      'summarizer prompt',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+      undefined,
+      { signal: new AbortController().signal },
+    );
+
+    const request = recordsOf(persistence, 'llm.request').at(-1)!;
+    expect(request.systemPrompt).toBe('summarizer prompt');
+    expect(request.messageCount).toBe(1);
+  });
+});
+
+describe('mcp.tools_discovered records', () => {
+  const RAW_TOOLS: MCPToolDefinition[] = [
+    {
+      name: 'query_range',
+      description: 'Query a metrics range',
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  ];
+
+  function fakeMcp(input: {
+    readonly rawTools: readonly MCPToolDefinition[];
+    readonly enabledNames: () => ReadonlySet<string>;
+    readonly onListener?: (listener: McpStatusListener) => void;
+  }): { mcp: McpConnectionManager; entry: McpServerEntry } {
+    const client: MCPClient = {
+      async listTools() {
+        return [...input.rawTools];
+      },
+      async callTool() {
+        return { content: [{ type: 'text', text: 'ok' }], isError: false };
+      },
+    };
+    const entry: McpServerEntry = {
+      name: 'grafana',
+      transport: 'stdio',
+      status: 'connected',
+      toolCount: input.rawTools.length,
+    };
+    const mcp = {
+      list: () => [entry],
+      onStatusChange: (listener: McpStatusListener) => {
+        input.onListener?.(listener);
+        return () => {};
+      },
+      resolved: () => ({
+        client,
+        tools: input.rawTools.map((definition) => ({
+          name: definition.name,
+          description: definition.description,
+          parameters: definition.inputSchema as Record<string, unknown>,
+        })),
+        rawTools: input.rawTools,
+        enabledNames: input.enabledNames(),
+      }),
+      oauthService: undefined,
+      getRemoteServerUrl: () => undefined,
+    } as unknown as McpConnectionManager;
+    return { mcp, entry };
+  }
+
+  function attachFakeMcp(ctx: TestAgentContext, mcp: McpConnectionManager): void {
+    (ctx.agent as { mcp?: McpConnectionManager }).mcp = mcp;
+    ctx.agent.tools.attachMcpTools();
+  }
+
+  it('records the raw tools/list once and dedups unchanged re-registrations', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure({ tools: ['mcp__*'] });
+
+    let statusListener: McpStatusListener | undefined;
+    let enabled: ReadonlySet<string> = new Set(['query_range']);
+    const { mcp, entry } = fakeMcp({
+      rawTools: RAW_TOOLS,
+      enabledNames: () => enabled,
+      onListener: (listener) => {
+        statusListener = listener;
+      },
+    });
+    attachFakeMcp(ctx, mcp);
+    // Reconnect with identical content: no second record.
+    statusListener?.(entry);
+
+    const discoveries = recordsOf(persistence, 'mcp.tools_discovered');
+    expect(discoveries).toHaveLength(1);
+    expect(discoveries[0]).toMatchObject({
+      serverName: 'grafana',
+      tools: RAW_TOOLS,
+      enabledNames: ['query_range'],
+    });
+    expect(discoveries[0]!.collisions).toBeUndefined();
+
+    // An allow-list change is a different gating decision — record it.
+    enabled = new Set();
+    statusListener?.(entry);
+    expect(recordsOf(persistence, 'mcp.tools_discovered')).toHaveLength(2);
+  });
+
+  it('does not re-log a durable discovery after resume', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure({ tools: ['mcp__*'] });
+    const first = fakeMcp({
+      rawTools: RAW_TOOLS,
+      enabledNames: () => new Set(['query_range']),
+    });
+    attachFakeMcp(ctx, first.mcp);
+    expect(recordsOf(persistence, 'mcp.tools_discovered')).toHaveLength(1);
+
+    const resumedPersistence = new InMemoryAgentRecordPersistence(
+      structuredClone(persistence.records),
+    );
+    const resumed = testAgent({ persistence: resumedPersistence });
+    await resumed.agent.resume();
+    const second = fakeMcp({
+      rawTools: RAW_TOOLS,
+      enabledNames: () => new Set(['query_range']),
+    });
+    attachFakeMcp(resumed, second.mcp);
+
+    expect(recordsOf(resumedPersistence, 'mcp.tools_discovered')).toHaveLength(1);
+  });
+});

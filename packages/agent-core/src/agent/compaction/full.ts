@@ -18,6 +18,7 @@ import {
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
 import type { ContextMessage } from '../context/types';
 import {
   collectLoadedDynamicToolNames,
@@ -41,6 +42,7 @@ import {
   estimateTokensForTools,
 } from '../../utils/tokens';
 import {
+  appliedCompletionBudgetCap,
   applyCompletionBudget,
   resolveCompletionBudget,
 } from '../../utils/completion-budget';
@@ -472,12 +474,19 @@ export class FullCompaction {
         maxContextTokens > 0
           ? Math.min(maxContextTokens, DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS)
           : undefined;
+      const baseProvider = this.agent.config.provider;
+      const compactionBudget = resolveCompletionBudget({
+        maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
+        reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+      });
       const provider = applyCompletionBudget({
-        provider: this.agent.config.provider,
-        budget: resolveCompletionBudget({
-          maxOutputSize: this.agent.config.maxOutputSize ?? defaultCompactionCap,
-          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
-        }),
+        provider: baseProvider,
+        budget: compactionBudget,
+        capability,
+      });
+      const maxTokens = appliedCompletionBudgetCap({
+        provider: baseProvider,
+        budget: compactionBudget,
         capability,
       });
       const instruction = this.buildInstruction(data.instruction);
@@ -514,13 +523,17 @@ export class FullCompaction {
         ];
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
         try {
+          const generateOptions: GenerateOptionsWithRequestLogFields = {
+            signal,
+            requestLogFields: { kind: 'compaction', maxTokens, droppedCount },
+          };
           const response = await this.agent.generate(
             provider,
             this.agent.config.systemPrompt,
             [...this.agent.tools.loopTools],
             messages,
             undefined,
-            { signal },
+            generateOptions,
           );
           if (response.finishReason === 'truncated') {
             throw new CompactionTruncatedError();

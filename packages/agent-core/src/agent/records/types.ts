@@ -1,20 +1,38 @@
-import type { ContentPart, TokenUsage } from '@moonshot-ai/kosong';
+import type { ContentPart, ThinkingEffort, TokenUsage } from '@moonshot-ai/kosong';
 
 import type { LoopRecordedEvent } from '../../loop';
 import type { GoalActor, GoalBudgetLimits, GoalStatus } from '../goal';
+import type { MCPToolDefinition } from '../../mcp/types';
 import type { ToolStoreUpdate } from '../../tools/store';
 import type { CompactionBeginData, CompactionResult } from '../compaction';
 import type { AgentConfigUpdateData } from '../config';
 import type { ContextMessage, PromptOrigin } from '../context';
 import type { PermissionApprovalResultRecord, PermissionMode } from '../permission';
-import type { UserToolRegistration } from '../tool';
+import type { McpToolCollision, UserToolRegistration } from '../tool';
 import type { UsageRecordScope } from '../usage';
 import type { SwarmModeTrigger } from '../swarm';
 
+/** One entry of a tools table as sent in a request's top-level `tools[]`. */
+export interface LlmRequestToolSchema {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
 // Agent records are the ordered event log used to rebuild agent state on resume.
 // Use records, not state.json, when correctness depends on the order in which
-// state transitions happened. Each persisted record type must have explicit
-// resume semantics in restoreAgentRecord; a write-only record is not persistence.
+// state transitions happened.
+//
+// Two record classes exist, and being persisted is not the same as being
+// replayed:
+//   - State records (the default): each type must have explicit state-rebuild
+//     semantics in restoreAgentRecord; a write-only state record is not
+//     persistence.
+//   - Observability records (`llm.tools_snapshot`, `llm.request`,
+//     `mcp.tools_discovered`): a durable trace of the data sent to the model,
+//     for debugging and trajectory replay. They never feed state rebuild;
+//     their only resume semantics is restoring the write-dedup cursors so a
+//     resumed session does not re-log snapshots it already persisted.
 export interface AgentRecordEvents {
   metadata: {
     protocol_version: string;
@@ -98,6 +116,69 @@ export interface AgentRecordEvents {
     actor?: GoalActor;
   };
   'goal.clear': {};
+
+  // Observability records (see the header note): request-trace data, not
+  // state. Resume only restores the write-dedup cursors.
+
+  /**
+   * Content-addressed snapshot of a request's top-level `tools[]` (after the
+   * `deferred` strip — exactly what the provider receives). Written once per
+   * unique table; `llm.request.toolsHash` points here.
+   */
+  'llm.tools_snapshot': {
+    hash: string;
+    tools: readonly LlmRequestToolSchema[];
+  };
+
+  /**
+   * One record per outbound model request (every retry attempt, strict
+   * resend, and compaction round included). Together with `config.update`
+   * (system prompt full text), context records (messages), and
+   * `llm.tools_snapshot` (tool schemas), this makes each request
+   * reconstructable from the wire log at the logical-request level.
+   */
+  'llm.request': {
+    kind: 'loop' | 'compaction';
+    provider: string;
+    model: string;
+    modelAlias?: string;
+    thinkingEffort?: ThinkingEffort;
+    /** Effective env-driven sampling overrides (Kimi provider only). */
+    temperature?: number;
+    topP?: number;
+    /** Client-computed completion budget cap passed to the provider. */
+    maxTokens?: number;
+    betaApi?: boolean;
+    /** Progressive tool disclosure in effect (env flag × model capability). */
+    toolSelect: boolean;
+    systemPromptHash: string;
+    /**
+     * Inlined only when the request's system prompt differs from the current
+     * `config.update` value (no such caller today; defensive for future ones).
+     */
+    systemPrompt?: string;
+    toolsHash: string;
+    messageCount: number;
+    turnStep?: string;
+    attempt?: string;
+    /** Set when this request is the strict wire-compliant rebuild resend. */
+    projection?: 'strict';
+    /** Compaction only: messages dropped so far by overflow/empty shrinking. */
+    droppedCount?: number;
+  };
+
+  /**
+   * Raw MCP `tools/list` result as advertised by the server, plus how this
+   * agent gated it (allow-list, name collisions). Written on registration,
+   * deduplicated per server by content hash.
+   */
+  'mcp.tools_discovered': {
+    serverName: string;
+    hash: string;
+    tools: readonly MCPToolDefinition[];
+    enabledNames: readonly string[];
+    collisions?: readonly McpToolCollision[];
+  };
 }
 
 export type AgentRecord = {

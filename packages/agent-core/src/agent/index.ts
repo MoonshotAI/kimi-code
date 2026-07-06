@@ -55,6 +55,7 @@ import { TurnFlow } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
+import { LlmRequestRecorder } from './llm-request-recorder';
 import { resolveCompletionBudget } from '../utils/completion-budget';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
@@ -125,6 +126,7 @@ export class Agent {
   readonly experimentalFlags: ExperimentalFlagResolver;
 
   readonly llmRequestLogger: LlmRequestLogger;
+  readonly llmRequestRecorder: LlmRequestRecorder;
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
@@ -187,6 +189,7 @@ export class Agent {
     this.systemPromptContextProvider = options.systemPromptContextProvider;
 
     this.llmRequestLogger = new LlmRequestLogger(this.log);
+    this.llmRequestRecorder = new LlmRequestRecorder(this);
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
@@ -265,6 +268,13 @@ export class Agent {
         this.llmRequestLogger.logRequest({
           provider,
           modelAlias,
+          systemPrompt,
+          tools,
+          messages: history,
+          fields: requestLogFields,
+        });
+        this.llmRequestRecorder.record({
+          provider,
           systemPrompt,
           tools,
           messages: history,
