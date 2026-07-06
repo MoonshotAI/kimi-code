@@ -541,7 +541,6 @@ function forgetSession(sessionId: string): void {
   delete rawState.messagesHasMoreBySession[sessionId];
   delete rawState.messagesLoadMoreErrorBySession[sessionId];
   delete epochBySession[sessionId];
-  lastLoadedSeq.delete(sessionId);
   sessionsKnownEmpty.delete(sessionId);
   // In-flight / queued prompt state: drop these too so a queued follow-up
   // can't be submitted to a session that was just archived when its turn later
@@ -905,14 +904,6 @@ function connectEventsIfNeeded(): void {
 // reactive — only consulted when building the subscribe cursor.
 const epochBySession: Record<string, string> = {};
 
-// Durable `seq` (event journal offset) captured the last time we loaded this
-// session's messages from a snapshot. Compared on re-open to skip the snapshot
-// fetch + transcript remount when nothing durable happened since. Not reactive
-// — only read inside reopenSession. Preferred over `updatedAt`: every durable
-// event (including `turn.ended`, which does not bump `updatedAt`) advances seq,
-// so it can never miss a change that matters here.
-const lastLoadedSeq = new Map<string, number>();
-
 // Sessions created locally in this client instance are known to be empty until
 // they receive their first message. This is more reliable than the daemon's
 // messageCount field, which can be stale for old sessions and would otherwise
@@ -1205,7 +1196,6 @@ async function syncSessionFromSnapshot(
       [sessionId]: snap.asOfSeq,
     };
     epochBySession[sessionId] = snap.epoch;
-    lastLoadedSeq.set(sessionId, snap.asOfSeq);
 
     connectEventsIfNeeded();
     if (eventConn) {
@@ -1301,50 +1291,17 @@ function dropWsSubscription(sessionId: string): void {
   sessionsWithStaleCursor.delete(sessionId);
 }
 
-/** Re-subscribe to live events from the tracked cursor (cheap, no remount).
- *  Used on re-open when the session provably has not changed since we last
- *  loaded it, so there is nothing new to rebuild from a snapshot. */
-function resubscribeSessionEvents(sessionId: string): void {
-  connectEventsIfNeeded();
-  if (eventConn) {
-    // Apply any queued streaming deltas before re-subscribing so the transcript
-    // is current. (Volatile — never replayed by the server, but flushing here is
-    // cheap and future-proofs the cursor if the batching set ever changes.)
-    enqueueEvent.flush();
-    const seq = rawState.lastSeqBySession[sessionId] ?? 0;
-    const epoch = epochBySession[sessionId];
-    eventConn.subscribe(sessionId, { seq, epoch });
-    retainWsSubscription(sessionId);
-  }
-}
-
-/** Re-open an already-loaded session.
+/** Re-open an already-loaded session: always rebuild from a fresh snapshot.
  *
  *  Volatile `assistant.delta` frames are never journaled or replayed: if a
  *  transport hiccup covered the tail of a turn while the user was away, the
  *  local transcript silently lost the model's final text, and a cursor
- *  resubscribe has nothing to recover it with. So re-open must be able to
- *  rebuild from the authoritative snapshot.
- *
- *  But rebuilding on EVERY re-open remounts the transcript (scroll reset +
- *  entrance-animation replay) even when nothing changed — a daily annoyance.
- *  Gate on the durable event `seq` captured at the last snapshot load: every
- *  durable event (including `turn.ended`, which does NOT bump `updatedAt`)
- *  advances it, so unlike `updatedAt` it can never miss a content change —
- *  including a mid-turn snapshot followed by a lost tail whose reconnect replay
- *  is only `turn.ended`.
- *    - evicted subscription  → cursor untrustworthy, always rebuild;
- *    - seq unchanged         → cheap cursor resubscribe, no remount;
- *    - seq advanced          → rebuild from snapshot, restoring any lost tail. */
+ *  resubscribe has nothing to recover it with. Fetching the authoritative
+ *  snapshot on every re-open keeps the logic trivially correct (no freshness
+ *  heuristics); the snapshot is cheap server-side (LRU on the wire file), and
+ *  the staleness guard inside syncSessionFromSnapshot discards the fetched
+ *  snapshot if newer local activity (a send / live events) raced the GET. */
 async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
-  if (sessionsWithStaleCursor.has(sessionId)) {
-    return syncSessionFromSnapshot(sessionId);
-  }
-  const currentSeq = rawState.lastSeqBySession[sessionId] ?? 0;
-  if (currentSeq === (lastLoadedSeq.get(sessionId) ?? 0)) {
-    resubscribeSessionEvents(sessionId);
-    return 'ok';
-  }
   return syncSessionFromSnapshot(sessionId);
 }
 
