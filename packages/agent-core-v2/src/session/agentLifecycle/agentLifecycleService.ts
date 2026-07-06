@@ -43,7 +43,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext';
 import { IAgentProfileService } from '#/agent/profile';
 import { contextBlobSelector, IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentBuiltinToolsRegistrar } from '#/agent/toolRegistry';
-import { IAgentWireRecordService, AgentWireRecordService, wireRecordPersistKey } from '#/agent/wireRecord';
+import { IAgentWireRecordService, AgentWireRecordService, WIRE_RECORD_FILENAME } from '#/agent/wireRecord';
 import { IAgentWireService, WireService } from '#/wire';
 import { IAgentBlobService, AgentBlobServiceImpl } from '#/agent/blob';
 import {
@@ -128,7 +128,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             } satisfies IAgentScopeContext,
           ],
           [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService, [{ homedir: agentHomedir }])],
-          [IAgentWireService, new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: wireRecordPersistKey(agentHomedir), blobSelector: contextBlobSelector }])],
+          [IAgentWireService, new SyncDescriptor(WireService, [{ logScope: agentScope, logKey: WIRE_RECORD_FILENAME, blobSelector: contextBlobSelector }])],
           [IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl, [{}])],
           [
             IAgentMcpService,

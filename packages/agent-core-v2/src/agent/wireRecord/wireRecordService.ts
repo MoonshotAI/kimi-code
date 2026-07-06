@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { relative } from 'pathe';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -43,7 +43,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     keyof WireRecordMap,
     BlobSelector<keyof WireRecordMap>[]
   >();
-  private readonly persistKey: string | undefined;
+  private readonly wireScope: string;
   private persistentAppendQueue: Promise<void> = Promise.resolve();
   private _restoring: { time?: number } | null = null;
   private _postRestoring = false;
@@ -60,12 +60,14 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     @IAppendLogStore private readonly log?: IAppendLogStore,
   ) {
     super();
-    // Each agent scope seeds its own `homedir` so the wire-log persistence key
-    // is per-agent. `IAppendLogStore` is App-scoped (shared), so a shared key
-    // would make every agent's wire records collide in the same append log.
-    this.persistKey = hashKey(options.homedir ?? bootstrap.homeDir);
-    if (this.log !== undefined && this.persistKey !== undefined) {
-      this._register(this.log.acquire('wire', this.persistKey));
+    // Each agent scope seeds its own `homedir` (`<homeDir>/sessions/<ws>/<sid>/
+    // agents/<aid>`); the wire log is the fixed `wire.jsonl` beneath it. The
+    // `IAppendLogStore` is App-scoped (shared, rooted at `homeDir`), so the
+    // store `scope` is the homedir made relative to `homeDir` — keeping every
+    // agent's records in its own file instead of one shared log.
+    this.wireScope = relative(bootstrap.homeDir, options.homedir ?? bootstrap.homeDir);
+    if (this.log !== undefined) {
+      this._register(this.log.acquire(this.wireScope, WIRE_RECORD_FILENAME));
     }
   }
 
@@ -119,8 +121,8 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     const fromPersistence = records === undefined;
     const source =
       records ??
-      (this.log !== undefined && this.persistKey !== undefined
-        ? this.log.read<PersistedWireRecord>('wire', this.persistKey)
+      (this.log !== undefined
+        ? this.log.read<PersistedWireRecord>(this.wireScope, WIRE_RECORD_FILENAME)
         : undefined);
     if (source === undefined) {
       await this.runResumeEndedHooks();
@@ -132,7 +134,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     const restoredRecords: PersistedWireRecord[] | undefined =
       rewriteMigratedRecords ? [] : undefined;
     const requireMetadata =
-      fromPersistence && this.log !== undefined && this.persistKey !== undefined;
+      fromPersistence && this.log !== undefined;
     let migrations: readonly WireMigration[] = [];
     let shouldRewrite = false;
     let completed = true;
@@ -188,10 +190,9 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
       completed &&
       shouldRewrite &&
       restoredRecords !== undefined &&
-      this.log !== undefined &&
-      this.persistKey !== undefined
+      this.log !== undefined
     ) {
-      this.log.rewrite('wire', this.persistKey, restoredRecords);
+      this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
       await this.log.flush();
     }
     if (completed) {
@@ -211,7 +212,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
   }
 
   private appendPersistent(record: PersistedWireRecord): void {
-    if (this.log === undefined || this.persistKey === undefined) return;
+    if (this.log === undefined) return;
     let metadata: WireRecordMetadata | undefined;
     if (!this.metadataInitialized && record.type !== 'metadata') {
       metadata = {
@@ -226,14 +227,14 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     }
 
     const append = this.persistentAppendQueue.then(async () => {
-      if (this.log === undefined || this.persistKey === undefined) return;
+      if (this.log === undefined) return;
       if (metadata !== undefined) {
-        this.log.append('wire', this.persistKey, metadata, {
+        this.log.append(this.wireScope, WIRE_RECORD_FILENAME, metadata, {
           onError: (error) => this.reportPersistenceError(error, metadata),
         });
       }
       const prepared = await this.preparePersistentRecord(record);
-      this.log.append('wire', this.persistKey, prepared, {
+      this.log.append(this.wireScope, WIRE_RECORD_FILENAME, prepared, {
         onError: (error) => this.reportPersistenceError(error, prepared),
       });
     });
@@ -356,15 +357,18 @@ function isWireRecordMetadata(record: PersistedWireRecord): record is WireRecord
   return record.type === 'metadata' && typeof record['protocol_version'] === 'string';
 }
 
-function hashKey(homedir: string): string {
-  return createHash('sha256').update(homedir).digest('hex').slice(0, 16);
-}
+/**
+ * File name of every agent's wire log, written beneath the agent's homedir
+ * (`<homeDir>/sessions/<ws>/<sid>/agents/<aid>/wire.jsonl`).
+ */
+export const WIRE_RECORD_FILENAME = 'wire.jsonl';
 
 /**
- * Persistence key of an agent's wire log, derived from its homedir. Used by
- * cross-session operations (e.g. fork) to read / rewrite a wire log through
- * `IAppendLogStore` without holding a live agent handle.
+ * Store `scope` of an agent's wire log: its homedir made relative to the app
+ * `homeDir`. Paired with {@link WIRE_RECORD_FILENAME} by callers that read /
+ * rewrite a wire log through `IAppendLogStore` without holding a live agent
+ * handle (e.g. session fork).
  */
-export function wireRecordPersistKey(homedir: string): string {
-  return hashKey(homedir);
+export function wireRecordScope(homedir: string, homeDir: string): string {
+  return relative(homeDir, homedir);
 }

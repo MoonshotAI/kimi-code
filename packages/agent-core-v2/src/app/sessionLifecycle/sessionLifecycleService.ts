@@ -40,7 +40,8 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   IAgentWireRecordService,
-  wireRecordPersistKey,
+  WIRE_RECORD_FILENAME,
+  wireRecordScope,
   type PersistedWireRecord,
 } from '#/agent/wireRecord';
 import { IAgentWireService, type PersistedRecord } from '#/wire';
@@ -321,8 +322,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
     }
 
-    const sourceKey = wireRecordPersistKey(args.sourceHomedir);
-    const records = await collect(this.appendLogStore.read<PersistedWireRecord>('wire', sourceKey));
+    const records = await collect(
+      this.appendLogStore.read<PersistedWireRecord>(
+        wireRecordScope(args.sourceHomedir, this.bootstrap.homeDir),
+        WIRE_RECORD_FILENAME,
+      ),
+    );
     // Ensure the log starts with a metadata envelope (restore() requires it).
     if (records.length === 0) {
       records.push(freshMetadataRecord());
@@ -336,8 +341,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       args.targetSessionId,
       args.agentId,
     );
-    const targetKey = wireRecordPersistKey(targetHomedir);
-    await this.appendLogStore.rewrite('wire', targetKey, records);
+    await this.appendLogStore.rewrite(
+      wireRecordScope(targetHomedir, this.bootstrap.homeDir),
+      WIRE_RECORD_FILENAME,
+      records,
+    );
   }
 
   private async readMetaFromDisk(

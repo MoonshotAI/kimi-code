@@ -17,6 +17,7 @@ import {
   resolveLoggingConfig,
   resolveSessionLogPath,
 } from '#/_base/log';
+import { AppLogService } from '#/_base/log/logService';
 import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext';
 
@@ -126,5 +127,37 @@ describe('SessionLogService', () => {
     return readSessionLog().then((text) => {
       expect(text).toContain('on-dispose');
     });
+  });
+});
+
+describe('ILogService cross-scope resolution', () => {
+  beforeEach(() => {
+    // The module-level hook registers only the Session binding; override with the
+    // production layout — one token bound at both App and Session — to pin how the
+    // single ILogService token resolves across scopes.
+    _clearScopedRegistryForTests();
+    registerScopedService(LifecycleScope.App, ILogService, AppLogService, InstantiationType.Delayed, 'log');
+    registerScopedService(LifecycleScope.Session, ILogService, SessionLogService, InstantiationType.Delayed, 'log');
+  });
+
+  it('resolves the single token to the nearest scope binding', () => {
+    const host = buildHost();
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
+    const agent = host.childOf(session, LifecycleScope.Agent, 'main');
+
+    const appLog = host.app.accessor.get(ILogService);
+    const sessionLog = session.accessor.get(ILogService);
+    const agentLog = agent.accessor.get(ILogService);
+
+    expect(appLog).toBeInstanceOf(AppLogService);
+    expect(sessionLog).toBeInstanceOf(SessionLogService);
+    // Agent has no own binding and falls back to the Session logger.
+    expect(agentLog).toBeInstanceOf(SessionLogService);
+
+    // Each scope is its own singleton; Agent shares the Session instance.
+    expect(appLog).not.toBe(sessionLog);
+    expect(agentLog).toBe(sessionLog);
+
+    host.dispose();
   });
 });

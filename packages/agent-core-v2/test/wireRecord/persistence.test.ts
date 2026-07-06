@@ -122,11 +122,8 @@ async function createWireHarness(): Promise<{
 async function readPersistedWireRecords(
   storage: IFileSystemStorageService,
 ): Promise<readonly PersistedWireRecord[]> {
-  const keys = await storage.list('wire');
-  if (keys.length === 0) return [];
-  expect(keys).toHaveLength(1);
   const log = createAppendLogHarness(storage);
-  return collect<PersistedWireRecord>(log, 'wire', keys[0]);
+  return collect<PersistedWireRecord>(log, '', 'wire.jsonl');
 }
 
 describe('AppendLogStore file persistence', () => {

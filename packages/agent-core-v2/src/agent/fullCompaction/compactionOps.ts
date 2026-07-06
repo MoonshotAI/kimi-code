@@ -33,9 +33,9 @@
  * interface-merge (`error` is already declared by `mcp`, so it is not
  * re-declared). The `full_compaction.*` record shapes stay declared in
  * `WireRecordMap` (see `fullCompactionService.ts`) because the records still
- * ride the shared `'wire'` log read by `wireRecord.restore()` / `getRecords()`
- * — `microCompaction` registers a `full_compaction.complete` resumer against
- * that stream. Consumed by the Agent-scope `fullCompactionService`.
+ * ride the per-agent `wire.jsonl` log read by `wireRecord.restore()` /
+ * `getRecords()` — `microCompaction` registers a `full_compaction.complete`
+ * resumer against that stream. Consumed by the Agent-scope `fullCompactionService`.
  */
 
 import type {
