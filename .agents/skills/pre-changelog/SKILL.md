@@ -37,9 +37,10 @@ If the CLI changelog is not in the diff (for example an SDK-only release), stop 
 
 Process the version block exactly as `sync-changelog` does for the docs site, but only in memory:
 
-- **Strip** (`sync-changelog` step 3): drop the H1, the `### Patch Changes` / `### Minor Changes` / `### Major Changes` subheadings, PR links, commit-hash links, and the `Thanks [@user](...)!` credit (including the multi-author form); keep only each entry's body text.
-- **Classify** (`sync-changelog` step 4): bucket into Features / Bug Fixes / Polish / Refactors / Other; order within each section by reader value.
-- **Translate** (`sync-changelog` step 6): translate entry bodies to Chinese; section headings become 新功能 / 修复 / 优化 / 重构 / 其他.
+- **Strip** (`sync-changelog` step 3): drop the H1, the `### Patch Changes` / `### Minor Changes` / `### Major Changes` subheadings, PR links, and commit-hash links. Drop the `Thanks [@user](...)!` credit only for team members; preserve it for external contributors (see `sync-changelog` "Contributor credit"). Within each entry, drop SDK-only and provider-internal sentences (SDK capability mapping / API exposure, provider wire-format mechanics, internal XML markers) and keep only the user-facing effect and required constraints.
+- **Merge and deduplicate** (`sync-changelog` step 4): merge micro-tweaks to the same surface into one higher-level entry; when three or more fixes target the same UI area or the same class of problem, merge them into one higher-level fix entry (do not merge broad or genuinely distinct fixes); and drop a server/API entry that only backs a web feature already listed.
+- **Classify** (`sync-changelog` step 4): bucket into Features / Bug Fixes / Polish / Refactors / Other; order within each section by reader value (in Polish, user-visible improvements before protocol/internal adjustments).
+- **Translate** (`sync-changelog` step 6): translate entry bodies to Chinese; keep one sentence per entry with a parallel rhythm within a section; render a preserved contributor credit as `（感谢 @user）`; section headings become 新功能 / 修复 / 优化 / 重构 / 其他.
 
 If an upstream entry is not in English, flag it and stop (changeset entries must be English).
 
