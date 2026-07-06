@@ -13,7 +13,7 @@
  * Keyboard:
  *   - ↑ / ↓             move highlight
  *   - ← / → · PgUp/PgDn page
- *   - Enter             on `[ Add New Platform ]` → `onAdd()`
+ *   - Enter             edit selected provider, or add on `[ Add New Platform ]`
  *   - D                 delete with inline `[y/N]` confirmation
  *                         on a source row → `onDeleteSource(providerIds)`
  *                         on `[ Add New Platform ]` → ignored
@@ -61,6 +61,8 @@ export interface ProviderManagerOptions {
   /** Provider id of the currently active model. */
   readonly activeProviderId?: string;
   readonly onAdd: () => void;
+  /** Edit a single provider/source row. Multi-provider registry rows are not editable here. */
+  readonly onEditProvider: (providerId: string) => void;
   /** Delete all providers under a source (Open Platform / custom-registry
    *  fetch / standalone). Passed the full provider-id list so the host
    *  doesn't have to re-derive the source grouping. */
@@ -91,7 +93,7 @@ type Row = SourceRow | AddRow;
 
 const ADD_ROW_LABEL = '[ Add New Platform ]';
 const PAGE_SIZE = 8;
-const HEADER_HINT = '↑↓ navigate · D delete · Esc cancel';
+const HEADER_HINT = '↑↓ navigate · Enter edit/add · D delete · Esc cancel';
 
 // Narrows a `ProviderConfig` blob to a `CustomRegistrySource` payload.
 // Mirrors `readCustomRegistrySource` in `kimi-tui.ts`. We can't import
@@ -308,6 +310,9 @@ export class ProviderManagerComponent extends Container implements Focusable {
       const selected = rows[this.selectedIndex];
       if (selected?.kind === 'add') {
         this.opts.onAdd();
+      } else if (selected?.kind === 'source' && selected.providerIds.length === 1) {
+        const providerId = selected.providerIds[0];
+        if (providerId !== undefined) this.opts.onEditProvider(providerId);
       }
       return;
     }

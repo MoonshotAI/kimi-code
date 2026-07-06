@@ -25,6 +25,7 @@ function makeComponent(overrides: Partial<ProviderManagerOptions> = {}): Provide
   return new ProviderManagerComponent({
     providers: {} as Record<string, ProviderConfig>,
     onAdd: vi.fn(),
+    onEditProvider: vi.fn(),
     onDeleteSource: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
