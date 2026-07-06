@@ -9,7 +9,13 @@ import {
 function subagentTask(
   id: string,
   parentToolCallId: string | undefined,
-  opts: { swarmIndex?: number; status?: AppTask['status']; subagentPhase?: AppTask['subagentPhase'] } = {},
+  opts: {
+    swarmIndex?: number;
+    status?: AppTask['status'];
+    subagentPhase?: AppTask['subagentPhase'];
+    text?: string;
+    outputLines?: string[];
+  } = {},
 ): AppTask {
   return {
     id,
@@ -20,6 +26,8 @@ function subagentTask(
     createdAt: '2026-01-01T00:00:00.000Z',
     parentToolCallId,
     swarmIndex: opts.swarmIndex,
+    text: opts.text,
+    outputLines: opts.outputLines,
     subagentPhase: opts.subagentPhase ?? 'working',
   };
 }
@@ -95,5 +103,25 @@ describe('swarmMembersByToolCall', () => {
       subagentTask('a', 'swarm-1'),
     ]);
     expect([...map.keys()]).toEqual(['swarm-1']);
+  });
+
+  it('carries task.text so live rows can show still-composing subagent output', () => {
+    const map = swarmMembersByToolCall([
+      subagentTask('a', 'swarm-1', { text: 'Hello, world!' }),
+      subagentTask('b', 'swarm-1', { outputLines: ['tool line'] }),
+    ]);
+    const rows = map.get('swarm-1') ?? [];
+    expect(rows[0]).toMatchObject({ id: 'a', text: 'Hello, world!' });
+    expect(rows[1]).toMatchObject({ id: 'b', outputLines: ['tool line'] });
+  });
+});
+
+describe('buildSwarmGroups preserves streamed text', () => {
+  it('carries task.text into each group member', () => {
+    const groups = buildSwarmGroups([
+      subagentTask('a', 'swarm-1', { swarmIndex: 1, text: 'first line' }),
+      subagentTask('b', 'swarm-1', { swarmIndex: 2, text: 'second line' }),
+    ]);
+    expect(groups[0]?.members.map((m) => m.text)).toEqual(['first line', 'second line']);
   });
 });

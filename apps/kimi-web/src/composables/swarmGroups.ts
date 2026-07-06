@@ -7,6 +7,9 @@ export interface SwarmMember {
   phase: AppSubagentPhase;
   summary?: string;
   outputLines?: string[];
+  /** Accumulated streaming text (text-kind taskProgress) — preferred over
+   *  outputLines/summary when rendering the live swarm row activity/body. */
+  text?: string;
   suspendedReason?: string;
   swarmIndex: number;
 }
@@ -53,6 +56,7 @@ export function buildSwarmGroups(tasks: AppTask[]): SwarmGroup[] {
       phase: phaseForTask(task),
       summary: task.outputPreview,
       outputLines: task.outputLines,
+      text: task.text,
       suspendedReason: task.suspendedReason,
       swarmIndex: task.swarmIndex,
     });
@@ -107,6 +111,7 @@ export function swarmMembersByToolCall(tasks: AppTask[]): Map<string, SwarmMembe
       phase: phaseForTask(task),
       summary: task.outputPreview,
       outputLines: task.outputLines,
+      text: task.text,
       suspendedReason: task.suspendedReason,
       swarmIndex: task.swarmIndex ?? Number.MAX_SAFE_INTEGER,
     });

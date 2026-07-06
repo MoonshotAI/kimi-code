@@ -144,8 +144,18 @@ interface Row {
 }
 
 function latestActivity(member: SwarmMember): string {
-  const last = member.outputLines?.map((line) => line.trimEnd()).filter(Boolean).at(-1);
-  return member.suspendedReason || last || member.summary || '';
+  const lastLine = member.outputLines?.map((line) => line.trimEnd()).filter(Boolean).at(-1);
+  // Prefer streamed subagent text so a still-composing agent shows its latest
+  // line instead of an empty/last-summary row.
+  const fromText = member.text?.split('\n').map((l) => l.trimEnd()).filter(Boolean).at(-1);
+  return member.suspendedReason || fromText || lastLine || member.summary || '';
+}
+
+function memberBody(member: SwarmMember): string {
+  if (member.suspendedReason) return member.suspendedReason;
+  if (member.text) return member.text;
+  if (member.outputLines && member.outputLines.length > 0) return member.outputLines.join('\n');
+  return member.summary ?? '';
 }
 
 function outcomeToPhase(outcome: string): AppSubagentPhase {
@@ -163,7 +173,7 @@ const rows = computed<Row[]>(() => {
       name: m.name,
       activity: latestActivity(m),
       phase: m.phase,
-      body: m.summary ?? latestActivity(m),
+      body: memberBody(m),
     }));
   }
   if (result.value) {
