@@ -972,10 +972,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         const result = await syncSessionFromSnapshot(sessionId);
         if (result === 'not-found') return;
       } else {
-        // Re-open: if the session was evicted from the subscription cap since
-        // last open, reopenSession rebuilds it from a snapshot (the kept cursor
-        // may have skipped per-session events); otherwise it re-subscribes from
-        // the tracked cursor and the daemon replays any missed durable events.
+        // Re-open: rebuild from a fresh snapshot rather than resuming from the
+        // tracked cursor — the daemon only replays durable events, so volatile
+        // streamed deltas lost to a WS hiccup would otherwise stay missing.
         const result = await reopenSession(sessionId);
         if (result === 'not-found') return;
       }
