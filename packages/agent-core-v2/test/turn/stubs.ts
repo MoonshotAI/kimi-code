@@ -39,13 +39,6 @@ function makeTurn(id: number): Turn {
   };
 }
 
-function makeHooks(): IAgentTurnService['hooks'] {
-  return createHooks([
-    'onLaunched',
-    'onEnded',
-  ]) as IAgentTurnService['hooks'];
-}
-
 function makeAgentLoopHookSlots(): IAgentLoopService['hooks'] {
   return createHooks([
     'beforeStep',
@@ -61,7 +54,6 @@ export function stubTurn(options: StubTurnOptions = {}): StubTurn {
   let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   return {
     _serviceBrand: undefined,
-    hooks: makeHooks(),
     launch() {
       const turn = makeTurn(nextId++);
       launches.push(turn.id);
@@ -84,13 +76,9 @@ export function stubTurn(options: StubTurnOptions = {}): StubTurn {
  * returns a minimal {@link Turn}; `getActiveTurn` is a no-op.
  */
 export function stubTurnWithHooks(): IAgentTurnService {
-  const turn = makeTurn(0);
-  return {
-    _serviceBrand: undefined,
-    hooks: makeHooks(),
-    launch: () => turn,
-    getActiveTurn: () => undefined,
-  };
+  // Turn-lifecycle hooks moved to `IEventBus`; no service registers turn hooks
+  // anymore, so this is now equivalent to `stubTurn()`.
+  return stubTurn();
 }
 
 /** An `IAgentLoopService` stub backed by real loop lifecycle hook slots. */

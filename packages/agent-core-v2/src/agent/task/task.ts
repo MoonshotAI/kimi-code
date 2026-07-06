@@ -118,10 +118,6 @@ export interface IAgentTaskService {
   waitForForegroundRelease(
     taskId: string,
   ): Promise<ForegroundTaskReleaseReason | undefined>;
-
-  readonly hooks: Hooks<{
-    onDidNotify: AgentTaskNotificationContext;
-  }>;
 }
 
 export const IAgentTaskService =

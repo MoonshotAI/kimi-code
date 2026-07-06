@@ -28,6 +28,7 @@ import {
 } from "#/_base/utils/tokens";
 import type { TelemetryProperties } from '#/app/telemetry';
 import { IConfigService } from '#/app/config';
+import { IEventBus } from '#/app/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize';
 import { IFlagService } from '#/app/flag';
@@ -72,6 +73,7 @@ export class AgentMicroCompactionService
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService loop: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();
     this.microConfig = this.readConfig();
@@ -92,10 +94,7 @@ export class AgentMicroCompactionService
       ),
     );
     this._register(
-      this.context.hooks.onSpliced.register('micro-compaction', async (ctx, next) => {
-        this.observeSplice(ctx);
-        await next();
-      }),
+      this.eventBus.subscribe('context.spliced', (e) => this.observeSplice(e)),
     );
   }
 

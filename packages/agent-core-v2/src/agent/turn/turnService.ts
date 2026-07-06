@@ -25,7 +25,7 @@ import { IAgentLoopService } from '#/agent/loop';
 import { IEventBus } from '#/app/event';
 import { IAgentTelemetryContextService, ITelemetryService } from '#/app/telemetry';
 import { IAgentWireService, type IWireService } from '#/wire';
-import type { Turn, TurnEndedContext, TurnResult } from './turn';
+import type { Turn, TurnResult } from './turn';
 import { IAgentTurnService } from './turn';
 import { promptTurn, TurnModel } from './turnOps';
 
@@ -41,11 +41,6 @@ declare module '#/app/event/eventBus' {
 export class AgentTurnService implements IAgentTurnService {
   declare readonly _serviceBrand: undefined;
   private activeTurn: Turn | undefined;
-
-  readonly hooks = {
-    onLaunched: new OrderedHookSlot<{ turn: Turn }>(),
-    onEnded: new OrderedHookSlot<TurnEndedContext>(),
-  };
 
   constructor(
     @IAgentLoopService private readonly loop: IAgentLoopService,
@@ -77,7 +72,6 @@ export class AgentTurnService implements IAgentTurnService {
     void ready.catch(() => undefined);
     this.activeTurn = turn;
     turn.result = this.runTurn(turn, ready);
-    void this.hooks.onLaunched.run({ turn });
     return turn;
   }
 
@@ -128,9 +122,8 @@ export class AgentTurnService implements IAgentTurnService {
           turnTelemetry.track('turn_interrupted', { at_step: result.steps ?? null });
         }
       }
-      if (result !== undefined) {
-        await this.hooks.onEnded.run({ turn, result });
-      }
+      // `turn.ended` is published to `IEventBus` above; subscribers (swarm /
+      // goal / externalHooks) react there — no hook slot to run here.
     }
   }
 }

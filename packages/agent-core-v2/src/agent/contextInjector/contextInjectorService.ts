@@ -9,6 +9,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentLoopService } from '#/agent/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IAgentTurnService } from '#/agent/turn';
+import { IEventBus } from '#/app/event';
 import type { ContextMessage } from '#/agent/contextMemory';
 import {
   IAgentContextInjectorService,
@@ -34,6 +35,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentTurnService turnService: IAgentTurnService,
     @IAgentLoopService loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();
     this._register(
@@ -43,17 +45,13 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
       }),
     );
     this._register(
-      turnService.hooks.onLaunched.register('context-injector', (_ctx, next) => {
+      this.eventBus.subscribe('turn.started', () => {
         for (const entry of this.entries) {
           entry.turnConsumed = false;
         }
-        return next();
       }),
     );
-    context.hooks.onSpliced.register('context-injector', (ctx, next) => {
-      this.handleSplice(ctx);
-      return next();
-    });
+    this.eventBus.subscribe('context.spliced', (e) => this.handleSplice(e));
   }
 
   register(

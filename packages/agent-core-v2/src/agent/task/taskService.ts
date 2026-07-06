@@ -19,6 +19,7 @@ import type { ContentPart } from '#/app/llmProtocol';
 
 import { Disposable } from '#/_base/di';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
+import { IEventBus } from '#/app/event';
 import type { TaskOrigin } from '#/agent/contextMemory';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task';
 import {
@@ -55,7 +56,6 @@ import { TaskModel, taskStarted, taskTerminated } from './taskOps';
 import { TaskListTool } from '#/agent/task/tools/task-list';
 import { TaskOutputTool } from '#/agent/task/tools/task-output';
 import { TaskStopTool } from '#/agent/task/tools/task-stop';
-import { OrderedHookSlot } from '#/hooks';
 
 interface ForegroundRelease {
   readonly promise: Promise<ForegroundTaskReleaseReason>;
@@ -123,11 +123,14 @@ export function isAgentTaskTerminal(status: AgentTaskStatus): boolean {
   return TERMINAL_STATUSES.has(status);
 }
 
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'task.notified': AgentTaskNotificationContext;
+  }
+}
+
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
-  readonly hooks: IAgentTaskService['hooks'] = {
-    onDidNotify: new OrderedHookSlot<AgentTaskNotificationContext>(),
-  };
 
   private readonly tasks = new Map<string, ManagedTask>();
   private readonly ghosts = new Map<string, AgentTaskInfo>();
@@ -145,6 +148,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @ISessionContext session: ISessionContext,
     @ITaskService private readonly taskService: ITaskService,
     @IAgentWireService private readonly wire: IWireService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();
     this.persistence = new AgentTaskPersistence(
@@ -155,9 +159,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     );
     this._register(this.wire.onRestored(() => this.restoreAfterReplay()));
     this._register(
-      context.hooks.onSpliced.register('task-notification-delivery', async (ctx, next) => {
-        await next();
-        for (const message of ctx.messages) {
+      this.eventBus.subscribe('context.spliced', (e) => {
+        for (const message of e.messages) {
           if (isTaskOrigin(message.origin)) {
             this.markDeliveredNotification(message.origin);
           }
@@ -865,14 +868,15 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
-    void this.hooks.onDidNotify.run({
+    this.eventBus.publish({
+      type: 'task.notified',
       notificationType: notification.type,
       title: notification.title,
       body: notification.body,
       severity: notification.severity,
       sourceKind: notification.source_kind,
       sourceId: notification.source_id,
-    }).catch(() => undefined);
+    });
   }
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {

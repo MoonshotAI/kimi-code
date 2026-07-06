@@ -37,11 +37,6 @@ export interface IAgentPermissionGate {
   authorize(
     context: ResolvedToolExecutionHookContext,
   ): Promise<AuthorizeToolExecutionResult | undefined>;
-
-  readonly hooks: Hooks<{
-    onDidRequestApproval: PermissionApprovalRequestContext;
-    onDidResolveApproval: PermissionApprovalResultContext;
-  }>;
 }
 
 export const IAgentPermissionGate =

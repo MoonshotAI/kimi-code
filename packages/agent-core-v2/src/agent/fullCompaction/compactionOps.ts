@@ -47,7 +47,7 @@ import type {
 import { defineModel, defineOp } from '#/wire';
 
 import type { FullCompactionCompleteData } from './fullCompaction';
-import type { CompactionBeginData } from './types';
+import type { CompactionBeginData, CompactionSource } from './types';
 
 export type CompactionPhase = 'idle' | 'running' | 'cancelled' | 'completed';
 
@@ -64,7 +64,7 @@ declare module '#/app/event/eventBus' {
     'compaction.started': Omit<CompactionStartedEvent, 'type'>;
     'compaction.blocked': Omit<CompactionBlockedEvent, 'type'>;
     'compaction.cancelled': Omit<CompactionCancelledEvent, 'type'>;
-    'compaction.completed': Omit<CompactionCompletedEvent, 'type'>;
+    'compaction.completed': Omit<CompactionCompletedEvent, 'type'> & { readonly trigger: CompactionSource };
   }
 }
 

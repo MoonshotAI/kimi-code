@@ -15,21 +15,11 @@ export interface Turn {
   readonly result: Promise<TurnResult>;
 }
 
-export interface TurnEndedContext {
-  readonly turn: Turn;
-  readonly result: TurnResult;
-}
-
 export interface IAgentTurnService {
   readonly _serviceBrand: undefined;
 
   launch(): Turn;
   getActiveTurn(): Turn | undefined;
-
-  readonly hooks: Hooks<{
-    onLaunched: { turn: Turn };
-    onEnded: TurnEndedContext;
-  }>;
 }
 
 export const IAgentTurnService = createDecorator<IAgentTurnService>('agentTurnService');

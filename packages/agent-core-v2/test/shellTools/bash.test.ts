@@ -38,7 +38,6 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IProcess, ISessionProcessRunner } from '#/session/process';
 import { type BashInput, BashInputSchema, BashTool } from '#/os/backends/node-local/tools/bash';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
-import { createHooks } from '#/hooks';
 
 const posixEnv: IHostEnvironment = {
   _serviceBrand: undefined,
@@ -451,8 +450,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
 
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
-    hooks: createHooks(['onDidNotify']) as IAgentTaskService['hooks'],
-
     track(): never {
       throw new Error('fake IAgentTaskService.track is not implemented');
     },

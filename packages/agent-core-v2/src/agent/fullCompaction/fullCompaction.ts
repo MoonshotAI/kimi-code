@@ -32,7 +32,6 @@ export interface IAgentFullCompactionService {
 
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionWillCompactContext;
-    onDidCompact: FullCompactionDidCompactContext;
   }>;
 }
 

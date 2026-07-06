@@ -18,11 +18,6 @@ export class AgentToolRegistryService extends Disposable implements IAgentToolRe
   declare readonly _serviceBrand: undefined;
   private readonly tools = new Map<string, ToolEntry>();
 
-  readonly hooks = {
-    onRegistered: new OrderedHookSlot<{ tool: ExecutableTool }>(),
-    onUnregistered: new OrderedHookSlot<{ tool: ExecutableTool }>(),
-  };
-
   constructor() {
     super();
   }
@@ -32,8 +27,6 @@ export class AgentToolRegistryService extends Disposable implements IAgentToolRe
     const entry: ToolEntry = { tool, source };
     this.unregisterTool(tool.name);
     this.tools.set(tool.name, entry);
-
-    void this.hooks.onRegistered.run({ tool: entry.tool });
 
     return toDisposable(() => {
       const current = this.tools.get(tool.name);
@@ -61,7 +54,6 @@ export class AgentToolRegistryService extends Disposable implements IAgentToolRe
     const entry = this.tools.get(name);
     if (entry === undefined) return undefined;
     this.tools.delete(name);
-    void this.hooks.onUnregistered.run({ tool: entry.tool });
     return entry;
   }
 }

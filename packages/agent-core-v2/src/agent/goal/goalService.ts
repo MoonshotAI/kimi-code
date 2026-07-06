@@ -42,7 +42,7 @@ import {
   type TurnBeforeStepContext,
 } from '#/agent/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder';
-import { IAgentTurnService, type Turn, type TurnEndedContext } from '#/agent/turn';
+import { IAgentTurnService, type TurnResult } from '#/agent/turn';
 import type { TokenUsage } from '#/app/llmProtocol';
 import type { TelemetryProperties } from '#/app/telemetry';
 import { ITelemetryService } from '#/app/telemetry';
@@ -161,10 +161,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     // fork clear handled by wire forkGoal op; reminder intentionally dropped (reversible).
     this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
     this._register(
-      turnService.hooks.onLaunched.register('goal-track-launched-turn', (ctx, next) => {
-        this.handleTurnLaunched(ctx.turn);
-        return next();
-      }),
+      this.eventBus.subscribe('turn.started', (e) => this.handleTurnLaunched(e.turnId)),
     );
     this._register(
       loopService.hooks.beforeStep.register('goal-count-turn', async (ctx, next) => {
@@ -179,9 +176,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this._register(
-      turnService.hooks.onEnded.register('goal-drive-continuation', async (ctx, next) => {
-        await next();
-        await this.handleTurnEnded(ctx);
+      this.eventBus.subscribe('turn.ended', (e) => {
+        void this.handleTurnEnded(e.turnId, { reason: e.reason, error: e.error }).catch(
+          () => undefined,
+        );
       }),
     );
   }
@@ -379,8 +377,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
   }
 
-  private handleTurnLaunched(turn: Turn): void {
-    const turnId = turn.id;
+  private handleTurnLaunched(turnId: number): void {
     if (this.goalState?.status === 'active') this.goalDrivenTurns.add(turnId);
     this.goalOutcomeContinuationTurns.delete(turnId);
   }
@@ -409,23 +406,25 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     ctx.continue = true;
   }
 
-  private async handleTurnEnded(ctx: TurnEndedContext): Promise<void> {
-    const turnId = ctx.turn.id;
+  private async handleTurnEnded(
+    turnId: number,
+    result: { reason: TurnResult['reason']; error?: TurnResult['error'] },
+  ): Promise<void> {
     this.goalDrivenTurns.delete(turnId);
     this.countedGoalTurns.delete(turnId);
     this.goalOutcomeContinuationTurns.delete(turnId);
 
-    if (ctx.result.reason === 'blocked') {
+    if (result.reason === 'blocked') {
       await this.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
       return;
     }
 
-    if (ctx.result.reason === 'cancelled') {
+    if (result.reason === 'cancelled') {
       await this.pauseOnInterrupt({ reason: 'Paused after interruption' });
       return;
     }
-    if (ctx.result.reason === 'failed') {
-      await this.pauseActiveGoal({ reason: goalFailurePauseReason(ctx.result.error) });
+    if (result.reason === 'failed') {
+      await this.pauseActiveGoal({ reason: goalFailurePauseReason(result.error) });
       return;
     }
 

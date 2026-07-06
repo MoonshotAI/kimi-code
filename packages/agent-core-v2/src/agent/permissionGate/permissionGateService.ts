@@ -29,15 +29,17 @@ import {
 } from './permissionGate';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { OrderedHookSlot } from '#/hooks';
+import { IEventBus } from '#/app/event';
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'permission.approval.requested': PermissionApprovalRequestContext;
+    'permission.approval.resolved': PermissionApprovalResultContext;
+  }
+}
 
 export class AgentPermissionGate extends Disposable implements IAgentPermissionGate {
   declare readonly _serviceBrand: undefined;
-  readonly hooks: IAgentPermissionGate['hooks'] = {
-    onDidRequestApproval: new OrderedHookSlot<PermissionApprovalRequestContext>(),
-    onDidResolveApproval: new OrderedHookSlot<PermissionApprovalResultContext>(),
-  };
-
   constructor(
     private readonly options: PermissionGateOptions = {},
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
@@ -46,6 +48,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     @ISessionContext private readonly session: ISessionContext,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
@@ -147,7 +150,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     if (approvalService === undefined) {
       response = { decision: 'approved' };
     } else {
-      void this.hooks.onDidRequestApproval.run(approvalContext).catch(() => undefined);
+      this.eventBus.publish({ type: 'permission.approval.requested', ...approvalContext });
       try {
         response = await abortable(
           approvalService.request(approvalRequest),
@@ -166,11 +169,12 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
           session_cache_written: false,
           has_feedback: false,
         });
-        void this.hooks.onDidResolveApproval.run({
+        this.eventBus.publish({
+          type: 'permission.approval.resolved',
           ...approvalContext,
           decision: 'error',
           error: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined);
+        });
         const resolved = result.resolveError?.(error);
         if (resolved !== undefined) {
           return this.permissionPolicyResolutionToAuthorize(resolved, context, policyName);
@@ -184,10 +188,11 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
         ? context.execution.approvalRule
         : undefined;
     if (approvalService !== undefined) {
-      void this.hooks.onDidResolveApproval.run({
+      this.eventBus.publish({
+        type: 'permission.approval.resolved',
         ...approvalContext,
         ...response,
-      }).catch(() => undefined);
+      });
     }
     this.rulesService.recordApprovalResult({
       turnId: context.turnId,

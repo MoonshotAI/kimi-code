@@ -22,11 +22,6 @@ export interface IAgentToolRegistryService {
   register(tool: ExecutableTool, options?: ToolRegistrationOptions): IDisposable;
   list(): readonly ToolInfo[];
   resolve(name: string): ExecutableTool | undefined;
-
-  readonly hooks: Hooks<{
-    onRegistered: { tool: ExecutableTool };
-    onUnregistered: { tool: ExecutableTool };
-  }>;
 }
 
 export const IAgentToolRegistryService = createDecorator<IAgentToolRegistryService>('agentToolRegistryService');

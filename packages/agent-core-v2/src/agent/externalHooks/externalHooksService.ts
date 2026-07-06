@@ -22,9 +22,9 @@ import { IAgentTaskService, type AgentTaskNotificationContext } from '#/agent/ta
 import { IAgentContextMemoryService, USER_PROMPT_ORIGIN } from '#/agent/contextMemory';
 import {
   IAgentFullCompactionService,
-  type FullCompactionDidCompactContext,
   type FullCompactionWillCompactContext,
 } from '#/agent/fullCompaction';
+import type { CompactionResult, CompactionSource } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type TurnAfterStepContext } from '#/agent/loop';
 import {
   IAgentPermissionGate,
@@ -33,7 +33,7 @@ import {
   IAgentPromptService,
   type PromptSubmitContext,
 } from '#/agent/prompt';
-import type { HookResultEvent } from '@moonshot-ai/protocol';
+import type { HookResultEvent, TurnEndReason } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event';
 import type {
   ExecutableToolResult,
@@ -43,7 +43,6 @@ import type {
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import {
   IAgentTurnService,
-  type TurnEndedContext,
 } from '#/agent/turn';
 import { IBootstrapService } from '#/app/bootstrap';
 import { IConfigService } from '#/app/config';
@@ -169,21 +168,21 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
   private registerPermissionHooks(permission: IAgentPermissionGate): void {
     this._register(
-      permission.hooks.onDidRequestApproval.register('externalHooks', async (ctx, next) => {
+      this.eventBus.subscribe('permission.approval.requested', (e) => {
+        const { type: _type, ...inputData } = e;
         void this.engine()?.fireAndForgetTrigger('PermissionRequest', {
-          matcherValue: ctx.toolName,
-          inputData: { ...ctx },
+          matcherValue: e.toolName,
+          inputData,
         });
-        await next();
       }),
     );
     this._register(
-      permission.hooks.onDidResolveApproval.register('externalHooks', async (ctx, next) => {
+      this.eventBus.subscribe('permission.approval.resolved', (e) => {
+        const { type: _type, ...inputData } = e;
         void this.engine()?.fireAndForgetTrigger('PermissionResult', {
-          matcherValue: ctx.toolName,
-          inputData: { ...ctx },
+          matcherValue: e.toolName,
+          inputData,
         });
-        await next();
       }),
     );
   }
@@ -202,10 +201,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
   private registerTurnHooks(turn: IAgentTurnService): void {
     this._register(
-      turn.hooks.onEnded.register('externalHooks', async (ctx, next) => {
-        this.notifyTurnEnded(ctx);
-        await next();
-      }),
+      this.eventBus.subscribe('turn.ended', (e) => this.notifyTurnEnded(e)),
     );
   }
 
@@ -244,18 +240,15 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
       }),
     );
     this._register(
-      fullCompaction.hooks.onDidCompact.register('externalHooks', async (ctx, next) => {
-        this.notifyPostCompact(ctx);
-        await next();
-      }),
+      this.eventBus.subscribe('compaction.completed', (e) => this.notifyPostCompact(e)),
     );
   }
 
   private registerTaskHooks(tasks: IAgentTaskService): void {
     this._register(
-      tasks.hooks.onDidNotify.register('externalHooks', async (ctx, next) => {
+      this.eventBus.subscribe('task.notified', (e) => {
+        const { type: _type, ...ctx } = e;
         this.notifyTaskNotification(ctx);
-        await next();
       }),
     );
   }
@@ -352,17 +345,18 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     return false;
   }
 
-  private notifyTurnEnded(ctx: TurnEndedContext): void {
+  private notifyTurnEnded(event: {
+    turnId: number;
+    reason: TurnEndReason;
+    error?: unknown;
+  }): void {
     this.stopHookContinuationUsed = false;
-    if (ctx.result.reason === 'failed' && ctx.result.error !== undefined) {
-      this.notifyStopFailure(ctx.result.error, ctx.turn.abortController.signal);
+    if (event.reason === 'failed' && event.error !== undefined) {
+      this.notifyStopFailure(event.error, new AbortController().signal);
     }
-    if (
-      ctx.result.reason === 'cancelled' &&
-      isUserCancellation(ctx.turn.abortController.signal.reason)
-    ) {
+    if (event.reason === 'cancelled') {
       void this.engine()?.fireAndForgetTrigger('Interrupt', {
-        inputData: { turnId: ctx.turn.id, reason: 'cancelled' },
+        inputData: { turnId: event.turnId, reason: 'cancelled' },
       });
     }
   }
@@ -406,12 +400,12 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     ctx.signal.throwIfAborted();
   }
 
-  private notifyPostCompact(ctx: FullCompactionDidCompactContext): void {
+  private notifyPostCompact(event: { trigger: CompactionSource; result: CompactionResult }): void {
     void this.engine()?.fireAndForgetTrigger('PostCompact', {
-      matcherValue: ctx.trigger,
+      matcherValue: event.trigger,
       inputData: {
-        trigger: ctx.trigger,
-        estimatedTokenCount: ctx.estimatedTokenCount,
+        trigger: event.trigger,
+        estimatedTokenCount: event.result.tokensAfter,
       },
     });
   }

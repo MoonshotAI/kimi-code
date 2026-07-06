@@ -17,6 +17,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IAgentTurnService } from '#/agent/turn';
+import { IEventBus } from '#/app/event';
 import { IAgentWireService, type IWireService } from '#/wire';
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
@@ -30,15 +31,14 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
     @IAgentWireService private readonly wire: IWireService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentTurnService turnService: IAgentTurnService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();
     this._register(
-      turnService.hooks.onEnded.register('swarm-mode-auto-exit', (_ctx, next) => {
-        const done = next();
+      this.eventBus.subscribe('turn.ended', () => {
         if (this.shouldAutoExit) {
           this.exit();
         }
-        return done;
       }),
     );
   }
