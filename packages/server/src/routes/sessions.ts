@@ -188,42 +188,42 @@ async function listSessionsWithRouteFilter(
   predicate: (session: SessionListItem) => boolean,
 ): Promise<SessionListPage> {
   const targetSize = normalizeSessionListPageSize(cursor);
-
-  // Forward (after_id) drain: the core returns the newest page above the pivot,
-  // and the only way to page further would be `before_id` — which reintroduces
-  // the pivot and older sessions, crossing the `after_id` lower bound. Take a
-  // single core page and filter it instead of draining past the bound.
-  if (cursor.after_id !== undefined && cursor.before_id === undefined) {
-    const page = await fetchPage({
-      ...baseQuery,
-      after_id: cursor.after_id,
-      page_size: MAX_SESSION_LIST_PAGE_SIZE,
-    });
-    const matches = page.items.filter(predicate);
-    return {
-      items: matches.slice(0, targetSize),
-      has_more: matches.length > targetSize,
-    };
-  }
+  const forward = cursor.after_id !== undefined && cursor.before_id === undefined;
 
   const matches: SessionListItem[] = [];
-  let beforeId = cursor.before_id;
+  // Forward starts from the after_id pivot (the newest page above it); backward
+  // starts from before_id (or the newest when there is no cursor). After the first
+  // page both drain toward older sessions via before_id. In forward mode we stop
+  // the moment we reach the pivot session itself, so paging stays within the
+  // after_id bound and never reintroduces the pivot or anything older.
+  let beforeId = forward ? undefined : cursor.before_id;
+  let afterId = forward ? cursor.after_id : undefined;
   let coreHasMore = true;
 
   while (matches.length <= targetSize && coreHasMore) {
     const page = await fetchPage({
       ...baseQuery,
       before_id: beforeId,
+      after_id: afterId,
       page_size: MAX_SESSION_LIST_PAGE_SIZE,
     });
     if (page.items.length === 0) break;
 
-    matches.push(...page.items.filter(predicate));
-    coreHasMore = page.has_more;
+    let hitPivot = false;
+    for (const session of page.items) {
+      if (forward && session.id === afterId) {
+        hitPivot = true;
+        break;
+      }
+      if (predicate(session)) matches.push(session);
+    }
+    coreHasMore = page.has_more && !hitPivot;
+    if (!coreHasMore) break;
 
     const nextBeforeId = page.items[page.items.length - 1]?.id;
-    if (!coreHasMore || nextBeforeId === undefined || nextBeforeId === beforeId) break;
+    if (nextBeforeId === undefined || nextBeforeId === beforeId) break;
     beforeId = nextBeforeId;
+    afterId = undefined;
   }
 
   return {
