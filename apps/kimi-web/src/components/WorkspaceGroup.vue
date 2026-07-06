@@ -254,9 +254,6 @@ function onHeaderDragStart(event: DragEvent): void {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
-  /* Lock the row to the sm IconButton height (26px) so revealing the hover
-     actions does not grow the row and nudge the path line / groups below. */
-  min-height: 26px;
 }
 
 .gh-folder {
@@ -299,16 +296,13 @@ function onHeaderDragStart(event: DragEvent): void {
   opacity: 1;
 }
 
-/* More + add buttons — taken out of the layout until hover (or while the more
-   menu is open / focused). `display: none` (not `opacity: 0`) reserves no width
-   when hidden, so the workspace name fills the row and only truncates once the
-   buttons actually appear. `.gh .gh-more` / `.gh .gh-add` out-specificity
-   IconButton's `display: inline-flex` so the hidden default wins. The same
-   actions stay reachable for keyboard/touch via the right-click menu and the
-   section kebab, so hiding these from the tab order is acceptable. */
+/* More + add buttons — hidden until hover (or while the more menu is open /
+   focused). `.gh .gh-more` / `.gh .gh-add` out-specificity IconButton's display
+   so the hidden default wins. */
 .gh .gh-more,
 .gh .gh-add {
-  display: none;
+  opacity: 0;
+  pointer-events: none;
 }
 .gh:hover .gh-more,
 .gh:hover .gh-add,
@@ -317,7 +311,8 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh-more.open,
 .gh-more:focus-visible,
 .gh-add:focus-visible {
-  display: inline-flex;
+  opacity: 1;
+  pointer-events: auto;
 }
 .gh-more.open { color: var(--color-text); background: var(--color-line); }
 
