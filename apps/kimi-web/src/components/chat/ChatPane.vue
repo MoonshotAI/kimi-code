@@ -8,6 +8,7 @@ import ToolGroup from './ToolGroup.vue';
 import Markdown from './Markdown.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
+import CronNotice from './CronNotice.vue';
 import AuthMedia from './AuthMedia.vue';
 import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
@@ -387,7 +388,7 @@ function copyConversation(): void {
   if (props.turns.length === 0) return;
   const lines: string[] = [];
   for (const turn of props.turns) {
-    if (turn.role === 'compaction') continue; // dividers don't copy
+    if (turn.role === 'compaction' || turn.role === 'cron') continue; // dividers / cron notices don't copy
     const roleLabel = turn.role === 'user' ? 'User' : 'Assistant';
     const content = turnToMarkdown(turn);
     if (content.trim()) {
@@ -639,6 +640,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
         <span class="cd-line" aria-hidden="true" />
       </div>
 
+      <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
+           a lightweight in-transcript notice rather than a user bubble. -->
+      <CronNotice v-else-if="turn.role === 'cron'" :turn="turn" />
+
       <!-- Assistant turn → left-aligned, no name/role label. -->
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
         <template v-for="(blk, bi) in assistantRenderBlocks(turn)" :key="renderBlockKey(blk, bi)">
@@ -801,6 +806,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .chat > .u-turn,
 .chat > .a-msg,
 .chat > .compact-divider,
+.chat > .cron-notice,
 .chat > .sending-placeholder,
 .chat > :deep(.activity-notice) {
   margin-top: var(--chat-turn-gap);
@@ -811,6 +817,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .chat > .u-turn:first-child,
 .chat > .a-msg:first-child,
 .chat > .compact-divider:first-child,
+.chat > .cron-notice:first-child,
 .chat > .sending-placeholder:first-child,
 .chat > :deep(.activity-notice:first-child) {
   margin-top: 0;

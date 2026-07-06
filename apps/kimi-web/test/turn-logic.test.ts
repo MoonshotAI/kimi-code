@@ -287,3 +287,88 @@ describe('latestTodos', () => {
     ).toEqual([{ title: 'new', status: 'done' }]);
   });
 });
+
+describe('messagesToTurns cron', () => {
+  it('renders a cron_job injection as a cron notice with the unwrapped prompt', () => {
+    const envelope =
+      '<cron-fire jobId="a3f9c2" cron="*/5 * * * *" recurring="true" coalescedCount="2" stale="false">\n' +
+      '<prompt>\nCheck the deploy status\n</prompt>\n</cron-fire>';
+    const turns = messagesToTurns(
+      [
+        message('c1', 'user', [{ type: 'text', text: envelope }], {
+          metadata: {
+            origin: {
+              kind: 'cron_job',
+              jobId: 'a3f9c2',
+              cron: '*/5 * * * *',
+              recurring: true,
+              coalescedCount: 2,
+              stale: false,
+            },
+          },
+        }),
+      ],
+      [],
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      role: 'cron',
+      text: 'Check the deploy status',
+      cron: {
+        jobId: 'a3f9c2',
+        cron: '*/5 * * * *',
+        recurring: true,
+        coalescedCount: 2,
+        stale: false,
+      },
+    });
+  });
+
+  it('renders a cron_missed injection as a cron notice carrying the missed count', () => {
+    const envelope = '<cron-fire missed="3">\nDaily report\n</cron-fire>';
+    const turns = messagesToTurns(
+      [
+        message('c2', 'user', [{ type: 'text', text: envelope }], {
+          metadata: { origin: { kind: 'cron_missed', count: 3 } },
+        }),
+      ],
+      [],
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      role: 'cron',
+      text: 'Daily report',
+      cron: { missedCount: 3 },
+    });
+  });
+
+  it('does not also render a user bubble for a cron injection', () => {
+    const turns = messagesToTurns(
+      [
+        message(
+          'c3',
+          'user',
+          [{ type: 'text', text: '<cron-fire>\n<prompt>\nhi\n</prompt>\n</cron-fire>' }],
+          {
+            metadata: {
+              origin: {
+                kind: 'cron_job',
+                jobId: 'j',
+                cron: '* * * * *',
+                recurring: true,
+                coalescedCount: 1,
+                stale: false,
+              },
+            },
+          },
+        ),
+      ],
+      [],
+    );
+
+    expect(turns.some((t) => t.role === 'user')).toBe(false);
+    expect(turns).toHaveLength(1);
+  });
+});

@@ -1218,9 +1218,39 @@ export function createAgentProjector(): AgentProjector {
       }
 
       // -----------------------------------------------------------------------
+      case 'cron.fired': {
+        // A scheduled reminder fired into the session. agent-core persists the
+        // injected user message (so a refresh renders it via messagesToTurns),
+        // but turn.steer() does NOT broadcast a prompt.submitted / message.created
+        // for it — synthesize one here so the notice shows up live too. A later
+        // snapshot reload replaces the message log wholesale, so this synthesized
+        // copy never duplicates the persisted one.
+        const origin = p?.origin;
+        const promptText = stringField(p ?? {}, 'prompt');
+        if (
+          origin &&
+          typeof origin === 'object' &&
+          (origin as Record<string, unknown>)['kind'] === 'cron_job' &&
+          promptText
+        ) {
+          const msg: AppMessage = {
+            id: ulid('cron_'),
+            sessionId,
+            role: 'user',
+            content: [{ type: 'text', text: promptText }],
+            createdAt: new Date().toISOString(),
+            promptId: s.currentPromptId ?? ulid('pr_'),
+            metadata: { origin: origin as Record<string, unknown> },
+          };
+          s.messages.push(msg);
+          out.push({ type: 'messageCreated', message: cloneMessage(msg) });
+        }
+        break;
+      }
+
+      // -----------------------------------------------------------------------
       // Explicitly known but not projected
       case 'compaction.blocked':
-      case 'cron.fired':
       case 'hook.result':
       case 'mcp.server.status':
       case 'skill.activated':

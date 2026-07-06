@@ -184,7 +184,7 @@ export type ApprovalBlock =
     }
   | { kind: 'generic'; summary: string };
 
-export type TurnRole = 'user' | 'assistant' | 'compaction';
+export type TurnRole = 'user' | 'assistant' | 'compaction' | 'cron';
 
 export interface FilePreviewRequest {
   path: string;
@@ -248,6 +248,17 @@ export interface ChatTurn {
   /** Plugin command metadata: when a user turn was triggered by a plugin slash
       command (/plugin:command), this holds the command identity and args. */
   pluginCommand?: { pluginId: string; commandName: string; args?: string };
+  /** Cron fire metadata (role 'cron'): set when an agent turn was triggered by a
+      scheduled reminder rather than a real user. Mirrors the TUI's
+      CronTranscriptData. `missedCount` present means a missed-fire catch-up. */
+  cron?: {
+    jobId?: string;
+    cron?: string;
+    recurring?: boolean;
+    coalescedCount?: number;
+    stale?: boolean;
+    missedCount?: number;
+  };
 }
 
 /**

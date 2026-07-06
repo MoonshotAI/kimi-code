@@ -351,6 +351,79 @@ interface Group {
 // ---------------------------------------------------------------------------
 
 /**
+ * Pull the prompt body out of a cron-fire envelope. Server-side, a cron
+ * injection reaches the transcript as a user message whose text is wrapped in
+ * `<cron-fire …>\n<prompt>\n…\n</prompt>\n</cron-fire>` (see renderCronFireXml
+ * in agent-core). We surface only the inner prompt, mirroring the TUI's
+ * extractCronPrompt / stripCronEnvelope.
+ */
+function extractCronPrompt(text: string): string {
+  const open = '<prompt>\n';
+  const close = '\n</prompt>';
+  const start = text.indexOf(open);
+  const end = text.lastIndexOf(close);
+  if (start >= 0 && end >= start + open.length) {
+    return text.slice(start + open.length, end);
+  }
+  return stripCronEnvelope(text);
+}
+
+function stripCronEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<cron-fire ') &&
+    lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
+}
+
+function cronOriginKind(msg: AppMessage): 'cron_job' | 'cron_missed' | undefined {
+  const origin = msg.metadata?.['origin'] as { kind?: string } | undefined;
+  if (origin?.kind === 'cron_job' || origin?.kind === 'cron_missed') return origin.kind;
+  return undefined;
+}
+
+function cronPromptText(msg: AppMessage): string {
+  const raw = msg.content
+    .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n');
+  return extractCronPrompt(raw);
+}
+
+function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_missed'): ChatTurn {
+  const origin = (msg.metadata?.['origin'] ?? {}) as Record<string, unknown>;
+  const text = cronPromptText(msg);
+  if (kind === 'cron_missed') {
+    return {
+      id: msg.id,
+      role: 'cron',
+      no,
+      text,
+      createdAt: msg.createdAt,
+      cron: { missedCount: typeof origin['count'] === 'number' ? origin['count'] : undefined },
+    };
+  }
+  return {
+    id: msg.id,
+    role: 'cron',
+    no,
+    text,
+    createdAt: msg.createdAt,
+    cron: {
+      jobId: typeof origin['jobId'] === 'string' ? origin['jobId'] : undefined,
+      cron: typeof origin['cron'] === 'string' ? origin['cron'] : undefined,
+      recurring: typeof origin['recurring'] === 'boolean' ? origin['recurring'] : undefined,
+      coalescedCount: typeof origin['coalescedCount'] === 'number' ? origin['coalescedCount'] : undefined,
+      stale: typeof origin['stale'] === 'boolean' ? origin['stale'] : undefined,
+    },
+  };
+}
+
+/**
  * Whether a USER-role message should be shown. Mirrors the TUI's
  * isReplayUserTurnRecord: only real user input (origin `user`/absent, or a
  * user-typed slash command) is displayed; system-injected user turns
@@ -609,6 +682,14 @@ export function messagesToTurns(
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
       flushGroup();
+      // Cron injections are persisted as user-role messages but render as their
+      // own in-transcript notice (TUI parity), not as a user bubble. They still
+      // act as a hard turn boundary (flushGroup above), like a real user turn.
+      const cronKind = cronOriginKind(msg);
+      if (cronKind !== undefined) {
+        turns.push(buildCronTurn(msg, no++, cronKind));
+        continue;
+      }
       // Hide system-injected user turns (TUI parity) — they end the previous
       // assistant turn but aren't rendered as a user bubble.
       if (!isDisplayableUserMessage(msg)) continue;
