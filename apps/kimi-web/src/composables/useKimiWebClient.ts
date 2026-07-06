@@ -13,6 +13,7 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -1137,7 +1138,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
           ? snap.session.model
           : s.model,
     }));
-    setSessionMessages(sessionId, snap.messages);
+    // The snapshot only carries the most recent page; keep any older pages the
+    // user already loaded so reopening does not reset scrollback.
+    setSessionMessages(
+      sessionId,
+      mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
+    );
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
       [sessionId]: snap.hasMoreMessages,

@@ -8,6 +8,7 @@ import { parseDiff } from '../src/lib/parseDiff';
 import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
+import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 import {
   coerceThinkingForModel,
@@ -17,7 +18,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '../src/lib/modelThinking';
-import type { AppModel } from '../src/api/types';
+import type { AppMessage, AppModel } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
@@ -367,5 +368,44 @@ describe('modelThinking', () => {
       expect(effortLabel('off')).toBe('Off');
       expect(effortLabel('xhigh')).toBe('Xhigh');
     });
+  });
+});
+
+describe('mergeSnapshotMessages', () => {
+  function msg(id: string, createdAt: string): AppMessage {
+    return { id, sessionId: 's1', role: 'assistant', content: [], createdAt };
+  }
+
+  it('keeps loaded messages older than the snapshot window', () => {
+    const loaded = [
+      msg('old-1', '2026-01-01T00:00:00.000Z'),
+      msg('old-2', '2026-01-02T00:00:00.000Z'),
+      msg('recent-live', '2026-01-03T00:00:00.000Z'),
+    ];
+    const snapshot = [
+      msg('m0', '2026-01-03T00:00:00.000Z'),
+      msg('m1', '2026-01-04T00:00:00.000Z'),
+    ];
+    expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual([
+      'old-1',
+      'old-2',
+      'm0',
+      'm1',
+    ]);
+  });
+
+  it('returns the snapshot when there is no older loaded prefix', () => {
+    const loaded = [msg('recent-live', '2026-01-03T00:00:00.000Z')];
+    const snapshot = [
+      msg('m0', '2026-01-03T00:00:00.000Z'),
+      msg('m1', '2026-01-04T00:00:00.000Z'),
+    ];
+    expect(mergeSnapshotMessages(loaded, snapshot)).toBe(snapshot);
+  });
+
+  it('returns the snapshot when either side is empty', () => {
+    const snapshot = [msg('m0', '2026-01-03T00:00:00.000Z')];
+    expect(mergeSnapshotMessages([], snapshot)).toBe(snapshot);
+    expect(mergeSnapshotMessages(snapshot, [])).toEqual([]);
   });
 });
