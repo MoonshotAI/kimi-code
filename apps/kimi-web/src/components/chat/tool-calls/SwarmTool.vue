@@ -15,6 +15,7 @@ import type { AppSubagentPhase } from '../../../api/types';
 import type { SwarmMember } from '../../../composables/swarmGroups';
 import { toolLabel } from '../../../lib/toolMeta';
 import { parseSwarmResult } from '../../../lib/parseSwarmResult';
+import { buildSwarmCardRows, type SwarmCardRow } from '../../../lib/swarmCardRows';
 import Icon from '../../ui/Icon.vue';
 import StatusDot from '../../ui/StatusDot.vue';
 import Tooltip from '../../ui/Tooltip.vue';
@@ -64,7 +65,6 @@ const input = computed(() => parseInput(props.tool.arg));
 const label = computed(() => toolLabel(props.tool.name));
 const description = computed(() => input.value.description ?? '');
 const members = computed(() => resolveSwarmMembers?.(props.tool.id) ?? []);
-const hasMembers = computed(() => members.value.length > 0);
 const result = computed(() => parseSwarmResult(props.tool.output));
 
 const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
@@ -83,29 +83,20 @@ interface PhaseCounts {
   failed: number;
 }
 
+// Rows are the single source of truth: phase counts and totals derive from the
+// live members and any not-yet-spawned result entries merged together (see
+// buildSwarmCardRows). Without that merge an interrupted swarm could drop
+// `state="not_started"` / `outcome="aborted"` rows when at least one live
+// AppTask still exists.
+const rows = computed<SwarmCardRow[]>(() => buildSwarmCardRows(members.value, result.value));
+
 const counts = computed<PhaseCounts>(() => {
-  if (hasMembers.value) {
-    const c: PhaseCounts = { completed: 0, working: 0, suspended: 0, queued: 0, failed: 0 };
-    for (const m of members.value) c[m.phase]++;
-    return c;
-  }
-  if (result.value) {
-    return {
-      completed: result.value.completed,
-      working: 0,
-      suspended: 0,
-      queued: 0,
-      failed: result.value.failed + result.value.aborted,
-    };
-  }
-  return { completed: 0, working: 0, suspended: 0, queued: 0, failed: 0 };
+  const c: PhaseCounts = { completed: 0, working: 0, suspended: 0, queued: 0, failed: 0 };
+  for (const r of rows.value) c[r.phase]++;
+  return c;
 });
 
-const total = computed(() => {
-  if (hasMembers.value) return members.value.length;
-  if (result.value) return result.value.total;
-  return input.value.itemCount ?? 0;
-});
+const total = computed(() => rows.value.length || input.value.itemCount || 0);
 const done = computed(() => counts.value.completed + counts.value.failed);
 const inProgress = computed(() => counts.value.working + counts.value.suspended + counts.value.queued);
 
@@ -135,64 +126,13 @@ function toggle(): void {
   open.value = !open.value;
 }
 
-interface Row {
-  id: string;
-  name: string;
-  activity: string;
-  phase: AppSubagentPhase;
-  body: string;
-}
-
-function latestActivity(member: SwarmMember): string {
-  const lastLine = member.outputLines?.map((line) => line.trimEnd()).filter(Boolean).at(-1);
-  // Prefer streamed subagent text so a still-composing agent shows its latest
-  // line instead of an empty/last-summary row.
-  const fromText = member.text?.split('\n').map((l) => l.trimEnd()).filter(Boolean).at(-1);
-  return member.suspendedReason || fromText || lastLine || member.summary || '';
-}
-
-function memberBody(member: SwarmMember): string {
-  if (member.suspendedReason) return member.suspendedReason;
-  if (member.text) return member.text;
-  if (member.outputLines && member.outputLines.length > 0) return member.outputLines.join('\n');
-  return member.summary ?? '';
-}
-
-function outcomeToPhase(outcome: string): AppSubagentPhase {
-  if (outcome === 'completed') return 'completed';
-  if (outcome === 'failed' || outcome === 'aborted') return 'failed';
-  return 'working';
-}
-
-// One accordion row per subagent. Prefer the live members (each one's live
-// phase); fall back to the parsed result when the AppTask store is gone.
-const rows = computed<Row[]>(() => {
-  if (hasMembers.value) {
-    return members.value.map((m) => ({
-      id: m.id,
-      name: m.name,
-      activity: latestActivity(m),
-      phase: m.phase,
-      body: memberBody(m),
-    }));
-  }
-  if (result.value) {
-    return result.value.subagents.map((s, i) => ({
-      id: s.agentId ?? s.item ?? `result-${i}`,
-      name: s.item ?? `subagent ${i + 1}`,
-      activity: s.body.split('\n')[0] ?? '',
-      phase: outcomeToPhase(s.outcome),
-      body: s.body,
-    }));
-  }
-  return [];
-});
-
-// When AgentSwarm fails before producing a structured result (e.g. argument
-// validation), tool.output carries plain text. Surface it instead of the
-// "waiting" placeholder so the user sees the actual failure cause.
-const errorOutput = computed(() => {
-  if (status.value !== 'error' || rows.value.length > 0) return '';
+// When AgentSwarm produces no structured result but the tool is no longer
+// running — e.g. argument validation bailing before renderSwarmResults, or an
+// unrecognized legacy output — show the raw tool output instead of the
+// "waiting" placeholder so the user sees the final text / failure cause.
+const fallbackOutput = computed(() => {
+  if (rows.value.length > 0 || result.value) return '';
+  if (status.value === 'running') return '';
   return (props.tool.output ?? []).join('\n').trim();
 });
 
@@ -281,7 +221,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
         </div>
       </template>
 
-      <div v-else-if="errorOutput" class="error-output">{{ errorOutput }}</div>
+      <div v-else-if="fallbackOutput" class="fallback-output">{{ fallbackOutput }}</div>
 
       <div v-else class="waiting">{{ t('tools.swarm.waiting') }}</div>
     </div>
@@ -531,7 +471,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
   font-size: var(--text-xs);
 }
 
-.error-output {
+.fallback-output {
   padding: 9px 11px 10px;
   color: var(--color-text);
   font: var(--text-xs)/1.6 var(--font-mono);
