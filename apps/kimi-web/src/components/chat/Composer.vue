@@ -1289,6 +1289,10 @@ function selectModel(modelId: string): void {
 
 .ph {
   color: var(--faint);
+  /* Keep the caret at the normal text colour even when the field is empty:
+     the empty state sets `color` to `--faint` (so the placeholder feels soft),
+     and an unset caret inherits that faint colour and nearly disappears. */
+  caret-color: var(--color-text);
   flex: 1;
   border: none;
   outline: none;
