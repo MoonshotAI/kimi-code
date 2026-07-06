@@ -318,12 +318,7 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
   return { entries: transcript as TranscriptEntry[], foldedLength };
 }
 
-/**
- * Mirrors agent-core's `createToolMessage`: the stored message carries the
- * tool's raw output verbatim (plus the structured isError/note fields).
- * Model-facing status text is a projection concern
- * (`renderToolResultForModel`), not part of the transcript.
- */
+/** Mirrors `createToolMessage`: raw output verbatim — status text is added only at LLM projection. */
 function rawToolResultContent(output: ExecutableToolResult['output']): ContentPart[] {
   return typeof output === 'string' ? [{ type: 'text', text: output }] : [...output];
 }
