@@ -44,7 +44,7 @@ import { ErrorCodes, KimiError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
-import { ILogService } from '#/app/log/log';
+import { ILogService } from '#/_base/log/log';
 import { type ModelAlias, MODELS_SECTION } from '#/app/model/model';
 import { IProviderService, type OAuthRef, type ProviderConfig, PROVIDERS_SECTION } from '#/app/provider/provider';
 import { ITelemetryService } from '#/app/telemetry/telemetry';

@@ -15,4 +15,4 @@ export type {
   GenerationKwargs,
   KimiOptions,
   ThinkingConfig,
-} from './kosong';
+} from './providers/kimi';

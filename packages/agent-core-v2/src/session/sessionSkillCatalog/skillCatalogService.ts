@@ -1,83 +1,107 @@
 /**
- * `sessionSkillCatalog` domain (L5) — `ISessionSkillCatalog` implementation.
+ * `sessionSkillCatalog` domain (L3) — `ISessionSkillCatalog` sink implementation.
  *
- * Merges the global catalog (`IGlobalSkillCatalog`) with the project skills
- * discovered through `ISkillDiscovery` for the session's current workDir
- * (`workspaceContext`). Project skills override global skills on name
- * collision. `ready` resolves once the first `load()` completes, so consumers
- * (e.g. skill activation) can await it instead of racing the asynchronous
- * discovery. Reloads when the workDir changes. Bound at Session scope.
+ * Dumb ordered-merge table: pulls the four eager `ISkillSource`s (builtin /
+ * user / workspace / plugin) and folds their contributions into an in-memory
+ * catalog by priority, so higher-priority sources win name collisions. `ready`
+ * resolves once all four have completed their first `load()`+merge; a source's
+ * `onDidChange` (e.g. plugin reload) re-pulls just that source and re-merges,
+ * firing `onDidChange`. `set`/`remove` (`ISkillCatalogSink`) let ad-hoc sources
+ * push contributions. Bound at Session scope; the same instance is the
+ * `ISessionSkillCatalog` read view.
  */
 
-import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di';
+import { InstantiationType } from '#/_base/di/extensions';
+import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IPluginService } from '#/app/plugin';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext';
+import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
+import type { SkillCatalog } from '#/app/skillCatalog/types';
+import { IUserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
 
-import { IGlobalSkillCatalog } from '#/app/globalSkillCatalog/globalSkillCatalog';
-import { InMemorySkillCatalog } from '#/app/globalSkillCatalog/registry';
-import { ISessionSkillCatalog } from './skillCatalog';
-import { ISkillDiscovery } from '#/app/globalSkillCatalog/skillDiscovery';
-import type { SkillCatalog } from '#/app/globalSkillCatalog/types';
+import { IPluginSkillSource } from './pluginSkillSource';
+import { ISessionSkillCatalog, type ISkillCatalogSink } from './skillCatalog';
+import { IWorkspaceFileSkillSource } from './workspaceFileSkillSource';
 
-export class SessionSkillCatalogService extends Disposable implements ISessionSkillCatalog {
+export class SessionSkillCatalogService
+  extends Disposable
+  implements ISessionSkillCatalog, ISkillCatalogSink
+{
   declare readonly _serviceBrand: undefined;
 
-  private inner = new InMemorySkillCatalog();
-  private loadedWorkDir: string | undefined;
-  private readyPromise: Promise<void> = Promise.resolve();
+  private readonly sources: readonly ISkillSource[];
+  private readonly contributions = new Map<
+    string,
+    { readonly c: SkillContribution; readonly priority: number }
+  >();
+  private merged = new InMemorySkillCatalog();
+  readonly ready: Promise<void>;
+  private readonly onDidChangeEmitter = this._register(new Emitter<void>());
+  readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
 
   constructor(
-    @IGlobalSkillCatalog private readonly global: IGlobalSkillCatalog,
-    @ISkillDiscovery private readonly store: ISkillDiscovery,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @IPluginService private readonly plugins: IPluginService,
+    @IBuiltinSkillSource builtin: IBuiltinSkillSource,
+    @IUserFileSkillSource user: IUserFileSkillSource,
+    @IWorkspaceFileSkillSource workspace: IWorkspaceFileSkillSource,
+    @IPluginSkillSource plugin: IPluginSkillSource,
   ) {
     super();
-    // Re-discover skills when plugins are reloaded so newly enabled/installed
-    // plugin skills become invocable and removed plugins' skills disappear
-    // without restarting the session.
-    this._register(
-      this.plugins.onDidReload(() => {
-        void this.reload();
-      }),
-    );
+    this.sources = [builtin, user, workspace, plugin].toSorted((a, b) => a.priority - b.priority);
+    for (const s of this.sources) {
+      if (s.onDidChange) this._register(s.onDidChange(() => { void this.reloadSource(s.id); }));
+    }
+    this.ready = this.loadAll();
   }
 
   get catalog(): SkillCatalog {
-    return this.inner;
-  }
-
-  get ready(): Promise<void> {
-    return this.readyPromise;
+    return this.merged;
   }
 
   async load(): Promise<void> {
-    const workDir = this.workspace.workDir;
-    if (this.loadedWorkDir === workDir) return;
-    this.readyPromise = this.discover(workDir);
-    await this.readyPromise;
-  }
-
-  private async discover(workDir: string): Promise<void> {
-    await this.global.load();
-    const pluginRoots = await this.plugins.pluginSkillRoots();
-    const { skills } = await this.store.discoverProject(workDir, pluginRoots);
-    const merged = new InMemorySkillCatalog();
-    for (const skill of this.global.catalog.listSkills()) {
-      merged.register(skill);
-    }
-    for (const skill of skills) {
-      merged.register(skill, { replace: true });
-    }
-    this.inner = merged;
-    this.loadedWorkDir = workDir;
+    await this.ready;
   }
 
   async reload(): Promise<void> {
-    this.loadedWorkDir = undefined;
-    await this.load();
+    await this.loadAll();
+    this.onDidChangeEmitter.fire();
+  }
+
+  set(id: string, c: SkillContribution, { priority }: { readonly priority: number }): void {
+    this.contributions.set(id, { c, priority });
+    this.remerge();
+    this.onDidChangeEmitter.fire();
+  }
+
+  remove(id: string): void {
+    this.contributions.delete(id);
+    this.remerge();
+    this.onDidChangeEmitter.fire();
+  }
+
+  private async loadAll(): Promise<void> {
+    for (const s of this.sources) {
+      const c = await s.load();
+      this.contributions.set(s.id, { c, priority: s.priority });
+    }
+    this.remerge();
+  }
+
+  private async reloadSource(id: string): Promise<void> {
+    const s = this.sources.find((x) => x.id === id);
+    if (!s) return;
+    const c = await s.load();
+    this.contributions.set(s.id, { c, priority: s.priority });
+    this.remerge();
+    this.onDidChangeEmitter.fire();
+  }
+
+  private remerge(): void {
+    const m = new InMemorySkillCatalog();
+    const ordered = [...this.contributions.values()].toSorted((a, b) => a.priority - b.priority);
+    for (const { c } of ordered) for (const skill of c.skills) m.register(skill, { replace: true });
+    this.merged = m;
   }
 }
 
@@ -86,5 +110,5 @@ registerScopedService(
   ISessionSkillCatalog,
   SessionSkillCatalogService,
   InstantiationType.Delayed,
-  'skill',
+  'sessionSkillCatalog',
 );

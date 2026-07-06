@@ -34,7 +34,8 @@ import {
   IAgentPromptService,
   type PromptSubmitContext,
 } from '#/agent/prompt';
-import { IAgentRecordService } from '#/agent/record';
+import type { HookResultEvent } from '@moonshot-ai/protocol';
+import { IAgentWireService, type IWireService } from '#/wire';
 import type {
   ExecutableToolResult,
   ToolDidExecuteContext,
@@ -63,6 +64,12 @@ import {
   renderUserPromptHookResult,
 } from './user-prompt';
 
+declare module '#/wire' {
+  interface SignalMap {
+    'hook.result': Omit<HookResultEvent, 'type'>;
+  }
+}
+
 const SUBAGENT_HOOK_TEXT_PREVIEW_LENGTH = 500;
 
 function fireAndForget(
@@ -88,7 +95,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   constructor(
     private readonly options: ExternalHooksServiceOptions = {},
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IConfigService private readonly config: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -327,7 +334,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         toolCalls: [],
         origin: { kind: 'hook_result', event: block.event, blocked: true },
       }]);
-      this.record.signal({
+      this.wire.signal({
         type: 'hook.result',
         hookEvent: block.event,
         content: block.message,
@@ -344,7 +351,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         toolCalls: [],
         origin: { kind: 'hook_result', event: append.event },
       }]);
-      this.record.signal({
+      this.wire.signal({
         type: 'hook.result',
         hookEvent: append.event,
         content: append.message,

@@ -5,10 +5,10 @@
  * Registers a turn-cadence `plugin_session_start` injection with
  * `IAgentContextInjectorService` so enabled plugins' `sessionStart` skills are
  * rendered into the main agent's context once per turn (deduped against
- * replayed history by the context-injector). On `IPluginService.onDidReload`,
- * force-appends a fresh reminder — or a neutralizing reminder when no session
- * start is resolvable but stale guidance may linger — mirroring the `/reload`
- * re-injection flow.
+ * replayed history by the context-injector). On the Session skill-catalog
+ * sink's `onDidChange`, force-appends a fresh reminder — or a neutralizing
+ * reminder when no session start is resolvable but stale guidance may linger —
+ * mirroring the `/reload` re-injection flow.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -17,11 +17,12 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 import { IPluginService } from '#/app/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog';
-import type { SkillCatalog, SkillDefinition } from '#/app/globalSkillCatalog/types';
+import { ISessionContext } from '#/session/sessionContext';
+import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
 import { IAgentSystemReminderService } from '#/agent/systemReminder';
 
 import { IAgentContextInjectorService } from './contextInjector';
@@ -47,6 +48,7 @@ export class PluginSessionStartInjectorService
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -54,7 +56,7 @@ export class PluginSessionStartInjectorService
       this.injector.register(INJECTION_VARIANT, () => this.renderReminder(), { cadence: 'turn' }),
     );
     this._register(
-      this.plugins.onDidReload(() => {
+      this.skillCatalog.onDidChange(() => {
         void this.appendReminderOnReload();
       }),
     );
@@ -68,6 +70,7 @@ export class PluginSessionStartInjectorService
       sessionStarts,
       catalog: this.skillCatalog.catalog,
       log: this.log,
+      sessionId: this.sessionContext.sessionId,
     });
   }
 
@@ -78,6 +81,7 @@ export class PluginSessionStartInjectorService
       sessionStarts,
       catalog: this.skillCatalog.catalog,
       log: this.log,
+      sessionId: this.sessionContext.sessionId,
     });
     if (reminder !== undefined) {
       this.reminders.appendSystemReminder(
@@ -98,12 +102,13 @@ export interface RenderPluginSessionStartReminderInput {
   readonly sessionStarts: readonly EnabledPluginSessionStart[];
   readonly catalog: SkillCatalog | undefined;
   readonly log?: { warn(message: string, payload?: unknown): void };
+  readonly sessionId?: string;
 }
 
 export function renderPluginSessionStartReminder(
   input: RenderPluginSessionStartReminderInput,
 ): string | undefined {
-  const { sessionStarts, catalog, log } = input;
+  const { sessionStarts, catalog, log, sessionId } = input;
   if (sessionStarts.length === 0) return undefined;
   if (catalog === undefined) return undefined;
   const blocks: string[] = [];
@@ -116,7 +121,9 @@ export function renderPluginSessionStartReminder(
       });
       continue;
     }
-    blocks.push(renderSessionStartBlock(sessionStart, skill, catalog.renderSkillPrompt(skill, '')));
+    blocks.push(
+      renderSessionStartBlock(sessionStart, skill, catalog.renderSkillPrompt(skill, '', { sessionId })),
+    );
   }
   return blocks.length > 0 ? blocks.join('\n') : undefined;
 }

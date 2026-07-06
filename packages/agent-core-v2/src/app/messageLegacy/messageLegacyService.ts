@@ -3,12 +3,13 @@
  *
  * Stateless App-scope dispatcher: each call resolves the target session (and
  * its main agent), sources the transcript, and projects it into the v1 wire
- * shape. Live sessions are read from the main agent's `IAgentContextMemoryService` (the
- * folded history already in memory); cold sessions are loaded, their main agent
- * is restored from the persisted wire log, and the FULL transcript is read from
- * `IAgentRecordService` — v2's own replay read model, so no reduction logic is
- * duplicated here. Pagination, id derivation, and the role filter mirror v1's
- * `MessageService` (`packages/agent-core/src/services/message/messageService.ts`).
+ * shape. Both live and cold sessions are read from the main agent's
+ * `IAgentContextMemoryService`: live sessions already hold the folded history in
+ * memory, and cold sessions are resumed (restoring the main agent's wire log and
+ * replaying it into the `ContextModel`) before the read, so the same `get()`
+ * yields the full transcript. Pagination, id derivation, and the role filter
+ * mirror v1's `MessageService`
+ * (`packages/agent-core/src/services/message/messageService.ts`).
  */
 
 import type { Message, PageResponse } from '@moonshot-ai/protocol';
@@ -19,10 +20,8 @@ import { ensureMainAgent } from '#/session/agentLifecycle';
 import {
   IAgentContextMemoryService,
   toProtocolMessage,
-  type ContextMessage,
 } from '#/agent/contextMemory';
 import { ErrorCodes, KimiError } from '#/errors';
-import { IAgentRecordService } from '#/agent/record';
 import { ISessionIndex } from '#/app/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle';
 
@@ -103,17 +102,12 @@ export class MessageLegacyService implements IMessageLegacyService {
     const agent = await this.resolveMainAgent(sessionId);
     if (agent === undefined) return [];
 
-    // Prefer the replay transcript: it is populated only by `wireRecord.restore`
-    // (live-appended records are not captured), so a non-empty replay means the
-    // agent was restored and the replay holds the full pre-compaction history.
-    // Otherwise the agent is fresh (never restored) and the folded context
-    // memory IS the transcript.
-    const replay = agent.accessor.get(IAgentRecordService).buildReplay();
-    const restored: ContextMessage[] = [];
-    for (const record of replay) {
-      if (record.type === 'message') restored.push(record.message);
-    }
-    const source = restored.length > 0 ? restored : agent.accessor.get(IAgentContextMemoryService).get();
+    // The transcript is the main agent's `ContextModel`: live sessions already
+    // hold it in memory, and cold sessions have been resumed (wire log restored
+    // + replayed into the Model) by `resolveMainAgent` before we get here, so a
+    // single `get()` covers both. The legacy replay read model
+    // (`IAgentRecordService.buildReplay`) is empty on every path and is gone.
+    const source = agent.accessor.get(IAgentContextMemoryService).get();
 
     return source.map((msg, index) => toProtocolMessage(sessionId, index, msg, summary.createdAt));
   }

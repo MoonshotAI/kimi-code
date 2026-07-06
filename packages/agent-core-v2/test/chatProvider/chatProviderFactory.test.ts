@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ChatProvider, Message, StreamedMessage, Tool } from '#/app/llmProtocol/kosong';
+import type { Message, Tool } from '#/app/llmProtocol';
+import type { ChatProvider, StreamedMessage } from '#/app/llmProtocol/provider';
 
 import { createScopedTestHost } from '#/_base/di/test';
 import { IChatProviderFactory } from '#/app/chatProvider';

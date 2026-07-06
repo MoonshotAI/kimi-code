@@ -1,7 +1,12 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/app/llmProtocol';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type {
+  ToolCallStartedEvent,
+  ToolInputDisplay,
+  ToolProgressEvent,
+  ToolResultEvent,
+} from '@moonshot-ai/protocol';
 
 import {
   compileToolArgsValidator,
@@ -12,7 +17,7 @@ import {
 import { PathSecurityError } from '#/_base/tools/policies/path-access';
 import { isUserCancellation } from "#/_base/utils/abort";
 import { isAbortError } from '#/agent/loop/errors';
-import { IAgentRecordService } from '#/agent/record';
+import { IAgentWireService, type IWireService } from '#/wire';
 import {
   ToolAccesses,
   type ExecutableTool,
@@ -26,7 +31,7 @@ import {
 } from '#/agent/tool';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { ToolCall } from '#/app/llmProtocol';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 import { ITelemetryService } from '#/app/telemetry';
 import { OrderedHookSlot } from '#/hooks';
 import {
@@ -35,6 +40,14 @@ import {
   type ToolExecutorExecuteOptions,
 } from './toolExecutor';
 import { ToolScheduler } from './toolScheduler';
+
+declare module '#/wire' {
+  interface SignalMap {
+    'tool.call.started': Omit<ToolCallStartedEvent, 'type'>;
+    'tool.result': Omit<ToolResultEvent, 'type'>;
+    'tool.progress': Omit<ToolProgressEvent, 'type'>;
+  }
+}
 
 const GRACE_TIMEOUT_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
@@ -81,7 +94,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log?: ILogService,
   ) {}
@@ -436,7 +449,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
     displayFields?: ToolCallDisplayFields,
   ): void {
-    this.record.signal({
+    this.wire.signal({
       type: 'tool.call.started',
       turnId: options.turnId,
       toolCallId: call.toolCall.id,
@@ -452,7 +465,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     result: ToolResult,
     options: ToolExecutorExecuteOptions,
   ): void {
-    this.record.signal({
+    this.wire.signal({
       type: 'tool.result',
       turnId: options.turnId,
       toolCallId: call.toolCall.id,
@@ -466,7 +479,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     update: ToolUpdate,
     options: ToolExecutorExecuteOptions,
   ): void {
-    this.record.signal({
+    this.wire.signal({
       type: 'tool.progress',
       turnId: options.turnId,
       toolCallId: call.toolCall.id,

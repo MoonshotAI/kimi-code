@@ -1,28 +1,27 @@
+/**
+ * `permissionMode` domain (L3) — `IAgentPermissionModeService` implementation.
+ *
+ * Holds the agent's permission mode (`manual` / `auto`) in the `wire`
+ * `PermissionModeModel`, mutating it only through the `permission.set_mode` Op
+ * (`wire.dispatch(setMode({ mode }))`) and reading it through `wire.getModel`.
+ * The `onChanged` hook is driven by a `wire.subscribe` on that model (firing
+ * only on actual changes), and the mode-aware reminder is registered through
+ * `contextInjector`. Bound at Agent scope.
+ */
+
 import type { PermissionMode } from '#/agent/permissionPolicy';
-import {
-  Disposable,
-} from "#/_base/di";
+import { Disposable } from '#/_base/di';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-
 import { IAgentContextInjectorService } from '#/agent/contextInjector';
 import { OrderedHookSlot } from '#/hooks';
-import { IAgentRecordService } from '#/agent/record';
 import { registerPermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
+import { IAgentWireService, type IWireService } from '#/wire';
 import { IAgentPermissionModeService } from './permissionMode';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'permission.set_mode': {
-      mode: PermissionMode;
-    };
-  }
-}
+import { PermissionModeModel, setMode } from './permissionModeOps';
 
 export class AgentPermissionModeService extends Disposable implements IAgentPermissionModeService {
   declare readonly _serviceBrand: undefined;
-
-  private currentMode: PermissionMode = 'manual';
 
   readonly hooks = {
     onChanged: new OrderedHookSlot<{
@@ -32,37 +31,25 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
   };
 
   constructor(
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
   ) {
     super();
     this._register(
-      record.define('permission.set_mode', {
-        resume: (r) => {
-          this.applyMode(r.mode);
-        },
-        toLive: (r) => ({ type: 'agent.status.updated', permission: r.mode }),
-        toReplay: (r) => ({ type: 'permission_updated', mode: r.mode }),
+      wire.subscribe(PermissionModeModel, (mode, previousMode) => {
+        if (mode === previousMode) return;
+        void this.hooks.onChanged.run({ mode, previousMode });
       }),
     );
-    this._register(
-      registerPermissionModeInjection(dynamicInjector, this),
-    );
+    this._register(registerPermissionModeInjection(dynamicInjector, this));
   }
 
   get mode(): PermissionMode {
-    return this.currentMode;
+    return this.wire.getModel(PermissionModeModel);
   }
 
   setMode(mode: PermissionMode): void {
-    this.record.append({ type: 'permission.set_mode', mode });
-    this.applyMode(mode);
-  }
-
-  private applyMode(mode: PermissionMode): void {
-    const previousMode = this.currentMode;
-    this.currentMode = mode;
-    void this.hooks.onChanged.run({ mode: this.currentMode, previousMode });
+    this.wire.dispatch(setMode({ mode }));
   }
 }
 

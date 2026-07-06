@@ -5,7 +5,8 @@
  * be exercised without the missing composition root.
  */
 
-import type { ContentPart, ModelCapability } from '#/app/llmProtocol/kosong';
+import type { ContentPart, ModelCapability } from '#/app/llmProtocol';
+import { Jimp } from 'jimp';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -13,12 +14,14 @@ import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
+  type ReadMediaFileInput,
   type VideoUploader,
 } from '#/agent/media/tools/read-media';
 import { registerMediaTools } from '#/agent/media/registerMediaTools';
 import { AgentToolRegistryService } from '#/agent/toolRegistry';
 import { ToolAccesses } from '#/agent/tool';
 import type { WorkspaceConfig } from '../../src/_base/tools/support/workspace';
+import { sniffImageDimensions } from '#/_base/tools/support/file-type';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
@@ -104,7 +107,7 @@ function makeTool(
 
 async function execute(
   tool: ReadMediaFileTool,
-  args: { path: string },
+  args: ReadMediaFileInput,
 ): Promise<ExecutableToolResult> {
   const execution = tool.resolveExecution(args);
   // `resolveExecution` may return a validation error result directly (e.g. an
@@ -132,6 +135,24 @@ describe('ReadMediaFileTool', () => {
 
     expect(tool.name).toBe('ReadMediaFile');
     expect(ReadMediaFileInputSchema.safeParse({ path: '/workspace/sample.png' }).success).toBe(true);
+    expect(
+      ReadMediaFileInputSchema.safeParse({
+        path: '/workspace/sample.png',
+        region: { x: 0, y: 0, width: 10, height: 10 },
+      }).success,
+    ).toBe(true);
+    expect(
+      ReadMediaFileInputSchema.safeParse({
+        path: '/workspace/sample.png',
+        region: { x: -1, y: 0, width: 10, height: 10 },
+      }).success,
+    ).toBe(false);
+    expect(
+      ReadMediaFileInputSchema.safeParse({
+        path: '/workspace/sample.png',
+        full_resolution: true,
+      }).success,
+    ).toBe(true);
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: { path: { type: 'string' } },
@@ -203,6 +224,47 @@ describe('ReadMediaFileTool', () => {
     expect(parts[3]).toEqual({ type: 'text', text: '</image>' });
   });
 
+  it('downsamples large images and points the model to region readback', async () => {
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
+      path: '/workspace/big.png',
+    });
+    const parts = outputParts(result);
+    const systemText = (parts[0] as { type: 'text'; text: string }).text;
+    expect(systemText).toContain('2600x2600');
+    expect(systemText).toMatch(/downsampled to 2000x2000/);
+    expect(systemText).toContain('region');
+    const url = (parts[2] as { imageUrl: { url: string } }).imageUrl.url;
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
+    expect(match).not.toBeNull();
+    const dims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
+    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(2000);
+  });
+
+  it('reads image regions at native resolution', async () => {
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
+      path: '/workspace/big.png',
+      region: { x: 100, y: 50, width: 400, height: 300 },
+    });
+    const parts = outputParts(result);
+    const url = (parts[2] as { imageUrl: { url: string } }).imageUrl.url;
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
+    expect(match).not.toBeNull();
+    expect(sniffImageDimensions(Buffer.from(match![2]!, 'base64'))).toEqual({
+      width: 400,
+      height: 300,
+    });
+    const systemText = (parts[0] as { type: 'text'; text: string }).text;
+    expect(systemText).toContain('2600x2600');
+    expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
+    expect(systemText).toContain('offset');
+  });
+
   it('errors when reading an image without image input capability', async () => {
     const result = await execute(
       makeTool(
@@ -225,6 +287,23 @@ describe('ReadMediaFileTool', () => {
       type: 'video_url',
       videoUrl: { url: expect.stringContaining('data:video/mp4;base64,') },
     });
+  });
+
+  it('rejects region and full_resolution for videos', async () => {
+    const tool = makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } });
+    const withRegion = await execute(tool, {
+      path: '/workspace/clip.mp4',
+      region: { x: 0, y: 0, width: 10, height: 10 },
+    });
+    expect(withRegion.isError).toBe(true);
+    expect(withRegion.output).toMatch(/image files/i);
+
+    const withFullResolution = await execute(tool, {
+      path: '/workspace/clip.mp4',
+      full_resolution: true,
+    });
+    expect(withFullResolution.isError).toBe(true);
+    expect(withFullResolution.output).toMatch(/image files/i);
   });
 
   it('uses the video uploader when provided', async () => {

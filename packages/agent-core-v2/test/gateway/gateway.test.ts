@@ -9,7 +9,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import type { ContextMessage } from '#/agent/contextMemory';
 import { IRestGateway } from '#/app/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 import { IAgentPromptService } from '#/agent/prompt';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle';
 import { IAgentTurnService } from '#/agent/turn';

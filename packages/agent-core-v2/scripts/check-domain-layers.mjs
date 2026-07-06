@@ -45,7 +45,7 @@ const DOMAIN_LAYER = new Map([
   // `llmProtocol` is v2's public wire-type namespace (`Message`,
   // `ContentPart`, `Tool`, `TokenUsage`, `FinishReason`, error classes,
   // etc.). It has no v2 dependencies of its own (it vendors the kosong wire
-  // implementation under `llmProtocol/kosong`); every domain — including
+  // implementation directly within `llmProtocol`); every domain — including
   // `_base/utils/tokens` and `_base/errors/serialize` — may import wire types
   // through it, so it sits at L0.
   ['llmProtocol', 0],
@@ -63,12 +63,9 @@ const DOMAIN_LAYER = new Map([
   // `_base/event` `Emitter`. Foundational substrate that any domain may
   // publish/subscribe through, so it sits in L1 (not the edge boundary).
   ['event', 1],
-  // `execContext` is the Session-scope seeded immutable value (`cwd`,
-  // `envLayers`); same layer as the other low-level bridges.
-  ['execContext', 1],
   // `sessionContext` is the Session-scope seeded immutable facts value
-  // (`sessionId`/`workspaceId`/`sessionDir`/`metaScope`); like `execContext`
-  // it is a pure seed with no IO, so it sits in L1.
+  // (`sessionId`/`workspaceId`/`sessionDir`/`metaScope`/`cwd`); a pure seed
+  // with no IO, so it sits in L1.
   ['sessionContext', 1],
   // `git` is the App-scope `IGitService` that runs `git status` / `git diff`
   // against a local repo. Process spawning goes through `os/interface`
@@ -95,10 +92,14 @@ const DOMAIN_LAYER = new Map([
   // L2 — data & cross-cutting capabilities
   ['records', 2],
   ['wireRecord', 2],
+  // `wire` is the scope-agnostic Model/Op/Signal state-machine layer: it
+  // consumes `persistence/interface` (L1) and is consumed by the scope tiers,
+  // so it sits in L2 beside the other data/cross-cutting layers.
+  ['wire', 2],
   ['blob', 2],
   ['file', 2],
   ['config', 2],
-  ['agentFs', 2],
+  ['sessionFs', 2],
   ['process', 2],
   ['workspaceRegistry', 2],
   ['hostFolderBrowser', 2],
@@ -111,7 +112,7 @@ const DOMAIN_LAYER = new Map([
   // L3 — registries & capabilities
   ['tool', 3],
   ['skill', 3],
-  ['globalSkillCatalog', 3],
+  ['skillCatalog', 3],
   ['sessionSkillCatalog', 3],
   ['permissionGate', 3],
   ['flag', 3],
@@ -147,10 +148,11 @@ const DOMAIN_LAYER = new Map([
   ['microCompaction', 4],
   ['loop', 4],
   ['media', 4],
-  // `edit` owns the EditTool plus its pure TextModel / EditService and the
-  // os-backed FileEditService adapter. It is an Agent-entry tool that depends
-  // on the L3 tool contract / registry and the L1 host bridges, so it sits in
-  // L4 beside the other agent-behaviour tools.
+  // `edit` spans two scopes: the App-scope `IFileEditService` capability (pure
+  // TextModel / EditService + os-backed read/write over the L1 hostFs bridge)
+  // and the Agent-scope `EditTool` adapter (depends on the L3 tool contract /
+  // registry and the L1 host bridges). The Agent adapter's L3 dependencies pin
+  // the domain to L4 beside the other agent-behaviour tools.
   ['edit', 4],
   ['llmRequester', 4],
   ['profile', 4],
@@ -232,7 +234,7 @@ function domainFromRel(rel, { exemptRootFile }) {
  * shape for several of them. They are surfaced here (and in the dependency
  * report) for review rather than hidden.
  *
- *  - `bootstrap>globalSkillCatalog` : composition root wires the skill catalog
+ *  - `bootstrap>skillCatalog` : composition root wires the skill catalog
  *                              Store to its filesystem backend (same role as
  *                              the storage backend bindings).
  *
@@ -260,7 +262,7 @@ function domainFromRel(rel, { exemptRootFile }) {
  * layering violation to fix here.
  */
 const ALLOWED_EXCEPTIONS = new Set([
-  'bootstrap>globalSkillCatalog',
+  'bootstrap>skillCatalog',
   // bootstrap is the composition root — it wires backends by design.
   'bootstrap>persistence/backends',
   // `auth` (KimiOAuth, L2) owns the OAuth-backed `WebSearch` tool and registers
@@ -320,7 +322,7 @@ const ALLOWED_EXCEPTIONS = new Set([
   'filestore>persistence/backends',
   'process>os/backends',
   'terminal>os/backends',
-  'agentFs>os/backends',
+  'sessionFs>os/backends',
   'blobStore>persistence/backends',
 ]);
 

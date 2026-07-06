@@ -6,14 +6,13 @@ import {
   APIConnectionError,
   APIContextOverflowError,
   APIStatusError,
-  generate as runKosongGenerate,
   UNKNOWN_CAPABILITY,
-  type ChatProvider,
   type Message,
-  type StreamedMessage,
   type StreamedMessagePart,
   type ToolCall,
-} from '#/app/llmProtocol/kosong';
+} from '#/app/llmProtocol';
+import { generate as runKosongGenerate } from '#/app/llmProtocol/generate';
+import type { ChatProvider, StreamedMessage } from '#/app/llmProtocol/provider';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {

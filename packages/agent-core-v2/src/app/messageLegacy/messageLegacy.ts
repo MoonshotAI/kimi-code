@@ -5,14 +5,15 @@
  * (`packages/server/src/routes/messages.ts`) on top of the native v2 services.
  *
  * The native `IAgentContextMemoryService` (Agent scope, serving `/api/v2` `messages:*`)
- * holds the model's CURRENT, folded context and is left untouched. For a live
- * session this adapter reads that folded history (its transcript is in memory
- * by definition); for a cold session it loads the session, restores the main
- * agent's wire log, and reads the FULL transcript from `IAgentRecordService`
- * (pre-compaction messages preserved, matching v1's `wire.jsonl` rebuild). The
- * `ContextMessage → Message` projection is shared with the `snapshot` and
- * `:undo` edges via `contextMemory/messageProjection`. Bound at App scope — a
- * stateless dispatcher that resolves the target session/agent per call.
+ * holds the model's CURRENT, folded context and is the transcript source here
+ * too. For a live session this adapter reads that folded history directly (its
+ * transcript is in memory by definition); for a cold session it resumes the
+ * session — restoring the main agent's wire log and replaying it into the
+ * `ContextModel` — and reads the rebuilt full transcript from the same
+ * `IAgentContextMemoryService`. The `ContextMessage → Message` projection is
+ * shared with the `snapshot` and `:undo` edges via
+ * `contextMemory/messageProjection`. Bound at App scope — a stateless dispatcher
+ * that resolves the target session/agent per call.
  *
  * Error contract (mapped at the route layer):
  *   - `session.not_found`  → 40401

@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ContentPart } from '#/app/llmProtocol/kosong';
+import type { ContentPart } from '#/app/llmProtocol';
 
 import type { CronTask } from '#/app/cron';
 import {

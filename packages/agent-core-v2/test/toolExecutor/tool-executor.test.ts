@@ -1,11 +1,10 @@
-import type { ToolCall } from '#/app/llmProtocol/kosong';
+import type { ToolCall } from '#/app/llmProtocol';
 import type { AgentEvent, ToolInputDisplay } from '@moonshot-ai/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { AgentRecordService, IAgentRecordService } from '#/agent/record';
 import { ToolAccesses, type ExecutableTool, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution, type ToolResult, type ToolUpdate } from '#/agent/tool';
 import { IAgentToolExecutorService, AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor';
 import { IAgentToolRegistryService, AgentToolRegistryService } from '#/agent/toolRegistry';
@@ -41,10 +40,11 @@ beforeEach(() => {
     },
     strict: true,
   });
-  ix.set(IAgentRecordService, new SyncDescriptor(AgentRecordService, [{}]));
-  ix.get(IAgentRecordService).on((event) => {
-    protocolEvents.push(event);
-  });
+  // TODO(phase-4.6): rewrite against wire event sink — IAgentRecordService/AgentRecordService facade deleted
+  // ix.set(IAgentRecordService, new SyncDescriptor(AgentRecordService, [{}]));
+  // ix.get(IAgentRecordService).on((event) => {
+  //   protocolEvents.push(event);
+  // });
   executor = ix.get(IAgentToolExecutorService);
   registry = ix.get(IAgentToolRegistryService);
 });

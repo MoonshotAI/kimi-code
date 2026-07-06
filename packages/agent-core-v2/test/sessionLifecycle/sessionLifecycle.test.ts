@@ -81,6 +81,7 @@ function skillCatalogStub(): ISessionSkillCatalog {
       getModelSkillListing: () => '',
     },
     ready: Promise.resolve(),
+    onDidChange: () => ({ dispose: () => {} }),
     load: () => Promise.resolve(),
     reload: () => Promise.resolve(),
   };

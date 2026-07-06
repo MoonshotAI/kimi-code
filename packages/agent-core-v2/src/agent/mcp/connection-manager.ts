@@ -11,7 +11,7 @@
 
 import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerConfig } from './config-schema';
-import type { ILogger as Logger } from '#/app/log';
+import type { ILogger as Logger } from '#/_base/log';
 import type { Tool } from '#/app/llmProtocol';
 
 import { abortable } from '#/_base/utils/abort';
@@ -60,6 +60,11 @@ const defaultLog: Logger = {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   /**
+   * Session workspace cwd for stdio MCP servers whose config omits `cwd`.
+   * Relative `cwd` values are resolved from this base, matching v1 Session MCP.
+   */
+  readonly stdioCwd?: string;
+  /**
    * Optional OAuth orchestrator. When provided, remote servers without a
    * static bearer token participate in the OAuth-via-synthetic-tool flow:
    *  - If `oauthService.hasTokens(name, url)` is true, the provider is
@@ -70,8 +75,9 @@ export interface McpConnectionManagerOptions {
    */
   readonly oauthService?: McpOAuthService;
   /**
-   * Parent logger. Defaults to the global `log`; Session passes its own
-   * `session.log` so MCP events land in the session log too.
+   * Parent logger. The Session-scoped lifecycle injects the session logger
+   * (the Session binding of `ILogService`) so MCP events are written to the
+   * per-session log file; falls back to a no-op when omitted.
    */
   readonly log?: Logger;
 }
@@ -348,7 +354,7 @@ export class McpConnectionManager {
   private async createClient(config: McpServerConfig, name: string): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs = config.toolTimeoutMs;
     if (config.transport === 'stdio') {
-      return new StdioMcpClient(config, { toolCallTimeoutMs });
+      return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
     }
     if (config.transport === 'sse') {
       return new SseMcpClient(config, {

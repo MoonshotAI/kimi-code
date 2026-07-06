@@ -17,7 +17,6 @@ import {
 import { IAgentLoopService, type TurnErrorContext } from '#/agent/loop';
 import { isAbortError, isContextOverflowError } from '#/agent/loop/errors';
 import { IAgentProfileService } from '#/agent/profile';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentTurnService } from '#/agent/turn';
 import { ISessionTodoService, renderTodoList, type TodoItem } from '#/session/todo';
 import {
@@ -29,6 +28,7 @@ import {
 } from '#/app/llmProtocol';
 import { ITelemetryService } from '#/app/telemetry';
 import { ErrorCodes, KimiError, isKimiError, toKimiErrorPayload } from "#/errors";
+import { IAgentWireService, type IWireService } from '#/wire';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import {
   IAgentFullCompactionService,
@@ -42,11 +42,23 @@ import {
   type CompactionStrategy,
 } from './strategy';
 import {
+  CompactionModel,
+  fullCompactionBegin,
+  fullCompactionCancel,
+  fullCompactionComplete,
+} from './compactionOps';
+import {
   type CompactionBeginData,
   type CompactionResult,
 } from './types';
 import { OrderedHookSlot } from '#/hooks';
 
+// The `full_compaction.*` record shapes stay declared in `WireRecordMap`
+// because the records still ride the shared `'wire'` log read by
+// `wireRecord.restore()` / `getRecords()`: `microCompaction` registers a
+// `full_compaction.complete` resumer against that stream. fullCompaction itself
+// no longer registers resumers here — its state rebuilds from the same log via
+// `wire.replay` into `CompactionModel`.
 declare module '#/agent/wireRecord' {
   interface WireRecordMap {
     'full_compaction.begin': CompactionBeginData;
@@ -114,7 +126,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionTodoService private readonly todo: ISessionTodoService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @IAgentTurnService turnService: IAgentTurnService,
     @IAgentLoopService loopService: IAgentLoopService,
   ) {
@@ -122,6 +134,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     this.strategy =
       this.options.compactionStrategy ??
       new RuntimeCompactionStrategy(() => this.profile.resolveModelContext());
+    this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
     this._register(
       turnService.hooks.onLaunched.register('full-compaction-reset', async (_ctx, next) => {
         this.resetForTurn();
@@ -143,42 +156,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     this._register(
       loopService.hooks.onError.register('full-compaction', async (ctx, next) => {
         await this.onLoopError(ctx, next);
-      }),
-    );
-    this._register(
-      record.define('full_compaction.begin', {
-        resume: (r) => {
-          this.record.push({
-            type: 'compaction',
-            instruction: r.instruction,
-          });
-        },
-      }),
-    );
-    this._register(
-      record.define('full_compaction.cancel', {
-        resume: () => {
-          this.record.patchLast('compaction', { result: 'cancelled' });
-        },
-      }),
-    );
-    this._register(
-      record.define('full_compaction.complete', {
-        resume: (r) => {
-          // The summary message never enters the replay (its splice is a
-          // boundary); the compaction record is its only replay presence.
-          const message = compactionSummaryMessage(this.context.get());
-          if (message === undefined) return;
-          const summary = contextMessageText(message);
-          this.record.patchLast('compaction', {
-            result: {
-              summary,
-              compactedCount: r.compactedCount,
-              tokensBefore: r.tokensBefore,
-              tokensAfter: r.tokensAfter,
-            },
-          });
-        },
       }),
     );
   }
@@ -203,8 +180,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No prefix that can be compacted in current history.');
     }
 
-    this.record.append({ type: 'full_compaction.begin', ...data });
-    this.record.signal({
+    this.wire.dispatch(fullCompactionBegin(data));
+    this.wire.signal({
       type: 'compaction.started',
       trigger: data.source,
       instruction: data.instruction,
@@ -223,16 +200,25 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   cancel(): void {
     const active = this.compacting;
     if (active === null) return;
-    this.record.append({ type: 'full_compaction.cancel' });
+    this.wire.dispatch(fullCompactionCancel({}));
     active.abortController.abort();
     this.compacting = null;
-    this.record.signal({ type: 'compaction.cancelled' });
+    this.wire.signal({ type: 'compaction.cancelled' });
   }
 
   private markCompleted(result: FullCompactionCompleteData): void {
     if (this.compacting === null) return;
-    this.record.append({ type: 'full_compaction.complete', ...result });
+    this.wire.dispatch(fullCompactionComplete(result));
     this.compacting = null;
+  }
+
+  private normalizeAfterReplay(): void {
+    // A compaction in flight when the session was torn down cannot resume — the
+    // worker and its AbortController are gone — so a `running` phase replayed
+    // from the log is stranded. Collapse it back to idle silently: no live
+    // `compaction.cancelled` signal, since restore must stay quiet.
+    if (this.wire.getModel(CompactionModel).phase !== 'running') return;
+    this.wire.dispatch(fullCompactionCancel({}));
   }
 
   private resetForTurn(): void {
@@ -321,7 +307,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         }
       }, { once: true });
     }
-    this.record.signal({ type: 'compaction.blocked', turnId });
+    this.wire.signal({ type: 'compaction.blocked', turnId });
     await active.promise;
   }
 
@@ -359,7 +345,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       if (this.compacting !== active) return;
       this.lastCompactedTokenCount = finalResult.tokensAfter;
       this.markCompleted(completeData(finalResult));
-      this.record.signal({ type: 'compaction.completed', result: finalResult });
+      this.wire.signal({ type: 'compaction.completed', result: finalResult });
       void this.hooks.onDidCompact.run({
         trigger: data.source,
         estimatedTokenCount: finalResult.tokensAfter,
@@ -373,7 +359,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       if (blockedByTurn) {
         throw error;
       }
-      this.record.signal({
+      this.wire.signal({
         type: 'error',
         ...toKimiErrorPayload(error),
       });
@@ -570,18 +556,6 @@ function completeData(result: CompactionResult): FullCompactionCompleteData {
     tokensBefore: result.tokensBefore,
     tokensAfter: result.tokensAfter,
   };
-}
-
-function compactionSummaryMessage(history: readonly ContextMessage[]): ContextMessage | undefined {
-  const message = history[0];
-  if (message?.origin?.kind !== 'compaction_summary') return undefined;
-  return message;
-}
-
-function contextMessageText(message: ContextMessage): string {
-  return message.content
-    .map((part) => (part.type === 'text' && typeof part.text === 'string' ? part.text : ''))
-    .join('');
 }
 
 function historyUnchanged(

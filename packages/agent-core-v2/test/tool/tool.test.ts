@@ -1,6 +1,6 @@
 import { Readable, type Writable } from 'node:stream';
 
-import type { ToolCall } from '#/app/llmProtocol/kosong';
+import type { ToolCall } from '#/app/llmProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory';

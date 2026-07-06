@@ -8,8 +8,9 @@ import {
 } from '#/agent/contextInjector/pluginSessionStart';
 import { IPluginService } from '#/app/plugin';
 import type { EnabledPluginSessionStart, ReloadSummary } from '#/app/plugin/types';
-import { InMemorySkillCatalog } from '#/app/globalSkillCatalog/registry';
-import type { SkillDefinition } from '#/app/globalSkillCatalog/types';
+import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
+import type { SkillDefinition } from '#/app/skillCatalog/types';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog';
 
 import { agentService, appService, createTestAgent, skillServices, type TestAgentContext } from '../harness';
 
@@ -126,10 +127,18 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(0);
   });
 
-  it('re-appends a fresh reminder when plugins are reloaded', async () => {
+  it('re-appends a fresh reminder when the skill catalog sink changes', async () => {
     const catalog = new InMemorySkillCatalog();
     catalog.register(pluginSkill());
-    const reloadEmitter = new Emitter<ReloadSummary>();
+    const sinkChange = new Emitter<void>();
+    const skillCatalog: ISessionSkillCatalog = {
+      _serviceBrand: undefined,
+      catalog,
+      ready: Promise.resolve(),
+      onDidChange: sinkChange.event,
+      load: async () => {},
+      reload: async () => {},
+    };
 
     ctx = createTestAgent(
       { autoConfigure: true },
@@ -137,10 +146,9 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
         IPluginService,
         pluginServiceStub({
           sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
-          reloadEmitter,
         }),
       ),
-      skillServices(catalog),
+      skillServices(skillCatalog),
       agentService(
         IPluginSessionStartInjectorService,
         new SyncDescriptor(PluginSessionStartInjectorService),
@@ -155,9 +163,10 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
 
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
 
-    // Simulate `pluginService.reloadPlugins()` firing.
-    reloadEmitter.fire({ added: ['demo'], removed: [], errors: [] });
-    // appendReminderOnReload is async (awaits skillCatalog.ready); let it settle.
+    // Simulate the skill-catalog sink firing onDidChange (e.g. after a plugin
+    // reload re-pulls the plugin source). appendReminderOnReload is async
+    // (awaits skillCatalog.ready); let it settle.
+    sinkChange.fire();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -166,6 +175,6 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
     const latest = messageText(messages.at(-1)!);
     expect(latest).toContain('<plugin_session_start plugin="demo" skill="demo-skill">');
     expect(latest).toContain('supersedes any earlier plugin_session_start reminder');
-    reloadEmitter.dispose();
+    sinkChange.dispose();
   });
 });

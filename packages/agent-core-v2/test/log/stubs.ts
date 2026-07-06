@@ -6,8 +6,8 @@
  */
 
 import type { ServiceRegistration } from '#/_base/di/test';
-import { ILogService } from '#/app/log/log';
-import type { ILogger } from '#/app/log/log';
+import { ILogService } from '#/_base/log/log';
+import type { ILogger } from '#/_base/log/log';
 
 /** A no-op `ILogger`: every method is a no-op, `child()` returns itself. */
 export function stubLogger(): ILogger {

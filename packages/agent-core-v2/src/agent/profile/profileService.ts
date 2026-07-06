@@ -3,8 +3,22 @@
  *
  * Owns the active agent's model alias, thinking level, system prompt, and
  * active-tool set; resolves the runnable god-object Model through the App-
- * scope `IModelResolver`, persists profile changes through `wireRecord`, and
- * emits status through `eventBus`. Bound at Agent scope.
+ * scope `IModelResolver`, persists the persistent config slice (`cwd` /
+ * `modelAlias` / `profileName` / resolved `thinkingLevel` / `systemPrompt`) in
+ * the `wire` `ProfileModel` through the `config.update` Op and the persisted
+ * active-tool set in the `wire` `ActiveToolsModel` through the
+ * `tools.set_active_tools` Op (`wire.dispatch`), and reads both through
+ * `wire.getModel`. The effective active-tool set read by consumers is the
+ * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
+ * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
+ * (used by `userTool`; intentionally not persisted, re-derived on resume); the
+ * live overlay is cached in a field and falls back to the Model when unset, so
+ * no restore-ordering coupling with `userTool` arises. The `agent.status.updated`
+ * / `warning` signals now ride the `wire` signal channel (interface-merged into
+ * `SignalMap`; `agent.status.updated` canonical in `usageOps`). `chdir` and
+ * `emitStatusUpdated` run live-only after the dispatch, so `wire.replay`
+ * rebuilds the Models silently.
+ * Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -29,15 +43,16 @@ import { resolveThinkingEffort } from './thinking';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IExecContext } from '#/session/execContext';
+import { ISessionContext } from '#/session/sessionContext';
 import { isMcpToolName } from '#/agent/tool';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile';
 
-import { IAgentRecordService, type AgentRecord } from '#/agent/record';
+import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry';
 import type { ToolSource } from '#/agent/tool';
+import { IAgentWireService, type IWireService } from '#/wire';
 import { prepareSystemPromptContext } from './context';
 import type {
   ApplyProfileOptions,
@@ -53,13 +68,29 @@ import {
   THINKING_SECTION,
   type ThinkingConfig,
 } from './configSection';
+import {
+  ActiveToolsModel,
+  configUpdate,
+  ProfileModel,
+  setActiveTools,
+  type ActiveToolsState,
+  type ConfigUpdatePayload,
+  type ProfileModelState,
+} from './profileOps';
 
 declare module '#/agent/wireRecord' {
   interface WireRecordMap {
-    'config.update': Omit<ProfileUpdateData, 'activeToolNames'>;
     'tools.set_active_tools': {
       names: readonly string[];
     };
+  }
+}
+
+declare module '#/wire' {
+  interface SignalMap {
+    // `warning` is owned by `profile` (the agents-md-oversized notice); it is the
+    // sole emitter, so the declaration lives here rather than in another domain.
+    warning: Omit<WarningEvent, 'type'>;
   }
 }
 
@@ -67,39 +98,35 @@ export class AgentProfileService implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
   private optionsValue: ProfileServiceOptions = {};
-  private cwdValue: string | undefined;
-  private modelAliasValue: string | undefined;
-  private profileName: string | undefined;
-  private thinkingLevelValue: ThinkingEffort = 'off';
-  private systemPrompt = '';
-  private activeToolNames: readonly string[] | undefined;
+  // Live overlay of ephemeral per-tool deltas (`addActiveTool` /
+  // `removeActiveTool`) on top of the persisted `ActiveToolsModel`. `undefined`
+  // means "no overlay — read the Model". Reset on every full `setActiveTools`.
+  private activeToolNamesOverlay: readonly string[] | undefined;
   private agentsMdWarning: string | undefined;
 
+  // Effective active-tool set: the live overlay when present, else the persisted
+  // base rebuilt by `wire.replay`. `undefined` means every tool is active.
+  private get activeToolNames(): ActiveToolsState {
+    return (
+      this.activeToolNamesOverlay ??
+      (this.wire.getModel(ActiveToolsModel) as ActiveToolsState)
+    );
+  }
+
   constructor(
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IConfigService private readonly config: IConfigService,
     @IModelResolver private readonly modelFactory: IModelResolver,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IHostFileSystem private readonly fs: IHostFileSystem,
-    @IExecContext private readonly execCtx: IExecContext,
+    @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
   ) {
     this.configure({});
-    record.define('config.update', {
-      resume: (r) => {
-        this.apply(stripConfigMeta(r));
-      },
-      toReplay: (r) => ({ type: 'config_updated', config: stripConfigMeta(r) }),
-    });
-    record.define('tools.set_active_tools', {
-      resume: (r) => {
-        this.applyActiveToolNames(r.names);
-      },
-    });
   }
 
   configure(options: ProfileServiceOptions): void {
@@ -108,16 +135,13 @@ export class AgentProfileService implements IAgentProfileService {
       chdir: options.chdir ?? this.optionsValue.chdir,
       emitStatusUpdated: options.emitStatusUpdated ?? this.optionsValue.emitStatusUpdated,
     };
-    if (this.cwdValue === undefined) {
-      this.cwdValue = this.readConfiguredCwd();
-    }
   }
 
   update(changed: ProfileUpdateData): void {
     const { activeToolNames, ...configChanged } = changed;
     if (Object.keys(configChanged).length > 0) {
-      this.record.append({ type: 'config.update', ...configChanged });
-      this.apply(configChanged);
+      this.wire.dispatch(configUpdate(this.resolveConfigPayload(configChanged)));
+      this.afterConfigDispatch(configChanged);
     }
     if (activeToolNames !== undefined) {
       this.setActiveTools(activeToolNames);
@@ -148,7 +172,7 @@ export class AgentProfileService implements IAgentProfileService {
     });
 
     if (agentsMdWarning !== undefined) {
-      this.record.signal({
+      this.wire.signal({
         type: 'warning',
         message: agentsMdWarning,
         code: 'agents-md-oversized',
@@ -195,7 +219,7 @@ export class AgentProfileService implements IAgentProfileService {
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
     const context = await prepareSystemPromptContext(
       { fs: this.fs, homeDir: this.env.homeDir },
-      this.execCtx.cwd,
+      this.sessionContext.cwd,
       this.bootstrap.homeDir,
       {
         additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
@@ -205,7 +229,7 @@ export class AgentProfileService implements IAgentProfileService {
     const { agentsMdWarning } = context;
     this.agentsMdWarning = agentsMdWarning;
     if (agentsMdWarning !== undefined) {
-      this.record.signal({
+      this.wire.signal({
         type: 'warning',
         message: agentsMdWarning,
         code: 'agents-md-oversized',
@@ -311,42 +335,46 @@ export class AgentProfileService implements IAgentProfileService {
   addActiveTool(name: string): void {
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || activeToolNames.includes(name)) return;
-    this.applyActiveToolNames([...activeToolNames, name]);
+    // Ephemeral overlay: not persisted; re-derived on resume by `userTool`.
+    this.activeToolNamesOverlay = [...activeToolNames, name];
   }
 
   removeActiveTool(name: string): void {
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || !activeToolNames.includes(name)) return;
-    this.applyActiveToolNames(activeToolNames.filter((candidate) => candidate !== name));
+    // Ephemeral overlay: not persisted; re-derived on resume by `userTool`.
+    this.activeToolNamesOverlay = activeToolNames.filter((candidate) => candidate !== name);
   }
 
-  private apply(changed: ProfileUpdateData): void {
-    if (changed.cwd !== undefined) {
-      this.cwdValue = changed.cwd;
-      void this.optionsValue.chdir?.(changed.cwd);
-    }
-    if (changed.modelAlias !== undefined) this.modelAliasValue = changed.modelAlias;
-    if (changed.profileName !== undefined) this.profileName = changed.profileName;
+  private resolveConfigPayload(
+    changed: Omit<ProfileUpdateData, 'activeToolNames'>,
+  ): ConfigUpdatePayload {
+    const payload: { -readonly [K in keyof ConfigUpdatePayload]: ConfigUpdatePayload[K] } = {};
+    if (changed.cwd !== undefined) payload.cwd = changed.cwd;
+    if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
+    if (changed.profileName !== undefined) payload.profileName = changed.profileName;
     if (changed.thinkingLevel !== undefined) {
-      this.thinkingLevelValue = resolveThinkingEffort(
+      payload.thinkingLevel = resolveThinkingEffort(
         changed.thinkingLevel,
         this.config.get<ThinkingConfig>(THINKING_SECTION),
       );
     }
-    if (changed.systemPrompt !== undefined) this.systemPrompt = changed.systemPrompt;
-    if (changed.activeToolNames !== undefined) {
-      this.applyActiveToolNames(changed.activeToolNames);
+    if (changed.systemPrompt !== undefined) payload.systemPrompt = changed.systemPrompt;
+    return payload;
+  }
+
+  private afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>): void {
+    if (changed.cwd !== undefined) {
+      void this.optionsValue.chdir?.(changed.cwd);
     }
     this.emitStatusUpdated();
   }
 
   private setActiveTools(names: readonly string[]): void {
-    this.record.append({ type: 'tools.set_active_tools', names: [...names] });
-    this.applyActiveToolNames(names);
-  }
-
-  private applyActiveToolNames(names: readonly string[]): void {
-    this.activeToolNames = [...names];
+    // Full replace: drop the ephemeral overlay (subsequent reads fall back to the
+    // Model) and persist the new base set through the wire.
+    this.activeToolNamesOverlay = undefined;
+    this.wire.dispatch(setActiveTools({ names: [...names] }));
   }
 
   private emitStatusUpdated(): void {
@@ -356,15 +384,19 @@ export class AgentProfileService implements IAgentProfileService {
       return;
     }
     if (!this.hasModel()) return;
-    this.record.signal({
+    this.wire.signal({
       type: 'agent.status.updated',
       model: this.modelAlias,
       maxContextTokens: this.getModelCapabilities().max_context_tokens,
     });
   }
 
+  private get profileState(): ProfileModelState {
+    return this.wire.getModel(ProfileModel);
+  }
+
   private get cwd(): string {
-    return this.cwdValue ?? this.readConfiguredCwd() ?? '';
+    return this.profileState.cwd ?? this.readConfiguredCwd() ?? '';
   }
 
   private get model(): string {
@@ -376,14 +408,23 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   private get modelAlias(): string | undefined {
-    return this.modelAliasValue;
+    return this.profileState.modelAlias;
+  }
+
+  private get profileName(): string | undefined {
+    return this.profileState.profileName;
+  }
+
+  private get systemPrompt(): string {
+    return this.profileState.systemPrompt;
   }
 
   private get thinkingLevel(): ThinkingEffort {
-    if (this.thinkingLevelValue === 'off' && this.alwaysThinkingModel) {
+    const stored = this.profileState.thinkingLevel;
+    if (stored === 'off' && this.alwaysThinkingModel) {
       return resolveThinkingEffort('on', this.config.get<ThinkingConfig>(THINKING_SECTION));
     }
-    return this.thinkingLevelValue;
+    return stored;
   }
 
   private get alwaysThinkingModel(): boolean {
@@ -401,7 +442,7 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   private async buildSystemPromptContext(cwd?: string): Promise<SystemPromptContext> {
-    const effectiveCwd = cwd ?? this.execCtx.cwd;
+    const effectiveCwd = cwd ?? this.sessionContext.cwd;
     const base = await prepareSystemPromptContext(
       { fs: this.fs, homeDir: this.env.homeDir },
       effectiveCwd,
@@ -433,11 +474,6 @@ export class AgentProfileService implements IAgentProfileService {
     const cwd = this.optionsValue.cwd;
     return typeof cwd === 'function' ? cwd() : cwd;
   }
-}
-
-function stripConfigMeta(record: AgentRecord<'config.update'>): ProfileUpdateData {
-  const { type: _type, time: _time, ...changed } = record;
-  return changed;
 }
 
 registerScopedService(

@@ -38,7 +38,7 @@ import {
   IAgentProfileCatalogService,
   type AgentProfile,
 } from '#/app/agentProfileCatalog';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 import { ISessionProcessRunner } from '#/session/process';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 

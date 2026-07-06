@@ -37,7 +37,7 @@ import {
   type TokenUsage,
   type Tool,
 } from '#/app/llmProtocol';
-import { ILogService, type LogContext } from '#/app/log';
+import { ILogService, type LogContext } from '#/_base/log';
 import type { KimiModelOverrides, Model, ModelRequestEvent } from '#/app/model';
 import { applyCompletionBudget, resolveCompletionBudget } from '#/app/model/completionBudget';
 import type { Protocol } from '#/app/protocol';

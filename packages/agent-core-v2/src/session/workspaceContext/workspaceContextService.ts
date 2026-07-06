@@ -10,7 +10,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IExecContext } from '#/session/execContext';
+import { ISessionContext } from '#/session/sessionContext';
 
 import { ISessionWorkspaceContext, type PathAccessOperation } from './workspaceContext';
 
@@ -19,7 +19,7 @@ export class SessionWorkspaceContextService implements ISessionWorkspaceContext 
   private _workDir: string;
   private _additionalDirs: string[] = [];
 
-  constructor(@IExecContext ctx: IExecContext) {
+  constructor(@ISessionContext ctx: ISessionContext) {
     this._workDir = resolve(ctx.cwd);
   }
 

@@ -5,7 +5,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
-import type { SkillRoot } from '#/app/globalSkillCatalog/types';
+import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { PluginManager } from './manager';
 import {

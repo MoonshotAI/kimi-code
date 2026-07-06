@@ -1,4 +1,4 @@
-import type { ContentPart } from '#/app/llmProtocol/kosong';
+import type { ContentPart } from '#/app/llmProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { estimateTokensForMessages } from '#/_base/utils/tokens';

@@ -1,4 +1,4 @@
-import { emptyUsage } from '#/app/llmProtocol/kosong';
+import { emptyUsage } from '#/app/llmProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester';

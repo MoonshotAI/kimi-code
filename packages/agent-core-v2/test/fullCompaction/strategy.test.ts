@@ -1,6 +1,6 @@
 import {
   type Message
-} from '#/app/llmProtocol/kosong';
+} from '#/app/llmProtocol';
 import { describe, expect, it } from 'vitest';
 
 import { estimateTokensForMessages } from '#/_base/utils/tokens';

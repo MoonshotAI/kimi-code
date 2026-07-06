@@ -1,5 +1,4 @@
-import { APIConnectionError, emptyUsage } from '#/app/llmProtocol/kosong';
-import type { StreamedMessagePart } from '#/app/llmProtocol/kosong';
+import { APIConnectionError, emptyUsage, type StreamedMessagePart } from '#/app/llmProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,7 +7,7 @@ import {
   type LLMRequestRetryContext,
 } from '#/agent/llmRequester';
 import { IAgentProfileService } from '#/agent/profile';
-import type { ILogger as Logger, LogPayload } from '#/app/log';
+import type { ILogger as Logger, LogPayload } from '#/_base/log';
 import {
   configServices,
   createTestAgent,

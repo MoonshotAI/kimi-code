@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
-import { IAgentRecordService } from '#/agent/record';
 const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 import { IAgentLifecycleService } from '#/session/agentLifecycle';
 import { ISessionSwarmService } from '#/session/swarm';
@@ -18,11 +17,17 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentSwarmService } from '#/agent/swarm';
 import { AgentSwarmService } from '#/agent/swarm/swarmService';
+import { SwarmModel } from '#/agent/swarm/swarmOps';
 import { AgentSwarmTool, AgentSwarmToolInputSchema } from '#/agent/swarm/tools/agent-swarm';
 import type { ExecutableToolContext } from '#/agent/tool';
 import { IAgentToolRegistryService, AgentToolRegistryService } from '#/agent/toolRegistry';
 import { IAgentTurnService } from '#/agent/turn';
 import { IAgentWireRecordService } from '#/agent/wireRecord';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IAgentWireService, WireService, type PersistedRecord, type WireEmission } from '#/wire';
 
 import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
 import { executeTool } from '../tools/fixtures/execute-tool';
@@ -62,12 +67,12 @@ describe('AgentSwarmService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAgentContextMemoryService, stubContextMemory());
     ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.stub(IAgentRecordService, {
-      append: () => {},
-      signal: () => {},
-      on: () => toDisposable(() => {}),
-      define: () => toDisposable(() => {}),
-    });
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix.set(
+      IAgentWireService,
+      new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'swarm-test' }]),
+    );
     ix.stub(IAgentTurnService, stubTurnWithHooks());
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.stub(IAgentLifecycleService, {});
@@ -78,13 +83,49 @@ describe('AgentSwarmService', () => {
   });
   afterEach(() => disposables.dispose());
 
-  it('enter / exit toggle isActive', async () => {
+  it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
     const swarm = ix.get(IAgentSwarmService);
+    const emissions: WireEmission[] = [];
+    disposables.add(ix.get(IAgentWireService).onEmission((e) => emissions.push(e)));
+
     expect(swarm.isActive).toBe(false);
     swarm.enter('manual');
     expect(swarm.isActive).toBe(true);
     swarm.exit();
     expect(swarm.isActive).toBe(false);
+
+    const signals = emissions
+      .filter((e): e is Extract<WireEmission, { type: 'signal' }> => e.type === 'signal')
+      .map((e) => e.signal);
+    expect(signals).toEqual([
+      { type: 'agent.status.updated', swarmMode: true },
+      { type: 'agent.status.updated', swarmMode: false },
+    ]);
+  });
+
+  it('dispatch persists enter/exit records and replay rebuilds the trigger (silent)', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    swarm.enter('manual');
+
+    const log = ix.get(IAppendLogStore);
+    const records: PersistedRecord[] = [];
+    for await (const record of log.read<PersistedRecord>('wire', 'swarm-test')) {
+      records.push(record);
+    }
+    expect(records).toEqual([
+      { type: 'swarm_mode.enter', trigger: 'manual', time: expect.any(Number) },
+    ]);
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(
+      IAgentWireService,
+      new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'swarm-replay' }]),
+    );
+    const fresh = ix2.get(IAgentWireService);
+    fresh.replay(...records);
+    expect(fresh.getModel(SwarmModel)).toBe('manual');
   });
 });
 

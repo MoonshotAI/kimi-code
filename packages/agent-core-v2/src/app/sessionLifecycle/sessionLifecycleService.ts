@@ -29,7 +29,6 @@ import { IEventService } from '#/app/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { ErrorCodes, KimiError } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { createExecContext, execContextSeed } from '#/session/execContext';
 import { ISessionActivity } from '#/session/sessionActivity';
 import { ISessionIndex } from '#/app/sessionIndex';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -44,6 +43,7 @@ import {
   wireRecordPersistKey,
   type PersistedWireRecord,
 } from '#/agent/wireRecord';
+import { IAgentWireService, type PersistedRecord } from '#/wire';
 
 import {
   type CreateSessionOptions,
@@ -98,6 +98,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workspaceId,
       sessionDir,
       metaScope,
+      cwd: opts.workDir,
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
@@ -107,21 +108,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     // synchronously in their constructors, so the probe must have landed by
     // the time the first Session-scoped service is resolved.
     await this.hostEnv.ready;
-    const execCtx = createExecContext(opts.workDir);
     const handle = createScopedChildHandle(
       this.instantiation,
       LifecycleScope.Session,
       opts.sessionId,
       {
-        extra: [
-          ...sessionContextSeed(ctx),
-          ...execContextSeed(execCtx),
-        ],
+        extra: [...sessionContextSeed(ctx)],
       },
     ) as ISessionScopeHandle;
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
-    void handle.accessor.get(ISessionSkillCatalog).load();
+    void handle.accessor.get(ISessionSkillCatalog).ready;
     this._onDidCreateSession.fire({ sessionId: opts.sessionId, handle });
     return handle;
   }
@@ -159,7 +156,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       // is registered; otherwise the wire replay applies splices into a void and
       // the restored transcript never lands in context memory.
       main.accessor.get(IAgentContextMemoryService);
-      await main.accessor.get(IAgentWireRecordService).restore();
+      const mainWireRecord = main.accessor.get(IAgentWireRecordService);
+      await mainWireRecord.restore();
+      await main
+        .accessor.get(IAgentWireService)
+        .replay(...(mainWireRecord.getRecords() as readonly PersistedRecord[]));
     }
     return handle;
   }
@@ -283,7 +284,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           sourceAgent.labels ??
           (sourceAgent.swarmItem !== undefined ? { swarmItem: sourceAgent.swarmItem } : undefined),
       });
-      await agentHandle.accessor.get(IAgentWireRecordService).restore();
+      const forkWireRecord = agentHandle.accessor.get(IAgentWireRecordService);
+      await forkWireRecord.restore();
+      await agentHandle
+        .accessor.get(IAgentWireService)
+        .replay(...(forkWireRecord.getRecords() as readonly PersistedRecord[]));
     }
 
     this._onDidForkSession.fire({

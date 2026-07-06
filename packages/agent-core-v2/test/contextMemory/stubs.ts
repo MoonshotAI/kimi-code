@@ -1,6 +1,6 @@
 /**
  * `contextMemory` test stubs — shared doubles for `IAgentContextMemoryService` and its
- * collaborators (`IAgentWireRecordService`, `IAgentRecordService`).
+ * collaborator (`IAgentWireRecordService`).
  *
  * Lives under `test/` (not `src/`) so test-support code stays out of the
  * production tree. Import from a relative path (`./stubs` or
@@ -12,7 +12,6 @@ import type { ServiceRegistration } from '#/_base/di/test';
 import { createHooks } from '#/hooks';
 import type { Hooks } from '#/hooks';
 import { ensureMessageId, IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentWireRecordService } from '#/agent/wireRecord';
 
 /**
@@ -33,26 +32,6 @@ export function stubWireRecord(): IAgentWireRecordService {
     flush: () => Promise.resolve(),
     close: () => Promise.resolve(),
     getRecords: () => [],
-  };
-}
-
-/** A no-op `IAgentRecordService` — every mutator is a no-op and `buildReplay` is empty. */
-export function stubRecord(): IAgentRecordService {
-  const hooks = createHooks(['onRestoredRecord', 'onResumeEnded']) as IAgentRecordService['hooks'];
-  return {
-    _serviceBrand: undefined,
-    restoring: null,
-    postRestoring: false,
-    captureLiveRecords: false,
-    hooks,
-    append: () => {},
-    on: () => toDisposable(() => {}),
-    signal: () => {},
-    define: () => toDisposable(() => {}),
-    push: () => {},
-    patchLast: () => {},
-    removeLastMessages: () => {},
-    buildReplay: () => [],
   };
 }
 
@@ -100,12 +79,11 @@ export function stubContextMemory(): StubContextMemory {
 
 /**
  * Register the default collaborators consumed by `AgentContextMemoryService`
- * (`IAgentWireRecordService`, `IAgentRecordService`) and an in-memory `IAgentContextMemoryService`.
+ * (`IAgentWireRecordService`) and an in-memory `IAgentContextMemoryService`.
  * Tests that exercise the real `AgentContextMemoryService` should override
  * `IAgentContextMemoryService` via `additionalServices`.
  */
 export function registerContextMemoryServices(reg: ServiceRegistration): void {
   reg.defineInstance(IAgentWireRecordService, stubWireRecord());
-  reg.defineInstance(IAgentRecordService, stubRecord());
   reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
 }

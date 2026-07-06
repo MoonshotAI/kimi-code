@@ -4,9 +4,11 @@
  * Owns the agent's registry of running and restored tasks:
  * registers and drives tasks to completion, retains a bounded output ring,
  * persists task state and output through task persistence, reads
- * limits through `config`, records lifecycle and broadcasts through `record`,
- * and delivers terminal notifications through `contextMemory`. Bound at Agent
- * scope.
+ * limits through `config`, records lifecycle and broadcasts through `wire`
+ * (`task.started` / `task.terminated` Ops into `TaskModel`, plus the matching
+ * signals), restores ghosts through a single `wire.onRestored` handler (wire
+ * replay -> disk load -> reconcile, in that order), and delivers terminal
+ * notifications through `contextMemory`. Bound at Agent scope.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -33,7 +35,7 @@ import { ISessionContext } from '#/session/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry';
-import { IAgentRecordService, type AgentRecord } from '#/agent/record';
+import { IAgentWireService, type IWireService } from '#/wire';
 import {
   IAgentTaskService,
   type AgentTaskNotificationContext,
@@ -49,21 +51,11 @@ import {
 } from './task';
 import { LEGACY_BACKGROUND_SECTION, TASK_SECTION, type AgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
+import { TaskModel, taskStarted, taskTerminated } from './taskOps';
 import { TaskListTool } from '#/agent/task/tools/task-list';
 import { TaskOutputTool } from '#/agent/task/tools/task-output';
 import { TaskStopTool } from '#/agent/task/tools/task-stop';
 import { OrderedHookSlot } from '#/hooks';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'task.started': {
-      info: AgentTaskInfo;
-    };
-    'task.terminated': {
-      info: AgentTaskInfo;
-    };
-  }
-}
 
 interface ForegroundRelease {
   readonly promise: Promise<ForegroundTaskReleaseReason>;
@@ -144,7 +136,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private readonly persistence: AgentTaskPersistence;
 
   constructor(
-    @IAgentRecordService private readonly record: IAgentRecordService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -153,6 +144,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
     @ISessionContext session: ISessionContext,
     @ITaskService private readonly taskService: ITaskService,
+    @IAgentWireService private readonly wire: IWireService,
   ) {
     super();
     this.persistence = new AgentTaskPersistence(
@@ -161,30 +153,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
     );
-    this._register(
-      record.define('task.started', {
-        resume: (r) => {
-          this.applyRestoredTask(r);
-        },
-      }),
-    );
-    this._register(
-      record.define('task.terminated', {
-        resume: (r) => {
-          this.applyRestoredTask(r);
-        },
-      }),
-    );
-    this._register(
-      record.hooks.onResumeEnded.register(
-        'task-lifecycle-resume',
-        async (_ctx, next) => {
-          await this.loadFromDisk({ replace: false });
-          await this.reconcile();
-          await next();
-        },
-      ),
-    );
+    this._register(this.wire.onRestored(() => this.restoreAfterReplay()));
     this._register(
       context.hooks.onSpliced.register('task-notification-delivery', async (ctx, next) => {
         await next();
@@ -195,6 +164,27 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         }
       }),
     );
+  }
+
+  private restoreAfterReplay(): void {
+    // `wire.replay` has rebuilt `TaskModel` from the persisted task.started /
+    // task.terminated records. Seed the restored "ghosts" from it first (the
+    // wire-replay contribution), THEN load from disk and reconcile — all inside
+    // this single onRestored handler so the ordering (wire ghosts -> disk
+    // ghosts -> reconcile) holds. loadFromDisk / reconcile are async (disk
+    // I/O); they chain here and are never split across two hooks (splitting
+    // would lose or duplicate tasks). They run fire-and-forget relative to the
+    // synchronous `wire.replay`: there is no auto-started turn on resume, so
+    // the local-disk reconciliation completes before the first RPC turn.
+    this.restoreGhostsFromWire();
+    void this.loadFromDisk({ replace: false }).then(() => this.reconcile());
+  }
+
+  private restoreGhostsFromWire(): void {
+    for (const [taskId, info] of this.wire.getModel(TaskModel)) {
+      if (this.tasks.has(taskId)) continue;
+      this.ghosts.set(taskId, info);
+    }
   }
 
   registerTask(task: AgentTask, options: RegisterAgentTaskOptions = {}): string {
@@ -666,14 +656,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return entry.foregroundRelease === undefined;
   }
 
-  private applyRestoredTask(
-    record: AgentRecord<'task.started' | 'task.terminated'>,
-  ): void {
-    const info = record.info;
-    if (this.tasks.has(info.taskId)) return;
-    this.ghosts.set(info.taskId, info);
-  }
-
   private async markLoadedTasksLost(): Promise<readonly AgentTaskInfo[]> {
     const lostTasks: AgentTaskInfo[] = [];
     const persistence = this.persistence;
@@ -793,16 +775,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
-    this.record.append({ type: 'task.started', info });
-    this.record.signal({ type: 'task.started', info });
+    this.wire.dispatch(taskStarted({ info }));
+    this.wire.signal({ type: 'task.started', info });
     this.telemetry.track('task_created', {
       kind: info.kind === 'process' ? 'bash' : info.kind,
     });
   }
 
   private recordTaskTerminated(info: AgentTaskInfo): void {
-    this.record.append({ type: 'task.terminated', info });
-    this.record.signal({ type: 'task.terminated', info });
+    this.wire.dispatch(taskTerminated({ info }));
+    this.wire.signal({ type: 'task.terminated', info });
     this.telemetry.track('task_completed', {
       kind: info.kind,
       duration: info.endedAt !== null ? info.endedAt - info.startedAt : null,

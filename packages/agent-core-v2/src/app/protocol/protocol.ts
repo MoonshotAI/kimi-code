@@ -8,9 +8,9 @@
  *
  * `IProtocolAdapterRegistry` is the boundary v2 owns for "how do I create a
  * request handler that speaks this wire protocol". Its current implementation
- * delegates to `createProvider` from the vendored kosong copy under
- * `llmProtocol/kosong`, which is v2's only runtime kosong boundary (Phase 8
- * replaces this with native adapters).
+ * delegates to `createProvider` from `llmProtocol/providers` (the kosong wire
+ * source, kept flat under `llmProtocol`), which is v2's only runtime kosong
+ * boundary (Phase 8 replaces this with native adapters).
  *
  * Bound at App scope; the registry is a pure, stateless singleton.
  */

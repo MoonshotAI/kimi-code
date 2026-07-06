@@ -16,7 +16,6 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
-import { IAgentRecordService } from '#/agent/record';
 import {
   AppendLogStore,
   AGENT_WIRE_PROTOCOL_VERSION,
@@ -29,7 +28,6 @@ import {
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { stubBootstrap } from '../bootstrap/stubs';
-import { stubRecord } from '../contextMemory/stubs';
 
 const cleanups: string[] = [];
 const disposables: DisposableStore[] = [];
@@ -101,7 +99,6 @@ async function createWireHarness(): Promise<{
   ix.set(IBlobStore, new SyncDescriptor(BlobStoreService));
   ix.stub(IBootstrapService, stubBootstrap(dir));
   ix.stub(IHostFileSystem, new HostFileSystem());
-  ix.stub(IAgentRecordService, stubRecord());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl));
   ix.set(IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService, [{}]));

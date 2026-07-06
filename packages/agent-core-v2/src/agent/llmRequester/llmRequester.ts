@@ -6,7 +6,7 @@ import type {
   TokenUsage,
   Tool,
 } from '#/app/llmProtocol';
-import type { LogContext } from '#/app/log';
+import type { LogContext } from '#/_base/log';
 
 export type LLMRequestLogFields = Readonly<LogContext>;
 

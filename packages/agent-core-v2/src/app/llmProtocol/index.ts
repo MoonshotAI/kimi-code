@@ -3,10 +3,10 @@
  * requests.
  *
  * Downstream v2 code and its consumers import wire types from here. The
- * implementation is the vendored kosong source under `./kosong`, re-exported
- * verbatim so field shapes remain bit-identical (wireRecord's on-disk format
- * stays readable, no data migration needed). Phase 8 (native adapters) will
- * replace the implementation without changing this path.
+ * implementation is the kosong wire source, kept flat in this directory so
+ * field shapes remain bit-identical (wireRecord's on-disk format stays
+ * readable, no data migration needed). Phase 8 (native adapters) will replace
+ * the implementation without changing this path.
  *
  * The domain owns:
  *   - message wire types + helpers (Message / ContentPart / ToolCall / ...)

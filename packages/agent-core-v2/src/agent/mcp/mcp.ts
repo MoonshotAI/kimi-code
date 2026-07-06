@@ -29,6 +29,7 @@ export interface IAgentMcpService {
 
 export interface McpServiceOptions {
   readonly manager?: McpConnectionManager;
+  readonly originalsDir?: string;
 }
 
 export const IAgentMcpService = createDecorator<IAgentMcpService>('agentMcpService');

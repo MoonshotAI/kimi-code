@@ -4,8 +4,8 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FileLogWriterService, PENDING_MAX, RotatingFileWriter } from '#/session/sessionLog/logWriter';
-import type { LogEntry } from '#/app/log/log';
+import { FileLogWriter, PENDING_MAX, RotatingFileWriter } from '#/_base/log/fileLog';
+import type { LogEntry } from '#/_base/log/log';
 
 let workDir: string;
 
@@ -156,7 +156,7 @@ describe('RotatingFileWriter', () => {
   });
 });
 
-describe('FileLogWriterService (ILogWriterService)', () => {
+describe('FileLogWriter (ILogWriter)', () => {
   function entry(overrides: Partial<LogEntry> = {}): LogEntry {
     return {
       t: Date.UTC(2026, 4, 19, 10, 12, 30, 123),
@@ -168,7 +168,7 @@ describe('FileLogWriterService (ILogWriterService)', () => {
 
   it('formats entries as logfmt lines', async () => {
     const path = join(workDir, 'app.log');
-    const sink = new FileLogWriterService({ path, maxBytes: 1_000_000, files: 2 });
+    const sink = new FileLogWriter({ path, maxBytes: 1_000_000, files: 2 });
     sink.write(entry({ ctx: { requestId: 'r1' } }));
     await sink.flush();
     const text = await readFile(path, 'utf-8');
@@ -179,7 +179,7 @@ describe('FileLogWriterService (ILogWriterService)', () => {
 
   it('redacts secret ctx values before writing', async () => {
     const path = join(workDir, 'app.log');
-    const sink = new FileLogWriterService({ path, maxBytes: 1_000_000, files: 2 });
+    const sink = new FileLogWriter({ path, maxBytes: 1_000_000, files: 2 });
     sink.write(entry({ ctx: { token: 'super-secret' } }));
     await sink.flush();
     const text = await readFile(path, 'utf-8');
@@ -190,7 +190,7 @@ describe('FileLogWriterService (ILogWriterService)', () => {
 
   it('omits configured context keys', async () => {
     const path = join(workDir, 'app.log');
-    const sink = new FileLogWriterService({
+    const sink = new FileLogWriter({
       path,
       maxBytes: 1_000_000,
       files: 2,

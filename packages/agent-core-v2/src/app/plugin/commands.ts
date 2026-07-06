@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { parseFrontmatter } from '#/app/globalSkillCatalog/parser';
+import { parseFrontmatter } from '#/app/skillCatalog/parser';
 
 import type { PluginCommandDef } from './types';
 

@@ -12,10 +12,10 @@
  * the requester's `IAgentExternalHooksService` — there is no intermediary
  * hook service; the tool wrapper is just a thin layer over the lifecycle.
  *
- * Wire shape note: the record signals are still named `subagent.spawned /
- * started / completed / failed` and telemetry still tracks `subagent_created`
- * so existing session recordings and dashboards stay valid. Rename lives on a
- * separate wire-cleanup PR.
+ * Wire shape note: the signals are still named `subagent.spawned / started /
+ * completed / failed` and telemetry still tracks `subagent_created` so existing
+ * session recordings and dashboards stay valid. Rename lives on a separate
+ * wire-cleanup PR.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -23,10 +23,25 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { isProviderRateLimitError, type TokenUsage } from '#/app/llmProtocol';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentExternalHooksService } from '#/agent/externalHooks';
-import { IAgentRecordService } from '#/agent/record';
+import type {
+  SubagentCompletedEvent,
+  SubagentFailedEvent,
+  SubagentSpawnedEvent,
+  SubagentStartedEvent,
+} from '@moonshot-ai/protocol';
+import { IAgentWireService } from '#/wire';
 import { isAbortError } from '#/agent/loop/errors';
 
 import type { AgentRunHandle } from './agentLifecycle';
+
+declare module '#/wire' {
+  interface SignalMap {
+    'subagent.spawned': Omit<SubagentSpawnedEvent, 'type'>;
+    'subagent.started': Omit<SubagentStartedEvent, 'type'>;
+    'subagent.completed': Omit<SubagentCompletedEvent, 'type'>;
+    'subagent.failed': Omit<SubagentFailedEvent, 'type'>;
+  }
+}
 
 const HOOK_TEXT_PREVIEW_LENGTH = 500;
 
@@ -67,7 +82,7 @@ export function emitAgentRunSpawned(
   targetAgentId: string,
   meta: AgentRunSpawnedMeta,
 ): void {
-  requester.accessor.get(IAgentRecordService)?.signal({
+  requester.accessor.get(IAgentWireService)?.signal({
     type: 'subagent.spawned',
     subagentId: targetAgentId,
     subagentName: meta.profileName,
@@ -94,9 +109,9 @@ export async function mirrorAgentRun(
   run: AgentRunHandle,
   options: MirrorAgentRunOptions,
 ): Promise<{ summary: string; usage?: TokenUsage }> {
-  const record = requester.accessor.get(IAgentRecordService);
+  const wire = requester.accessor.get(IAgentWireService);
   const externalHooks = requester.accessor.get(IAgentExternalHooksService);
-  record?.signal({ type: 'subagent.started', subagentId: run.agentId });
+  wire?.signal({ type: 'subagent.started', subagentId: run.agentId });
   if (options.prompt !== undefined) {
     try {
       await externalHooks?.runAgentTaskStart({
@@ -118,7 +133,7 @@ export async function mirrorAgentRun(
   }
   try {
     const result = await run.completion;
-    record?.signal({
+    wire?.signal({
       type: 'subagent.completed',
       subagentId: run.agentId,
       resultSummary: result.summary,
@@ -131,7 +146,7 @@ export async function mirrorAgentRun(
     return result;
   } catch (error) {
     if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
-      record?.signal({
+      wire?.signal({
         type: 'subagent.failed',
         subagentId: run.agentId,
         error: errorMessage(error),

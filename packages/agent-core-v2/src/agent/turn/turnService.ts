@@ -1,4 +1,18 @@
+/**
+ * `turn` domain (L4) — `IAgentTurnService` implementation.
+ *
+ * Owns the agent's turn lifecycle: the next-turn-id counter lives in the `wire`
+ * `TurnModel` (advanced only through the `turn.launch` Op via `wire.dispatch`,
+ * read through `wire.getModel`), while the per-turn runtime (the active `Turn`,
+ * its `AbortController` and `ready`/`result` promises, and the `turn.started` /
+ * `turn.ended` / `error` signals) stays live-only and is emitted through
+ * `wire.signal`. `wire.replay` rebuilds the counter silently so resumed sessions
+ * keep allocating fresh ids without re-firing any signal. Bound at Agent scope.
+ */
+
 import { createControlledPromise } from '@antfu/utils';
+
+import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/protocol';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -6,25 +20,22 @@ import { ErrorCodes, KimiError, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentLoopService } from '#/agent/loop';
 import { IAgentTelemetryContextService, ITelemetryService } from '#/app/telemetry';
-import { IAgentRecordService } from '#/agent/record';
-import type {
-  Turn,
-  TurnEndedContext,
-  TurnResult,
-} from './turn';
+import { IAgentWireService, type IWireService } from '#/wire';
+import type { Turn, TurnEndedContext, TurnResult } from './turn';
 import { IAgentTurnService } from './turn';
+import { launchTurn, TurnModel } from './turnOps';
 
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'turn.launch': {
-      turnId: number;
-    };
+declare module '#/wire' {
+  interface SignalMap {
+    'turn.started': Omit<TurnStartedEvent, 'type'>;
+    'turn.ended': Omit<TurnEndedEvent, 'type'>;
+    // `error` is declared by the `mcp` domain (interface-merge); reused here, not
+    // re-declared.
   }
 }
 
 export class AgentTurnService implements IAgentTurnService {
   declare readonly _serviceBrand: undefined;
-  private nextTurnId = 0;
   private activeTurn: Turn | undefined;
 
   readonly hooks = {
@@ -34,16 +45,10 @@ export class AgentTurnService implements IAgentTurnService {
 
   constructor(
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
-  ) {
-    record.define('turn.launch', {
-      resume: (r) => {
-        this.restoreLaunch(r.turnId);
-      },
-    });
-  }
+  ) {}
 
   launch(): Turn {
     if (this.activeTurn !== undefined) {
@@ -54,9 +59,8 @@ export class AgentTurnService implements IAgentTurnService {
       );
     }
 
-    const turnId = this.nextTurnId;
-    this.record.append({ type: 'turn.launch', turnId });
-    this.restoreLaunch(turnId);
+    const turnId = this.wire.getModel(TurnModel).nextTurnId;
+    this.wire.dispatch(launchTurn({ turnId }));
     const abortController = new AbortController();
     const ready = createControlledPromise<void>();
     const turn: MutableTurn = {
@@ -85,7 +89,7 @@ export class AgentTurnService implements IAgentTurnService {
     let result: TurnResult | undefined;
     try {
       turnTelemetry.track('turn_started');
-      this.record.signal({
+      this.wire.signal({
         type: 'turn.started',
         turnId: turn.id,
       });
@@ -109,7 +113,7 @@ export class AgentTurnService implements IAgentTurnService {
       }
       if (result !== undefined) {
         const error = result.error !== undefined ? toKimiErrorPayload(result.error) : undefined;
-        this.record.signal({
+        this.wire.signal({
           type: 'turn.ended',
           turnId: turn.id,
           reason: result.reason,
@@ -117,7 +121,7 @@ export class AgentTurnService implements IAgentTurnService {
           durationMs: Date.now() - startedAt,
         });
         if (error !== undefined) {
-          this.record.signal({ type: 'error', ...error });
+          this.wire.signal({ type: 'error', ...error });
         }
         if (result.reason !== 'completed') {
           turnTelemetry.track('turn_interrupted', { at_step: result.steps ?? null });
@@ -126,12 +130,6 @@ export class AgentTurnService implements IAgentTurnService {
       if (result !== undefined) {
         await this.hooks.onEnded.run({ turn, result });
       }
-    }
-  }
-
-  private restoreLaunch(turnId: number): void {
-    if (Number.isInteger(turnId) && turnId >= this.nextTurnId) {
-      this.nextTurnId = turnId + 1;
     }
   }
 }

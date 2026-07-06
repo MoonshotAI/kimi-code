@@ -14,8 +14,8 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { createExecContext, IExecContext } from '#/session/execContext';
 import { ISessionProcessRunner, SessionProcessRunner } from '#/session/process';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext';
 
 async function collect(stream: Readable): Promise<string> {
   const chunks: Buffer[] = [];
@@ -25,7 +25,7 @@ async function collect(stream: Readable): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-describe('SessionProcessRunner (backed by IExecContext)', () => {
+describe('SessionProcessRunner', () => {
   let dir: string;
 
   beforeEach(async () => {
@@ -56,7 +56,18 @@ describe('SessionProcessRunner (backed by IExecContext)', () => {
     const session = host.child(
       LifecycleScope.Session,
       's',
-      [stubPair(IExecContext, createExecContext(dir))],
+      [
+        stubPair(
+          ISessionContext,
+          makeSessionContext({
+            sessionId: 's',
+            workspaceId: 'w',
+            sessionDir: dir,
+            sessionScope: 'sessions/w/s',
+            cwd: dir,
+          }),
+        ),
+      ],
     );
     return session.accessor.get(ISessionProcessRunner);
   }

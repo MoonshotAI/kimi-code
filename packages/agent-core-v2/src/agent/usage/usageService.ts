@@ -1,55 +1,41 @@
+/**
+ * `usage` domain (L3) — `IAgentUsageService` implementation.
+ *
+ * Accumulates the agent's token usage in the `wire` `UsageModel`, mutating it
+ * only through the `usage.record` Op (`wire.dispatch(recordUsage(...))`) and
+ * deriving `status()` snapshots from `wire.getModel`. Publishes the resulting
+ * `agent.status.updated` through `wire.signal` (edge reconnection of that
+ * signal is a Phase 5 concern). Bound at Agent scope.
+ */
+
 import { addUsage, type TokenUsage } from '#/app/llmProtocol';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 import type { LLMRequestSource } from '#/agent/llmRequester/llmRequester';
-import { IAgentRecordService } from '#/agent/record';
+import { IAgentWireService, type IWireService } from '#/wire';
 import type { UsageStatus } from './usage';
 import { IAgentUsageService } from './usage';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'usage.record': {
-      model: string;
-      usage: TokenUsage;
-      context?: LLMRequestSource;
-    };
-  }
-}
+import { recordUsage, UsageModel } from './usageOps';
 
 export class AgentUsageService extends Disposable implements IAgentUsageService {
   declare readonly _serviceBrand: undefined;
-  private readonly byModel: Record<string, TokenUsage> = {};
-  private currentTurnId: number | undefined;
-  private currentTurn: TokenUsage | undefined;
 
-  constructor(@IAgentRecordService private readonly records: IAgentRecordService) {
+  constructor(@IAgentWireService private readonly wire: IWireService) {
     super();
-    this._register(
-      records.define('usage.record', {
-        resume: (r) => {
-          this.apply(r.model, r.usage, r.context);
-        },
-      }),
-    );
   }
 
   record(model: string, usage: TokenUsage, source?: LLMRequestSource): void {
-    this.records.append({
-      type: 'usage.record',
-      model,
-      usage,
-      context: source,
-    });
-    this.apply(model, usage, source);
+    this.wire.dispatch(recordUsage({ model, usage, context: source }));
     this.publishChanged();
   }
 
   status(): UsageStatus {
-    const byModel = this.byModelSnapshot();
+    const model = this.wire.getModel(UsageModel);
+    const byModel = byModelSnapshot(model.byModel);
     const hasByModel = Object.keys(byModel).length > 0;
-    const currentTurn = this.currentTurn;
+    const currentTurn = model.currentTurn;
     return {
       byModel: hasByModel ? byModel : undefined,
       total: hasByModel ? totalUsage(byModel) : undefined,
@@ -57,36 +43,19 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
     };
   }
 
-  private apply(model: string, usage: TokenUsage, source: LLMRequestSource | undefined): void {
-    const current = this.byModel[model];
-    this.byModel[model] = current === undefined ? copyUsage(usage) : addUsage(current, usage);
-
-    if (source?.type === 'turn') {
-      if (this.currentTurnId !== source.turnId) {
-        this.currentTurnId = source.turnId;
-        this.currentTurn = copyUsage(usage);
-      } else {
-        this.currentTurn =
-          this.currentTurn === undefined ? copyUsage(usage) : addUsage(this.currentTurn, usage);
-      }
-    }
-  }
-
   private publishChanged(): void {
-    const status = this.status();
-    if (status === undefined) return;
-    this.records.signal({ type: 'agent.status.updated', usage: status });
-  }
-
-  private byModelSnapshot(): Record<string, TokenUsage> {
-    return Object.fromEntries(
-      Object.entries(this.byModel).map(([model, usage]) => [model, copyUsage(usage)]),
-    );
+    this.wire.signal({ type: 'agent.status.updated', usage: this.status() });
   }
 }
 
 function copyUsage(usage: TokenUsage): TokenUsage {
   return { ...usage };
+}
+
+function byModelSnapshot(byModel: Record<string, TokenUsage>): Record<string, TokenUsage> {
+  return Object.fromEntries(
+    Object.entries(byModel).map(([model, usage]) => [model, copyUsage(usage)]),
+  );
 }
 
 function totalUsage(byModel: Record<string, TokenUsage>): TokenUsage | undefined {

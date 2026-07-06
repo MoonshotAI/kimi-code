@@ -7,7 +7,7 @@ import {
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { Event } from '#/_base/event';
-import { emptyUsage } from '#/app/llmProtocol/kosong';
+import { emptyUsage } from '#/app/llmProtocol';
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
 import { IAgentTaskService } from '#/agent/task';
 import {
@@ -24,7 +24,6 @@ import { IAgentFullCompactionService } from '#/agent/fullCompaction';
 import { IAgentLoopService, type TurnAfterStepContext } from '#/agent/loop';
 import { IAgentPermissionGate } from '#/agent/permissionGate';
 import { IAgentPromptService } from '#/agent/prompt';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { IAgentTurnService, type Turn } from '#/agent/turn';
 import { IBootstrapService } from '#/app/bootstrap';
@@ -33,7 +32,6 @@ import { IPluginService } from '#/app/plugin';
 import { createHooks } from '#/hooks';
 
 import { stubBootstrap } from '../bootstrap/stubs';
-import { stubRecord } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubTurnWithHooks } from '../turn/stubs';
 
 function nodeCommand(source: string): string {
@@ -159,7 +157,6 @@ describe('HookEngine integration', () => {
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
           reg.defineInstance(IAgentContextMemoryService, context);
-          reg.defineInstance(IAgentRecordService, stubRecord());
           reg.defineInstance(IAgentLoopService, loop);
           reg.definePartialInstance(IAgentPromptService, {
             hooks: createHooks(['onWillSubmitPrompt']),

@@ -16,6 +16,7 @@ export function createMcpTool(
   qualifiedName: string,
   tool: KosongTool,
   client: MCPClient,
+  options: { readonly originalsDir?: string } = {},
 ): ExecutableTool {
   return {
     name: qualifiedName,
@@ -29,7 +30,11 @@ export function createMcpTool(
           (args ?? {}) as Record<string, unknown>,
           context.signal,
         );
-        return normalizeMcpToolResult(mcpResultToExecutableOutput(result, qualifiedName));
+        return normalizeMcpToolResult(
+          await mcpResultToExecutableOutput(result, qualifiedName, {
+            originalsDir: options.originalsDir,
+          }),
+        );
       },
     }),
   };
@@ -38,7 +43,14 @@ export function createMcpTool(
 function normalizeMcpToolResult(result: {
   readonly output: ExecutableToolResult['output'];
   readonly isError: boolean;
+  readonly truncated?: true;
 }): ExecutableToolResult {
-  if (result.isError) return { output: result.output, isError: true };
-  return { output: result.output };
+  if (result.isError) {
+    return result.truncated === true
+      ? { output: result.output, isError: true, truncated: true }
+      : { output: result.output, isError: true };
+  }
+  return result.truncated === true
+    ? { output: result.output, truncated: true }
+    : { output: result.output };
 }

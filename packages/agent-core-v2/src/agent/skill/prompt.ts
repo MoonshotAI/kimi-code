@@ -1,5 +1,5 @@
 import { escapeXml } from '#/_base/utils/xml-escape';
-import type { SkillSource } from '#/app/globalSkillCatalog/types';
+import type { SkillSource } from '#/app/skillCatalog/types';
 
 export type SkillPromptTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 

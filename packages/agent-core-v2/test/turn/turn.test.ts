@@ -9,11 +9,11 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   APITimeoutError,
-  type ChatProvider,
   type ModelCapability,
   type ProviderRequestAuth,
   type ToolCall,
-} from '#/app/llmProtocol/kosong';
+} from '#/app/llmProtocol';
+import type { ChatProvider } from '#/app/llmProtocol/provider';
 import { describe, expect, it, vi } from 'vitest';
 
 import { abortError, abortable } from '#/_base/utils/abort';
@@ -24,7 +24,7 @@ import { IOAuthService } from '#/app/auth';
 import { IAgentTelemetryContextService } from '#/app/telemetry';
 import { ErrorCodes, KimiError } from '#/errors';
 import { HookEngine } from '#/agent/externalHooks/engine';
-import type { ILogger as Logger, LogPayload } from '#/app/log';
+import type { ILogger as Logger, LogPayload } from '#/_base/log';
 import { IAgentMcpService } from '#/agent/mcp';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { registerMediaTools, type VideoUploader } from '#/agent/media';

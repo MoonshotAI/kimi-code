@@ -1,5 +1,5 @@
 import type { AgentEvent } from '@moonshot-ai/protocol';
-import type { ContentPart, Tool as KosongTool } from '#/app/llmProtocol/kosong';
+import type { ContentPart, Tool as KosongTool } from '#/app/llmProtocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -16,10 +16,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentTurnService } from '#/agent/turn';
 import { IAgentProfileService } from '#/agent/profile';
-import { IAgentRecordService } from '#/agent/record';
 
 import { createTestAgent, mcpServices, type TestAgentContext } from '../harness';
-import { stubRecord } from '../contextMemory/stubs';
 import { stubTurnWithHooks } from '../turn/stubs';
 import { discoverTools, executeTool, fakeMcpClient } from './stubs';
 
@@ -141,7 +139,6 @@ describe('AgentMcpService', () => {
       on: () => toDisposable(() => {}),
     });
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
-    ix.stub(IAgentRecordService, stubRecord());
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
     ix.stub(IAgentTurnService, stubTurnWithHooks());
   });

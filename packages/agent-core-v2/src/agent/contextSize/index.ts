@@ -3,4 +3,5 @@
  */
 
 export * from './contextSize';
+export * from './contextSizeOps';
 export * from './contextSizeService';

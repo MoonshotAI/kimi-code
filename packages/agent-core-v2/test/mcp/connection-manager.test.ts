@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import type { AddressInfo as HttpAddress } from 'node:net';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { join } from 'pathe';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -21,6 +25,7 @@ import {
   closeServer,
   crashAfterConnectFixture,
   createMemoryMcpOAuthStore,
+  cwdStdioFixture,
   hangingListStdioFixture,
   slowStdioFixture,
   stderrThenExitFixture,
@@ -129,6 +134,24 @@ describe('McpConnectionManager', () => {
       expect(cm.get('filtered')?.toolCount).toBe(1);
     } finally {
       await cm.shutdown();
+    }
+  }, 15000);
+
+  it('starts stdio servers in stdioCwd when config.cwd is omitted', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-manager-cwd-'));
+    const cm = new McpConnectionManager({ stdioCwd: cwd });
+    try {
+      await cm.connectAll({
+        cwd: stdioConfig([cwdStdioFixture]),
+      });
+      const resolved = cm.resolved('cwd');
+      if (resolved === undefined) throw new Error('Expected cwd MCP server to connect');
+      const result = await resolved.client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(cwd));
+    } finally {
+      await cm.shutdown();
+      await rm(cwd, { recursive: true, force: true });
     }
   }, 15000);
 

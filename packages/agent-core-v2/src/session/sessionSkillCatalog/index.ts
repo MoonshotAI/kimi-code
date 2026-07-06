@@ -1,8 +1,12 @@
 /**
  * `sessionSkillCatalog` domain barrel — re-exports the per-session skill
- * catalog contract and its Session-scope service. Importing this barrel
- * registers the `ISessionSkillCatalog` binding into the scope registry.
+ * catalog sink contract, its sink service, and the Session-scope workspace /
+ * plugin sources. Importing this barrel registers the `ISessionSkillCatalog`
+ * sink plus the `IWorkspaceFileSkillSource` and `IPluginSkillSource` bindings
+ * into the scope registry.
  */
 
 export * from './skillCatalog';
 export * from './skillCatalogService';
+export * from './workspaceFileSkillSource';
+export * from './pluginSkillSource';

@@ -1,16 +1,19 @@
 /**
- * `SessionEventBroadcaster` — per-session single fan-out point that turns
- * agent `IAgentRecordService` emissions into a sequenced, journaled, replayable
- * `/api/v1/ws` event stream (the `{seq, epoch}` watermark).
+ * `SessionEventBroadcaster` — per-session single fan-out point that turns agent
+ * emissions (live signals via `IAgentWireService.onEmission`) into a sequenced,
+ * journaled, replayable `/api/v1/ws` event stream (the `{seq, epoch}` watermark).
  *
  * Port of v1's `WSBroadcastService` (`packages/server/.../wsBroadcastService.ts`),
- * adapted to v2 where agent events live on per-agent `IAgentRecordService`s (not a Core
- * firehose). For each session it:
+ * adapted to v2 where agent events live on per-agent `IAgentWireService` emissions
+ * (not a Core firehose). For each session it:
  *
- *   1. Subscribes to every agent's `IAgentRecordService` via `IAgentLifecycleService`
- *      reach-down-via-handle (and `onDidCreate`/`onDidDispose` for late agents).
+ *   1. Subscribes to every agent's `IAgentWireService.onEmission` via
+ *      `IAgentLifecycleService` reach-down-via-handle (and `onDidCreate` /
+ *      `onDidDispose` for late agents); `record` emissions are persisted and not
+ *      broadcast (see step 3).
  *   2. Attaches `agentId`/`sessionId` to build the wire `Event`.
- *   3. Classifies durable vs volatile (`VOLATILE_EVENT_TYPES`).
+ *   3. Classifies durable vs volatile — `isVolatileSignal` for the agent
+ *      wire-emission path (`isVolatileEventType` remains for the global/model path).
  *   4. Durable events: assign the next per-session `seq` (monotonic across
  *      restarts), persist to the `SessionEventJournal`, cache in an in-memory
  *      tail, fan out.
@@ -30,15 +33,15 @@ import type {
   IDisposable,
   ISessionScopeHandle,
   Scope,
+  WireEmission,
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
-  IAgentRecordService,
+  IAgentWireService,
   IEventService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
 import type {
-  AgentEvent,
   Event,
   InFlightTurn,
   ModelCatalogChangedEvent,
@@ -250,16 +253,24 @@ export class SessionEventBroadcaster {
 
   private async dispatchGlobal(event: Event): Promise<void> {
     const state = await this.ensureGlobalState();
-    state.queue = state.queue.then(() => this.dispatch(state, event)).catch(() => {});
+    state.queue = state.queue
+      .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
+      .catch(() => {});
   }
 
   private attachAgents(sessionId: string, session: ISessionScopeHandle, state: SessionState): void {
     const agents = session.accessor.get(IAgentLifecycleService);
     const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
-      const sink = handle.accessor.get(IAgentRecordService);
-      const d = sink.on((agentEvent) => this.onAgentEvent(sessionId, handle.id, agentEvent));
-      state.agentDisposables.set(handle.id, d);
+      // Every domain emits live signals via `IAgentWireService.onEmission`;
+      // `record` emissions are persisted and not broadcast.
+      const wire = handle.accessor.get(IAgentWireService);
+      const wireD = wire.onEmission((emission) =>
+        this.onWireEmission(sessionId, handle.id, emission),
+      );
+      state.agentDisposables.set(handle.id, {
+        dispose: () => wireD.dispose(),
+      });
     };
     for (const handle of agents.list()) subscribeAgent(handle);
     state.lifecycleDisposables.push(
@@ -274,20 +285,29 @@ export class SessionEventBroadcaster {
     );
   }
 
-  private onAgentEvent(sessionId: string, agentId: string, agentEvent: AgentEvent): void {
+  private onWireEmission(sessionId: string, agentId: string, emission: WireEmission): void {
+    // Records are persisted; the migrated domains' live UI rides the signal, so
+    // `record` emissions are intentionally not broadcast here.
+    if (emission.type !== 'signal') return;
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
-    const event = { ...agentEvent, agentId, sessionId } as Event;
-    // Enqueue so dispatch is serialized per session.
-    state.queue = state.queue.then(() => this.dispatch(state, event)).catch(() => {});
+    const { signal } = emission;
+    // The migrated wire signals are AgentEvent-shaped by construction (they were
+    // ported from the former `record.signal(agentEvent)` call sites); the declared
+    // `SignalMap` payload types are deliberately wider than the protocol contract,
+    // hence the assertion via `unknown`.
+    const event = { ...signal, agentId, sessionId } as unknown as Event;
+    state.queue = state.queue
+      .then(() => this.dispatch(state, event, isVolatileSignal(signal.type)))
+      .catch(() => {});
   }
 
-  private async dispatch(state: SessionState, event: Event): Promise<void> {
+  private async dispatch(state: SessionState, event: Event, volatile: boolean): Promise<void> {
     const { journal, tracker, tail, targets, sessionId } = state;
     const annotation = tracker.apply(sessionId, event);
 
     let envelope: EventEnvelope;
-    if (isVolatileEventType(event.type)) {
+    if (volatile) {
       envelope = this.buildEnvelope(journal.seq, sessionId, event, {
         epoch: journal.epoch,
         volatile: true,
@@ -332,6 +352,30 @@ export class SessionEventBroadcaster {
       for (const target of state.targets) yield target;
     }
   }
+}
+
+/**
+ * Server-side durability gate for the agent wire-emission path. Live signals
+ * reach the edge via `IAgentWireService.onEmission`; their volatile vs durable
+ * classification is owned here rather than by the protocol's
+ * `VOLATILE_EVENT_TYPES` / `isVolatileEventType` (still used by the global /
+ * model path in `dispatchGlobal`, and by the shipped v1 server). Volatile set
+ * per plan line 475.
+ */
+const VOLATILE_SIGNAL_TYPES = [
+  'assistant.delta',
+  'thinking.delta',
+  'tool.call.delta',
+  'tool.progress',
+  'shell.output',
+  'shell.started',
+  'agent.status.updated',
+] as const;
+
+const volatileSignalTypeSet: ReadonlySet<string> = new Set(VOLATILE_SIGNAL_TYPES);
+
+function isVolatileSignal(type: string): boolean {
+  return volatileSignalTypeSet.has(type);
 }
 
 /** Session/workspace/config/model-catalog events are broadcast to every connection. */

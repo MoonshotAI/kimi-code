@@ -5,10 +5,10 @@
  * `rg`, streams `--json` output through the host `IHostProcessService`, and
  * parses it into the protocol `FsGrepResponse`. When `rg` is unavailable it
  * falls back to a pure-node walker (gitignore-aware, JS regex) so Grep still
- * works on hosts without ripgrep — matching the previous `agentFs`
+ * works on hosts without ripgrep — matching the previous `sessionFs`
  * `ISessionFsService.grep` behavior.
  *
- * Ported from `session/agentFs/fsService` (`grep` / `grepWithRg` /
+ * Ported from `session/sessionFs/fsService` (`grep` / `grepWithRg` /
  * `grepWithNode` / `parseRgJsonOutput`) onto the os domains: subprocesses go
  * through `IHostProcessService` and the node walker through `IHostFileSystem`.
  */
@@ -314,7 +314,7 @@ function readStream(stream: NodeJS.ReadableStream): Promise<string> {
   });
 }
 
-// ── pure helpers (ported from session/agentFs/fsSearch) ──────────────
+// ── pure helpers (ported from session/sessionFs/fsSearch) ──────────────
 
 function compileGrepPattern(req: FsGrepRequest): RegExp {
   const flags = req.case_sensitive ? 'g' : 'gi';

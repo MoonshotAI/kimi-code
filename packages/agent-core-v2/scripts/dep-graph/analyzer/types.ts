@@ -26,7 +26,7 @@ export interface ServiceNode {
    * Format: `${scope}::${token}` — matches the DI registration identity and
    * disambiguates the same impl class bound to multiple tokens (e.g.
    * `InMemoryStorageService` registered against 4 different tokens) as well
-   * as the same token bound at multiple scopes (e.g. `ILogWriterService`
+   * as the same token bound at multiple scopes (e.g. `ILogService`
    * bound at App and Session).
    */
   id: string;

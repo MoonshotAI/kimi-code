@@ -24,7 +24,6 @@ export {
   permissionModeServices,
   permissionRulesServices,
   questionServices,
-  replayServices,
   sessionService,
   sessionServices,
   skillServices,

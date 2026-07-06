@@ -1,9 +1,15 @@
 /**
- * `llmProtocol.tool` — v2's public `Tool` wire type.
+ * A tool that the model may invoke during generation.
  *
- * The name / description / JSON-Schema parameters carried across the wire when
- * v2 declares an available tool to the LLM. Downstream v2 code imports `Tool`
- * from here; it is re-exported from the vendored kosong copy under `./kosong`.
+ * The definition is provider-agnostic; each provider implementation converts
+ * it to the appropriate wire format (e.g. OpenAI function-calling, Anthropic
+ * tool-use, Google function declarations).
  */
-
-export type { Tool } from './kosong';
+export interface Tool {
+  /** Unique tool name used to match invocations. */
+  name: string;
+  /** Human-readable description shown to the model. */
+  description: string;
+  /** JSON Schema describing the tool's parameters. */
+  parameters: Record<string, unknown>;
+}

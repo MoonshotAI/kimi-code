@@ -34,7 +34,7 @@ import type { AgentTaskSettlement } from '#/agent/task/types';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentProfileService } from '#/agent/profile';
-import { createExecContext, type IExecContext } from '#/session/execContext';
+import { type ISessionContext, makeSessionContext } from '#/session/sessionContext';
 import type { IProcess, ISessionProcessRunner } from '#/session/process';
 import { type BashInput, BashInputSchema, BashTool } from '#/os/backends/node-local/tools/bash';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
@@ -286,14 +286,20 @@ function processWithOpenStreamsThatExitOnKill(): IProcess {
   };
 }
 
-// ── Fake IHostEnvironment / IExecContext ─────────────────────────────
+// ── Fake IHostEnvironment / ISessionContext ────────────────────────────
 
 function createTestEnv(env: IHostEnvironment = posixEnv): IHostEnvironment {
   return env;
 }
 
-function createTestCtx(cwd = '/workspace'): IExecContext {
-  return createExecContext(cwd);
+function createTestCtx(cwd = '/workspace'): ISessionContext {
+  return makeSessionContext({
+    sessionId: 's',
+    workspaceId: 'w',
+    sessionDir: cwd,
+    sessionScope: 'sessions/w/s',
+    cwd,
+  });
 }
 
 // ── Fake ISessionProcessRunner ──────────────────────────────────────────────
@@ -690,7 +696,7 @@ function stubProfile(isToolActive: (name: string) => boolean = () => true): IAge
 function bashTool(
   runner: ISessionProcessRunner,
   env: IHostEnvironment = createTestEnv(),
-  ctx: IExecContext = createTestCtx(),
+  ctx: ISessionContext = createTestCtx(),
   background: IAgentTaskService = createFakeTaskService().service,
   profile: IAgentProfileService = stubProfile(),
 ): BashTool {

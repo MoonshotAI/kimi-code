@@ -1,13 +1,30 @@
-import {
-  Disposable,
-} from "#/_base/di";
-import { OrderedHookSlot } from '#/hooks';
-import { IAgentRecordService, type AgentRecord } from '#/agent/record';
-import { IAgentContextMemoryService } from './contextMemory';
-import { ensureMessageId } from './messageId';
-import type { ContextMessage } from './types';
+/**
+ * `contextMemory` domain (L4) — `IAgentContextMemoryService` implementation.
+ *
+ * Owns the per-agent conversation history in the wire `ContextModel`
+ * (`ContextMessage[]`): reads through `wire.getModel`, writes through
+ * `wire.dispatch(contextSplice(...))` (splice is the single primitive). The
+ * `context.splice` record still rides the shared wire log read by `getRecords()`
+ * and replayed into the Model, so its shape stays declared in `WireRecordMap`;
+ * blob offload now lives in the `WireService` hook (seeded with
+ * `contextBlobSelector`) rather than a `record.define(..., { blobs })` facet.
+ * Message ids are stamped at the dispatch call site so `apply` stays pure.
+ * `onSpliced` fires from the live `splice` path only — replay rebuilds the Model
+ * silently and never invokes the service method, so the hook is quiet on
+ * restore. The legacy replay read model (`IAgentRecordService`) is no longer
+ * mirrored here. Bound at Agent scope.
+ */
+
+import { Disposable } from '#/_base/di';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { OrderedHookSlot } from '#/hooks';
+import { IAgentWireService, type IWireService } from '#/wire';
+
+import { IAgentContextMemoryService } from './contextMemory';
+import { ContextModel, contextSplice } from './contextOps';
+import { ensureMessageId } from './messageId';
+import type { ContextMessage } from './types';
 
 declare module '#/agent/wireRecord' {
   interface WireRecordMap {
@@ -22,7 +39,6 @@ declare module '#/agent/wireRecord' {
 
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
-  private readonly history: ContextMessage[] = [];
 
   readonly hooks = {
     onSpliced: new OrderedHookSlot<{
@@ -33,31 +49,12 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     }>(),
   };
 
-  constructor(
-    @IAgentRecordService private readonly record: IAgentRecordService,
-  ) {
+  constructor(@IAgentWireService private readonly wire: IWireService) {
     super();
-    this._register(
-      record.define('context.splice', {
-        resume: (r) => {
-          this.applySplice(r);
-        },
-        blobs: (r) =>
-          r.messages.map((message, index) => ({
-            parts: message.content,
-            replace: (current, content) => ({
-              ...current,
-              messages: current.messages.map((item, itemIndex) =>
-                itemIndex === index ? { ...item, content: [...content] } : item,
-              ),
-            }),
-          })),
-      }),
-    );
   }
 
   get(): readonly ContextMessage[] {
-    return [...this.history];
+    return this.wire.getModel(ContextModel) as readonly ContextMessage[];
   }
 
   splice(
@@ -67,40 +64,12 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     tokens?: number,
   ): void {
     const stamped = messages.map(ensureMessageId);
-    const record: AgentRecord<'context.splice'> = {
-      type: 'context.splice',
+    this.wire.dispatch(contextSplice({ start, deleteCount, messages: stamped, tokens }));
+    void this.hooks.onSpliced.run({
       start,
       deleteCount,
-      messages: stamped,
+      messages: [...stamped],
       tokens,
-    };
-    this.record.append(record);
-    this.applySplice(record);
-  }
-
-  private applySplice(record: AgentRecord<'context.splice'>): void {
-    // A boundary splice (`start === 0 && deleteCount > 0`, i.e. compaction or
-    // clear — see `isUndoBoundaryRecord`) never touches the replay: the removed
-    // transcript stays visible, and what it inserts (a compaction summary) is
-    // context machinery represented by its owner's record, not a message.
-    // Every other splice mirrors itself into the replay.
-    const boundary = record.start === 0 && record.deleteCount > 0;
-    const removedMessages = boundary
-      ? []
-      : this.history.slice(record.start, record.start + record.deleteCount);
-    const messages = record.messages.map(ensureMessageId);
-    this.history.splice(record.start, record.deleteCount, ...messages);
-    if (!boundary) {
-      this.record.removeLastMessages(new Set(removedMessages));
-      for (const message of messages) {
-        this.record.push({ type: 'message', message });
-      }
-    }
-    void this.hooks.onSpliced.run({
-      start: record.start,
-      deleteCount: record.deleteCount,
-      messages,
-      tokens: record.tokens,
     });
   }
 }

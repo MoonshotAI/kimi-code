@@ -4,13 +4,14 @@
  * Session-level scheduling engine. Holds the in-memory task map (filtered
  * from `ICronTaskPersistence` by `sessionId` tag), runs the polling timer
  * (tick / coalesce / jitter / cursor), persists mutations through the
- * App-scoped `ICronTaskPersistence`, mirrors mutations onto `wireRecord` for
- * replay via the main agent's `IAgentRecordService` (cross-scope borrow),
- * steers the main agent through `IAgentPromptService` when a task fires, and
- * registers the cron tools (`CronCreate` / `CronList` / `CronDelete`) into the
- * main agent's `IAgentToolRegistryService` once `IAgentLifecycleService`
- * signals `onDidCreateMain`. Bound at Session scope.
- * Bound at Session scope.
+ * App-scoped `ICronTaskPersistence`, mirrors mutations as `cron.add` /
+ * `cron.delete` / `cron.cursor` Ops on the main agent's `wire` (cross-scope
+ * borrow) so `wire.replay` can rebuild the `CronModel`, fires `cron.fired`
+ * through the main agent's `wire` signal channel, steers the main agent
+ * through `IAgentPromptService` when a task fires, and registers the cron
+ * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
+ * `IAgentToolRegistryService` once `IAgentLifecycleService` signals
+ * `onDidCreateMain`. Bound at Session scope.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -47,7 +48,7 @@ import { ISessionContext } from '#/session/sessionContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle';
 import type { ContextMessage } from '#/agent/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt';
-import { IAgentRecordService } from '#/agent/record';
+import { IAgentWireService, type Op, type Signal } from '#/wire';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import type { Turn } from '#/agent/turn';
 import { IAgentTurnService } from '#/agent/turn';
@@ -56,6 +57,7 @@ import { CronCreateTool } from './tools/cron-create';
 import { CronListTool } from './tools/cron-list';
 import { CronDeleteTool } from './tools/cron-delete';
 
+import { CronModel, cronAdd, cronDelete, cronCursor } from './cronOps';
 import { ISessionCronService, type CronLoadOptions } from './sessionCronService';
 
 export const CRON_SCHEDULED = 'cron_scheduled' as const;
@@ -141,28 +143,16 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private bindMainAgent(handle: IAgentScopeHandle): void {
-    const record = handle.accessor.get(IAgentRecordService);
-
-    record.define('cron.add', {
-      resume: (r) => {
-        this.adopt(r.task);
-      },
-    });
-    record.define('cron.delete', {
-      resume: (r) => {
-        this.removeByIds(r.ids);
-      },
-    });
-    record.define('cron.cursor', {
-      resume: (r) => {
-        this.markFired(r.id, r.lastFiredAt);
-      },
-    });
-    record.hooks.onResumeEnded.register('cron-lifecycle-resume', async (_ctx, next) => {
-      await this.loadFromStore({ replace: false });
-      this.start();
-      await next();
-    });
+    const wire = handle.accessor.get(IAgentWireService);
+    this._register(
+      wire.onRestored(() => {
+        this.tasks.clear();
+        for (const [id, task] of wire.getModel(CronModel)) {
+          this.tasks.set(id, task as CronTask);
+        }
+        void this.loadFromStore({ replace: false }).then(() => this.start());
+      }),
+    );
 
     this.registerCronTools(handle);
 
@@ -196,7 +186,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       tags: { ...init.tags, [SESSION_TAG]: this.ctx.sessionId },
     };
     this.tasks.set(task.id, task);
-    this.appendRecord({ type: 'cron.add', task });
+    this.dispatchCron(cronAdd({ task }));
     this.persistEnqueue(task.id, () =>
       this.store.save(this.ctx.workspaceId, task),
     );
@@ -207,7 +197,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     const removed = this.removeByIds(ids);
     if (removed.length === 0) return removed;
 
-    this.appendRecord({ type: 'cron.delete', ids: removed });
+    this.dispatchCron(cronDelete({ ids: removed }));
     for (const id of removed) {
       this.persistEnqueue(id, () =>
         this.store.delete(this.ctx.workspaceId, id),
@@ -447,7 +437,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       toolCalls: [],
       origin,
     };
-    this.signalRecord({ type: 'cron.fired', origin, prompt: task.prompt });
+    this.signalCron({ type: 'cron.fired', origin, prompt: task.prompt });
     const buffered = mainHandle.accessor.get(IAgentTurnService).getActiveTurn() !== undefined;
     void promptService.steer(message).launched.catch(() => {});
     this.telemetry.track(CRON_FIRED, {
@@ -463,26 +453,24 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     const updated = this.markFired(id, lastFiredAt);
     if (updated === undefined) return;
 
-    this.appendRecord({ type: 'cron.cursor', id, lastFiredAt });
+    this.dispatchCron(cronCursor({ id, lastFiredAt }));
     this.persistEnqueue(id, () =>
       this.store.save(this.ctx.workspaceId, updated),
     );
   }
 
-  // —— wireRecord borrow helpers ——
+  // —— wire borrow helpers ——
 
-  private appendRecord(record: { type: string; [key: string]: unknown }): void {
+  private dispatchCron(op: Op): void {
     const mainHandle = this.agentLifecycle.getHandle('main');
     if (!mainHandle) return;
-    const recordService = mainHandle.accessor.get(IAgentRecordService);
-    recordService.append(record as never);
+    mainHandle.accessor.get(IAgentWireService).dispatch(op);
   }
 
-  private signalRecord(event: { type: string; [key: string]: unknown }): void {
+  private signalCron(signal: Signal): void {
     const mainHandle = this.agentLifecycle.getHandle('main');
     if (!mainHandle) return;
-    const recordService = mainHandle.accessor.get(IAgentRecordService);
-    recordService.signal(event as never);
+    mainHandle.accessor.get(IAgentWireService).signal(signal);
   }
 
   // —— scheduler helpers ——

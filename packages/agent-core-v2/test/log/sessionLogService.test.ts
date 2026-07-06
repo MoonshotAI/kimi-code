@@ -12,13 +12,11 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
 import {
-  ILogWriterService,
-  ISessionLogService,
+  ILogService,
+  logSeed,
   resolveLoggingConfig,
   resolveSessionLogPath,
-} from '#/app/log';
-import { logSeed } from '#/app/log/logConfig';
-import { SessionFileLogWriterService } from '#/session/sessionLog/logWriter';
+} from '#/_base/log';
 import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext';
 
@@ -29,14 +27,7 @@ beforeEach(async () => {
   _clearScopedRegistryForTests();
   registerScopedService(
     LifecycleScope.Session,
-    ILogWriterService,
-    SessionFileLogWriterService,
-    InstantiationType.Delayed,
-    'log',
-  );
-  registerScopedService(
-    LifecycleScope.Session,
-    ISessionLogService,
+    ILogService,
     SessionLogService,
     InstantiationType.Delayed,
     'log',
@@ -64,6 +55,7 @@ function testSessionSeed() {
     sessionDir,
     sessionScope: 'sessions/test-workspace/s1',
     metaScope: 'sessions/test-workspace/s1/session-meta',
+    cwd: sessionDir,
   }));
 }
 
@@ -79,7 +71,7 @@ describe('SessionLogService', () => {
   it('writes entries to the per-session log file', async () => {
     const host = buildHost();
     const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
-    const log = session.accessor.get(ISessionLogService);
+    const log = session.accessor.get(ILogService);
     log.info('session event', { requestId: 'r1' });
     await log.flush();
     const text = await readSessionLog();
@@ -91,7 +83,7 @@ describe('SessionLogService', () => {
   it('omits sessionId from per-session lines', async () => {
     const host = buildHost();
     const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
-    const log = session.accessor.get(ISessionLogService);
+    const log = session.accessor.get(ILogService);
     log.info('evt');
     await log.flush();
     const text = await readSessionLog();
@@ -102,7 +94,7 @@ describe('SessionLogService', () => {
   it('child logger accumulates context and writes to the same file', async () => {
     const host = buildHost();
     const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
-    const log = session.accessor.get(ISessionLogService);
+    const log = session.accessor.get(ILogService);
     log.child({ agentId: 'main' }).warn('child event');
     await log.flush();
     const text = await readSessionLog();
@@ -114,7 +106,7 @@ describe('SessionLogService', () => {
   it('close flushes and a subsequent write is dropped', async () => {
     const host = buildHost();
     const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
-    const log = session.accessor.get(ISessionLogService);
+    const log = session.accessor.get(ILogService) as SessionLogService;
     log.info('before-close');
     await log.close();
     log.info('after-close');
@@ -127,7 +119,7 @@ describe('SessionLogService', () => {
   it('dispose flushes pending entries synchronously', () => {
     const host = buildHost();
     const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
-    const log = session.accessor.get(ISessionLogService);
+    const log = session.accessor.get(ILogService);
     log.info('on-dispose');
     host.dispose();
     // dispose() is synchronous and uses flushSync; read after the call returns.

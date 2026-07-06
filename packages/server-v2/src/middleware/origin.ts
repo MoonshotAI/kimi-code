@@ -78,12 +78,35 @@ export function isOriginAllowed(
   if (oh === undefined) {
     return true;
   }
-  if (host !== undefined && stripPort(oh) === stripPort(host)) {
-    return true;
+  const ohStripped = stripPort(oh);
+  if (host !== undefined) {
+    const hostStripped = stripPort(host);
+    if (ohStripped === hostStripped) {
+      return true;
+    }
+    // Dev-proxy case: a browser hitting a same-machine dev server (e.g. Vite on
+    // `localhost:5175`) whose upstream server is bound to a different loopback
+    // name (e.g. `127.0.0.1:58627`). The two are not string-equal, but both ends
+    // are loopback, so there is no real cross-origin threat — treat as
+    // same-origin so WebSocket upgrades are not rejected with 403.
+    if (isLoopbackHost(ohStripped) && isLoopbackHost(hostStripped)) {
+      return true;
+    }
   }
   // `origin` is defined here (originHost returned a host), so the whitelist
   // match is against the full origin string (scheme + host).
   return allowed.includes(origin as string);
+}
+
+/** Loopback-only host names, mirroring the allowlist in `hostnames.ts`. */
+function isLoopbackHost(h: string): boolean {
+  return (
+    h === 'localhost' ||
+    h === '::1' ||
+    h === '[::1]' ||
+    h.startsWith('127.') ||
+    h.endsWith('.localhost')
+  );
 }
 
 /**

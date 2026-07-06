@@ -1,56 +1,120 @@
 /**
- * `AgentContextMemoryService.applySplice` replay contract, exercised without
- * the full agent harness: a boundary splice (`start === 0 && deleteCount > 0`,
- * i.e. compaction/clear) never touches the replay; every other splice mirrors
- * itself (removes deleted messages, pushes inserted ones).
+ * `AgentContextMemoryService` wire contract, exercised without the full agent
+ * harness (mirror of `test/goal/goal-wire.test.ts`): a `TestInstantiationService`
+ * + `InMemoryStorageService` + `AppendLogStore` + `WireService` seeded with the
+ * `contextBlobSelector` and a stub `IAgentBlobService`. Covers the splice Ops'
+ * NEW-reference + flat-record shape, the live-only `onSpliced` hook (silent on
+ * replay), and — load-bearing — the blob offload-on-dispatch ↔
+ * rehydrate-on-replay round-trip.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentBlobService } from '#/agent/blob';
 import {
   AgentContextMemoryService,
+  contextBlobSelector,
+  ContextModel,
+  contextAppendLoopEvent,
+  contextAppendMessage,
+  contextApplyCompaction,
+  contextClear,
+  contextUndo,
+  IAgentContextMemoryService,
   type ContextMessage,
 } from '#/agent/contextMemory';
-import type { AgentRecord, IAgentRecordService } from '#/agent/record';
-import type { AgentReplayRecordPayload } from '#/agent/replayBuilder/types';
-import { stubRecord } from './stubs';
+import type { ContentPart } from '#/app/llmProtocol';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import {
+  IAgentWireService,
+  WireService,
+  type IWireService,
+  type PersistedRecord,
+} from '#/wire';
 
-interface RecordingRecordStub {
-  readonly record: IAgentRecordService;
-  readonly pushed: AgentReplayRecordPayload[];
-  readonly removed: ContextMessage[][];
-  readonly resume: (record: AgentRecord<'context.splice'>) => void;
+const SCOPE = 'wire';
+const KEY = 'ctx-live';
+const REPLAY_KEY = 'ctx-replay';
+const BLOBREF = 'blobref:';
+const DATA_URI_RE = /^data:([^;]+);base64,(.+)$/;
+const OFFLOAD_THRESHOLD = 64;
+
+function asMedia(value: unknown): { url: string } | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  return typeof obj['url'] === 'string' ? (obj as { url: string }) : undefined;
 }
 
-function recordingRecord(): RecordingRecordStub {
-  const pushed: AgentReplayRecordPayload[] = [];
-  const removed: ContextMessage[][] = [];
-  let resume: ((record: AgentRecord<'context.splice'>) => void) | undefined;
-  const base = stubRecord();
-  const record: IAgentRecordService = {
-    ...base,
-    define: (type, facets) => {
-      if (type === 'context.splice' && facets.resume !== undefined) {
-        resume = facets.resume as unknown as (record: AgentRecord<'context.splice'>) => void;
-      }
-      return base.define(type, facets);
-    },
-    push: (payload) => {
-      pushed.push(payload);
-    },
-    removeLastMessages: (messages) => {
-      if (messages.size > 0) removed.push([...messages]);
-    },
-  };
-  return {
-    record,
-    pushed,
-    removed,
-    resume: (spliceRecord) => {
-      if (resume === undefined) throw new Error('context.splice resumer not registered');
-      resume(spliceRecord);
-    },
-  };
+class StubBlobService implements IAgentBlobService {
+  declare readonly _serviceBrand: undefined;
+  readonly store = new Map<string, string>();
+  offloadCalls = 0;
+  rehydrateCalls = 0;
+  private seq = 0;
+
+  isBlobRef(url: string): boolean {
+    return url.startsWith(BLOBREF);
+  }
+
+  async offloadParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]> {
+    let changed = false;
+    const out = parts.map((part) => {
+      const next = this.offloadPart(part);
+      if (next !== part) changed = true;
+      return next;
+    });
+    return changed ? out : parts;
+  }
+
+  async rehydrateParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]> {
+    let changed = false;
+    const out = parts.map((part) => {
+      const next = this.rehydratePart(part);
+      if (next !== part) changed = true;
+      return next;
+    });
+    return changed ? out : parts;
+  }
+
+  private offloadPart(part: ContentPart): ContentPart {
+    const obj = part as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(obj)) {
+      const media = asMedia(value);
+      if (media === undefined) continue;
+      const match = DATA_URI_RE.exec(media.url);
+      if (match === null) continue;
+      const payload = match[2]!;
+      if (payload.length < OFFLOAD_THRESHOLD) continue;
+      const sha = `sha${this.seq++}`;
+      this.store.set(sha, payload);
+      this.offloadCalls++;
+      return { ...obj, [key]: { ...media, url: `${BLOBREF}${match[1]};${sha}` } } as unknown as ContentPart;
+    }
+    return part;
+  }
+
+  private rehydratePart(part: ContentPart): ContentPart {
+    const obj = part as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(obj)) {
+      const media = asMedia(value);
+      if (media === undefined || !this.isBlobRef(media.url)) continue;
+      const rest = media.url.slice(BLOBREF.length);
+      const semi = rest.indexOf(';');
+      const mime = rest.slice(0, semi);
+      const sha = rest.slice(semi + 1);
+      const payload = this.store.get(sha);
+      if (payload === undefined) continue;
+      this.rehydrateCalls++;
+      return { ...obj, [key]: { ...media, url: `data:${mime};base64,${payload}` } } as unknown as ContentPart;
+    }
+    return part;
+  }
 }
 
 function userMessage(text: string): ContextMessage {
@@ -66,99 +130,160 @@ function summaryMessage(text: string): ContextMessage {
   };
 }
 
-describe('AgentContextMemoryService splice replay contract', () => {
-  it('pushes appended messages into the replay', () => {
-    const stub = recordingRecord();
-    const context = new AgentContextMemoryService(stub.record);
+function imageMessage(payload: string): ContextMessage {
+  const part = {
+    type: 'image',
+    source: { url: `data:image/png;base64,${payload}` },
+  } as unknown as ContentPart;
+  return { role: 'user', content: [part], toolCalls: [] };
+}
 
-    context.splice(0, 0, [userMessage('hello')]);
-    context.splice(context.get().length, 0, [userMessage('world')]);
+function mediaUrl(message: ContextMessage): string {
+  const part = message.content[0] as unknown as { source: { url: string } };
+  return part.source.url;
+}
 
-    expect(stub.pushed).toHaveLength(2);
-    expect(stub.pushed[1]).toMatchObject({
-      type: 'message',
-      message: expect.objectContaining({ content: [{ type: 'text', text: 'world' }] }),
+let disposables: DisposableStore;
+let blob: StubBlobService;
+
+interface Host {
+  wire: IWireService;
+  svc: IAgentContextMemoryService;
+  log: IAppendLogStore;
+}
+
+function buildHost(key: string): Host {
+  const ix = disposables.add(new TestInstantiationService());
+  ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.set(
+    IAgentWireService,
+    new SyncDescriptor(WireService, [
+      { logScope: SCOPE, logKey: key, blobSelector: contextBlobSelector },
+    ]),
+  );
+  ix.stub(IAgentBlobService, blob);
+  ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
+  return {
+    wire: ix.get(IAgentWireService),
+    svc: ix.get(IAgentContextMemoryService),
+    log: ix.get(IAppendLogStore),
+  };
+}
+
+async function readRecords(log: IAppendLogStore, key = KEY): Promise<PersistedRecord[]> {
+  const out: PersistedRecord[] = [];
+  for await (const record of log.read<PersistedRecord>(SCOPE, key)) {
+    out.push(record);
+  }
+  return out;
+}
+
+beforeEach(() => {
+  disposables = new DisposableStore();
+  blob = new StubBlobService();
+});
+
+afterEach(() => disposables.dispose());
+
+describe('AgentContextMemoryService (wire-backed)', () => {
+  it('splice/append/undo/apply_compaction/clear/append_loop_event each update getModel with a NEW reference and persist flat records', async () => {
+    const host = buildHost(KEY);
+    const model = () => host.wire.getModel(ContextModel) as readonly ContextMessage[];
+
+    host.svc.splice(0, 0, [userMessage('a'), userMessage('b')]);
+    expect(model()).toHaveLength(2);
+
+    let prev = model();
+    host.wire.dispatch(contextAppendMessage({ message: userMessage('c') }));
+    expect(model()).not.toBe(prev);
+    expect(model()).toHaveLength(3);
+
+    prev = model();
+    host.wire.dispatch(contextUndo({ count: 1 }));
+    expect(model()).not.toBe(prev);
+    expect(model()).toHaveLength(2);
+
+    prev = model();
+    host.wire.dispatch(contextApplyCompaction({ count: 1, summary: summaryMessage('sum') }));
+    expect(model()).not.toBe(prev);
+    expect(model()![0]).toMatchObject({ content: [{ type: 'text', text: 'sum' }] });
+
+    prev = model();
+    host.wire.dispatch(contextClear({}));
+    expect(model()).not.toBe(prev);
+    expect(model()).toHaveLength(0);
+
+    prev = model();
+    host.wire.dispatch(contextAppendLoopEvent({ message: userMessage('d') }));
+    expect(model()).not.toBe(prev);
+    expect(model()).toHaveLength(1);
+
+    await host.wire.flush();
+    const records = await readRecords(host.log);
+    expect(records.every((record) => 'payload' in record === false)).toBe(true);
+    expect(records.map((record) => record.type)).toEqual([
+      'context.splice',
+      'context.append_message',
+      'context.undo',
+      'context.apply_compaction',
+      'context.clear',
+      'context.append_loop_event',
+    ]);
+  });
+
+  it('offloads an oversized content part on dispatch and rehydrates it byte-for-byte on replay', async () => {
+    const host = buildHost(KEY);
+    const big = 'A'.repeat(200);
+    const dataUri = `data:image/png;base64,${big}`;
+
+    host.svc.splice(0, 0, [imageMessage(big)]);
+    await host.wire.flush();
+
+    const live = host.wire.getModel(ContextModel) as readonly ContextMessage[];
+    expect(live).toHaveLength(1);
+    expect(mediaUrl(live[0]!)).toBe(dataUri);
+
+    const records = await readRecords(host.log);
+    expect(blob.offloadCalls).toBeGreaterThanOrEqual(1);
+    const splice = records.find((record) => record.type === 'context.splice');
+    expect(splice).toBeDefined();
+    const persisted = (splice!['messages'] as readonly ContextMessage[])[0]!;
+    expect(mediaUrl(persisted).startsWith(BLOBREF)).toBe(true);
+    expect(mediaUrl(persisted)).not.toContain(big);
+
+    const replay = buildHost(REPLAY_KEY);
+    await replay.wire.replay(...records);
+    expect(blob.rehydrateCalls).toBeGreaterThanOrEqual(1);
+
+    const rebuilt = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
+    expect(rebuilt).toEqual(live);
+    expect(mediaUrl(rebuilt[0]!)).toBe(dataUri);
+  });
+
+  it('onSpliced fires on live dispatch and is silent on replay', async () => {
+    const host = buildHost(KEY);
+    const live: { start: number; deleteCount: number }[] = [];
+    host.svc.hooks.onSpliced.register('test', async (ctx, next) => {
+      live.push({ start: ctx.start, deleteCount: ctx.deleteCount });
+      await next();
     });
-    expect(stub.removed).toHaveLength(0);
-  });
 
-  it('mirrors mid-history removals (undo-shaped splices) into the replay', () => {
-    const stub = recordingRecord();
-    const context = new AgentContextMemoryService(stub.record);
-    context.splice(0, 0, [userMessage('keep'), userMessage('drop')]);
+    host.svc.splice(0, 0, [userMessage('x')]);
+    host.svc.splice(0, 0, [userMessage('y')]);
+    expect(live).toHaveLength(2);
+    await host.wire.flush();
+    const records = await readRecords(host.log);
 
-    context.splice(1, 1, []);
-
-    expect(context.get().map((m) => m.content)).toEqual([[{ type: 'text', text: 'keep' }]]);
-    expect(stub.removed).toHaveLength(1);
-    expect(stub.removed[0]![0]).toMatchObject({ content: [{ type: 'text', text: 'drop' }] });
-  });
-
-  it('mirrors in-place replacements (migrated step updates) into the replay', () => {
-    const stub = recordingRecord();
-    const context = new AgentContextMemoryService(stub.record);
-    context.splice(0, 0, [userMessage('prompt'), userMessage('partial')]);
-    stub.pushed.length = 0;
-
-    context.splice(1, 1, [userMessage('final')]);
-
-    expect(stub.removed).toHaveLength(1);
-    expect(stub.removed[0]![0]).toMatchObject({ content: [{ type: 'text', text: 'partial' }] });
-    expect(stub.pushed).toHaveLength(1);
-    expect(stub.pushed[0]).toMatchObject({
-      type: 'message',
-      message: expect.objectContaining({ content: [{ type: 'text', text: 'final' }] }),
+    const replay = buildHost(REPLAY_KEY);
+    const replayed: { start: number; deleteCount: number }[] = [];
+    replay.svc.hooks.onSpliced.register('test', async (ctx, next) => {
+      replayed.push({ start: ctx.start, deleteCount: ctx.deleteCount });
+      await next();
     });
+    await replay.wire.replay(...records);
+    expect(replayed).toHaveLength(0);
+    expect(replay.wire.getModel(ContextModel) as readonly ContextMessage[]).toHaveLength(2);
   });
 
-  it('leaves the replay untouched for boundary splices (compaction)', () => {
-    const stub = recordingRecord();
-    const context = new AgentContextMemoryService(stub.record);
-    context.splice(0, 0, [userMessage('old 1'), userMessage('old 2')]);
-    stub.pushed.length = 0;
-
-    context.splice(0, 2, [summaryMessage('summary')]);
-
-    expect(context.get()).toHaveLength(1);
-    expect(stub.removed).toHaveLength(0);
-    expect(stub.pushed).toHaveLength(0);
-  });
-
-  it('leaves the replay untouched for boundary splices (clear)', () => {
-    const stub = recordingRecord();
-    const context = new AgentContextMemoryService(stub.record);
-    context.splice(0, 0, [userMessage('one'), userMessage('two')]);
-    stub.pushed.length = 0;
-
-    context.splice(0, context.get().length, []);
-
-    expect(context.get()).toHaveLength(0);
-    expect(stub.removed).toHaveLength(0);
-    expect(stub.pushed).toHaveLength(0);
-  });
-
-  it('applies the same contract on the resume path', () => {
-    const stub = recordingRecord();
-    const context = new AgentContextMemoryService(stub.record);
-
-    stub.resume({
-      type: 'context.splice',
-      start: 0,
-      deleteCount: 0,
-      messages: [userMessage('restored 1'), userMessage('restored 2')],
-    });
-    stub.resume({
-      type: 'context.splice',
-      start: 0,
-      deleteCount: 2,
-      messages: [summaryMessage('restored summary')],
-    });
-
-    expect(context.get()).toHaveLength(1);
-    // Appends were pushed; the boundary splice neither removed nor pushed, so
-    // the restored transcript keeps the pre-compaction messages and the
-    // summary never appears as a plain message.
-    expect(stub.pushed).toHaveLength(2);
-    expect(stub.removed).toHaveLength(0);
-  });
 });

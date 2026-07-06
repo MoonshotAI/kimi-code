@@ -1,4 +1,4 @@
-import type { Message, Tool as LLMTool } from '#/app/llmProtocol/kosong';
+import type { Message, Tool as LLMTool } from '#/app/llmProtocol';
 import { expect } from 'vitest';
 
 import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/migration';

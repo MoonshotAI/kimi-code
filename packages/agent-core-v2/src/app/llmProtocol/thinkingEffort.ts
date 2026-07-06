@@ -7,4 +7,4 @@
  * through to `Model.withThinking(...)`).
  */
 
-export type { ThinkingEffort } from './kosong';
+export type { ThinkingEffort } from './provider';

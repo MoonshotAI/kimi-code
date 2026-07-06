@@ -6,7 +6,15 @@
 export * from './_base/di/index';
 export * from './errors';
 
-export * from '#/app/log';
+export * from '#/_base/log';
+export {
+  IAgentWireService,
+  ISessionWireService,
+  type IWireService,
+  type Signal,
+  type SignalMap,
+  type WireEmission,
+} from '#/wire';
 export * from '#/session/sessionLog';
 export * from '#/app/telemetry';
 export * from '#/app/bootstrap';
@@ -28,17 +36,15 @@ export * from '#/app/modelCatalog';
 export * from '#/app/agentProfileCatalog';
 export * from '#/app/plugin';
 
-export type { SkillSource } from '#/app/globalSkillCatalog';
+export type { SkillSource } from '#/app/skillCatalog';
 export * from '#/agent/skill';
-export * from '#/app/globalSkillCatalog';
+export * from '#/app/skillCatalog';
 export * from '#/session/sessionSkillCatalog';
 export * from '#/agent/permissionGate';
 import '#/app/flag';
 export * from '#/app/flag';
 
 import '#/agent/turn';
-import '#/agent/edit';
-export * from '#/agent/edit';
 export * from '#/agent/plan';
 export * from '#/agent/goal';
 export * from '#/agent/swarm';
@@ -55,7 +61,6 @@ export * from '#/app/sessionLegacy';
 export * from '#/session/interaction';
 export * from '#/session/sessionContext';
 export * from '#/session/sessionActivity';
-export * from '#/session/session';
 
 import '#/session/approval';
 export { ISessionApprovalService } from '#/session/approval';
@@ -65,9 +70,8 @@ export * from '#/app/gateway';
 
 export * from '#/session/workspaceContext';
 export * from '#/app/workspaceRegistry';
-export * from '#/session/execContext';
 export * from '#/session/process';
-export * from '#/session/agentFs';
+export * from '#/session/sessionFs';
 export * from '#/app/hostFolderBrowser';
 export * from '#/persistence/interface';
 export * from '#/persistence/backends/node-fs';
@@ -75,6 +79,7 @@ export * from '#/persistence/backends/memory';
 export * from '#/app/auth';
 export * from '#/app/authLegacy';
 export * from '#/app/file';
+export * from '#/app/edit';
 export * from '#/app/web';
 
 // Ported agent services. These keep the current service boundaries during the migration.
@@ -98,7 +103,6 @@ export * from '#/agent/prompt';
 export * from '#/agent/promptLegacy';
 export * from '#/app/messageLegacy';
 export * from '#/agent/replayBuilder';
-export * from '#/agent/record';
 export * from '#/agent/rpc';
 export * from '#/agent/scopeContext';
 export * from '#/session/btw';

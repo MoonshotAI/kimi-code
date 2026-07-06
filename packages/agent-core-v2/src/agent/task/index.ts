@@ -13,4 +13,5 @@ import './tools/task-output';
 import './tools/task-stop';
 
 export * from './task';
+export * from './taskOps';
 export * from './taskService';

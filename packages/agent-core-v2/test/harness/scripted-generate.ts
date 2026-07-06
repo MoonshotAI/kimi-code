@@ -4,8 +4,8 @@ import {
   type FinishReason,
   type Message,
   type StreamedMessagePart,
-} from '#/app/llmProtocol/kosong';
-import type { generate as kosongGenerate } from '#/app/llmProtocol/kosong';
+} from '#/app/llmProtocol';
+import type { generate as kosongGenerate } from '#/app/llmProtocol/generate';
 
 import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import {

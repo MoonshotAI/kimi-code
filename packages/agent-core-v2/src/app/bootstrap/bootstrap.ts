@@ -24,8 +24,8 @@ import {
   IFileSystemStorageService,
 } from '#/persistence/interface/storage';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { FileSkillDiscovery } from '#/app/globalSkillCatalog/fileSkillDiscovery';
-import { ISkillDiscovery } from '#/app/globalSkillCatalog/skillDiscovery';
+import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
+import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 
 export interface IBootstrapOptions {
   readonly homeDir: string;

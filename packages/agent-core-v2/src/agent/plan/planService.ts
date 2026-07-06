@@ -17,7 +17,7 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentProfileService } from '#/agent/profile';
 import { IAgentTelemetryContextService, ITelemetryService } from '#/app/telemetry';
-import { IAgentRecordService } from '#/agent/record';
+import { IAgentWireService, type IWireService } from '#/wire';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import type { ExecutableToolResult } from '#/agent/tool';
 import { type ExitPlanModeInput } from '#/agent/plan/tools/exit-plan-mode';
@@ -26,21 +26,13 @@ import {
   type PlanData,
   type PlanFilePath,
 } from './plan';
+import {
+  PlanModel,
+  planModeCancel,
+  planModeEnter,
+  planModeExit,
+} from './planOps';
 import PLAN_MODE_EXIT_REMINDER from './plan-mode-exit-reminder.md?raw';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'plan_mode.enter': {
-      id: string;
-    };
-    'plan_mode.cancel': {
-      id?: string;
-    };
-    'plan_mode.exit': {
-      id?: string;
-    };
-  }
-}
 
 const PLAN_MODE_DEDUP_MIN_TURNS = 2;
 const PLAN_MODE_FULL_REFRESH_TURNS = 5;
@@ -49,49 +41,23 @@ const PLAN_MODE_INJECTION_VARIANT = 'plan_mode';
 export class AgentPlanService extends Disposable implements IAgentPlanService {
   declare readonly _serviceBrand: undefined;
 
-  private _active = false;
-  private planId: string | null = null;
-  private _planFilePath: PlanFilePath = null;
-
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
-    @IHostFileSystem private readonly agentFs: IHostFileSystem,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
+    @IAgentWireService private readonly wire: IWireService,
   ) {
     super();
-    this._register(
-      record.define('plan_mode.enter', {
-        resume: ({ id }) => {
-          this.restoreEnter({ id });
-        },
-        toReplay: () => ({ type: 'plan_updated', enabled: true }),
-      }),
-    );
-    this._register(
-      record.define('plan_mode.cancel', {
-        resume: () => {
-          this.applyInactive();
-        },
-        toReplay: () => ({ type: 'plan_updated', enabled: false }),
-      }),
-    );
-    this._register(
-      record.define('plan_mode.exit', {
-        resume: () => {
-          this.applyInactive();
-        },
-        toReplay: () => ({ type: 'plan_updated', enabled: false }),
-      }),
-    );
+
+    this._register(this.wire.onRestored(() => this.restoreTelemetryMode()));
 
     let wasActive = false;
     this._register(
       dynamicInjector.register(PLAN_MODE_INJECTION_VARIANT, async ({ lastInjectedAt: injectedAt }) => {
-        if (!this._active) {
+        if (!this.isActive) {
           if (!wasActive) return undefined;
           wasActive = false;
           return PLAN_MODE_EXIT_REMINDER;
@@ -111,6 +77,26 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     );
   }
 
+  private get isActive(): boolean {
+    return this.wire.getModel(PlanModel).active;
+  }
+
+  private currentPlanFilePath(): PlanFilePath {
+    const state = this.wire.getModel(PlanModel);
+    if (!state.active || state.id === undefined) return null;
+    return state.planFilePath ?? this.planFilePathFor(state.id);
+  }
+
+  private restoreTelemetryMode(): void {
+    // `wire.replay` rebuilds `PlanModel` silently, so the live telemetry
+    // context (set on the enter/exit path) is not re-applied by replay. Re-derive
+    // it here from the restored model so a resumed plan-mode session keeps
+    // tagging telemetry with `mode: 'plan'` (mirroring the legacy restoreEnter).
+    if (this.isActive) {
+      this.telemetryContext.set({ mode: 'plan' });
+    }
+  }
+
   private createPlanId(): string {
     return generateHeroSlug(randomUUID(), new Set());
   }
@@ -120,73 +106,59 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     createFile = false,
     emitStatus = true,
   ): Promise<void> {
-    if (this._active) {
+    if (this.isActive) {
       throw new Error('Already in plan mode');
     }
 
-    this._active = true;
+    const planFilePath = this.planFilePathFor(id);
+    this.wire.dispatch(planModeEnter({ id, planFilePath }));
     this.telemetryContext.set({ mode: 'plan' });
-    this.planId = id;
-    this._planFilePath = null;
 
-    let enterRecorded = false;
     try {
-      const planFilePath = this.planFilePathFor(id);
-      this._planFilePath = planFilePath;
       await this.ensurePlanDirectory(planFilePath);
-      this.record.append({ type: 'plan_mode.enter', id });
-      enterRecorded = true;
       if (createFile) {
         await this.writeEmptyPlanFile(planFilePath);
       }
     } catch (error) {
-      if (enterRecorded) {
-        this.cancel(id);
-      } else {
-        this.reset();
-      }
+      this.cancel(id);
       throw error;
     }
 
     if (emitStatus) this.emitChanged();
   }
 
-  private restoreEnter({ id }: { readonly id: string }): void {
-    this._active = true;
-    this.telemetryContext.set({ mode: 'plan' });
-    this.planId = id;
-    this._planFilePath = this.planFilePathFor(id);
-  }
-
   cancel(id?: string): void {
-    this.record.append({ type: 'plan_mode.cancel', id });
-    this.applyInactive();
+    this.wire.dispatch(planModeCancel({ id }));
+    this.telemetryContext.set({ mode: 'agent' });
     this.emitChanged();
   }
 
   async clear(): Promise<void> {
-    if (this._planFilePath === null) return;
-    await this.writeEmptyPlanFile(this._planFilePath);
+    const path = this.currentPlanFilePath();
+    if (path === null) return;
+    await this.writeEmptyPlanFile(path);
   }
 
   exit(id?: string): void {
-    this.record.append({ type: 'plan_mode.exit', id });
-    this.applyInactive();
+    this.wire.dispatch(planModeExit({ id }));
+    this.telemetryContext.set({ mode: 'agent' });
     this.emitChanged();
   }
 
   async status(): Promise<PlanData> {
-    if (this.planId === null || this._planFilePath === null) return null;
+    const state = this.wire.getModel(PlanModel);
+    if (!state.active || state.id === undefined) return null;
+    const path = state.planFilePath ?? this.planFilePathFor(state.id);
     let content = '';
     try {
-      content = await this.agentFs.readText(this._planFilePath);
+      content = await this.hostFs.readText(this._planFilePath);
     } catch (error) {
       if (!isMissingFileError(error)) throw error;
     }
     return {
-      id: this.planId,
+      id: state.id,
       content,
-      path: this._planFilePath,
+      path,
     };
   }
 
@@ -195,7 +167,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private async enterPlanModeToolResult(): Promise<ExecutableToolResult> {
-    if (this._active) {
+    if (this.isActive) {
       return {
         isError: true,
         output: 'Plan mode is already active. Use ExitPlanMode when the plan is ready.',
@@ -211,13 +183,13 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 
     this.trackTelemetry('plan_enter_resolved', { outcome: 'auto_approved' });
 
-    return { output: enteredPlanModeMessage(this._planFilePath) };
+    return { output: enteredPlanModeMessage(this.currentPlanFilePath()) };
   }
 
   private async resolvePlanReviewDisplay(
     args: ExitPlanModeInput,
   ): Promise<ToolInputDisplay | undefined> {
-    if (!this._active) return undefined;
+    if (!this.isActive) return undefined;
     let data: PlanData;
     try {
       data = await this.status();
@@ -237,7 +209,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private async exitPlanModeToolResult(input: ExitPlanModeInput): Promise<ExecutableToolResult> {
-    if (!this._active) {
+    if (!this.isActive) {
       return {
         isError: true,
         output:
@@ -288,26 +260,15 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
       error: {
         isError: true,
         output:
-          this._planFilePath === null
+          this.currentPlanFilePath() === null
             ? 'No plan file found. Write the plan to the current plan file first, then call ExitPlanMode.'
-            : `No plan file found. Write your plan to ${this._planFilePath} first, then call ExitPlanMode.`,
+            : `No plan file found. Write your plan to ${this.currentPlanFilePath()} first, then call ExitPlanMode.`,
       },
     };
   }
 
-  private applyInactive(): void {
-    this.reset();
-  }
-
-  private reset(): void {
-    this._active = false;
-    this.telemetryContext.set({ mode: 'agent' });
-    this.planId = null;
-    this._planFilePath = null;
-  }
-
   private emitChanged(): void {
-    this.record.signal({ type: 'agent.status.updated', planMode: this._active });
+    this.wire.signal({ type: 'agent.status.updated', planMode: this.isActive });
   }
 
   private trackTelemetry(
@@ -327,24 +288,24 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private fullReminder(): string {
-    return fullReminder(this._planFilePath);
+    return fullReminder(this.currentPlanFilePath());
   }
 
   private sparseReminder(): string {
-    return sparseReminder(this._planFilePath);
+    return sparseReminder(this.currentPlanFilePath());
   }
 
   private reentryReminder(): string {
-    return reentryReminder(this._planFilePath);
+    return reentryReminder(this.currentPlanFilePath());
   }
 
   private async writeEmptyPlanFile(path: string): Promise<void> {
     await this.ensurePlanDirectory(path);
-    await this.agentFs.writeText(path, '');
+    await this.hostFs.writeText(path, '');
   }
 
   private async ensurePlanDirectory(path: string): Promise<void> {
-    await this.agentFs.mkdir(dirname(path), { recursive: true });
+    await this.hostFs.mkdir(dirname(path), { recursive: true });
   }
 
   private currentCwd(): string {

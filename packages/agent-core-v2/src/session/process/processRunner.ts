@@ -3,8 +3,9 @@
  *
  * Defines the `ISessionProcessRunner` that business code injects to spawn processes
  * inside the Agent's execution environment, plus the `IProcess` handle it
- * returns. Session-scoped and backed by the session's `IExecContext`; business code
- * depends on `ISessionProcessRunner` only.
+ * returns. Session-scoped and defaults to the session's seeded `cwd`
+ * (`ISessionContext.cwd`); business code depends on `ISessionProcessRunner`
+ * only.
  */
 
 import type { Readable, Writable } from 'node:stream';

@@ -111,10 +111,11 @@ const booleanQueryParam = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
-// NOTE: `status` filtering and the `before_id`/`after_id` id-cursors are
-// accepted for wire compatibility but not applied — `ISessionIndex` does not
-// support them (gap G5). `page_size` maps to `limit`; `include_archive` maps
-// to `includeArchived`; `workspace_id` maps to `workspaceId`.
+// NOTE: `status` filtering is accepted for wire compatibility but not applied
+// (gap G5). `before_id`/`after_id` id-cursors and `page_size` ARE applied in
+// the route handler (the `FileSessionIndex` does not implement `cursor`, so we
+// page over its recency-sorted result). `include_archive` → `includeArchived`;
+// `workspace_id` → `workspaceId`; `exclude_empty` drops sessions with no prompt.
 const sessionsListQueryCoercion = z
   .object({
     before_id: z.string().min(1).optional(),
@@ -284,31 +285,54 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     },
     async (req, reply) => {
       const raw = req.query;
-      const limit = raw.page_size;
+      const pageSize = raw.page_size;
+
+      // `FileSessionIndex` does not implement `cursor` (gap G5 closed here), so
+      // we fetch the full recency-sorted set (no `limit`) and apply the id
+      // cursor in this handler. `list()` already orders by `updatedAt` desc and
+      // filters by workspace / archived.
       const page = await core.accessor.get(ISessionIndex).list({
         workspaceId: raw.workspace_id,
         includeArchived: raw.include_archive,
-        // Fetch one extra to detect `has_more` (FileSessionIndex does not
-        // expose a cursor today).
-        limit: limit !== undefined ? limit + 1 : undefined,
       });
-
-      let hasMore = false;
-      let summaries = page.items;
-      if (limit !== undefined && summaries.length > limit) {
-        summaries = summaries.slice(0, limit);
-        hasMore = true;
-      }
 
       const workspaces = await core.accessor.get(IWorkspaceRegistry).list();
       const roots = new Map(workspaces.map((w) => [w.id, w.root]));
-      const items: Session[] = [];
-      for (const summary of summaries) {
+
+      // Filter down to the sequence the client actually sees BEFORE computing
+      // the cursor position and the page boundary, so a cursor carried over
+      // from a previous page always resolves to the same index.
+      const eligible: { summary: (typeof page.items)[number]; cwd: string }[] = [];
+      for (const summary of page.items) {
         const cwd = roots.get(summary.workspaceId);
         if (cwd === undefined) continue; // gap G3: cannot represent cwd
         if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
-        items.push(toWireSession(summary, cwd));
+        eligible.push({ summary, cwd });
       }
+
+      // `before_id` = strictly older than this id (forward / default paging);
+      // `after_id` = strictly newer. An unknown cursor resolves to an empty,
+      // terminal page (`has_more: false`) so a client cannot spin on a cursor
+      // the server cannot advance (this was the boot-time request storm).
+      let start = 0;
+      let end = eligible.length;
+      const cursorId = raw.before_id ?? raw.after_id;
+      if (cursorId !== undefined) {
+        const idx = eligible.findIndex((e) => e.summary.id === cursorId);
+        if (idx === -1) {
+          reply.send(okEnvelope({ items: [], has_more: false }, req.id));
+          return;
+        }
+        if (raw.before_id !== undefined) start = idx + 1;
+        else end = idx;
+      }
+
+      const window = eligible.slice(start, end);
+      const limit = pageSize ?? window.length;
+      const hasMore = window.length > limit;
+      const items: Session[] = window
+        .slice(0, limit)
+        .map(({ summary, cwd }) => toWireSession(summary, cwd));
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
     },
   );

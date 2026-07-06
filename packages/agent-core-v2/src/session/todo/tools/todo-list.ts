@@ -9,13 +9,17 @@
  *
  * The list is session-shared: the tool reads/writes `ISessionTodoService`,
  * which persists every change as a `todo.set` wire record on the main agent.
- * Instantiated per agent by `SessionTodoService` and registered into each
- * agent's tool registry.
+ * Self-registers via `registerTool(TodoListTool)` at module load; the Eager
+ * `AgentBuiltinToolsRegistrar` instantiates one per agent (resolving the
+ * Session-scope `ISessionTodoService` from the parent scope) and registers it
+ * into that agent's tool registry — never from a service constructor, which
+ * would re-enter `ISessionTodoService` while it is still being constructed.
  */
 
 import { z } from 'zod';
 
 import type { BuiltinTool, ToolExecution } from '#/agent/tool';
+import { registerTool } from '#/agent/toolRegistry';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
@@ -84,3 +88,5 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
     };
   }
 }
+
+registerTool(TodoListTool);

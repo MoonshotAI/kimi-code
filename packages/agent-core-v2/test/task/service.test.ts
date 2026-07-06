@@ -9,14 +9,12 @@ import { AgentTaskService } from '#/agent/task/taskService';
 import { IConfigRegistry, IConfigService } from '#/app/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt';
-import { IAgentRecordService } from '#/agent/record';
 import { ISessionContext } from '#/session/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { IAgentWireRecordService } from '#/agent/wireRecord';
-import { createHooks } from '#/hooks';
 
 import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
 
@@ -39,13 +37,6 @@ describe('AgentTaskService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAgentWireRecordService, stubWireRecord());
     ix.stub(IAgentContextMemoryService, stubContextMemory());
-    ix.stub(IAgentRecordService, {
-      hooks: createHooks(['onRestoredRecord', 'onResumeEnded']) as IAgentRecordService['hooks'],
-      append: () => {},
-      on: () => toDisposable(() => {}),
-      define: () => toDisposable(() => {}),
-      signal: () => {},
-    });
     ix.stub(ITelemetryService, { track: () => {} });
     ix.stub(IAgentToolRegistryService, {
       register: () => toDisposable(() => {}),

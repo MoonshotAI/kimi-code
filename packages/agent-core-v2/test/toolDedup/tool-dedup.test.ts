@@ -5,7 +5,6 @@ import { createServices } from '#/_base/di/test';
 import { ITelemetryService } from '#/app/telemetry';
 import type { ToolCall } from '#/app/llmProtocol';
 import { IAgentLoopService } from '#/agent/loop';
-import { IAgentRecordService } from '#/agent/record';
 import type { ExecutableTool, ExecutableToolContext, ToolExecution, ToolResult } from '#/agent/tool';
 import {
   IAgentToolDedupeService,
@@ -16,7 +15,6 @@ import type { ToolDedupResult } from '#/agent/toolDedupe';
 import { AgentToolExecutorService, IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { AgentToolRegistryService, IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { IAgentTurnService } from '#/agent/turn';
-import { stubRecord } from '../contextMemory/stubs';
 import { registerLogServices } from '../log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubTurnWithHooks } from '../turn/stubs';
@@ -161,7 +159,6 @@ describe('AgentToolDedupeService', () => {
         additionalServices: (reg) => {
           reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
           reg.defineInstance(IAgentLoopService, loop);
-          reg.defineInstance(IAgentRecordService, stubRecord());
           reg.defineInstance(IAgentTurnService, stubTurnWithHooks());
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
           reg.define(IAgentToolExecutorService, AgentToolExecutorService);

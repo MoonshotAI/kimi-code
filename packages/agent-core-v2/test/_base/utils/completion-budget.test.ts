@@ -1,4 +1,5 @@
-import type { ChatProvider, ModelCapability } from '#/app/llmProtocol/kosong';
+import type { ModelCapability } from '#/app/llmProtocol';
+import type { ChatProvider } from '#/app/llmProtocol/provider';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

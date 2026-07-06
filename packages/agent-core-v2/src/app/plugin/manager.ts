@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
-import type { SkillRoot } from '#/app/globalSkillCatalog/types';
+import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { downloadZip, extractZip } from './archive';
 import { loadPluginCommand } from './commands';

@@ -3,7 +3,7 @@
  *
  * Defines the `IHostFolderBrowser` used by the program side (TUI / server) to
  * let the user browse the real local filesystem when choosing a workspace
- * folder. Distinct from the Agent-side `agentFs`, which is sandboxed and may
+ * folder. Distinct from the Session-side `sessionFs`, which is sandboxed and may
  * be remote. App-scoped.
  *
  * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are sourced from

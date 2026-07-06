@@ -2,7 +2,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { Event } from '#/_base/event';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
-import type { SkillRoot } from '#/app/globalSkillCatalog/types';
+import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import type {
   EnabledPluginSessionStart,

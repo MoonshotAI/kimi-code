@@ -8,7 +8,6 @@ import { Emitter } from '#/_base/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentProfileService } from '#/agent/profile';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import { IAgentLifecycleService } from '#/session/agentLifecycle';
 import {
@@ -35,20 +34,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
   const registeredVariants: string[] = [];
   const appended: RecordedTodoSet[] = [];
   const resumers: Array<(record: RecordedTodoSet) => void> = [];
-
-  const recordStub = {
-    _serviceBrand: undefined,
-    append: (record: RecordedTodoSet) => {
-      appended.push(record);
-    },
-    define: (_type: string, facets: { resume?: (r: RecordedTodoSet) => void }) => {
-      if (facets.resume !== undefined) resumers.push(facets.resume);
-      return toDisposable(() => {});
-    },
-    signal: () => {},
-    on: () => toDisposable(() => {}),
-    hooks: {},
-  };
 
   const registryStub = {
     _serviceBrand: undefined,
@@ -85,7 +70,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
 
   const accessor: ServicesAccessor = {
     get: <T>(id: ServiceIdentifier<T>): T => {
-      if (id === IAgentRecordService) return recordStub as unknown as T;
       if (id === IAgentToolRegistryService) return registryStub as unknown as T;
       if (id === IAgentContextInjectorService) return injectorStub as unknown as T;
       if (id === IInstantiationService) return instantiationStub as unknown as T;
@@ -209,7 +193,7 @@ describe('SessionTodoService', () => {
     expect(service.getTodos()).toEqual([{ title: 'x', status: 'pending' }]);
   });
 
-  it('binds the TodoList tool and reminder into every created agent', () => {
+  it('binds the stale-todo reminder into every created agent', () => {
     const lifecycle = makeLifecycleStub();
     const service = new SessionTodoService(lifecycle.service);
     void service;
@@ -219,9 +203,10 @@ describe('SessionTodoService', () => {
     lifecycle.fireCreate(main.handle);
     lifecycle.fireCreate(sub.handle);
 
-    expect(main.registeredTools).toContain('TodoListTool');
+    // The TodoList tool itself is contributed via `registerTool` and registered
+    // by the Agent-scope builtin-tools registrar — SessionTodoService only owns
+    // the per-agent reminder.
     expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
-    expect(sub.registeredTools).toContain('TodoListTool');
     expect(sub.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
   });
 
@@ -254,7 +239,7 @@ describe('SessionTodoService', () => {
     const main = makeFakeAgent('main');
     lifecycle.fireCreate(main.handle);
 
-    expect(main.registeredTools).toHaveLength(1);
+    expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
     // Disposal should not throw and should leave the service usable.
     expect(() => lifecycle.fireDispose('main')).not.toThrow();
     expect(service.getTodos()).toEqual([]);

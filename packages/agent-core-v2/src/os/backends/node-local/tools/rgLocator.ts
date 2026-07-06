@@ -19,7 +19,7 @@
  * If nothing resolves, {@link ensureRgPath} throws and callers surface
  * {@link rgUnavailableMessage} instead of a naked `spawn rg ENOENT`.
  *
- * Ported from `session/agentFs/rgLocator` onto the os tools: the probe is now
+ * Ported from `session/sessionFs/rgLocator` onto the os tools: the probe is now
  * backed by `IHostProcessService` instead of the session process runner.
  */
 

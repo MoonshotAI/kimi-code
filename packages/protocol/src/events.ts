@@ -1480,6 +1480,12 @@ export const eventSchema = agentEventSchema.and(
  * other REST surfaces instead of delta replay.
  *
  * Everything not listed here is durable: journaled, seq-bearing, replayable.
+ *
+ * @deprecated Use the server-side `isVolatileSignal`
+ * (`packages/server-v2/src/transport/ws/v1/sessionEventBroadcaster.ts`) instead,
+ * which owns volatile-vs-durable classification for the `wire` emission path.
+ * The legacy `IAgentRecordService` (`record.on`) transport path still consumes
+ * this until Phase 4 removes it; do not add new consumers.
  */
 export const VOLATILE_EVENT_TYPES = [
   'assistant.delta',
@@ -1495,6 +1501,13 @@ export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
 
 const volatileEventTypeSet: ReadonlySet<string> = new Set(VOLATILE_EVENT_TYPES);
 
+/**
+ * @deprecated Use the server-side `isVolatileSignal`
+ * (`packages/server-v2/src/transport/ws/v1/sessionEventBroadcaster.ts`) instead,
+ * which owns volatile-vs-durable classification for the `wire` emission path.
+ * Retained only for the legacy `IAgentRecordService` (`record.on`) transport
+ * path until Phase 4 removes it; do not add new consumers.
+ */
 export function isVolatileEventType(type: string): type is VolatileEventType {
   return volatileEventTypeSet.has(type);
 }

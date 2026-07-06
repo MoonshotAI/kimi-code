@@ -15,7 +15,7 @@ import { join, relative } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ContentPart } from '#/app/llmProtocol/kosong';
+import type { ContentPart } from '#/app/llmProtocol';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt';
 import type { CronTask } from '#/app/cron';

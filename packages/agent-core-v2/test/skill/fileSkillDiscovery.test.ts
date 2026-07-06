@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { FileSkillDiscovery } from '#/app/globalSkillCatalog/fileSkillDiscovery';
+import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
+import type { SkillRoot } from '#/app/skillCatalog/types';
 
 describe('FileSkillDiscovery', () => {
   let root: string;
@@ -23,79 +24,55 @@ describe('FileSkillDiscovery', () => {
     await writeFile(full, `---\n${frontmatter}\n---\n${body}`);
   }
 
-  async function markGitRoot(dir: string = root): Promise<void> {
-    await mkdir(join(dir, '.git'), { recursive: true });
+  function skillRoot(rel: string, source: SkillRoot['source'] = 'project'): SkillRoot {
+    return { path: join(root, rel), source };
   }
 
-  it('discovers a project directory skill under .kimi-code/skills', async () => {
-    await markGitRoot();
-    await writeSkill('.kimi-code/skills/commit/SKILL.md', 'name: commit\ndescription: commit changes');
+  it('discovers a directory skill under a root', async () => {
+    await writeSkill('skills/commit/SKILL.md', 'name: commit\ndescription: commit changes');
 
-    const result = await new FileSkillDiscovery().discoverProject(root);
+    const result = await new FileSkillDiscovery().discover([skillRoot('skills')]);
 
     expect(result.skills.map((s) => s.name)).toEqual(['commit']);
     expect(result.skills[0]?.source).toBe('project');
   });
 
-  it('discovers a project skill under .agents/skills as a fallback', async () => {
-    await markGitRoot();
-    await writeSkill('.agents/skills/review/SKILL.md', 'name: review\ndescription: review code');
-
-    const result = await new FileSkillDiscovery().discoverProject(root);
-
-    expect(result.skills.map((s) => s.name)).toEqual(['review']);
-  });
-
-  it('returns an empty result when no skill directories exist', async () => {
-    await markGitRoot();
-
-    const result = await new FileSkillDiscovery().discoverProject(root);
+  it('returns an empty result when given no roots', async () => {
+    const result = await new FileSkillDiscovery().discover([]);
 
     expect(result.skills).toEqual([]);
     expect(result.scannedRoots).toEqual([]);
   });
 
   it('discovers a flat .md skill at the root top level', async () => {
-    await markGitRoot();
-    await writeSkill('.kimi-code/skills/summarize.md', 'name: summarize\ndescription: summarize text');
+    await writeSkill('skills/summarize.md', 'name: summarize\ndescription: summarize text');
 
-    const result = await new FileSkillDiscovery().discoverProject(root);
+    const result = await new FileSkillDiscovery().discover([skillRoot('skills')]);
 
     expect(result.skills.map((s) => s.name)).toEqual(['summarize']);
   });
 
-  it('lets .kimi-code/skills win over .agents/skills on name collision', async () => {
-    await markGitRoot();
-    await writeSkill('.kimi-code/skills/dup/SKILL.md', 'name: dup\ndescription: from brand');
-    await writeSkill('.agents/skills/dup/SKILL.md', 'name: dup\ndescription: from generic');
+  it('lets the first root win over a later sibling root on name collision', async () => {
+    await writeSkill('brand/dup/SKILL.md', 'name: dup\ndescription: from brand');
+    await writeSkill('generic/dup/SKILL.md', 'name: dup\ndescription: from generic');
 
-    const result = await new FileSkillDiscovery().discoverProject(root);
+    const result = await new FileSkillDiscovery().discover([
+      skillRoot('brand'),
+      skillRoot('generic'),
+    ]);
 
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0]?.description).toBe('from brand');
   });
 
-  it('discovers user skills under homeDir/skills', async () => {
-    await writeSkill('skills/notes/SKILL.md', 'name: notes\ndescription: personal notes');
-
-    const result = await new FileSkillDiscovery().discoverUser(root, root);
-
-    expect(result.skills.map((s) => s.name)).toEqual(['notes']);
-    expect(result.skills[0]?.source).toBe('user');
-  });
-
   it('discovers sub-skills of a parent that opts in', async () => {
-    await markGitRoot();
     await writeSkill(
-      '.kimi-code/skills/parent/SKILL.md',
+      'skills/parent/SKILL.md',
       'name: parent\ndescription: parent\nhas-sub-skill: true',
     );
-    await writeSkill(
-      '.kimi-code/skills/parent/child/SKILL.md',
-      'name: child\ndescription: child skill',
-    );
+    await writeSkill('skills/parent/child/SKILL.md', 'name: child\ndescription: child skill');
 
-    const result = await new FileSkillDiscovery().discoverProject(root);
+    const result = await new FileSkillDiscovery().discover([skillRoot('skills')]);
     const names = result.skills.map((s) => s.name).toSorted();
 
     expect(names).toEqual(['parent', 'parent.child']);
@@ -103,13 +80,12 @@ describe('FileSkillDiscovery', () => {
   });
 
   it('ignores node_modules and dot directories while walking', async () => {
-    await markGitRoot();
     await writeSkill(
-      '.kimi-code/skills/node_modules/hidden/SKILL.md',
+      'skills/node_modules/hidden/SKILL.md',
       'name: hidden\ndescription: hidden',
     );
 
-    const result = await new FileSkillDiscovery().discoverProject(root);
+    const result = await new FileSkillDiscovery().discover([skillRoot('skills')]);
 
     expect(result.skills.map((s) => s.name)).not.toContain('hidden');
   });

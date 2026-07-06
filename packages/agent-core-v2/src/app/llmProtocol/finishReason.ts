@@ -6,4 +6,4 @@
  * importing the type from kosong.
  */
 
-export type { FinishReason } from './kosong';
+export type { FinishReason } from './provider';

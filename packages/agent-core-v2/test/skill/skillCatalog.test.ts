@@ -5,13 +5,13 @@ import { LifecycleScope } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap';
 import { IPluginService } from '#/app/plugin';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
-import '#/app/globalSkillCatalog';
+import '#/app/skillCatalog';
 import '#/session/sessionSkillCatalog';
 import '#/agent/skill';;
-import { InMemorySkillDiscovery } from '#/app/globalSkillCatalog/inMemorySkillDiscovery';
+import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { ISkillDiscovery } from '#/app/globalSkillCatalog/skillDiscovery';
-import type { SkillRoot } from '#/app/globalSkillCatalog/types';
+import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
+import type { SkillRoot } from '#/app/skillCatalog/types';
 
 import { stubSkill } from './stubs';
 
@@ -150,15 +150,12 @@ describe('SessionSkillCatalogService', () => {
     class ExtraRootStore implements ISkillDiscovery {
       declare readonly _serviceBrand: undefined;
       receivedRoots: readonly SkillRoot[] | undefined;
-      async discoverProject(_workDir: string, extraRoots?: readonly SkillRoot[]) {
-        this.receivedRoots = extraRoots;
-        const pluginSkills = (extraRoots ?? [])
+      async discover(roots: readonly SkillRoot[]) {
+        this.receivedRoots = roots;
+        const pluginSkills = roots
           .filter((root) => root.plugin !== undefined)
           .map((root) => stubSkill('demo-skill', { source: 'extra', plugin: root.plugin }));
         return { skills: pluginSkills, skipped: [], scannedRoots: [] };
-      }
-      async discoverUser() {
-        return { skills: [], skipped: [], scannedRoots: [] };
       }
     }
     const store = new ExtraRootStore();

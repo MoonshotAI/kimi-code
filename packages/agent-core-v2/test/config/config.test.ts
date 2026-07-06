@@ -1,4 +1,5 @@
-import type { ModelCapability, ProviderConfig, ToolCall } from '#/app/llmProtocol/kosong';
+import type { ModelCapability, ToolCall } from '#/app/llmProtocol';
+import type { ProviderConfig } from '#/app/llmProtocol/providers';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile';

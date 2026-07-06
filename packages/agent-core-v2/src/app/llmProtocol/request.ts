@@ -14,10 +14,10 @@
  * envelope, not wire content.
  */
 
+export type { GenerateCallbacks } from './generate';
 export type {
-  GenerateCallbacks,
   MaxCompletionTokensOptions,
   ProviderRequestAuth,
   StreamDecodeStats,
   VideoUploadInput,
-} from './kosong';
+} from './provider';

@@ -1,106 +1,68 @@
+/**
+ * `permissionRules` domain (L3) — `IAgentPermissionRulesService` implementation.
+ *
+ * Holds the agent's permission rules and deduped session-approval patterns in the
+ * `wire` `PermissionRulesModel`, mutating it only through the `permission.rules.add`
+ * / `permission.record_approval_result` Ops (`wire.dispatch(...)`) and reading it
+ * through `wire.getModel`. The `onChanged` hook is driven by a `wire.subscribe`
+ * on that model (firing only when the rules slice actually changes); the
+ * `onApprovalRecorded` hook is a live notification fired after the dispatch, so
+ * neither re-fires on resume — `wire.replay` rebuilds the model silently and
+ * consumers read the getters instead. Bound at Agent scope.
+ */
 
-import {
-  Disposable,
-} from "#/_base/di";
+import { Disposable } from '#/_base/di';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 import { OrderedHookSlot } from '#/hooks';
-import { IAgentRecordService, type AgentRecord } from '#/agent/record';
+import { IAgentWireService, type IWireService } from '#/wire';
 import {
   IAgentPermissionRulesService,
   type PermissionApprovalResultRecord,
   type PermissionRule,
 } from './permissionRules';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'permission.rules.add': {
-      rules: readonly PermissionRule[];
-    };
-    'permission.record_approval_result': PermissionApprovalResultRecord;
-  }
-
-}
+import {
+  addPermissionRules,
+  PermissionRulesModel,
+  recordApprovalResult as recordApprovalResultOp,
+} from './permissionRulesOps';
 
 export class AgentPermissionRulesService extends Disposable implements IAgentPermissionRulesService {
   declare readonly _serviceBrand: undefined;
-
-  private readonly localRules: PermissionRule[] = [];
-  private readonly localSessionApprovalRulePatterns = new Set<string>();
 
   readonly hooks = {
     onChanged: new OrderedHookSlot<{ rules: readonly PermissionRule[] }>(),
     onApprovalRecorded: new OrderedHookSlot<{ record: PermissionApprovalResultRecord }>(),
   };
 
-  constructor(
-    @IAgentRecordService private readonly record: IAgentRecordService,
-  ) {
+  constructor(@IAgentWireService private readonly wire: IWireService) {
     super();
     this._register(
-      record.define('permission.rules.add', {
-        resume: (r) => {
-          this.applyAddRules(r.rules);
-        },
-      }),
-    );
-    this._register(
-      record.define('permission.record_approval_result', {
-        resume: (r) => {
-          this.applyApprovalResult(stripRecordMeta(r));
-        },
-        toReplay: (r) => ({ type: 'approval_result', record: stripRecordMeta(r) }),
+      wire.subscribe(PermissionRulesModel, (state, previous) => {
+        if (state.rules === previous.rules) return;
+        void this.hooks.onChanged.run({ rules: state.rules });
       }),
     );
   }
 
   get rules(): readonly PermissionRule[] {
-    return [...this.localRules];
+    return [...this.wire.getModel(PermissionRulesModel).rules];
   }
 
   get sessionApprovalRulePatterns(): readonly string[] {
-    return [...this.localSessionApprovalRulePatterns];
+    return [...this.wire.getModel(PermissionRulesModel).sessionApprovalRulePatterns];
   }
 
   addRules(rules: readonly PermissionRule[]): void {
     if (rules.length === 0) return;
-    this.record.append({ type: 'permission.rules.add', rules: [...rules] });
-    this.applyAddRules(rules);
+    this.wire.dispatch(addPermissionRules({ rules: [...rules] }));
   }
 
   recordApprovalResult(record: PermissionApprovalResultRecord): void {
-    this.record.append({ type: 'permission.record_approval_result', ...record });
-    this.applyApprovalResult(record);
-  }
-
-  private applyAddRules(rules: readonly PermissionRule[]): void {
-    if (rules.length === 0) return;
-    this.localRules.push(...rules);
-    this.emitRulesChanged();
-  }
-
-  private applyApprovalResult(record: PermissionApprovalResultRecord): void {
-    if (record.result.decision === 'approved' && record.result.scope === 'session') {
-      const pattern = record.sessionApprovalRule;
-      if (pattern !== undefined) {
-        this.localSessionApprovalRulePatterns.add(pattern);
-      }
-    }
+    this.wire.dispatch(recordApprovalResultOp(record));
     void this.hooks.onApprovalRecorded.run({ record });
   }
-
-  private emitRulesChanged(): void {
-    const rules = this.rules;
-    void this.hooks.onChanged.run({ rules });
-  }
-}
-
-function stripRecordMeta(
-  record: AgentRecord<'permission.record_approval_result'>,
-): PermissionApprovalResultRecord {
-  const { type: _type, time: _time, ...approval } = record;
-  return approval;
 }
 
 registerScopedService(

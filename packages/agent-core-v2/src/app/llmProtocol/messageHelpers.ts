@@ -7,9 +7,9 @@
  * Utilities: `extractText | mergeInPlace` (in-place merge of streamed
  * tool-call argument deltas).
  *
- * Values are delegated to the vendored kosong copy under `./kosong` so behavior
- * is identical across the migration. Import from here rather than from the
- * vendored copy directly.
+ * Values live in `./message` beside the wire types; this module re-exports
+ * them so callers can take the helper surface without pulling in the entire
+ * wire-type module.
  */
 
 export {
@@ -21,4 +21,4 @@ export {
   isToolCall,
   isToolCallPart,
   mergeInPlace,
-} from './kosong';
+} from './message';

@@ -1,25 +1,31 @@
 /**
- * EditTool tests for the v2 fileTools domain.
+ * EditTool tests for the v2 edit domain.
  *
- * Ported from v1 (`packages/agent-core/test/tools/edit.test.ts`) and adapted
- * to the v2 constructor `(fs, env, workspace)`. Self-contained: builds a
- * minimal fake `IHostFileSystem` (spied readText/writeText) inline so the tool
- * can be exercised without the composition root, mirroring
- * `test/fileTools/read.test.ts`. The pure `TextModel` / `EditService` logic is
- * exercised through the tool and its `FileEditService` adapter.
+ * Ported from v1 (`packages/agent-core/test/tools/edit.test.ts`). The Agent
+ * `EditTool` adapter is built through the container (`createInstance`) so its
+ * `@IService` deps resolve for real: a spied fake `IHostFileSystem`, the test
+ * `IHostEnvironment` / `ISessionWorkspaceContext`, and the App-scope
+ * `IFileEditService` binding. The pure `TextModel` / `EditService` logic is
+ * exercised end-to-end through the tool and the real `FileEditService`.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '../../src/_base/tools/policies/path-access';
 import { stubWorkspaceContext } from './stub-workspace-context';
-import { type EditInput, EditInputSchema, EditTool } from '#/agent/edit';
-import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { createServices } from '#/_base/di/test';
+import { type EditInput, EditInputSchema, EditTool } from '#/app/edit';
+import { FileEditService, IFileEditService } from '#/app/edit';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
+
+let disposables: DisposableStore;
 
 function createTestEnv(home = '/home'): IHostEnvironment {
   return {
@@ -53,6 +59,22 @@ function createSpiedEditFs(
   return { fs, readText, writeText };
 }
 
+function buildTool(
+  fs: IHostFileSystem,
+  env: IHostEnvironment,
+  workspace: ISessionWorkspaceContext,
+): EditTool {
+  const ix = createServices(disposables, {
+    additionalServices: (reg) => {
+      reg.defineInstance(IHostFileSystem, fs);
+      reg.defineInstance(IHostEnvironment, env);
+      reg.defineInstance(ISessionWorkspaceContext, workspace);
+      reg.define(IFileEditService, FileEditService);
+    },
+  });
+  return ix.createInstance(EditTool);
+}
+
 function isPromiseLike(
   value: ToolExecution | Promise<ToolExecution>,
 ): value is Promise<ToolExecution> {
@@ -83,8 +105,15 @@ async function execute(tool: EditTool, args: EditInput): Promise<ExecutableToolR
 }
 
 describe('EditTool', () => {
+  beforeEach(() => {
+    disposables = new DisposableStore();
+  });
+  afterEach(() => {
+    disposables.dispose();
+  });
+
   it('exposes before/after on the file_io display so the approval panel can render a diff', () => {
-    const tool = new EditTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
     const execution = tool.resolveExecution({
       path: '/tmp/foo.ts',
       old_string: 'a\nb\nc',
@@ -103,7 +132,7 @@ describe('EditTool', () => {
   });
 
   it('declares writeFile access for the edited path', () => {
-    const tool = new EditTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
     const execution = tool.resolveExecution({
       path: '/tmp/foo.ts',
       old_string: 'a',
@@ -116,7 +145,7 @@ describe('EditTool', () => {
   });
 
   it('exposes current metadata and schema', () => {
-    const tool = new EditTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(createSpiedEditFs().fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     expect(tool.name).toBe('Edit');
     expect(tool.description).toContain('Read the target file before every Edit');
@@ -172,7 +201,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('alpha beta'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -188,7 +217,7 @@ describe('EditTool', () => {
     const readText = vi.fn().mockResolvedValue('alpha beta');
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({ readText, writeText });
-    const tool = new EditTool(fs, createTestEnv('/home/test'), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv('/home/test'), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '~/notes/today.txt',
@@ -207,7 +236,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('alpha beta gamma'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -225,7 +254,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('a b a'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -244,7 +273,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('alpha\r\nbeta\r\ngamma\r\n'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -262,7 +291,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('alpha\r\nbeta\r\n'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -280,7 +309,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('alpha\r\nbeta\ngamma\r\n'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -299,7 +328,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('alpha\r\nbeta\ngamma\r\n'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -317,7 +346,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('a b a'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -334,7 +363,7 @@ describe('EditTool', () => {
     const readText = vi.fn().mockResolvedValue('same');
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({ readText, writeText });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -355,7 +384,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('alpha beta'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -374,7 +403,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('same same'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/a.txt',
@@ -392,7 +421,7 @@ describe('EditTool', () => {
   it('rejects relative traversal edits before reading', async () => {
     const readText = vi.fn().mockResolvedValue('secret');
     const { fs } = createSpiedEditFs({ readText });
-    const tool = new EditTool(fs, createTestEnv(), stubWorkspaceContext('/workspace/project'));
+    const tool = buildTool(fs, createTestEnv(), stubWorkspaceContext('/workspace/project'));
 
     const result = await execute(tool, {
       path: '../outside.txt',
@@ -411,7 +440,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('Hello 世界! café'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/u.txt',
@@ -430,7 +459,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue(original),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/n.txt',
@@ -453,7 +482,7 @@ describe('EditTool', () => {
         }),
       ),
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/dir',
@@ -471,7 +500,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('Hello world!'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, {
       path: '/tmp/e.txt',
@@ -489,7 +518,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('old content'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
+    const tool = buildTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
 
     const result = await execute(tool, {
       path: '/tmp/outside.txt',
@@ -509,7 +538,7 @@ describe('EditTool', () => {
       readText: vi.fn().mockResolvedValue('content'),
       writeText,
     });
-    const tool = new EditTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
+    const tool = buildTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
 
     const result = await execute(tool, {
       path: '/workspace-sneaky/test.txt',

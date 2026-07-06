@@ -11,4 +11,5 @@ import './tools/enter-plan-mode';
 import './tools/exit-plan-mode';
 
 export * from './plan';
+export * from './planOps';
 export * from './planService';

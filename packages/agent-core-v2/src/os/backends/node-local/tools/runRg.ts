@@ -7,7 +7,7 @@
  * predicate. Mode-specific argument building and output parsing stay in the
  * tools themselves.
  *
- * Ported from `session/agentFs/runRg` onto the os tools: the subprocess now
+ * Ported from `session/sessionFs/runRg` onto the os tools: the subprocess now
  * goes through `IHostProcessService.spawn` instead of the session
  * `ISessionProcessRunner.exec`.
  */

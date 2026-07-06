@@ -3,7 +3,7 @@
  *
  * Mirrors `packages/server/src/routes/fs.ts` path-for-path and schema-for-schema
  * so existing v1 clients keep working against server-v2. Backed by the v2
- * Session-scoped `ISessionFsService` (`agent-core-v2/src/agentFs`): the route resolves
+ * Session-scoped `ISessionFsService` (`agent-core-v2/src/sessionFs`): the route resolves
  * the session from the URL, then dispatches `fs:<action>` to the matching
  * `ISessionFsService` method. The wire schema is reused from `@moonshot-ai/protocol`.
  */

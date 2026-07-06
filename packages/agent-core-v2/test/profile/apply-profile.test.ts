@@ -5,7 +5,6 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { createExecContext } from '#/session/execContext';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile';
 
 import { createTestAgent, execEnvServices, type TestAgentContext } from '../harness';
@@ -37,14 +36,13 @@ describe('AgentProfileService.applyProfile', () => {
     // Real session-scoped fs anchored at workDir, plus a hermetic home dir
     // (empty temp dir) so a developer's real ~/.kimi-code / ~/.agents files
     // never leak into the assertions.
-    const execCtx = createExecContext(workDir);
     const fs = new HostFileSystem();
     ctx = createTestAgent(
       execEnvServices({
         hostEnvironment: { homeDir },
-        execContext: execCtx,
         hostFs: fs,
       }),
+      { cwd: workDir },
     );
     return { ctx, profile: ctx.get(IAgentProfileService) };
   }

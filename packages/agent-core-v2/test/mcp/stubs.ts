@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Tool as KosongTool } from '#/app/llmProtocol/kosong';
+import type { Tool as KosongTool } from '#/app/llmProtocol';
 import { z } from 'zod';
 
 import type { McpOAuthStore } from '#/agent/mcp/oauth';

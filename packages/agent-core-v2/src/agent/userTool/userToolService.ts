@@ -1,38 +1,40 @@
-import {
-  Disposable,
-  type IDisposable,
-} from '#/_base/di';
+/**
+ * `userTool` domain (L4) — `IAgentUserToolService` implementation.
+ *
+ * Holds the set of host-registered user tools in the `wire` `UserToolModel`
+ * (`Map<string, UserToolRegistration>`), mutating it only through the
+ * `tools.register_user_tool` / `tools.unregister_user_tool` Ops
+ * (`wire.dispatch(...)`). The live side effects — `registry.register` +
+ * `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) — run
+ * after the dispatch, and are re-derived from the rebuilt Model by
+ * `wire.onRestored` after `wire.replay`, so a resumed agent re-registers exactly
+ * the tools the persisted ops describe without re-firing any live notification.
+ * The per-tool `IDisposable` handles stay live-only (they cannot be persisted).
+ * Bound at Agent scope.
+ */
+
+import { Disposable, type IDisposable } from '#/_base/di';
+import { InstantiationType } from '#/_base/di/extensions';
+import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
+import { IAgentProfileService } from '#/agent/profile';
 import type {
   ExecutableTool,
   ExecutableToolContext,
   ExecutableToolResult,
 } from '#/agent/tool';
-import { ISessionInteractionService } from '#/session/interaction';
-import { IAgentProfileService } from '#/agent/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
-import { IAgentRecordService } from '#/agent/record';
-import {
-  IAgentUserToolService,
-  type UserToolRegistration,
-} from './userTool';
-import { InstantiationType } from '#/_base/di/extensions';
-import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { ISessionInteractionService } from '#/session/interaction';
+import { IAgentWireService, type IWireService } from '#/wire';
+
+import { IAgentUserToolService, type UserToolRegistration } from './userTool';
+import { registerUserTool, unregisterUserTool, UserToolModel } from './userToolOps';
 
 interface UserToolExecutionRequest {
   readonly turnId?: number;
   readonly toolCallId: string;
   readonly name: string;
   readonly args: unknown;
-}
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'tools.register_user_tool': UserToolRegistration;
-    'tools.unregister_user_tool': {
-      readonly name: string;
-    };
-  }
 }
 
 export class AgentUserToolService extends Disposable implements IAgentUserToolService {
@@ -43,34 +45,27 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
   constructor(
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentRecordService private readonly records: IAgentRecordService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
+    @IAgentWireService private readonly wire: IWireService,
   ) {
     super();
-    this._register(
-      records.define('tools.register_user_tool', {
-        resume: (r) => {
-          this.applyRegister(r);
-        },
-      }),
-    );
-    this._register(
-      records.define('tools.unregister_user_tool', {
-        resume: (r) => {
-          this.applyUnregister(r.name);
-        },
-      }),
-    );
+    this._register(this.wire.onRestored(() => this.restoreRegisteredTools()));
   }
 
   register(input: UserToolRegistration): void {
-    this.records.append({ type: 'tools.register_user_tool', ...input });
+    this.wire.dispatch(registerUserTool(input));
     this.applyRegister(input);
   }
 
   unregister(name: string): void {
-    this.records.append({ type: 'tools.unregister_user_tool', name });
+    this.wire.dispatch(unregisterUserTool({ name }));
     this.applyUnregister(name);
+  }
+
+  private restoreRegisteredTools(): void {
+    for (const registration of this.wire.getModel(UserToolModel).values()) {
+      this.applyRegister(registration);
+    }
   }
 
   private applyRegister(input: UserToolRegistration): void {

@@ -29,8 +29,9 @@ import { renderModelToolSkillPrompt } from '#/agent/skill/prompt';
 import type { BuiltinTool } from '#/agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '#/agent/tool';
 import { registerTool } from '#/agent/toolRegistry';
-import { isInlineSkillType } from '#/app/globalSkillCatalog/types';
+import { isInlineSkillType } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog';
+import { ISessionContext } from '#/session/sessionContext';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
@@ -81,6 +82,7 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
     @IAgentSkillService private readonly skill: IAgentSkillService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
@@ -94,13 +96,20 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   }
 
   withInitialQueryDepth(initialQueryDepth: number): SkillTool {
-    const clone = new SkillTool(this.catalog, this.prompt, this.skill);
+    const clone = new SkillTool(this.catalog, this.prompt, this.skill, this.sessionContext);
     clone.queryDepth = initialQueryDepth;
     return clone;
   }
 
   private async execution(args: SkillToolInput): Promise<ExecutableToolResult> {
-    return executeModelSkill(this.catalog, this.prompt, this.skill, args, this.queryDepth);
+    return executeModelSkill(
+      this.catalog,
+      this.prompt,
+      this.skill,
+      args,
+      this.queryDepth,
+      this.sessionContext.sessionId,
+    );
   }
 }
 
@@ -112,6 +121,7 @@ export async function executeModelSkill(
   skillService: IAgentSkillService,
   args: SkillToolInput,
   queryDepth: number,
+  sessionId: string,
 ): Promise<ExecutableToolResult> {
   // Recursion hard cap. Once `currentDepth` has reached
   // MAX_SKILL_QUERY_DEPTH, firing another Skill call would push the
@@ -153,7 +163,7 @@ export async function executeModelSkill(
     skillPath: skill.path,
     skillSource: skill.source,
   };
-  const skillContent = catalog.catalog.renderSkillPrompt(skill, skillArgs);
+  const skillContent = catalog.catalog.renderSkillPrompt(skill, skillArgs, { sessionId });
   const message: ContextMessage = {
     role: 'user',
     content: [

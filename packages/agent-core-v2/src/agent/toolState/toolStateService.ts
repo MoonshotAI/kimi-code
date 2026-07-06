@@ -1,24 +1,24 @@
-import {
-  Disposable,
-} from "#/_base/di";
+/**
+ * `toolState` domain (L3) — `IAgentToolState` implementation.
+ *
+ * Holds the agent's opaque per-key tool store in the `wire` `ToolStoreModel`,
+ * mutating it only through the `tools.update_store` Op
+ * (`wire.dispatch(updateStore({ key, value }))`) and reading it through
+ * `wire.getModel`. The `onUpdated` hook is driven by a `wire.subscribe` on that
+ * model, so it fires on live writes but not during `wire.replay` (matching the
+ * former `!restoring` gate). Bound at Agent scope.
+ */
+
+import { Disposable } from '#/_base/di';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { OrderedHookSlot } from '#/hooks';
+import { IAgentWireService, type IWireService } from '#/wire';
 import { IAgentToolState, type ToolStoreData, type ToolStoreKey } from './toolState';
-import { IAgentRecordService, type AgentRecord } from '#/agent/record';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'tools.update_store': {
-      key: ToolStoreKey;
-      value: ToolStoreData[ToolStoreKey];
-    };
-  }
-}
+import { ToolStoreModel, updateStore } from './toolStateOps';
 
 export class AgentToolStateService extends Disposable implements IAgentToolState {
   declare readonly _serviceBrand: undefined;
-  private readonly store: Partial<ToolStoreData> = {};
 
   readonly hooks = {
     onUpdated: new OrderedHookSlot<{
@@ -27,40 +27,33 @@ export class AgentToolStateService extends Disposable implements IAgentToolState
     }>(),
   };
 
-  constructor(@IAgentRecordService private readonly records: IAgentRecordService) {
+  constructor(@IAgentWireService private readonly wire: IWireService) {
     super();
     this._register(
-      records.define('tools.update_store', {
-        resume: (r) => {
-          this.apply(r.key, r.value);
-        },
+      wire.subscribe(ToolStoreModel, (state, prev) => {
+        if (state === prev) return;
+        for (const key of Object.keys(state)) {
+          if (state[key] !== prev[key]) {
+            void this.hooks.onUpdated.run({
+              key: key as ToolStoreKey,
+              value: state[key] as ToolStoreData[ToolStoreKey],
+            });
+          }
+        }
       }),
     );
   }
 
   get<K extends ToolStoreKey>(key: K): ToolStoreData[K] | undefined {
-    return this.store[key];
+    return this.wire.getModel(ToolStoreModel)[key] as ToolStoreData[K] | undefined;
   }
 
   set<K extends ToolStoreKey>(key: K, value: ToolStoreData[K]): void {
-    const record: AgentRecord<'tools.update_store'> = {
-      type: 'tools.update_store',
-      key,
-      value,
-    };
-    this.records.append(record);
-    this.apply(key, value);
+    this.wire.dispatch(updateStore({ key, value }));
   }
 
   data(): Readonly<Partial<ToolStoreData>> {
-    return { ...this.store };
-  }
-
-  private apply<K extends ToolStoreKey>(key: K, value: ToolStoreData[K]): void {
-    this.store[key] = value;
-    if (!this.records.restoring) {
-      void this.hooks.onUpdated.run({ key, value });
-    }
+    return { ...this.wire.getModel(ToolStoreModel) } as Readonly<Partial<ToolStoreData>>;
   }
 }
 

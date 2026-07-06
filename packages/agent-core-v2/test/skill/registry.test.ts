@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { InMemorySkillCatalog } from '#/app/globalSkillCatalog';
-import type { SkillDefinition, SkillSource } from '#/app/globalSkillCatalog/types';
+import { InMemorySkillCatalog } from '#/app/skillCatalog';
+import type { SkillDefinition, SkillSource } from '#/app/skillCatalog/types';
 import { stubSkill } from './stubs';
 
 describe('InMemorySkillCatalog skill listing', () => {
@@ -170,7 +170,7 @@ describe('InMemorySkillCatalog model skill listing', () => {
 
 describe('InMemorySkillCatalog prompt rendering', () => {
   it('expands raw, positional, named, and context placeholders', () => {
-    const rendered = new InMemorySkillCatalog({ sessionId: 'ses_1' }).renderSkillPrompt(
+    const rendered = new InMemorySkillCatalog().renderSkillPrompt(
       stubSkill('commit', {
         dir: '/tmp/skills/commit',
         content:
@@ -178,6 +178,7 @@ describe('InMemorySkillCatalog prompt rendering', () => {
         metadata: { arguments: ['flag', 'message'] },
       }),
       '-m "fix login"',
+      { sessionId: 'ses_1' },
     );
 
     expect(rendered).toBe(
@@ -186,12 +187,13 @@ describe('InMemorySkillCatalog prompt rendering', () => {
   });
 
   it('leaves unknown placeholders alone and clears missing indexed values', () => {
-    const rendered = new InMemorySkillCatalog({ sessionId: 's' }).renderSkillPrompt(
+    const rendered = new InMemorySkillCatalog().renderSkillPrompt(
       stubSkill('review', {
         dir: '/x',
         content: 'unknown=$missing actual=$0 missing=$1',
       }),
       'hello',
+      { sessionId: 's' },
     );
 
     expect(rendered).toBe('unknown=$missing actual=hello missing=');
@@ -222,12 +224,13 @@ describe('InMemorySkillCatalog prompt rendering', () => {
   });
 
   it('expands context placeholders and still appends args when no argument placeholder is used', () => {
-    const rendered = new InMemorySkillCatalog({ sessionId: 'ses_1' }).renderSkillPrompt(
+    const rendered = new InMemorySkillCatalog().renderSkillPrompt(
       stubSkill('review', {
         dir: '/skills/review',
         content: 'Use ${KIMI_SKILL_DIR}/references/checklist.md.',
       }),
       'src/app.ts',
+      { sessionId: 'ses_1' },
     );
 
     expect(rendered).toBe(

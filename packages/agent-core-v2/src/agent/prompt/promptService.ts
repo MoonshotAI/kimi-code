@@ -8,7 +8,6 @@ import {
   type ContextMessage,
 } from '#/agent/contextMemory';
 import { IAgentLoopService } from '#/agent/loop';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentTurnService, type Turn } from '#/agent/turn';
 import { OrderedHookSlot } from '#/hooks';
 import {
@@ -35,7 +34,6 @@ export class AgentPromptService implements IAgentPromptService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentTurnService private readonly turnService: IAgentTurnService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
     @IAgentLoopService loopService: IAgentLoopService,
   ) {
     loopService.hooks.beforeStep.register('prompt-service-steer-before-step', async (_ctx, next) => {
@@ -103,7 +101,10 @@ export class AgentPromptService implements IAgentPromptService {
       }
     }
 
-    if (removedCount < count && !this.record.restoring) {
+    // `undo` is only ever invoked live (user / RPC); the legacy `context.undo`
+    // record is migrated to `context.splice` and replayed by contextMemory, so
+    // this method never runs during restore and needs no restoring-phase guard.
+    if (removedCount < count) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
         formatUndoUnavailableMessage(count, removedCount, stoppedAtCompaction),

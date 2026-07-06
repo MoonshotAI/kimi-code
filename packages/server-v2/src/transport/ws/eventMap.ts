@@ -7,17 +7,19 @@
  *   Core    `events`                — process-wide `DomainEvent` bus (`IEventService`)
  *   Session `interactions`          — pending human-in-the-loop requests (`ISessionInteractionService.onDidChange`)
  *   Session `interactions:resolved` — request resolutions (`ISessionInteractionService.onDidResolve`)
- *   Agent   `events`                — per-agent `AgentEvent` stream (`IAgentRecordService`)
+ *   Agent   `events`                — per-agent `AgentEvent` stream (live signals via
+ *                                     `IAgentWireService.onEmission`)
  */
 
 import {
   IEventService,
-  IAgentRecordService,
+  IAgentWireService,
   ISessionInteractionService,
   type DomainEvent,
   type IDisposable,
   type IScopeHandle,
   type Scope,
+  type WireEmission,
 } from '@moonshot-ai/agent-core-v2';
 
 import type { ScopeKind } from '../channel';
@@ -58,7 +60,17 @@ export const eventMap: Record<ScopeKind, Record<string, EventSource>> = {
   },
   agent: {
     events: {
-      subscribe: (scope, listener) => scope.accessor.get(IAgentRecordService).on(listener),
+      subscribe: (scope, listener) => {
+        // Every domain emits live signals via `IAgentWireService.onEmission`.
+        // Forward signals; ignore `record` emissions (persisted; live UI rides
+        // the signal).
+        const wireD = scope.accessor
+          .get(IAgentWireService)
+          .onEmission((emission: WireEmission) => {
+            if (emission.type === 'signal') listener(emission.signal);
+          });
+        return { dispose: () => wireD.dispose() };
+      },
     },
   },
 };

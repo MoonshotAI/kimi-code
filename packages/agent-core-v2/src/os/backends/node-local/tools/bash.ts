@@ -8,7 +8,7 @@
  * Dependencies injected via constructor:
  *   - `runner`   — `ISessionProcessRunner`, spawns the shell process
  *   - `env`      — `IHostEnvironment`, host OS / shell probe (osKind / shellName / shellPath)
- *   - `ctx`      — `IExecContext`, session cwd used to render the shell prompt
+ *   - `ctx`      — `ISessionContext`, session cwd used to render the shell prompt
  *   - `tasks`    — `IAgentTaskService`, owns foreground/detached task
  *                  lifecycle (timeouts, detach, user interrupt)
  *
@@ -34,7 +34,7 @@ import { z } from 'zod';
 
 import { IAgentTaskService } from '#/agent/task';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IExecContext } from '#/session/execContext';
+import { ISessionContext } from '#/session/sessionContext';
 import { ISessionProcessRunner } from '#/session/process';
 import type { IProcess } from '#/session/process';
 import { IAgentProfileService } from '#/agent/profile';
@@ -171,7 +171,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   constructor(
     @ISessionProcessRunner private readonly runner: ISessionProcessRunner,
     @IHostEnvironment private readonly env: IHostEnvironment,
-    @IExecContext private readonly ctx: IExecContext,
+    @ISessionContext private readonly ctx: ISessionContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {

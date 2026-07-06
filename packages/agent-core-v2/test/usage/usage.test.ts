@@ -1,136 +1,82 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { toDisposable } from '#/_base/di';
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { OrderedHookSlot } from '#/hooks';
-import { IAgentEventSinkService } from '#/agent/eventSink';
-import { AgentRecordService, IAgentRecordService } from '#/agent/record';
+import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentUsageService, type UsageStatus } from '#/agent/usage';
 import { AgentUsageService } from '#/agent/usage/usageService';
-import { IAgentWireRecordService, type WireRecord } from '#/agent/wireRecord';
-import type { WireRecordRestoredContext } from '#/agent/wireRecord';
+import { UsageModel } from '#/agent/usage/usageOps';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IAgentWireService, WireService, type PersistedRecord, type WireEmission } from '#/wire';
+
+const SCOPE = 'wire';
+const KEY = 'usage-test';
 
 let disposables: DisposableStore;
+let ix: TestInstantiationService;
+let log: IAppendLogStore;
+let svc: IAgentUsageService;
 
 beforeEach(() => {
   disposables = new DisposableStore();
+  ix = disposables.add(new TestInstantiationService());
+  ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
+  ix.set(IAgentUsageService, new SyncDescriptor(AgentUsageService));
+  log = ix.get(IAppendLogStore);
+  svc = ix.get(IAgentUsageService);
 });
 
-afterEach(() => {
-  disposables.dispose();
-});
+afterEach(() => disposables.dispose());
 
-describe('AgentUsageService', () => {
-  it('resolves by interface and accumulates usage by model', () => {
-    const { usage, records } = createUsageHarness();
+async function readRecords(): Promise<PersistedRecord[]> {
+  const out: PersistedRecord[] = [];
+  for await (const record of log.read<PersistedRecord>(SCOPE, KEY)) {
+    out.push(record);
+  }
+  return out;
+}
 
-    usage.record('model-a', {
-      inputOther: 1,
-      output: 2,
-      inputCacheRead: 3,
-      inputCacheCreation: 4,
-    });
-    usage.record('model-a', {
-      inputOther: 10,
-      output: 20,
-      inputCacheRead: 30,
-      inputCacheCreation: 40,
-    });
-    usage.record('model-b', {
-      inputOther: 100,
-      output: 200,
-      inputCacheRead: 300,
-      inputCacheCreation: 400,
-    });
+const a1 = { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 };
+const a2 = { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation: 40 };
+const b1 = { inputOther: 100, output: 200, inputCacheRead: 300, inputCacheCreation: 400 };
 
-    expect(usage.status()).toEqual({
+describe('AgentUsageService (wire-backed)', () => {
+  it('accumulates usage by model', () => {
+    svc.record('model-a', a1);
+    svc.record('model-a', a2);
+    svc.record('model-b', b1);
+
+    expect(svc.status()).toEqual({
       byModel: {
-        'model-a': {
-          inputOther: 11,
-          output: 22,
-          inputCacheRead: 33,
-          inputCacheCreation: 44,
-        },
-        'model-b': {
-          inputOther: 100,
-          output: 200,
-          inputCacheRead: 300,
-          inputCacheCreation: 400,
-        },
+        'model-a': { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 },
+        'model-b': b1,
       },
-      total: {
-        inputOther: 111,
-        output: 222,
-        inputCacheRead: 333,
-        inputCacheCreation: 444,
-      },
+      total: { inputOther: 111, output: 222, inputCacheRead: 333, inputCacheCreation: 444 },
       currentTurn: undefined,
     });
-    expect(records.map((record) => record.type)).toEqual([
-      'usage.record',
-      'usage.record',
-      'usage.record',
-    ]);
   });
 
   it('tracks current turn usage by turn id', () => {
-    const { usage } = createUsageHarness();
+    svc.record('model-a', a1);
+    svc.record('model-a', a2, { type: 'turn', turnId: 1 });
+    svc.record('model-b', b1, { type: 'turn', turnId: 1 });
 
-    usage.record('model-a', {
-      inputOther: 1,
-      output: 2,
-      inputCacheRead: 3,
-      inputCacheCreation: 4,
-    });
-    usage.record(
-      'model-a',
-      {
-        inputOther: 10,
-        output: 20,
-        inputCacheRead: 30,
-        inputCacheCreation: 40,
-      },
-      { type: 'turn', turnId: 1 },
-    );
-    usage.record(
-      'model-b',
-      {
-        inputOther: 100,
-        output: 200,
-        inputCacheRead: 300,
-        inputCacheCreation: 400,
-      },
-      { type: 'turn', turnId: 1 },
-    );
-
-    expect(usage.status()).toMatchObject({
-      total: {
-        inputOther: 111,
-        output: 222,
-        inputCacheRead: 333,
-        inputCacheCreation: 444,
-      },
-      currentTurn: {
-        inputOther: 110,
-        output: 220,
-        inputCacheRead: 330,
-        inputCacheCreation: 440,
-      },
+    expect(svc.status()).toMatchObject({
+      total: { inputOther: 111, output: 222, inputCacheRead: 333, inputCacheCreation: 444 },
+      currentTurn: { inputOther: 110, output: 220, inputCacheRead: 330, inputCacheCreation: 440 },
     });
 
-    usage.record(
-      'model-a',
-      {
-        inputOther: 5,
-        output: 6,
-        inputCacheRead: 7,
-        inputCacheCreation: 8,
-      },
-      { type: 'turn', turnId: 2 },
-    );
+    svc.record('model-a', { inputOther: 5, output: 6, inputCacheRead: 7, inputCacheCreation: 8 }, {
+      type: 'turn',
+      turnId: 2,
+    });
 
-    expect(usage.status().currentTurn).toEqual({
+    expect(svc.status().currentTurn).toEqual({
       inputOther: 5,
       output: 6,
       inputCacheRead: 7,
@@ -139,118 +85,74 @@ describe('AgentUsageService', () => {
   });
 
   it('returns immutable status snapshots', () => {
-    const { usage } = createUsageHarness();
+    svc.record('model-a', a1);
+    const snapshot = svc.status();
 
-    usage.record('model-a', {
-      inputOther: 1,
-      output: 2,
-      inputCacheRead: 3,
-      inputCacheCreation: 4,
-    });
-    const snapshot = usage.status();
-
-    usage.record('model-a', {
-      inputOther: 10,
-      output: 20,
-      inputCacheRead: 30,
-      inputCacheCreation: 40,
-    });
+    svc.record('model-a', a2);
 
     expect(snapshot).toEqual({
-      byModel: {
-        'model-a': {
-          inputOther: 1,
-          output: 2,
-          inputCacheRead: 3,
-          inputCacheCreation: 4,
-        },
-      },
-      total: {
-        inputOther: 1,
-        output: 2,
-        inputCacheRead: 3,
-        inputCacheCreation: 4,
-      },
+      byModel: { 'model-a': a1 },
+      total: a1,
       currentTurn: undefined,
     });
   });
 
-  it('publishes usage status changes through the event sink', () => {
-    const { usage, events } = createUsageHarness();
+  it('emits agent.status.updated with the usage snapshot via wire.signal', () => {
+    const emissions: WireEmission[] = [];
+    disposables.add(ix.get(IAgentWireService).onEmission((e) => emissions.push(e)));
 
-    usage.record('model-a', {
-      inputOther: 1,
-      output: 2,
-      inputCacheRead: 3,
-      inputCacheCreation: 4,
-    });
+    svc.record('model-a', a1);
 
-    expect(events).toEqual([
+    const signals = emissions
+      .filter((e): e is Extract<WireEmission, { type: 'signal' }> => e.type === 'signal')
+      .map((e) => e.signal);
+    expect(signals).toEqual([
       {
         type: 'agent.status.updated',
         usage: {
-          byModel: {
-            'model-a': {
-              inputOther: 1,
-              output: 2,
-              inputCacheRead: 3,
-              inputCacheCreation: 4,
-            },
-          },
-          total: {
-            inputOther: 1,
-            output: 2,
-            inputCacheRead: 3,
-            inputCacheCreation: 4,
-          },
+          byModel: { 'model-a': a1 },
+          total: a1,
           currentTurn: undefined,
         } satisfies UsageStatus,
       },
     ]);
   });
-});
 
-function createUsageHarness(): {
-  readonly ix: TestInstantiationService;
-  readonly usage: IAgentUsageService;
-  readonly records: WireRecord[];
-  readonly events: unknown[];
-} {
-  const records: WireRecord[] = [];
-  const events: unknown[] = [];
-  const ix = createServices(disposables, {
-    strict: true,
-    additionalServices: (reg) => {
-      reg.definePartialInstance(IAgentWireRecordService, {
-        restoring: null,
-        postRestoring: false,
-        hooks: {
-          onRestoredRecord: new OrderedHookSlot<WireRecordRestoredContext>(),
-          onResumeEnded: new OrderedHookSlot<{}>(),
-        },
-        append: (record) => {
-          records.push(record);
-        },
-        register: () => toDisposable(() => {}),
-        restore: async () => ({}),
-        flush: async () => {},
-        close: async () => {},
-      });
-      reg.definePartialInstance(IAgentEventSinkService, {
-        emit: (event) => {
-          events.push(event);
-        },
-        on: () => toDisposable(() => {}),
-      });
-      reg.define(IAgentRecordService, AgentRecordService);
-      reg.define(IAgentUsageService, AgentUsageService);
-    },
+  it('dispatch persists flat { type, model, usage } records (no payload key)', async () => {
+    svc.record('model-a', a1);
+
+    const records = await readRecords();
+    expect(records).toEqual([
+      { type: 'usage.record', model: 'model-a', usage: a1, time: expect.any(Number) },
+    ]);
+    expect('payload' in records[0]!).toBe(false);
   });
 
-  return {
-    ix,
-    usage: ix.get(IAgentUsageService),
-    records,
-    events,
-  };
-}
+  it('replay rebuilds usage from persisted records on a fresh WireService (silent)', async () => {
+    svc.record('model-a', a1);
+    svc.record('model-a', a2, { type: 'turn', turnId: 1 });
+    const records = await readRecords();
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(
+      IAgentWireService,
+      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'usage-replay' }]),
+    );
+    const log2 = ix2.get(IAppendLogStore);
+    const fresh = ix2.get(IAgentWireService);
+
+    fresh.replay(...records);
+
+    expect(fresh.getModel(UsageModel).byModel).toEqual({
+      'model-a': { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 },
+    });
+
+    const written: PersistedRecord[] = [];
+    for await (const record of log2.read<PersistedRecord>(SCOPE, 'usage-replay')) {
+      written.push(record);
+    }
+    expect(written).toEqual([]);
+  });
+});

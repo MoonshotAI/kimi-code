@@ -89,6 +89,7 @@ function stubSessionContext(sessionId = 's1'): ISessionContext {
     sessionDir: '/ws/.session',
     sessionScope: `session:${sessionId}`,
     metaScope: `session:${sessionId}`,
+    cwd: '/ws',
   });
 }
 

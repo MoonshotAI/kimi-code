@@ -31,7 +31,6 @@ import type { PermissionRule } from '#/agent/permissionRules';
 import { IAgentPlanService } from '#/agent/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import { AgentRecordService, IAgentRecordService, type RecordServiceOptions } from '#/agent/record';
 import type { AgentAPI } from '#/agent/rpc/core-api';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { AgentSkillService } from '#/agent/skill/skillService';
@@ -47,24 +46,22 @@ import type {
 } from '#/agent/wireRecord';
 import { IOAuthService } from '#/app/auth/auth';
 import { IChatProviderFactory } from '#/app/chatProvider';
-import type { SkillCatalog } from '#/app/globalSkillCatalog/types';
+import type { SkillCatalog } from '#/app/skillCatalog/types';
 import {
   isToolCall,
   isToolCallPart,
-  type ChatProvider,
   type ContentPart,
-  type GenerateOptions,
-  KimiChatProvider,
   type Message as KosongMessage,
   type ModelCapability,
-  type ProviderConfig,
-  type StreamedMessage,
   type StreamedMessagePart,
   type ThinkingEffort,
   type Tool as KosongTool,
-  type generate as kosongGenerate,
-} from '#/app/llmProtocol/kosong';
-import type { ILogger, LogContext, LogLevel } from '#/app/log';
+} from '#/app/llmProtocol';
+import type { generate as kosongGenerate } from '#/app/llmProtocol/generate';
+import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/app/llmProtocol/provider';
+import type { ProviderConfig } from '#/app/llmProtocol/providers';
+import { KimiChatProvider } from '#/app/llmProtocol/providers/kimi';
+import type { ILogger, LogContext, LogLevel } from '#/_base/log';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
@@ -132,7 +129,6 @@ import {
   type ServiceIdentifier,
 } from '#/index';
 import type { ApprovalResponse } from '#/session/approval';
-import { IExecContext, createExecContext } from '#/session/execContext';
 import {
   ISessionInteractionService,
   type Interaction,
@@ -299,16 +295,17 @@ export interface TestAgentOptions {
   readonly telemetry?: ITelemetryService | undefined;
   readonly persistence?: WireRecordPersistence | undefined;
   readonly microCompaction?:
-    | {
-        readonly config?: Partial<MicroCompactionConfig> | undefined;
-      }
-    | undefined;
+  | {
+    readonly config?: Partial<MicroCompactionConfig> | undefined;
+  }
+  | undefined;
   readonly fullCompaction?: FullCompactionServiceOptions | undefined;
   readonly hookEngine?:
-    | Pick<HookEngine, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>
-    | undefined;
+  | Pick<HookEngine, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>
+  | undefined;
   readonly initialConfig?: Partial<KimiConfig> | undefined;
   readonly autoConfigure?: boolean | undefined;
+  readonly cwd?: string | undefined;
   readonly [key: string]: unknown;
 }
 
@@ -390,33 +387,25 @@ function defineServiceValue<T>(
   }
 }
 
-type ExecContextOverride = {
-  readonly cwd?: string;
-  readonly envLayers?: readonly Record<string, string>[];
-};
-
 /**
  * Session-scope override for the execution environment and derived atoms.
+ *
+ * The session cwd is controlled via `TestAgentOptions.cwd` (seeded into
+ * `ISessionContext.cwd`); this override only swaps the host-fs and process
+ * runner atoms that depend on it.
  */
 export interface ExecEnvOverride {
-  readonly execContext?: ExecContextOverride;
   readonly hostFs?: IHostFileSystem | Partial<IHostFileSystem>;
   readonly processRunner?: ISessionProcessRunner | Partial<ISessionProcessRunner>;
 }
 
 /**
  * Register a fake execution-environment set for a test session. Any
- * unspecified atom keeps the harness default `IExecContext` and the real
- * services backed by it.
+ * unspecified atom keeps the harness default and the real services backed by
+ * it.
  */
 export function execEnvServices(override: ExecEnvOverride = {}): TestAgentServiceOverride {
   return sessionServices((reg) => {
-    if (override.execContext !== undefined) {
-      reg.defineInstance(
-        IExecContext,
-        createExecContext(override.execContext.cwd ?? '/workspace', override.execContext.envLayers),
-      );
-    }
     if (override.hostFs !== undefined) {
       reg.defineInstance(IHostFileSystem, resolveHostFsOverride(override.hostFs));
     }
@@ -523,9 +512,9 @@ export function configServices(readConfig: () => KimiConfig): TestAgentServiceOv
 
 export function wireRecordPersistenceServices(
   persistence: WireRecordPersistence,
-  onRead: (event: PersistedWireRecord) => void = () => {},
+  onRead: (event: PersistedWireRecord) => void = () => { },
 ): TestAgentServiceOverride {
-  return appService(IAppendLogStore, new PersistenceAppendLogStore(persistence, () => {}, onRead));
+  return appService(IAppendLogStore, new PersistenceAppendLogStore(persistence, () => { }, onRead));
 }
 
 export function logServices(logger: Logger): TestAgentServiceOverride {
@@ -614,8 +603,9 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     _serviceBrand: undefined,
     catalog,
     ready: Promise.resolve(),
-    load: async () => {},
-    reload: async () => {},
+    onDidChange: Event.None as Event<void>,
+    load: async () => { },
+    reload: async () => { },
   };
 }
 
@@ -628,10 +618,6 @@ export function swarmServices(swarmService: ISessionSwarmService): TestAgentServ
 
 export function goalServices(options: GoalServiceOptions): TestAgentServiceOverride {
   return agentService(IAgentGoalService, new SyncDescriptor(AgentGoalService, [options]));
-}
-
-export function replayServices(options: RecordServiceOptions = {}): TestAgentServiceOverride {
-  return agentService(IAgentRecordService, new SyncDescriptor(AgentRecordService, [options]));
 }
 
 /**
@@ -693,13 +679,13 @@ function mergeTestAgentOptions(base: TestAgentOptions, next: TestAgentOptions): 
       base.microCompaction === undefined && next.microCompaction === undefined
         ? undefined
         : {
-            ...base.microCompaction,
-            ...next.microCompaction,
-            config: {
-              ...base.microCompaction?.config,
-              ...next.microCompaction?.config,
-            },
+          ...base.microCompaction,
+          ...next.microCompaction,
+          config: {
+            ...base.microCompaction?.config,
+            ...next.microCompaction?.config,
           },
+        },
     initialConfig: {
       ...base.initialConfig,
       ...next.initialConfig,
@@ -779,7 +765,7 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     private readonly persistence: WireRecordPersistence,
     private readonly onAppend: (event: PersistedWireRecord) => void,
     private readonly onRead: (event: PersistedWireRecord) => void,
-  ) {}
+  ) { }
 
   append<R>(_scope: string, _key: string, record: R): void {
     const event = record as PersistedWireRecord;
@@ -808,7 +794,7 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 
   acquire(_scope: string, _key: string): IDisposable {
-    return toDisposable(() => {});
+    return toDisposable(() => { });
   }
 }
 
@@ -877,7 +863,7 @@ function renderPluginSessionStartReminder(
     }
     blocks.push(
       `<plugin_session_start plugin="${escapeXmlAttr(sessionStart.pluginId)}" ` +
-        `skill="${escapeXmlAttr(skill.name)}">\n${catalog.renderSkillPrompt(skill, '')}\n</plugin_session_start>`,
+      `skill="${escapeXmlAttr(skill.name)}">\n${catalog.renderSkillPrompt(skill, '')}\n</plugin_session_start>`,
     );
   }
   return blocks.length > 0 ? blocks.join('\n') : undefined;
@@ -910,8 +896,9 @@ export class AgentTestContext {
 
   constructor(overrides: readonly TestAgentServiceOverride[] = [], options: TestAgentOptions = {}) {
     this.options = options;
+    if (options.cwd !== undefined) this.cwd = options.cwd;
     this.serviceOverrides = flattenServiceOverrides(overrides);
-    this.emitter.on('error', () => {});
+    this.emitter.on('error', () => { });
     this.kimiConfig = applyTestAgentOptionsToConfig(emptyConfig(), options);
 
     const sessionId = 'test-session';
@@ -946,7 +933,7 @@ export class AgentTestContext {
             IAppendLogStore,
             new PersistenceAppendLogStore(
               persistence,
-              () => {},
+              () => { },
               (event) => {
                 this.recordHistory.push(cloneRecord(event));
               },
@@ -984,13 +971,13 @@ export class AgentTestContext {
               workspaceId,
               sessionDir: bootstrap.sessionDir(workspaceId, sessionId),
               metaScope: `${sessionScope}/session-meta`,
+              cwd: this.cwd,
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
-            reg.defineInstance(IExecContext, createExecContext(this.cwd));
             // Note: the os `IHostFileSystem` (App scope) and `ISessionProcessRunner`
             // are auto-registered by their service files. Tests that need a fake
             // filesystem override it via `execEnvServices({ hostFs })`.
@@ -1501,9 +1488,8 @@ export class AgentTestContext {
     const profile = this.get(IAgentProfileService);
     const configSnapshot = structuredClone(this.get(IConfigService).getAll() as KimiConfig);
     const resumed = createTestAgent(
-      { autoConfigure: false },
+      { autoConfigure: false, cwd: profile.data().cwd },
       ...this.serviceOverrides,
-      createResumeNoSideEffectExecEnv(profile.data().cwd),
       configServices(() => configSnapshot),
       llmGenerateServices(failOnResumeGenerate),
       wireRecordPersistenceServices(
@@ -1835,7 +1821,7 @@ function createWorkspaceContextStub(
 function createPermissionModeService(initialMode: PermissionMode): IAgentPermissionModeService {
   let mode = initialMode;
   const emptyHook = {
-    register: () => toDisposable(() => {}),
+    register: () => toDisposable(() => { }),
     run: () => Promise.resolve(),
   };
   return {
@@ -1857,7 +1843,7 @@ function createPermissionRulesStub(
 ): IAgentPermissionRulesService {
   let rules = [...initialRules];
   const emptyHook = {
-    register: () => ({ dispose: () => {} }),
+    register: () => ({ dispose: () => { } }),
     run: () => Promise.resolve(),
   };
   return {
@@ -1871,7 +1857,7 @@ function createPermissionRulesStub(
     addRules: (nextRules) => {
       rules = [...rules, ...nextRules];
     },
-    recordApprovalResult: () => {},
+    recordApprovalResult: () => { },
     hooks: {
       onChanged: emptyHook,
       onApprovalRecorded: emptyHook,
@@ -1885,9 +1871,9 @@ function createHostTerminalService(): IHostTerminalService {
     spawn: async () => ({
       onData: Event.None as Event<string>,
       onExit: Event.None as Event<{ exitCode: number | null }>,
-      write: () => {},
-      resize: () => {},
-      kill: () => {},
+      write: () => { },
+      resize: () => { },
+      kill: () => { },
     }),
   };
 }
@@ -1895,14 +1881,6 @@ function createHostTerminalService(): IHostTerminalService {
 const failOnResumeGenerate: GenerateFn = async () => {
   throw new Error('Resume replay unexpectedly called the LLM');
 };
-
-function createResumeNoSideEffectExecEnv(initialCwd: string): TestAgentServiceOverride {
-  return execEnvServices({
-    execContext: { cwd: initialCwd },
-    // Any fs/process interaction during a resume replay is a bug — surface it
-    // loudly instead of silently no-oping.
-  });
-}
 
 function resumeStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot {
   const tasks = ctx.get(IAgentTaskService);
@@ -2002,8 +1980,8 @@ function configService(readConfig: () => KimiConfig): IConfigService {
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
-    onDidChangeConfiguration: () => ({ dispose: () => {} }),
-    onDidSectionChange: () => ({ dispose: () => {} }),
+    onDidChangeConfiguration: () => ({ dispose: () => { } }),
+    onDidSectionChange: () => ({ dispose: () => { } }),
     get: <T>(domain: string) => (effectiveConfig() as Record<string, unknown>)[domain] as T,
     inspect: (domain: string) => {
       const value = (effectiveConfig() as Record<string, unknown>)[domain];
@@ -2215,7 +2193,7 @@ function createGenerateBackedChatProviderFactory(generate: GenerateFn): IChatPro
       config.type === 'kimi'
         ? new GenerateBackedKimiChatProvider(config, generate)
         : new GenerateBackedChatProvider(config, generate),
-    register: () => {},
+    register: () => { },
   };
 }
 

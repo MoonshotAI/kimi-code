@@ -1,8 +1,7 @@
 /**
- * `sessionLog` domain barrel — re-exports the Session-scope log services.
- * Importing this barrel registers the `ISessionLogService` and file
- * `ILogWriterService` bindings into the scope registry.
+ * `sessionLog` domain barrel — re-exports the Session-scope `ILogService`
+ * binding. Importing this barrel registers the Session-scope `ILogService`
+ * into the scope registry.
  */
 
 export * from './sessionLogService';
-export * from './logWriter';

@@ -5,9 +5,8 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentWireRecordService } from '#/agent/wireRecord';
-import { stubRecord, stubWireRecord } from '../contextMemory/stubs';
+import { stubWireRecord } from '../contextMemory/stubs';
 
 function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
   return {
@@ -37,7 +36,6 @@ describe('message history (IAgentContextMemoryService)', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.stub(IAgentRecordService, stubRecord());
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
   });
   afterEach(() => disposables.dispose());

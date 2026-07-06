@@ -3,18 +3,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
+import { IAgentMcpService } from '#/agent/mcp';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { IBootstrapService } from '#/app/bootstrap';
 import { IConfigService } from '#/app/config';
 import { IPluginSessionStartInjectorService } from '#/agent/contextInjector';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 import { IPluginService } from '#/app/plugin';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { IAgentToolRegistryService, _clearToolContributionsForTests } from '#/agent/toolRegistry';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
+import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -50,6 +54,7 @@ describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let registerAgent: ReturnType<typeof vi.fn>;
+  let atomicDocs: Map<string, unknown>;
 
   beforeEach(() => {
     // The unit under test force-instantiates the builtin-tools registrar per
@@ -59,6 +64,7 @@ describe('AgentLifecycleService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     registerAgent = vi.fn(() => Promise.resolve());
+    atomicDocs = new Map();
     ix.stub(ISessionContext, {
       _serviceBrand: undefined,
       sessionId: 'sess_test',
@@ -95,6 +101,23 @@ describe('AgentLifecycleService', () => {
       ready: Promise.resolve(),
       get: (() => undefined) as IConfigService['get'],
     } as unknown as IConfigService);
+    ix.stub(IAtomicDocumentStore, {
+      _serviceBrand: undefined,
+      get: async <T>(scope: string, key: string): Promise<T | undefined> =>
+        atomicDocs.get(`${scope}/${key}`) as T | undefined,
+      set: async <T>(scope: string, key: string, value: T): Promise<void> => {
+        atomicDocs.set(`${scope}/${key}`, value);
+      },
+      delete: async (scope: string, key: string): Promise<void> => {
+        atomicDocs.delete(`${scope}/${key}`);
+      },
+      list: async (scope: string, prefix = ''): Promise<readonly string[]> =>
+        [...atomicDocs.keys()]
+          .filter((key) => key.startsWith(`${scope}/${prefix}`))
+          .map((key) => key.slice(scope.length + 1)),
+      watch: () => Event.None as Event<void>,
+      acquire: () => ({ dispose: () => {} }),
+    } satisfies IAtomicDocumentStore);
     ix.stub(ILogService, noopLog);
     ix.stub(IPluginSessionStartInjectorService, {
       _serviceBrand: undefined,
@@ -148,6 +171,32 @@ describe('AgentLifecycleService', () => {
       forkedFrom: 'main',
       labels: { swarmItem: 'swarm-item-1' },
     });
+  });
+
+  it('wires MCP OAuth credentials through the session atomic document store', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+
+    const mcp = main.accessor.get(IAgentMcpService);
+    const oauth = mcp.oauthService;
+    if (oauth === undefined) throw new Error('Expected session MCP manager to provide OAuth');
+    const provider = oauth.getProvider('linear', 'https://linear.example.com/mcp');
+    await provider.ready;
+
+    await provider.saveTokens({
+      access_token: 'session-token',
+      token_type: 'Bearer',
+    } satisfies OAuthTokens);
+
+    const tokenEntries = [...atomicDocs.entries()].filter(
+      ([key]) => key.startsWith('credentials/mcp/') && key.endsWith('-tokens.json'),
+    );
+    expect(tokenEntries).toEqual([
+      [
+        expect.stringMatching(/^credentials\/mcp\/linear-[a-f0-9]{24}-tokens\.json$/),
+        { access_token: 'session-token', token_type: 'Bearer' },
+      ],
+    ]);
   });
 
   it('fork throws when the source agent does not exist', async () => {

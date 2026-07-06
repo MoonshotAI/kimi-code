@@ -15,7 +15,7 @@ import { AuthSummaryService, OAuthService } from '#/app/auth/authService';
 import { AuthLegacyService, IAuthLegacyService } from '#/app/authLegacy';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventService } from '#/app/event/event';
-import { ILogService } from '#/app/log/log';
+import { ILogService } from '#/_base/log/log';
 import { type ModelAlias } from '#/app/model/model';
 import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
 

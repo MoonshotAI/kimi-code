@@ -1,19 +1,19 @@
 /**
  * `process` domain (L2) — `ISessionProcessRunner` implementation.
  *
- * Resolves cwd + env from the session's `IExecContext` and delegates the actual
- * host spawn to the App-scope `IHostProcessService`. Per-call overrides
- * (`options.cwd`, `options.env`) win over the seeded context; env layers are
- * overlaid onto `process.env` in registration order, then the caller-supplied
- * env goes on top. When neither `envLayers` nor `options.env` is set we pass
- * `undefined` so the child inherits `process.env` verbatim. Bound at Session
- * scope.
+ * Resolves the default cwd from the session's `ISessionContext` and delegates
+ * the actual host spawn to the App-scope `IHostProcessService`. A per-call
+ * `options.cwd` wins over the seeded cwd. A per-call `options.env` is overlaid
+ * onto `process.env` and passed as the child's complete env bag (the host
+ * replaces the child env with what we pass); when `options.env` is omitted we
+ * pass `undefined` so the child inherits `process.env` verbatim. Bound at
+ * Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IExecContext } from '#/session/execContext';
+import { ISessionContext } from '#/session/sessionContext';
 
 import { type IProcess, ISessionProcessRunner, type ProcessExecOptions } from './processRunner';
 
@@ -21,7 +21,7 @@ export class SessionProcessRunner implements ISessionProcessRunner {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IExecContext private readonly ctx: IExecContext,
+    @ISessionContext private readonly ctx: ISessionContext,
     @IHostProcessService private readonly hostProcess: IHostProcessService,
   ) {}
 
@@ -43,23 +43,18 @@ export class SessionProcessRunner implements ISessionProcessRunner {
   private _buildExecEnv(
     invocationEnv: Record<string, string> | undefined,
   ): Record<string, string> | undefined {
-    // No overrides at all — inherit process.env verbatim by passing `undefined`
-    // to the host process service. Mirrors the pre-refactor behaviour when
-    // neither the session context nor the caller wanted to touch the child's
-    // environment.
-    if (this.ctx.envLayers.length === 0 && invocationEnv === undefined) {
+    // No per-call override — inherit process.env verbatim by passing
+    // `undefined` to the host process service.
+    if (invocationEnv === undefined) {
       return undefined;
     }
-    const merged: Record<string, string> = {
+    // The host replaces the child's env with what we pass, so layer the
+    // per-call override on top of the current process env to form a complete
+    // bag.
+    return {
       ...(process.env as Record<string, string>),
+      ...invocationEnv,
     };
-    for (const layer of this.ctx.envLayers) {
-      Object.assign(merged, layer);
-    }
-    if (invocationEnv !== undefined) {
-      Object.assign(merged, invocationEnv);
-    }
-    return merged;
   }
 }
 

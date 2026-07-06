@@ -1,21 +1,27 @@
 import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { createServices, TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { AgentLoopService, IAgentLoopService } from '#/agent/loop';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { AgentTurnService, IAgentTurnService } from '#/agent/turn';
+import { TurnModel } from '#/agent/turn/turnOps';
 import { IConfigService } from '#/app/config';
 import { emptyUsage } from '#/app/llmProtocol';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 import { IAgentTelemetryContextService, ITelemetryService } from '#/app/telemetry';
 import { ErrorCodes, KimiError } from '#/errors';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IAgentWireService, WireService, type PersistedRecord } from '#/wire';
 
-import { stubContextMemory, stubRecord } from '../contextMemory/stubs';
+import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLog } from '../log/stubs';
 import { recordingTelemetry } from '../telemetry/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from './stubs';
@@ -31,7 +37,6 @@ describe('AgentTurnService ready', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLoopService, loop);
-        reg.defineInstance(IAgentRecordService, stubRecord());
         reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.defineInstance(IAgentTelemetryContextService, {
@@ -39,6 +44,10 @@ describe('AgentTurnService ready', () => {
           get: () => ({ mode: 'agent' }),
           set: () => {},
         });
+        reg.defineInstance(
+          IAgentWireService,
+          disposables.add(new WireService({ logScope: 'wire', logKey: 'turn-ready' })),
+        );
         reg.define(IAgentTurnService, AgentTurnService);
       },
     });
@@ -148,7 +157,6 @@ describe('AgentLoopService onStarted', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
-        reg.defineInstance(IAgentRecordService, stubRecord());
         reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
         reg.definePartialInstance(IConfigService, {
           get: <T>() => undefined as T,
@@ -272,5 +280,85 @@ describe('AgentLoopService onStarted', () => {
       }),
     ).resolves.toMatchObject({ reason: 'failed', error: cause, steps: 1 });
     expect(started).toBe(false);
+  });
+});
+
+
+const WIRE_SCOPE = 'wire';
+const WIRE_KEY = 'turn-state-test';
+
+describe('AgentTurnService wire state', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let log: IAppendLogStore;
+  let turnService: IAgentTurnService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: WIRE_SCOPE, logKey: WIRE_KEY }]));
+    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(ITelemetryService, recordingTelemetry([]));
+    ix.stub(IAgentTelemetryContextService, {
+      _serviceBrand: undefined,
+      get: () => ({ mode: 'agent' }),
+      set: () => {},
+    });
+    ix.set(IAgentTurnService, new SyncDescriptor(AgentTurnService));
+    log = ix.get(IAppendLogStore);
+    turnService = ix.get(IAgentTurnService);
+  });
+
+  afterEach(() => disposables.dispose());
+
+  async function readRecords(): Promise<PersistedRecord[]> {
+    const out: PersistedRecord[] = [];
+    for await (const record of log.read<PersistedRecord>(WIRE_SCOPE, WIRE_KEY)) {
+      out.push(record);
+    }
+    return out;
+  }
+
+  it('launch allocates sequential ids from the wire model', () => {
+    const first = turnService.launch();
+    expect(first.id).toBe(0);
+    expect(ix.get(IAgentWireService).getModel(TurnModel)).toEqual({ nextTurnId: 1 });
+  });
+
+  it('dispatch persists a flat { type, turnId } record (no payload key)', async () => {
+    turnService.launch();
+
+    const records = await readRecords();
+    expect(records).toEqual([{ type: 'turn.launch', turnId: 0, time: expect.any(Number) }]);
+    expect('payload' in records[0]!).toBe(false);
+  });
+
+  it('replay rebuilds nextTurnId from a persisted record on a fresh WireService (silent)', async () => {
+    turnService.launch();
+    const records = await readRecords();
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(
+      IAgentWireService,
+      new SyncDescriptor(WireService, [{ logScope: WIRE_SCOPE, logKey: 'turn-state-replay' }]),
+    );
+    const log2 = ix2.get(IAppendLogStore);
+    const fresh = ix2.get(IAgentWireService);
+
+    fresh.replay(...records);
+
+    // nextTurnId advances past the replayed turnId (0 -> 1).
+    expect(fresh.getModel(TurnModel)).toEqual({ nextTurnId: 1 });
+
+    // Replay is silent: nothing is written back to the wire log.
+    const written: PersistedRecord[] = [];
+    for await (const record of log2.read<PersistedRecord>(WIRE_SCOPE, 'turn-state-replay')) {
+      written.push(record);
+    }
+    expect(written).toEqual([]);
   });
 });

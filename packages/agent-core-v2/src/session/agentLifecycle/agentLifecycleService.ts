@@ -3,8 +3,8 @@
  *
  * Creates and tracks the session's agents as child scopes in a flat registry.
  * Seeds each agent's identity through `agent` scopeContext, wires per-agent
- * wire records, blob store, and MCP, and registers the agent in the session
- * registry. Bound at Session scope.
+ * wire records and the wire state machine, the blob store, and MCP, and
+ * registers the agent in the session registry. Bound at Session scope.
  *
  * No agent id is special here: the main agent is created by its bootstrappers
  * as `create({ agentId: 'main' })` (see `mainAgent.ts`), and `fork` requires
@@ -17,6 +17,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { sessionMediaOriginalsDir } from '#/_base/tools/support/image-originals';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import {
   createScopedChildHandle,
@@ -25,21 +26,25 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap';
-import { ILogService } from '#/app/log';
+import { ITelemetryService } from '#/app/telemetry';
+import { ILogService } from '#/_base/log';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog';
 import { AgentMcpService, IAgentMcpService } from '#/agent/mcp';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import { createMcpOAuthStore, McpOAuthService } from '#/agent/mcp/oauth';
 import { resolveSessionMcpConfig } from '#/agent/mcp/session-config';
 import { IPluginService } from '#/app/plugin';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 import { IAgentScopeContext } from '#/agent/scopeContext';
 import { IAgentProfileService } from '#/agent/profile';
-import { IAgentContextMemoryService } from '#/agent/contextMemory';
+import { contextBlobSelector, IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentBuiltinToolsRegistrar } from '#/agent/toolRegistry';
-import { IAgentWireRecordService, AgentWireRecordService } from '#/agent/wireRecord';
+import { IAgentWireRecordService, AgentWireRecordService, wireRecordPersistKey } from '#/agent/wireRecord';
+import { IAgentWireService, WireService } from '#/wire';
 import { IAgentBlobService, AgentBlobServiceImpl } from '#/agent/blob';
 import {
   IAgentExternalHooksService,
@@ -86,6 +91,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IPluginService private readonly plugins: IPluginService,
     @ILogService private readonly log: ILogService,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
+    @IAtomicDocumentStore private readonly atomicDocs: IAtomicDocumentStore,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
   }
@@ -121,8 +128,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             } satisfies IAgentScopeContext,
           ],
           [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService, [{ homedir: agentHomedir }])],
+          [IAgentWireService, new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: wireRecordPersistKey(agentHomedir), blobSelector: contextBlobSelector }])],
           [IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl, [{}])],
-          [IAgentMcpService, new SyncDescriptor(AgentMcpService, [{ manager: this.getMcpManager() }])],
+          [
+            IAgentMcpService,
+            new SyncDescriptor(AgentMcpService, [
+              {
+                manager: this.getMcpManager(),
+                originalsDir: sessionMediaOriginalsDir(this.ctx.sessionDir),
+              },
+            ]),
+          ],
           // External hooks carries a leading static `options` param; the scoped
           // registry supplies none, so seed an empty one to satisfy the DI
           // contract (static args must fill the slots before the first `@IX`).
@@ -225,7 +241,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
    */
   private getMcpManager(): McpConnectionManager {
     if (this.mcpManager !== undefined) return this.mcpManager;
-    const manager = new McpConnectionManager({ log: this.log });
+    const oauthService = new McpOAuthService({
+      store: createMcpOAuthStore(this.atomicDocs),
+    });
+    const manager = new McpConnectionManager({
+      log: this.log,
+      oauthService,
+      stdioCwd: this.workspace.workDir,
+    });
     this.mcpManager = manager;
     this._register({ dispose: () => void manager.shutdown() });
     void this.connectMcpServers(manager).catch((error: unknown) => {
@@ -242,6 +265,29 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const servers = { ...base?.servers, ...pluginServers };
     if (Object.keys(servers).length === 0) return;
     await manager.connectAll(servers);
+    this.trackMcpInitialLoad(manager);
+  }
+
+  private trackMcpInitialLoad(manager: McpConnectionManager): void {
+    const entries = manager.list().filter((entry) => entry.status !== 'disabled');
+    const totalCount = entries.length;
+    if (totalCount === 0) return;
+
+    const connectedCount = entries.filter((entry) => entry.status === 'connected').length;
+    if (connectedCount > 0) {
+      this.telemetry.track('mcp_connected', {
+        server_count: connectedCount,
+        total_count: totalCount,
+      });
+    }
+
+    const failedCount = entries.filter((entry) => entry.status === 'failed').length;
+    if (failedCount > 0) {
+      this.telemetry.track('mcp_failed', {
+        failed_count: failedCount,
+        total_count: totalCount,
+      });
+    }
   }
 
   getHandle(agentId: string): IAgentScopeHandle | undefined {

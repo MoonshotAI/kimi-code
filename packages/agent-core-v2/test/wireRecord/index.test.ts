@@ -4,17 +4,13 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   IAgentContextMemoryService,
   IAgentContextSizeService,
-  IAgentFullCompactionService,
-  IAgentRecordService,
   IAgentWireRecordService,
   type ContextMessage,
   type PersistedWireRecord,
 } from '#/index';
-import type { ReplayRangeOptions } from '#/agent/record';
 import {
   InMemoryWireRecordPersistence,
   createTestAgent,
-  replayServices,
   testAgent,
   type TestAgentContext,
 } from '../harness';
@@ -26,7 +22,6 @@ describe('AgentRecords persistence metadata', () => {
   let expectResumeMatches: boolean;
   let persistence: RecordingInMemoryWireRecordPersistence;
   let records: IAgentWireRecordService;
-  let replay: IAgentRecordService;
 
   beforeEach(() => {
     expectResumeMatches = true;
@@ -35,7 +30,6 @@ describe('AgentRecords persistence metadata', () => {
     context = ctx.get(IAgentContextMemoryService);
     contextSize = ctx.get(IAgentContextSizeService);
     records = ctx.get(IAgentWireRecordService);
-    replay = ctx.get(IAgentRecordService);
   });
 
   afterEach(async () => {
@@ -237,27 +231,6 @@ describe('AgentRecords persistence metadata', () => {
 
     await expect(ctx.restorePersisted()).resolves.toEqual({});
     expect(context.get()).toHaveLength(0);
-    expect(replay.buildReplay()).toEqual([
-      expect.objectContaining({
-        type: 'goal_updated',
-        snapshot: expect.objectContaining({ goalId: 'g1', status: 'active' }),
-        change: { kind: 'created' },
-      }),
-      expect.objectContaining({
-        type: 'goal_updated',
-        snapshot: expect.objectContaining({
-          goalId: 'g1',
-          status: 'blocked',
-          terminalReason: 'needs credentials',
-        }),
-        change: {
-          kind: 'lifecycle',
-          status: 'blocked',
-          reason: 'needs credentials',
-          actor: 'model',
-        },
-      }),
-    ]);
   });
 
   it('restores forked records as fork boundaries that clear copied goals', async () => {
@@ -379,6 +352,8 @@ describe('IAgentWireRecordService.records()', () => {
 });
 
 describe('agent replay range build', () => {
+  // TODO(phase-4.6): rewrite against wire resume — buildReplay() facade deleted
+  /*
   it('returns the complete replay when no range is requested', async () => {
     const firstMessage = userMessage('first');
     const afterClearMessage = userMessage('after-clear');
@@ -622,6 +597,7 @@ describe('agent replay range build', () => {
       expect.objectContaining({ type: 'message', message: expect.objectContaining(afterClearMessage) }),
     ]);
   });
+  */
 });
 
 class RecordingInMemoryWireRecordPersistence extends InMemoryWireRecordPersistence {
@@ -633,39 +609,40 @@ class RecordingInMemoryWireRecordPersistence extends InMemoryWireRecordPersisten
   }
 }
 
-async function buildReplay(
-  records: readonly PersistedWireRecord[],
-  range?: ReplayRangeOptions,
-) {
-  return buildReplayFromPersistence(
-    new InMemoryWireRecordPersistence(records),
-    range,
-  );
-}
-
-async function buildReplayFromPersistence(
-  persistence: InMemoryWireRecordPersistence,
-  range?: ReplayRangeOptions,
-) {
-  const ctx = createTestAgent(
-    { persistence, autoConfigure: false },
-    replayServices(range === undefined ? {} : { range }),
-  );
-  const fullCompaction = ctx.get(IAgentFullCompactionService);
-  const replay = ctx.get(IAgentRecordService);
-  try {
-    const isCompacting = fullCompaction.isCompacting;
-    if (isCompacting) throw new Error('Unexpected active compaction before restore');
-    await ctx.restorePersisted({ rewriteMigratedRecords: false });
-    return replay.buildReplay();
-  } finally {
-    try {
-      await ctx.expectResumeMatches();
-    } finally {
-      await ctx.dispose();
-    }
-  }
-}
+// TODO(phase-4.6): rewrite against wire resume — buildReplay()/replayServices facade deleted
+// async function buildReplay(
+//   records: readonly PersistedWireRecord[],
+//   range?: ReplayRangeOptions,
+// ) {
+//   return buildReplayFromPersistence(
+//     new InMemoryWireRecordPersistence(records),
+//     range,
+//   );
+// }
+//
+// async function buildReplayFromPersistence(
+//   persistence: InMemoryWireRecordPersistence,
+//   range?: ReplayRangeOptions,
+// ) {
+//   const ctx = createTestAgent(
+//     { persistence, autoConfigure: false },
+//     replayServices(range === undefined ? {} : { range }),
+//   );
+//   const fullCompaction = ctx.get(IAgentFullCompactionService);
+//   const replay = ctx.get(IAgentRecordService);
+//   try {
+//     const isCompacting = fullCompaction.isCompacting;
+//     if (isCompacting) throw new Error('Unexpected active compaction before restore');
+//     await ctx.restorePersisted({ rewriteMigratedRecords: false });
+//     return replay.buildReplay();
+//   } finally {
+//     try {
+//       await ctx.expectResumeMatches();
+//     } finally {
+//       await ctx.dispose();
+//     }
+//   }
+// }
 
 function userMessage(text: string): ContextMessage {
   return {

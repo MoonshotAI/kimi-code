@@ -166,6 +166,66 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(filtered.body.data.items.some((s) => s.id === created.body.data.id)).toBe(false);
   });
 
+  it('paginates sessions with before_id and terminates on the last page', async () => {
+    const cwd = home as string;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const ids: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const { body } = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      expect(body.code).toBe(0);
+      ids.push(body.data.id);
+      await sleep(5); // keep updatedAt strictly increasing so recency order is deterministic
+    }
+
+    // Recency order: most-recently-created first → page 1 holds ids[6,5,4].
+    const page1 = await getJson<PageWire>('/api/v1/sessions?page_size=3');
+    expect(page1.body.code).toBe(0);
+    expect(page1.body.data.items.map((s) => s.id)).toEqual(ids.slice(4).reverse());
+    expect(page1.body.data.has_more).toBe(true);
+
+    const cursor1 = page1.body.data.items[page1.body.data.items.length - 1]!.id;
+    const page2 = await getJson<PageWire>(
+      `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(cursor1)}`,
+    );
+    expect(page2.body.data.items.map((s) => s.id)).toEqual(ids.slice(1, 4).reverse());
+    expect(page2.body.data.has_more).toBe(true);
+
+    const cursor2 = page2.body.data.items[page2.body.data.items.length - 1]!.id;
+    const page3 = await getJson<PageWire>(
+      `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(cursor2)}`,
+    );
+    expect(page3.body.data.items.map((s) => s.id)).toEqual([ids[0]]);
+    expect(page3.body.data.has_more).toBe(false);
+
+    // No overlap across pages, and together they cover every session exactly once.
+    const seen = [
+      ...page1.body.data.items,
+      ...page2.body.data.items,
+      ...page3.body.data.items,
+    ].map((s) => s.id);
+    expect(new Set(seen).size).toBe(7);
+    expect(new Set(seen)).toEqual(new Set(ids));
+
+    // Paging past the oldest session yields an empty, terminal page — the client
+    // must stop here instead of looping (regression for the boot request storm).
+    const last = await getJson<PageWire>(
+      `/api/v1/sessions?page_size=3&before_id=${encodeURIComponent(ids[0]!)}`,
+    );
+    expect(last.body.data.items).toEqual([]);
+    expect(last.body.data.has_more).toBe(false);
+  });
+
+  it('returns an empty terminal page for an unknown before_id cursor', async () => {
+    const cwd = home as string;
+    await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const { body } = await getJson<PageWire>(
+      '/api/v1/sessions?page_size=3&before_id=sess_does_not_exist',
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items).toEqual([]);
+    expect(body.data.has_more).toBe(false);
+  });
+
   it('gets a session by id and 404s for unknown', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

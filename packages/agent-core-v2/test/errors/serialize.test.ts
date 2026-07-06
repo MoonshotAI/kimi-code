@@ -1,4 +1,4 @@
-import { APIStatusError } from '#/app/llmProtocol/kosong';
+import { APIStatusError } from '#/app/llmProtocol';
 import { describe, expect, it } from 'vitest';
 
 import { toErrorPayload } from '../../src/_base/errors/serialize';

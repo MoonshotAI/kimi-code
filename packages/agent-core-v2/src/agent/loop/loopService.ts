@@ -2,11 +2,20 @@ import { randomUUID } from 'node:crypto';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import type {
+  AssistantDeltaEvent,
+  ThinkingDeltaEvent,
+  ToolCallDeltaEvent,
+  TurnStepCompletedEvent,
+  TurnStepInterruptedEvent,
+  TurnStepRetryingEvent,
+  TurnStepStartedEvent,
+} from '@moonshot-ai/protocol';
 import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester';
-import { IAgentRecordService } from '#/agent/record';
 import type { ToolResult } from '#/agent/tool';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { IConfigService } from '#/app/config';
+import { IAgentWireService, type IWireService } from '#/wire';
 import {
   createToolMessage,
   type ContentPart,
@@ -32,6 +41,18 @@ import {
   type TurnResult,
 } from './loop';
 
+declare module '#/wire' {
+  interface SignalMap {
+    'turn.step.started': Omit<TurnStepStartedEvent, 'type'>;
+    'turn.step.retrying': Omit<TurnStepRetryingEvent, 'type'>;
+    'turn.step.completed': Omit<TurnStepCompletedEvent, 'type'>;
+    'turn.step.interrupted': Omit<TurnStepInterruptedEvent, 'type'>;
+    'assistant.delta': Omit<AssistantDeltaEvent, 'type'>;
+    'thinking.delta': Omit<ThinkingDeltaEvent, 'type'>;
+    'tool.call.delta': Omit<ToolCallDeltaEvent, 'type'>;
+  }
+}
+
 const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
 const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
 const TOOL_EMPTY_ERROR_STATUS =
@@ -52,7 +73,7 @@ export class AgentLoopService implements IAgentLoopService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
   ) { }
@@ -142,7 +163,7 @@ export class AgentLoopService implements IAgentLoopService {
 
     const stepUuid = randomUUID();
 
-    this.record.signal({ type: 'turn.step.started', turnId, step: currentStep, stepId: stepUuid });
+    this.wire.signal({ type: 'turn.step.started', turnId, step: currentStep, stepId: stepUuid });
 
     let stepStarted = false;
     const markStepStarted = (): void => {
@@ -157,7 +178,7 @@ export class AgentLoopService implements IAgentLoopService {
         retry: {
           maxAttempts: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxRetriesPerStep,
           onRetry: (retry) => {
-            this.record.signal({
+            this.wire.signal({
               type: 'turn.step.retrying',
               turnId,
               step: currentStep,
@@ -254,7 +275,7 @@ export class AgentLoopService implements IAgentLoopService {
         response.providerFinishReason !== finishReason
         ? response.providerFinishReason
         : undefined;
-    this.record.signal({
+    this.wire.signal({
       type: 'turn.step.completed',
       turnId,
       step,
@@ -279,7 +300,7 @@ export class AgentLoopService implements IAgentLoopService {
     message?: string,
   ): void {
     if (activeStep === undefined) return;
-    this.record.signal({
+    this.wire.signal({
       type: 'turn.step.interrupted',
       turnId,
       step: activeStep,
@@ -306,11 +327,11 @@ export class AgentLoopService implements IAgentLoopService {
       switch (part.type) {
         case 'text':
           onResponseEvent();
-          this.record.signal({ type: 'assistant.delta', turnId, delta: part.text });
+          this.wire.signal({ type: 'assistant.delta', turnId, delta: part.text });
           return;
         case 'think':
           onResponseEvent();
-          this.record.signal({ type: 'thinking.delta', turnId, delta: part.think });
+          this.wire.signal({ type: 'thinking.delta', turnId, delta: part.think });
           return;
         case 'image_url':
         case 'audio_url':
@@ -319,7 +340,7 @@ export class AgentLoopService implements IAgentLoopService {
         case 'function': {
           onResponseEvent();
           callsByIndex.set(part._streamIndex, { id: part.id, name: part.name });
-          this.record.signal({
+          this.wire.signal({
             type: 'tool.call.delta',
             turnId,
             toolCallId: part.id,
@@ -333,7 +354,7 @@ export class AgentLoopService implements IAgentLoopService {
           const toolCall = callsByIndex.get(part.index);
           if (toolCall === undefined) return;
           onResponseEvent();
-          this.record.signal({
+          this.wire.signal({
             type: 'tool.call.delta',
             turnId,
             toolCallId: toolCall.id,

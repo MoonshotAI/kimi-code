@@ -2,19 +2,17 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import type { ToolCall } from '#/app/llmProtocol/kosong';
+import type { ToolCall } from '#/app/llmProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentEventSinkService } from '#/agent/eventSink';
 import { IAgentProfileService } from '#/agent/profile';
-import { IAgentRecordService } from '#/agent/record';
-import { InMemorySkillCatalog, type SkillCatalog, type SkillDefinition } from '#/app/globalSkillCatalog';
+import { InMemorySkillCatalog, type SkillCatalog, type SkillDefinition } from '#/app/skillCatalog';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry';
 import {
   InMemoryWireRecordPersistence,
   createTestAgent,
-  execEnvServices,
   skillServices,
   telemetryServices,
   wireRecordPersistenceServices,
@@ -282,7 +280,6 @@ describe('ToolManager SkillTool wire behavior', () => {
 describe('ToolManager SkillTool restore behavior', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
-  let replay: IAgentRecordService;
   let skills: InMemorySkillCatalog;
   let emit: ReturnType<typeof vi.spyOn>;
   let track: ReturnType<typeof vi.spyOn>;
@@ -298,7 +295,6 @@ describe('ToolManager SkillTool restore behavior', () => {
     );
     context = ctx.get(IAgentContextMemoryService);
     const events = ctx.get(IAgentEventSinkService);
-    replay = ctx.get(IAgentRecordService);
     emit = vi.spyOn(events, 'emit');
   });
 
@@ -351,19 +347,6 @@ describe('ToolManager SkillTool restore behavior', () => {
     );
     expect(track).not.toHaveBeenCalledWith('skill_invoked', expect.anything());
     expect(context.get()).toMatchObject([message]);
-    expect(replay.buildReplay()).toContainEqual(
-      expect.objectContaining({
-        type: 'message',
-        message: expect.objectContaining({
-          origin: expect.objectContaining({
-            kind: 'skill_activation',
-            activationId: 'act_restore_skill',
-            skillName: 'review',
-            trigger: 'user-slash',
-          }),
-        }),
-      }),
-    );
   });
 });
 
@@ -394,7 +377,7 @@ describe('ToolManager SkillTool workspace refresh', () => {
     skills.register(skill);
 
     ctx = createTestAgent(
-      execEnvServices({ execContext: { cwd: workDir } }),
+      { cwd: workDir },
       skillServices(skills),
     );
     profile = ctx.get(IAgentProfileService);

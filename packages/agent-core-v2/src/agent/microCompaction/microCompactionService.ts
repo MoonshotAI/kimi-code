@@ -1,10 +1,18 @@
 /**
  * `microCompaction` domain (L4) - `IAgentMicroCompactionService` implementation.
  *
- * Tracks cache-miss compaction cutoffs over `contextMemory`, sizes context via
- * `contextSize`, resolves model capacity through `profile`, persists cutoffs
- * through `wireRecord`, gates behavior through `flag`, emits telemetry, and
- * participates in `loop` hooks. Bound at Agent scope.
+ * Tracks cache-miss compaction cutoffs over `contextMemory` in the wire
+ * `MicroCompactionModel` (`{ cutoff }`): reads it through `wire.getModel`,
+ * writes it through `wire.dispatch(microCompactionApply(...))` (both advances
+ * from `detect` and the `cutoff: 0` resets recorded on the live full-compaction
+ * / context-clear paths), so `wire.replay` rebuilds the cutoff — including the
+ * resume-time reset — without a `full_compaction.complete` resumer. Sizes
+ * context via `contextSize`, resolves model capacity through `profile`, gates
+ * behavior through `flag`, reads tuning through `config`, emits telemetry, and
+ * participates in `loop` hooks. The effective cutoff is clamped to the current
+ * context length at read time (an undo that shortens the context cannot leave a
+ * dangling cutoff), so the delete-clamp needs no persisted record. Bound at
+ * Agent scope.
  */
 
 import type { ContentPart } from '#/app/llmProtocol';
@@ -27,24 +35,17 @@ import { IAgentLoopService } from '#/agent/loop';
 import { IAgentProfileService } from '#/agent/profile';
 import { ITelemetryService } from '#/app/telemetry';
 import type { ContextMessage } from '#/agent/contextMemory';
-import { IAgentRecordService } from '#/agent/record';
+import { IAgentWireService, type IWireService } from '#/wire';
 import {
   IAgentMicroCompactionService,
   type MicroCompactionConfig,
   type MicroCompactionEffect,
 } from './microCompaction';
+import { MicroCompactionModel, microCompactionApply } from './microCompactionOps';
 import {
   MICRO_COMPACTION_SECTION,
   type MicroCompactionConfigPatch,
 } from './configSection';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'micro_compaction.apply': {
-      cutoff: number;
-    };
-  }
-}
 
 const DEFAULT_CONFIG: MicroCompactionConfig = {
   keepRecentMessages: 20,
@@ -59,14 +60,13 @@ export class AgentMicroCompactionService
   implements IAgentMicroCompactionService
 {
   declare readonly _serviceBrand: undefined;
-  private cutoff = 0;
   private microConfig: MicroCompactionConfig;
   private _lastAssistantAt: number | null = null;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
-    @IAgentRecordService private readonly record: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @IFlagService private readonly flags: IFlagService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -92,20 +92,6 @@ export class AgentMicroCompactionService
       ),
     );
     this._register(
-      this.record.define('micro_compaction.apply', {
-        resume: (r) => {
-          this.apply(r.cutoff);
-        },
-      }),
-    );
-    this._register(
-      this.record.define('full_compaction.complete', {
-        resume: () => {
-          this.reset();
-        },
-      }),
-    );
-    this._register(
       this.context.hooks.onSpliced.register('micro-compaction', async (ctx, next) => {
         this.observeSplice(ctx);
         await next();
@@ -117,16 +103,20 @@ export class AgentMicroCompactionService
     return this._lastAssistantAt;
   }
 
+  private get cutoff(): number {
+    const cutoff = this.wire.getModel(MicroCompactionModel).cutoff;
+    const length = (this.context.get() as readonly ContextMessage[]).length;
+    return cutoff <= length ? cutoff : length;
+  }
+
   private reset(maxCutoff = 0): void {
-    this.cutoff = Math.min(this.cutoff, maxCutoff);
+    const next = Math.min(this.cutoff, maxCutoff);
+    if (next === this.cutoff) return;
+    this.wire.dispatch(microCompactionApply({ cutoff: next }));
   }
 
   private apply(cutoff: number): void {
-    this.record.append({
-      type: 'micro_compaction.apply',
-      cutoff,
-    });
-    this.cutoff = cutoff;
+    this.wire.dispatch(microCompactionApply({ cutoff }));
   }
 
   private detect(): void {
@@ -208,12 +198,10 @@ export class AgentMicroCompactionService
 
     if (context.messages.some(isCompactionSummary)) {
       this.reset();
-    } else if (context.deleteCount > 0) {
-      this.reset(this.context.get().length);
     }
 
     if (context.messages.some(isAssistantCacheAnchor)) {
-      this._lastAssistantAt = this.record.restoring?.time ?? Date.now();
+      this._lastAssistantAt = Date.now();
     }
   }
 

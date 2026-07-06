@@ -1,0 +1,168 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import {
+  AgentPermissionRulesService,
+  IAgentPermissionRulesService,
+  type PermissionApprovalResultRecord,
+  type PermissionRule,
+} from '#/agent/permissionRules';
+import { PermissionRulesModel } from '#/agent/permissionRules/permissionRulesOps';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IAgentWireService, WireService, type PersistedRecord } from '#/wire';
+
+const SCOPE = 'wire';
+const KEY = 'permission-rules-test';
+
+const allowRule: PermissionRule = { decision: 'allow', scope: 'session-runtime', pattern: 'Read(**)' };
+const denyRule: PermissionRule = { decision: 'deny', scope: 'user', pattern: 'Bash(rm *)' };
+
+function sessionApproval(pattern: string): PermissionApprovalResultRecord {
+  return {
+    turnId: 1,
+    toolCallId: 'call-1',
+    toolName: 'Bash',
+    action: 'Bash(rm -rf /tmp/x)',
+    sessionApprovalRule: pattern,
+    result: { decision: 'approved', scope: 'session' },
+  };
+}
+
+let disposables: DisposableStore;
+let ix: TestInstantiationService;
+let log: IAppendLogStore;
+let svc: IAgentPermissionRulesService;
+
+beforeEach(() => {
+  disposables = new DisposableStore();
+  ix = disposables.add(new TestInstantiationService());
+  ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
+  ix.set(IAgentPermissionRulesService, new SyncDescriptor(AgentPermissionRulesService));
+  log = ix.get(IAppendLogStore);
+  svc = ix.get(IAgentPermissionRulesService);
+});
+
+afterEach(() => disposables.dispose());
+
+async function readRecords(): Promise<PersistedRecord[]> {
+  const out: PersistedRecord[] = [];
+  for await (const record of log.read<PersistedRecord>(SCOPE, KEY)) {
+    out.push(record);
+  }
+  return out;
+}
+
+describe('AgentPermissionRulesService (wire-backed)', () => {
+  it('addRules appends rules and fires onChanged with the accumulated rules', () => {
+    const changes: PermissionRule[][] = [];
+    svc.hooks.onChanged.register('test', (ctx, next) => {
+      changes.push([...ctx.rules]);
+      return next();
+    });
+
+    expect(svc.rules).toEqual([]);
+
+    svc.addRules([allowRule]);
+    expect(svc.rules).toEqual([allowRule]);
+    svc.addRules([denyRule]);
+    expect(svc.rules).toEqual([allowRule, denyRule]);
+
+    expect(changes).toEqual([[allowRule], [allowRule, denyRule]]);
+
+    // Empty add is a no-op: it does not dispatch and onChanged does not fire.
+    svc.addRules([]);
+    expect(changes).toEqual([[allowRule], [allowRule, denyRule]]);
+  });
+
+  it('records a session approval pattern and notifies onApprovalRecorded on the live path', () => {
+    const recorded: PermissionApprovalResultRecord[] = [];
+    svc.hooks.onApprovalRecorded.register('test', (ctx, next) => {
+      recorded.push(ctx.record);
+      return next();
+    });
+
+    const approval = sessionApproval('Bash(rm *)');
+    svc.recordApprovalResult(approval);
+
+    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
+    expect(recorded).toEqual([approval]);
+
+    // Duplicate session approval is deduped by the model (state reference stays
+    // the same); the live notification still fires for the caller.
+    svc.recordApprovalResult(approval);
+    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
+    expect(recorded).toEqual([approval, approval]);
+  });
+
+  it('ignores non-session approvals for the pattern set', () => {
+    const oneTime: PermissionApprovalResultRecord = {
+      turnId: 2,
+      toolCallId: 'call-2',
+      toolName: 'Write',
+      action: 'Write(/tmp/x)',
+      result: { decision: 'approved' },
+    };
+    svc.recordApprovalResult(oneTime);
+    expect(svc.sessionApprovalRulePatterns).toEqual([]);
+  });
+
+  it('dispatch persists flat records (no payload key)', async () => {
+    svc.addRules([allowRule]);
+    svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+
+    const records = await readRecords();
+    expect(records).toEqual([
+      { type: 'permission.rules.add', rules: [allowRule] },
+      {
+        type: 'permission.record_approval_result',
+        turnId: 1,
+        toolCallId: 'call-1',
+        toolName: 'Bash',
+        action: 'Bash(rm -rf /tmp/x)',
+        sessionApprovalRule: 'Bash(rm *)',
+        result: { decision: 'approved', scope: 'session' },
+      },
+    ]);
+    expect(records.every((record) => 'payload' in record === false)).toBe(true);
+  });
+
+  it('replay rebuilds rules and patterns on a fresh WireService (silent)', async () => {
+    svc.addRules([allowRule, denyRule]);
+    svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+    const records = await readRecords();
+
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.set(
+      IAgentWireService,
+      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'permission-rules-replay' }]),
+    );
+    const log2 = ix2.get(IAppendLogStore);
+    const fresh = ix2.get(IAgentWireService);
+
+    let changes = 0;
+    disposables.add(fresh.subscribe(PermissionRulesModel, () => (changes += 1)));
+
+    fresh.replay(...records);
+
+    expect(fresh.getModel(PermissionRulesModel)).toEqual({
+      rules: [allowRule, denyRule],
+      sessionApprovalRulePatterns: ['Bash(rm *)'],
+    });
+    // Replay is silent: no onChange and nothing written back to the wire log.
+    expect(changes).toBe(0);
+    const written: PersistedRecord[] = [];
+    for await (const record of log2.read<PersistedRecord>(SCOPE, 'permission-rules-replay')) {
+      written.push(record);
+    }
+    expect(written).toEqual([]);
+  });
+});

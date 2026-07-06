@@ -1,5 +1,5 @@
-import type { ChatProvider, ProviderConfig as KosongProviderConfig } from '#/app/llmProtocol/kosong';
-import { createProvider } from '#/app/llmProtocol/kosong';
+import type { ChatProvider } from '#/app/llmProtocol/provider';
+import { createProvider, type ProviderConfig as KosongProviderConfig } from '#/app/llmProtocol/providers';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
@@ -15,8 +15,9 @@ import {
  * `protocol` domain (L1) — `IProtocolAdapterRegistry` implementation.
  *
  * Owns the current mapping from a Protocol identifier to a request-handler
- * factory. Delegates to `createProvider` from the vendored kosong copy under
- * `llmProtocol/kosong` for now; this is v2's only runtime kosong boundary
+ * factory. Delegates to `createProvider` from `llmProtocol/providers` (the
+ * kosong wire source, kept flat under `llmProtocol`); this is v2's only
+ * runtime kosong boundary
  * (Phase 8 replaces it with native adapters). Bound at App scope.
  */
 

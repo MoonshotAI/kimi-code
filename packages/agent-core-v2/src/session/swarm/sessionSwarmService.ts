@@ -20,7 +20,8 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile';
-import { IAgentRecordService } from '#/agent/record';
+import type { SubagentSuspendedEvent } from '@moonshot-ai/protocol';
+import { IAgentWireService } from '#/wire';
 import {
   applyProfilePromptPrefix,
   IAgentProfileCatalogService,
@@ -30,9 +31,9 @@ import {
   IAgentLifecycleService,
   mirrorAgentRun,
 } from '#/session/agentLifecycle';
-import { IExecContext } from '#/session/execContext';
+import { ISessionContext } from '#/session/sessionContext';
 import { ISessionProcessRunner } from '#/session/process';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 
 import {
   ISessionSwarmService,
@@ -49,6 +50,12 @@ import {
   type AgentRunAttemptHandle,
 } from './agentRunBatch';
 
+declare module '#/wire' {
+  interface SignalMap {
+    'subagent.suspended': Omit<SubagentSuspendedEvent, 'type'>;
+  }
+}
+
 /**
  * Requester-facing label for a resumed agent whose profile binding is unknown.
  * Kept as the legacy wire display value.
@@ -63,7 +70,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
-    @IExecContext private readonly execContext: IExecContext,
+    @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
   ) {}
@@ -83,7 +90,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
         const caller = this.lifecycle.getHandle(callerAgentId);
-        caller?.accessor.get(IAgentRecordService)?.signal({
+        caller?.accessor.get(IAgentWireService)?.signal({
           type: 'subagent.suspended',
           subagentId: event.agentId,
           reason: event.reason,
@@ -137,7 +144,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       runInBackground: options.runInBackground,
     });
     const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
-      cwd: this.execContext.cwd,
+      cwd: this.sessionContext.cwd,
       runner: this.processRunner,
       log: this.log,
     });

@@ -3,4 +3,5 @@
  */
 
 export * from './userTool';
+export * from './userToolOps';
 export * from './userToolService';

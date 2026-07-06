@@ -1,4 +1,4 @@
-import { emptyUsage, type ToolCall } from '#/app/llmProtocol/kosong';
+import { emptyUsage, type ToolCall } from '#/app/llmProtocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService } from '#/index';

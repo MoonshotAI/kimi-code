@@ -6,10 +6,9 @@ import { IAgentLoopService } from '#/agent/loop';
 import { AgentPromptService, IAgentPromptService } from '#/agent/prompt';
 import type { PromptSubmitContext } from '#/agent/prompt';
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
-import { IAgentRecordService } from '#/agent/record';
 import { IAgentTurnService, type Turn } from '#/agent/turn';
 
-import { stubContextMemory, stubRecord } from '../contextMemory/stubs';
+import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubTurn } from '../turn/stubs';
 
 function userMessage(text: string, origin: ContextMessage['origin']): ContextMessage {
@@ -33,7 +32,6 @@ function createHarness(options: { readonly hasActiveTurn?: boolean } = {}) {
     additionalServices: (reg) => {
       reg.defineInstance(IAgentContextMemoryService, context);
       reg.defineInstance(IAgentTurnService, turn);
-      reg.defineInstance(IAgentRecordService, stubRecord());
       reg.defineInstance(IAgentLoopService, loop);
       reg.define(IAgentPromptService, AgentPromptService);
     },

@@ -9,7 +9,7 @@ import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import type { ContextMessage } from '#/agent/contextMemory';
 import { ISessionCronService } from '#/session/cron';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
-import { ILogService } from '#/app/log';
+import { ILogService } from '#/_base/log';
 import { IAgentPromptService } from '#/agent/prompt';
 import { ISessionContext } from '#/session/sessionContext';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';

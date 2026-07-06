@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import type { ContentPart } from '#/app/llmProtocol/kosong';
+import type { ContentPart } from '#/app/llmProtocol';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';

@@ -12,7 +12,7 @@
  * list before `AgentProfileCatalogService` constructs.
  */
 
-import { collectGitContext } from '#/session/agentFs';
+import { collectGitContext } from '#/session/sessionFs';
 import { registerAgentProfile } from '#/app/agentProfileCatalog';
 import {
   renderSystemPrompt,

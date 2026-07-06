@@ -1,3 +1,16 @@
+/**
+ * `skill` domain (L3) — `IAgentSkillService` implementation.
+ *
+ * Resolves skills from the session catalog, renders the activation prompt,
+ * records the activation as a `skill.activate` fact through `wire.dispatch`
+ * (a stateless, identity-apply Op), publishes the `skill.activated` signal
+ * through `wire.signal`, drives user-slash activations into a new turn via
+ * `prompt`, and reports `skill_invoked` / `flow_invoked` through `telemetry`.
+ * `wire.replay` reapplies the fact as a no-op, so neither the signal nor
+ * telemetry fires on resume (matching the former `restoring` guard). Bound at
+ * Agent scope.
+ */
+
 import { randomUUID } from 'node:crypto';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -6,23 +19,17 @@ import type { ContentPart } from '#/app/llmProtocol';
 
 import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory';
 import { renderUserSlashSkillPrompt } from './prompt';
-import { Disposable } from "#/_base/di";
-import { ErrorCodes, KimiError } from "#/errors";
-import { isUserActivatableSkillType, type SkillDefinition } from '#/app/globalSkillCatalog/types';
+import { ISessionContext } from '#/session/sessionContext';
+import { Disposable } from '#/_base/di';
+import { ErrorCodes, KimiError } from '#/errors';
+import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
 import { IAgentPromptService } from '#/agent/prompt';
 import { ITelemetryService } from '#/app/telemetry';
 import type { Turn } from '#/agent/turn';
-import { IAgentRecordService } from '#/agent/record';
+import { IAgentWireService, type IWireService } from '#/wire';
 import { IAgentSkillService, type SkillActivationInput } from './skill';
+import { skillActivate } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-
-declare module '#/agent/wireRecord' {
-  interface WireRecordMap {
-    'skill.activate': {
-      origin: SkillActivationOrigin;
-    };
-  }
-}
 
 export class AgentSkillService extends Disposable implements IAgentSkillService {
   declare readonly _serviceBrand: undefined;
@@ -30,17 +37,11 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   constructor(
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
-    @IAgentRecordService private readonly records: IAgentRecordService,
+    @IAgentWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
     super();
-    this._register(
-      records.define('skill.activate', {
-        resume: (r) => {
-          this.publishActivation(r.origin);
-        },
-      }),
-    );
   }
 
   async activate(input: SkillActivationInput): Promise<Turn> {
@@ -101,7 +102,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
   ): Promise<Turn | undefined> {
-    this.records.append({ type: 'skill.activate', origin });
+    this.wire.dispatch(skillActivate({ origin }));
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
@@ -115,11 +116,13 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   }
 
   private renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
-    return this.skillCatalog.catalog.renderSkillPrompt(skill, rawArgs);
+    return this.skillCatalog.catalog.renderSkillPrompt(skill, rawArgs, {
+      sessionId: this.sessionContext.sessionId,
+    });
   }
 
   private publishActivation(origin: SkillActivationOrigin): void {
-    this.records.signal({
+    this.wire.signal({
       type: 'skill.activated',
       activationId: origin.activationId,
       skillName: origin.skillName,
@@ -128,7 +131,6 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
       skillPath: origin.skillPath,
       skillSource: origin.skillSource,
     });
-    if (this.records.restoring !== null) return;
     this.telemetry.track('skill_invoked', {
       skill_name: origin.skillName,
       trigger: origin.trigger,
