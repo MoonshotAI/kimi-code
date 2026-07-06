@@ -12,7 +12,7 @@ export default {
   newChat: 'New Chat',
   newWorkspace: 'New Workspace',
   emptyState: 'No sessions yet · click New Session to start',
-  archiveConfirm: 'Archive this session? You can restore it or permanently delete it later from Settings.',
+  archiveConfirm: 'Archive this session? You can restore it later from Settings.',
   options: 'Options',
   rename: 'Rename',
   copyPath: 'Copy path',
