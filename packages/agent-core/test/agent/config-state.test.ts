@@ -243,6 +243,22 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     });
   }
 
+  // The same config backs both the ProviderManager (provider resolution) and
+  // the agent's kimiConfig (where ConfigState reads thinking.keep).
+  function kimiAgentWithThinkingKeep(keep: string | undefined) {
+    const config: KimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+      models: {
+        'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+      },
+      ...(keep !== undefined ? { thinking: { keep } } : {}),
+    };
+    return testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+    });
+  }
+
   it('injects KIMI_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', () => {
     vi.stubEnv('KIMI_MODEL_TEMPERATURE', '0.3');
     try {
@@ -290,6 +306,67 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     }
   });
 
+  it('injects thinking.keep="all" into config.provider by default (no env, no config)', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', '');
+    try {
+      const ctx = kimiAgent();
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { keep?: unknown } };
+      };
+      expect(gen.extra_body?.thinking?.keep).toBe('all');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('config thinking.keep="off" disables keep by default', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', '');
+    try {
+      const ctx = kimiAgentWithThinkingKeep('off');
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
+
+      const gen = Reflect.get(ctx.agent.config.provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { keep?: unknown } };
+      };
+      expect(gen.extra_body?.thinking?.keep).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('env off-value overrides config thinking.keep="all"', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'off');
+    try {
+      const ctx = kimiAgentWithThinkingKeep('all');
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
+
+      const gen = Reflect.get(ctx.agent.config.provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { keep?: unknown } };
+      };
+      expect(gen.extra_body?.thinking?.keep).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('env="all" overrides config thinking.keep="off"', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    try {
+      const ctx = kimiAgentWithThinkingKeep('off');
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
+
+      const gen = Reflect.get(ctx.agent.config.provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { keep?: unknown } };
+      };
+      expect(gen.extra_body?.thinking?.keep).toBe('all');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('injects KIMI_MODEL_THINKING_EFFORT into config.provider when thinking is on', () => {
     vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
     try {
@@ -300,7 +377,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       const gen = Reflect.get(provider as object, '_generationKwargs') as {
         extra_body?: { thinking?: { type?: string; effort?: string } };
       };
-      expect(gen.extra_body?.thinking).toEqual({ type: 'enabled', effort: 'max' });
+      expect(gen.extra_body?.thinking).toMatchObject({ type: 'enabled', effort: 'max' });
     } finally {
       vi.unstubAllEnvs();
     }

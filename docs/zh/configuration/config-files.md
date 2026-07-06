@@ -42,6 +42,7 @@ max_context_size = 262144
 [thinking]
 enabled = true
 effort = "high"
+keep = "all"
 
 [loop_control]
 max_retries_per_step = 3
@@ -168,6 +169,7 @@ display_name = "Kimi for Coding (custom)"
 | --- | --- | --- | --- |
 | `enabled` | `boolean` | `true` | 新会话是否默认开启 Thinking，设为 `false` 可强制关闭 |
 | `effort` | `string` | — | Thinking 强度（例如 `low`、`medium`、`high`、`xhigh`、`max`），实际可用等级取决于模型声明的 `support_efforts`，未识别的值会被供应商忽略 |
+| `keep` | `string` | `"all"` | Moonshot 保留思考透传（`thinking.keep`）。`"all"` 会保留历史轮次的 `reasoning_content`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用。可被 `KIMI_MODEL_THINKING_KEEP` 覆盖；仅对 `kimi` 供应商生效，且仅在 Thinking 开启时注入 |
 
 ### 已废弃字段
 

@@ -62,19 +62,47 @@ describe('applyKimiEnvSamplingParams', () => {
 });
 
 describe('applyKimiEnvThinkingKeep', () => {
-  it('injects thinking.keep when thinking is on', () => {
+  it('injects thinking.keep="all" by default when thinking is on', () => {
+    const out = applyKimiEnvThinkingKeep(kimi(), 'high', {});
+    expect(genState(out).extra_body?.thinking?.keep).toBe('all');
+  });
+
+  it('injects thinking.keep from env when thinking is on', () => {
     const out = applyKimiEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: 'all' });
     expect(genState(out).extra_body?.thinking?.keep).toBe('all');
+  });
+
+  it('injects thinking.keep from config when env is unset', () => {
+    const out = applyKimiEnvThinkingKeep(kimi(), 'high', {}, 'all');
+    expect(genState(out).extra_body?.thinking?.keep).toBe('all');
+  });
+
+  it('env takes precedence over config', () => {
+    const out = applyKimiEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: 'all' }, 'off');
+    expect(genState(out).extra_body?.thinking?.keep).toBe('all');
+  });
+
+  it.each(['off', 'false', '0', 'no', 'none', 'null', 'OFF', 'None'])(
+    'env off-value %s disables keep even when config enables it',
+    (off) => {
+      const out = applyKimiEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: off }, 'all');
+      expect(genState(out).extra_body).toBeUndefined();
+    },
+  );
+
+  it.each(['off', 'none', 'null'])('config off-value %s disables keep by default', (off) => {
+    const out = applyKimiEnvThinkingKeep(kimi(), 'high', {}, off);
+    expect(genState(out).extra_body).toBeUndefined();
+  });
+
+  it('blank env falls through to config', () => {
+    const out = applyKimiEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: '  ' }, 'off');
+    expect(genState(out).extra_body).toBeUndefined();
   });
 
   it('does NOT inject thinking.keep when thinking is off', () => {
     const out = applyKimiEnvThinkingKeep(kimi(), 'off', { KIMI_MODEL_THINKING_KEEP: 'all' });
     expect(genState(out).extra_body).toBeUndefined();
-  });
-
-  it('returns the same provider when keep is unset', () => {
-    const provider = kimi();
-    expect(applyKimiEnvThinkingKeep(provider, 'high', {})).toBe(provider);
   });
 
   it('leaves non-kimi providers untouched', () => {
