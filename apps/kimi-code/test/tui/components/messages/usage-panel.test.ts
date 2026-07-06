@@ -23,6 +23,12 @@ describe('UsagePanelComponent', () => {
             inputCacheCreation: 500,
             output: 250,
           },
+          'kimi-lite': {
+            inputOther: 200,
+            inputCacheRead: 0,
+            inputCacheCreation: 100,
+            output: 50,
+          },
         },
       } as never,
       contextUsage: 0.25,
@@ -41,11 +47,37 @@ describe('UsagePanelComponent', () => {
 
     expect(lines).toContain('Session usage');
     expect(lines).toContain('  kimi  input 2.0k  output 250  total 2.3k');
+    expect(lines).toContain('    cache  read 500  write 500');
+    expect(lines).toContain('  kimi-lite  input 300  output 50  total 350');
+    expect(lines).toContain('    cache  read 0  write 100');
+    expect(lines).toContain('  total  input 2.3k  output 300  total 2.6k');
+    expect(lines).toContain('    cache  read 500  write 600');
     expect(lines).toContain('Context window');
     expect(lines.join('\n')).toContain('25.0%');
     expect(lines).toContain('Plan usage');
     expect(lines.join('\n')).toContain('20% used');
     expect(lines.join('\n')).toContain('resets tomorrow');
+  });
+
+  it('omits cache rows when no cache tokens were recorded', () => {
+    const lines = buildUsageReportLines({
+      sessionUsage: {
+        byModel: {
+          kimi: {
+            inputOther: 1000,
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+            output: 250,
+          },
+        },
+      } as never,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+    }).map(strip);
+
+    expect(lines).toContain('  kimi  input 1.0k  output 250  total 1.3k');
+    expect(lines.join('\n')).not.toContain('cache');
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {

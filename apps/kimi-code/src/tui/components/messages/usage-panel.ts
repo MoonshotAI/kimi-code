@@ -62,6 +62,17 @@ function usageInputTotal(usage: TokenUsage): number {
   );
 }
 
+function formatCacheLine(usage: TokenUsage, value: Colorize, muted: Colorize): string | undefined {
+  const cacheRead = usageNumber(usage.inputCacheRead);
+  const cacheWrite = usageNumber(usage.inputCacheCreation);
+  if (cacheRead === 0 && cacheWrite === 0) return undefined;
+  return (
+    `    ${muted('cache')}  read ${value(formatTokenCount(cacheRead))}  write ${value(
+      formatTokenCount(cacheWrite),
+    )}`
+  );
+}
+
 function buildSessionUsageSection(
   usage: SessionUsage | undefined,
   error: string | undefined,
@@ -78,23 +89,39 @@ function buildSessionUsageSection(
   const lines: string[] = [];
   let totalInput = 0;
   let totalOutput = 0;
+  let totalCacheRead = 0;
+  let totalCacheWrite = 0;
   for (const [model, row] of entries) {
     const input = usageInputTotal(row);
     const output = usageNumber(row.output);
+    const cacheRead = usageNumber(row.inputCacheRead);
+    const cacheWrite = usageNumber(row.inputCacheCreation);
     totalInput += input;
     totalOutput += output;
+    totalCacheRead += cacheRead;
+    totalCacheWrite += cacheWrite;
     lines.push(
       `  ${muted(model)}  input ${value(formatTokenCount(input))}  output ${value(
         formatTokenCount(output),
       )}  total ${value(formatTokenCount(input + output))}`,
     );
+    const cacheLine = formatCacheLine(row, value, muted);
+    if (cacheLine !== undefined) lines.push(cacheLine);
   }
   if (entries.length > 1) {
+    const total: TokenUsage = {
+      inputOther: totalInput - totalCacheRead - totalCacheWrite,
+      output: totalOutput,
+      inputCacheRead: totalCacheRead,
+      inputCacheCreation: totalCacheWrite,
+    };
     lines.push(
       `  ${muted('total')}  input ${value(formatTokenCount(totalInput))}  output ${value(
         formatTokenCount(totalOutput),
       )}  total ${value(formatTokenCount(totalInput + totalOutput))}`,
     );
+    const cacheLine = formatCacheLine(total, value, muted);
+    if (cacheLine !== undefined) lines.push(cacheLine);
   }
   return lines;
 }
