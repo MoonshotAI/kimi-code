@@ -23,11 +23,14 @@ describe('stripSystemTags', () => {
     expect(stripSystemTags('plain text')).toBe('plain text');
   });
 
-  it('strips tool error/empty sentinels but keeps surrounding text', () => {
+  it('unwraps error/empty sentinels, keeping the status text without the tags', () => {
     expect(stripSystemTags('<system>ERROR: Tool execution failed.</system>\nreal stderr')).toBe(
-      '\nreal stderr',
+      'ERROR: Tool execution failed.\nreal stderr',
     );
-    expect(stripSystemTags('<system>Tool output is empty.</system>')).toBe('');
+    expect(stripSystemTags('<system>Tool output is empty.</system>')).toBe('Tool output is empty.');
+    expect(
+      stripSystemTags('<system>ERROR: Tool execution failed. Tool output is empty.</system>'),
+    ).toBe('ERROR: Tool execution failed. Tool output is empty.');
   });
 });
 

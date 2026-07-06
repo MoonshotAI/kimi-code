@@ -10,17 +10,39 @@
  * mapper, and the TUI output component — so the stripping rule lives in exactly
  * one place instead of being reimplemented per UI.
  *
- * Only well-formed, paired tags are removed. A lone `<system>` without its
- * closing `</system>` is left untouched, so user data that merely contains the
- * literal substring is not eaten.
+ * Most `<system>` blocks are removed entirely. The exception is the tool
+ * error/empty status sentinels, which carry user-meaningful state and are
+ * UNWRAPPED — the text is kept, only the tags are dropped — so a failed or
+ * empty tool result does not render as a blank output. A lone `<system>`
+ * without its closing `</system>` is left untouched, so user data that merely
+ * contains the literal substring is not eaten.
  */
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 const SYSTEM_TAG_RE = /<system>[\s\S]*?<\/system>/g;
 
+// Status sentinels carrying user-meaningful state ("tool failed" / "tool
+// produced no output"). The model reads them with the `<system>` wrapper in
+// history, but for UI we UNWRAP them — keep the human-readable text, drop only
+// the tags — instead of deleting them. Otherwise a failed or empty tool result
+// renders as a blank output, indistinguishable from a rendering bug. Match the
+// longest first so the combined sentinel is unwrapped cleanly.
+const SENTINELS: readonly [string, string][] = [
+  [
+    '<system>ERROR: Tool execution failed. Tool output is empty.</system>',
+    'ERROR: Tool execution failed. Tool output is empty.',
+  ],
+  ['<system>ERROR: Tool execution failed.</system>', 'ERROR: Tool execution failed.'],
+  ['<system>Tool output is empty.</system>', 'Tool output is empty.'],
+];
+
 export function stripSystemTags(text: string): string {
   if (!text.includes('<system>')) return text;
-  return text.replace(SYSTEM_TAG_RE, '');
+  let out = text;
+  for (const [tag, plain] of SENTINELS) {
+    out = out.replaceAll(tag, plain);
+  }
+  return out.replace(SYSTEM_TAG_RE, '');
 }
 
 /**
