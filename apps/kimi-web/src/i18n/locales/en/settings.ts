@@ -63,4 +63,5 @@ export default {
   archivedAt: 'Archived {time}',
   archivedLoadMore: 'Load more',
   archivedLoading: 'Loading…',
+  archivedLoadingAll: 'Loading all archived sessions…',
 };

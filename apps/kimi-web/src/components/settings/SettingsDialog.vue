@@ -247,9 +247,35 @@ async function loadArchived(reset: boolean): Promise<void> {
   }
 }
 
+// When the user searches, sorts, or changes the workspace filter, drain every
+// remaining archived page first so the client-side filter/sort runs over the
+// full set — not just the pages loaded so far. Simpler and correct over fast:
+// the user waits a moment in exchange for a global result.
+const drainingAll = ref(false);
+async function drainAllArchived(): Promise<void> {
+  if (drainingAll.value) return;
+  drainingAll.value = true;
+  try {
+    while (archivedHasMore.value) {
+      await loadArchived(false);
+    }
+  } catch (err) {
+    // Keep whatever is already loaded; the user can retry via Load more.
+    console.warn('drainAllArchived failed', err);
+  } finally {
+    drainingAll.value = false;
+  }
+}
+
 watch(activeTab, (tab) => {
   if (tab === 'archived' && !archivedLoaded.value) {
     void loadArchived(true);
+  }
+});
+
+watch([archiveQuery, archiveSort, archiveWsFilter], () => {
+  if (activeTab.value === 'archived' && archivedHasMore.value && !drainingAll.value) {
+    void drainAllArchived();
   }
 });
 
@@ -598,6 +624,8 @@ function archiveTime(iso: string): string {
             />
           </div>
 
+          <div v-if="drainingAll" class="archive-draining">{{ t('settings.archivedLoadingAll') }}</div>
+
           <div v-if="archivedLoading && !archivedLoaded" class="archive-empty">
             {{ t('settings.archivedLoading') }}
           </div>
@@ -803,6 +831,7 @@ function archiveTime(iso: string): string {
 .archive-meta { min-width: 0; }
 .archive-name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-mono); }
+.archive-draining { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-accent-hover); font-size: var(--text-sm); }
 .archive-empty { padding: var(--space-6) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-xl); color: var(--color-text-faint); font-size: var(--text-sm); text-align: center; background: var(--color-bg); }
 .archive-more { display: flex; justify-content: center; margin-top: var(--space-4); }
 @media (max-width: 640px) {

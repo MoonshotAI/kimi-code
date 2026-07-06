@@ -63,4 +63,5 @@ export default {
   archivedAt: '归档于 {time}',
   archivedLoadMore: '加载更多',
   archivedLoading: '加载中…',
+  archivedLoadingAll: '正在加载全部归档会话…',
 };
