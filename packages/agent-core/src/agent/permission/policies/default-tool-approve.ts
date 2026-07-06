@@ -20,6 +20,9 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'GetGoal',
   'SetGoalBudget',
   'UpdateGoal',
+  // Loading a tool definition into context has no side effects on the world;
+  // executing the loaded tool still goes through its own approval.
+  'select_tools',
 ]);
 
 export class DefaultToolApprovePermissionPolicy implements PermissionPolicy {

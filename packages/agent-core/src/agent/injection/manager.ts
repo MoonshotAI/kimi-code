@@ -7,6 +7,7 @@ import { PermissionModeInjector } from './permission-mode';
 import { PluginSessionStartInjector } from './plugin-session-start';
 import { PlanModeInjector } from './plan-mode';
 import { TodoListReminderInjector } from './todo-list';
+import { ToolsDiffInjector } from './tools-diff';
 
 const ACTIVE_BACKGROUND_TASK_GUIDANCE =
   'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before. Do not start duplicates. Use TaskOutput to fetch a task’s result, TaskList to list them, and TaskStop to cancel one.';
@@ -19,6 +20,9 @@ export class InjectionManager {
   // near the tail without mutating the prefix, so prompt caching is preserved and
   // the context does not grow O(n^2) the way per-step injection did.
   private readonly goalInjector: GoalInjector | null;
+  // Same boundary cadence, but NOT main-only: subagents announce their own
+  // loadable tool set. See ToolsDiffInjector for why it also diverges on origin.
+  private readonly toolsDiffInjector: ToolsDiffInjector;
 
   constructor(protected readonly agent: Agent) {
     this.injectors = [
@@ -28,6 +32,7 @@ export class InjectionManager {
       new PermissionModeInjector(agent),
     ];
     this.goalInjector = agent.type === 'main' ? new GoalInjector(agent) : null;
+    this.toolsDiffInjector = new ToolsDiffInjector(agent);
   }
 
   async inject(): Promise<void> {
@@ -45,8 +50,18 @@ export class InjectionManager {
     await this.activeGoalInjector()?.inject();
   }
 
+  /**
+   * Appends a loadable-tools diff announcement when the loadable set changed.
+   * Boundary cadence (turn start + post-compaction); no-op when the disclosure
+   * gate is closed or nothing changed.
+   */
+  injectToolsDiff(): void {
+    this.toolsDiffInjector.inject();
+  }
+
   async injectAfterCompaction(): Promise<void> {
     await this.injectGoal();
+    this.injectToolsDiff();
     this.injectActiveBackgroundTasks();
     await this.inject();
   }

@@ -55,11 +55,16 @@ export function createScriptedGenerate() {
 
     const input = normalizeGenerateInput({
       systemPrompt,
-      tools: tools.map(({ name, description, parameters }) => ({
-        name,
-        description,
-        parameters,
-      })),
+      // Mirror kosong generate(): deferred tools are stripped before the
+      // provider builds the request, so the recorded "wire" tools must not
+      // contain them either.
+      tools: tools
+        .filter((tool) => tool.deferred !== true)
+        .map(({ name, description, parameters }) => ({
+          name,
+          description,
+          parameters,
+        })),
       history: structuredClone(history),
     });
     calls.push(input);

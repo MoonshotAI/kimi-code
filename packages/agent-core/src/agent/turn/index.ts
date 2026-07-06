@@ -676,6 +676,10 @@ export class TurnFlow {
     // there is no active goal). Each goal continuation is its own turn, so this
     // re-injects the reminder once per turn rather than per step, preserving prompt caching.
     await this.agent.injection.injectGoal();
+    // Announce loadable-tool changes at the same boundary cadence: a diff is
+    // appended only when the loadable set actually changed, so quiet turns
+    // keep the prompt cache fully warm.
+    this.agent.injection.injectToolsDiff();
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
@@ -689,7 +693,10 @@ export class TurnFlow {
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
           dispatchEvent: this.buildDispatchEvent(turnId),
-          tools: this.agent.tools.loopTools,
+          // Re-read per step (not snapshotted per turn) so a select_tools load
+          // is dispatchable on the very next step of the same turn.
+          buildTools: () => this.agent.tools.loopTools,
+          describeMissingTool: (name) => this.agent.tools.missingToolMessage(name),
           log: this.agent.log,
           maxSteps: loopControl?.maxStepsPerTurn,
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
