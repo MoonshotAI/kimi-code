@@ -1125,7 +1125,10 @@ async function pullSessionWarnings(sessionId: string): Promise<void> {
   }
 }
 
-async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
+async function syncSessionFromSnapshot(
+  sessionId: string,
+  opts?: { force?: boolean },
+): Promise<SyncSessionResult> {
   // Preconditions captured before the await, used to detect a newer local
   // prompt/seq or optimistic send that appears while the snapshot is in flight
   // (see guard below).
@@ -1143,10 +1146,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // whose `asOfSeq` predates newer local state — replacing messages would wipe a
     // live turn (volatile deltas are not replayable) or the just-sent optimistic
     // user message. On first open we must always install + subscribe, even if a
-    // global event advanced lastSeq during the await; and an evicted session is
-    // already unsubscribed, so it must always rebuild + re-subscribe here instead
-    // of discarding. When discarded, the live stream / next re-open reconciles.
-    if (wasLoaded && !sessionsWithStaleCursor.has(sessionId)) {
+    // global event advanced lastSeq during the await; an evicted session is
+    // already unsubscribed, so it must always rebuild + re-subscribe; and a forced
+    // resync (delta-gap recovery) must always apply the authoritative snapshot,
+    // even though the triggering cursor advance is exactly what the guard watches.
+    // When discarded, the live stream / next re-open reconciles.
+    if (!opts?.force && wasLoaded && !sessionsWithStaleCursor.has(sessionId)) {
       if ((rawState.lastSeqBySession[sessionId] ?? 0) !== seqBefore) return 'ok';
       if (rawState.promptIdBySession[sessionId] !== promptBefore) return 'ok';
       if (inFlightPromptSessions.has(sessionId) !== inFlightBefore) return 'ok';
@@ -1225,7 +1230,11 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
   }
 }
 
-const snapshotSyncRunner = createCoalescedAsyncRunner(syncSessionFromSnapshot);
+// Resync (delta-gap recovery) must always apply the authoritative snapshot, so
+// it bypasses the staleness guard that only the re-open path needs.
+const snapshotSyncRunner = createCoalescedAsyncRunner((sid) =>
+  syncSessionFromSnapshot(sid, { force: true }),
+);
 
 function hasLoadedMessages(sessionId: string): boolean {
   return Object.prototype.hasOwnProperty.call(rawState.messagesBySession, sessionId);
