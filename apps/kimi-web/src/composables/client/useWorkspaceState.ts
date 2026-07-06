@@ -122,7 +122,7 @@ export interface UseWorkspaceStateDeps {
   ) => void;
   nextOptimisticMsgId: () => string;
   getEventConn: () => KimiEventConnection | null;
-  syncSessionFromSnapshot: (sessionId: string) => Promise<SyncSessionResult>;
+  syncSessionFromSnapshot: (sessionId: string, opts?: { force?: boolean }) => Promise<SyncSessionResult>;
   reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
@@ -1762,7 +1762,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     })();
     try {
       await getKimiWebApi().undoSession(sid, count);
-      await syncSessionFromSnapshot(sid);
+      await syncSessionFromSnapshot(sid, { force: true });
       return lastUserText;
     } catch (err) {
       pushOperationFailure('undo', err, { sessionId: sid });
