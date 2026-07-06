@@ -34,7 +34,6 @@ import {
   type PromptSubmitContext,
 } from '#/agent/prompt';
 import type { HookResultEvent } from '@moonshot-ai/protocol';
-import { IAgentWireService, type IWireService } from '#/wire';
 import { IEventBus } from '#/app/event';
 import type {
   ExecutableToolResult,
@@ -63,12 +62,6 @@ import {
   renderUserPromptHookBlockResult,
   renderUserPromptHookResult,
 } from './user-prompt';
-
-declare module '#/wire' {
-  interface SignalMap {
-    'hook.result': Omit<HookResultEvent, 'type'>;
-  }
-}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -101,7 +94,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   constructor(
     private readonly options: ExternalHooksServiceOptions = {},
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IConfigService private readonly config: IConfigService,
@@ -231,12 +223,12 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         const reason = await this.runStop(ctx);
         if (reason !== undefined) {
           this.stopHookContinuationUsed = true;
-          this.context.splice(this.context.get().length, 0, [{
+          this.context.append({
             role: 'user',
             content: [{ type: 'text', text: reason }],
             toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
-          }]);
+          });
           ctx.continue = true;
           return;
         }
@@ -328,19 +320,13 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
     const block = renderUserPromptHookBlockResult(results);
     if (block !== undefined) {
-      this.context.splice(this.context.get().length, 0, [{
+      this.context.append({
         role: 'assistant',
         content: [{ type: 'text', text: block.text }],
         toolCalls: [],
         origin: { kind: 'hook_result', event: block.event, blocked: true },
-      }]);
-      this.eventBus.publish({
-        type: 'hook.result',
-        hookEvent: block.event,
-        content: block.message,
-        blocked: true,
       });
-      this.wire.signal({
+      this.eventBus.publish({
         type: 'hook.result',
         hookEvent: block.event,
         content: block.message,
@@ -351,18 +337,13 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
     const append = renderUserPromptHookResult(results);
     if (append !== undefined) {
-      this.context.splice(this.context.get().length, 0, [{
+      this.context.append({
         role: 'user',
         content: [{ type: 'text', text: append.text }],
         toolCalls: [],
         origin: { kind: 'hook_result', event: append.event },
-      }]);
-      this.eventBus.publish({
-        type: 'hook.result',
-        hookEvent: append.event,
-        content: append.message,
       });
-      this.wire.signal({
+      this.eventBus.publish({
         type: 'hook.result',
         hookEvent: append.event,
         content: append.message,

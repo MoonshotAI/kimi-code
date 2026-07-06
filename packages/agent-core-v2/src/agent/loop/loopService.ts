@@ -15,7 +15,6 @@ import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmReq
 import type { ToolResult } from '#/agent/tool';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
 import { IConfigService } from '#/app/config';
-import { IAgentWireService, type IWireService } from '#/wire';
 import { IEventBus } from '#/app/event';
 import {
   createToolMessage,
@@ -41,18 +40,6 @@ import {
   type TurnAfterStepContext,
   type TurnResult,
 } from './loop';
-
-declare module '#/wire' {
-  interface SignalMap {
-    'turn.step.started': Omit<TurnStepStartedEvent, 'type'>;
-    'turn.step.retrying': Omit<TurnStepRetryingEvent, 'type'>;
-    'turn.step.completed': Omit<TurnStepCompletedEvent, 'type'>;
-    'turn.step.interrupted': Omit<TurnStepInterruptedEvent, 'type'>;
-    'assistant.delta': Omit<AssistantDeltaEvent, 'type'>;
-    'thinking.delta': Omit<ThinkingDeltaEvent, 'type'>;
-    'tool.call.delta': Omit<ToolCallDeltaEvent, 'type'>;
-  }
-}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -86,7 +73,6 @@ export class AgentLoopService implements IAgentLoopService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
-    @IAgentWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
@@ -178,7 +164,6 @@ export class AgentLoopService implements IAgentLoopService {
     const stepUuid = randomUUID();
 
     this.eventBus.publish({ type: 'turn.step.started', turnId, step: currentStep, stepId: stepUuid });
-    this.wire.signal({ type: 'turn.step.started', turnId, step: currentStep, stepId: stepUuid });
 
     let stepStarted = false;
     const markStepStarted = (): void => {
@@ -194,19 +179,6 @@ export class AgentLoopService implements IAgentLoopService {
           maxAttempts: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxRetriesPerStep,
           onRetry: (retry) => {
             this.eventBus.publish({
-              type: 'turn.step.retrying',
-              turnId,
-              step: currentStep,
-              stepId: stepUuid,
-              failedAttempt: retry.failedAttempt,
-              nextAttempt: retry.nextAttempt,
-              maxAttempts: retry.maxAttempts,
-              delayMs: retry.delayMs,
-              errorName: retry.errorName,
-              errorMessage: retry.errorMessage,
-              statusCode: retry.statusCode,
-            });
-            this.wire.signal({
               type: 'turn.step.retrying',
               turnId,
               step: currentStep,
@@ -287,7 +259,7 @@ export class AgentLoopService implements IAgentLoopService {
   }
 
   private append(message: ContextMessage): void {
-    this.context.splice(this.context.get().length, 0, [message]);
+    this.context.append(message);
   }
 
   private emitStepCompleted(
@@ -319,22 +291,6 @@ export class AgentLoopService implements IAgentLoopService {
       providerFinishReason,
       rawFinishReason: providerFinishReason !== undefined ? response.rawFinishReason : undefined,
     });
-    this.wire.signal({
-      type: 'turn.step.completed',
-      turnId,
-      step,
-      stepId,
-      usage,
-      finishReason,
-      llmFirstTokenLatencyMs: response.timing?.firstTokenLatencyMs,
-      llmStreamDurationMs: response.timing?.streamDurationMs,
-      llmRequestBuildMs: response.timing?.requestBuildMs,
-      llmServerFirstTokenMs: response.timing?.serverFirstTokenMs,
-      llmServerDecodeMs: response.timing?.serverDecodeMs,
-      llmClientConsumeMs: response.timing?.clientConsumeMs,
-      providerFinishReason,
-      rawFinishReason: providerFinishReason !== undefined ? response.rawFinishReason : undefined,
-    });
   }
 
   private emitStepInterrupted(
@@ -345,13 +301,6 @@ export class AgentLoopService implements IAgentLoopService {
   ): void {
     if (activeStep === undefined) return;
     this.eventBus.publish({
-      type: 'turn.step.interrupted',
-      turnId,
-      step: activeStep,
-      reason,
-      message,
-    });
-    this.wire.signal({
       type: 'turn.step.interrupted',
       turnId,
       step: activeStep,
@@ -379,12 +328,10 @@ export class AgentLoopService implements IAgentLoopService {
         case 'text':
           onResponseEvent();
           this.eventBus.publish({ type: 'assistant.delta', turnId, delta: part.text });
-          this.wire.signal({ type: 'assistant.delta', turnId, delta: part.text });
           return;
         case 'think':
           onResponseEvent();
           this.eventBus.publish({ type: 'thinking.delta', turnId, delta: part.think });
-          this.wire.signal({ type: 'thinking.delta', turnId, delta: part.think });
           return;
         case 'image_url':
         case 'audio_url':
@@ -400,13 +347,6 @@ export class AgentLoopService implements IAgentLoopService {
             name: part.name,
             argumentsPart: part.arguments ?? undefined,
           });
-          this.wire.signal({
-            type: 'tool.call.delta',
-            turnId,
-            toolCallId: part.id,
-            name: part.name,
-            argumentsPart: part.arguments ?? undefined,
-          });
           return;
         }
         case 'tool_call_part': {
@@ -415,13 +355,6 @@ export class AgentLoopService implements IAgentLoopService {
           if (toolCall === undefined) return;
           onResponseEvent();
           this.eventBus.publish({
-            type: 'tool.call.delta',
-            turnId,
-            toolCallId: toolCall.id,
-            name: toolCall.name,
-            argumentsPart: part.argumentsPart,
-          });
-          this.wire.signal({
             type: 'tool.call.delta',
             turnId,
             toolCallId: toolCall.id,

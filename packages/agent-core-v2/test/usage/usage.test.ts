@@ -10,7 +10,8 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService, WireService, type PersistedRecord, type WireEmission } from '#/wire';
+import { IAgentWireService, WireService, type PersistedRecord } from '#/wire';
+import { EventBusService, IEventBus, type DomainEvent } from '#/app/event';
 
 const SCOPE = 'wire';
 const KEY = 'usage-test';
@@ -26,6 +27,7 @@ beforeEach(() => {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
+  ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(IAgentUsageService, new SyncDescriptor(AgentUsageService));
   log = ix.get(IAppendLogStore);
   svc = ix.get(IAgentUsageService);
@@ -98,15 +100,12 @@ describe('AgentUsageService (wire-backed)', () => {
   });
 
   it('emits agent.status.updated with the usage snapshot via wire.signal', () => {
-    const emissions: WireEmission[] = [];
-    disposables.add(ix.get(IAgentWireService).onEmission((e) => emissions.push(e)));
+    const events: DomainEvent[] = [];
+    disposables.add(ix.get(IEventBus).subscribe((e) => events.push(e)));
 
     svc.record('model-a', a1);
 
-    const signals = emissions
-      .filter((e): e is Extract<WireEmission, { type: 'signal' }> => e.type === 'signal')
-      .map((e) => e.signal);
-    expect(signals).toEqual([
+    expect(events).toEqual([
       {
         type: 'agent.status.updated',
         usage: {

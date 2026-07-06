@@ -12,11 +12,37 @@
  * in `tool-access`, execution hook contexts in `toolHooks`. No scoped service.
  */
 
-import type { ContentPart, Tool } from '#/app/llmProtocol';
+import type { ContentPart, Tool, ToolCall } from '#/app/llmProtocol';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import type { ToolAccesses } from './tool-access';
 
 export type ExecutableToolOutput = string | ContentPart[];
+
+/**
+ * Declared side channel for delivering an extra user message into context
+ * memory, separate from the tool result returned to the model. The tool result
+ * always pairs with its `tool_call`; `delivery` asks the agent layer to inject
+ * an additional message (e.g. a steered user message) so tools do not reach
+ * into `IAgentPromptService` themselves.
+ *
+ * The L3 contract only carries an L3-legal payload: `origin` is intentionally
+ * `unknown` so the tool contract stays free of the L4 `ContextMessage` type;
+ * the L4 consumer forwards it verbatim onto the steered `ContextMessage`.
+ * Kinds grow with later phases.
+ */
+export type ToolDeliveryKind = 'steer';
+
+export interface ToolDeliveryMessage {
+  readonly role: 'user';
+  readonly content: readonly ContentPart[];
+  readonly toolCalls?: readonly ToolCall[];
+  readonly origin?: unknown;
+}
+
+export interface ToolDelivery {
+  readonly kind: ToolDeliveryKind;
+  readonly message: ToolDeliveryMessage;
+}
 
 export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
@@ -24,6 +50,7 @@ export interface ExecutableToolSuccessResult {
   readonly stopTurn?: boolean | undefined;
   readonly message?: string | undefined;
   readonly truncated?: boolean | undefined;
+  readonly delivery?: ToolDelivery | undefined;
 }
 
 export interface ExecutableToolErrorResult {
@@ -32,6 +59,7 @@ export interface ExecutableToolErrorResult {
   readonly message?: string | undefined;
   readonly stopTurn?: boolean | undefined;
   readonly truncated?: boolean | undefined;
+  readonly delivery?: ToolDelivery | undefined;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;

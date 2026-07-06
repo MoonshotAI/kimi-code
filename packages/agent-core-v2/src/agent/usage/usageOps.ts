@@ -7,8 +7,8 @@
  * `record` call into it; the `apply` is the pure extraction of the former live
  * `apply` + `resume` facet (their common transition), so
  * `wire.dispatch(recordUsage(...))` and `wire.replay` produce identical state.
- * Also augments `SignalMap` with the `usage` slice of `agent.status.updated`
- * (merged with the other domains' slices). Consumed by the Agent-scope
+ * Also augments `DomainEventMap` with the `usage` slice of `agent.status.updated`,
+ * derived from the `usage.record` Op's `toEvent`. Consumed by the Agent-scope
  * `usageService`.
  */
 
@@ -18,26 +18,10 @@ import { defineModel, defineOp } from '#/wire';
 
 import type { UsageStatus } from './usage';
 
-declare module '#/wire' {
-  interface SignalMap {
-    // Canonical declaration for the agent status-bar signal (legacy channel). Each
-    // domain emits a subset; the full shape lives here so every `wire.signal({
-    // type: 'agent.status.updated', ... })` call site resolves the same merged type.
-    'agent.status.updated': {
-      usage?: UsageStatus;
-      swarmMode?: boolean;
-      planMode?: boolean;
-      model?: string;
-      maxContextTokens?: number;
-      contextTokens?: number;
-    };
-  }
-}
-
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    // Canonical declaration for the agent status-bar event (`IEventBus`). Mirrors
-    // the `SignalMap` slice above; each domain derives/publishes a subset.
+    // Canonical declaration for the agent status-bar event (`IEventBus`); each
+    // domain derives/publishes a subset.
     'agent.status.updated': {
       usage?: UsageStatus;
       swarmMode?: boolean;

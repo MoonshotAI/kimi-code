@@ -11,6 +11,7 @@ export {
   IAgentWireService,
   ISessionWireService,
   type IWireService,
+  type WireEmission,
 } from '#/wire';
 export * from '#/session/sessionLog';
 export * from '#/app/telemetry';

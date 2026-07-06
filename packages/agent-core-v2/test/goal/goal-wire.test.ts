@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { EventBusService, IEventBus } from '#/app/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { AgentGoalService, IAgentGoalService } from '#/agent/goal';
@@ -79,16 +80,19 @@ let disposables: DisposableStore;
 let wire: IWireService;
 let svc: IAgentGoalService;
 let log: IAppendLogStore;
+let eventBus: IEventBus;
 
 function buildHost(key: string): {
   wire: IWireService;
   svc: IAgentGoalService;
   log: IAppendLogStore;
+  eventBus: IEventBus;
 } {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: key }]));
+  ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.stub(IAgentTurnService, createTurnStub());
   ix.stub(IAgentLoopService, createLoopStub());
   ix.stub(IAgentContextMemoryService, createContextStub());
@@ -100,6 +104,7 @@ function buildHost(key: string): {
     wire: ix.get(IAgentWireService),
     svc: ix.get(IAgentGoalService),
     log: ix.get(IAppendLogStore),
+    eventBus: ix.get(IEventBus),
   };
 }
 
@@ -109,6 +114,7 @@ beforeEach(() => {
   wire = host.wire;
   svc = host.svc;
   log = host.log;
+  eventBus = host.eventBus;
 });
 
 afterEach(() => disposables.dispose());
@@ -160,9 +166,9 @@ describe('AgentGoalService (wire-backed)', () => {
 
   it('goal.updated signal and model subscription are live-only and silent on replay', async () => {
     const signals: string[] = [];
-    const sub = wire.onEmission((emission) => {
-      if (emission.type === 'signal' && emission.signal.type === 'goal.updated') {
-        signals.push(emission.signal.type);
+    const sub = eventBus.subscribe((e) => {
+      if (e.type === 'goal.updated') {
+        signals.push(e.type);
       }
     });
     let modelChanges = 0;
@@ -180,9 +186,9 @@ describe('AgentGoalService (wire-backed)', () => {
     const records = await readRecords();
     const host = buildHost('goal-replay');
     const replaySignals: string[] = [];
-    host.wire.onEmission((emission) => {
-      if (emission.type === 'signal' && emission.signal.type === 'goal.updated') {
-        replaySignals.push(emission.signal.type);
+    host.eventBus.subscribe((e) => {
+      if (e.type === 'goal.updated') {
+        replaySignals.push(e.type);
       }
     });
     let replayModelChanges = 0;

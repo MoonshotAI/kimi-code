@@ -51,7 +51,7 @@ export class EventBusService extends Disposable implements IEventBus {
 }
 
 registerScopedService(
-  LifecycleScope.App,
+  LifecycleScope.Agent,
   IEventBus,
   EventBusService,
   InstantiationType.Delayed,

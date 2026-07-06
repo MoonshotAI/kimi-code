@@ -45,15 +45,6 @@ export type GoalModelState = GoalState | null;
 
 export const GoalModel = defineModel<GoalModelState>('goal', () => null);
 
-declare module '#/wire' {
-  interface SignalMap {
-    'goal.updated': {
-      snapshot: GoalSnapshot | null;
-      change?: GoalChange;
-    };
-  }
-}
-
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'goal.updated': {

@@ -15,14 +15,7 @@ import {
   defineOp,
   type IWireService,
   type PersistedRecord,
-  type WireEmission,
 } from '#/wire';
-
-declare module '#/wire' {
-  interface SignalMap {
-    'store.test.signal': { value: number };
-  }
-}
 
 const SCOPE = 'wire';
 const KEY = 'store-test';
@@ -197,21 +190,5 @@ describe('WireService', () => {
     expect(() => wire.dispatch(mutateCounter({}))).toThrow(TypeError);
     // Apply threw before reassignment, so state is unchanged.
     expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
-  });
-
-  it('signal bypasses OpGroup: not persisted, not applied, emitted only', async () => {
-    let changes = 0;
-    const emissions: WireEmission[] = [];
-    disposables.add(wire.subscribe(CounterModel, () => (changes += 1)));
-    disposables.add(wire.onEmission((e) => emissions.push(e)));
-
-    wire.signal({ type: 'store.test.signal', value: 7 });
-
-    expect(changes).toBe(0);
-    expect(wire.getModel(CounterModel)).toEqual({ value: 0 });
-    expect(emissions).toEqual([
-      { type: 'signal', signal: { type: 'store.test.signal', value: 7 } },
-    ]);
-    expect(await readRecords()).toEqual([]);
   });
 });

@@ -443,7 +443,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       toolCalls: [],
       origin: GOAL_CONTINUATION_ORIGIN,
     });
-    this.context.splice(this.context.get().length, 0, [message]);
+    this.context.append(message);
     this.turnService.launch();
   }
 
@@ -520,7 +520,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
     this.eventBus.publish({ type: 'goal.updated', snapshot, change });
-    this.wire.signal({ type: 'goal.updated', snapshot, change });
   }
 
   private settleWallClock(state: GoalState): number {

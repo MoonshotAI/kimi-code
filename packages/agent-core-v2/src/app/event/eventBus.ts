@@ -1,18 +1,21 @@
 /**
  * `event` domain (L1) — augmentable `DomainEventMap`, the `DomainEvent`
- * discriminated union, and the `IEventBus` contract (the single "what happened"
- * channel) plus its DI token.
+ * discriminated union, and the `IEventBus` contract (the per-agent "what
+ * happened" channel) plus its DI token.
  *
- * `IEventBus` is the canonical fact bus: producers `publish(event)` and
- * consumers `subscribe(handler)` (all events) or `subscribe(type, handler)`
- * (one type). It sits beside the legacy `IEventService` (`./event`), which is
- * kept only until Phase 3 cuts its consumers over and deletes it; new code uses
- * `IEventBus`. Domains declare their event payloads by augmenting
- * `DomainEventMap` via `declare module '#/app/event/eventBus'`; `DomainEvent`
- * resolves to a `{ type } & payload` union over those declarations — the same
- * distributed-declaration shape as `SignalMap` (`#/wire/signal`). Durability
- * classification (volatile vs durable) lives in the server consumer, not here.
- * App-scope singleton; scope-agnostic contract.
+ * `IEventBus` is the canonical fact bus for agent events: producers
+ * `publish(event)` and consumers `subscribe(handler)` (all events) or
+ * `subscribe(type, handler)` (one type). It is bound at Agent scope — one
+ * instance per agent — so a subscription sees only that agent's events (the
+ * server fans out per agent and tags `agentId` / `sessionId`, exactly like the
+ * former `IAgentWireService.onEmission`). Process-global events (model catalog,
+ * session lifecycle, auth) stay on the legacy `IEventService` (`./event`),
+ * which is retained as the global channel; its payload type is re-exported from
+ * the barrel as `GlobalEvent`. Domains declare their agent-event payloads by
+ * augmenting `DomainEventMap` via `declare module '#/app/event/eventBus'`;
+ * `DomainEvent` resolves to a `{ type } & payload` union over those
+ * declarations. Durability classification (volatile vs durable) lives in the
+ * server consumer, not here. Agent-scope; scope-agnostic contract.
  */
 
 import { createDecorator, type IDisposable, type ServiceIdentifier } from '#/_base/di';

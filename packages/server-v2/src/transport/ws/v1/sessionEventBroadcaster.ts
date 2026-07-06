@@ -1,13 +1,13 @@
 /**
  * `SessionEventBroadcaster` — per-session single fan-out point that turns agent
- * emissions (live signals via `IAgentWireService.onEmission`) into a sequenced,
+ * events (via the per-agent `IEventBus`) into a sequenced,
  * journaled, replayable `/api/v1/ws` event stream (the `{seq, epoch}` watermark).
  *
  * Port of v1's `WSBroadcastService` (`packages/server/.../wsBroadcastService.ts`),
- * adapted to v2 where agent events live on per-agent `IAgentWireService` emissions
+ * adapted to v2 where agent events live on the per-agent `IEventBus`
  * (not a Core firehose). For each session it:
  *
- *   1. Subscribes to every agent's `IAgentWireService.onEmission` via
+ *   1. Subscribes to every agent's `IEventBus` via
  *      `IAgentLifecycleService` reach-down-via-handle (and `onDidCreate` /
  *      `onDidDispose` for late agents); `record` emissions are persisted and not
  *      broadcast (see step 3). Also subscribes to the session's
@@ -32,17 +32,17 @@
 import type {
   ApprovalResponse,
   DomainEvent,
+  GlobalEvent,
   IAgentScopeHandle,
   IDisposable,
   Interaction,
   InteractionKind,
   ISessionScopeHandle,
   Scope,
-  WireEmission,
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
-  IAgentWireService,
+  IEventBus,
   IEventService,
   ISessionInteractionService,
   ISessionLifecycleService,
@@ -252,7 +252,7 @@ export class SessionEventBroadcaster {
     return state;
   }
 
-  private onCoreEvent(event: DomainEvent): void {
+  private onCoreEvent(event: GlobalEvent): void {
     if (event.type !== 'event.model_catalog.changed') return;
     const payload = modelCatalogChangedPayload(event.payload);
     if (payload === undefined) return;
@@ -275,14 +275,14 @@ export class SessionEventBroadcaster {
     const agents = session.accessor.get(IAgentLifecycleService);
     const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
-      // Every domain emits live signals via `IAgentWireService.onEmission`;
-      // `record` emissions are persisted and not broadcast.
-      const wire = handle.accessor.get(IAgentWireService);
-      const wireD = wire.onEmission((emission) =>
-        this.onWireEmission(sessionId, handle.id, emission),
+      // Every domain emits live events via the per-agent `IEventBus`; the bus is
+      // Agent-scoped, so this sees only this agent's events.
+      const eventBus = handle.accessor.get(IEventBus);
+      const busD = eventBus.subscribe((event) =>
+        this.onAgentEvent(sessionId, handle.id, event),
       );
       state.agentDisposables.set(handle.id, {
-        dispose: () => wireD.dispose(),
+        dispose: () => busD.dispose(),
       });
     };
     for (const handle of agents.list()) subscribeAgent(handle);
@@ -298,20 +298,16 @@ export class SessionEventBroadcaster {
     );
   }
 
-  private onWireEmission(sessionId: string, agentId: string, emission: WireEmission): void {
-    // Records are persisted; the migrated domains' live UI rides the signal, so
-    // `record` emissions are intentionally not broadcast here.
-    if (emission.type !== 'signal') return;
+  private onAgentEvent(sessionId: string, agentId: string, event: DomainEvent): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
-    const { signal } = emission;
-    // The migrated wire signals are AgentEvent-shaped by construction (they were
+    // The migrated agent events are AgentEvent-shaped by construction (they were
     // ported from the former `record.signal(agentEvent)` call sites); the declared
-    // `SignalMap` payload types are deliberately wider than the protocol contract,
-    // hence the assertion via `unknown`.
-    const event = { ...signal, agentId, sessionId } as unknown as Event;
+    // `DomainEventMap` payload types are deliberately wider than the protocol
+    // contract, hence the assertion via `unknown`.
+    const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
     state.queue = state.queue
-      .then(() => this.dispatch(state, event, isVolatileSignal(signal.type)))
+      .then(() => this.dispatch(state, wireEvent, isVolatileSignal(event.type)))
       .catch(() => {});
   }
 
@@ -411,8 +407,8 @@ export class SessionEventBroadcaster {
 }
 
 /**
- * Server-side durability gate for the agent wire-emission path. Live signals
- * reach the edge via `IAgentWireService.onEmission`; their volatile vs durable
+ * Server-side durability gate for the agent event path. Live events reach the
+ * edge via the per-agent `IEventBus`; their volatile vs durable
  * classification is owned here rather than by the protocol's
  * `VOLATILE_EVENT_TYPES` / `isVolatileEventType` (still used by the global /
  * model path in `dispatchGlobal`, and by the shipped v1 server). Volatile set

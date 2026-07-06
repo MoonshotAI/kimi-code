@@ -12,5 +12,5 @@
 
 export * from './eventBus';
 export * from './eventBusService';
-export { IEventService } from './event';
+export { IEventService, type DomainEvent as GlobalEvent } from './event';
 export * from './eventService';

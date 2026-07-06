@@ -59,15 +59,6 @@ export const CompactionModel = defineModel<CompactionState>('fullCompaction', ()
   phase: 'idle',
 }));
 
-declare module '#/wire' {
-  interface SignalMap {
-    'compaction.started': Omit<CompactionStartedEvent, 'type'>;
-    'compaction.blocked': Omit<CompactionBlockedEvent, 'type'>;
-    'compaction.cancelled': Omit<CompactionCancelledEvent, 'type'>;
-    'compaction.completed': Omit<CompactionCompletedEvent, 'type'>;
-  }
-}
-
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'compaction.started': Omit<CompactionStartedEvent, 'type'>;

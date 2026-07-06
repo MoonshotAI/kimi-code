@@ -29,7 +29,7 @@ export class AgentSystemReminderService extends Disposable implements IAgentSyst
       toolCalls: [],
       origin,
     };
-    this.context.splice(this.context.get().length, 0, [message]);
+    this.context.append(message);
     return message;
   }
 

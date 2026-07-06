@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { EventBusService, IEventBus } from '#/app/event';
 import {
   CompactionModel,
   fullCompactionBegin,
@@ -22,12 +23,13 @@ let disposables: DisposableStore;
 let wire: IWireService;
 let log: IAppendLogStore;
 
-function buildHost(key: string): { wire: IWireService; log: IAppendLogStore } {
+function buildHost(key: string): { wire: IWireService; log: IAppendLogStore; eventBus: IEventBus } {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: key }]));
-  return { wire: ix.get(IAgentWireService), log: ix.get(IAppendLogStore) };
+  ix.set(IEventBus, new SyncDescriptor(EventBusService));
+  return { wire: ix.get(IAgentWireService), log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
 }
 
 beforeEach(() => {
@@ -108,8 +110,8 @@ describe('fullCompaction ops (wire-backed)', () => {
 
     const host = buildHost('full-compaction-replay');
     const emissions: string[] = [];
-    host.wire.onEmission((emission) => {
-      emissions.push(emission.type);
+    host.eventBus.subscribe((e) => {
+      emissions.push(e.type);
     });
     let modelChanges = 0;
     host.wire.subscribe(CompactionModel, () => {

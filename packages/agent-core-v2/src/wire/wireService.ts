@@ -1,13 +1,14 @@
 /**
  * `wire` domain (L2) — `IWireService` contract and its supporting types
- * (`PersistedRecord`, `OpGroup`, `ModelChange`, `WireEmission`).
+ * (`PersistedRecord`, `OpGroup`, `ModelChange`).
  *
  * The scope-agnostic state-machine engine: `dispatch` persists + applies +
  * notifies (OpGroup `{ silent: false }`), `replay` (async — rehydrates blob
- * references first) applies only (`{ silent: true }`), and `signal` broadcasts
- * transiently without an OpGroup; `flush` drains the serialized persist queue.
- * Reads go through `getModel` / `subscribe`; emissions and restore completion
- * stream via `onEmission` / `onRestored`. A single implementation serves every
+ * references first) applies only (`{ silent: true }`); `flush` drains the
+ * serialized persist queue. Reads go through `getModel` / `subscribe`; the live
+ * append-log record stream streams via `onEmission`, restore completion via
+ * `onRestored`, and Op-derived facts flow out through `IEventBus` (see `op.ts`
+ * `toEvent`). A single implementation serves every
  * scope — instances are isolated per scope through the distinct DI tokens in
  * `tokens`, each seeded with its own persistence key. `PersistedRecord` is the
  * on-the-wire append-log shape (`wire.jsonl`): intentionally flat
@@ -22,7 +23,6 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 
 import type { DeepReadonly, DerivedModelDef, ModelDef } from './model';
 import type { Op } from './op';
-import type { Signal } from './signal';
 
 export interface PersistedRecord {
   readonly type: string;
@@ -40,16 +40,23 @@ export interface ModelChange<S> {
   readonly prev: S;
 }
 
-export type WireEmission =
-  | { readonly type: 'record'; readonly record: PersistedRecord }
-  | { readonly type: 'signal'; readonly signal: Signal };
+/**
+ * Live append-log observation: `dispatch` emits each persisted record here so
+ * observers (the test harness's `[wire]` capture, audit tooling) see the record
+ * stream as it happens. Op-derived *facts* (`toEvent`) go to `IEventBus`
+ * instead — they are not records and are not emitted here. The `signal`
+ * variant that used to share this channel was retired in favor of `IEventBus`.
+ */
+export interface WireEmission {
+  readonly type: 'record';
+  readonly record: PersistedRecord;
+}
 
 export interface IWireService {
   readonly _serviceBrand: undefined;
 
   dispatch(...ops: Op[]): void;
   replay(...records: PersistedRecord[]): Promise<void>;
-  signal(signal: Signal): void;
   flush(): Promise<void>;
 
   attach<S>(model: DerivedModelDef<S>): IDisposable;

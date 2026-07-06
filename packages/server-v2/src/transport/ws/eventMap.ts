@@ -4,22 +4,21 @@
  * binds `event` → an `Event` subscription that yields an `IDisposable`.
  *
  * Only the high-value streams are exposed for now:
- *   Core    `events`                — process-wide `DomainEvent` bus (`IEventService`)
+ *   Core    `events`                — process-wide `GlobalEvent` bus (`IEventService`)
  *   Session `interactions`          — pending human-in-the-loop requests (`ISessionInteractionService.onDidChange`)
  *   Session `interactions:resolved` — request resolutions (`ISessionInteractionService.onDidResolve`)
- *   Agent   `events`                — per-agent `AgentEvent` stream (live signals via
- *                                     `IAgentWireService.onEmission`)
+ *   Agent   `events`                — per-agent `AgentEvent` stream (live events via
+ *                                     the per-agent `IEventBus`)
  */
 
 import {
+  IEventBus,
   IEventService,
-  IAgentWireService,
   ISessionInteractionService,
-  type DomainEvent,
+  type GlobalEvent,
   type IDisposable,
   type IScopeHandle,
   type Scope,
-  type WireEmission,
 } from '@moonshot-ai/agent-core-v2';
 
 import type { ScopeKind } from '../channel';
@@ -34,7 +33,7 @@ export const eventMap: Record<ScopeKind, Record<string, EventSource>> = {
   core: {
     events: {
       subscribe: (scope, listener) =>
-        scope.accessor.get(IEventService).subscribe(listener as (event: DomainEvent) => void),
+        scope.accessor.get(IEventService).subscribe(listener as (event: GlobalEvent) => void),
     },
   },
   session: {
@@ -61,15 +60,10 @@ export const eventMap: Record<ScopeKind, Record<string, EventSource>> = {
   agent: {
     events: {
       subscribe: (scope, listener) => {
-        // Every domain emits live signals via `IAgentWireService.onEmission`.
-        // Forward signals; ignore `record` emissions (persisted; live UI rides
-        // the signal).
-        const wireD = scope.accessor
-          .get(IAgentWireService)
-          .onEmission((emission: WireEmission) => {
-            if (emission.type === 'signal') listener(emission.signal);
-          });
-        return { dispose: () => wireD.dispose() };
+        // Every domain emits live events via the per-agent `IEventBus`. The bus
+        // is Agent-scoped, so this subscription sees only this agent's events.
+        const busD = scope.accessor.get(IEventBus).subscribe((event) => listener(event));
+        return { dispose: () => busD.dispose() };
       },
     },
   },

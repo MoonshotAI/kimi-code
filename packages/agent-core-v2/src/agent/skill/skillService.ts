@@ -122,18 +122,6 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   }
 
   private publishActivation(origin: SkillActivationOrigin): void {
-    // Legacy channel (kept until Phase 3 cuts consumers to `IEventBus`): the
-    // canonical `skill.activated` event is now also derived from the Op's
-    // `toEvent` onto `IEventBus` at `wire.dispatch` time.
-    this.wire.signal({
-      type: 'skill.activated',
-      activationId: origin.activationId,
-      skillName: origin.skillName,
-      trigger: origin.trigger,
-      skillArgs: origin.skillArgs,
-      skillPath: origin.skillPath,
-      skillSource: origin.skillSource,
-    });
     this.telemetry.track('skill_invoked', {
       skill_name: origin.skillName,
       trigger: origin.trigger,

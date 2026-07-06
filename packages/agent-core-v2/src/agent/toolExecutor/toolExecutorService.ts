@@ -17,7 +17,6 @@ import {
 import { PathSecurityError } from '#/_base/tools/policies/path-access';
 import { isUserCancellation } from "#/_base/utils/abort";
 import { isAbortError } from '#/agent/loop/errors';
-import { IAgentWireService, type IWireService } from '#/wire';
 import { IEventBus } from '#/app/event';
 import {
   ToolAccesses,
@@ -41,14 +40,6 @@ import {
   type ToolExecutorExecuteOptions,
 } from './toolExecutor';
 import { ToolScheduler } from './toolScheduler';
-
-declare module '#/wire' {
-  interface SignalMap {
-    'tool.call.started': Omit<ToolCallStartedEvent, 'type'>;
-    'tool.result': Omit<ToolResultEvent, 'type'>;
-    'tool.progress': Omit<ToolProgressEvent, 'type'>;
-  }
-}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -103,7 +94,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log?: ILogService,
@@ -469,15 +459,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       description: displayFields?.description,
       display: displayFields?.display,
     });
-    this.wire.signal({
-      type: 'tool.call.started',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      name: call.toolName,
-      args,
-      description: displayFields?.description,
-      display: displayFields?.display,
-    });
   }
 
   private dispatchToolResult(
@@ -492,13 +473,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       output: result.output,
       isError: result.isError,
     });
-    this.wire.signal({
-      type: 'tool.result',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      output: result.output,
-      isError: result.isError,
-    });
   }
 
   private dispatchToolProgress(
@@ -507,12 +481,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
   ): void {
     this.eventBus.publish({
-      type: 'tool.progress',
-      turnId: options.turnId,
-      toolCallId: call.toolCall.id,
-      update,
-    });
-    this.wire.signal({
       type: 'tool.progress',
       turnId: options.turnId,
       toolCallId: call.toolCall.id,

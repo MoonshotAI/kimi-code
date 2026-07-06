@@ -3,8 +3,8 @@
  *
  * Tracks swarm-mode enter/exit in the `wire` `SwarmModel` (mutated only through
  * the `swarm_mode.enter` / `swarm_mode.exit` Ops, read through `wire.getModel`),
- * mirrors it into `systemReminder` as live-only side effects, emits
- * `agent.status.updated` through `wire.signal`, and auto-exits on turn end via
+ * mirrors it into `systemReminder` as live-only side effects, derives
+ * `agent.status.updated` from the Ops' `toEvent`, and auto-exits on turn end via
  * `turn`. The reminder injection is a live-only side effect: `wire.replay`
  * rebuilds the model silently, so reminders are not re-emitted on resume
  * (matching the former `injectReminder` gate). Bound at Agent scope. The
@@ -52,7 +52,6 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
         variant: 'swarm_mode',
       });
     }
-    this.emitChanged();
   }
 
   exit(): void {
@@ -70,7 +69,6 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
         variant: 'swarm_mode_exit',
       });
     }
-    this.emitChanged();
   }
 
   get isActive(): boolean {
@@ -80,10 +78,6 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
   private get shouldAutoExit(): boolean {
     const trigger = this.wire.getModel(SwarmModel);
     return trigger === 'task' || trigger === 'tool';
-  }
-
-  private emitChanged(): void {
-    this.wire.signal({ type: 'agent.status.updated', swarmMode: this.isActive });
   }
 }
 

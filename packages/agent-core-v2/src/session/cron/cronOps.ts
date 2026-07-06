@@ -2,7 +2,7 @@
  * `cron` domain (L5) — wire Model (`CronModel`) and the `cron.add`
  * (`cronAdd`) / `cron.delete` (`cronDelete`) / `cron.cursor` (`cronCursor`)
  * Ops for the session-level scheduling engine, plus the `cron.fired` edge
- * signal declared on the wire `SignalMap`.
+ * event declared on `DomainEventMap`.
  *
  * The Model is the replayable map of `taskId -> CronTask` (initial empty). The
  * cursor (`lastFiredAt`) lives on the task itself, so there is no separate
@@ -29,12 +29,6 @@ import type { CronTask } from '#/app/cron';
 export type CronModelState = Map<string, CronTask>;
 
 export const CronModel = defineModel<CronModelState>('cron', () => new Map());
-
-declare module '#/wire' {
-  interface SignalMap {
-    'cron.fired': { readonly origin: CronJobOrigin; readonly prompt: string };
-  }
-}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

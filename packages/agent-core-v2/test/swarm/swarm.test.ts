@@ -27,7 +27,8 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService, WireService, type PersistedRecord, type WireEmission } from '#/wire';
+import { IAgentWireService, WireService, type PersistedRecord } from '#/wire';
+import { EventBusService, IEventBus, type DomainEvent } from '#/app/event';
 
 import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
 import { executeTool } from '../tools/fixtures/execute-tool';
@@ -73,6 +74,7 @@ describe('AgentSwarmService', () => {
       IAgentWireService,
       new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'swarm-test' }]),
     );
+    ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.stub(IAgentTurnService, stubTurnWithHooks());
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.stub(IAgentLifecycleService, {});
@@ -85,8 +87,8 @@ describe('AgentSwarmService', () => {
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
     const swarm = ix.get(IAgentSwarmService);
-    const emissions: WireEmission[] = [];
-    disposables.add(ix.get(IAgentWireService).onEmission((e) => emissions.push(e)));
+    const events: DomainEvent[] = [];
+    disposables.add(ix.get(IEventBus).subscribe((e) => events.push(e)));
 
     expect(swarm.isActive).toBe(false);
     swarm.enter('manual');
@@ -94,10 +96,7 @@ describe('AgentSwarmService', () => {
     swarm.exit();
     expect(swarm.isActive).toBe(false);
 
-    const signals = emissions
-      .filter((e): e is Extract<WireEmission, { type: 'signal' }> => e.type === 'signal')
-      .map((e) => e.signal);
-    expect(signals).toEqual([
+    expect(events).toEqual([
       { type: 'agent.status.updated', swarmMode: true },
       { type: 'agent.status.updated', swarmMode: false },
     ]);

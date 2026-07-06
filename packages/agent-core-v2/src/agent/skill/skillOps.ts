@@ -16,19 +16,6 @@ import { defineModel, defineOp } from '#/wire';
 
 import type { SkillActivationOrigin, SkillSource } from '#/agent/contextMemory';
 
-declare module '#/wire' {
-  interface SignalMap {
-    'skill.activated': {
-      activationId: string;
-      skillName: string;
-      trigger: string;
-      skillArgs?: string;
-      skillPath?: string;
-      skillSource?: SkillSource;
-    };
-  }
-}
-
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'skill.activated': {

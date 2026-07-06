@@ -2,17 +2,20 @@ import { migrateV1_0ToV1_1 } from './v1.1';
 import { migrateV1_1ToV1_2 } from './v1.2';
 import { migrateV1_2ToV1_3 } from './v1.3';
 import { migrateV1_3ToV1_4 } from './v1.4';
-import { migrateV1_4ToV1_5 } from './v1.5';
 
 export {
   migrateV1_0ToV1_1,
   migrateV1_1ToV1_2,
   migrateV1_2ToV1_3,
   migrateV1_3ToV1_4,
-  migrateV1_4ToV1_5,
 };
 
-export const AGENT_WIRE_PROTOCOL_VERSION = '1.5';
+// Wire protocol versions currently support only the `number.number` format.
+// Bump this only for changes that require migration of existing records or
+// change how existing records must be interpreted. Do not bump it only because
+// a new feature adds a new wire record type: older versions do not implement
+// that feature and do not need to understand the new record type.
+export const AGENT_WIRE_PROTOCOL_VERSION = '1.4';
 
 export interface WireMigrationRecord {
   readonly type: string;
@@ -22,8 +25,7 @@ export interface WireMigrationRecord {
 export interface WireMigration {
   readonly sourceVersion: string;
   readonly targetVersion: string;
-  migrateRecord?(record: WireMigrationRecord): WireMigrationRecord | readonly WireMigrationRecord[];
-  migrateRecords?(records: readonly WireMigrationRecord[]): readonly WireMigrationRecord[];
+  migrateRecord(record: WireMigrationRecord): WireMigrationRecord;
 }
 
 const MIGRATIONS: readonly WireMigration[] = [
@@ -31,7 +33,6 @@ const MIGRATIONS: readonly WireMigration[] = [
   migrateV1_1ToV1_2,
   migrateV1_2ToV1_3,
   migrateV1_3ToV1_4,
-  migrateV1_4ToV1_5,
 ];
 
 export function isNewerWireVersion(readVersion: string): boolean {
@@ -61,18 +62,10 @@ export function migrateWireRecord(
   record: WireMigrationRecord,
   migrations: readonly WireMigration[],
 ): WireMigrationRecord {
-  const migrated = migrateWireRecordBatch(record, migrations);
-  if (migrated.length !== 1) {
-    throw new Error('Wire migration produced multiple records for a single-record migration');
-  }
-  return migrated[0]!;
-}
-
-export function migrateWireRecordBatch(
-  record: WireMigrationRecord,
-  migrations: readonly WireMigration[],
-): WireMigrationRecord[] {
-  return applyWireMigrations([record], migrations);
+  return migrations.reduce(
+    (current, migration) => migration.migrateRecord(current),
+    record,
+  );
 }
 
 export function migrateWireRecords(
@@ -88,37 +81,7 @@ export function applyWireMigrations(
   records: readonly WireMigrationRecord[],
   migrations: readonly WireMigration[],
 ): WireMigrationRecord[] {
-  let current = [...records];
-  for (const migration of migrations) {
-    current = applyWireMigration(current, migration);
-  }
-  return current;
-}
-
-function applyWireMigration(
-  records: readonly WireMigrationRecord[],
-  migration: WireMigration,
-): WireMigrationRecord[] {
-  if (migration.migrateRecords !== undefined) {
-    return [...migration.migrateRecords(records)];
-  }
-  if (migration.migrateRecord === undefined) return [...records];
-  const migrated: WireMigrationRecord[] = [];
-  for (const record of records) {
-    const result = migration.migrateRecord(record);
-    if (isWireMigrationRecordArray(result)) {
-      migrated.push(...result);
-    } else {
-      migrated.push(result);
-    }
-  }
-  return migrated;
-}
-
-function isWireMigrationRecordArray(
-  result: WireMigrationRecord | readonly WireMigrationRecord[],
-): result is readonly WireMigrationRecord[] {
-  return Array.isArray(result);
+  return records.map((record) => migrateWireRecord(record, migrations));
 }
 
 function findMigration(sourceVersion: string): WireMigration | undefined {

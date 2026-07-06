@@ -211,7 +211,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
     const sourceMessages = source.accessor.get(IAgentContextMemoryService)?.get();
     if (sourceMessages !== undefined && sourceMessages.length > 0) {
-      child.accessor.get(IAgentContextMemoryService)?.splice(0, 0, sourceMessages);
+      child.accessor.get(IAgentContextMemoryService)?.append(...sourceMessages);
     }
     return child;
   }

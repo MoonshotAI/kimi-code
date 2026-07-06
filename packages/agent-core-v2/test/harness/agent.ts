@@ -128,6 +128,7 @@ import {
   type ScopeSeed,
   type ServiceIdentifier,
 } from '#/index';
+import { IEventBus } from '#/app/event';
 import { IAgentWireService, WireService } from '#/wire';
 import { IModelResolver, IModelService, ModelResolverService, type Model } from '#/app/model';
 import { IPlatformService } from '#/app/platform';
@@ -1118,15 +1119,17 @@ export class AgentTestContext {
     const wire = this.get(IAgentWireService);
     this.disposables.push(
       wire.onEmission((e) => {
-        if (e.type === 'record') {
-          // The new wire engine (`IWireService.dispatch`) persists records through the
-          // append log and emits them here; the legacy `IAgentWireRecordService.append`
-          // path that used to feed `[wire]` snapshot entries is no longer on the
-          // dispatch path. Forward the record so `[wire]` events are still captured.
-          this.captureRecord(e.record as PersistedWireRecord);
-          return;
-        }
-        const { type, ...args } = e.signal;
+        // `onEmission` is the record-only channel: `dispatch` persists each record
+        // through the append log and emits it here for `[wire]` snapshot capture.
+        // Op-derived facts (formerly signals) ride `IEventBus` instead — see the
+        // subscription below.
+        this.captureRecord(e.record as PersistedWireRecord);
+      }),
+    );
+    const eventBus = this.get(IEventBus);
+    this.disposables.push(
+      eventBus.subscribe((e) => {
+        const { type, ...args } = e;
         this.recordRpc(type, args);
       }),
     );

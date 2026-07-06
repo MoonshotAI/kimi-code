@@ -2,15 +2,15 @@
  * `turn` domain (L4) — `IAgentTurnService` implementation.
  *
  * Owns the agent's turn lifecycle: the next-turn-id counter lives in the `wire`
- * `TurnModel` (advanced only through the `turn.launch` Op via `wire.dispatch`,
+ * `TurnModel` (advanced only through the `turn.prompt` Op via `wire.dispatch`,
  * read through `wire.getModel`), while the per-turn runtime (the active `Turn`,
  * its `AbortController` and `ready`/`result` promises, and the `turn.started` /
- * `turn.ended` / `error` events) stays live-only. `turn.started` is derived from
- * the `turn.launch` Op's `toEvent` onto `IEventBus`; `turn.ended` / `error`
- * publish to `IEventBus` directly. Each is also emitted through `wire.signal`
- * (legacy channel, until Phase 3). `wire.replay` rebuilds the counter silently so
- * resumed sessions keep allocating fresh ids without re-firing anything. Bound at
- * Agent scope.
+ * `turn.ended` / `error` events) stays live-only. `turn.started` is emitted
+ * through `wire.signal` (legacy channel); `turn.ended` / `error` publish to
+ * `IEventBus` and are also emitted through `wire.signal`. `wire.replay` rebuilds
+ * the counter silently so resumed sessions keep allocating fresh ids without
+ * re-firing anything. `turn.launch` (`launchTurn`) stays registered only to
+ * replay sessions written at wire protocol 1.5. Bound at Agent scope.
  */
 
 import { createControlledPromise } from '@antfu/utils';
@@ -27,16 +27,7 @@ import { IAgentTelemetryContextService, ITelemetryService } from '#/app/telemetr
 import { IAgentWireService, type IWireService } from '#/wire';
 import type { Turn, TurnEndedContext, TurnResult } from './turn';
 import { IAgentTurnService } from './turn';
-import { launchTurn, TurnModel } from './turnOps';
-
-declare module '#/wire' {
-  interface SignalMap {
-    'turn.started': Omit<TurnStartedEvent, 'type'>;
-    'turn.ended': Omit<TurnEndedEvent, 'type'>;
-    // `error` is declared by the `mcp` domain (interface-merge); reused here, not
-    // re-declared.
-  }
-}
+import { promptTurn, TurnModel } from './turnOps';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -74,7 +65,7 @@ export class AgentTurnService implements IAgentTurnService {
     }
 
     const turnId = this.wire.getModel(TurnModel).nextTurnId;
-    this.wire.dispatch(launchTurn({ turnId }));
+    this.wire.dispatch(promptTurn({ turnId }));
     const abortController = new AbortController();
     const ready = createControlledPromise<void>();
     const turn: MutableTurn = {
@@ -103,10 +94,6 @@ export class AgentTurnService implements IAgentTurnService {
     let result: TurnResult | undefined;
     try {
       turnTelemetry.track('turn_started');
-      this.wire.signal({
-        type: 'turn.started',
-        turnId: turn.id,
-      });
       result = await this.loop.run({
         turnId: turn.id,
         signal: turn.abortController.signal,
@@ -134,18 +121,8 @@ export class AgentTurnService implements IAgentTurnService {
           error,
           durationMs: Date.now() - startedAt,
         });
-        // Legacy channel (kept until Phase 3 cuts consumers to `IEventBus`).
-        this.wire.signal({
-          type: 'turn.ended',
-          turnId: turn.id,
-          reason: result.reason,
-          error,
-          durationMs: Date.now() - startedAt,
-        });
         if (error !== undefined) {
           this.eventBus.publish({ type: 'error', ...error });
-          // Legacy channel (kept until Phase 3).
-          this.wire.signal({ type: 'error', ...error });
         }
         if (result.reason !== 'completed') {
           turnTelemetry.track('turn_interrupted', { at_step: result.steps ?? null });

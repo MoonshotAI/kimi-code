@@ -14,8 +14,8 @@
  * (used by `userTool`; intentionally not persisted, re-derived on resume); the
  * live overlay is cached in a field and falls back to the Model when unset, so
  * no restore-ordering coupling with `userTool` arises. The `agent.status.updated`
- * / `warning` signals now ride the `wire` signal channel (interface-merged into
- * `SignalMap`; `agent.status.updated` canonical in `usageOps`). `chdir` and
+ * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
+ * `usageOps`). `chdir` and
  * `emitStatusUpdated` run live-only after the dispatch, so `wire.replay`
  * rebuilds the Models silently.
  * Bound at Agent scope.
@@ -87,17 +87,9 @@ declare module '#/agent/wireRecord' {
   }
 }
 
-declare module '#/wire' {
-  interface SignalMap {
-    // `warning` is owned by `profile` (the agents-md-oversized notice); it is the
-    // sole emitter, so the declaration lives here rather than in another domain.
-    warning: Omit<WarningEvent, 'type'>;
-  }
-}
-
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    // `warning` is owned by `profile`; mirrors the `SignalMap` declaration above.
+    // `warning` is owned by `profile` (the agents-md-oversized notice).
     warning: Omit<WarningEvent, 'type'>;
   }
 }
@@ -186,11 +178,6 @@ export class AgentProfileService implements IAgentProfileService {
         message: agentsMdWarning,
         code: 'agents-md-oversized',
       });
-      this.wire.signal({
-        type: 'warning',
-        message: agentsMdWarning,
-        code: 'agents-md-oversized',
-      });
     }
   }
 
@@ -244,11 +231,6 @@ export class AgentProfileService implements IAgentProfileService {
     this.agentsMdWarning = agentsMdWarning;
     if (agentsMdWarning !== undefined) {
       this.eventBus.publish({
-        type: 'warning',
-        message: agentsMdWarning,
-        code: 'agents-md-oversized',
-      });
-      this.wire.signal({
         type: 'warning',
         message: agentsMdWarning,
         code: 'agents-md-oversized',
@@ -404,11 +386,6 @@ export class AgentProfileService implements IAgentProfileService {
     }
     if (!this.hasModel()) return;
     this.eventBus.publish({
-      type: 'agent.status.updated',
-      model: this.modelAlias,
-      maxContextTokens: this.getModelCapabilities().max_context_tokens,
-    });
-    this.wire.signal({
       type: 'agent.status.updated',
       model: this.modelAlias,
       maxContextTokens: this.getModelCapabilities().max_context_tokens,

@@ -21,8 +21,8 @@
  * `apply` the new state is `Object.freeze`d — the runtime half of the
  * immutability guarantee whose compile-time half is `DeepReadonly`. Internally
  * each per-model instance is erased to `any` (the same localized erasure as
- * `OP_REGISTRY`) and restored at the public boundary; `signal` is a side channel
- * that never enters an OpGroup.
+ * `OP_REGISTRY`) and restored at the public boundary; an Op's optional `toEvent`
+ * derives an `IEventBus` fact on `dispatch` (never on `replay`).
  *
  * Persists each dispatched op through `persistence` (`IAppendLogStore`) as a
  * flat `{ type, ...payload }` record — scalar / array payloads nested so a
@@ -56,7 +56,6 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import type { DeepReadonly, DerivedModelDef, ModelDef, PartsRehydrator } from './model';
 import type { Op } from './op';
 import { OP_REGISTRY } from './op';
-import type { Signal } from './signal';
 import type {
   IWireService,
   ModelChange,
@@ -223,10 +222,6 @@ export class WireService extends Disposable implements IWireService {
     this.execute({ ops, silent: true });
     await this.rehydrateModels();
     this.restoredEmitter.fire(undefined);
-  }
-
-  signal(signal: Signal): void {
-    this.emissionEmitter.fire({ type: 'signal', signal });
   }
 
   async flush(): Promise<void> {

@@ -123,14 +123,11 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
       this.cancel(id);
       throw error;
     }
-
-    if (emitStatus) this.emitChanged();
   }
 
   cancel(id?: string): void {
     this.wire.dispatch(planModeCancel({ id }));
     this.telemetryContext.set({ mode: 'agent' });
-    this.emitChanged();
   }
 
   async clear(): Promise<void> {
@@ -142,7 +139,6 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   exit(id?: string): void {
     this.wire.dispatch(planModeExit({ id }));
     this.telemetryContext.set({ mode: 'agent' });
-    this.emitChanged();
   }
 
   async status(): Promise<PlanData> {
@@ -265,10 +261,6 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
             : `No plan file found. Write your plan to ${this.currentPlanFilePath()} first, then call ExitPlanMode.`,
       },
     };
-  }
-
-  private emitChanged(): void {
-    this.wire.signal({ type: 'agent.status.updated', planMode: this.isActive });
   }
 
   private trackTelemetry(

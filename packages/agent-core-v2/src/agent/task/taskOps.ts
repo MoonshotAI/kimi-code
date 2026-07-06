@@ -25,13 +25,6 @@ export type TaskModelState = Map<string, AgentTaskInfo>;
 
 export const TaskModel = defineModel<TaskModelState>('task', () => new Map());
 
-declare module '#/wire' {
-  interface SignalMap {
-    'task.started': { readonly info: AgentTaskInfo };
-    'task.terminated': { readonly info: AgentTaskInfo };
-  }
-}
-
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'task.started': { readonly info: AgentTaskInfo };

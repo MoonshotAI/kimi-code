@@ -62,7 +62,6 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
     const tokens = this.wire.getModel(ContextSizeModel).tokens;
     if (tokens === this.lastEmittedTokens) return;
     this.lastEmittedTokens = tokens;
-    this.wire.signal({ type: 'agent.status.updated', contextTokens: tokens });
   }
 }
 
