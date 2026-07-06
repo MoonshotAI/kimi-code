@@ -332,7 +332,7 @@ describe('mcpResultToExecutableOutput', () => {
       { type: 'text', text: 'A'.repeat(100_000) },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,' + 'B'.repeat(500_000) } },
     ]);
-    expect(out).not.toHaveProperty('truncated');
+    expect(out.truncated).toBeUndefined();
   });
 
   test('downsamples an oversized real image instead of leaving it full-size', async () => {

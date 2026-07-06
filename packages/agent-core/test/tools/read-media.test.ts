@@ -735,9 +735,10 @@ describe('ReadMediaFileTool', () => {
 
       const systemText = noteText(result);
       expect(systemText).toContain('2600x2600');
-      // The note trails the media content in the projected message, so the
-      // wording must point up at the image, not down.
-      expect(systemText).toMatch(/The image above was downsampled to 2000x2000/);
+      // Wording must not depend on serialization order: some providers keep
+      // the note inline after the media, others flatten tool text and
+      // re-attach the image after it — so no "above"/"below".
+      expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
       expect(systemText).toMatch(/fine detail/i);
       expect(systemText).toContain('region');
     });

@@ -175,7 +175,7 @@ function buildMediaNote(input: {
   const delivery = input.delivery;
   if (delivery?.kind === 'downsampled') {
     parts.push(
-      `The image above was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
+      `The attached image was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
         `(${delivery.mimeType}, ${formatByteSize(delivery.byteLength)}) to fit model limits; ` +
         'fine detail may be lost.',
       'To inspect fine detail, call ReadMediaFile again with the region parameter ' +

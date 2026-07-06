@@ -204,8 +204,8 @@ export async function mcpResultToExecutableOutput(
   return {
     output,
     isError: result.isError,
-    ...(split.note === undefined ? {} : { note: split.note }),
-    ...(truncated ? { truncated: true as const } : {}),
+    note: split.note,
+    truncated: truncated ? true : undefined,
   };
 }
 
