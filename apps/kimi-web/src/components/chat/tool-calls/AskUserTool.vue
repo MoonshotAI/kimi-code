@@ -17,6 +17,7 @@ import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
 import { toolGlyph, toolLabel } from '../../../lib/toolMeta';
 import {
+  answerFor,
   parseAskInput,
   parseAskOutput,
   resolveAnswer,
@@ -55,10 +56,7 @@ const isDismissed = computed(
   () => recognized.value && Object.keys(output.value.answers).length === 0 && output.value.note.length > 0,
 );
 const resolved = computed(() =>
-  questions.value.map((q, i) =>
-    // Current form keys by question text; legacy transcripts key by `q_<i>`.
-    resolveAnswer(output.value.answers[q.question] ?? output.value.answers[`q_${i}`], q.options),
-  ),
+  questions.value.map((q, i) => resolveAnswer(answerFor(output.value.answers, q.question, i), q.options)),
 );
 const answeredCount = computed(() => Object.keys(output.value.answers).length);
 

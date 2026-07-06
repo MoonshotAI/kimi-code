@@ -34,12 +34,13 @@ import DESCRIPTION from './ask-user.md?raw';
 const QuestionOptionSchema = z.object({
   label: z
     .string()
+    .min(1)
     .describe("Concise display text (1-5 words). If recommended, append '(Recommended)'."),
   description: z.string().default('').describe('Brief explanation of trade-offs or implications.'),
 });
 
 const QuestionItemSchema = z.object({
-  question: z.string().describe("A specific, actionable question. End with '?'."),
+  question: z.string().min(1).describe("A specific, actionable question. End with '?'."),
   header: z
     .string()
     .default('')

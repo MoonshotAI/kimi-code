@@ -86,6 +86,22 @@ describe('AskUserQuestionTool', () => {
     ).toBe(false);
   });
 
+  it('rejects empty question text and empty option labels at the schema layer', () => {
+    expect(
+      AskUserQuestionInputSchema.safeParse(input({ question: '' })).success,
+    ).toBe(false);
+    expect(
+      AskUserQuestionInputSchema.safeParse(
+        input({
+          options: [
+            { label: '', description: 'Empty label' },
+            { label: 'B', description: '' },
+          ],
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
   it('rejects duplicate question texts across questions (schema + execution)', async () => {
     const duplicated: AskUserQuestionInput = {
       questions: [input().questions[0]!, input().questions[0]!],

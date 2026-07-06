@@ -271,7 +271,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     };
     expect(inProcResp.answers).toEqual({
       'Animal?': 'Cat',
-      'Colors?': 'R,B',
+      'Colors?': 'R, B',
       'Custom?': 'Hippopotamus',
       // 'Skip me' omitted entirely (kind: skipped)
     });
@@ -391,7 +391,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
       'multi kind',
       [{ question: '?', options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }], multiSelect: true }],
       { q_0: { kind: 'multi', option_ids: ['opt_0_0', 'opt_0_2'] } },
-      { '?': 'A,C' },
+      { '?': 'A, C' },
     ],
     [
       'other kind',
@@ -409,7 +409,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
           other_text: 'X',
         },
       },
-      { '?': 'A,X' },
+      { '?': 'A, X' },
     ],
     [
       'skipped kind (record entry omitted)',

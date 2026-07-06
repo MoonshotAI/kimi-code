@@ -130,7 +130,7 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
     expect(inProc.answers).toEqual({ 'Which animal?': 'Dog' });
   });
 
-  it("'multi' → answers[question text] = labels.join(',')", () => {
+  it("'multi' → answers[question text] = labels.join(', ')", () => {
     const inProc = toAgentCoreResponse(
       {
         answers: {
@@ -139,7 +139,7 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
       },
       request,
     );
-    expect(inProc.answers).toEqual({ 'Which colors?': 'Red,Blue' });
+    expect(inProc.answers).toEqual({ 'Which colors?': 'Red, Blue' });
   });
 
   it("'other' → answers[question text] = free text verbatim", () => {
@@ -150,7 +150,7 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
     expect(inProc.answers).toEqual({ 'Which animal?': 'Hippopotamus' });
   });
 
-  it("'multi_with_other' → [...labels, other_text].join(',')", () => {
+  it("'multi_with_other' → [...labels, other_text].join(', ')", () => {
     const inProc = toAgentCoreResponse(
       {
         answers: {
@@ -163,7 +163,7 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
       },
       request,
     );
-    expect(inProc.answers).toEqual({ 'Which colors?': 'Red,Green,Custom' });
+    expect(inProc.answers).toEqual({ 'Which colors?': 'Red, Green, Custom' });
   });
 
   it("'skipped' → entry OMITTED entirely from the record", () => {
@@ -209,7 +209,7 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
     );
     expect(inProc.answers).toEqual({
       q_0: 'opt_0_1',
-      q_1: 'opt_1_0,opt_1_2',
+      q_1: 'opt_1_0, opt_1_2',
     });
   });
 

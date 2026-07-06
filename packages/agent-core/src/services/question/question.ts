@@ -183,10 +183,14 @@ export function toBrokerRequest(
  *                         when the request is unavailable or the qid is
  *                         unknown — stale client, defensive)
  *   - single            → option label
- *   - multi             → labels.join(',')
+ *   - multi             → labels.join(', ')
  *   - other             → text
- *   - multi_with_other  → [...labels, other_text].join(',')
+ *   - multi_with_other  → [...labels, other_text].join(', ')
  *   - skipped           → OMIT entry
+ *
+ * Multi-select joins use `', '` to match what the TUI reverse-RPC path
+ * already emits, so the model sees one format regardless of which client
+ * answered.
  *
  * Unknown option ids are kept verbatim rather than dropped so a stale
  * client's answer stays diagnosable.
@@ -213,13 +217,13 @@ export function toAgentCoreResponse(
         flattened[key] = optionText(ans.option_id);
         break;
       case 'multi':
-        flattened[key] = ans.option_ids.map(optionText).join(',');
+        flattened[key] = ans.option_ids.map(optionText).join(', ');
         break;
       case 'other':
         flattened[key] = ans.text;
         break;
       case 'multi_with_other':
-        flattened[key] = [...ans.option_ids.map(optionText), ans.other_text].join(',');
+        flattened[key] = [...ans.option_ids.map(optionText), ans.other_text].join(', ');
         break;
       case 'skipped':
         // Omitted from the record — skipped questions carry no answer.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  answerFor,
   parseAskInput,
   parseAskOutput,
   resolveAnswer,
@@ -127,8 +128,14 @@ describe('resolveAnswer', () => {
     expect(r.selected).toEqual(new Set([0, 2]));
   });
 
+  it("matches comma-space-joined multi-select labels (server / TUI ', ' form)", () => {
+    const r = resolveAnswer('Vercel, AWS', multi);
+    expect(r.selected).toEqual(new Set([0, 2]));
+    expect(r.otherText).toBe('');
+  });
+
   it('splits a multi+Other value into labels plus the free-text segment', () => {
-    const r = resolveAnswer('Vercel,AWS,Custom thing', multi);
+    const r = resolveAnswer('Vercel, AWS, Custom thing', multi);
     expect(r.selected).toEqual(new Set([0, 2]));
     expect(r.otherText).toBe('Custom thing');
   });
@@ -170,7 +177,7 @@ describe('resolveAnswer', () => {
   it('joins non-matching segments back so Other text containing a comma survives', () => {
     const r = resolveAnswer('Auth0,alpha,beta', single);
     expect([...r.selected]).toEqual([1]);
-    expect(r.otherText).toBe('alpha,beta');
+    expect(r.otherText).toBe('alpha, beta');
   });
 
   it('decodes legacy ids without any options context', () => {
@@ -189,5 +196,25 @@ describe('resolveAnswer', () => {
     expect(r.selected.size).toBe(0);
     expect(r.otherText).toBe('');
     expect(r.indeterminate).toBe(false);
+  });
+});
+
+describe('answerFor', () => {
+  it('prefers the question-text key (current form)', () => {
+    const answers = { 'Which auth provider?': 'Auth0' } as const;
+    expect(answerFor(answers, 'Which auth provider?', 0)).toBe('Auth0');
+  });
+
+  it('falls back to the legacy q_<index> key', () => {
+    const answers = { q_1: 'opt_1_2' } as const;
+    expect(answerFor(answers, 'Where to deploy?', 1)).toBe('opt_1_2');
+  });
+
+  it('returns undefined when neither key is present (skipped question)', () => {
+    expect(answerFor({}, 'Which auth provider?', 0)).toBeUndefined();
+  });
+
+  it('passes through the literal true (indeterminate answer)', () => {
+    expect(answerFor({ 'Which auth provider?': true }, 'Which auth provider?', 0)).toBe(true);
   });
 });

@@ -5,8 +5,8 @@
 //   tool.arg      : JSON { questions: [{ question, header, options[{label,description}], multi_select }] }
 //                   Input questions carry NO id — order === broker order.
 //   tool.output[0]: on a successful answer, JSON { answers: Record<question text, string|true>, note? }
-//                   value = the chosen option's label (single), comma-joined
-//                   labels (multi), free-text (Other), or labels+text
+//                   value = the chosen option's label (single), labels joined
+//                   with ', ' (multi), free-text (Other), or labels+text
 //                   (multi+Other). skipped → omitted. Dismissed → { answers: {}, note }.
 //                   LEGACY (transcripts from before the label form): keys are
 //                   `q_<index>` and values are synthesized `opt_<q>_<o>` ids —
@@ -108,6 +108,16 @@ export function parseAskOutput(output: string[] | undefined): AskOutput {
   };
 }
 
+/** Look up one question's flattened answer: current transcripts key by the
+ *  question text; legacy transcripts key by `q_<index>`. */
+export function answerFor(
+  answers: Record<string, string | true>,
+  questionText: string,
+  index: number,
+): string | true | undefined {
+  return answers[questionText] ?? answers[`q_${index}`];
+}
+
 const OPT_ID = /^opt_\d+_(\d+)$/;
 
 /** Decode one question's flattened answer into picked option indices plus any
@@ -115,10 +125,12 @@ const OPT_ID = /^opt_\d+_(\d+)$/;
  *
  *  Current form: the value is option label text — matched exactly against
  *  `options` (whole-string first, so a single-select label containing a comma
- *  still resolves; then per comma-segment for multi-select). Legacy form: the
+ *  still resolves; then per comma-segment for multi-select). Segments are
+ *  trimmed before matching because joiners vary by client (', ' from the
+ *  server translator and TUI, ',' in older transcripts). Legacy form: the
  *  value is `opt_<q>_<o>` ids whose trailing index is decoded directly.
  *  Segments that are neither a label nor an id are the Other free text
- *  (joined back with `,` in case the text itself contained one). */
+ *  (rejoined with ', ' in case the text itself contained a comma). */
 export function resolveAnswer(
   value: string | true | undefined,
   options: readonly AskOption[] = [],
@@ -139,7 +151,8 @@ export function resolveAnswer(
 
   const selected = new Set<number>();
   const others: string[] = [];
-  for (const seg of value.split(',')) {
+  for (const rawSeg of value.split(',')) {
+    const seg = rawSeg.trim();
     const byLabel = indexByLabel.get(seg);
     if (byLabel !== undefined) {
       selected.add(byLabel);
@@ -149,5 +162,5 @@ export function resolveAnswer(
     if (m) selected.add(Number(m[1]));
     else if (seg.length > 0) others.push(seg);
   }
-  return { selected, otherText: others.join(','), indeterminate: false };
+  return { selected, otherText: others.join(', '), indeterminate: false };
 }
