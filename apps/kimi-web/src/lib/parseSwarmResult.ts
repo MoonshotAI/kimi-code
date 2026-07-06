@@ -26,7 +26,12 @@ export interface SwarmResult {
 
 const SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/;
 const RESUME_HINT_RE = /<resume_hint>([\s\S]*?)<\/resume_hint>/;
-const SUBAGENT_RE = /<subagent\b([^>]*)>([\s\S]*?)<\/subagent>/g;
+// Opening tag for a subagent row. Body parsing is done manually below so a
+// literal `</subagent>` inside a subagent's output (e.g. the subagent is
+// analyzing or emitting an AgentSwarm snippet) does not terminate the row
+// early — producer writes body text unescaped.
+const SUBAGENT_START_RE = /<subagent\b([^>]*)>/g;
+const SUBAGENT_CLOSE = '</subagent>';
 const COUNT_RE = /(completed|failed|aborted):\s*(\d+)/g;
 const ATTR_RE = /([a-z_]+)="([^"]*)"/g;
 
@@ -59,6 +64,36 @@ function parseCounts(summary: string): Pick<SwarmResult, 'completed' | 'failed' 
   return counts;
 }
 
+function parseSubagents(text: string): SwarmResultSubagent[] {
+  const subs: SwarmResultSubagent[] = [];
+  SUBAGENT_START_RE.lastIndex = 0;
+  const opens: { attrs: string; start: number; openEnd: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = SUBAGENT_START_RE.exec(text)) !== null) {
+    opens.push({ attrs: m[1] ?? '', start: m.index, openEnd: SUBAGENT_START_RE.lastIndex });
+  }
+  for (let i = 0; i < opens.length; i++) {
+    const open = opens[i]!;
+    // Close tag: the last `</subagent>` before the next row's opening tag (or
+    // document end), so embedded `</subagent>` text in the body is preserved
+    // instead of truncating this subagent's output.
+    const nextStart = opens[i + 1]?.start ?? text.length;
+    const windowClose = text.lastIndexOf(SUBAGENT_CLOSE, nextStart - 1);
+    const close = windowClose > open.openEnd ? windowClose : text.indexOf(SUBAGENT_CLOSE, open.openEnd);
+    const body = close === -1 ? text.slice(open.openEnd) : text.slice(open.openEnd, close);
+    const attrs = parseAttrs(open.attrs);
+    subs.push({
+      outcome: attrs['outcome'] ?? 'completed',
+      item: attrs['item'],
+      agentId: attrs['agent_id'],
+      mode: attrs['mode'],
+      state: attrs['state'],
+      body: body.trim(),
+    });
+  }
+  return subs;
+}
+
 export function parseSwarmResult(output: string[] | string | undefined | null): SwarmResult | null {
   if (output === undefined || output === null) return null;
   const text = Array.isArray(output) ? output.join('\n') : output;
@@ -67,21 +102,7 @@ export function parseSwarmResult(output: string[] | string | undefined | null): 
   const summary = SUMMARY_RE.exec(text)?.[1]?.trim() ?? '';
   const { completed, failed, aborted } = parseCounts(summary);
   const resumeHint = RESUME_HINT_RE.exec(text)?.[1]?.trim();
-
-  const subagents: SwarmResultSubagent[] = [];
-  SUBAGENT_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = SUBAGENT_RE.exec(text)) !== null) {
-    const attrs = parseAttrs(m[1] ?? '');
-    subagents.push({
-      outcome: attrs['outcome'] ?? 'completed',
-      item: attrs['item'],
-      agentId: attrs['agent_id'],
-      mode: attrs['mode'],
-      state: attrs['state'],
-      body: (m[2] ?? '').trim(),
-    });
-  }
+  const subagents = parseSubagents(text);
 
   const totalFromSummary = completed + failed + aborted;
   return {

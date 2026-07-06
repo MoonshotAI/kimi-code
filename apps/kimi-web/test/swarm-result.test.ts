@@ -45,4 +45,29 @@ describe('parseSwarmResult', () => {
     expect(result?.subagents[0]?.mode).toBe('resume');
     expect(result?.subagents[0]?.state).toBe('started');
   });
+
+  it('does not truncate the body on a literal "</subagent>" inside it', () => {
+    // Producer writes subagent body unescaped. A naive non-greedy regex treats
+    // the embedded `</subagent>` as the row's close, losing " after".
+    const body = 'before</subagent> after';
+    const text = `<agent_swarm_result><summary>completed: 1</summary><subagent item="xml" outcome="completed">${body}</subagent></agent_swarm_result>`;
+    const result = parseSwarmResult(text);
+    expect(result?.subagents).toHaveLength(1);
+    expect(result?.subagents[0]?.item).toBe('xml');
+    expect(result?.subagents[0]?.body).toBe(body);
+  });
+
+  it('keeps sibling rows intact when an earlier body has a "</subagent>" inside it', () => {
+    const text = [
+      '<agent_swarm_result><summary>completed: 2</summary>',
+      '<subagent item="a" outcome="completed">row one</subagent>and more</subagent>',
+      '<subagent item="b" outcome="completed">row two</subagent>',
+      '</agent_swarm_result>',
+    ].join('');
+    const result = parseSwarmResult(text);
+    expect(result?.subagents.map((s) => s.item)).toEqual(['a', 'b']);
+    expect(result?.subagents[0]?.body).toContain('row one');
+    expect(result?.subagents[0]?.body).toContain('and more');
+    expect(result?.subagents[1]?.body).toBe('row two');
+  });
 });
