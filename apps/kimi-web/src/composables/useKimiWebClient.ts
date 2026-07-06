@@ -1127,21 +1127,28 @@ async function pullSessionWarnings(sessionId: string): Promise<void> {
 
 async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
   // Preconditions captured before the await, used to detect a newer local
-  // prompt/seq that appears while the snapshot is in flight (see guard below).
+  // prompt/seq or optimistic send that appears while the snapshot is in flight
+  // (see guard below).
   const seqBefore = rawState.lastSeqBySession[sessionId] ?? 0;
   const promptBefore = rawState.promptIdBySession[sessionId];
+  const inFlightBefore = inFlightPromptSessions.has(sessionId);
+  const wasLoaded = hasLoadedMessages(sessionId);
   try {
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
 
-    // Discard a snapshot that went stale because a newer local prompt/seq
-    // arrived while it was in flight. On the re-open path `sessionLoading` is
-    // false and the composer stays usable, so a send can race this GET: the
-    // snapshot's `asOfSeq` predates the new prompt, and replacing messages here
-    // would wipe a live turn whose volatile deltas are not replayable. The live
-    // stream will populate messages; a later re-open reconciles again if needed.
-    if ((rawState.lastSeqBySession[sessionId] ?? 0) !== seqBefore) return 'ok';
-    if (rawState.promptIdBySession[sessionId] !== promptBefore) return 'ok';
+    // Staleness guard, scoped to the re-open path (session already loaded):
+    // there the composer stays usable, so a send or a broadcast global event can
+    // race this GET and produce a snapshot whose `asOfSeq` predates newer local
+    // state — replacing messages would wipe a live turn (volatile deltas are not
+    // replayable) or the just-sent optimistic user message. On first open we must
+    // always install messages + subscribe, even if a global event advanced lastSeq
+    // during the await. When discarded, the live stream / next re-open reconciles.
+    if (wasLoaded) {
+      if ((rawState.lastSeqBySession[sessionId] ?? 0) !== seqBefore) return 'ok';
+      if (rawState.promptIdBySession[sessionId] !== promptBefore) return 'ok';
+      if (inFlightPromptSessions.has(sessionId) !== inFlightBefore) return 'ok';
+    }
 
     // Drain any queued streaming deltas before the snapshot replaces
     // messagesBySession[sessionId]. The snapshot is authoritative (it already
