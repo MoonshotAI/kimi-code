@@ -608,12 +608,17 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('write-goal', 'ship it', 'sess_new');
   });
 
-  it('persists draft plan/swarm modes to the new session before activation', async () => {
+  it('awaits the profile POST before activating, so plan/swarm apply first', async () => {
     // Skill activation only carries `args`, so the daemon never sees the per-
-    // prompt planMode/swarmMode flags. Persisting them to the new session's
-    // profile keeps the first skill turn in the modes the UI shows.
+    // prompt planMode/swarmMode flags. We persist them to the new session's
+    // profile and must WAIT for it; otherwise the :activate request can race
+    // ahead of applyAgentState and the first skill turn runs at default modes.
+    let resolveProfile!: () => void;
+    const profileGate = new Promise<void>((r) => {
+      resolveProfile = r;
+    });
     const activateSkill = vi.fn().mockResolvedValue(undefined);
-    const persistSessionProfile = vi.fn();
+    const persistSessionProfile = vi.fn().mockReturnValue(profileGate);
     const deps = {
       ...skillDeps(activateSkill),
       persistSessionProfile,
@@ -621,17 +626,21 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     };
     const ws = useWorkspaceState(createState(), deps);
 
-    await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
-
+    const pending = ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+    // Yield a macrotask so createDraftSession's chain (which awaits selectSession
+    // before persisting the profile) progresses to the in-flight /profile POST.
+    // Activation must NOT have started while /profile is still pending.
+    await new Promise((r) => setTimeout(r, 0));
     expect(persistSessionProfile).toHaveBeenCalledWith(
       { planMode: true, swarmMode: true },
       'sess_new',
     );
-    // Ordering: profile is persisted (synchronously, even if the POST is async)
-    // before the skill activation is issued.
-    expect(persistSessionProfile.mock.invocationCallOrder[0]).toBeLessThan(
-      activateSkill.mock.invocationCallOrder[0]!,
-    );
+    expect(activateSkill).not.toHaveBeenCalled();
+
+    resolveProfile();
+    await pending;
+
+    expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
   it('is a no-op for an unknown workspace', async () => {

@@ -126,7 +126,7 @@ export interface UseWorkspaceStateDeps {
   reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => void;
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
@@ -801,13 +801,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     // Persist plan/swarm onto the new session's profile so non-prompt origins
     // (e.g. a skill activation, which carries only `args`) run with the same
-    // modes the UI shows. Plain prompts already send planMode/swarmMode on the
-    // prompt request itself, so this is redundant but harmless there. Sent by
-    // id (not via the active-session setter) for the same race reason as the
-    // map writes above. Goal mode is a one-shot flag consumed per send, not a
-    // profile field, so there is nothing to persist for it.
+    // modes the UI shows. Awaited so the origin that follows — especially
+    // startSessionAndActivateSkill — can't race ahead of applyAgentState on the
+    // daemon and have its first turn run at the default modes. Sent by id (not
+    // via the active-session setter) for the same race reason as the map writes
+    // above. Plain prompts already send planMode/swarmMode on the prompt request
+    // itself, so awaiting here is redundant but harmless there. Goal mode is a
+    // one-shot flag consumed per send, not a profile field, so there is nothing
+    // to persist for it.
     if (draftModes.planMode || draftModes.swarmMode) {
-      persistSessionProfile(
+      await persistSessionProfile(
         {
           planMode: draftModes.planMode,
           swarmMode: draftModes.swarmMode,
@@ -1512,7 +1515,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (sid) {
       rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: on };
       savePlanModeToStorage();
-      persistSessionProfile({ planMode: on });
+      void persistSessionProfile({ planMode: on });
     } else {
       draftModes.planMode = on;
     }
@@ -1532,7 +1535,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (sid) {
       rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: on };
       saveSwarmModeToStorage();
-      persistSessionProfile({ swarmMode: on });
+      void persistSessionProfile({ swarmMode: on });
     } else {
       draftModes.swarmMode = on;
     }
@@ -1610,7 +1613,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   function setPermission(mode: PermissionMode): void {
     rawState.permission = mode;
     savePermissionToStorage(mode);
-    persistSessionProfile({ permissionMode: mode });
+    void persistSessionProfile({ permissionMode: mode });
   }
 
   /** Dismiss a warning by index */

@@ -602,10 +602,14 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
 }
 
 /** Persist runtime controls to a session via POST /profile, then re-read
- *  /status. Fire-and-forget: the UI already updated optimistically. `sessionId`
- *  overrides the active session — used when creating a session and immediately
- *  persisting its draft modes, so a concurrent session switch can't write the
- *  patch to the wrong session. */
+ *  /status. `sessionId` overrides the active session — used when creating a
+ *  session and immediately persisting its draft modes, so a concurrent session
+ *  switch can't write the patch to the wrong session.
+ *
+ *  Returns the update promise (errors swallowed — the UI already updated
+ *  optimistically). Most callers fire-and-forget via `void persistSessionProfile(...)`;
+ *  call sites that must order strictly after the profile (e.g. a skill
+ *  activation that can't carry its own modes) await it. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -614,11 +618,11 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
-}, sessionId?: string): void {
+}, sessionId?: string): Promise<void> {
   const sid = sessionId ?? rawState.activeSessionId;
-  if (!sid) return;
+  if (!sid) return Promise.resolve();
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
-  void Promise.resolve(getKimiWebApi().updateSession(sid, patch))
+  return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
     .then(() => refreshSessionStatus(sid))
     .catch(() => {
       /* ignore — local state already reflects the change */
