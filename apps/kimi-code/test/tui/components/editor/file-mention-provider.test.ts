@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,17 @@ function ctrl(): AbortSignal {
 }
 
 const NO_FD = null;
+
+function resolveFdPath(): string | null {
+  const command = process.platform === 'win32' ? 'where' : 'which';
+  const result = spawnSync(command, ['fd'], { encoding: 'utf-8' });
+  if (result.status !== 0 || !result.stdout) return null;
+  const firstLine = result.stdout.split(/\r?\n/).find(Boolean);
+  return firstLine ? firstLine.trim() : null;
+}
+
+const FD_PATH = resolveFdPath();
+const IS_FD_INSTALLED = Boolean(FD_PATH);
 const GOAL_COMMAND = {
   name: 'goal',
   description: 'Start or manage a goal',
@@ -288,7 +300,7 @@ describe('FileMentionProvider', () => {
     const extraDir = createExtraDir();
     mkdirSync(join(extraDir, 'src'), { recursive: true });
     writeFileSync(join(extraDir, 'src', 'Additional.ts'), 'export {};');
-    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+    const provider = new FileMentionProvider([], workDir, NO_FD, [extraDir]);
 
     const result = await provider.getSuggestions(['@add'], 0, 4, { signal: ctrl() });
 
@@ -297,6 +309,31 @@ describe('FileMentionProvider', () => {
       `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
     );
   });
+
+  it.runIf(IS_FD_INSTALLED)(
+    'uses fd for additionalDirs even when cwd is large enough to exhaust the fallback scanner',
+    async () => {
+      // Fill cwd with enough entries to push the filesystem fallback past its
+      // 2000-entry scan cap, so it would never reach the additional root. fd
+      // searches each root independently and still finds the deep target.
+      for (let i = 0; i < 2000; i++) {
+        writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
+      }
+      const extraDir = createExtraDir();
+      mkdirSync(join(extraDir, 'deep'), { recursive: true });
+      writeFileSync(join(extraDir, 'deep', 'target-needle.ts'), 'export {};');
+      const provider = new FileMentionProvider([], workDir, FD_PATH!, [extraDir]);
+
+      const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value)).toContain(
+        `@${join(extraDir, 'deep', 'target-needle.ts').replaceAll('\\', '/')}`,
+      );
+    },
+  );
 
   it('keeps cwd @ mention values relative and additionalDir values absolute', async () => {
     mkdirSync(join(workDir, 'src'), { recursive: true });
