@@ -422,4 +422,34 @@ describe('messagesToTurns cron', () => {
       cron: { jobId: 'j' },
     });
   });
+
+  it('flushes an idle cron fire as its own turn even when no prompt ids are present', () => {
+    const envelope =
+      '<cron-fire jobId="j" cron="* * * * *" recurring="true" coalescedCount="1" stale="false">\n' +
+      '<prompt>\nCheck BTC\n</prompt>\n</cron-fire>';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'hi' }]),
+        message('a1', 'assistant', [{ type: 'text', text: 'answer' }]),
+        message('c1', 'user', [{ type: 'text', text: envelope }], {
+          metadata: {
+            origin: {
+              kind: 'cron_job',
+              jobId: 'j',
+              cron: '* * * * *',
+              recurring: true,
+              coalescedCount: 1,
+              stale: false,
+            },
+          },
+        }),
+        message('a2', 'assistant', [{ type: 'text', text: 'btc is 62k' }]),
+      ],
+      [],
+    );
+
+    // No prompt ids anywhere (REST-shaped): the cron still becomes its own
+    // turn, and the cron-triggered reply does not merge into the first answer.
+    expect(turns.map((t) => t.role)).toEqual(['user', 'assistant', 'cron', 'assistant']);
+  });
 });
