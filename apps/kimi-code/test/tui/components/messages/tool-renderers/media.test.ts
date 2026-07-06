@@ -38,7 +38,10 @@ function imageOutput(path: string, b64 = PNG_B64, mime = 'image/png'): string {
     { type: 'text', text: `<image path="${path}">` },
     { type: 'image_url', imageUrl: { url: `data:${mime};base64,${b64}` } },
     { type: 'text', text: '</image>' },
-    { type: 'text', text: `Loaded image file "${path}" (${mime}, 70 bytes, original size 1x1px).` },
+    {
+      type: 'text',
+      text: `<system>ReadMediaFile summary: Read image file. Mime type: ${mime}. Size: 70 bytes. Original dimensions: 1x1 pixels.</system>`,
+    },
   ]);
 }
 

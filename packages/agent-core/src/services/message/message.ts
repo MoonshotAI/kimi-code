@@ -45,6 +45,7 @@
 
 import { createDecorator } from '../../di';
 import type { ContextMessage } from '../../agent/context';
+import { stripSystemTags } from '../../utils/strip-system-tags';
 import type {
   CursorQuery,
   Message,
@@ -197,9 +198,9 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
       // fall back to text passthrough so we don't lose user-visible content.
       return msg.content.map((p) => mapContentPart(p));
     }
-    const flattenedOutput = msg.content
-      .map((p) => (p.type === 'text' ? p.text : ''))
-      .join('');
+    const flattenedOutput = stripSystemTags(
+      msg.content.map((p) => (p.type === 'text' ? p.text : '')).join(''),
+    );
     const part: MessageContent = msg.isError === true
       ? {
           type: 'tool_result',

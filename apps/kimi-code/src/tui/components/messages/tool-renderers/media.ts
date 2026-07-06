@@ -31,7 +31,7 @@ export interface ReadMediaSummary {
 }
 
 const PATH_TAG_RE = /^<(image|video)\s+path="([^"]+)">$/;
-const ORIGINAL_SIZE_RE = /original size\s+(\d+x\d+px)/;
+const ORIGINAL_SIZE_RE = /Original dimensions:\s*(\d+x\d+)\s*pixels/;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
 
 function bytesFromBase64(b64: string): number {
@@ -72,7 +72,7 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
         continue;
       }
       const size = ORIGINAL_SIZE_RE.exec(text);
-      if (size) originalSize = size[1];
+      if (size) originalSize = `${size[1]}px`;
       continue;
     }
 

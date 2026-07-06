@@ -23,6 +23,7 @@ import {
   makeErrorPayload,
   toKimiErrorPayload,
 } from '#/errors';
+import { stripSystemFromOutput } from '#/utils/strip-system-tags';
 import { isAbortError, isMaxStepsExceededError } from '../../loop/errors';
 import {
   createLoopEventDispatcher,
@@ -1127,7 +1128,7 @@ function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined 
         type: 'tool.result',
         turnId,
         toolCallId: event.toolCallId,
-        output: event.result.output,
+        output: stripSystemFromOutput(event.result.output),
         isError: event.result.isError,
       };
     case 'turn.interrupted':

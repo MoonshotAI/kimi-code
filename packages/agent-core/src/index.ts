@@ -18,6 +18,7 @@ export {
 export { resolveLoggingConfig } from './logging/resolve-config';
 export type { ResolveLoggingInput } from './logging/resolve-config';
 export { installGlobalProxyDispatcher } from './utils/proxy';
+export { stripSystemTags, stripSystemFromOutput } from './utils/strip-system-tags';
 export type {
   LogContext,
   LogEntry,

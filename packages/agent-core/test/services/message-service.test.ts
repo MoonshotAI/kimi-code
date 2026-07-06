@@ -359,3 +359,26 @@ describe('MessageService', () => {
     failingImpl.dispose();
   });
 });
+
+
+describe('toProtocolMessage tool-result <system> stripping', () => {
+  it('strips <system> blocks from a tool result output before it reaches the wire shape', () => {
+    const toolMessage: ContextMessage = {
+      role: 'tool',
+      toolCallId: 'call_1',
+      content: [
+        { type: 'text', text: '<system>Read image file. Mime type: image/png.</system>' },
+        { type: 'text', text: '<image path="/tmp/x.png">' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,A' } },
+        { type: 'text', text: '</image>' },
+      ],
+      toolCalls: [],
+    };
+    const [part] = toProtocolMessage(SESSION_ID, 0, toolMessage, SESSION_CREATED_AT).content;
+    expect(part?.type).toBe('tool_result');
+    const output = (part as { output: string }).output;
+    expect(output).not.toContain('<system>');
+    expect(output).not.toContain('Read image file');
+    expect(output).toContain('<image path="/tmp/x.png">');
+  });
+});

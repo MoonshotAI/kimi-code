@@ -74,4 +74,15 @@ describe('TruncatedOutputComponent', () => {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);
     }
   });
+
+  it('strips <system> blocks from output before rendering', () => {
+    const component = new TruncatedOutputComponent(
+      '<system>Read image file. Mime type: image/png.</system>\n<image path="/tmp/x.png">',
+      { expanded: true, isError: false },
+    );
+    const out = strip(component.render(80).join('\n'));
+    expect(out).not.toContain('<system>');
+    expect(out).not.toContain('Read image file');
+    expect(out).toContain('<image path="/tmp/x.png">');
+  });
 });

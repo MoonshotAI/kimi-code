@@ -67,6 +67,10 @@ export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
 export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
 
+// UI display helper — strips `<system>...</system>` side-channel notes from tool
+// output before rendering, so hosts (CLI/TUI) don't surface model-bound markup.
+export { stripSystemTags } from '@moonshot-ai/agent-core';
+
 // Image compression — ingestion sites (e.g. the CLI's clipboard paste, the ACP
 // adapter) shrink oversized images while constructing the content part, before
 // it enters a prompt. Best effort: returns the original on any failure.
