@@ -1137,14 +1137,16 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
 
-    // Staleness guard, scoped to the re-open path (session already loaded):
-    // there the composer stays usable, so a send or a broadcast global event can
-    // race this GET and produce a snapshot whose `asOfSeq` predates newer local
-    // state — replacing messages would wipe a live turn (volatile deltas are not
-    // replayable) or the just-sent optimistic user message. On first open we must
-    // always install messages + subscribe, even if a global event advanced lastSeq
-    // during the await. When discarded, the live stream / next re-open reconciles.
-    if (wasLoaded) {
+    // Staleness guard, scoped to the re-open path (session already loaded AND
+    // not evicted from the subscription cap): there the composer stays usable, so
+    // a send or a broadcast global event can race this GET and produce a snapshot
+    // whose `asOfSeq` predates newer local state — replacing messages would wipe a
+    // live turn (volatile deltas are not replayable) or the just-sent optimistic
+    // user message. On first open we must always install + subscribe, even if a
+    // global event advanced lastSeq during the await; and an evicted session is
+    // already unsubscribed, so it must always rebuild + re-subscribe here instead
+    // of discarding. When discarded, the live stream / next re-open reconciles.
+    if (wasLoaded && !sessionsWithStaleCursor.has(sessionId)) {
       if ((rawState.lastSeqBySession[sessionId] ?? 0) !== seqBefore) return 'ok';
       if (rawState.promptIdBySession[sessionId] !== promptBefore) return 'ok';
       if (inFlightPromptSessions.has(sessionId) !== inFlightBefore) return 'ok';
