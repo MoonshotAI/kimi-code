@@ -4,6 +4,7 @@ import {
   KimiChatProvider,
   type ThinkingEffort,
 } from '@moonshot-ai/kosong';
+import { AnthropicChatProvider } from '@moonshot-ai/kosong/providers/anthropic';
 
 import { parseFloatEnv } from '#/config/resolve';
 
@@ -114,4 +115,25 @@ export function applyKimiEnvThinkingKeep(
   const keep = resolveThinkingKeep(env, configKeep, thinkingEffort);
   if (keep === undefined) return provider;
   return provider.withExtraBody({ thinking: { keep } });
+}
+
+/**
+ * Apply the Anthropic equivalent of Preserved Thinking — a `context_management`
+ * `clear_thinking_20251015` edit carrying `keep` — to an Anthropic chat
+ * provider. See `resolveThinkingKeep` for precedence. Non-Anthropic providers
+ * are returned unchanged. Applies to every Anthropic provider (Claude and
+ * Kimi's Anthropic-compatible mode) while thinking is on; `keep: "all"` tells
+ * the server to retain all prior thinking blocks (prune none), mirroring Kimi's
+ * `thinking.keep`.
+ */
+export function applyAnthropicThinkingKeep(
+  provider: ChatProvider,
+  thinkingEffort: ThinkingEffort,
+  env: Env = process.env,
+  configKeep?: string,
+): ChatProvider {
+  if (!(provider instanceof AnthropicChatProvider)) return provider;
+  const keep = resolveThinkingKeep(env, configKeep, thinkingEffort);
+  if (keep === undefined) return provider;
+  return provider.withThinkingKeep(keep);
 }

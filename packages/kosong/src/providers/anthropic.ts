@@ -114,6 +114,17 @@ interface AnthropicGenerationKwargs {
   thinking?: MessageCreateParams['thinking'] | undefined;
   output_config?: MessageCreateParams['output_config'] | undefined;
   betaFeatures?: string[] | undefined;
+  contextManagement?: AnthropicContextManagement | undefined;
+}
+
+/**
+ * Anthropic beta context-management payload (`context-management-2025-06-27`).
+ * Only the `clear_thinking_20251015` edit is emitted today, with `keep`
+ * forwarded as a string (`"all"`); the `{ type, value }` turn-count form is
+ * not used because the shared `[thinking] keep` config is a string.
+ */
+interface AnthropicContextManagement {
+  edits: Array<{ type: string; keep?: string }>;
 }
 
 // Anthropic's native effort values. `ThinkingEffort` is an open string, so after
@@ -122,6 +133,8 @@ interface AnthropicGenerationKwargs {
 type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
+const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
+const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
 const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
@@ -1083,6 +1096,9 @@ export class AnthropicChatProvider implements ChatProvider {
     if (this._generationKwargs.output_config !== undefined) {
       kwargs['output_config'] = this._generationKwargs.output_config;
     }
+    if (this._generationKwargs.contextManagement !== undefined) {
+      kwargs['context_management'] = this._generationKwargs.contextManagement;
+    }
 
     // Build the beta feature list. On the standard Messages API these travel
     // via the `anthropic-beta` header; on the beta Messages API (`betaApi`) the
@@ -1287,6 +1303,17 @@ export class AnthropicChatProvider implements ChatProvider {
       delete clone._generationKwargs.output_config;
     }
     return clone;
+  }
+
+  withThinkingKeep(keep: string): AnthropicChatProvider {
+    const current = this._generationKwargs.betaFeatures ?? [];
+    const betaFeatures = current.includes(CONTEXT_MANAGEMENT_BETA)
+      ? current
+      : [...current, CONTEXT_MANAGEMENT_BETA];
+    return this._withGenerationKwargs({
+      contextManagement: { edits: [{ type: CLEAR_THINKING_EDIT, keep }] },
+      betaFeatures,
+    });
   }
 
   withGenerationKwargs(kwargs: Partial<AnthropicGenerationKwargs>): AnthropicChatProvider {

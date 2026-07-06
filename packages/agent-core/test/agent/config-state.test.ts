@@ -398,4 +398,58 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       vi.unstubAllEnvs();
     }
   });
+
+  function anthropicAgentWithThinkingKeep(keep: string | undefined) {
+    const config: KimiConfig = {
+      providers: { anthropic: { type: 'anthropic', apiKey: 'test-key' } },
+      models: {
+        'claude-sonnet-4-6': {
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-6',
+          maxContextSize: 200_000,
+          capabilities: ['thinking', 'tool_use'],
+        },
+      },
+      ...(keep !== undefined ? { thinking: { keep } } : {}),
+    };
+    return testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+    });
+  }
+
+  it('injects context_management clear_thinking keep into config.provider for anthropic when thinking is on', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    try {
+      const ctx = anthropicAgentWithThinkingKeep(undefined);
+      ctx.agent.config.update({ modelAlias: 'claude-sonnet-4-6', thinkingEffort: 'high' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        contextManagement?: { edits: Array<{ type: string; keep?: string }> };
+        betaFeatures?: string[];
+      };
+      expect(gen.contextManagement).toEqual({
+        edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+      });
+      expect(gen.betaFeatures).toContain('context-management-2025-06-27');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does NOT inject context_management for anthropic when thinking is off', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    try {
+      const ctx = anthropicAgentWithThinkingKeep(undefined);
+      ctx.agent.config.update({ modelAlias: 'claude-sonnet-4-6', thinkingEffort: 'off' });
+
+      const gen = Reflect.get(ctx.agent.config.provider as object, '_generationKwargs') as {
+        contextManagement?: unknown;
+      };
+      expect(gen.contextManagement).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
