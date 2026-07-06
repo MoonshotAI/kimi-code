@@ -178,6 +178,14 @@ const rows = computed<Row[]>(() => {
   return [];
 });
 
+// When AgentSwarm fails before producing a structured result (e.g. argument
+// validation), tool.output carries plain text. Surface it instead of the
+// "waiting" placeholder so the user sees the actual failure cause.
+const errorOutput = computed(() => {
+  if (status.value !== 'error' || rows.value.length > 0) return '';
+  return (props.tool.output ?? []).join('\n').trim();
+});
+
 // Per-row accordion: each member expands on its own, leaving the rest folded.
 const openRows = ref<Set<string>>(new Set());
 function toggleRow(id: string): void {
@@ -262,6 +270,8 @@ function phaseLabel(phase: AppSubagentPhase): string {
           <div v-show="isRowOpen(row.id)" class="member-body">{{ row.body }}</div>
         </div>
       </template>
+
+      <div v-else-if="errorOutput" class="error-output">{{ errorOutput }}</div>
 
       <div v-else class="waiting">{{ t('tools.swarm.waiting') }}</div>
     </div>
@@ -509,5 +519,13 @@ function phaseLabel(phase: AppSubagentPhase): string {
   padding: 6px 11px 10px;
   color: var(--color-text-muted);
   font-size: var(--text-xs);
+}
+
+.error-output {
+  padding: 9px 11px 10px;
+  color: var(--color-text);
+  font: var(--text-xs)/1.6 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

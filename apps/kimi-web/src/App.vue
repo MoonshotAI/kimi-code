@@ -58,10 +58,13 @@ const showServerAuth = computed(
 provide('resolveImage', client.resolveImageUrl);
 // Live swarm member roster for the inline AgentSwarm tool card. Sourced from the
 // AppTask store so the card shows each subagent's live phase; on refresh the
-// tasks are gone and the card falls back to the parsed tool result.
-provide('resolveSwarmMembers', (toolCallId: string): SwarmMember[] => {
-  return client.swarms.value.find((group) => group.id === toolCallId)?.members ?? [];
-});
+// tasks are gone and the card falls back to the parsed tool result. Includes
+// single-member "swarms" (e.g. AgentSwarm with one resume_agent_ids entry),
+// which buildSwarmGroups filters out for the badge counter.
+provide(
+  'resolveSwarmMembers',
+  (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
+);
 const { t } = useI18n();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.

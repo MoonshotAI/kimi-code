@@ -64,8 +64,8 @@ import { toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
-import { buildSwarmGroups, countSwarmMembers } from './swarmGroups';
-import type { SwarmGroup } from './swarmGroups';
+import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from './swarmGroups';
+import type { SwarmGroup, SwarmMember } from './swarmGroups';
 import type {
   ActivityState,
   ActivationBadges,
@@ -1680,6 +1680,11 @@ const tasks = computed<TaskItem[]>(() => {
 });
 
 const swarms = computed<SwarmGroup[]>(() => buildSwarmGroups(activeAppTasks.value));
+// Foreground/background subagents keyed by their spawning tool call id — used by
+// the inline AgentSwarm tool card to stream each subagent's live progress.
+const swarmMembersByToolCallId = computed<Map<string, SwarmMember[]>>(() =>
+  swarmMembersByToolCall(activeAppTasks.value),
+);
 
 const goal = computed<AppGoal | null>(() => {
   const sid = rawState.activeSessionId;
@@ -2398,6 +2403,7 @@ export function useKimiWebClient() {
     todos,
     goal,
     swarms,
+    swarmMembersByToolCallId,
     activationBadges,
     compaction,
     status,
