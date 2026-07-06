@@ -275,26 +275,41 @@ export async function compressBase64ForModel(
   };
 }
 
+export interface CompressedContentParts {
+  /** The input parts with oversized inline images re-encoded in place. */
+  readonly parts: ContentPart[];
+  /**
+   * One {@link buildImageCompressionCaption} note per re-encoded image, in
+   * encounter order, when `annotate` is set. Returned as data — never
+   * inserted into `parts` — so the caller picks the channel (the MCP path
+   * joins them into the tool result's `note`) and quoted caption text in
+   * the tool's own output can never be mistaken for a generated one.
+   */
+  readonly captions: readonly string[];
+}
+
 /**
- * Compress any inline base64 image parts in a content-part list — the single
- * helper used by the prompt-ingestion chokepoint (every client's images) and
- * the MCP tool-result path. Image parts whose URL is not a `data:` URL (e.g. a
- * remote http(s) image) are passed through, as are non-image parts. Best
- * effort: a part that fails to compress is left unchanged.
+ * Compress any inline base64 image parts in a content-part list — used by
+ * the MCP tool-result path (prompt ingestion compresses per image with
+ * {@link compressBase64ForModel} while constructing the part). Image parts
+ * whose URL is not a `data:` URL (e.g. a remote http(s) image) are passed
+ * through, as are non-image parts. Best effort: a part that fails to
+ * compress is left unchanged.
  *
- * With `annotate` set, every image that was actually re-encoded gains a
- * {@link buildImageCompressionCaption} text part immediately before it, so the
- * model knows it is looking at a downsampled copy. `annotate.persistOriginal`
- * additionally saves the pre-compression bytes and puts the returned path in
- * the caption so the model can read the original back; persistence failures
- * degrade to a caption without a path.
+ * With `annotate` set, every image that was actually re-encoded gets a
+ * caption in {@link CompressedContentParts.captions} so the model knows it
+ * is looking at a downsampled copy. `annotate.persistOriginal` additionally
+ * saves the pre-compression bytes and puts the returned path in the caption
+ * so the model can read the original back; persistence failures degrade to
+ * a caption without a path.
  */
 export async function compressImageContentParts(
   parts: readonly ContentPart[],
   options: CompressImageOptions & { readonly annotate?: CompressAnnotateOptions } = {},
-): Promise<ContentPart[]> {
+): Promise<CompressedContentParts> {
   const { annotate, ...compressOptions } = options;
   const out: ContentPart[] = [];
+  const captions: string[] = [];
   for (const part of parts) {
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
@@ -313,9 +328,8 @@ export async function compressImageContentParts(
                 originalPath = null;
               }
             }
-            out.push({
-              type: 'text',
-              text: buildImageCompressionCaption({
+            captions.push(
+              buildImageCompressionCaption({
                 original: {
                   width: result.originalWidth,
                   height: result.originalHeight,
@@ -330,7 +344,7 @@ export async function compressImageContentParts(
                 },
                 originalPath,
               }),
-            });
+            );
           }
           out.push({
             type: 'image_url',
@@ -342,7 +356,7 @@ export async function compressImageContentParts(
     }
     out.push(part);
   }
-  return out;
+  return { parts: out, captions };
 }
 
 export interface CompressAnnotateOptions {
@@ -558,9 +572,10 @@ export interface ImageCompressionCaptionInput {
  * back (via ReadMediaFile `region`) for full-fidelity detail.
  *
  * Two channels consume this note differently:
- *  - Tool results (MCP images): the MCP output pipeline splits the inline
- *    captions out into the result's `note` side channel (rendered to the
- *    model at projection time, never to UIs).
+ *  - Tool results (MCP images): {@link compressImageContentParts} returns
+ *    the captions as data and the MCP output pipeline joins them into the
+ *    result's `note` side channel (rendered to the model at projection
+ *    time, never to UIs).
  *  - User prompts must not render raw `<system>` markup in the UI, so the
  *    context layer detects the caption via
  *    {@link extractImageCompressionCaptions} and reroutes it through the

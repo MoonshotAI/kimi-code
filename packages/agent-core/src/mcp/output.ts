@@ -14,9 +14,9 @@
  *     would silently reintroduce the very degradation the caption reports.
  *  4. Compress oversized inline images, announcing each compression with a
  *     caption (original vs. sent size, readback path to the persisted
- *     original) so downsampling is never silent. The captions are collected
- *     into the result's `note` side channel — rendered to the model at
- *     projection time, never to UIs.
+ *     original) so downsampling is never silent. The captions come back
+ *     from the compressor as data and ride the result's `note` side
+ *     channel — rendered to the model at projection time, never to UIs.
  *  5. Apply the per-part 10 MB binary cap: oversized binary parts
  *     (image/audio/video URLs) collapse to a notice, so a single
  *     screenshot cannot evict every text part.
@@ -29,10 +29,7 @@
 
 import type { ContentPart } from '@moonshot-ai/kosong';
 
-import {
-  compressImageContentParts,
-  extractImageCompressionCaptions,
-} from '../tools/support/image-compress';
+import { compressImageContentParts } from '../tools/support/image-compress';
 import { persistOriginalImage } from '../tools/support/image-originals';
 import type { MCPContentBlock, MCPToolResult } from './types';
 
@@ -179,11 +176,13 @@ export async function mcpResultToExecutableOutput(
   const budgeted = applyTextBudget(wrapped);
   // Shrink oversized images BEFORE the per-part byte cap, so a large but
   // compressible screenshot is downsampled and kept rather than dropped to a
-  // text notice. Compression is never silent: each re-encoded image gains a
+  // text notice. Compression is never silent: each re-encoded image yields a
   // caption stating what the original was, and the original bytes are
   // persisted (best effort, into the session's media-originals dir when
   // known) so the model can read detail back via ReadMediaFile + region.
-  // Parts that cannot be compressed pass through.
+  // Parts that cannot be compressed pass through. The captions come back as
+  // DATA (never inserted into the parts), so tool output that merely quotes
+  // a caption can never be mistaken for a generated one.
   const compressed = await compressImageContentParts(budgeted.parts, {
     annotate: {
       persistOriginal: (bytes, mimeType) =>
@@ -194,46 +193,15 @@ export async function mcpResultToExecutableOutput(
         ),
     },
   });
-  // The compression helper inserts each caption inline (the prompt-ingestion
-  // caller depends on that); here the captions move to the `note` side
-  // channel so the tool output stays pure data.
-  const split = splitCompressionCaptions(compressed);
-  const capped = applyBinaryPartCap(split.parts);
+  const capped = applyBinaryPartCap(compressed.parts);
   const truncated = budgeted.truncated || capped.truncated;
   const output = collapseSingleText(capped.parts);
   return {
     output,
     isError: result.isError,
-    note: split.note,
+    note: compressed.captions.length > 0 ? compressed.captions.join('\n') : undefined,
     truncated: truncated ? true : undefined,
   };
-}
-
-/**
- * Pull the inline image-compression captions out of `parts` and join them
- * into a single `note` string (re-wrapped in `<system>`, one caption per
- * line). Returns `note: undefined` when nothing was compressed.
- */
-function splitCompressionCaptions(parts: readonly ContentPart[]): {
-  parts: ContentPart[];
-  note?: string | undefined;
-} {
-  const kept: ContentPart[] = [];
-  const captions: string[] = [];
-  for (const part of parts) {
-    if (part.type === 'text') {
-      const extracted = extractImageCompressionCaptions(part.text);
-      if (extracted.captions.length > 0) {
-        captions.push(...extracted.captions.map((body) => `<system>${body}</system>`));
-        if (extracted.text.trim().length > 0) {
-          kept.push({ type: 'text', text: extracted.text });
-        }
-        continue;
-      }
-    }
-    kept.push(part);
-  }
-  return captions.length > 0 ? { parts: kept, note: captions.join('\n') } : { parts: kept };
 }
 
 /**

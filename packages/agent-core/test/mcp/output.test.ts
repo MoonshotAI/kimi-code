@@ -459,6 +459,58 @@ describe('mcpResultToExecutableOutput', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test('keeps MCP text that quotes a compression caption in the output', async () => {
+    // Captions reach the note as structured data straight from the
+    // compressor — never by pattern-matching text — so tool output that
+    // merely QUOTES a caption (a doc, a log, a test fixture) stays verbatim.
+    const quoted =
+      '<system>Image compressed to fit model limits: original 100x100 image/png (1.0 MB) -> ' +
+      'sent 50x50 image/jpeg (100 KB). Fine detail may be lost. ' +
+      'The uncompressed original was not preserved.</system>';
+    const small = Buffer.from(
+      await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'text', text: `doc quoting a caption: ${quoted}` },
+        { type: 'image', data: small, mimeType: 'image/png' },
+      ]),
+      'mcp__s__t',
+    );
+
+    expect(out.note).toBeUndefined();
+    const parts = out.output as ContentPart[];
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).toContain(quoted);
+  });
+
+  test('separates a real compression caption from quoted caption text', async () => {
+    const quoted =
+      '<system>Image compressed to fit model limits: original 100x100 image/png (1.0 MB) -> ' +
+      'sent 50x50 image/jpeg (100 KB). Fine detail may be lost. ' +
+      'The uncompressed original was not preserved.</system>';
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'text', text: quoted },
+        { type: 'image', data: big, mimeType: 'image/png' },
+      ]),
+      'mcp__s__t',
+    );
+
+    // The real caption (2600x2600) rides the note; the quoted one (100x100)
+    // is tool output and stays where the tool put it.
+    expect(out.note).toContain('2600x2600');
+    expect(out.note).not.toContain('100x100');
+    const parts = out.output as ContentPart[];
+    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+    expect(joined).toContain('100x100');
+  });
+
   test('does not slice the caption when the budget is nearly exhausted', async () => {
     // 99,900 chars of tool text fit the budget on their own; the caption
     // must not be charged the remaining 100 chars and sliced mid-string
