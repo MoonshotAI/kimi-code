@@ -335,6 +335,31 @@ describe('FileMentionProvider', () => {
     },
   );
 
+  it.runIf(IS_FD_INSTALLED)(
+    'treats a bare fd command name as executable and resolves it via PATH',
+    async () => {
+      // A bare "fd" (system PATH lookup) must not be mistaken for unavailable;
+      // otherwise the large cwd would push the fallback scanner past its cap
+      // and hide the deep target in the additional root.
+      for (let i = 0; i < 2000; i++) {
+        writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
+      }
+      const extraDir = createExtraDir();
+      mkdirSync(join(extraDir, 'deep'), { recursive: true });
+      writeFileSync(join(extraDir, 'deep', 'target-needle.ts'), 'export {};');
+      const provider = new FileMentionProvider([], workDir, 'fd', [extraDir]);
+
+      const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+        signal: ctrl(),
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value)).toContain(
+        `@${join(extraDir, 'deep', 'target-needle.ts').replaceAll('\\', '/')}`,
+      );
+    },
+  );
+
   it('keeps cwd @ mention values relative and additionalDir values absolute', async () => {
     mkdirSync(join(workDir, 'src'), { recursive: true });
     writeFileSync(join(workDir, 'src', 'Cwd.ts'), 'export {};');

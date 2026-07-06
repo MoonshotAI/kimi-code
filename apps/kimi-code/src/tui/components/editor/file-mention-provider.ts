@@ -232,6 +232,12 @@ export function extractAtPrefix(text: string): string | null {
 }
 
 function isExecutableFd(fdPath: string): boolean {
+  // Bare command names (for example "fd" discovered on the system PATH) are
+  // trusted: spawn resolves them through PATH. Only absolute/relative paths are
+  // probed, which is how the managed fd is referenced and which can go stale.
+  if (!fdPath.includes('/') && !fdPath.includes('\\')) {
+    return true;
+  }
   try {
     accessSync(fdPath, fsConstants.X_OK);
     return true;
