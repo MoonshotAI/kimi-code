@@ -26,6 +26,8 @@ const notifyPermission = ref<string>(
   typeof Notification !== 'undefined' ? Notification.permission : 'denied',
 );
 
+const NOTIFICATION_ICON = '/favicon.ico';
+
 /** Shared setter: disabling is instant; enabling requests OS permission first
     and stays off if the user blocks it. */
 async function setNotifyPref(pref: Ref<boolean>, key: string, on: boolean): Promise<void> {
@@ -63,7 +65,7 @@ export interface NotifyCompletionCtx {
   /** True when the target session is the active one and the page is visible —
       in which case we suppress the notification. */
   isActiveAndVisible: boolean;
-  /** Session title used as the notification title. */
+  /** Session title used as the completion notification body and a question-body fallback. */
   sessionTitle: string;
   /** Called when the user clicks the notification (e.g. select the session). */
   onClick: () => void;
@@ -71,14 +73,53 @@ export interface NotifyCompletionCtx {
 
 export interface NotifyQuestionCtx extends NotifyCompletionCtx {
   /** Short preview of the question, used as the notification body. Falls back
-      to a generic line when empty. */
+      to the session title, then to a generic line when empty. */
   questionPreview: string;
 }
 
+export interface NotificationCopy {
+  readonly title: string;
+  readonly body: string;
+}
+
+function firstText(...values: Array<string | undefined>): string {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
+export function completionNotificationCopy(sessionTitle: string): NotificationCopy {
+  return {
+    title: i18n.global.t('settings.notifyTitle'),
+    body: firstText(sessionTitle, i18n.global.t('settings.notifyFallback')),
+  };
+}
+
+export function questionNotificationCopy(
+  sessionTitle: string,
+  questionPreview: string,
+): NotificationCopy {
+  return {
+    title: i18n.global.t('settings.notifyQuestionTitle'),
+    body: firstText(
+      questionPreview,
+      sessionTitle,
+      i18n.global.t('settings.notifyQuestionFallback'),
+    ),
+  };
+}
+
 /** Shared permission gate + fire. `enabled` is the caller's per-kind preference;
-    `body` and `tag` let each kind carry its own text and a per-kind dedup tag
+    `copy` and `tag` let each kind carry its own text and a per-kind dedup tag
     so a completion and a question don't collapse into one notification. */
-function maybeNotify(enabled: boolean, ctx: NotifyCompletionCtx, body: string, tag: string): void {
+function maybeNotify(
+  enabled: boolean,
+  ctx: NotifyCompletionCtx,
+  copy: NotificationCopy,
+  tag: string,
+): void {
   if (!enabled) return;
   if (typeof Notification === 'undefined') return;
   const perm = Notification.permission;
@@ -87,18 +128,17 @@ function maybeNotify(enabled: boolean, ctx: NotifyCompletionCtx, body: string, t
     // Request permission asynchronously; if granted, fire the notification.
     void Notification.requestPermission().then((p) => {
       notifyPermission.value = p;
-      if (p === 'granted') fire(ctx, body, tag);
+      if (p === 'granted') fire(ctx, copy, tag);
     });
     return;
   }
-  fire(ctx, body, tag);
+  fire(ctx, copy, tag);
 }
 
-function fire(ctx: NotifyCompletionCtx, body: string, tag: string): void {
+function fire(ctx: NotifyCompletionCtx, copy: NotificationCopy, tag: string): void {
   if (ctx.isActiveAndVisible) return;
-  const title = ctx.sessionTitle.trim() || 'Kimi Code';
   try {
-    const n = new Notification(title, { body, tag });
+    const n = new Notification(copy.title, { body: copy.body, tag, icon: NOTIFICATION_ICON });
     n.onclick = () => {
       try {
         window.focus();
@@ -116,14 +156,23 @@ function fire(ctx: NotifyCompletionCtx, body: string, tag: string): void {
 /** Fire a completion notification for a finished session, but only when the
     caller says the user isn't already looking at it. */
 function maybeNotifyCompletion(sid: string, ctx: NotifyCompletionCtx): void {
-  maybeNotify(notifyOnComplete.value, ctx, i18n.global.t('settings.notifyBody'), `kimi-complete-${sid}`);
+  maybeNotify(
+    notifyOnComplete.value,
+    ctx,
+    completionNotificationCopy(ctx.sessionTitle),
+    `kimi-complete-${sid}`,
+  );
 }
 
 /** Fire a notification when a session asks a question, but only when the user
     explicitly opted into question notifications and isn't already looking. */
 function maybeNotifyQuestion(sid: string, ctx: NotifyQuestionCtx): void {
-  const body = ctx.questionPreview || i18n.global.t('settings.notifyQuestionBody');
-  maybeNotify(notifyOnQuestion.value, ctx, body, `kimi-question-${sid}`);
+  maybeNotify(
+    notifyOnQuestion.value,
+    ctx,
+    questionNotificationCopy(ctx.sessionTitle, ctx.questionPreview),
+    `kimi-question-${sid}`,
+  );
 }
 
 export function useNotification() {

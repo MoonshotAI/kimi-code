@@ -293,6 +293,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       status?: AppSessionStatus;
       workspaceId?: string;
       includeArchive?: boolean;
+      archivedOnly?: boolean;
       excludeEmpty?: boolean;
     },
   ): Promise<Page<AppSession>> {
@@ -302,6 +303,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       page_size: input?.pageSize,
       status: input?.status ? toWireSessionStatus(input.status) : undefined,
       include_archive: input?.includeArchive,
+      archived_only: input?.archivedOnly,
       exclude_empty: input?.excludeEmpty,
       // PRESUMED — daemon supports ?workspace_id= once the registry ships; it
       // ignores unknown query params until then, so this is safe to always send.
@@ -418,6 +420,16 @@ export class DaemonKimiWebApi implements KimiWebApi {
       {},
     );
     return data;
+  }
+
+  // POST /sessions/{id}:restore — clear the archived flag. The daemon returns
+  // the full restored session, so callers can merge it straight back into lists.
+  async restoreSession(sessionId: string): Promise<AppSession> {
+    const data = await this.http.post<WireSession>(
+      `/sessions/${encodeURIComponent(sessionId)}:restore`,
+      {},
+    );
+    return toAppSession(data);
   }
 
   // -------------------------------------------------------------------------

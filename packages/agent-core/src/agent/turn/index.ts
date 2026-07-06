@@ -604,7 +604,17 @@ export class TurnFlow {
       this.agent.emitEvent(errorEvent);
     }
     if (ended.reason !== 'completed') {
-      this.trackTurnInterrupted(turnId, this.currentStepByTurn.get(turnId) ?? this.currentStep);
+      // Fallback for turns that end abnormally without a `turn.interrupted`
+      // loop event reaching `trackLoopTelemetry` (e.g. a user-prompt hook block
+      // or an abort that bypasses the step loop). `ended.reason` maps onto the
+      // same interrupt-reason taxonomy the loop-event path uses; for a
+      // `cancelled` end the signal's reason decides user_cancelled vs aborted.
+      const interruptReason = telemetryInterruptReason(ended.reason, isUserCancellation(signal.reason));
+      this.trackTurnInterrupted(
+        turnId,
+        this.currentStepByTurn.get(turnId) ?? this.currentStep,
+        interruptReason,
+      );
     }
     this.telemetryModeByTurn.delete(turnId);
     this.currentStepByTurn.delete(turnId);
@@ -938,7 +948,11 @@ export class TurnFlow {
       if (event.reason === 'error' && event.activeStep !== undefined) {
         this.stepFailureByTurn.set(turnId, event);
       }
-      this.trackTurnInterrupted(turnId, interruptedStep(event));
+      this.trackTurnInterrupted(
+        turnId,
+        interruptedStep(event),
+        event.interruptReason ?? telemetryInterruptReason(event.reason, false),
+      );
       return;
     }
     this.trackToolLifecycle(event, turnId);
@@ -1024,12 +1038,17 @@ export class TurnFlow {
     return false;
   }
 
-  private trackTurnInterrupted(turnId: number, atStep: number): void {
+  private trackTurnInterrupted(
+    turnId: number,
+    atStep: number,
+    interruptReason: TelemetryInterruptReason,
+  ): void {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
     this.agent.telemetry.track('turn_interrupted', {
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       at_step: atStep,
+      interrupt_reason: interruptReason,
       ...this.requestProtocolProps(),
     });
   }
@@ -1230,6 +1249,34 @@ function toolOutputText(output: ExecutableToolResult['output']): string {
 
 function interruptedStep(event: LoopTurnInterruptedEvent): number {
   return event.activeStep ?? event.attemptedSteps;
+}
+
+/**
+ * Telemetry-facing interrupt reason. The loop reports `LoopInterruptReason`
+ * (`aborted` | `max_steps` | `error`); we split `aborted` into a deliberate
+ * user cancel vs. any other programmatic abort so telemetry can tell them
+ * apart. `filtered` is folded in for the fallback path (turn ends flagged
+ * `filtered` never emit a `turn.interrupted` loop event).
+ */
+type TelemetryInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered';
+
+function telemetryInterruptReason(
+  reason: LoopTurnInterruptedEvent['reason'] | Exclude<TurnEndedEvent['reason'], 'completed'>,
+  userCancelled: boolean,
+): TelemetryInterruptReason {
+  if ((reason === 'aborted' || reason === 'cancelled') && userCancelled) {
+    return 'user_cancelled';
+  }
+  if (reason === 'aborted' || reason === 'cancelled') return 'aborted';
+  if (reason === 'failed') return 'error';
+  // Remaining values are `max_steps` | `error` | `filtered`, which match the
+  // telemetry enum.
+  return reason;
 }
 
 interface ApiErrorClassification {
