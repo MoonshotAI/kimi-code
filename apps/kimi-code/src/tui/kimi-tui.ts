@@ -2608,8 +2608,10 @@ export class KimiTUI {
     // Measure overflow against the restored tree (editor mounted), not the tall
     // panel just removed — otherwise a short session with a tall panel looks like
     // it overflows and we take a full clear/home that yanks the editor to the top.
+    // Treat an exact one-screen fill as overflowing too: a full redraw is safe
+    // there (no blank tail) and clears a stale viewport offset after a shrink.
     const { columns, rows } = this.state.terminal;
-    const overflowsViewport = this.state.ui.render(columns).length > rows;
+    const overflowsViewport = this.state.ui.render(columns).length >= rows;
     // Force a full re-render after replacing a tall panel with the shorter editor:
     // differential rendering leaves the editor shifted up when the bottom-anchored
     // region shrinks in place. Skip under tmux (its own reflow handles the shrink)

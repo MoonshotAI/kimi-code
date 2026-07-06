@@ -820,6 +820,24 @@ describe('CustomEditor full re-render on autocomplete close', () => {
     expect(requestRender).not.toHaveBeenCalledWith(true);
   });
 
+  it('forces a full re-render when the content exactly fills one screen', async () => {
+    vi.stubEnv('TMUX', '');
+    const { editor, requestRender } = makeEditorWithRenderSpy(40);
+    editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    renderFrame(editor);
+
+    editor.handleInput('');
+    expect(editor.isShowingAutocomplete()).toBe(false);
+
+    renderFrame(editor);
+    await flushAutocomplete();
+    expect(requestRender).toHaveBeenCalledWith(true);
+  });
+
   it('does not force a full re-render inside tmux', async () => {
     vi.stubEnv('TMUX', '/tmp/tmux-501/default,1234,0');
     const { editor, requestRender } = makeEditorWithRenderSpy(50);

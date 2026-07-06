@@ -266,7 +266,10 @@ export class CustomEditor extends Editor {
   private requestFullRenderOnAutocompleteClose(): void {
     if (isInsideTmux()) return;
     const { columns, rows } = this.tui.terminal;
-    if (this.tui.render(columns).length <= rows) return;
+    // Redraw when content fills or overflows the viewport. An exact fill (==
+    // rows) is safe to clear (no blank tail) and still needs the redraw: the
+    // differential renderer keeps the old viewport offset after a shrink.
+    if (this.tui.render(columns).length < rows) return;
     this.tui.requestRender(true);
   }
 
