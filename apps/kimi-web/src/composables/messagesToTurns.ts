@@ -17,9 +17,46 @@ import { phaseForTask } from './swarmGroups';
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
 const MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">$/;
+// A user-uploaded image/video reaches the transcript (after the server resolves
+// it) as a self-contained text tag: `<video path="/cache/<fileId>.mp4"></video>`.
+// The tag is its own content part, so anchoring keeps ordinary prose from
+// matching; the closing tag is optional because ReadMediaFile emits the bare
+// opening tag as a standalone part.
+const USER_MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">(?:<\/\1>)?$/;
 const SYSTEM_MIME_RE = /Mime type:\s*([^.\s]+)/i;
 const SYSTEM_SIZE_RE = /Size:\s*(\d+)\s*bytes/i;
 const SYSTEM_DIMENSIONS_RE = /Original dimensions:\s*(\d+)x(\d+)\s*pixels/i;
+
+function unescapeAttr(value: string): string {
+  // &amp; last so a doubly-escaped value isn't decoded twice.
+  return value
+    .replaceAll('&quot;', '"')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+/** Parse a `<video|image|audio path="…"></video>` text part. */
+function mediaPathTag(text: string): { kind: 'image' | 'video' | 'audio'; path: string } | null {
+  const m = USER_MEDIA_PATH_TAG_RE.exec(text.trim());
+  if (!m) return null;
+  return { kind: m[1] as 'image' | 'video' | 'audio', path: unescapeAttr(m[2]!) };
+}
+
+/** The server materializes uploads into `<cacheDir>/<fileId>.<ext>` (see
+ *  materializeVideoToCache in the server prompts route). The browser can't play
+ *  a server-local path, but the same bytes are served at getFileUrl(fileId), so
+ *  recover the fileId from the cache filename to build a playable URL. Returns
+ *  undefined when the basename isn't shaped like a file-store id (`f_…`) — e.g.
+ *  TUI cache names (`<uuid>-<label>`) or legacy `/tmp/foo.mp4` paths — so the
+ *  caller leaves the raw tag as text instead of fabricating a broken /files url. */
+const FILE_STORE_ID_RE = /^f_[A-Za-z0-9]{10,}$/;
+function fileIdFromCachePath(p: string): string | undefined {
+  const base = p.split(/[\\/]/).at(-1) ?? '';
+  const dot = base.lastIndexOf('.');
+  const id = dot > 0 ? base.slice(0, dot) : base;
+  return FILE_STORE_ID_RE.test(id) ? id : undefined;
+}
 
 function bytesFromBase64(b64: string): number {
   if (b64.length === 0) return 0;
@@ -527,17 +564,17 @@ export function messagesToTurns(
 
   function resolveMediaUrl(
     c: AppMessage['content'][number],
-  ): { url: string; kind: 'image' | 'video' } | undefined {
+  ): { url: string; kind: 'image' | 'video'; fileId?: string } | undefined {
     if (c.type === 'image' || c.type === 'video') {
       const kind = c.type;
       const src = c.source;
       if (src.kind === 'url') return { url: src.url, kind };
       if (src.kind === 'base64') return { url: `data:${src.mediaType};base64,${src.data}`, kind };
-      if (src.kind === 'file' && getFileUrl) return { url: getFileUrl(src.fileId), kind };
+      if (src.kind === 'file' && getFileUrl) return { url: getFileUrl(src.fileId), kind, fileId: src.fileId };
     }
     if (c.type === 'file' && getFileUrl) {
-      if (c.mediaType.startsWith('image/')) return { url: getFileUrl(c.fileId), kind: 'image' };
-      if (c.mediaType.startsWith('video/')) return { url: getFileUrl(c.fileId), kind: 'video' };
+      if (c.mediaType.startsWith('image/')) return { url: getFileUrl(c.fileId), kind: 'image', fileId: c.fileId };
+      if (c.mediaType.startsWith('video/')) return { url: getFileUrl(c.fileId), kind: 'video', fileId: c.fileId };
     }
     return undefined;
   }
@@ -593,7 +630,7 @@ export function messagesToTurns(
         origin?.kind === 'plugin_command' && origin?.trigger === 'user-slash';
 
       const textParts: string[] = [];
-      const images: { url: string; alt?: string; kind: 'image' | 'video' }[] = [];
+      const images: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] = [];
       for (const c of msg.content) {
         if (c.type === 'text') {
           if (isSkillActivation) {
@@ -605,11 +642,24 @@ export function messagesToTurns(
             // user-provided args, mirroring skill activations.
             textParts.push(origin.commandArgs ?? '');
           } else {
+            // A video/image upload comes back from the server as a
+            // `<video path="…"></video>` text tag (see resolvePromptMediaFiles).
+            // Render it as an attachment instead of dumping the raw tag into the
+            // bubble — recover the fileId from the cache filename so the browser
+            // gets a playable URL via getFileUrl.
+            const tag = mediaPathTag(c.text);
+            if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
+              const fileId = fileIdFromCachePath(tag.path);
+              if (fileId) {
+                images.push({ url: getFileUrl(fileId), kind: tag.kind, alt: fileId, fileId });
+                continue;
+              }
+            }
             textParts.push(c.text);
           }
         }
         const media = resolveMediaUrl(c);
-        if (media) images.push({ url: media.url, kind: media.kind, alt: c.type === 'file' ? c.name : undefined });
+        if (media) images.push({ url: media.url, kind: media.kind, alt: c.type === 'file' ? c.name : undefined, fileId: media.fileId });
       }
       turns.push({
         id: msg.id,

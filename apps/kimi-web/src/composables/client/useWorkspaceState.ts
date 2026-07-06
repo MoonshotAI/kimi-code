@@ -30,6 +30,7 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
+import { coerceThinkingForModel } from '../../lib/modelThinking';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import type {
@@ -543,6 +544,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         api.getMeta().then((m) => {
           rawState.serverVersion = m.serverVersion;
           rawState.availableOpenInApps = m.openInApps;
+          rawState.dangerousBypassAuth = m.dangerousBypassAuth;
         }).catch(() => null),
         modelProvider.loadModels(),
       ]);
@@ -990,6 +992,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  // Coerce the persisted thinking level against the prompt's target model before
+  // submitting, so a stale value carried over from another session (e.g. 'max'
+  // from an effort model) isn't sent to a model that doesn't declare it. The
+  // composer already renders the coerced value; this keeps the submitted level
+  // in sync with what's displayed. Falls back to the raw level when the model
+  // catalog hasn't loaded yet (coerceThinkingForModel preserves it).
+  function coercePromptThinking(model: string | undefined) {
+    const promptModel =
+      model === undefined
+        ? undefined
+        : modelProvider.models.value.find(
+            (m) => m.model === model || m.id === model || m.displayName === model,
+          );
+    return coerceThinkingForModel(promptModel, rawState.thinking);
+  }
+
   /** Internal: submit a prompt to a specific session, bypassing the queue check.
       Returns true when the daemon accepted the prompt. */
   async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
@@ -1058,7 +1076,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: rawState.thinking,
+        thinking: coercePromptThinking(model),
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1192,7 +1210,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: rawState.thinking,
+        thinking: coercePromptThinking(model),
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

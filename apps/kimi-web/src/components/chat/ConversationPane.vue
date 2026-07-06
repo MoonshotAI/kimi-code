@@ -119,7 +119,7 @@ const emit = defineEmits<{
   openChanges: [];
   refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
-  editMessage: [text: string];
+  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
@@ -190,10 +190,24 @@ const copyConversationCopied = ref(false);
 const goalExpandSignal = ref(0);
 let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Load text into whichever composer is currently mounted (docked vs the
-    empty-session composer). Used by App for "edit & resend the last message". */
-function loadComposerForEdit(value: string): void {
-  (dockedComposerRef.value ?? emptyComposerRef.value)?.loadForEdit(value);
+/** Load text (and any attachments) into whichever composer is currently mounted
+    (docked vs the empty-session composer). Used by App for "edit & resend the
+    last message", and by the queue when a pending prompt is loaded for edit.
+    Returns false when no composer is actually able to receive the content (e.g.
+    the dock is showing a pending question/approval and the composer is hidden),
+    so the caller can avoid dropping the prompt. */
+function loadComposerForEdit(
+  value: string,
+  attachments?: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[],
+): boolean {
+  const composer = dockedComposerRef.value ?? emptyComposerRef.value;
+  if (!composer) return false;
+  // loadForEdit returns false when the dock's nested Composer is hidden; the
+  // empty composer's loadForEdit returns void (treat as success).
+  const ok = composer.loadForEdit(value);
+  if (ok === false) return false;
+  composer.loadAttachmentsForEdit(attachments ?? []);
+  return true;
 }
 
 function handleCopyConversationCopied(): void {
@@ -365,7 +379,11 @@ const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
-type ComposerHandle = { loadForEdit: (value: string) => void; focus: () => void };
+type ComposerHandle = {
+  loadForEdit: (value: string) => boolean | void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  focus: () => void;
+};
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
 function toHtmlEl(el: RefArg): HTMLElement | null {
@@ -396,6 +414,10 @@ function bindChatDock(el: RefArg): void {
   ) {
     dockedComposerRef.value = {
       loadForEdit: el.loadForEdit.bind(el),
+      loadAttachmentsForEdit:
+        'loadAttachmentsForEdit' in el && typeof el.loadAttachmentsForEdit === 'function'
+          ? el.loadAttachmentsForEdit.bind(el)
+          : () => {},
       focus: el.focus.bind(el),
     };
   } else {
@@ -759,19 +781,26 @@ function handleComposerSubmit(payload: { text: string; attachments: { fileId: st
 // returns. Scrolling here would target the pre-rewind bottom and fight the
 // bubble-exit animation, so we only arm the follow state; the scrollKey watcher
 // smooth-scrolls once the truncated turns actually land.
-function handleEditMessage(text: string): void {
+function handleEditMessage(payload: {
+  text: string;
+  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+}): void {
   following.value = true;
   showPill.value = false;
   userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
-  emit('editMessage', text);
+  emit('editMessage', payload);
 }
 
-// A queued message was clicked for editing: load its text back into the active
-// composer, then let the parent dequeue it (mirrors the old dock-queue flow).
+// A queued message was clicked for editing: load its text (and any attachments)
+// back into the active composer, then let the parent dequeue it (mirrors the old
+// dock-queue flow). Only dequeue when the load actually succeeds — if the dock is
+// showing a pending question/approval the composer is hidden and the load no-ops,
+// so dequeuing would drop the prompt instead of making it editable.
 function handleEditQueued(index: number): void {
-  const text = props.queued?.[index]?.text ?? '';
-  if (text) loadComposerForEdit(text);
-  emit('editQueued', index);
+  const item = props.queued?.[index];
+  const text = item?.text ?? '';
+  const loaded = loadComposerForEdit(text, item?.attachments);
+  if (loaded) emit('editQueued', index);
 }
 
 function handleReorderQueue(payload: { from: number; to: number }): void {

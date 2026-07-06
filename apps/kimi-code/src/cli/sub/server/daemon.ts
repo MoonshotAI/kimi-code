@@ -59,6 +59,10 @@ export interface EnsureDaemonOptions {
   allowRemoteShutdown?: boolean;
   /** Keep the PTY `/api/v1/terminals/*` routes enabled on a non-loopback bind. */
   allowRemoteTerminals?: boolean;
+  /** Disable bearer-token auth on every route (`--dangerous-bypass-auth`). */
+  dangerousBypassAuth?: boolean;
+  /** Keep the daemon alive instead of idle-killing it (`--keep-alive`). */
+  keepAlive?: boolean;
   /** Extra `Host` header values to allow through the DNS-rebinding check. */
   allowedHosts?: readonly string[];
   /** Idle-shutdown grace in ms for the spawned daemon (daemon mode only). */
@@ -202,6 +206,8 @@ interface SpawnDaemonChildOptions {
   insecureNoTls?: boolean;
   allowRemoteShutdown?: boolean;
   allowRemoteTerminals?: boolean;
+  dangerousBypassAuth?: boolean;
+  keepAlive?: boolean;
   allowedHosts?: readonly string[];
   idleGraceMs?: number;
 }
@@ -234,6 +240,12 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): ChildProcess
   }
   if (options.allowRemoteTerminals === true) {
     args.push('--allow-remote-terminals');
+  }
+  if (options.dangerousBypassAuth === true) {
+    args.push('--dangerous-bypass-auth');
+  }
+  if (options.keepAlive === true) {
+    args.push('--keep-alive');
   }
   if (options.idleGraceMs !== undefined) {
     args.push('--idle-grace-ms', String(options.idleGraceMs));
@@ -320,6 +332,8 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    dangerousBypassAuth: options.dangerousBypassAuth,
+    keepAlive: options.keepAlive,
     allowedHosts: options.allowedHosts,
     idleGraceMs: options.idleGraceMs,
   });

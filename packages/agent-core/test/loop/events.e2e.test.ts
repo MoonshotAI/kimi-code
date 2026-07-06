@@ -158,6 +158,19 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
     expect(typeof tr?.result.output).toBe('string');
   });
 
+  it('records the provider response id on step.end', async () => {
+    const { context } = await runTurn({
+      responses: [
+        {
+          ...makeEndTurnResponse('ok'),
+          messageId: 'chatcmpl-test',
+        },
+      ],
+    });
+
+    expect(context.stepEnds()[0]?.messageId).toBe('chatcmpl-test');
+  });
+
   it('accepts a custom emitter function', async () => {
     class StrictCollector {
       readonly events: LoopEvent[] = [];

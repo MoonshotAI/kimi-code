@@ -90,6 +90,9 @@ export function useModelProviderState(
   // Session-scoped skills (slash-invocable). Loaded lazily per session; the active
   // session's list feeds the composer's `/` menu.
   const skillsBySession = ref<Record<string, AppSkill[]>>({});
+  // Workspace-scoped skills, used to populate the `/` menu before a session exists
+  // (onboarding composer). Keyed by workspace id; loaded once per workspace.
+  const skillsByWorkspace = ref<Record<string, AppSkill[]>>({});
   const providers = ref<AppProvider[]>([]);
 
   // Model picked while in the "new session draft" state (onboarding composer —
@@ -124,6 +127,17 @@ export function useModelProviderState(
     } catch {
       // Skills are side data; an older daemon without /skills just yields no
       // slash-skills, the built-in commands still work.
+    }
+  }
+
+  async function loadSkillsForWorkspace(workspaceId: string): Promise<void> {
+    try {
+      const api = getKimiWebApi();
+      const list = await api.listSkillsForWorkspace(workspaceId);
+      skillsByWorkspace.value = { ...skillsByWorkspace.value, [workspaceId]: list };
+    } catch {
+      // Side data; an older daemon without /workspaces/{id}/skills just yields
+      // no slash-skills for the onboarding composer.
     }
   }
 
@@ -383,8 +397,10 @@ export function useModelProviderState(
     providers,
     draftModel,
     skillsBySession,
+    skillsByWorkspace,
     // actions
     loadSkillsForSession,
+    loadSkillsForWorkspace,
     loadModels,
     refreshOAuthProviderModels,
     loadProviders,

@@ -18,6 +18,7 @@ import { detectEnvironmentFromNode, type Environment } from './environment';
 import { KaosFileExistsError } from './errors';
 import { BufferedReadable, decodeTextWithErrors, globPatternToRegex } from './internal';
 import type { Kaos } from './kaos';
+import { applyLoginShellPathFromNode } from './login-shell-path';
 import type { KaosProcess } from './process';
 import type { StatResult } from './types';
 
@@ -212,7 +213,11 @@ export class LocalKaos implements Kaos {
    * without polluting one another.
    */
   static async create(): Promise<LocalKaos> {
-    const osEnv = await detectEnvironmentFromNode();
+    // Enrich process.env.PATH from the user's login shell so spawned
+    // commands find user-installed tools (e.g. Homebrew's gh) even when
+    // kimi-code itself was launched without the full profile PATH. Both
+    // probes are memoised, independent, and run concurrently.
+    const [osEnv] = await Promise.all([detectEnvironmentFromNode(), applyLoginShellPathFromNode()]);
     return new LocalKaos(osEnv);
   }
 

@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
         handler(mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
       }
     }),
+    waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
   };
 
   return {
@@ -208,6 +209,7 @@ describe('runPrompt', () => {
       model: 'k2',
       permission: 'auto',
       additionalDirs: undefined,
+      drainAgentTasksOnStop: true,
     });
     expect(mocks.session.setPermission).not.toHaveBeenCalled();
     expect(mocks.session.setApprovalHandler).toHaveBeenCalledWith(expect.any(Function));
@@ -333,6 +335,7 @@ describe('runPrompt', () => {
       model: 'kimi-code/k2.5',
       permission: 'auto',
       additionalDirs: undefined,
+      drainAgentTasksOnStop: true,
     });
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
@@ -350,6 +353,7 @@ describe('runPrompt', () => {
       model: 'k2',
       permission: 'auto',
       additionalDirs: ['../shared', '/tmp/extra'],
+      drainAgentTasksOnStop: true,
     });
   });
 
@@ -657,6 +661,37 @@ describe('runPrompt', () => {
         '',
       ].join('\n'),
     );
+  });
+
+  it('flushes stream-json assistant output before waiting for background tasks', async () => {
+    let releaseWait: () => void = () => {};
+    const waitGate = new Promise<void>((resolve) => {
+      releaseWait = resolve;
+    });
+    mocks.session.waitForBackgroundTasksOnPrint.mockImplementationOnce(async () => waitGate);
+
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 9, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 9, delta: 'final answer' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 9, reason: 'completed' }));
+      }
+    });
+
+    const stdout = writer();
+    const stderr = writer();
+    const runPromise = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    // The assistant message must be flushed even while the background wait is pending.
+    await waitForAssertion(() => {
+      expect(stdout.text()).toContain('{"role":"assistant","content":"final answer"}');
+    });
+
+    releaseWait();
+    await runPromise;
   });
 
   it('resumes a concrete session without a configured default model', async () => {

@@ -11,6 +11,7 @@ export default {
     search: 'Search',
     todo: 'Todo',
     task: 'Task',
+    ask_user: 'Question',
   },
   chip: {
     lines: '{count} lines',
@@ -24,5 +25,12 @@ export default {
     running: 'running',
     error: 'failed',
     done: 'done',
+  },
+  ask: {
+    dismissed: 'Dismissed',
+    answer: '{count} answer',
+    answers: '{count} answers',
+    answered: 'Answered',
+    more: '(+{count} more)',
   },
 } as const;

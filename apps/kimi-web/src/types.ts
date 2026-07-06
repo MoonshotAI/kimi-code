@@ -110,6 +110,9 @@ export interface ToolMedia {
   mimeType?: string;
   bytes?: number;
   dimensions?: string;
+  /** File-store id when the media is an uploaded file. The preview fetches its
+   *  bytes with the Bearer credential (a bare getFileUrl src 401s in <img>). */
+  fileId?: string;
 }
 
 export type AgentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
@@ -230,7 +233,7 @@ export interface ChatTurn {
   approval?: ApprovalBlock;
   approvalId?: string; // daemon approval id — present when approval needs a decision
   /** Image attachments sent by the user (rendered above the text bubble). */
-  images?: { url: string; alt?: string; kind: 'image' | 'video' }[];
+  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
   /** Compaction divider data (role 'compaction'): the transcript keeps all
       prior turns and renders this as a separator line; `text` holds the
       LLM-generated summary, opened in the right-side panel on click. */

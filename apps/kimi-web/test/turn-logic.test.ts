@@ -201,6 +201,63 @@ describe('messagesToTurns', () => {
       expect.objectContaining({ kind: 'agentGroup' }),
     );
   });
+
+  it('renders a `<video path>` text tag as a video attachment, not raw text', () => {
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'look at this' },
+          {
+            type: 'text',
+            text: `<video path="/Users/me/.kimi-code/cache/${fileId}.mp4"></video>`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+      [],
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
+    expect(turns[0]?.images).toEqual([
+      { url: `/api/v1/files/${fileId}`, kind: 'video', alt: fileId, fileId },
+    ]);
+  });
+
+  it('keeps the video tag as text when no file resolver is provided', () => {
+    const tag =
+      '<video path="/Users/me/.kimi-code/cache/f_01KWK39A0ZC8R2ATZEQMD8716C.mp4"></video>';
+    const turns = messagesToTurns(
+      [message('u1', 'user', [{ type: 'text', text: tag }])],
+      [],
+      undefined,
+      false,
+      [],
+    );
+
+    expect(turns[0]).toMatchObject({ role: 'user', text: tag });
+    expect(turns[0]?.images).toBeUndefined();
+  });
+
+  it('leaves non-file-store media paths as text instead of fabricating a url', () => {
+    // TUI/legacy cache names are not shaped like a file-store id (`f_…`), so the
+    // tag must stay as text rather than becoming a broken /files/<name> request.
+    const tag =
+      '<video path="/tmp/550e8400-e29b-41d4-a716-446655440000-clip.mp4"></video>';
+    const turns = messagesToTurns(
+      [message('u1', 'user', [{ type: 'text', text: tag }])],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+      [],
+    );
+
+    expect(turns[0]).toMatchObject({ role: 'user', text: tag });
+    expect(turns[0]?.images).toBeUndefined();
+  });
 });
 
 describe('latestTodos', () => {

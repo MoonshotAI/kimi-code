@@ -1,5 +1,53 @@
 # @moonshot-ai/kimi-code
 
+## 0.22.3
+
+### Patch Changes
+
+- [#1367](https://github.com/MoonshotAI/kimi-code/pull/1367) [`23daf0f`](https://github.com/MoonshotAI/kimi-code/commit/23daf0f3c199b4aaa9bd9388a2903d7827f98d32) - Revert the recent TUI transcript rendering changes to the original upstream behavior and fix related rendering issues.
+
+- [#1343](https://github.com/MoonshotAI/kimi-code/pull/1343) [`ec758c7`](https://github.com/MoonshotAI/kimi-code/commit/ec758c747a95555847b8a0275ed0809010c7d5e7) - Add click-to-enlarge for images uploaded in the web chat. Click an image in a message to open it.
+
+- [#1343](https://github.com/MoonshotAI/kimi-code/pull/1343) [`ec758c7`](https://github.com/MoonshotAI/kimi-code/commit/ec758c747a95555847b8a0275ed0809010c7d5e7) - Fix uploaded videos failing to play in the web chat.
+
+- [#1371](https://github.com/MoonshotAI/kimi-code/pull/1371) [`5394fea`](https://github.com/MoonshotAI/kimi-code/commit/5394feaabb5d373fab046b3986b10a1180b4991d) - Wait for background subagents to finish and respond to their results before exiting in `kimi -p`, instead of ending the turn early.
+
+- [#1373](https://github.com/MoonshotAI/kimi-code/pull/1373) [`e715b16`](https://github.com/MoonshotAI/kimi-code/commit/e715b1648c57bd0863edf859cb67db0327b7bb94) - Add `--dangerous-bypass-auth` and `--keep-alive` flags to `kimi server run`, so the server can run without a token on trusted networks and stay alive past the idle timeout.
+
+- [#1344](https://github.com/MoonshotAI/kimi-code/pull/1344) [`26b9022`](https://github.com/MoonshotAI/kimi-code/commit/26b90225d21bd18f4f7e3b775f3f7f49034afad9) - Add a segmented thinking-level control in the web model picker for models that support multiple reasoning efforts. Open the composer model menu to choose a level.
+
+## 0.22.2
+
+### Patch Changes
+
+- [#1353](https://github.com/MoonshotAI/kimi-code/pull/1353) [`68ad686`](https://github.com/MoonshotAI/kimi-code/commit/68ad686211760eb1c3e6b5c23eb28ace9009c17f) - Fix duplicated transcript content appearing in scrollback during streaming.
+
+- [#1340](https://github.com/MoonshotAI/kimi-code/pull/1340) [`e2fe62a`](https://github.com/MoonshotAI/kimi-code/commit/e2fe62a5eff124b816a0f656355fc5bea85e3893) - Fix sessions silently dropping later user messages after a turn was interrupted between a tool call and its result.
+
+- [#1342](https://github.com/MoonshotAI/kimi-code/pull/1342) [`84d8d5b`](https://github.com/MoonshotAI/kimi-code/commit/84d8d5b06399d29a9d8caba701835061c30a4817) - Have context-compaction notes capture a forward plan for the remaining work — upcoming steps, settled decisions, and foreseeable obstacles — instead of only the immediate next step, so the agent continues more coherently after auto-compaction.
+
+- [#1340](https://github.com/MoonshotAI/kimi-code/pull/1340) [`e2fe62a`](https://github.com/MoonshotAI/kimi-code/commit/e2fe62a5eff124b816a0f656355fc5bea85e3893) - Fix requests being rejected by strict providers when the model emits duplicate tool call ids.
+
+- [#1339](https://github.com/MoonshotAI/kimi-code/pull/1339) [`021786f`](https://github.com/MoonshotAI/kimi-code/commit/021786f5a201df5466a963d4d1ac915b3977582b) - Enrich PATH from the user's login shell at startup, so shell commands find user-installed tools (e.g. Homebrew's `gh`) even when kimi-code was launched without the full profile PATH.
+
+- [#1336](https://github.com/MoonshotAI/kimi-code/pull/1336) [`4c1d0a1`](https://github.com/MoonshotAI/kimi-code/commit/4c1d0a1633c98ae5703addbf86ffe50b81545c08) - Keep automatic background updates from flashing a console window on Windows.
+
+- [#1332](https://github.com/MoonshotAI/kimi-code/pull/1332) [`93f16c3`](https://github.com/MoonshotAI/kimi-code/commit/93f16c32d71d974f30c3ea3b1134691936ac5f53) - Fix `kimi upgrade` failing on Windows with a spawn error when installing the new version.
+
+- [#1348](https://github.com/MoonshotAI/kimi-code/pull/1348) [`175b95f`](https://github.com/MoonshotAI/kimi-code/commit/175b95f3af684f7c5447967b9fe7c8a58b6ffe1b) - Fix compressed-image prompts leaking an internal `<system>` compression note into the visible message and the session title.
+
+- [#1338](https://github.com/MoonshotAI/kimi-code/pull/1338) [`276407d`](https://github.com/MoonshotAI/kimi-code/commit/276407d2a46b03ce32cce02b73c5d485b1b02b17) - Promote the language-matching rule to a dedicated section in the system prompt, so replies and reasoning consistently follow the user's language through long English tool output, while repository artifacts keep project conventions.
+
+- [#1347](https://github.com/MoonshotAI/kimi-code/pull/1347) [`02da587`](https://github.com/MoonshotAI/kimi-code/commit/02da5877953ce082826ba5ab1a1abd914d82b24a) - In `kimi -p` runs, wait for background subagents to finish before exiting when `background.keep_alive_on_exit` is enabled. Set `keep_alive_on_exit = true` to let concurrent background subagents complete.
+
+- [#1349](https://github.com/MoonshotAI/kimi-code/pull/1349) [`e9db9ca`](https://github.com/MoonshotAI/kimi-code/commit/e9db9cafcf7a0d26122b2cac247d866d7724fd7a) - Record model response ids in session wire logs to make individual model requests easier to trace.
+
+- [#1345](https://github.com/MoonshotAI/kimi-code/pull/1345) [`3ed22e3`](https://github.com/MoonshotAI/kimi-code/commit/3ed22e35a4ee09ce353e699406c6c994423ff39f) - Keep subagent cards at a stable height and show a live status spinner with a compact two-row activity window.
+
+- [#1305](https://github.com/MoonshotAI/kimi-code/pull/1305) [`9091627`](https://github.com/MoonshotAI/kimi-code/commit/909162725770700efd3051f4cfa68156d9b84fa8) - Add a TUI preference to keep rapid multi-line pastes from submitting line by line when bracketed paste is unavailable. Set `disable_paste_burst = true` in `tui.toml` to turn it off.
+
+- [#1328](https://github.com/MoonshotAI/kimi-code/pull/1328) [`01b65bd`](https://github.com/MoonshotAI/kimi-code/commit/01b65bdddc28c7c492096000103687f6a507e353) - Rebuild the web design-system easter egg as an in-app overlay that uses the app's real design tokens, so it stays in sync instead of drifting as a separate copy.
+
 ## 0.22.1
 
 ### Patch Changes

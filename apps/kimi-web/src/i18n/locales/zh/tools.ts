@@ -11,6 +11,7 @@ export default {
     search: '搜索',
     todo: '待办',
     task: '任务',
+    ask_user: '提问',
   },
   chip: {
     lines: '{count} 行',
@@ -24,5 +25,12 @@ export default {
     running: '运行中',
     error: '有失败',
     done: '已完成',
+  },
+  ask: {
+    dismissed: '已忽略',
+    answer: '{count} 个回答',
+    answers: '{count} 个回答',
+    answered: '已回答',
+    more: '（还有 {count} 个）',
   },
 } as const;

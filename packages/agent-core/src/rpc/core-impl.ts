@@ -36,6 +36,12 @@ import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig }
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
+  registerBuiltinSkills,
+  SessionSkillRegistry,
+  resolveSkillRoots,
+  summarizeSkill,
+} from '../skill';
+import {
   ProviderManager, type BearerTokenProvider,
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
@@ -80,6 +86,7 @@ import type {
   GetPluginInfoPayload,
   InstallPluginPayload,
   ListSessionsPayload,
+  ListWorkspaceSkillsPayload,
   McpServerInfo,
   McpStartupMetrics,
   PluginInfo,
@@ -296,12 +303,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       pluginCommands,
       appVersion: this.appVersion,
       additionalDirs,
+      drainAgentTasksOnStop: options.drainAgentTasksOnStop,
     });
     try {
       session.metadata = {
         ...session.metadata,
         createdAt: new Date(summary.createdAt).toISOString(),
         updatedAt: new Date(summary.updatedAt).toISOString(),
+        workDir,
         ...(summary.title !== undefined
           ? {
               title: summary.title,
@@ -755,6 +764,37 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).listSkills(payload);
   }
 
+  /**
+   * List the skills available for a workspace working directory without
+   * requiring a session. Mirrors `Session.loadSkills` exactly (same roots,
+   * same discovery order, same built-ins) so the result matches what a new
+   * session created in `workDir` would see. Used to populate the composer
+   * skill menu before a session exists.
+   */
+  async listWorkspaceSkills({
+    workDir,
+  }: ListWorkspaceSkillsPayload): Promise<readonly SkillSummary[]> {
+    const cwd = requiredWorkDir('listWorkspaceSkills', workDir);
+    await this.pluginsReady;
+    const skills = this.resolveSessionSkillConfig(this.reloadProviderManager());
+    const roots = await resolveSkillRoots({
+      paths: {
+        userHomeDir: skills.userHomeDir ?? this.userHomeDir,
+        brandHomeDir: skills.brandHomeDir ?? this.homeDir,
+        workDir: cwd,
+      },
+      explicitDirs: skills.explicitDirs,
+      extraDirs: skills.extraDirs,
+      pluginSkillRoots: skills.pluginSkillRoots,
+      mergeAllAvailableSkills: skills.mergeAllAvailableSkills,
+      builtinDir: skills.builtinDir,
+    });
+    const registry = new SessionSkillRegistry({});
+    await registry.loadRoots(roots);
+    registerBuiltinSkills(registry);
+    return registry.listSkills().map(summarizeSkill);
+  }
+
   listPluginCommands({
     sessionId,
     ...payload
@@ -789,6 +829,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getSessionWarnings({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<readonly SessionWarning[]> {
     return this.sessionApi(sessionId).getSessionWarnings(payload);
+  }
+
+  waitForBackgroundTasksOnPrint({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<void> {
+    return this.sessionApi(sessionId).waitForBackgroundTasksOnPrint(payload);
   }
 
   addAdditionalDir({

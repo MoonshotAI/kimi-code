@@ -41,6 +41,7 @@ export interface LoopStepEndEvent {
    */
   readonly providerFinishReason?: FinishReason | undefined;
   readonly rawFinishReason?: string | undefined;
+  readonly messageId?: string | undefined;
 }
 
 export interface LoopStepRetryingEvent {
@@ -77,6 +78,7 @@ export interface LoopToolCallEvent {
   readonly args: unknown;
   readonly description?: string | undefined;
   readonly display?: ToolInputDisplay | undefined;
+  readonly extras?: Record<string, unknown> | undefined;
 }
 
 export interface LoopToolResultEvent {

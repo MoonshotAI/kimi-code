@@ -716,6 +716,8 @@ export function toAppModel(wire: WireModel): AppModel {
     displayName: wire.display_name,
     maxContextSize: wire.max_context_size,
     capabilities: wire.capabilities,
+    supportEfforts: wire.support_efforts,
+    defaultEffort: wire.default_effort,
   };
 }
 

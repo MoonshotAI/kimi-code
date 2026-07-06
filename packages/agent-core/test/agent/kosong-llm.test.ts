@@ -90,6 +90,27 @@ describe('KosongLLM streaming tool-call deltas', () => {
   });
 });
 
+describe('KosongLLM response id', () => {
+  it('surfaces the provider response id from the generate result', async () => {
+    const generate: GenerateFn = async () => ({
+      id: 'chatcmpl-test',
+      message: { role: 'assistant', content: [], toolCalls: [] },
+      usage: emptyUsage(),
+      finishReason: 'completed',
+      rawFinishReason: 'stop',
+    });
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+
+    const response = await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response.messageId).toBe('chatcmpl-test');
+  });
+});
+
 describe('KosongLLM stream timing', () => {
   it('returns timing measured from provider request start to stream end', async () => {
     const generate: GenerateFn = async (

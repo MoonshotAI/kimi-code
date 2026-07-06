@@ -193,9 +193,12 @@ You can also switch models temporarily without touching the config file — by s
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently |
-| `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes. By default, Kimi Code requests that all background tasks stop before the process exits; set this to `true` only when you want tasks to outlive the session |
+| `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes. By default, Kimi Code requests that all background tasks stop before the process exits; set this to `true` only when you want tasks to outlive the session. In print mode (`kimi -p`), setting this to `true` also makes the process wait for all background tasks to finish before exiting, so background subagents can complete their work |
+| `print_wait_ceiling_s` | `integer` | `3600` | In print mode (`kimi -p`) with `keep_alive_on_exit = true`, the maximum number of seconds the process waits for background tasks to finish after the main agent's turn ends. Has no effect outside print mode or when `keep_alive_on_exit` is `false` |
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
+
+In print mode (`kimi -p "<prompt>"`), Kimi Code runs a single non-interactive turn and exits as soon as the main agent finishes. If you launch background tasks (for example, concurrent subagents via `Agent(run_in_background=true)`) and need them to run to completion, set `keep_alive_on_exit = true`: the process then waits for every background task to reach a terminal state before exiting, bounded by `print_wait_ceiling_s`. Without it, the single turn ending tears background tasks down with the process.
 
 <!--
 ## `experimental`

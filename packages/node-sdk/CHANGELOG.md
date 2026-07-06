@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.12.1
+
+### Patch Changes
+
+- [#1349](https://github.com/MoonshotAI/kimi-code/pull/1349) [`e9db9ca`](https://github.com/MoonshotAI/kimi-code/commit/e9db9cafcf7a0d26122b2cac247d866d7724fd7a) - Record model response ids in session wire logs to make individual model requests easier to trace.
+
 ## 0.12.0
 
 ### Minor Changes

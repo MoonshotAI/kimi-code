@@ -168,7 +168,7 @@ defineEmits<{ toggle: [] }>();
   color: var(--color-danger);
 }
 
-/* Expanded detail: sunken panel under the row, indented to align with the name.
+/* Expanded detail: sunken panel under the row.
    Collapses/expands via a height transition; `interpolate-size: allow-keywords`
    (set on :root) lets `height: auto` interpolate instead of snap. The visual
    styles live on `.bb-pad` so they clip cleanly inside the 0-height clip box. */
@@ -181,7 +181,7 @@ defineEmits<{ toggle: [] }>();
   height: auto;
 }
 .bb-pad {
-  padding: 0 11px 11px 36px;
+  padding: 0 11px 11px;
   background: var(--color-surface-sunken);
   border-top: 1px solid var(--color-line);
   color: var(--color-text);

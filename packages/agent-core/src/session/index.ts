@@ -76,6 +76,12 @@ export interface SessionOptions {
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Print-mode (`kimi -p`) only: hold the main turn open while background
+   * subagents (`kind === 'agent'`) are still running, idle-waiting until they
+   * finish before the run exits. Set via the SDK `createSession` option.
+   */
+  readonly drainAgentTasksOnStop?: boolean;
 }
 
 export interface SessionSkillConfig {
@@ -117,6 +123,10 @@ export interface SessionMeta {
   isCustomTitle: boolean;
   lastPrompt?: string;
   forkedFrom?: string;
+  /** Absolute working directory the session was created in. Persisted so the
+   *  session directory is self-describing and the global session index does not
+   *  have to be trusted for the (one-way-hashed) workDir. */
+  workDir?: string;
   agents: Record<string, AgentMeta>;
   custom: Record<string, any>;
 }
@@ -293,6 +303,11 @@ export class Session {
     const { agent } = await this.createAgent({ type: 'main' }, {
       profile: DEFAULT_AGENT_PROFILES['agent'],
     });
+    if (this.options.drainAgentTasksOnStop) {
+      const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
+      agent.printDrainAgentTasksOnStop = true;
+      agent.printDrainDeadlineMs = Date.now() + ceilingS * 1000;
+    }
     await this.triggerSessionStart('startup');
     return agent;
   }
@@ -421,6 +436,81 @@ export class Session {
         await agent.background.stopAll('Session closed');
       }),
     );
+  }
+
+  /**
+   * Wait for all still-running background tasks (across every agent) to reach a
+   * terminal state before a `kimi -p` (print) run exits.
+   *
+   * Gated by `background.keep_alive_on_exit`: when it is not `true`, this returns
+   * immediately so print mode keeps its default single-turn semantics. The wait is
+   * bounded by `background.print_wait_ceiling_s` (default 3600s) so a wedged task
+   * cannot keep the process alive forever.
+   *
+   * Terminal notifications are suppressed for each task while we wait, so a task
+   * completing cannot `turn.steer` the (already finished) main agent into launching
+   * a new turn.
+   */
+  async waitForBackgroundTasksOnPrint(): Promise<void> {
+    const keepAliveOnExit = resolveConfigValue({
+      env: process.env,
+      envKey: BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV,
+      configValue: this.options.background?.keepAliveOnExit,
+      defaultValue: false,
+      parseEnv: parseBooleanEnv,
+    });
+    if (!keepAliveOnExit) return;
+
+    const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
+    const timeoutMs = ceilingS * 1000;
+    const deadline = Date.now() + timeoutMs;
+
+    // Re-enumerate active background tasks across every agent until none remain
+    // (or the ceiling expires). A subagent may fan out new background tasks
+    // after a previous enumeration, so a single pass could return while those
+    // later tasks are still running — breaking the "every background task"
+    // guarantee. Each round waits for the newly discovered tasks, then rescans
+    // to catch anything spawned in the meantime.
+    const seen = new Set<string>();
+    const allWaiters: Promise<unknown>[] = [];
+    while (Date.now() < deadline) {
+      const batch: Promise<unknown>[] = [];
+      const suppressions: Promise<void>[] = [];
+      let activeCount = 0;
+      for (const agent of this.readyAgents()) {
+        for (const task of agent.background.list(true)) {
+          activeCount++;
+          if (seen.has(task.taskId)) continue;
+          seen.add(task.taskId);
+          // suppressTerminalNotification sets the suppressed flag synchronously
+          // when called; defer awaiting the persist until after the whole
+          // enumeration so no task can complete and fire a notification while
+          // another task's persist write is pending.
+          suppressions.push(agent.background.suppressTerminalNotification(task.taskId));
+          const remaining = Math.max(1, deadline - Date.now());
+          const waiter = agent.background.wait(task.taskId, remaining);
+          batch.push(waiter);
+          allWaiters.push(waiter);
+        }
+      }
+      if (suppressions.length > 0) {
+        await Promise.all(suppressions);
+      }
+      if (activeCount === 0 || batch.length === 0) break;
+      this.log.info('waiting for background tasks before print exit', {
+        active: activeCount,
+        new: batch.length,
+        timeoutMs,
+      });
+      await Promise.all(batch);
+    }
+    if (allWaiters.length > 0) {
+      await Promise.all(allWaiters);
+      this.log.info('background tasks settled before print exit', {
+        count: seen.size,
+        timeoutMs,
+      });
+    }
   }
 
   async createAgent(
@@ -903,6 +993,7 @@ export class Session {
 }
 
 export * from './subagent-host';
+export * from './store';
 
 function initCompletionReminder(agentsMd: string): string {
   const latest =

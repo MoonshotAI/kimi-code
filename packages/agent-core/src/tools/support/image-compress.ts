@@ -20,7 +20,10 @@
  *    original dimensions, {@link buildImageCompressionCaption} renders the
  *    shared "what was compressed, where is the original" note every ingestion
  *    point can place next to the image, and {@link cropImageForModel} lets a
- *    caller read a region of the original back at full fidelity.
+ *    caller read a region of the original back at full fidelity. In user
+ *    prompts the context layer later reroutes that note through the hidden
+ *    system-reminder injection via {@link extractImageCompressionCaptions},
+ *    so its raw `<system>` markup never renders in the UI.
  */
 
 import type { ContentPart } from '@moonshot-ai/kosong';
@@ -553,6 +556,14 @@ export interface ImageCompressionCaptionInput {
  * model knows it is looking at a downsampled copy: what the original was, what
  * was actually sent, and — when the original is on disk — where to read it
  * back (via ReadMediaFile `region`) for full-fidelity detail.
+ *
+ * Two channels consume this note differently:
+ *  - Tool results (MCP images) keep it inline — `<system>` status text inside
+ *    tool output is the established convention there.
+ *  - User prompts must not render raw `<system>` markup in the UI, so the
+ *    context layer detects the caption via
+ *    {@link extractImageCompressionCaptions} and reroutes it through the
+ *    built-in system-reminder injection (hidden by its `injection` origin).
  */
 export function buildImageCompressionCaption(input: ImageCompressionCaptionInput): string {
   const sentences = [
@@ -570,6 +581,46 @@ export function buildImageCompressionCaption(input: ImageCompressionCaptionInput
     sentences.push('The uncompressed original was not preserved.');
   }
   return `<system>${sentences.join(' ')}</system>`;
+}
+
+/**
+ * Fixed opening every {@link buildImageCompressionCaption} note starts with —
+ * the anchor {@link extractImageCompressionCaptions} matches on. Keep the two
+ * in sync.
+ */
+const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
+
+/**
+ * A full caption embedded in arbitrary text. The body is sentences plus a
+ * quoted file path and never contains `</system>`, so the non-greedy scan to
+ * the closing tag is exact.
+ */
+const CAPTION_PATTERN = /<system>(Image compressed to fit model limits:[\s\S]*?)<\/system>/g;
+
+export interface ImageCompressionCaptionExtraction {
+  /** Caption bodies found, in order, without the `<system>` wrapper. */
+  readonly captions: readonly string[];
+  /** The input text with every caption removed. */
+  readonly text: string;
+}
+
+/**
+ * Find every {@link buildImageCompressionCaption} note embedded in `text` and
+ * return the unwrapped caption bodies plus the text without them. Prompt
+ * ingestion (server upload/base64 route, TUI paste, ACP) places the caption
+ * inline next to the image — sometimes merged into an adjacent text segment —
+ * and the context layer uses this to reroute the note through the built-in
+ * system-reminder injection instead of leaving raw `<system>` markup in the
+ * user-visible message.
+ */
+export function extractImageCompressionCaptions(text: string): ImageCompressionCaptionExtraction {
+  if (!text.includes(CAPTION_OPENING)) return { captions: [], text };
+  const captions: string[] = [];
+  const remainder = text.replace(CAPTION_PATTERN, (_match, body: string) => {
+    captions.push(body);
+    return '';
+  });
+  return { captions, text: remainder };
 }
 
 function describeImageVariant(variant: ImageVariantDescription): string {

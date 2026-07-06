@@ -21,7 +21,7 @@
  *     → kosong content adapter against a mocked bridge.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -760,17 +760,21 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(0);
-    expect(submitted?.content).toEqual([
-      { type: 'text', text: 'what happens in this video?' },
-      {
-        type: 'video',
-        source: {
-          kind: 'base64',
-          media_type: 'video/mp4',
-          data: TINY_MP4.toString('base64'),
-        },
-      },
-    ]);
+    // Video is NOT base64-inlined. It is materialized into the cache and
+    // referenced by a `<video path="...">` tag so ReadMediaFile / the
+    // provider's VideoUploader handle it, matching the TUI.
+    const content = submitted?.content;
+    expect(content).toHaveLength(2);
+    expect(content?.[0]).toEqual({ type: 'text', text: 'what happens in this video?' });
+    const videoPart = content?.[1] as { type: string; text: string } | undefined;
+    expect(videoPart?.type).toBe('text');
+    const match = /<video path="([^"]+)"><\/video>/.exec(videoPart?.text ?? '');
+    expect(match).not.toBeNull();
+    const cachePath = match![1]!;
+    expect(cachePath.startsWith(join(bridgeHome, 'cache'))).toBe(true);
+    expect(cachePath.endsWith('.mp4')).toBe(true);
+    expect(existsSync(cachePath)).toBe(true);
+    expect(readFileSync(cachePath).equals(TINY_MP4)).toBe(true);
   });
 
   it('rejects non-video file_id content before submitting the prompt', async () => {
