@@ -188,16 +188,32 @@ async function listSessionsWithRouteFilter(
   predicate: (session: SessionListItem) => boolean,
 ): Promise<SessionListPage> {
   const targetSize = normalizeSessionListPageSize(cursor);
+
+  // Forward (after_id) drain: the core returns the newest page above the pivot,
+  // and the only way to page further would be `before_id` — which reintroduces
+  // the pivot and older sessions, crossing the `after_id` lower bound. Take a
+  // single core page and filter it instead of draining past the bound.
+  if (cursor.after_id !== undefined && cursor.before_id === undefined) {
+    const page = await fetchPage({
+      ...baseQuery,
+      after_id: cursor.after_id,
+      page_size: MAX_SESSION_LIST_PAGE_SIZE,
+    });
+    const matches = page.items.filter(predicate);
+    return {
+      items: matches.slice(0, targetSize),
+      has_more: matches.length > targetSize,
+    };
+  }
+
   const matches: SessionListItem[] = [];
   let beforeId = cursor.before_id;
-  let afterId = cursor.after_id;
   let coreHasMore = true;
 
   while (matches.length <= targetSize && coreHasMore) {
     const page = await fetchPage({
       ...baseQuery,
       before_id: beforeId,
-      after_id: afterId,
       page_size: MAX_SESSION_LIST_PAGE_SIZE,
     });
     if (page.items.length === 0) break;
@@ -208,7 +224,6 @@ async function listSessionsWithRouteFilter(
     const nextBeforeId = page.items[page.items.length - 1]?.id;
     if (!coreHasMore || nextBeforeId === undefined || nextBeforeId === beforeId) break;
     beforeId = nextBeforeId;
-    afterId = undefined;
   }
 
   return {
