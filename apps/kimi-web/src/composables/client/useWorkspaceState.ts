@@ -737,6 +737,75 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
+   * Create a session in a workspace for an immediate first action — the first
+   * prompt (`startSessionAndSendPrompt`) or a skill activation
+   * (`startSessionAndActivateSkill`) from the empty-session composer. Returns
+   * the new session id, or null if the workspace is unknown. Applies the staged
+   * draft model + modes onto the new session. Throws on daemon failure so the
+   * caller can surface the error via pushOperationFailure.
+   */
+  async function createDraftSession(workspaceId: string): Promise<string | null> {
+    const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
+    if (!ws) return null;
+    const api = getKimiWebApi();
+    let workspaceIdForCreate: string | undefined;
+    let cwdForCreate = ws.root;
+    try {
+      const registered = await api.addWorkspace({ root: ws.root });
+      workspaceIdForCreate = registered.id;
+      cwdForCreate = registered.root;
+      upsertWorkspacePreserveOrder(registered);
+    } catch {
+      // Older daemons may not have /workspaces.
+    }
+    const draftPick = modelProvider.draftModel.value ?? undefined;
+    const session = await api.createSession({
+      workspaceId: workspaceIdForCreate,
+      cwd: cwdForCreate,
+      model: draftPick,
+    });
+    modelProvider.draftModel.value = null; // applied — the next draft starts from the default
+    // The create echo may return model as '' (same daemon quirk as /profile);
+    // keep the user's pick so the status line doesn't snap back to the default.
+    const created =
+      draftPick !== undefined && (!session.model || session.model.length === 0)
+        ? { ...session, model: draftPick }
+        : session;
+    upsertSessionFront(created);
+    selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
+    // session" (createSession), here we immediately act on it: keeping
+    // sessionLoading=true through the snapshot avoids flashing the empty-session
+    // composer before the optimistic first turn lands. selectSession resolves,
+    // then the caller adds the first turn synchronously (no await in between),
+    // so the view goes loading → message with no empty-composer frame.
+    await selectSession(session.id);
+    // Carry any mode toggles the user staged in the empty composer into the
+    // newly-created session, so the first action honors them. Write them to
+    // this session's per-session maps by id (not via the activeSessionId-based
+    // setters): if the user switches to another session while selectSession is
+    // awaiting the snapshot, the setters would otherwise read the then-current
+    // activeSessionId and pollute that session while this one loses the modes.
+    const sid = session.id;
+    if (draftModes.planMode) {
+      rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
+      savePlanModeToStorage();
+    }
+    if (draftModes.swarmMode) {
+      rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: true };
+      saveSwarmModeToStorage();
+    }
+    if (draftModes.goalMode) {
+      rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
+      saveGoalModeToStorage();
+    }
+    draftModes.planMode = false;
+    draftModes.swarmMode = false;
+    draftModes.goalMode = false;
+    return sid;
+  }
+
+  /**
    * Create a session and immediately submit the first prompt.
    * This is the unified path when there is no active session (e.g. after
    * clicking "+" or in an empty workspace).
@@ -746,67 +815,33 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     text: string,
     attachments?: PromptAttachment[],
   ): Promise<void> {
-    const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-    if (!ws) return;
     try {
-      const api = getKimiWebApi();
-      let workspaceIdForCreate: string | undefined;
-      let cwdForCreate = ws.root;
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        cwdForCreate = registered.root;
-        upsertWorkspacePreserveOrder(registered);
-      } catch {
-        // Older daemons may not have /workspaces.
-      }
-      const draftPick = modelProvider.draftModel.value ?? undefined;
-      const session = await api.createSession({
-        workspaceId: workspaceIdForCreate,
-        cwd: cwdForCreate,
-        model: draftPick,
-      });
-      modelProvider.draftModel.value = null; // applied — the next draft starts from the default
-      // The create echo may return model as '' (same daemon quirk as /profile);
-      // keep the user's pick so the status line doesn't snap back to the default.
-      const created =
-        draftPick !== undefined && (!session.model || session.model.length === 0)
-          ? { ...session, model: draftPick }
-          : session;
-      upsertSessionFront(created);
-      selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-      // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
-      // session" (createSession), here we immediately send a prompt: keeping
-      // sessionLoading=true through the snapshot avoids flashing the empty-session
-      // composer before the optimistic user message lands. selectSession resolves,
-      // then submitPromptInternal adds the user turn synchronously (no await in
-      // between), so the view goes loading → message with no empty-composer frame.
-      await selectSession(session.id);
-      // Carry any mode toggles the user staged in the empty composer into the
-      // newly-created session, so the first prompt honors them. Write them to
-      // this session's per-session maps by id (not via the activeSessionId-based
-      // setters): if the user switches to another session while selectSession is
-      // awaiting the snapshot, the setters would otherwise read the then-current
-      // activeSessionId and pollute that session while this one loses the modes.
-      const sid = session.id;
-      if (draftModes.planMode) {
-        rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
-        savePlanModeToStorage();
-      }
-      if (draftModes.swarmMode) {
-        rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: true };
-        saveSwarmModeToStorage();
-      }
-      if (draftModes.goalMode) {
-        rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
-        saveGoalModeToStorage();
-      }
-      draftModes.planMode = false;
-      draftModes.swarmMode = false;
-      draftModes.goalMode = false;
-      await submitPromptInternal(session.id, text, attachments);
+      const sid = await createDraftSession(workspaceId);
+      if (!sid) return;
+      await submitPromptInternal(sid, text, attachments);
     } catch (err) {
       pushOperationFailure('startSessionAndSendPrompt', err);
+    }
+  }
+
+  /**
+   * Create a session and immediately activate a skill — the empty-composer
+   * counterpart to startSessionAndSendPrompt. Without this, `/<skill>` from the
+   * new-session screen silently dropped the activation (`activateSkill` needs a
+   * session id). Shares createDraftSession so the model and draft modes are
+   * applied identically to a prompt-started session.
+   */
+  async function startSessionAndActivateSkill(
+    workspaceId: string,
+    skillName: string,
+    args?: string,
+  ): Promise<void> {
+    try {
+      const sid = await createDraftSession(workspaceId);
+      if (!sid) return;
+      await modelProvider.activateSkill(skillName, args, sid);
+    } catch (err) {
+      pushOperationFailure('startSessionAndActivateSkill', err);
     }
   }
 
@@ -1994,6 +2029,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     clearActiveSession,
     openWorkspaceDraft,
     startSessionAndSendPrompt,
+    startSessionAndActivateSkill,
     addWorkspaceByPath,
     browseFs,
     getFsHome,

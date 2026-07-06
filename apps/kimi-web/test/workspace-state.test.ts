@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
   abortSession: vi.fn(),
   addWorkspace: vi.fn(),
   updateWorkspace: vi.fn(),
+  createSession: vi.fn(),
   respondQuestion: vi.fn(),
   respondApproval: vi.fn(),
   dismissQuestion: vi.fn(),
@@ -555,5 +556,67 @@ describe('useWorkspaceState — cancelTask', () => {
 
     resolveCancel({ cancelled: true });
     await first;
+  });
+});
+
+describe('useWorkspaceState — startSessionAndActivateSkill', () => {
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
+
+  beforeEach(() => {
+    apiMock.addWorkspace.mockReset();
+    apiMock.createSession.mockReset();
+    apiMock.addWorkspace.mockResolvedValue(registered);
+    apiMock.createSession.mockResolvedValue(newSession);
+  });
+
+  function skillDeps(activateSkill: ReturnType<typeof vi.fn>): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      taskPoller: { loadTasksForSession: vi.fn() } as unknown as UseWorkspaceStateDeps['taskPoller'],
+      modelProvider: {
+        draftModel: ref(null),
+        skillsBySession: ref({}),
+        loadSkillsForSession: vi.fn(),
+        activateSkill,
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
+    };
+  }
+
+  it('creates a session, then activates the skill on the new session id', async () => {
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const ws = useWorkspaceState(createState(), deps);
+
+    await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+
+    expect(apiMock.createSession).toHaveBeenCalledOnce();
+    // The activation targets the freshly created session, so a concurrent
+    // session switch can't redirect it.
+    expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('passes through skill args', async () => {
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const ws = useWorkspaceState(createState(), deps);
+
+    await ws.startSessionAndActivateSkill('wd_1', 'write-goal', 'ship it');
+
+    expect(activateSkill).toHaveBeenCalledWith('write-goal', 'ship it', 'sess_new');
+  });
+
+  it('is a no-op for an unknown workspace', async () => {
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const ws = useWorkspaceState(createState(), deps);
+
+    await ws.startSessionAndActivateSkill('wd_missing', 'pre-changelog');
+
+    expect(apiMock.createSession).not.toHaveBeenCalled();
+    expect(activateSkill).not.toHaveBeenCalled();
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });
 });

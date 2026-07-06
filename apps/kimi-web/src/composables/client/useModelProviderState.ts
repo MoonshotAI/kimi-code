@@ -241,9 +241,13 @@ export function useModelProviderState(
    * Activate a session skill (the web analogue of typing `/<skill> <args>` in the
    * TUI). The daemon starts a turn with a `skill_activation` origin; progress
    * arrives over the WS stream like any other turn. Never crashes the caller.
+   *
+   * `sessionId` overrides the active session — used when activating right after
+   * creating a session, so a concurrent session switch can't redirect the
+   * activation to the wrong session. No session at all is a no-op.
    */
-  async function activateSkill(skillName: string, args?: string): Promise<void> {
-    const sid = rawState.activeSessionId;
+  async function activateSkill(skillName: string, args?: string, sessionId?: string): Promise<void> {
+    const sid = sessionId ?? rawState.activeSessionId;
     if (!sid) return;
     const guarded = activity.value === 'idle' && !inFlightPromptSessions.has(sid);
     const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
