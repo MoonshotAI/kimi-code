@@ -359,12 +359,11 @@ export class AcpServer implements Agent {
    * deliberately skips it (per ACP spec G4 / plan gap-4.3).
    */
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories) ?? [];
     const { session, acpSession, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
       mcpServers: params.mcpServers,
-      additionalDirs,
+      additionalDirectories: params.additionalDirectories,
       mode: 'load',
     });
     // Synchronously replay history — the response must not settle
@@ -397,12 +396,11 @@ export class AcpServer implements Agent {
    * rationale, and gap-4.1 for the matching capability advertisement.
    */
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories) ?? [];
     const { session, configOptions } = await this.setupSessionFromExisting({
       cwd: params.cwd,
       sessionId: params.sessionId,
       mcpServers: params.mcpServers,
-      additionalDirs,
+      additionalDirectories: params.additionalDirectories,
       mode: 'resume',
     });
     this.scheduleAvailableCommandsUpdate(session.id);
@@ -436,7 +434,7 @@ export class AcpServer implements Agent {
     cwd: string;
     sessionId: string;
     mcpServers?: ReadonlyArray<McpServer>;
-    additionalDirs?: readonly string[];
+    additionalDirectories?: unknown;
     mode: 'load' | 'resume';
   }): Promise<{
     session: Session;
@@ -446,6 +444,7 @@ export class AcpServer implements Agent {
     if (!(await harnessIsAuthed(this.harness))) {
       throw RequestError.authRequired();
     }
+    const additionalDirs = validateAdditionalDirectories(params.additionalDirectories) ?? [];
     if (!this.conn) {
       throw RequestError.internalError(undefined, 'AcpServer is missing its AgentSideConnection');
     }
@@ -467,7 +466,7 @@ export class AcpServer implements Agent {
         id: params.sessionId,
         kaos: acpKaos,
         persistenceKaos,
-        additionalDirs: params.additionalDirs,
+        additionalDirs,
         sessionStartedProperties: { mode: params.mode },
         // @ts-expect-error — see block comment above; mcpServers is a
         // kernel-only field that the SDK forwards via spread.
