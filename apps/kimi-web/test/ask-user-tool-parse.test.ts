@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  answerFor,
   parseAskInput,
   parseAskOutput,
   resolveAnswer,
@@ -54,7 +55,15 @@ describe('parseAskInput', () => {
 });
 
 describe('parseAskOutput', () => {
-  it('recognizes an answer payload and reads answers', () => {
+  it('recognizes an answer payload and reads answers (question-text keys, label values)', () => {
+    const out = parseAskOutput([
+      JSON.stringify({ answers: { 'Which auth provider?': 'Auth0' }, note: '' }),
+    ]);
+    expect(out.recognized).toBe(true);
+    expect(out.answers).toEqual({ 'Which auth provider?': 'Auth0' });
+  });
+
+  it('recognizes a legacy answer payload (q_<i> keys, opt ids)', () => {
     const out = parseAskOutput([JSON.stringify({ answers: { q_0: 'opt_0_1' }, note: '' })]);
     expect(out.recognized).toBe(true);
     expect(out.answers).toEqual({ q_0: 'opt_0_1' });
@@ -97,46 +106,115 @@ describe('parseAskOutput', () => {
 });
 
 describe('resolveAnswer', () => {
-  it('decodes a single-select option id to its index', () => {
-    const r = resolveAnswer('opt_0_1');
+  const single = [
+    { label: 'Clerk', description: '' },
+    { label: 'Auth0', description: '' },
+  ];
+  const multi = [
+    { label: 'Vercel', description: '' },
+    { label: 'Fly.io', description: '' },
+    { label: 'AWS', description: '' },
+  ];
+
+  it('matches a single-select label to its index', () => {
+    const r = resolveAnswer('Auth0', single);
     expect([...r.selected]).toEqual([1]);
     expect(r.otherText).toBe('');
     expect(r.indeterminate).toBe(false);
   });
 
-  it('decodes a comma-joined multi-select into several indices', () => {
-    const r = resolveAnswer('opt_1_0,opt_1_2');
+  it('matches comma-joined multi-select labels into several indices', () => {
+    const r = resolveAnswer('Vercel,AWS', multi);
     expect(r.selected).toEqual(new Set([0, 2]));
   });
 
-  it('treats a free-text value as an Other answer', () => {
-    const r = resolveAnswer('Use OIDC instead of static keys');
-    expect(r.selected.size).toBe(0);
-    expect(r.otherText).toBe('Use OIDC instead of static keys');
+  it("matches comma-space-joined multi-select labels (server / TUI ', ' form)", () => {
+    const r = resolveAnswer('Vercel, AWS', multi);
+    expect(r.selected).toEqual(new Set([0, 2]));
+    expect(r.otherText).toBe('');
   });
 
-  it('splits a multi+Other value into options plus the free-text segment', () => {
-    const r = resolveAnswer('opt_0_0,opt_0_2,Custom thing');
+  it('splits a multi+Other value into labels plus the free-text segment', () => {
+    const r = resolveAnswer('Vercel, AWS, Custom thing', multi);
     expect(r.selected).toEqual(new Set([0, 2]));
     expect(r.otherText).toBe('Custom thing');
   });
 
-  it('joins non-id segments back so Other text containing a comma survives', () => {
-    const r = resolveAnswer('opt_0_1,alpha,beta');
+  it('resolves a whole-value label containing a comma (single-select)', () => {
+    const withComma = [
+      { label: 'Fast, but risky', description: '' },
+      { label: 'Slow and safe', description: '' },
+    ];
+    const r = resolveAnswer('Fast, but risky', withComma);
+    expect([...r.selected]).toEqual([0]);
+    expect(r.otherText).toBe('');
+  });
+
+  it('treats a free-text value as an Other answer', () => {
+    const r = resolveAnswer('Use OIDC instead of static keys', single);
+    expect(r.selected.size).toBe(0);
+    expect(r.otherText).toBe('Use OIDC instead of static keys');
+  });
+
+  it('decodes a legacy single-select option id to its index', () => {
+    const r = resolveAnswer('opt_0_1', single);
     expect([...r.selected]).toEqual([1]);
-    expect(r.otherText).toBe('alpha,beta');
+    expect(r.otherText).toBe('');
+    expect(r.indeterminate).toBe(false);
+  });
+
+  it('decodes legacy comma-joined multi-select ids into several indices', () => {
+    const r = resolveAnswer('opt_1_0,opt_1_2', multi);
+    expect(r.selected).toEqual(new Set([0, 2]));
+  });
+
+  it('splits a legacy multi+Other value into options plus the free-text segment', () => {
+    const r = resolveAnswer('opt_0_0,opt_0_2,Custom thing', multi);
+    expect(r.selected).toEqual(new Set([0, 2]));
+    expect(r.otherText).toBe('Custom thing');
+  });
+
+  it('joins non-matching segments back so Other text containing a comma survives', () => {
+    const r = resolveAnswer('Auth0,alpha,beta', single);
+    expect([...r.selected]).toEqual([1]);
+    expect(r.otherText).toBe('alpha, beta');
+  });
+
+  it('decodes legacy ids without any options context', () => {
+    const r = resolveAnswer('opt_0_1');
+    expect([...r.selected]).toEqual([1]);
   });
 
   it('marks the literal true as indeterminate', () => {
-    const r = resolveAnswer(true);
+    const r = resolveAnswer(true, single);
     expect(r.indeterminate).toBe(true);
     expect(r.selected.size).toBe(0);
   });
 
   it('returns an empty result for skipped / unanswered questions', () => {
-    const r = resolveAnswer(undefined);
+    const r = resolveAnswer(undefined, single);
     expect(r.selected.size).toBe(0);
     expect(r.otherText).toBe('');
     expect(r.indeterminate).toBe(false);
+  });
+});
+
+describe('answerFor', () => {
+  it('prefers the question-text key (current form)', () => {
+    const answers = { 'Which auth provider?': 'Auth0' } as const;
+    expect(answerFor(answers, 'Which auth provider?', 0)).toBe('Auth0');
+  });
+
+  it('falls back to the legacy q_<index> key', () => {
+    const answers = { q_1: 'opt_1_2' } as const;
+    expect(answerFor(answers, 'Where to deploy?', 1)).toBe('opt_1_2');
+  });
+
+  it('returns undefined when neither key is present (skipped question)', () => {
+    expect(answerFor({}, 'Which auth provider?', 0)).toBeUndefined();
+  });
+
+  it('passes through the literal true (indeterminate answer)', () => {
+    expect(answerFor({ 'Which auth provider?': true }, 'Which auth provider?', 0)).toBe(true);
   });
 });

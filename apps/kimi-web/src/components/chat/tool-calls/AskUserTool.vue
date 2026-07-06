@@ -1,11 +1,12 @@
 <!-- apps/kimi-web/src/components/chat/tool-calls/AskUserTool.vue
      Result card for the AskUserQuestion tool. On a successful answer the
      output is a single JSON line ({ answers, note? }); answers are keyed by
-     synthesized question id (`q_<index>`) and the values are synthesized option
-     ids (`opt_<q>_<o>`, comma-joined for multi-select) or free-text (Other). We
-     zip answers back to the input questions by index and echo the full option
-     list, marking the picked option(s) selected and the rest faint — so the
-     transcript shows both what was chosen and what was passed over.
+     question text and the values are option labels (comma-joined for
+     multi-select) or free-text (Other). Legacy transcripts instead carry
+     synthesized ids (`q_<index>` keys, `opt_<q>_<o>` values) — both forms are
+     resolved. We zip answers back to the input questions and echo the full
+     option list, marking the picked option(s) selected and the rest faint —
+     so the transcript shows both what was chosen and what was passed over.
 
      Background launches and error cases return plain-text output instead of
      the answer JSON; those fall back to a raw output view so the task id /
@@ -16,6 +17,7 @@ import { useI18n } from 'vue-i18n';
 import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
 import { toolGlyph, toolLabel } from '../../../lib/toolMeta';
 import {
+  answerFor,
   parseAskInput,
   parseAskOutput,
   resolveAnswer,
@@ -54,7 +56,7 @@ const isDismissed = computed(
   () => recognized.value && Object.keys(output.value.answers).length === 0 && output.value.note.length > 0,
 );
 const resolved = computed(() =>
-  questions.value.map((_, i) => resolveAnswer(output.value.answers[`q_${i}`])),
+  questions.value.map((q, i) => resolveAnswer(answerFor(output.value.answers, q.question, i), q.options)),
 );
 const answeredCount = computed(() => Object.keys(output.value.answers).length);
 

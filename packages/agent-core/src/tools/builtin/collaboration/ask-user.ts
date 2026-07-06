@@ -34,12 +34,13 @@ import DESCRIPTION from './ask-user.md?raw';
 const QuestionOptionSchema = z.object({
   label: z
     .string()
+    .min(1)
     .describe("Concise display text (1-5 words). If recommended, append '(Recommended)'."),
   description: z.string().default('').describe('Brief explanation of trade-offs or implications.'),
 });
 
 const QuestionItemSchema = z.object({
-  question: z.string().describe("A specific, actionable question. End with '?'."),
+  question: z.string().min(1).describe("A specific, actionable question. End with '?'."),
   header: z
     .string()
     .default('')
@@ -67,6 +68,36 @@ export interface AskUserQuestionInput {
   }>;
 }
 
+const QUESTION_UNIQUENESS_MESSAGE =
+  'Question texts must be unique across questions, and option labels must be unique within each question.';
+
+/**
+ * Answers are keyed by question text with option labels as values, so both
+ * must be unambiguous: question texts unique across the call, option labels
+ * unique within their question. Runtime tool-arg validation is AJV against
+ * the JSON Schema (where zod refinements are unrepresentable), so the
+ * execution path re-runs this check itself.
+ */
+function questionUniquenessError(
+  questions: AskUserQuestionInput['questions'],
+): string | null {
+  const texts = new Set<string>();
+  for (const q of questions) {
+    if (texts.has(q.question)) {
+      return `Invalid questions: duplicate question text ${JSON.stringify(q.question)}. ${QUESTION_UNIQUENESS_MESSAGE} Rephrase the duplicates and call the tool again.`;
+    }
+    texts.add(q.question);
+    const labels = new Set<string>();
+    for (const option of q.options) {
+      if (labels.has(option.label)) {
+        return `Invalid questions: duplicate option label ${JSON.stringify(option.label)} in question ${JSON.stringify(q.question)}. ${QUESTION_UNIQUENESS_MESSAGE} Rephrase the duplicates and call the tool again.`;
+      }
+      labels.add(option.label);
+    }
+  }
+  return null;
+}
+
 const AskUserQuestionInputBaseSchema = z.object({
   questions: z
     .array(QuestionItemSchema)
@@ -82,10 +113,15 @@ const AskUserQuestionInputSchemaWithBackground = AskUserQuestionInputBaseSchema.
     .describe(
       'Set true to ask in the background and return immediately with a background task_id; you are notified automatically when the user answers — do not poll with TaskOutput while the question is pending.',
     ),
+}).refine((data) => questionUniquenessError(data.questions) === null, {
+  message: QUESTION_UNIQUENESS_MESSAGE,
 });
 
 export const AskUserQuestionInputSchema: z.ZodType<AskUserQuestionInput> =
-  AskUserQuestionInputBaseSchema;
+  AskUserQuestionInputBaseSchema.refine(
+    (data) => questionUniquenessError(data.questions) === null,
+    { message: QUESTION_UNIQUENESS_MESSAGE },
+  );
 
 const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answering.';
 
@@ -123,6 +159,13 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       turnId,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    // AJV (the runtime arg validator) cannot express the uniqueness refine,
+    // so enforce it here before any UI interaction or task registration.
+    const uniquenessError = questionUniquenessError(args.questions);
+    if (uniquenessError !== null) {
+      return { isError: true, output: uniquenessError };
+    }
+
     if (args.background === true) {
       return this.executeInBackground(args, { toolCallId, turnId, signal });
     }
