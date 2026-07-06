@@ -27,7 +27,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
-import { renderDiffLines } from '#/tui/components/media/diff-preview';
+import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import type { DiffDisplayBlock, FileContentDisplayBlock } from '#/tui/reverse-rpc/types';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
@@ -218,17 +218,19 @@ function buildBody(block: ApprovalPreviewBlock): BuiltBody {
 }
 
 function buildDiffBody(block: DiffDisplayBlock): BuiltBody {
-  // renderDiffLines emits a `+N -M path` header on its first line followed
-  // by every changed line. We pull the header out into the viewer chrome so
-  // the body is purely scrollable diff content; this also means we don't
-  // double-render the path.
-  const rendered = renderDiffLines(
+  // renderDiffLinesClustered emits a `+N -M path` header on its first line
+  // followed by every changed line plus surrounding context. We pull the
+  // header out into the viewer chrome so the body is purely scrollable diff
+  // content; this also means we don't double-render the path.
+  const rendered = renderDiffLinesClustered(
     block.old_text,
     block.new_text,
     block.path,
-    false,
-    block.old_start ?? 1,
-    block.new_start ?? 1,
+    {
+      contextLines: 3,
+      oldStart: block.old_start ?? 1,
+      newStart: block.new_start ?? 1,
+    },
   );
   const [header = '', ...rest] = rendered;
   return { lines: rest, title: stripLeadingSpace(header) };
