@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
+import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
 describe('subagentProgressText', () => {
   it('drops turn.step.started as noise', () => {
@@ -58,5 +58,79 @@ describe('subagent streaming text', () => {
     const projector = createAgentProjector();
     const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: '' }, 's1');
     expect(events).toEqual([]);
+  });
+});
+
+describe('cron.fired', () => {
+  it('synthesizes a user message so the cron notice renders live', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'cron.fired',
+      {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'a3f9c2',
+          cron: '*/5 * * * *',
+          recurring: true,
+          coalescedCount: 2,
+          stale: false,
+        },
+        prompt: 'Check the deploy status',
+      },
+      's1',
+    );
+    const created = events.find((e) => e.type === 'messageCreated');
+    expect(created).toBeDefined();
+    expect(created).toMatchObject({
+      type: 'messageCreated',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Check the deploy status' }],
+        metadata: { origin: { kind: 'cron_job', jobId: 'a3f9c2' } },
+      },
+    });
+  });
+
+  it('ignores cron.fired events missing a prompt or a cron_job origin', () => {
+    const projector = createAgentProjector();
+    expect(projector.project('cron.fired', { origin: { kind: 'cron_job' } }, 's1')).toEqual([]);
+    expect(projector.project('cron.fired', { prompt: 'hi' }, 's1')).toEqual([]);
+  });
+});
+
+describe('cron.fired prompt id isolation', () => {
+  it('omits promptId so the synthesized notice does not clobber the abort cache', () => {
+    const projector = createAgentProjector();
+    projector.project(
+      'prompt.submitted',
+      { promptId: 'pr_user', userMessageId: 'u1', content: [{ type: 'text', text: 'hi' }] },
+      's1',
+    );
+    const events = projector.project(
+      'cron.fired',
+      {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'j',
+          cron: '* * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: 'Check the deploy status',
+      },
+      's1',
+    );
+    const created = events.find((e) => e.type === 'messageCreated');
+    expect(created).toBeDefined();
+    expect((created as { message: { promptId?: string } }).message.promptId).toBeUndefined();
+  });
+});
+
+describe('classifyFrame cron.fired', () => {
+  it('routes both raw and event.-prefixed cron.fired to the agent projector', () => {
+    const payload = { origin: { kind: 'cron_job' }, prompt: 'x' };
+    expect(classifyFrame('cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
+    expect(classifyFrame('event.cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
   });
 });

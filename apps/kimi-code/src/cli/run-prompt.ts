@@ -179,6 +179,7 @@ export async function runPrompt(
       version,
       uiMode: PROMPT_UI_MODE,
       model: telemetryModel,
+      sessionId: session.id,
     });
     setCrashPhase('runtime');
 

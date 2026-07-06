@@ -949,9 +949,20 @@ function selectModel(modelId: string): void {
           <!-- Compact chip when context is high -->
           <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
 
-          <!-- Context meter — circular ring + token count -->
+          <!-- Context meter — circular ring + token count. The ring is
+               aria-hidden, so the trigger exposes the full usage (used/max/pct)
+               via aria-label; focusable so keyboard and switch-control users
+               reach the same tooltip hover users see. The visible "12k/256k"
+               count is hidden under 980px by CSS, but SR users still get this
+               label. -->
           <Tooltip :text="ctxTooltip">
-            <span v-if="status && !hideContext" class="ctx-group">
+            <span
+              v-if="status && !hideContext"
+              class="ctx-group"
+              role="img"
+              tabindex="0"
+              :aria-label="ctxTooltip"
+            >
               <ContextRing :pct="pct" />
               <span class="ctx-num">{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</span>
             </span>
@@ -1454,13 +1465,19 @@ function selectModel(modelId: string): void {
   color: var(--color-danger);
 }
 
-/* Context group — circular ring + num */
+/* Context group — circular ring + num. Focusable for keyboard / switch access
+   to its aria-label and tooltip (see template), so it needs a focus ring. */
 .ctx-group {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  padding: 2px 0;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+.ctx-group:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .ctx-num {
@@ -1886,6 +1903,37 @@ function selectModel(modelId: string): void {
   font-size: var(--ui-font-size-xs);
 }
 
+/* ---- Narrow composer toolbar ----------------------------------------------
+   Below a wide desktop the chat column can be narrower than the full toolbar
+   needs — with the sidebar open on a small window, and on phones. The desktop
+   toolbar shows every control on one row and toolbar-left / toolbar-right are
+   overflow:hidden, so without shedding ink the row clips its own content. The
+   context ring stays visible at every width (it is the live context-pressure
+   signal) but the "12k/256k" readout moves into the ring's tooltip, the model
+   name truncates earlier, and the permission label is capped so the ring and
+   the send button are never squeezed out. Mobile (≤640px) additionally hides
+   perm / modes via the rules below (those live in MobileSettingsSheet there). */
+@media (max-width: 980px) {
+  /* The ring already conveys context pressure; the "12k/256k" readout lives in
+     the tooltip and returns at wider widths. */
+  .ctx-num {
+    display: none;
+  }
+  /* Model name was budgeted for a wide card (280px); trim it so the ring and
+     send button are not squeezed out on a narrow column. */
+  .model-pill b {
+    max-width: 130px;
+  }
+  /* Permission label is short (manual/yolo/auto); cap it defensively so a
+     longer label can never push the toolbar past its container. */
+  .perm-pill {
+    max-width: 104px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 /* ---- Mobile composer (prototype): round attach + rounded panel input +
        round blue send with a soft shadow. The .cin container loses its border
        and acts as a flex row; the textarea itself becomes the pill input. ---- */
@@ -1947,13 +1995,14 @@ function selectModel(modelId: string): void {
     line-height: 1;
   }
 
-  /* Mobile toolbar: hide secondary controls; only attach + model stay visible.
-     Permission / plan / context live in the MobileSettingsSheet. The /compact
-     chip stays: it is the ONLY context-pressure signal on a phone (it appears
-     at ≥80% usage) and tapping it triggers compaction directly. */
+  /* Mobile toolbar: hide secondary controls; attach / context ring / model /
+     send stay visible. Permission + plan move into the MobileSettingsSheet.
+     The context ring stays at every width by design — it is the live
+     context-pressure signal on a phone (the "12k/256k" readout is hidden here
+     by the ≤980px rule above and remains in the ring's tooltip). The /compact
+     chip also stays so compaction is one tap away at ≥80% usage. */
   .perm-pill,
-  .modes,
-  .ctx-group {
+  .modes {
     display: none;
   }
 

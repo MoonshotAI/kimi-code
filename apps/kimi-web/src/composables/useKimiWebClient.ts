@@ -13,6 +13,7 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -64,8 +65,8 @@ import { toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
-import { buildSwarmGroups, countSwarmMembers } from './swarmGroups';
-import type { SwarmGroup } from './swarmGroups';
+import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from './swarmGroups';
+import type { SwarmGroup, SwarmMember } from './swarmGroups';
 import type {
   ActivityState,
   ActivationBadges,
@@ -1137,7 +1138,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
           ? snap.session.model
           : s.model,
     }));
-    setSessionMessages(sessionId, snap.messages);
+    // The snapshot only carries the most recent page; keep any older pages the
+    // user already loaded so reopening does not reset scrollback.
+    setSessionMessages(
+      sessionId,
+      mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
+    );
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
       [sessionId]: snap.hasMoreMessages,
@@ -1260,38 +1266,19 @@ function dropWsSubscription(sessionId: string): void {
   sessionsWithStaleCursor.delete(sessionId);
 }
 
-function subscribeToSessionEvents(sessionId: string): void {
-  connectEventsIfNeeded();
-  if (eventConn) {
-    // Apply any queued streaming deltas before re-subscribing so the transcript
-    // is current. (These deltas are volatile — never replayed by the server and
-    // they don't advance lastSeqBySession — but flushing here is cheap and
-    // future-proofs the cursor if the batching set ever changes.)
-    enqueueEvent.flush();
-    const seq = rawState.lastSeqBySession[sessionId] ?? 0;
-    const epoch = epochBySession[sessionId];
-    eventConn.subscribe(sessionId, { seq, epoch });
-    retainWsSubscription(sessionId);
-  }
-}
-
-/** Re-open an already-loaded session. If it was evicted from the subscription
- *  cap since it was last open, rebuild from a snapshot: resuming from the kept
- *  cursor would skip the per-session events that arrived while unsubscribed,
- *  and replaying from seq 0 would make the projector regenerate message ids and
- *  duplicate the already-loaded transcript. Otherwise just re-subscribe from the
- *  tracked cursor.
+/** Re-open an already-loaded session: always rebuild from a fresh snapshot.
  *
- * The stale marker is only read here; `syncSessionFromSnapshot` clears it once
- * the snapshot succeeds. If the snapshot fails transiently the marker stays, so
- * the next re-open retries the snapshot instead of falling back to a cursor
- * that may have skipped events while unsubscribed. */
+ *  Volatile `assistant.delta` frames are never journaled or replayed: if a
+ *  transport hiccup covered the tail of a turn while the user was away, the
+ *  local transcript silently lost the model's final text, and a cursor
+ *  resubscribe has nothing to recover it with. Always fetching the authoritative
+ *  snapshot keeps the logic trivially correct (no freshness heuristics, no
+ *  races to reason about); the snapshot is cheap server-side (LRU on the wire
+ *  file). Trade-off: a snapshot GET in flight during a steep local send can
+ *  momentarily overwrite that optimistic message — the user notices immediately
+ *  and the next re-open (or a refresh) reconciles. */
 async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
-  if (sessionsWithStaleCursor.has(sessionId)) {
-    return syncSessionFromSnapshot(sessionId);
-  }
-  subscribeToSessionEvents(sessionId);
-  return 'ok';
+  return syncSessionFromSnapshot(sessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -1669,7 +1656,6 @@ const turns = computed<ChatTurn[]>(() => {
     approvals,
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
-    activeAppTasks.value,
     rawState.planReviewByToolCallId,
   );
 });
@@ -1681,6 +1667,11 @@ const tasks = computed<TaskItem[]>(() => {
 });
 
 const swarms = computed<SwarmGroup[]>(() => buildSwarmGroups(activeAppTasks.value));
+// Foreground/background subagents keyed by their spawning tool call id — used by
+// the inline AgentSwarm tool card to stream each subagent's live progress.
+const swarmMembersByToolCallId = computed<Map<string, SwarmMember[]>>(() =>
+  swarmMembersByToolCall(activeAppTasks.value),
+);
 
 const goal = computed<AppGoal | null>(() => {
   const sid = rawState.activeSessionId;
@@ -2399,6 +2390,7 @@ export function useKimiWebClient() {
     todos,
     goal,
     swarms,
+    swarmMembersByToolCallId,
     activationBadges,
     compaction,
     status,
