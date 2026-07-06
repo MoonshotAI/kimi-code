@@ -300,7 +300,7 @@ describe('FileMentionProvider', () => {
     const extraDir = createExtraDir();
     mkdirSync(join(extraDir, 'src'), { recursive: true });
     writeFileSync(join(extraDir, 'src', 'Additional.ts'), 'export {};');
-    const provider = new FileMentionProvider([], workDir, NO_FD, [extraDir]);
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
 
     const result = await provider.getSuggestions(['@add'], 0, 4, { signal: ctrl() });
 
@@ -369,14 +369,19 @@ describe('FileMentionProvider', () => {
     expect(overlapItems).toHaveLength(1);
   });
 
-  it('does not bypass fd filtering with filesystem suggestions when fd returns no matches', async () => {
-    writeFileSync(join(workDir, 'README.md'), 'readme');
-    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'));
+  it.runIf(IS_FD_INSTALLED)(
+    'does not bypass fd filtering with filesystem suggestions when fd returns no matches',
+    async () => {
+      writeFileSync(join(workDir, 'README.md'), 'readme');
+      const provider = new FileMentionProvider([], workDir, FD_PATH!);
 
-    const result = await provider.getSuggestions(['@read'], 0, 5, { signal: ctrl() });
+      const result = await provider.getSuggestions(['@zzz-no-match-xyz'], 0, '@zzz-no-match-xyz'.length, {
+        signal: ctrl(),
+      });
 
-    expect(result).toBeNull();
-  });
+      expect(result).toBeNull();
+    },
+  );
 
   it('filesystem fallback returns folders and excludes .git', async () => {
     mkdirSync(join(workDir, 'src'));

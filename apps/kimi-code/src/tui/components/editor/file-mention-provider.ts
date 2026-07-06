@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import {
@@ -75,10 +75,11 @@ export class FileMentionProvider implements AutocompleteProvider {
     // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
-      // fd backs `@` completion across every root (cwd + additional dirs); only
-      // fall back to the filesystem scanner when fd itself is unavailable, or
-      // if spawning it fails below.
-      if (this.fdPath === null) {
+      // fd backs `@` completion across every root (cwd + additional dirs). Fall
+      // back to the filesystem scanner when fd is unavailable, not executable
+      // (e.g. the managed binary was removed or lost execute permission), or if
+      // spawning it fails below. A genuine fd no-match still returns null.
+      if (this.fdPath === null || !isExecutableFd(this.fdPath)) {
         return getFsMentionSuggestions(
           this.workDir,
           this.additionalDirs,
@@ -228,6 +229,15 @@ export function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+function isExecutableFd(fdPath: string): boolean {
+  try {
+    accessSync(fdPath, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
