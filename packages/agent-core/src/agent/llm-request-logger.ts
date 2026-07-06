@@ -24,18 +24,22 @@ export class LlmRequestLogger {
   }): void {
     const { provider, modelAlias, systemPrompt, tools, messages, fields } = input;
     const requestLogFields = fields ?? {};
+    // This logs the outbound request; deferred tools are stripped by kosong
+    // generate() before the provider sees them, so mirror that here or the
+    // toolCount/toolsHash would describe a request that never hits the wire.
+    const wireTools = tools.filter((tool) => tool.deferred !== true);
     const config = {
       provider: provider.name,
       model: provider.modelName,
       modelAlias,
       thinkingEffort: provider.thinkingEffort ?? undefined,
       systemPromptChars: systemPrompt.length,
-      toolCount: tools.length,
+      toolCount: wireTools.length,
     };
     const signature = JSON.stringify({
       ...config,
       systemPromptHash: fingerprint(systemPrompt),
-      toolsHash: fingerprint(JSON.stringify(toolSignature(tools))),
+      toolsHash: fingerprint(JSON.stringify(toolSignature(wireTools))),
     });
     if (signature !== this.lastConfigLogSignature) {
       this.lastConfigLogSignature = signature;

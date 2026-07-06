@@ -38,7 +38,7 @@ export default {
   collapseSidebar: '收起侧边栏',
   expandSidebar: '展开侧边栏',
   searchPlaceholder: '搜索会话',
-  searchShortcut: '搜索会话 (⌘K)',
+  searchShortcut: '搜索会话 ({shortcut})',
   searchHint: '↑↓ 选择 · ↵ 打开 · Esc 关闭',
   searchNoResults: '没有匹配的会话',
 };

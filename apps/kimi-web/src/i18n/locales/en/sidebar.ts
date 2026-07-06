@@ -38,7 +38,7 @@ export default {
   collapseSidebar: 'Collapse sidebar',
   expandSidebar: 'Expand sidebar',
   searchPlaceholder: 'Search sessions',
-  searchShortcut: 'Search sessions (⌘K)',
+  searchShortcut: 'Search sessions ({shortcut})',
   searchHint: '↑↓ navigate · ↵ open · Esc close',
   searchNoResults: 'No matching sessions',
 } as const;

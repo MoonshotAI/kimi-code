@@ -3,6 +3,7 @@ import type { Component } from 'vue';
 import type { ToolCall } from '../../../types';
 import { normalizeToolName } from '../../../lib/toolMeta';
 import AgentTool from './AgentTool.vue';
+import AskUserTool from './AskUserTool.vue';
 import EditTool from './EditTool.vue';
 import GenericTool from './GenericTool.vue';
 import MediaTool from './MediaTool.vue';
@@ -19,5 +20,6 @@ export function resolveToolRenderer(tool: ToolCall): ToolRenderer {
   // `task` — `agent` here would be dead code and route subagent calls to
   // GenericTool, dropping the inline "Open" button for the detail panel.
   if (name === 'task') return AgentTool;
+  if (name === 'askuserquestion') return AskUserTool;
   return GenericTool;
 }

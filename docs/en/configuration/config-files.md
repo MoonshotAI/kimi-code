@@ -42,6 +42,7 @@ max_context_size = 262144
 [thinking]
 enabled = true
 effort = "high"
+keep = "all"
 
 [loop_control]
 max_retries_per_step = 3
@@ -168,6 +169,7 @@ You can also switch models temporarily without touching the config file — by s
 | --- | --- | --- | --- |
 | `enabled` | `boolean` | `true` | Whether Thinking is enabled by default for new sessions; set to `false` to force Thinking off |
 | `effort` | `string` | — | Thinking effort level (for example `low`, `medium`, `high`, `xhigh`, `max`); the levels actually available depend on the model's declared `support_efforts`, and unrecognized values are ignored by the provider |
+| `keep` | `string` | `"all"` | Moonshot Preserved Thinking passthrough (`thinking.keep`). `"all"` preserves previous turns' `reasoning_content`; set to an off-value (`false`/`0`/`no`/`off`/`none`/`null`) to disable. Overridden by `KIMI_MODEL_THINKING_KEEP`; applies to the `kimi` provider only, and only while Thinking is on |
 
 ### Deprecated fields
 

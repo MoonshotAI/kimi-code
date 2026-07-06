@@ -185,6 +185,16 @@ export class QuestionService extends Disposable implements IQuestionService {
     return this._pending.has(questionId);
   }
 
+  /**
+   * Protocol request for a still-pending question. The resolve route needs it
+   * to translate wire ids back to question text / option labels before the
+   * response reaches the SDK; must be read BEFORE `resolve()` settles (and
+   * thereby drops) the pending entry.
+   */
+  getPendingRequest(questionId: string): ProtocolQuestionRequest | undefined {
+    return this._pending.get(questionId)?.protocolRequest;
+  }
+
   listPending(sessionId: string): ProtocolQuestionRequest[] {
     return Array.from(this._pending.values())
       .filter((p) => p.sessionId === sessionId)

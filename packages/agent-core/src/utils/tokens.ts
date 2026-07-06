@@ -11,6 +11,7 @@ interface TokenEstimatableMessage {
   readonly role: string;
   readonly content: readonly ContentPart[];
   readonly toolCalls?: readonly { readonly name: string; readonly arguments: unknown }[];
+  readonly tools?: readonly Tool[] | undefined;
 }
 
 const messageTokenEstimateCache = new WeakMap<TokenEstimatableMessage, number>();
@@ -67,6 +68,12 @@ export function estimateTokensForMessage(message: TokenEstimatableMessage): numb
       total += estimateTokens(call.name);
       total += estimateTokens(JSON.stringify(call.arguments));
     }
+  }
+  // Dynamic tool schema messages carry full tool definitions; without this the
+  // injected schemas are invisible to every compaction budget and the context
+  // overflows before compaction ever triggers.
+  if (message.tools !== undefined) {
+    total += estimateTokensForTools(message.tools);
   }
   messageTokenEstimateCache.set(message, total);
   return total;

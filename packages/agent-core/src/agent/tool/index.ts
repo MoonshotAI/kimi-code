@@ -3,6 +3,9 @@ import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
 import picomatch from 'picomatch';
 
 import type { Agent } from '..';
+import {
+  collectLoadedDynamicToolNames,
+} from '../context/dynamic-tools';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
@@ -42,6 +45,14 @@ export class ToolManager {
   protected enabledTools: Set<string> = new Set();
   /** Glob patterns (e.g. `mcp__*`, `mcp__github__*`) gating which MCP tools the profile exposes. */
   private mcpAccessPatterns: string[] = [];
+  /**
+   * Defer-window lead for the loaded-tools ledger: names marked loaded whose
+   * schema message may still sit in the context's deferred queue (an open tool
+   * exchange). The history itself is the source of truth —
+   * `loadedDynamicToolNames()` unions this set with a history scan — so
+   * undo/compaction/resume never need to roll this back.
+   */
+  private readonly pendingLoadedDynamicTools = new Set<string>();
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
 
@@ -423,12 +434,119 @@ export class ToolManager {
     return this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern));
   }
 
+  /**
+   * Whether MCP tools are disclosed progressively: kept out of the top-level
+   * `tools[]` and loaded on demand via select_tools. Reads the agent's single
+   * three-gate decision point.
+   */
+  private get progressiveDisclosure(): boolean {
+    return this.agent.toolSelectEnabled;
+  }
+
+  /**
+   * Names the model may select right now: registered MCP tools that pass the
+   * profile's `mcp__*` access patterns, sorted for byte-stable announcements.
+   * In disclosure mode the patterns keep their permission-filter role but stop
+   * feeding the top-level `tools[]`.
+   */
+  loadableDynamicToolNames(): string[] {
+    return [...this.mcpTools.keys()]
+      .filter((name) => this.isMcpToolEnabled(name))
+      .toSorted((a, b) => a.localeCompare(b));
+  }
+
+  /**
+   * The loaded-tools ledger: every name whose full definition has been
+   * delivered to the conversation via a `tools`-carrying message, plus the
+   * defer-window pending set. History is the single source of truth, so the
+   * ledger survives resume (records replay rebuilds the history), keeps its
+   * state across undo (schema messages have `injection` origin and are not
+   * undone), and self-heals after compaction (the rebuild message re-carries
+   * the schemas).
+   */
+  loadedDynamicToolNames(): ReadonlySet<string> {
+    const names = collectLoadedDynamicToolNames(this.agent.context.history);
+    for (const name of this.pendingLoadedDynamicTools) names.add(name);
+    return names;
+  }
+
+  /** Mark names loaded ahead of their schema message landing in history. */
+  markDynamicToolsLoaded(names: Iterable<string>): void {
+    for (const name of names) this.pendingLoadedDynamicTools.add(name);
+  }
+
+  /**
+   * Context was cleared (`/clear`): every schema message is gone, so the
+   * defer-window lead must not keep reporting its names as loaded — a stale
+   * entry would make select_tools answer "Already available" for a tool whose
+   * definition the model can no longer see.
+   */
+  onContextCleared(): void {
+    this.pendingLoadedDynamicTools.clear();
+  }
+
+  /**
+   * Compaction rebuilt the history: from here on the keep-all rebuild message
+   * (which may have trimmed or skipped schemas — budget guard, disconnected
+   * servers) is the sole truth about what is still loaded. A pending entry
+   * surviving past this boundary would report a schema the context no longer
+   * carries as loaded, and re-selecting it would wrongly answer
+   * "Already available" instead of injecting.
+   */
+  onContextCompacted(): void {
+    this.pendingLoadedDynamicTools.clear();
+  }
+
+  /**
+   * Plain schema snapshot of a registered MCP tool, read from the live
+   * registry (never from history) at injection time.
+   */
+  getMcpToolSchema(name: string): Tool | undefined {
+    const entry = this.mcpTools.get(name);
+    if (entry === undefined) return undefined;
+    return {
+      name: entry.tool.name,
+      description: entry.tool.description,
+      parameters: entry.tool.parameters,
+    };
+  }
+
+  /**
+   * Disclosure-mode wording for a tool-call preflight miss. A loaded tool
+   * whose server dropped is a different situation from a never-announced name;
+   * telling them apart stops the model from re-selecting a disconnected tool
+   * in a loop or treating a transient disconnect as a permanent removal.
+   */
+  missingToolMessage(name: string): string | undefined {
+    if (!this.progressiveDisclosure) return undefined;
+    if (!isMcpToolName(name)) return undefined;
+    const registered = this.mcpTools.has(name) && this.isMcpToolEnabled(name);
+    const loaded = this.loadedDynamicToolNames().has(name);
+    if (registered && !loaded) {
+      return (
+        `Tool "${name}" is available but not loaded. ` +
+        `Call select_tools with ["${name}"] first, then call the tool.`
+      );
+    }
+    if (!registered && loaded) {
+      return (
+        `Tool "${name}" was loaded but its MCP server is currently disconnected. ` +
+        'It may become available again when the server reconnects; do not retry immediately.'
+      );
+    }
+    return undefined;
+  }
+
   *toolInfos(): Iterable<ToolInfo> {
     for (const tool of this.builtinTools.values()) {
       yield {
         name: tool.name,
         description: tool.description,
-        active: this.enabledTools.has(tool.name),
+        // select_tools is always registered but only offered while the
+        // disclosure gate is open (see loopTools); report that live state.
+        active:
+          this.enabledTools.has(tool.name) ||
+          (tool.name === b.SELECT_TOOLS_TOOL_NAME && this.agent.toolSelectEnabled),
         source: 'builtin',
       };
     }
@@ -492,6 +610,13 @@ export class ToolManager {
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
+        // Registered unconditionally: the tool-select flag can flip at runtime
+        // (config reload calls setConfigOverrides) without this method
+        // re-running, so registration must not depend on the gate — exposure
+        // is decided per step in loopTools instead. Deliberately not
+        // main-only: subagents run their own disclosure and need select_tools
+        // just as much.
+        new b.SelectToolsTool(this.agent),
         // Goal tools are main-agent-only.
         goalToolsEnabled && new b.CreateGoalTool(this.agent),
         goalToolsEnabled && new b.GetGoalTool(this.agent),
@@ -595,21 +720,45 @@ export class ToolManager {
 
   get loopTools(): readonly ExecutableTool[] {
     if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
-    const mcpNames = [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name));
+    const disclosure = this.progressiveDisclosure;
+    const enabledMcpNames = [...this.mcpTools.keys()].filter((name) =>
+      this.isMcpToolEnabled(name),
+    );
+    // Progressive disclosure splits "the model can see this tool" from "the
+    // core can execute it": the top-level request view stays the immutable
+    // core set + select_tools, while loaded MCP tools join the executable
+    // table as deferred extras — dispatchable, but stripped from the outbound
+    // top-level tools[] by kosong generate(). With disclosure off this is the
+    // inline behavior, byte for byte.
+    const loadedSet = disclosure ? this.loadedDynamicToolNames() : undefined;
+    const mcpNames =
+      loadedSet === undefined
+        ? enabledMcpNames
+        : enabledMcpNames.filter((name) => loadedSet.has(name));
+    const selectToolsName = disclosure ? [b.SELECT_TOOLS_TOOL_NAME] : [];
     // Mutation goal tools are only offered to the model while a goal exists.
     const hideGoalMutationTools = this.agent.goal.getGoal().goal === null;
-    return uniq([...this.enabledTools, ...mcpNames])
+    return uniq([...this.enabledTools, ...selectToolsName, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
       .filter(
         (name) =>
           !(hideGoalMutationTools && (name === 'SetGoalBudget' || name === 'UpdateGoal')),
       )
-      .map(
-        (name) =>
+      // select_tools is exposed exclusively through the disclosure gate — a
+      // profile or setActiveTools listing the name explicitly must not
+      // surface it in inline mode (it was silently dropped back when
+      // registration itself was gated; keep that contract).
+      .filter((name) => disclosure || name !== b.SELECT_TOOLS_TOOL_NAME)
+      .map((name) => {
+        const tool =
           this.userTools.get(name) ??
           this.mcpTools.get(name)?.tool ??
-          this.builtinTools.get(name),
-      )
+          this.builtinTools.get(name);
+        if (tool === undefined) return undefined;
+        // MCP entries are plain object literals, so the spread keeps the
+        // execution closure intact while adding the wire-strip marker.
+        return disclosure && this.mcpTools.has(name) ? { ...tool, deferred: true as const } : tool;
+      })
       .filter((tool) => !!tool);
   }
 }

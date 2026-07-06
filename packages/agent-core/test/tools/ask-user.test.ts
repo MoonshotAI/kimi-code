@@ -86,6 +86,106 @@ describe('AskUserQuestionTool', () => {
     ).toBe(false);
   });
 
+  it('rejects empty question text and empty option labels at the schema layer', () => {
+    expect(
+      AskUserQuestionInputSchema.safeParse(input({ question: '' })).success,
+    ).toBe(false);
+    expect(
+      AskUserQuestionInputSchema.safeParse(
+        input({
+          options: [
+            { label: '', description: 'Empty label' },
+            { label: 'B', description: '' },
+          ],
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it('rejects duplicate question texts across questions (schema + execution)', async () => {
+    const duplicated: AskUserQuestionInput = {
+      questions: [input().questions[0]!, input().questions[0]!],
+    };
+    expect(AskUserQuestionInputSchema.safeParse(duplicated).success).toBe(false);
+
+    const { tool, requestQuestion } = makeTool();
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_dup_question',
+      args: duplicated,
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('unique');
+    expect(requestQuestion).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate option labels within one question (schema + execution)', async () => {
+    const duplicated = input({
+      options: [
+        { label: 'Postgres', description: 'Relational storage' },
+        { label: 'Postgres', description: 'Same label again' },
+      ],
+    });
+    expect(AskUserQuestionInputSchema.safeParse(duplicated).success).toBe(false);
+
+    const { tool, requestQuestion } = makeTool();
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_dup_label',
+      args: duplicated,
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('unique');
+    expect(requestQuestion).not.toHaveBeenCalled();
+  });
+
+  it('allows the same option label to appear in different questions', async () => {
+    const args: AskUserQuestionInput = {
+      questions: [
+        input().questions[0]!,
+        input({ question: 'Which cache?' }).questions[0]!,
+      ],
+    };
+    expect(AskUserQuestionInputSchema.safeParse(args).success).toBe(true);
+
+    const { tool, requestQuestion } = makeTool();
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_cross_label',
+      args,
+      signal,
+    });
+    expect(result.isError).toBe(false);
+    expect(requestQuestion).toHaveBeenCalledOnce();
+  });
+
+  it('rejects duplicate questions on the background path before starting a task', async () => {
+    const { manager } = createBackgroundManager();
+    const requestQuestion = vi.fn();
+    const agent = {
+      rpc: { requestQuestion },
+      telemetry: { track: vi.fn() },
+      background: manager,
+    } as unknown as Agent;
+    const tool = new AskUserQuestionTool(agent);
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_bg_dup',
+      args: {
+        questions: [input().questions[0]!, input().questions[0]!],
+        background: true,
+      },
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('unique');
+    expect(result.output).not.toContain('task_id:');
+    expect(requestQuestion).not.toHaveBeenCalled();
+  });
+
   it('describes the no-Other rule on options and the Recommended hint on label', () => {
     const { tool } = makeTool();
     const params = tool.parameters as {

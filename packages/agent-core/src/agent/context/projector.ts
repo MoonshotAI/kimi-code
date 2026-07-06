@@ -390,6 +390,10 @@ function prepareMessageForProjection(
       },
     );
   }
+  // A message that loads tool definitions (`tools` present) is intentionally
+  // content-free — it must survive the empty-message cleanup or the loaded
+  // schemas silently vanish from every outgoing request.
+  if (next.tools !== undefined && next.tools.length > 0) return next;
   return next.content.length === 0 && next.toolCalls.length === 0 ? null : next;
 }
 
@@ -429,6 +433,7 @@ function stripContextMetadata(message: ContextMessage): Message {
     toolCalls: message.toolCalls.map((tc) => ({ ...tc })),
     toolCallId: message.toolCallId,
     partial: message.partial,
+    tools: message.tools?.map((tool) => ({ ...tool })),
   };
 }
 

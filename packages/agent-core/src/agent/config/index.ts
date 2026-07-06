@@ -122,11 +122,16 @@ export class ConfigState {
     //   - withThinking: preserve thinking during compaction (#464)
     //   - sampling params: KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P
     //   - thinking.effort: KIMI_MODEL_THINKING_EFFORT (forces an effort, only while thinking is on)
-    //   - thinking.keep: KIMI_MODEL_THINKING_KEEP (only while thinking is on)
+    //   - thinking.keep: env KIMI_MODEL_THINKING_KEEP > config thinking.keep > default "all" (only while thinking is on)
     const provider = createProvider(this.providerConfig).withThinking(this.thinkingEffort);
     const withSampling = applyKimiEnvSamplingParams(provider);
     const withEffort = applyKimiEnvThinkingEffort(withSampling, this.thinkingEffort);
-    return applyKimiEnvThinkingKeep(withEffort, this.thinkingEffort);
+    return applyKimiEnvThinkingKeep(
+      withEffort,
+      this.thinkingEffort,
+      undefined,
+      this.agent.kimiConfig?.thinking?.keep,
+    );
   }
 
   get model(): string {
