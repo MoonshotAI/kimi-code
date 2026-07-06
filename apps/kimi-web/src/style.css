@@ -223,6 +223,17 @@ summary {
   vertical-align: -0.15em;
 }
 
+/* Render code literally: disable the ligatures coding fonts enable by default
+   (e.g. `!=` collapsing to `≠`, `=>` to `⇒`). */
+code,
+pre,
+kbd,
+samp,
+tt {
+  font-feature-settings: "liga" 0, "calt" 0, "ss01" 0;
+  font-variant-ligatures: none;
+}
+
 /* color-scheme drives UA-rendered parts (scrollbars, form controls, etc.).
    An explicit choice must pin it to a single value — otherwise a dark-mode
    user on a light OS gets light scrollbars floating on the dark UI. */
@@ -635,6 +646,10 @@ body {
   text-rendering: auto;
   font-synthesis: none;
   text-size-adjust: 100%;
+  /* Never insert a hyphen glyph at line breaks (the page is `lang="en"`);
+     word-break/overflow-wrap still decide where lines wrap. */
+  -webkit-hyphens: none;
+  hyphens: none;
 }
 
 /* ---------------------------------------------------------------------------

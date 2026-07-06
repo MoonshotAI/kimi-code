@@ -43,6 +43,7 @@ export type IconName =
   | "code"
   | "terminal"
   | "pencil"
+  | "tool"
   | "glob"
   | "globe"
   | "check-list"
@@ -113,6 +114,7 @@ export const NAME_TO_REMIX: Record<IconName, string> = {
   code: "ri:code-line",
   terminal: "ri:terminal-box-line",
   pencil: "ri:pencil-line",
+  tool: "ri:tools-line",
   glob: "ri:braces-line",
   globe: "ri:global-line",
   "check-list": "ri:list-check",
@@ -175,6 +177,7 @@ export const ICON_DATA: Record<IconName, IconData> = {
   code: { body: "<path fill=\"currentColor\" d=\"m23 12l-7.071 7.071l-1.414-1.414L20.172 12l-5.657-5.657l1.414-1.414zM3.828 12l5.657 5.657l-1.414 1.414L1 12l7.071-7.071l1.414 1.414z\"/>", width: 24, height: 24 },
   terminal: { body: "<path fill=\"currentColor\" d=\"M3 3h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1m1 2v14h16V5zm8 10h6v2h-6zm-3.333-3L5.838 9.172l1.415-1.415L11.495 12l-4.242 4.243l-1.415-1.415z\"/>", width: 24, height: 24 },
   pencil: { body: "<path fill=\"currentColor\" d=\"m15.728 9.576l-1.414-1.414L5 17.476v1.414h1.414zm1.414-1.414l1.414-1.414l-1.414-1.414l-1.414 1.414zm-9.9 12.728H3v-4.243L16.435 3.212a1 1 0 0 1 1.414 0l2.829 2.829a1 1 0 0 1 0 1.414z\"/>", width: 24, height: 24 },
+  tool: { body: "<path fill=\"currentColor\" d=\"M5.33 3.272a3.5 3.5 0 0 1 4.254 4.962l10.709 10.71l-1.414 1.414l-10.71-10.71a3.502 3.502 0 0 1-4.962-4.255L5.444 7.63a1.5 1.5 0 0 0 2.121-2.121zm10.367 1.883l3.182-1.768l1.414 1.415l-1.768 3.182l-1.768.353l-2.12 2.121l-1.415-1.414l2.121-2.121zm-6.718 8.132l1.415 1.414l-5.304 5.303a1 1 0 0 1-1.492-1.327l.078-.087z\"/>", width: 24, height: 24 },
   glob: { body: "<path fill=\"currentColor\" d=\"M4 18v-3.7a1.5 1.5 0 0 0-1.5-1.5H2v-1.6h.5A1.5 1.5 0 0 0 4 9.7V6a3 3 0 0 1 3-3h1v2H7a1 1 0 0 0-1 1v4.1A2 2 0 0 1 4.626 12A2 2 0 0 1 6 13.9V18a1 1 0 0 0 1 1h1v2H7a3 3 0 0 1-3-3m16-3.7V18a3 3 0 0 1-3 3h-1v-2h1a1 1 0 0 0 1-1v-4.1a2 2 0 0 1 1.374-1.9A2 2 0 0 1 18 10.1V6a1 1 0 0 0-1-1h-1V3h1a3 3 0 0 1 3 3v3.7a1.5 1.5 0 0 0 1.5 1.5h.5v1.6h-.5a1.5 1.5 0 0 0-1.5 1.5\"/>", width: 24, height: 24 },
   globe: { body: "<path fill=\"currentColor\" d=\"M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10s-4.477 10-10 10m-2.29-2.333A17.9 17.9 0 0 1 8.027 13H4.062a8.01 8.01 0 0 0 5.648 6.667M10.03 13c.151 2.439.848 4.73 1.97 6.752A15.9 15.9 0 0 0 13.97 13zm9.908 0h-3.965a17.9 17.9 0 0 1-1.683 6.667A8.01 8.01 0 0 0 19.938 13M4.062 11h3.965A17.9 17.9 0 0 1 9.71 4.333A8.01 8.01 0 0 0 4.062 11m5.969 0h3.938A15.9 15.9 0 0 0 12 4.248A15.9 15.9 0 0 0 10.03 11m4.259-6.667A17.9 17.9 0 0 1 15.973 11h3.965a8.01 8.01 0 0 0-5.648-6.667\"/>", width: 24, height: 24 },
   "check-list": { body: "<path fill=\"currentColor\" d=\"M8 4h13v2H8zm-5-.5h3v3H3zm0 7h3v3H3zm0 7h3v3H3zM8 11h13v2H8zm0 7h13v2H8z\"/>", width: 24, height: 24 },

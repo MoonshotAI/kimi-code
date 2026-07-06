@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ToolGroup.vue -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, inject, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ToolCall from './ToolCall.vue';
 import { toolStackKey, toolStackPosition } from '../chatTurnRendering';
@@ -49,30 +49,41 @@ const statusLabel = computed(() => {
 function toggle(): void {
   open.value = !open.value;
 }
+
+const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+const headEl = ref<HTMLElement | null>(null);
+
+function onHeadClick(): void {
+  toggle();
+  const el = headEl.value;
+  if (el) nextTick(() => pinScroll(el));
+}
 </script>
 
 <template>
   <div class="tool-group" :class="{ open }">
-    <button class="tool-group-head" type="button" :aria-expanded="open" @click="toggle">
+    <button class="tool-group-head" ref="headEl" type="button" :aria-expanded="open" @click="onHeadClick">
       <StatusDot :status="aggregateStatus" />
       <Icon class="tg-ic" name="list" size="sm" />
       <span class="tg-title">{{ t('tools.group.title', count) }}</span>
       <span class="tg-meta">· {{ statusLabel }}</span>
       <Icon class="tg-car" name="chevron-right" size="sm" />
     </button>
-    <div v-show="open" class="tool-group-body">
-      <ToolCall
-        v-for="(item, si) in tools"
-        :key="toolStackKey(item)"
-        :tool="item.tool"
-        :mobile="mobile"
-        :stack-position="toolStackPosition(si, tools.length)"
-        :tool-diff-panel="toolDiffPanel"
-        @open-media="emit('openMedia', $event)"
-        @open-file="emit('openFile', $event)"
-        @open-tool-diff="emit('openToolDiff', $event)"
-        @open-agent="emit('openAgent', $event)"
-      />
+    <div class="tool-group-body" :class="{ open }" :inert="!open">
+      <div class="tool-group-body-inner">
+        <ToolCall
+          v-for="(item, si) in tools"
+          :key="toolStackKey(item)"
+          :tool="item.tool"
+          :mobile="mobile"
+          :stack-position="toolStackPosition(si, tools.length)"
+          :tool-diff-panel="toolDiffPanel"
+          @open-media="emit('openMedia', $event)"
+          @open-file="emit('openFile', $event)"
+          @open-tool-diff="emit('openToolDiff', $event)"
+          @open-agent="emit('openAgent', $event)"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -131,6 +142,17 @@ function toggle(): void {
   transform: rotate(90deg);
 }
 .tool-group-body {
+  display: grid;
+  grid-template-rows: minmax(0, 0fr);
+  overflow: hidden;
+  transition: grid-template-rows var(--duration-base) var(--ease-out);
+}
+.tool-group-body.open {
+  grid-template-rows: minmax(0, 1fr);
+}
+.tool-group-body-inner {
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
