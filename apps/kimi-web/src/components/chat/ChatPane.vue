@@ -541,7 +541,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
       <!-- User turn → right-aligned soft-blue bubble (undo affordance lives
            outside the bubble with an inline confirm step). -->
       <template v-if="turn.role === 'user'">
-        <div class="u-turn" :class="{ 'is-latest-user': turn.id === lastUserTurnId }">
+        <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
             <!-- Image / video attachments -->
             <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
@@ -816,27 +816,13 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   margin-top: 0;
 }
 
-/* User turn — wraps the bubble + meta row so they lay out as one right-aligned
-   group and can be pinned together. */
+/* User turn — wraps the bubble + meta row so they lay out as one right-aligned group. */
 .u-turn {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  /* `.chat` is a flex column, so `.u-turn` is a flex item. A flex item defaults
-     to `align-self: stretch`, which prevents `position: sticky` from working.
-     Use a non-stretch alignment (sticky requires it) and keep the group full
-     width explicitly so the bubble's `max-width: 78%` still resolves against
-     the read column. */
   align-self: flex-start;
   width: 100%;
-}
-/* Pin the most recent user turn to the top of the scroll viewport. The meta
-   row lives inside the same wrapper, so it stays attached and never overlaps. */
-.u-turn.is-latest-user {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky);
-  background: var(--bg);
 }
 
 /* User message → right-aligned soft-blue bubble (redesign .p-bubble-user). */
@@ -1066,6 +1052,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > :deep(.agent-card),
 .a-msg > :deep(.agent-group),
 .a-msg > :deep(.box),
+.a-msg > :deep(.swarm-card),
 .a-msg > :deep(.media-tool) {
   margin-top: var(--chat-block-gap);
 }
@@ -1075,6 +1062,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > :deep(.agent-card:first-child),
 .a-msg > :deep(.agent-group:first-child),
 .a-msg > :deep(.box:first-child),
+.a-msg > :deep(.swarm-card:first-child),
 .a-msg > :deep(.media-tool:first-child) {
   margin-top: 0;
 }
