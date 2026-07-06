@@ -257,6 +257,7 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
   return undefined;
 }
 provide('resolveAgentTaskId', resolveAgentTaskId);
+provide('pinScroll', pinScrollFor);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 const hasDockWork = computed(() =>
   bashTasks.value.length > 0 ||
@@ -464,6 +465,11 @@ function onPanesScroll(): void {
   if (!el) return;
   const top = el.scrollTop;
 
+  if (isPinned()) {
+    lastScrollTop = top;
+    return;
+  }
+
   if (performance.now() - lastSmoothScroll < 100) {
     lastScrollTop = top;
     return;
@@ -478,6 +484,7 @@ function onPanesScroll(): void {
   }
   if (top < lastScrollTop - 1 && dist > 1) {
     following.value = false;
+    showPill.value = true;
   } else if (dist <= BOTTOM_THRESHOLD && top > lastScrollTop + 1) {
     following.value = true;
     showPill.value = false;
@@ -601,6 +608,42 @@ function raf(cb: () => void): number {
 function cancelRaf(id: number): void {
   if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
   else clearTimeout(id);
+}
+
+// --- Scroll anchoring for expand/collapse interactions ----------------------
+// Toggling a tool row/group grows or shrinks its body, which would otherwise move
+// the viewport: a collapse near the bottom shrinks scrollHeight and lets the
+// browser clamp scrollTop, and the auto-follow may snap to the tail. While the
+// transition runs we pin the toggled row's viewport position and suppress the
+// auto-follow, so the row stays put and only its body opens downward / collapses
+// upward.
+let pinUntil = 0;
+let pinRaf = 0;
+let pinEl: HTMLElement | null = null;
+let pinTargetTop = 0;
+
+function isPinned(): boolean {
+  return performance.now() < pinUntil;
+}
+
+function pinScrollFor(el: HTMLElement, ms = 260): void {
+  const panes = panesRef.value;
+  if (!panes) return;
+  pinEl = el;
+  pinTargetTop = el.getBoundingClientRect().top;
+  pinUntil = performance.now() + ms;
+  if (pinRaf) return;
+  const tick = () => {
+    pinRaf = 0;
+    if (performance.now() >= pinUntil || !pinEl) {
+      pinEl = null;
+      return;
+    }
+    const delta = pinEl.getBoundingClientRect().top - pinTargetTop;
+    if (delta) panes.scrollTop += delta;
+    pinRaf = raf(tick);
+  };
+  pinRaf = raf(tick);
 }
 
 function scheduleStableFollow(maxFrames = 36): void {
@@ -824,6 +867,7 @@ let contentObserver: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let observedContent: Element | null = null;
 let observedDock: HTMLElement | null = null;
+let lastObservedClientHeight = 0;
 let scrollRaf = 0;
 let pillEligible = false;
 const historyLoadInProgress = ref(false);
@@ -839,6 +883,7 @@ function scheduleFollow(allowPill: boolean): void {
     scrollRaf = 0;
     const wantPill = pillEligible;
     pillEligible = false;
+    if (isPinned()) return;
     if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
     else if (wantPill) showPill.value = true;
   }) as unknown as number;
@@ -877,6 +922,7 @@ function rebindScrollObservers(): void {
     ensureContentObserved();
     ensureDockObserved();
   }
+  lastObservedClientHeight = el?.clientHeight ?? 0;
 }
 
 function onContentMutated(): void {
@@ -926,7 +972,18 @@ onMounted(() => {
     if (typeof ResizeObserver === 'function') {
       resizeObserver = new ResizeObserver(() => {
         updatePanesScrollbarWidth();
-        scheduleFollow(false);
+        const el = panesRef.value;
+        if (!el) return;
+        const { clientHeight } = el;
+        const viewportShrank = clientHeight < lastObservedClientHeight - 1;
+        lastObservedClientHeight = clientHeight;
+        // Data-driven growth (new turns, streaming) is already chased by the
+        // scrollKey watcher, so a content resize must not move the viewport on its
+        // own. Expanding/collapsing a tool row only changes content height: the row
+        // header stays put while its body opens downward or collapses upward in
+        // place. The only resize we still follow is a shrinking viewport (e.g. the
+        // composer dock growing and hiding the last message).
+        if (viewportShrank) scheduleFollow(false);
       });
     }
     rebindScrollObservers();
@@ -944,6 +1001,7 @@ onUnmounted(() => {
   if (resizeObserver) resizeObserver.disconnect();
   if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf);
   if (stableFollowRaf) cancelRaf(stableFollowRaf);
+  if (pinRaf) cancelRaf(pinRaf);
   if (abortToastTimer !== null) clearTimeout(abortToastTimer);
   if (copyConversationCopiedTimer !== null) {
     clearTimeout(copyConversationCopiedTimer);
