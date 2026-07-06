@@ -602,8 +602,8 @@ function archiveTime(iso: string): string {
             {{ t('settings.archivedLoading') }}
           </div>
 
-          <template v-else-if="groupedArchived.length > 0">
-            <div class="archive-list">
+          <template v-else>
+            <div v-if="groupedArchived.length > 0" class="archive-list">
               <section v-for="g in groupedArchived" :key="g.cwd" class="archive-card">
                 <div class="archive-workspace">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h6l2 2h10v9H3z" /><path d="M3 7V5h6l2 2" /></svg>
@@ -621,16 +621,15 @@ function archiveTime(iso: string): string {
                 </div>
               </section>
             </div>
+            <div v-else class="archive-empty">
+              {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
+            </div>
             <div v-if="archivedHasMore" class="archive-more">
               <Button variant="secondary" size="sm" :loading="archivedLoading" @click="loadArchived(false)">
                 {{ t('settings.archivedLoadMore') }}
               </Button>
             </div>
           </template>
-
-          <div v-else class="archive-empty">
-            {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
-          </div>
         </section>
 
       </div>
