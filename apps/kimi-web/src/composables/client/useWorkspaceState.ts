@@ -1694,6 +1694,30 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /** Restore an archived session — calls API, then puts the returned session
+   *  back at the front of the list so it reappears in the sidebar. */
+  async function restoreSession(id: string): Promise<boolean> {
+    try {
+      const restored = await getKimiWebApi().restoreSession(id);
+      upsertSessionFront(restored);
+      return true;
+    } catch (err) {
+      pushOperationFailure('restoreSession', err, { sessionId: id });
+      return false;
+    }
+  }
+
+  /** List archived sessions (server-side `archived_only` filter). Kept separate
+   *  from the per-workspace active list — callers (e.g. Settings) hold the page
+   *  locally and do their own search/filter/sort. */
+  function loadArchivedSessions(input?: { beforeId?: string; pageSize?: number }) {
+    return getKimiWebApi().listSessions({
+      archivedOnly: true,
+      beforeId: input?.beforeId,
+      pageSize: input?.pageSize ?? 50,
+    });
+  }
+
   /** Logout from the managed Kimi provider. Re-checks auth and reloads sessions. */
   async function logout(): Promise<void> {
     try {
@@ -2007,6 +2031,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     renameWorkspace,
     deleteWorkspace,
     archiveSession,
+    restoreSession,
+    loadArchivedSessions,
     logout,
     compact,
     forkSession,

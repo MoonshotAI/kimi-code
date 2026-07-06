@@ -2522,6 +2522,8 @@ export function useKimiWebClient() {
     reorderWorkspaces,
     setWorkspaceSortMode,
     archiveSession: workspaceState.archiveSession,
+    restoreSession: workspaceState.restoreSession,
+    loadArchivedSessions: workspaceState.loadArchivedSessions,
     compact: workspaceState.compact,
     forkSession: workspaceState.forkSession,
     undo: workspaceState.undo,
