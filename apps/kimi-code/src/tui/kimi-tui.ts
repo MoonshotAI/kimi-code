@@ -1,13 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import {
-  deleteAllKittyImages,
-  type Component,
-  type Focusable,
-  getCapabilities,
-  Spacer,
-} from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ApprovalRequest,
@@ -20,6 +13,13 @@ import type {
   Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
+import {
+  deleteAllKittyImages,
+  type Component,
+  type Focusable,
+  getCapabilities,
+  Spacer,
+} from '@moonshot-ai/pi-tui';
 import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
@@ -75,15 +75,15 @@ import {
   GoalCompletionMessageComponent,
   GoalSetMessageComponent,
 } from './components/messages/goal-panel';
-import { SkillActivationComponent } from './components/messages/skill-activation';
 import { PluginCommandComponent } from './components/messages/plugin-command';
 import { ShellRunComponent } from './components/messages/shell-run';
+import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
   StatusMessageComponent,
 } from './components/messages/status-message';
-import { ThinkingComponent } from './components/messages/thinking';
 import { StepSummaryComponent } from './components/messages/step-summary';
+import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
 import { UserMessageComponent } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
@@ -135,12 +135,17 @@ import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attach
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { formatBashOutputForDisplay } from './utils/shell-output';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
-import { getTranscriptComponentEntry, markTranscriptComponent } from './utils/transcript-component-metadata';
+import {
+  getTranscriptComponentEntry,
+  markTranscriptComponent,
+} from './utils/transcript-component-metadata';
+import { nextTranscriptId } from './utils/transcript-id';
 import {
   TRANSCRIPT_EXPAND_TURNS,
   TRANSCRIPT_HYSTERESIS,
@@ -150,8 +155,6 @@ import {
   groupTurns,
   turnsToTrim,
 } from './utils/transcript-window';
-import { formatBashOutputForDisplay } from './utils/shell-output';
-import { nextTranscriptId } from './utils/transcript-id';
 
 export type { TUIState } from './tui-state';
 export { createTUIState } from './tui-state';
@@ -2453,7 +2456,8 @@ export class KimiTUI {
     if (detached === 0 && alreadyFinished > 0) {
       hint = alreadyFinished === 1 ? 'Task already finished.' : 'Tasks already finished.';
     } else if (detached === targets.length) {
-      hint = detached === 1 ? 'Moved 1 task to background.' : `Moved ${detached} tasks to background.`;
+      hint =
+        detached === 1 ? 'Moved 1 task to background.' : `Moved ${detached} tasks to background.`;
     } else {
       hint = `Moved ${detached} of ${targets.length} tasks to background.`;
     }
@@ -2598,10 +2602,20 @@ export class KimiTUI {
   }
 
   restoreEditor(): void {
+    // Estimate whether the content already overflows one screen while the panel
+    // is still mounted. A forced full re-render clears the screen and homes the
+    // cursor, which is only safe when content fills the viewport; below one
+    // screen it would yank the editor to the top and leave a blank tail.
+    const { columns, rows } = this.state.terminal;
+    const overflowsViewport = this.state.ui.render(columns).length > rows;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
-    this.state.ui.requestRender();
+    // Force a full re-render after replacing a tall panel with the shorter editor:
+    // differential rendering leaves the editor shifted up when the bottom-anchored
+    // region shrinks in place. Skip under tmux (its own reflow handles the shrink)
+    // and when content fits on one screen (a full clear would pull the editor up).
+    this.state.ui.requestRender(!this.state.terminalState.insideTmux && overflowsViewport);
   }
 
   restoreInputText(text: string): void {
