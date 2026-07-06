@@ -192,26 +192,29 @@ export function toBrokerRequest(
  * already emits, so the model sees one format regardless of which client
  * answered.
  *
- * Unknown option ids are kept verbatim rather than dropped so a stale
- * client's answer stays diagnosable.
+ * Unknown qids and option ids — including ids that belong to a DIFFERENT
+ * question than the one being answered — are kept verbatim rather than
+ * resolved or dropped: translating a cross-question id would hand the model
+ * a plausible-looking label that was never offered for that question, while
+ * the raw id stays diagnosable.
  */
 export function toAgentCoreResponse(
   resp: ProtocolQuestionResponse,
   request?: ProtocolQuestionRequest,
 ): InProcessQuestionResponse {
   const itemsById = new Map<string, ProtocolQuestionItem>();
-  // Option ids embed their question index (`opt_<q>_<o>`), so a single flat
-  // map across all questions cannot collide.
-  const labelsByOptionId = new Map<string, string>();
   for (const item of request?.questions ?? []) {
     itemsById.set(item.id, item);
-    for (const opt of item.options) labelsByOptionId.set(opt.id, opt.label);
   }
-  const optionText = (id: string): string => labelsByOptionId.get(id) ?? id;
 
   const flattened: InProcessQuestionAnswers = {};
   for (const [qid, ans] of Object.entries(resp.answers)) {
-    const key = itemsById.get(qid)?.question ?? qid;
+    const item = itemsById.get(qid);
+    const key = item?.question ?? qid;
+    // Resolve option ids only within the answered question's own options
+    // (at most 4, so a linear scan is fine).
+    const optionText = (id: string): string =>
+      item?.options.find((o) => o.id === id)?.label ?? id;
     switch (ans.kind) {
       case 'single':
         flattened[key] = optionText(ans.option_id);

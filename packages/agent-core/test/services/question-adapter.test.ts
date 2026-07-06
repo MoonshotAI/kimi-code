@@ -197,6 +197,33 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
     });
   });
 
+  it("keeps a cross-question option id verbatim instead of resolving another question's label", () => {
+    // opt_0_0 is 'Cat' — an option of question 0, never offered for question 1.
+    // Translating it would hand the model a plausible-looking answer that was
+    // never on the list; the raw id stays diagnosable.
+    const inProc = toAgentCoreResponse(
+      {
+        answers: {
+          q_1: { kind: 'single', option_id: 'opt_0_0' },
+        },
+      },
+      request,
+    );
+    expect(inProc.answers).toEqual({ 'Which colors?': 'opt_0_0' });
+  });
+
+  it('resolves in-question ids and keeps cross-question ids verbatim within one multi answer', () => {
+    const inProc = toAgentCoreResponse(
+      {
+        answers: {
+          q_1: { kind: 'multi', option_ids: ['opt_1_0', 'opt_0_1'] },
+        },
+      },
+      request,
+    );
+    expect(inProc.answers).toEqual({ 'Which colors?': 'Red, opt_0_1' });
+  });
+
   it('falls back to raw ids when no request is available (defensive path)', () => {
     const inProc = toAgentCoreResponse(
       {
