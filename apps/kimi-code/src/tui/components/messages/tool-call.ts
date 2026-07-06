@@ -1444,6 +1444,20 @@ export class ToolCallComponent extends Container {
       return `${bullet}${currentTheme.boldFg(tone, label)}`;
     }
 
+    if (toolCall.name === 'Bash') {
+      // The command itself is rendered in the body (with a `$` prompt), so the
+      // header only names the action — repeating the command in parentheses
+      // would duplicate the body. Wording mirrors the other label-only headers
+      // (e.g. AskUserQuestion): the whole label takes the tone colour.
+      if (isTruncated) {
+        return `${bullet}${currentTheme.fg('error', 'Truncated')} ${currentTheme.boldFg('primary', 'Bash')}`;
+      }
+      const label = isFinished ? 'Ran a command' : 'Running a command';
+      const tone = isError ? 'error' : 'primary';
+      const chipStr = isFinished && result !== undefined ? this.buildHeaderChip(result) : '';
+      return `${bullet}${currentTheme.boldFg(tone, label)}${chipStr}`;
+    }
+
     const goalHeader = buildGoalToolHeader({
       toolCall,
       result,
@@ -1962,11 +1976,15 @@ export class ToolCallComponent extends Container {
       for (const line of lines) {
         this.addChild(new Text(line, 2, 0));
       }
-    } else if (name === 'Bash' && this.result === undefined) {
-      // While a long-running Bash call is in-flight (args finalized, no result
-      // yet), surface its command in the body so the user can see what is
-      // running and expand it with ctrl+o. Once the result lands, buildContent's
-      // shellExecutionResultRenderer takes over command rendering.
+    } else if (name === 'Bash') {
+      // Surface the command in the body across the whole lifecycle — while
+      // streaming, running, and after the result lands. Keeping the collapsed
+      // command preview here (instead of yielding to the result renderer once
+      // the result lands) avoids a height collapse when a multi-line command
+      // finishes with short output: the command block stays put and only the
+      // live-output tail swaps for the result. Owned solely by buildCallPreview
+      // so the command never renders twice; shellExecutionResultRenderer
+      // renders the result only.
       const command = str(this.toolCall.args['command']);
       if (command.length === 0) return;
       this.addChild(
@@ -2039,7 +2057,7 @@ export class ToolCallComponent extends Container {
         new ShellExecutionComponent({
           command: cmd,
           showCommand: true,
-          commandPreviewLines: COMMAND_PREVIEW_LINES,
+          commandPreviewLines: this.expanded ? undefined : COMMAND_PREVIEW_LINES,
         }),
       );
     }
