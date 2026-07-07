@@ -945,6 +945,42 @@ describe('OpenAIResponsesChatProvider', () => {
         },
       });
     });
+
+    it('preserves existing Responses text options when applying response format', async () => {
+      const provider = createProvider().withGenerationKwargs({
+        text: { verbosity: 'low' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['text']).toEqual({
+        verbosity: 'low',
+        format: {
+          type: 'json_schema',
+          name: 'contact',
+          schema,
+          strict: true,
+          description: undefined,
+        },
+      });
+    });
   });
 
   describe('reasoning configuration', () => {

@@ -1101,7 +1101,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         createParams['instructions'] = systemPrompt;
       }
       if (options?.responseFormat !== undefined) {
-        createParams['text'] = responseFormatToResponsesText(options.responseFormat);
+        createParams['text'] = {
+          ...asRawObject(createParams['text']),
+          ...responseFormatToResponsesText(options.responseFormat),
+        };
       }
 
       if (
