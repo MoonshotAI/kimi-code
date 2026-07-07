@@ -2479,6 +2479,7 @@ export function useKimiWebClient() {
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,
     startSessionAndSendPrompt: workspaceState.startSessionAndSendPrompt,
     startSessionAndActivateSkill: workspaceState.startSessionAndActivateSkill,
+    startSessionAndOpenSideChat: workspaceState.startSessionAndOpenSideChat,
     addWorkspaceByPath: workspaceState.addWorkspaceByPath,
     browseFs: workspaceState.browseFs,
     getFsHome: workspaceState.getFsHome,

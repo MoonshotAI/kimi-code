@@ -866,6 +866,28 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
+   * Create a session and open a BTW side chat under it — the empty-composer
+   * counterpart to startSessionAndSendPrompt. Without this, `/btw <question>`
+   * from the new-session screen silently no-ops (the panel still opens, but
+   * empty), because openSideChat reads the active session id directly. The side
+   * chat prompt itself carries model / thinking / permissionMode / plan / swarm
+   * (see sendSideChatPromptOn), so unlike skill activation we don't need to
+   * persist them onto the parent profile here.
+   */
+  async function startSessionAndOpenSideChat(
+    workspaceId: string,
+    prompt?: string,
+  ): Promise<void> {
+    try {
+      const sid = await createDraftSession(workspaceId);
+      if (!sid) return;
+      await sideChat.openSideChatOn(sid, prompt);
+    } catch (err) {
+      pushOperationFailure('startSessionAndOpenSideChat', err);
+    }
+  }
+
+  /**
    * Add a workspace by folder path, registering it with the daemon. Returns true
    * when the workspace was registered and selected; false when the daemon
    * rejected the path, so callers can keep the picker open and any pending
@@ -2074,6 +2096,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     openWorkspaceDraft,
     startSessionAndSendPrompt,
     startSessionAndActivateSkill,
+    startSessionAndOpenSideChat,
     addWorkspaceByPath,
     browseFs,
     getFsHome,

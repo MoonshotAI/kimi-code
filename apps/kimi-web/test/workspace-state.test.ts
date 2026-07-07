@@ -765,3 +765,65 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.updateSession).not.toHaveBeenCalled();
   });
 });
+
+describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
+
+  beforeEach(() => {
+    apiMock.addWorkspace.mockReset();
+    apiMock.createSession.mockReset();
+    apiMock.addWorkspace.mockResolvedValue(registered);
+    apiMock.createSession.mockResolvedValue(newSession);
+  });
+
+  function sideChatDeps(openSideChatOn: ReturnType<typeof vi.fn>): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      taskPoller: { loadTasksForSession: vi.fn() } as unknown as UseWorkspaceStateDeps['taskPoller'],
+      sideChat: { openSideChatOn } as unknown as UseWorkspaceStateDeps['sideChat'],
+      modelProvider: {
+        draftModel: ref(null),
+        skillsBySession: ref({}),
+        loadSkillsForSession: vi.fn(),
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
+    };
+  }
+
+  it('creates a session, then opens BTW on the new session id with the question', async () => {
+    const openSideChatOn = vi.fn().mockResolvedValue(undefined);
+    const deps = sideChatDeps(openSideChatOn);
+    const ws = useWorkspaceState(createState(), deps);
+
+    await ws.startSessionAndOpenSideChat('wd_1', 'what changed?');
+
+    expect(apiMock.createSession).toHaveBeenCalledOnce();
+    // The BTW sub-agent is opened on the freshly created session, so a
+    // concurrent session switch can't redirect it.
+    expect(openSideChatOn).toHaveBeenCalledWith('sess_new', 'what changed?');
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('works without an initial question (bare /btw)', async () => {
+    const openSideChatOn = vi.fn().mockResolvedValue(undefined);
+    const deps = sideChatDeps(openSideChatOn);
+    const ws = useWorkspaceState(createState(), deps);
+
+    await ws.startSessionAndOpenSideChat('wd_1');
+
+    expect(openSideChatOn).toHaveBeenCalledWith('sess_new', undefined);
+  });
+
+  it('is a no-op for an unknown workspace', async () => {
+    const openSideChatOn = vi.fn().mockResolvedValue(undefined);
+    const deps = sideChatDeps(openSideChatOn);
+    const ws = useWorkspaceState(createState(), deps);
+
+    await ws.startSessionAndOpenSideChat('wd_missing', 'what changed?');
+
+    expect(apiMock.createSession).not.toHaveBeenCalled();
+    expect(openSideChatOn).not.toHaveBeenCalled();
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+});
