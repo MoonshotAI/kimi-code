@@ -1,47 +1,65 @@
 // apps/kimi-web/src/lib/icons.test.ts
 import { describe, expect, it } from 'vitest';
-import { ICONS, iconSvg } from './icons';
+import { ICONS, SIZE_PX, getIcon, iconSvg } from './icons';
 
 describe('ICONS registry', () => {
-  it('has a non-empty body for every entry', () => {
-    for (const [name, def] of Object.entries(ICONS)) {
-      expect(def.body.trim(), `${name} body`).not.toBe('');
+  it('is non-empty', () => {
+    expect(Object.keys(ICONS).length).toBeGreaterThan(0);
+  });
+
+  it('every entry has a component and a non-empty raw svg', () => {
+    for (const [name, entry] of Object.entries(ICONS)) {
+      // unplugin-icons component can be a function or a defineComponent object
+      const ct = typeof entry.component;
+      expect(['function', 'object'], `${name} component type`).toContain(ct);
+      expect(typeof entry.svg, `${name} svg type`).toBe('string');
+      expect(entry.svg.trim(), `${name} svg`).not.toBe('');
+      expect(entry.svg.toLowerCase(), `${name} svg contains <svg`).toContain('<svg');
     }
   });
 
-  it('bodies contain only inner SVG markup (no outer <svg>)', () => {
-    for (const [name, def] of Object.entries(ICONS)) {
-      expect(def.body.toLowerCase(), `${name}`).not.toContain('<svg');
-    }
-  });
-
-  it('every entry is fill-based on a 24x24 grid (Remix)', () => {
-    for (const [name, def] of Object.entries(ICONS)) {
-      expect(def.fill, `${name} fill`).toBe(true);
-      expect(def.viewBox, `${name} viewBox`).toBe('0 0 24 24');
+  it('every entry svg is on a 24x24 grid with a viewBox', () => {
+    for (const [name, entry] of Object.entries(ICONS)) {
+      expect(entry.svg, `${name} viewBox`).toContain('viewBox="0 0 24 24"');
     }
   });
 });
 
+describe('getIcon', () => {
+  it('returns the entry for a known name', () => {
+    expect(getIcon('plus')).toBe(ICONS.plus);
+  });
+
+  it('returns undefined for an unknown name (runtime fallback)', () => {
+    // @ts-expect-error - intentional runtime misuse path
+    expect(getIcon('definitely-not-an-icon')).toBeUndefined();
+  });
+});
+
 describe('iconSvg', () => {
-  it('renders a Remix icon with the registry defaults', () => {
+  it('renders a Remix icon with kw-icon class and default md size', () => {
     const svg = iconSvg('plus');
-    expect(svg.startsWith('<svg class="kw-icon"')).toBe(true);
-    expect(svg).toContain('viewBox="0 0 24 24"');
-    expect(svg).toContain('fill="currentColor"');
-    expect(svg).not.toContain('stroke=');
-    expect(svg).toContain(ICONS.plus.body);
+    expect(svg.startsWith('<svg ')).toBe(true);
+    expect(svg).toContain('class="kw-icon"');
+    expect(svg).toContain('width="16" height="16"');
   });
 
   it('maps size tokens to pixel width/height', () => {
-    expect(iconSvg('plus', 'sm')).toContain('width="14" height="14"');
-    expect(iconSvg('plus', 'md')).toContain('width="16" height="16"');
-    expect(iconSvg('plus', 'lg')).toContain('width="20" height="20"');
+    expect(iconSvg('plus', 'sm')).toContain(`width="${SIZE_PX.sm}" height="${SIZE_PX.sm}"`);
+    expect(iconSvg('plus', 'md')).toContain(`width="${SIZE_PX.md}" height="${SIZE_PX.md}"`);
+    expect(iconSvg('plus', 'lg')).toContain(`width="${SIZE_PX.lg}" height="${SIZE_PX.lg}"`);
   });
 
-  it('renders a filled icon with currentColor and no stroke', () => {
-    const svg = iconSvg('star');
-    expect(svg).toContain('fill="currentColor"');
-    expect(svg).not.toContain('stroke=');
+  it('does not duplicate width/height attributes from the raw icon', () => {
+    const svg = iconSvg('plus');
+    const widthCount = (svg.match(/\bwidth="/g) ?? []).length;
+    const heightCount = (svg.match(/\bheight="/g) ?? []).length;
+    expect(widthCount).toBe(1);
+    expect(heightCount).toBe(1);
+  });
+
+  it('returns empty string for an unknown name', () => {
+    // @ts-expect-error - intentional runtime misuse path
+    expect(iconSvg('definitely-not-an-icon')).toBe('');
   });
 });

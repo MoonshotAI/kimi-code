@@ -18,6 +18,7 @@ import {
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
 import type { ContextMessage } from '../context/types';
 import {
   collectLoadedDynamicToolNames,
@@ -43,8 +44,7 @@ import {
 import {
   applyCompletionBudget,
   resolveCompletionBudget,
-} from '../../utils/completion-budget';
-import { renderPrompt } from '../../utils/render-prompt';
+} from '../../utils/completion-budget';import { renderPrompt } from '../../utils/render-prompt';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
@@ -514,13 +514,17 @@ export class FullCompaction {
         ];
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
         try {
+          const generateOptions: GenerateOptionsWithRequestLogFields = {
+            signal,
+            requestLogFields: { kind: 'compaction', droppedCount },
+          };
           const response = await this.agent.generate(
             provider,
             this.agent.config.systemPrompt,
             [...this.agent.tools.loopTools],
             messages,
             undefined,
-            { signal },
+            generateOptions,
           );
           if (response.finishReason === 'truncated') {
             throw new CompactionTruncatedError();

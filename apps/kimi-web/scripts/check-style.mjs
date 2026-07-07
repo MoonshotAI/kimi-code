@@ -27,13 +27,13 @@ const DOMAIN_HEX_EXEMPT = new Set([
   'Terminal.vue',
 ]);
 
-// Files that legitimately render their own <svg>: the icon primitive itself,
-// bespoke data-viz / colored illustrations, the spinner, and brand marks
-// (the Kimi wordmark on the loading screen). Everything else should use
-// lib/icons.ts via <Icon>/iconSvg(). The 32x22 Kimi eye logo is also exempted
-// inline (matched by viewBox).
+// Files that legitimately render their own <svg>: bespoke data-viz / colored
+// illustrations, the spinner, and brand marks (the Kimi wordmark on the loading
+// screen). Everything else should use lib/icons.ts via <Icon>/iconSvg(). The
+// 32x22 Kimi eye logo is also exempted inline (matched by viewBox). The icon
+// primitive (components/ui/Icon.vue) itself renders no hand-written <svg>, so it
+// is not exempted here.
 const ICON_EXEMPT = new Set([
-  'components/ui/Icon.vue',
   'components/ui/Spinner.vue',
   'components/ui/MoonSpinner.vue',
   'components/ui/ContextRing.vue',
