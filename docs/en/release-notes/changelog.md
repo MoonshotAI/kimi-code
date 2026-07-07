@@ -6,6 +6,44 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.0 (2026-07-06)
+
+### Features
+
+- web: Add an Archived sessions page in Settings to browse and restore archived sessions. Open Settings → Archived to find it.
+- Add experimental on-demand tool loading (`select_tools`) under the `tool-select` flag: a supporting model loads MCP tools only when needed instead of sending all of them in every request, preserving the provider prompt cache. Off by default and only active on models that declare the `select_tools` capability.
+
+### Bug Fixes
+
+- Fix sessions that exist on disk but were missing from the session list or returned 404 on direct access, by rebuilding the session index at server startup.
+- Fix the Bash and Edit tool cards collapsing, jumping, or flickering in height when results stream in or finish with short output, and visually separate the Bash command from its output.
+- Fix the input box shifting upward after the slash command menu closes.
+- Fix the edit approval preview shown by Ctrl+E to include surrounding context lines, matching the summary panel.
+- Fix `@` file completion missing deeply nested files in large projects after adding extra workspace directories.
+- web: Fix several web layout and animation glitches: the collapsed sidebar now hides correctly, the chat history no longer replays its entrance animation when opening a session, and tool components no longer jump the conversation when expanded or collapsed.
+- web: Fix scheduled-reminder (cron) fires being hidden; they now show as notice cards in the chat.
+- web: Fix the end of a reply staying missing after reopening a session.
+- web: Fix queued media messages not loading back into the composer and keep attachments when undoing a message.
+- web: Keep the composer toolbar from clipping its controls on narrow windows and phones, with the context ring staying visible at every width.
+- web: Fix the font size setting so chat text, composer text, and sidebar text follow the selected size. Thanks @justjavac!
+- web: Fix an almost-invisible composer input caret and a washed-out strikethrough on completed todos.
+- web: Show the correct session search shortcut on Windows. Thanks @justjavac!
+- Fix tool calling with Google Gemini models, including Gemini 3 thinking-signature round-trips across turns.
+
+### Polish
+
+- web: Replace the swarm footer with a single inline tool card that shows live subagent progress and the aggregated result, and keep the swarm progress bar stable after refresh.
+- Show compaction summaries in the TUI after compaction. Press Ctrl+O to show or hide the summary.
+- web: Render AskUserQuestion answers as a readable option list with the chosen option(s) highlighted, instead of raw JSON.
+- web: Show available skills in the composer before a session is created.
+- web: Add an Archived sessions entry to the mobile settings sheet and clarify the archive confirmation to mention restoring from Settings.
+- web: Show the Kimi icon and clearer titles in desktop notifications.
+- web: Align the markdown diff code block with the design system: code text keeps the normal ink colour while the sign and a soft row background carry the change, matching the `~/diff` panel.
+- web: Prevent chat text from hyphenating at line breaks and render code without font ligatures.
+- web: Drop the stray left indent in the tool-call card body so expanded content aligns with the header.
+- Feed AskUserQuestion answers back to the model as question text and option labels instead of positional ids, so the model no longer has to map them back. Question texts must now be unique per call and option labels unique per question; existing clients keep answering with option ids, so no client change is required.
+- Keep prior reasoning across turns for Kimi models by default when Thinking is on. Set `[thinking] keep = "off"` to disable.
+
 ## 0.22.3 (2026-07-04)
 
 ### Bug Fixes

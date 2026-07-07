@@ -114,6 +114,17 @@ interface AnthropicGenerationKwargs {
   thinking?: MessageCreateParams['thinking'] | undefined;
   output_config?: MessageCreateParams['output_config'] | undefined;
   betaFeatures?: string[] | undefined;
+  contextManagement?: AnthropicContextManagement | undefined;
+}
+
+/**
+ * Anthropic beta context-management payload (`context-management-2025-06-27`).
+ * Only the `clear_thinking_20251015` edit is emitted today, with `keep`
+ * forwarded as a string (`"all"`); the `{ type, value }` turn-count form is
+ * not used because the shared `[thinking] keep` config is a string.
+ */
+interface AnthropicContextManagement {
+  edits: Array<{ type: string; keep?: unknown }>;
 }
 
 // Anthropic's native effort values. `ThinkingEffort` is an open string, so after
@@ -122,6 +133,8 @@ interface AnthropicGenerationKwargs {
 type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
+const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
+const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
 const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
@@ -1083,6 +1096,9 @@ export class AnthropicChatProvider implements ChatProvider {
     if (this._generationKwargs.output_config !== undefined) {
       kwargs['output_config'] = this._generationKwargs.output_config;
     }
+    if (this._generationKwargs.contextManagement !== undefined) {
+      kwargs['context_management'] = this._generationKwargs.contextManagement;
+    }
 
     // Build the beta feature list. On the standard Messages API these travel
     // via the `anthropic-beta` header; on the beta Messages API (`betaApi`) the
@@ -1286,6 +1302,35 @@ export class AnthropicChatProvider implements ChatProvider {
     if (!supportsEffortParam(this._model, adaptive)) {
       delete clone._generationKwargs.output_config;
     }
+    return clone;
+  }
+
+  withThinkingKeep(keep: string): AnthropicChatProvider {
+    const current = this._generationKwargs.betaFeatures ?? [];
+    const betaFeatures = current.includes(CONTEXT_MANAGEMENT_BETA)
+      ? current
+      : [...current, CONTEXT_MANAGEMENT_BETA];
+    // Preserve any existing context-management edits (e.g. clear_tool_uses) and
+    // keep clear_thinking first, as Anthropic requires when combining edits. Drop
+    // a previous clear_thinking edit so re-applying stays idempotent.
+    const existingEdits = this._generationKwargs.contextManagement?.edits ?? [];
+    const edits = [
+      { type: CLEAR_THINKING_EDIT, keep },
+      ...existingEdits.filter((edit) => edit.type !== CLEAR_THINKING_EDIT),
+    ];
+    const clone = this._withGenerationKwargs({
+      contextManagement: { edits },
+      betaFeatures,
+    });
+    // clear_thinking_20251015 is honored only on the beta Messages API
+    // (client.beta.messages.create), so enabling keep forces the beta endpoint
+    // here even when the provider was constructed with betaApi: false. Setting
+    // `[thinking] keep` to an off-value (or KIMI_MODEL_THINKING_KEEP=off) is the
+    // escape hatch that disables keep and returns requests to the standard
+    // endpoint. This also routes adaptive models (whose withThinking would
+    // otherwise drop the interleaved-thinking beta and leave betaFeatures empty)
+    // onto the beta endpoint with a body `betas=[context-management-...]`.
+    clone._betaApi = true;
     return clone;
   }
 

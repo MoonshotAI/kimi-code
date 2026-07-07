@@ -972,10 +972,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         const result = await syncSessionFromSnapshot(sessionId);
         if (result === 'not-found') return;
       } else {
-        // Re-open: if the session was evicted from the subscription cap since
-        // last open, reopenSession rebuilds it from a snapshot (the kept cursor
-        // may have skipped per-session events); otherwise it re-subscribes from
-        // the tracked cursor and the daemon replays any missed durable events.
+        // Re-open: rebuild from a fresh snapshot rather than resuming from the
+        // tracked cursor — the daemon only replays durable events, so volatile
+        // streamed deltas lost to a WS hiccup would otherwise stay missing.
         const result = await reopenSession(sessionId);
         if (result === 'not-found') return;
       }
@@ -1694,6 +1693,30 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /** Restore an archived session — calls API, then puts the returned session
+   *  back at the front of the list so it reappears in the sidebar. */
+  async function restoreSession(id: string): Promise<boolean> {
+    try {
+      const restored = await getKimiWebApi().restoreSession(id);
+      upsertSessionFront(restored);
+      return true;
+    } catch (err) {
+      pushOperationFailure('restoreSession', err, { sessionId: id });
+      return false;
+    }
+  }
+
+  /** List archived sessions (server-side `archived_only` filter). Kept separate
+   *  from the per-workspace active list — callers (e.g. Settings) hold the page
+   *  locally and do their own search/filter/sort. */
+  function loadArchivedSessions(input?: { beforeId?: string; pageSize?: number }) {
+    return getKimiWebApi().listSessions({
+      archivedOnly: true,
+      beforeId: input?.beforeId,
+      pageSize: input?.pageSize ?? 50,
+    });
+  }
+
   /** Logout from the managed Kimi provider. Re-checks auth and reloads sessions. */
   async function logout(): Promise<void> {
     try {
@@ -2007,6 +2030,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     renameWorkspace,
     deleteWorkspace,
     archiveSession,
+    restoreSession,
+    loadArchivedSessions,
     logout,
     compact,
     forkSession,

@@ -1,5 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ToolRow.vue -->
 <script setup lang="ts">
+import { inject, nextTick, ref } from 'vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import StatusDot from '../ui/StatusDot.vue';
@@ -28,7 +29,16 @@ withDefaults(
   },
 );
 
-defineEmits<{ toggle: [] }>();
+const emit = defineEmits<{ toggle: [] }>();
+
+const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
+const bhEl = ref<HTMLElement | null>(null);
+
+function onHeadClick(): void {
+  emit('toggle');
+  const el = bhEl.value;
+  if (el) nextTick(() => pinScroll(el));
+}
 </script>
 
 <template>
@@ -43,7 +53,7 @@ defineEmits<{ toggle: [] }>();
       'stack-last': stackPosition === 'last',
     }"
   >
-    <div class="bh" @click="$emit('toggle')">
+    <div class="bh" ref="bhEl" @click="onHeadClick">
       <span v-if="icon" class="gl" v-html="icon" aria-hidden="true" />
       <span class="a">{{ name }}</span>
       <Tooltip :text="arg">
@@ -168,19 +178,24 @@ defineEmits<{ toggle: [] }>();
   color: var(--color-danger);
 }
 
-/* Expanded detail: sunken panel under the row.
-   Collapses/expands via a height transition; `interpolate-size: allow-keywords`
-   (set on :root) lets `height: auto` interpolate instead of snap. The visual
-   styles live on `.bb-pad` so they clip cleanly inside the 0-height clip box. */
+/* Expanded detail: sunken panel under the row. Opens downward / collapses upward
+   via a `grid-template-rows` transition (0fr ↔ 1fr), which animates smoothly in
+   every modern browser — unlike `height: auto`, which only interpolates in
+   Chromium (via `interpolate-size`) and snaps everywhere else. The inner
+   `.bb-pad` needs `min-height: 0` + `overflow: hidden` so the 0fr track can
+   collapse fully. */
 .bb {
-  height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 0fr);
   overflow: hidden;
-  transition: height var(--duration-base) var(--ease-out);
+  transition: grid-template-rows var(--duration-base) var(--ease-out);
 }
 .bb.open {
-  height: auto;
+  grid-template-rows: minmax(0, 1fr);
 }
 .bb-pad {
+  min-height: 0;
+  overflow: hidden;
   padding: 0 11px 11px;
   background: var(--color-surface-sunken);
   border-top: 1px solid var(--color-line);

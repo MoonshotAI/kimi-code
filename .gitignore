@@ -25,3 +25,15 @@ docs/superpowers/
 reports/
 .superpowers/
 /plan/
+
+# Agent scratch / throwaway files - do not commit
+.tmp/
+HANDOVER*.md
+HANDOFF*.md
+handoff.md
+handover.md
+*-designs.html
+*-design.html
+*-mockup.html
+*-demo.html
+*-demos.html

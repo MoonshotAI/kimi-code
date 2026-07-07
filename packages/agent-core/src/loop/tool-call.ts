@@ -659,12 +659,19 @@ function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
+  // Rebuild keeps the persisted contract only: `note` rides into the record
+  // (the model reads it at projection), while `stopTurn`/`message` are
+  // loop/UI-local and are dropped here. Tools are arbitrary JS, so this is
+  // also where the note contract (string | undefined) is enforced: a
+  // malformed or empty note is discarded — the tool's actual output is
+  // still valid, and everything downstream trusts the contract.
+  const base: { output: typeof output; note?: string; truncated?: true } = { output };
+  if (typeof r.note === 'string' && r.note.length > 0) base.note = r.note;
+  if (r.truncated === true) base.truncated = true;
   if (r.isError === true) {
-    return r.truncated === true
-      ? { output, isError: true, truncated: true }
-      : { output, isError: true };
+    return { ...base, isError: true };
   }
-  return r.truncated === true ? { output, truncated: true } : { output };
+  return base;
 }
 
 function makeToolResult(

@@ -23,11 +23,12 @@ import {
   workspaceIdSchema,
   type Event,
 } from '@moonshot-ai/protocol';
-import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IWorkspaceRegistry, WorkspaceNotFoundError, IEventService, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
+import { IPromptService, ISessionService, SessionNotFoundError, SessionUndoUnavailableError, ErrorCodes, KimiError, IEnvironmentService, IWorkspaceRegistry, WorkspaceNotFoundError, IEventService, type IInstantiationService, type SessionClientTelemetry } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { restoreArchivedSession } from '../lib/sessionArchive';
 import { defineRoute } from '../middleware/defineRoute';
 import { parseActionSuffix } from './action-suffix';
 
@@ -84,6 +85,7 @@ const sessionsListQueryCoercion = z
     status: sessionStatusSchema.optional(),
     include_archive: booleanQueryParam,
     exclude_empty: booleanQueryParam,
+    archived_only: booleanQueryParam,
 
     workspace_id: workspaceIdSchema.optional(),
   })
@@ -93,6 +95,14 @@ const sessionsListQueryCoercion = z
         code: 'custom',
         message: 'before_id and after_id are mutually exclusive',
         path: ['before_id'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+    if (value.archived_only === true && value.include_archive === true) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'archived_only and include_archive are mutually exclusive',
+        path: ['archived_only'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
     }
@@ -155,6 +165,71 @@ function headerString(headers: Record<string, unknown>, key: string): string | u
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   return trimmed.length === 0 ? undefined : trimmed;
+}
+
+const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
+const MAX_SESSION_LIST_PAGE_SIZE = 100;
+
+type SessionListRequest = Parameters<ISessionService['list']>[0];
+type SessionListPage = Awaited<ReturnType<ISessionService['list']>>;
+type SessionListItem = SessionListPage['items'][number];
+type SessionListBaseQuery = Omit<SessionListRequest, 'before_id' | 'after_id' | 'page_size' | 'status'>;
+type SessionListCursor = Pick<SessionListRequest, 'before_id' | 'after_id' | 'page_size'>;
+
+function normalizeSessionListPageSize(cursor: SessionListCursor): number {
+  const requested = cursor.page_size ?? DEFAULT_SESSION_LIST_PAGE_SIZE;
+  return Math.min(Math.max(requested, 1), MAX_SESSION_LIST_PAGE_SIZE);
+}
+
+async function listSessionsWithRouteFilter(
+  fetchPage: (query: SessionListRequest) => Promise<SessionListPage>,
+  baseQuery: SessionListBaseQuery,
+  cursor: SessionListCursor,
+  predicate: (session: SessionListItem) => boolean,
+): Promise<SessionListPage> {
+  const targetSize = normalizeSessionListPageSize(cursor);
+  const forward = cursor.after_id !== undefined && cursor.before_id === undefined;
+
+  const matches: SessionListItem[] = [];
+  // Forward starts from the after_id pivot (the newest page above it); backward
+  // starts from before_id (or the newest when there is no cursor). After the first
+  // page both drain toward older sessions via before_id. In forward mode we stop
+  // the moment we reach the pivot session itself, so paging stays within the
+  // after_id bound and never reintroduces the pivot or anything older.
+  let beforeId = forward ? undefined : cursor.before_id;
+  let afterId = forward ? cursor.after_id : undefined;
+  let coreHasMore = true;
+
+  while (matches.length <= targetSize && coreHasMore) {
+    const page = await fetchPage({
+      ...baseQuery,
+      before_id: beforeId,
+      after_id: afterId,
+      page_size: MAX_SESSION_LIST_PAGE_SIZE,
+    });
+    if (page.items.length === 0) break;
+
+    let hitPivot = false;
+    for (const session of page.items) {
+      if (forward && session.id === afterId) {
+        hitPivot = true;
+        break;
+      }
+      if (predicate(session)) matches.push(session);
+    }
+    coreHasMore = page.has_more && !hitPivot;
+    if (!coreHasMore) break;
+
+    const nextBeforeId = page.items[page.items.length - 1]?.id;
+    if (nextBeforeId === undefined || nextBeforeId === beforeId) break;
+    beforeId = nextBeforeId;
+    afterId = undefined;
+  }
+
+  return {
+    items: matches.slice(0, targetSize),
+    has_more: matches.length > targetSize,
+  };
 }
 
 export function registerSessionsRoutes(
@@ -267,15 +342,12 @@ export function registerSessionsRoutes(
     async (req, reply) => {
       try {
         const raw = req.query;
-        const baseQuery = {
-          before_id: raw.before_id,
-          after_id: raw.after_id,
-          page_size: raw.page_size,
-          status: raw.status,
-          includeArchive: raw.include_archive,
+        const archivedOnly = raw.archived_only === true;
+        const status = raw.status;
+        let baseQuery: SessionListBaseQuery = {
+          includeArchive: archivedOnly ? true : raw.include_archive,
           excludeEmpty: raw.exclude_empty,
         };
-        let query;
         if (raw.workspace_id !== undefined) {
           const registry = ix.invokeFunction((a) => a.get(IWorkspaceRegistry));
           let root: string;
@@ -290,11 +362,30 @@ export function registerSessionsRoutes(
             }
             throw err;
           }
-          query = { ...baseQuery, workDir: root };
-        } else {
-          query = baseQuery;
+          baseQuery = { ...baseQuery, workDir: root };
         }
-        const page = await ix.invokeFunction((a) => a.get(ISessionService).list(query));
+
+        if (archivedOnly) {
+          const page = await listSessionsWithRouteFilter(
+            (query) => ix.invokeFunction((a) => a.get(ISessionService).list(query)),
+            baseQuery,
+            raw,
+            (session) =>
+              session.archived === true && (status === undefined || session.status === status),
+          );
+          reply.send(okEnvelope(page, req.id));
+          return;
+        }
+
+        const page = await ix.invokeFunction((a) =>
+          a.get(ISessionService).list({
+            ...baseQuery,
+            before_id: raw.before_id,
+            after_id: raw.after_id,
+            page_size: raw.page_size,
+            status,
+          }),
+        );
         reply.send(okEnvelope(page, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -427,7 +518,7 @@ export function registerSessionsRoutes(
         const { tail } = req.params;
         const parsed = parseActionSuffix({
           tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive'] as const,
+          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive', 'restore'] as const,
           resourceLabel: 'session',
         });
         if (parsed.kind !== 'action') {
@@ -482,6 +573,16 @@ export function registerSessionsRoutes(
             a.get(ISessionService).archive(parsed.id),
           );
           reply.send(okEnvelope(result, req.id));
+          return;
+        }
+
+        if (parsed.action === 'restore') {
+          const homeDir = ix.invokeFunction((a) => a.get(IEnvironmentService)).homeDir;
+          await restoreArchivedSession(homeDir, parsed.id);
+          const session = await ix.invokeFunction((a) =>
+            a.get(ISessionService).get(parsed.id),
+          );
+          reply.send(okEnvelope(session, req.id));
           return;
         }
 

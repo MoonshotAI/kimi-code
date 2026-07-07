@@ -7,6 +7,7 @@ import {
 } from '@moonshot-ai/kosong';
 
 import {
+  applyAnthropicThinkingKeep,
   applyKimiEnvSamplingParams,
   applyKimiEnvThinkingEffort,
   applyKimiEnvThinkingKeep,
@@ -122,16 +123,20 @@ export class ConfigState {
     //   - withThinking: preserve thinking during compaction (#464)
     //   - sampling params: KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P
     //   - thinking.effort: KIMI_MODEL_THINKING_EFFORT (forces an effort, only while thinking is on)
-    //   - thinking.keep: env KIMI_MODEL_THINKING_KEEP > config thinking.keep > default "all" (only while thinking is on)
+    //   - thinking.keep: env KIMI_MODEL_THINKING_KEEP > config thinking.keep > default "all"
+    //     (only while thinking is on). Drives Kimi's `thinking.keep` and, on the
+    //     Anthropic path, a `context_management` `clear_thinking_20251015` edit.
     const provider = createProvider(this.providerConfig).withThinking(this.thinkingEffort);
     const withSampling = applyKimiEnvSamplingParams(provider);
     const withEffort = applyKimiEnvThinkingEffort(withSampling, this.thinkingEffort);
-    return applyKimiEnvThinkingKeep(
+    const configKeep = this.agent.kimiConfig?.thinking?.keep;
+    const withKimiKeep = applyKimiEnvThinkingKeep(
       withEffort,
       this.thinkingEffort,
       undefined,
-      this.agent.kimiConfig?.thinking?.keep,
+      configKeep,
     );
+    return applyAnthropicThinkingKeep(withKimiKeep, this.thinkingEffort, undefined, configKeep);
   }
 
   get model(): string {

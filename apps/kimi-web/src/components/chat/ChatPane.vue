@@ -8,6 +8,7 @@ import ToolGroup from './ToolGroup.vue';
 import Markdown from './Markdown.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
+import CronNotice from './CronNotice.vue';
 import AuthMedia from './AuthMedia.vue';
 import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
@@ -387,7 +388,7 @@ function copyConversation(): void {
   if (props.turns.length === 0) return;
   const lines: string[] = [];
   for (const turn of props.turns) {
-    if (turn.role === 'compaction') continue; // dividers don't copy
+    if (turn.role === 'compaction' || turn.role === 'cron') continue; // dividers / cron notices don't copy
     const roleLabel = turn.role === 'user' ? 'User' : 'Assistant';
     const content = turnToMarkdown(turn);
     if (content.trim()) {
@@ -541,7 +542,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
       <!-- User turn → right-aligned soft-blue bubble (undo affordance lives
            outside the bubble with an inline confirm step). -->
       <template v-if="turn.role === 'user'">
-        <div class="u-turn" :class="{ 'is-latest-user': turn.id === lastUserTurnId }">
+        <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
             <!-- Image / video attachments -->
             <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
@@ -639,6 +640,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
         <span class="cd-line" aria-hidden="true" />
       </div>
 
+      <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
+           a lightweight in-transcript notice rather than a user bubble. -->
+      <CronNotice v-else-if="turn.role === 'cron'" :text="turn.text" :cron="turn.cron" :turn-id="turn.id" />
+
       <!-- Assistant turn → left-aligned, no name/role label. -->
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
         <template v-for="(blk, bi) in assistantRenderBlocks(turn)" :key="renderBlockKey(blk, bi)">
@@ -655,6 +660,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             @open-agent="emit('openAgent', $event)"
           />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" @open-agent="emit('openAgent', $event)" />
+          <CronNotice v-else-if="blk.kind === 'cron'" :text="blk.text" :cron="blk.cron" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
           <Tooltip :text="`${turn.durationMs} ms`">
@@ -801,6 +807,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .chat > .u-turn,
 .chat > .a-msg,
 .chat > .compact-divider,
+.chat > .cron-notice,
 .chat > .sending-placeholder,
 .chat > :deep(.activity-notice) {
   margin-top: var(--chat-turn-gap);
@@ -811,32 +818,19 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .chat > .u-turn:first-child,
 .chat > .a-msg:first-child,
 .chat > .compact-divider:first-child,
+.chat > .cron-notice:first-child,
 .chat > .sending-placeholder:first-child,
 .chat > :deep(.activity-notice:first-child) {
   margin-top: 0;
 }
 
-/* User turn — wraps the bubble + meta row so they lay out as one right-aligned
-   group and can be pinned together. */
+/* User turn — wraps the bubble + meta row so they lay out as one right-aligned group. */
 .u-turn {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  /* `.chat` is a flex column, so `.u-turn` is a flex item. A flex item defaults
-     to `align-self: stretch`, which prevents `position: sticky` from working.
-     Use a non-stretch alignment (sticky requires it) and keep the group full
-     width explicitly so the bubble's `max-width: 78%` still resolves against
-     the read column. */
   align-self: flex-start;
   width: 100%;
-}
-/* Pin the most recent user turn to the top of the scroll viewport. The meta
-   row lives inside the same wrapper, so it stays attached and never overlaps. */
-.u-turn.is-latest-user {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky);
-  background: var(--bg);
 }
 
 /* User message → right-aligned soft-blue bubble (redesign .p-bubble-user). */
@@ -1066,6 +1060,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > :deep(.agent-card),
 .a-msg > :deep(.agent-group),
 .a-msg > :deep(.box),
+.a-msg > :deep(.swarm-card),
 .a-msg > :deep(.media-tool) {
   margin-top: var(--chat-block-gap);
 }
@@ -1075,6 +1070,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > :deep(.agent-card:first-child),
 .a-msg > :deep(.agent-group:first-child),
 .a-msg > :deep(.box:first-child),
+.a-msg > :deep(.swarm-card:first-child),
 .a-msg > :deep(.media-tool:first-child) {
   margin-top: 0;
 }

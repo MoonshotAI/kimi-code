@@ -12,7 +12,7 @@ export default {
   newChat: '新建对话',
   newWorkspace: '新建工作区',
   emptyState: '还没有会话 · 点击 新建会话 开始',
-  archiveConfirm: '归档会话？',
+  archiveConfirm: '确认归档会话？归档后可以从「设置」中恢复',
   options: '选项',
   rename: '重命名',
   copyPath: '复制路径',

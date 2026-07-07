@@ -38,7 +38,6 @@ function imageOutput(path: string, b64 = PNG_B64, mime = 'image/png'): string {
     { type: 'text', text: `<image path="${path}">` },
     { type: 'image_url', imageUrl: { url: `data:${mime};base64,${b64}` } },
     { type: 'text', text: '</image>' },
-    { type: 'text', text: `Loaded image file "${path}" (${mime}, 70 bytes, original size 1x1px).` },
   ]);
 }
 
@@ -58,7 +57,6 @@ describe('parseReadMediaOutput', () => {
     expect(m?.path).toBe('/tmp/a.png');
     expect(m?.mimeType).toBe('image/png');
     expect(m?.bytes).toBeGreaterThan(0);
-    expect(m?.originalSize).toBe('1x1px');
   });
 
   it('extracts video kind and mime', () => {

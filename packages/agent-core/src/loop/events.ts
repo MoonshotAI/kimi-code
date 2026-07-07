@@ -4,6 +4,7 @@ import type { ToolInputDisplay } from '../tools/display';
 import type { ExecutableToolResult, LoopStepStopReason, ToolUpdate } from './types';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
+export type LoopInterruptCause = LoopInterruptReason | 'user_cancelled';
 
 export interface LoopStepBeginEvent {
   readonly type: 'step.begin';
@@ -94,6 +95,11 @@ export interface LoopTurnInterruptedEvent {
   readonly attemptedSteps: number;
   readonly activeStep?: number | undefined;
   readonly message?: string | undefined;
+  /**
+   * Telemetry-facing interrupt cause. `aborted` is split into a deliberate user
+   * cancel vs. any other abort; `max_steps`/`error` mirror `reason`.
+   */
+  readonly interruptReason?: LoopInterruptCause | undefined;
 }
 
 export interface LoopTextDeltaEvent {

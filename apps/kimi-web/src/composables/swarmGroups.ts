@@ -7,6 +7,9 @@ export interface SwarmMember {
   phase: AppSubagentPhase;
   summary?: string;
   outputLines?: string[];
+  /** Accumulated streaming text (text-kind taskProgress) — preferred over
+   *  outputLines/summary when rendering the live swarm row activity/body. */
+  text?: string;
   suspendedReason?: string;
   swarmIndex: number;
 }
@@ -53,6 +56,7 @@ export function buildSwarmGroups(tasks: AppTask[]): SwarmGroup[] {
       phase: phaseForTask(task),
       summary: task.outputPreview,
       outputLines: task.outputLines,
+      text: task.text,
       suspendedReason: task.suspendedReason,
       swarmIndex: task.swarmIndex,
     });
@@ -85,4 +89,39 @@ export function countSwarmMembers(groups: SwarmGroup[]): { done: number; total: 
     }
   }
   return { done, total };
+}
+
+/**
+ * Bucket foreground/background subagent tasks by their spawning tool call and
+ * return one member list per AgentSwarm call. Unlike buildSwarmGroups this keeps
+ * single-member "swarms" (e.g. AgentSwarm used with one resume_agent_ids entry),
+ * so the inline card can show a resumed subagent's live progress before the
+ * structured result arrives. Also includes subagents without a swarmIndex so a
+ * late-synced task still appears (sorted last).
+ */
+export function swarmMembersByToolCall(tasks: AppTask[]): Map<string, SwarmMember[]> {
+  const buckets = new Map<string, SwarmMember[]>();
+  for (const task of tasks) {
+    if (task.kind !== 'subagent' || !task.parentToolCallId) continue;
+    const list = buckets.get(task.parentToolCallId) ?? [];
+    list.push({
+      id: task.id,
+      name: task.description,
+      subagentType: task.subagentType,
+      phase: phaseForTask(task),
+      summary: task.outputPreview,
+      outputLines: task.outputLines,
+      text: task.text,
+      suspendedReason: task.suspendedReason,
+      swarmIndex: task.swarmIndex ?? Number.MAX_SAFE_INTEGER,
+    });
+    buckets.set(task.parentToolCallId, list);
+  }
+  for (const [key, members] of buckets) {
+    buckets.set(
+      key,
+      members.toSorted((a, b) => a.swarmIndex - b.swarmIndex || a.id.localeCompare(b.id)),
+    );
+  }
+  return buckets;
 }
