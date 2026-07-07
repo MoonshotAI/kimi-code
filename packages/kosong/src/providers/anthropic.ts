@@ -159,10 +159,9 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   // Claude Fable 5 documents a 128k output ceiling.
   'fable-5': 128000,
   // Claude Opus per minor version. 4.6 and 4.7 raised the cap to 128k;
-  // 4.8 and 4.5 ship at 64k; 4.1 and the dated 4.0 release stay at 32k.
+  // 4.5 ships at 64k; 4.1 and the dated 4.0 release stay at 32k.
   'opus-4-7': 128000,
   'opus-4-6': 128000,
-  'opus-4-8': 64000,
   'opus-4-5': 64000,
   'opus-4-1': 32000,
   'opus-4-0': 32000,

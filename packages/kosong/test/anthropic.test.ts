@@ -2737,7 +2737,6 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
   it('uses per-version Messages-API caps for known Claude 4 models', async () => {
     expect(await maxTokensFor('claude-opus-4-7')).toBe(128000);
     expect(await maxTokensFor('claude-opus-4-6')).toBe(128000);
-    expect(await maxTokensFor('claude-opus-4-8')).toBe(64000);
     expect(await maxTokensFor('claude-opus-4-5')).toBe(64000);
     expect(await maxTokensFor('claude-sonnet-4-6')).toBe(64000);
     expect(await maxTokensFor('claude-haiku-4-5-20251001')).toBe(64000);
