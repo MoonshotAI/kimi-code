@@ -539,6 +539,19 @@ export interface KimiEventConnection {
    * instead of dropping them like background subagents.
    */
   markSideChannelAgent(agentId: string): void;
+  /**
+   * Report the underlying socket's health. Used to detect a silent-half-open
+   * connection after the tab was frozen in the background: the browser still
+   * reports OPEN (so no auto-reconnect) yet no frames have arrived for a while.
+   */
+  health(): { connected: boolean; open: boolean; stale: boolean };
+  /**
+   * Force a clean reconnect of the underlying socket. Used to recover from a
+   * silent-half-open (background-tab freeze) where onclose never fires. The
+   * reconnect handshake re-subscribes at the last durable cursor. No-op after
+   * close().
+   */
+  reconnect(): void;
   close(): void;
 }
 
