@@ -82,6 +82,32 @@ async function noisePng(width: number, height: number, alpha = false): Promise<U
   return new Uint8Array(await image.getBuffer('image/png'));
 }
 
+/**
+ * Statistically random (deterministic xorshift) noise. Unlike noisePng's
+ * periodic pattern — whose post-resize deflate size is unpredictable — this
+ * stays roughly proportionally incompressible after a resize smooths it,
+ * so byte sizes can be compared across scales.
+ */
+async function randomNoisePng(width: number, height: number): Promise<Uint8Array> {
+  const image = new Jimp({ width, height, color: 0x000000ff });
+  const data = image.bitmap.data;
+  let state = 0x9e3779b9;
+  const next = (): number => {
+    state ^= (state << 13) >>> 0;
+    state ^= state >>> 17;
+    state ^= (state << 5) >>> 0;
+    state >>>= 0;
+    return state & 0xff;
+  };
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = next();
+    data[i + 1] = next();
+    data[i + 2] = next();
+    data[i + 3] = 0xff;
+  }
+  return new Uint8Array(await image.getBuffer('image/png'));
+}
+
 async function decodeAlpha(bytes: Uint8Array): Promise<boolean> {
   const image = await Jimp.fromBuffer(Buffer.from(bytes));
   return image.hasAlpha();
@@ -198,6 +224,33 @@ describe('compressImageForModel — byte budget', () => {
     expect(result.changed).toBe(true);
     expect(result.mimeType).toBe('image/jpeg');
     expect(result.finalByteLength).toBeLessThan(result.originalByteLength);
+  });
+
+  it('steps down through the 2000px edge before the 1000px fallback', async () => {
+    // Regression guard for the 3000px cap raise: a PNG whose fitted encode
+    // is over budget but whose 2000px encode fits must come back at 2000px
+    // (as it did under the old cap), not skip straight to 1000px.
+    // The budget is anchored to the actual 2000px encode size (probed with
+    // an unlimited budget) so the test does not depend on exact deflate
+    // output sizes.
+    const png = await randomNoisePng(2400, 600);
+    const probe = await compressImageForModel(png, 'image/png', {
+      maxEdge: 2000,
+      byteBudget: Number.MAX_SAFE_INTEGER,
+    });
+    expect(probe.changed).toBe(true);
+    expect(probe.mimeType).toBe('image/png');
+    expect(Math.max(probe.width, probe.height)).toBe(2000);
+    // Sanity: the anchor budget must sit below the input size, or the run
+    // below would pass through on the fast path instead of re-encoding.
+    expect(probe.finalByteLength + 1024).toBeLessThan(png.length);
+
+    const result = await compressImageForModel(png, 'image/png', {
+      byteBudget: probe.finalByteLength + 1024,
+    });
+    expect(result.changed).toBe(true);
+    expect(result.mimeType).toBe('image/png');
+    expect(Math.max(result.width, result.height)).toBe(2000);
   });
 });
 

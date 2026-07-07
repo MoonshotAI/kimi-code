@@ -43,8 +43,13 @@ export const IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
 /** Progressively lower JPEG quality until the payload fits the byte budget. */
 const JPEG_QUALITY_STEPS = [80, 60, 40, 20] as const;
 
-/** Last-ditch longest edge when the budget cannot be met at MAX_IMAGE_EDGE_PX. */
-const FALLBACK_EDGE_PX = 1000;
+/**
+ * Longest-edge step-downs tried when the budget cannot be met at the fitted
+ * size. The 2000px step preserves the behavior of the previous 2000px cap:
+ * an image whose 2000px encode fits the budget keeps that resolution
+ * instead of dropping straight to the 1000px last resort.
+ */
+const FALLBACK_EDGES_PX = [2000, 1000] as const;
 
 /**
  * Pixel-count ceiling above which we skip compression entirely. A tiny-byte,
@@ -170,7 +175,7 @@ export async function compressImageForModel(
     const encoded = await encodeWithinBudget(image, {
       sourceIsPng,
       byteBudget,
-      fallbackEdge: FALLBACK_EDGE_PX,
+      fallbackEdges: FALLBACK_EDGES_PX,
     });
 
     // Keep the result when it actually helps: fewer bytes, or fewer pixels
@@ -544,7 +549,7 @@ export async function cropImageForModel(
     const encoded = await encodeWithinBudget(image, {
       sourceIsPng,
       byteBudget,
-      fallbackEdge: FALLBACK_EDGE_PX,
+      fallbackEdges: FALLBACK_EDGES_PX,
     });
     return {
       ok: true,
@@ -694,7 +699,7 @@ interface EncodedImage {
 interface EncodeOptions {
   readonly sourceIsPng: boolean;
   readonly byteBudget: number;
-  readonly fallbackEdge: number;
+  readonly fallbackEdges: readonly number[];
 }
 
 /**
@@ -703,14 +708,16 @@ interface EncodeOptions {
  * Strategy — prefer the source format so a downscaled screenshot stays lossless
  * PNG (preserving text and transparency), and only fall back to lossy JPEG when
  * PNG cannot meet the byte budget:
- *  - PNG source: PNG at the fitted size → a smaller PNG rescale → JPEG ladder.
- *  - JPEG source: JPEG quality ladder → a smaller JPEG rescale.
+ *  - PNG source: PNG at the fitted size → smaller PNG rescales, stepping down
+ *    the fallback edges → JPEG ladder.
+ *  - JPEG source: JPEG quality ladder → smaller rescales at the lowest
+ *    quality, stepping down the fallback edges.
  *
  * Always returns the smallest buffer it produced, even if no attempt met the
  * budget — the caller still gates on whether it actually helped.
  */
 async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promise<EncodedImage> {
-  const { sourceIsPng, byteBudget, fallbackEdge } = opts;
+  const { sourceIsPng, byteBudget, fallbackEdges } = opts;
   let smallest: EncodedImage | null = null;
 
   const consider = (data: Buffer, mimeType: string): EncodedImage => {
@@ -727,8 +734,9 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
     if (png.length <= byteBudget) return consider(png, 'image/png');
     consider(png, 'image/png');
 
-    // Over budget: a smaller PNG before going lossy.
-    if (fitWithinEdge(image, fallbackEdge)) {
+    // Over budget: progressively smaller PNGs before going lossy.
+    for (const edge of fallbackEdges) {
+      if (!fitWithinEdge(image, edge)) continue;
       const smallerPng = await image.getBuffer('image/png', { deflateLevel: 9 });
       if (smallerPng.length <= byteBudget) return consider(smallerPng, 'image/png');
       consider(smallerPng, 'image/png');
@@ -743,14 +751,16 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
     return smallest!;
   }
 
-  // JPEG source: quality ladder, then a smaller rescale at the lowest quality.
+  // JPEG source: quality ladder, then smaller rescales at the lowest quality.
   for (const quality of JPEG_QUALITY_STEPS) {
     const jpeg = await image.getBuffer('image/jpeg', { quality });
     if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
     consider(jpeg, 'image/jpeg');
   }
-  if (fitWithinEdge(image, fallbackEdge)) {
+  for (const edge of fallbackEdges) {
+    if (!fitWithinEdge(image, edge)) continue;
     const jpeg = await image.getBuffer('image/jpeg', { quality: JPEG_QUALITY_STEPS.at(-1) });
+    if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
     consider(jpeg, 'image/jpeg');
   }
 
