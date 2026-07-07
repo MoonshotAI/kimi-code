@@ -87,6 +87,12 @@ While paired, you receive Telegram notifications for session events:
 
 Milestone notifications are always sent as plain text. Events for unpaired or inactive sessions are ignored.
 
+## Feature matrix and roadmap
+
+For a side-by-side comparison of what the browser UI (`kimi-web`) exposes versus what is
+currently available through this Telegram bot, see [`docs/kimi-web-feature-matrix.md`](docs/kimi-web-feature-matrix.md).
+It includes a prioritized backlog of features planned for Telegram.
+
 ### 5. Unpair or switch sessions
 
 To link the chat to a different session, generate a new pairing code from the new session and run `/start <new-code>`. The bot replaces the previous pairing with the new one.
