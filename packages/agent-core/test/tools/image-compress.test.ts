@@ -419,6 +419,20 @@ describe('compressImageForModel — EXIF orientation', () => {
     // The sent image keeps the rotated (portrait) aspect.
     expect(result.width).toBeLessThan(result.height);
   });
+
+  it('reports display-space dimensions for an EXIF-rotated passthrough', async () => {
+    // Within both budgets → no decode ever happens. The header sniff itself
+    // must account for EXIF orientation so passthrough metadata agrees with
+    // the space a later region readback (which decodes) will use.
+    const jpeg = withExifOrientation(await solidJpeg(120, 80), 6);
+    const result = await compressImageForModel(jpeg, 'image/jpeg');
+    expect(result.changed).toBe(false);
+    expect(result.data).toBe(jpeg); // fast path — not decoded
+    expect(result.originalWidth).toBe(80);
+    expect(result.originalHeight).toBe(120);
+    expect(result.width).toBe(80);
+    expect(result.height).toBe(120);
+  });
 });
 
 describe('compressImageForModel — original dimensions metadata', () => {

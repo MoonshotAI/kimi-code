@@ -348,10 +348,9 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             region: outcome.region,
             resized: outcome.resized,
           };
-          // The decode is authoritative: jimp applies EXIF orientation, so
-          // the header sniff has width/height swapped for orientations 5-8
-          // (and misses some formats entirely). Region coordinates live in
-          // the decoded space, so the note must report it.
+          // The decode is authoritative: it covers formats and nonconforming
+          // EXIF the header sniff cannot read, and region coordinates live
+          // in the decoded space, so the note must report it.
           dimensions = { width: outcome.originalWidth, height: outcome.originalHeight };
         } else if (args.full_resolution === true) {
           // Native resolution on request — but the provider's per-image byte
@@ -399,9 +398,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             mimeType: compressed.mimeType,
           };
           if (compressed.changed) {
-            // Same as the crop path: once a decode happened, its (EXIF-rotated)
-            // dimensions are the space the sent image and any later region
-            // readback live in — the header sniff may have them swapped.
+            // Same as the crop path: once a decode happened, its dimensions
+            // are authoritative over the header sniff.
             dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
           }
         }

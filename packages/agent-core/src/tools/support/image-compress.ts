@@ -91,9 +91,9 @@ export interface CompressImageResult {
   /** Pixel height of `data`; falls back to the input size when unknown. */
   readonly height: number;
   /**
-   * Pixel width of the input image. When re-encoded this is the decoded
-   * (EXIF-rotated) width — the space crop regions live in; on passthrough it
-   * is the header sniff (0 when unknown).
+   * Pixel width of the input image, in display space (EXIF orientation
+   * applied): the decoded width when re-encoded, the header sniff on
+   * passthrough (0 when it cannot be determined).
    */
   readonly originalWidth: number;
   /** Pixel height of the input image; see {@link originalWidth}. */
@@ -155,10 +155,12 @@ export async function compressImageForModel(
     const { Jimp } = await import('jimp');
     const image = await Jimp.fromBuffer(Buffer.from(bytes));
     const sourceIsPng = normalizedMime === 'image/png';
-    // Jimp applies EXIF orientation while decoding, so the bitmap — not the
-    // header sniff, whose width/height are swapped for orientations 5-8 — is
-    // the coordinate space the encoded result and any later crop region
-    // (see cropImageForModel, which decodes the same way) actually live in.
+    // The decoded bitmap is authoritative for the original size: jimp
+    // applies EXIF orientation while decoding, and this is the coordinate
+    // space the encoded result and any later crop region (see
+    // cropImageForModel, which decodes the same way) actually live in. The
+    // header sniff also reports display space, but can miss formats or
+    // nonconforming EXIF that the decoder still handles.
     const decodedWidth = image.width;
     const decodedHeight = image.height;
 
@@ -206,9 +208,9 @@ export interface CompressBase64Result {
   /** Pixel height of the (possibly re-encoded) payload; 0 when unknown. */
   readonly height: number;
   /**
-   * Pixel width of the input image. When re-encoded this is the decoded
-   * (EXIF-rotated) width — the space crop regions live in; on passthrough it
-   * is the header sniff (0 when unknown).
+   * Pixel width of the input image, in display space (EXIF orientation
+   * applied): the decoded width when re-encoded, the header sniff on
+   * passthrough (0 when it cannot be determined).
    */
   readonly originalWidth: number;
   /** Pixel height of the input image; see {@link originalWidth}. */

@@ -771,6 +771,35 @@ describe('ReadMediaFileTool', () => {
     expect(noteText(result)).toContain('Original dimensions: 80x120');
   });
 
+  it('reports display-space dimensions for an EXIF-rotated image sent untouched', async () => {
+    // Within both budgets the original bytes are sent without decoding; the
+    // note must still report the display-space size so coordinates derived
+    // from it agree with a later region readback (which decodes).
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: portrait.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(portrait),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_exif_untouched',
+      args: { path: '/workspace/portrait.jpg' },
+      signal,
+    });
+
+    const systemText = noteText(result);
+    expect(systemText).toContain('Original dimensions: 80x120');
+    expect(systemText).not.toMatch(/downsampled/i);
+  });
+
   describe('region and full_resolution', () => {
     async function bigPng(width: number, height: number): Promise<Buffer> {
       return Buffer.from(
