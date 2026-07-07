@@ -304,9 +304,7 @@ export class Session {
       profile: DEFAULT_AGENT_PROFILES['agent'],
     });
     if (this.options.drainAgentTasksOnStop) {
-      const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
       agent.printDrainAgentTasksOnStop = true;
-      agent.printDrainDeadlineMs = Date.now() + ceilingS * 1000;
     }
     await this.triggerSessionStart('startup');
     return agent;

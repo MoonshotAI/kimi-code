@@ -68,6 +68,7 @@ const GROUPS = [
     code: 'code-line',
     terminal: 'terminal-box-line',
     pencil: 'pencil-line',
+    tool: 'tools-line',
     glob: 'braces-line',
     globe: 'global-line',
     'check-list': 'list-check',

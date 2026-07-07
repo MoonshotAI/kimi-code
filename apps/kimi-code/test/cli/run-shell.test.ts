@@ -241,6 +241,34 @@ describe('runShell', () => {
     });
   });
 
+  it('forwards skillsDirs from CLI options to the harness', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: ['/skills'],
+      },
+      '1.2.3-test',
+    );
+
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ skillDirs: ['/skills'] }),
+    );
+  });
+
   it('tracks first launch when device id creation reports first launch', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',

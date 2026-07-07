@@ -654,6 +654,9 @@ describe('OpenAILegacyChatProvider', () => {
 
       // 1000000 - 30000 = 970000, clamped to 131072
       expect(body['max_tokens']).toBe(131072);
+      // The exposed effective cap matches the ceiling-clamped wire value —
+      // the request trace records this field.
+      expect(provider.maxCompletionTokens).toBe(131072);
     });
   });
 
@@ -670,6 +673,9 @@ describe('OpenAILegacyChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
       expect(body['max_tokens']).toBe(1024);
+      // The constructor-level cap is on the wire without any budget
+      // application, so the exposed cap must reflect it too.
+      expect(provider.maxCompletionTokens).toBe(1024);
     });
 
     it('does not inject max_tokens when maxTokens option is omitted', async () => {

@@ -375,9 +375,10 @@ describe('reduceWireRecords', () => {
     // Synthetic result spliced in place (index 2), before the deferred prompt.
     expect(entries[2]!.message.toolCallId).toBe('call_interrupted');
     expect(entries[2]!.message.isError).toBe(true);
+    // Raw fact, like ContextMemory history: the ERROR status prefix is a
+    // model-projection concern, not part of the stored message.
     expect(textOf(entries[2]!.message)).toBe(
-      '<system>ERROR: Tool execution failed.</system>\n' +
-        'Tool execution was interrupted before its result was recorded. ' +
+      'Tool execution was interrupted before its result was recorded. ' +
         'Do not assume the tool completed successfully.',
     );
     expect(textOf(entries[3]!.message)).toBe('keep going');
@@ -467,7 +468,7 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(2);
   });
 
-  it('wraps tool errors and empty outputs with <system> statuses like agent-core', () => {
+  it('keeps raw tool output with the structured isError/note fields like agent-core history', () => {
     const { entries } = reduceWireRecords([
       loopEvent({ type: 'step.begin', uuid: 's1', turnId: 't', step: 0 }),
       ...['call_err', 'call_empty'].map((toolCallId) =>
@@ -492,14 +493,13 @@ describe('reduceWireRecords', () => {
         type: 'tool.result',
         parentUuid: 's1',
         toolCallId: 'call_empty',
-        result: { output: '' },
+        result: { output: '', note: '<system>meta</system>' },
       }),
     ]);
-    expect(textOf(entries[1]!.message)).toBe(
-      '<system>ERROR: Tool execution failed.</system>\nboom',
-    );
+    expect(textOf(entries[1]!.message)).toBe('boom');
     expect(entries[1]!.message.isError).toBe(true);
-    expect(textOf(entries[2]!.message)).toBe('<system>Tool output is empty.</system>');
+    expect(textOf(entries[2]!.message)).toBe('');
+    expect(entries[2]!.message.note).toBe('<system>meta</system>');
   });
 });
 

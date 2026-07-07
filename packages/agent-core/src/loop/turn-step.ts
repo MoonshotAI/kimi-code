@@ -162,7 +162,11 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     try {
       response = await chatWithRetry({
         ...retryInput,
-        params: { ...chatParams, messages: strictMessages },
+        params: {
+          ...chatParams,
+          messages: strictMessages,
+          requestLogFields: { projection: 'strict' },
+        },
       });
     } catch (strictError) {
       // The strictly-sanitized rebuild was still rejected — our wire-compliance

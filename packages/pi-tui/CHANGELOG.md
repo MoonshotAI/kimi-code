@@ -1,5 +1,11 @@
 # @moonshot-ai/pi-tui
 
+## 0.80.7
+
+### Patch Changes
+
+- [#1408](https://github.com/MoonshotAI/kimi-code/pull/1408) [`fc259ab`](https://github.com/MoonshotAI/kimi-code/commit/fc259abdb415fe9ac10132a142bdb5ce507ccda2) Thanks [@liruifengv](https://github.com/liruifengv)! - Support searching multiple workspace roots for `@` file completion through fd, deduplicated by absolute path.
+
 ## 0.80.6
 
 ### Patch Changes

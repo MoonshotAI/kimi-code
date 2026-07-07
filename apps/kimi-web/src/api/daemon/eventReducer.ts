@@ -119,6 +119,11 @@ function isOptimisticUserMessage(message: AppMessage): boolean {
   );
 }
 
+function isCronOriginMessage(message: AppMessage): boolean {
+  const origin = message.metadata?.['origin'] as { kind?: string } | undefined;
+  return origin?.kind === 'cron_job' || origin?.kind === 'cron_missed';
+}
+
 function sameMessageContent(a: AppMessage, b: AppMessage): boolean {
   return JSON.stringify(a.content) === JSON.stringify(b.content);
 }
@@ -388,7 +393,12 @@ export function reduceAppEvent(
       const msgs = next.messagesBySession[sid] ?? [];
       const exists = msgs.some((m) => m.id === event.message.id);
       if (!exists) {
-        if (event.message.role === 'user') {
+        // Cron-injected user messages (origin cron_job/cron_missed) carry the
+        // reminder's prompt as their text, which can coincide with a still-
+        // optimistic user message. They must append as their own turn rather
+        // than reconcile into (and replace) that optimistic echo — so skip the
+        // echo lookup entirely for them.
+        if (event.message.role === 'user' && !isCronOriginMessage(event.message)) {
           const optimisticIndex = findOptimisticUserEchoIndex(msgs, event.message);
           if (optimisticIndex !== -1) {
             const updated = [...msgs];

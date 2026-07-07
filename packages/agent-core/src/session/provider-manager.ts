@@ -39,8 +39,6 @@ interface ProviderManagerOptions {
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly promptCacheKey?: string;
-  // remove before commit
-  readonly adaptiveThinkingOverride?: () => boolean | undefined;
 }
 
 type AuthorizedRequest = <T>(
@@ -121,9 +119,6 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
-    // remove before commit
-    const adaptiveThinkingOverride = this.options.adaptiveThinkingOverride?.();
-    const effectiveAdaptiveThinking = adaptiveThinkingOverride ?? effectiveAlias.adaptiveThinking;
     const provider = toKosongProviderConfig(
       providerConfig,
       alias.model,
@@ -132,7 +127,7 @@ export class ProviderManager implements ModelProvider {
       effectiveAlias.maxOutputSize,
       effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
-      effectiveAdaptiveThinking,
+      effectiveAlias.adaptiveThinking,
       alias.betaApi,
       effectiveAlias.supportEfforts,
     );

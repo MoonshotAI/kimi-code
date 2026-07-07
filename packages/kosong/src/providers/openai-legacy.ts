@@ -450,6 +450,16 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 export class OpenAILegacyChatProvider implements ChatProvider {
   readonly name: string = 'openai';
 
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. Reuses the request-time
+   * kwargs normalization so the model-dependent `max_tokens` /
+   * `max_completion_tokens` aliasing is mirrored exactly.
+   */
+  get maxCompletionTokens(): number | undefined {
+    const kwargs = normalizeGenerationKwargs(this._model, this._generationKwargs);
+    return kwargs.max_completion_tokens ?? kwargs.max_tokens;
+  }
+
   private _model: string;
   private _stream: boolean;
   private _apiKey: string | undefined;

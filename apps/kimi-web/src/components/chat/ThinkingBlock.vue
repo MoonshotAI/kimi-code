@@ -35,7 +35,7 @@ const isFoldable = computed(() => props.foldable && paragraphs.value.length > 1)
 const open = computed(() => props.streaming || !isFoldable.value);
 
 /** Last non-empty paragraph, shown as the collapsed teaser. */
-const teaser = computed(() => paragraphs.value.pop() ?? '');
+const teaser = computed(() => paragraphs.value.at(-1) ?? '');
 
 const bodyEl = ref<HTMLElement | null>(null);
 
@@ -99,7 +99,13 @@ watch(
 }
 .tc-anim,
 .prev-anim {
+  /* min-height: 0 is required for the 0fr/1fr grid collapse to actually shrink
+     below the tracks' content. Without it, an inner scroll container (`.tc`,
+     overflow-y: auto) contributes its content as the automatic minimum, so the
+     row keeps its streaming height and never collapses to the short teaser —
+     most visible on iOS Safari. */
   overflow: hidden;
+  min-height: 0;
 }
 
 /* Hover hints clickability (opens the full text in the side panel) */

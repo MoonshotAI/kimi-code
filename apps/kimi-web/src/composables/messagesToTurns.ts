@@ -11,7 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -343,6 +343,84 @@ interface Group {
 // ---------------------------------------------------------------------------
 
 /**
+ * Pull the prompt body out of a cron-fire envelope. Server-side, a cron
+ * injection reaches the transcript as a user message whose text is wrapped in
+ * `<cron-fire …>\n<prompt>\n…\n</prompt>\n</cron-fire>` (see renderCronFireXml
+ * in agent-core). We surface only the inner prompt, mirroring the TUI's
+ * extractCronPrompt / stripCronEnvelope.
+ */
+function extractCronPrompt(text: string): string {
+  const open = '<prompt>\n';
+  const close = '\n</prompt>';
+  const start = text.indexOf(open);
+  const end = text.lastIndexOf(close);
+  if (start >= 0 && end >= start + open.length) {
+    return text.slice(start + open.length, end);
+  }
+  return stripCronEnvelope(text);
+}
+
+function stripCronEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<cron-fire ') &&
+    lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
+}
+
+function cronOriginKind(msg: AppMessage): 'cron_job' | 'cron_missed' | undefined {
+  const origin = msg.metadata?.['origin'] as { kind?: string } | undefined;
+  if (origin?.kind === 'cron_job' || origin?.kind === 'cron_missed') return origin.kind;
+  return undefined;
+}
+
+function cronPromptText(msg: AppMessage): string {
+  const raw = msg.content
+    .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n');
+  return extractCronPrompt(raw);
+}
+
+function buildCronData(
+  msg: AppMessage,
+  kind: 'cron_job' | 'cron_missed',
+): { text: string; cron: CronTurnData } {
+  const origin = (msg.metadata?.['origin'] ?? {}) as Record<string, unknown>;
+  const text = cronPromptText(msg);
+  if (kind === 'cron_missed') {
+    return {
+      text,
+      cron: { missedCount: typeof origin['count'] === 'number' ? origin['count'] : undefined },
+    };
+  }
+  return {
+    text,
+    cron: {
+      jobId: typeof origin['jobId'] === 'string' ? origin['jobId'] : undefined,
+      cron: typeof origin['cron'] === 'string' ? origin['cron'] : undefined,
+      recurring: typeof origin['recurring'] === 'boolean' ? origin['recurring'] : undefined,
+      coalescedCount: typeof origin['coalescedCount'] === 'number' ? origin['coalescedCount'] : undefined,
+      stale: typeof origin['stale'] === 'boolean' ? origin['stale'] : undefined,
+    },
+  };
+}
+
+function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_missed'): ChatTurn {
+  const { text, cron } = buildCronData(msg, kind);
+  return { id: msg.id, role: 'cron', no, text, createdAt: msg.createdAt, cron };
+}
+
+function buildCronBlock(msg: AppMessage, kind: 'cron_job' | 'cron_missed'): TurnBlock {
+  const { text, cron } = buildCronData(msg, kind);
+  return { kind: 'cron', text, cron };
+}
+
+/**
  * Whether a USER-role message should be shown. Mirrors the TUI's
  * isReplayUserTurnRecord: only real user input (origin `user`/absent, or a
  * user-typed slash command) is displayed; system-injected user turns
@@ -377,6 +455,13 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
     promptId === undefined ||
     group.promptId === promptId
   );
+}
+
+/** True while a tool in this group has been called but not yet resolved — i.e.
+ *  the group is mid-tool-call. A cron injection that arrives now is sandwiched
+ *  between the tool use and its result and must not flush the group. */
+function hasRunningTool(group: Group): boolean {
+  return group.tools.some((t) => t.status === 'running');
 }
 
 /** Extract the plan file path from an ExitPlanMode tool result. The approved
@@ -567,7 +652,25 @@ export function messagesToTurns(
 
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
+      const cronKind = cronOriginKind(msg);
+      // A cron injection steered into an in-flight turn can land between a
+      // tool use and its result in the live event stream. It must NOT flush the
+      // pending assistant group then — flushing would orphan the next
+      // tool.result, which only folds into a pending group, leaving the tool
+      // rendered without output. So embed it as a block only while the group
+      // has an in-flight tool. Otherwise — a cron at a turn boundary, including
+      // an idle fire on a REST snapshot that carries no prompt ids (where the
+      // whole transcript shares one group) — flush and render it as its own
+      // turn so it doesn't merge into the previous answer.
+      if (cronKind !== undefined && pendingGroup !== null && hasRunningTool(pendingGroup)) {
+        pendingGroup.blocks.push(buildCronBlock(msg, cronKind));
+        continue;
+      }
       flushGroup();
+      if (cronKind !== undefined) {
+        turns.push(buildCronTurn(msg, no++, cronKind));
+        continue;
+      }
       // Hide system-injected user turns (TUI parity) — they end the previous
       // assistant turn but aren't rendered as a user bubble.
       if (!isDisplayableUserMessage(msg)) continue;

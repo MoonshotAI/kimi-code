@@ -55,6 +55,7 @@ import { TurnFlow } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
+import { LlmRequestRecorder } from './llm-request-recorder';
 import { resolveCompletionBudget } from '../utils/completion-budget';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
@@ -125,6 +126,7 @@ export class Agent {
   readonly experimentalFlags: ExperimentalFlagResolver;
 
   readonly llmRequestLogger: LlmRequestLogger;
+  readonly llmRequestRecorder: LlmRequestRecorder;
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
@@ -152,13 +154,6 @@ export class Agent {
    * by the session for print runs; defaults to false everywhere else.
    */
   printDrainAgentTasksOnStop = false;
-  /**
-   * Absolute deadline (ms epoch) bounding all print-mode drain waits for this
-   * agent, derived from `background.printWaitCeilingS`. `Infinity` when the
-   * drain is disabled. Shared across every drain hold within a single print
-   * run so backfill rounds cannot exceed the ceiling in aggregate.
-   */
-  printDrainDeadlineMs = Number.POSITIVE_INFINITY;
 
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;
@@ -187,6 +182,7 @@ export class Agent {
     this.systemPromptContextProvider = options.systemPromptContextProvider;
 
     this.llmRequestLogger = new LlmRequestLogger(this.log);
+    this.llmRequestRecorder = new LlmRequestRecorder(this);
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
@@ -262,14 +258,27 @@ export class Agent {
       const { requestLogFields, generateOptions } = splitGenerateOptions(options);
       const modelAlias = this.config.modelAlias;
       const run = (requestOptions: Parameters<typeof generate>[5]) => {
-        this.llmRequestLogger.logRequest({
-          provider,
-          modelAlias,
-          systemPrompt,
-          tools,
-          messages: history,
-          fields: requestLogFields,
-        });
+        // Mirror kosong generate()'s pre-flight abort check: a call whose
+        // signal is already aborted never reaches the wire (generate throws
+        // before dispatching), so it must not leave a request trace or a
+        // diagnostic log line claiming a request was sent.
+        if (requestOptions?.signal?.aborted !== true) {
+          this.llmRequestLogger.logRequest({
+            provider,
+            modelAlias,
+            systemPrompt,
+            tools,
+            messages: history,
+            fields: requestLogFields,
+          });
+          this.llmRequestRecorder.record({
+            provider,
+            systemPrompt,
+            tools,
+            messages: history,
+            fields: requestLogFields,
+          });
+        }
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
       };
       if (generateOptions?.auth !== undefined) {

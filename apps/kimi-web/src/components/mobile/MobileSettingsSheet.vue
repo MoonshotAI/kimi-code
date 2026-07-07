@@ -6,11 +6,12 @@
 <!-- (theme / color scheme / language) and the sign-in/out entry, which previously -->
 <!-- had no mobile counterpart. -->
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
-import type { AppModel, ThinkingLevel } from '../../api/types';
+import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
 import type { ColorScheme } from '../../composables/useKimiWebClient';
+import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import {
   coerceThinkingForModel,
   commitLevel,
@@ -20,6 +21,8 @@ import {
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import Button from '../ui/Button.vue';
+import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
 
 const { t } = useI18n();
@@ -146,6 +149,94 @@ function onLogout(): void {
   emit('logout');
   emit('update:modelValue', false);
 }
+
+// ---------------------------------------------------------------------------
+// Archived-sessions sub-view — mirrors the desktop Settings "Archived" tab so
+// the mobile archive confirmation (which points users to Settings to restore)
+// is true here too. Loads all archived sessions once when the view opens;
+// search + sort run client-side over the full set.
+// ---------------------------------------------------------------------------
+const client = useKimiWebClient();
+type SheetView = 'main' | 'archived';
+const view = ref<SheetView>('main');
+
+const archivedItems = ref<AppSession[]>([]);
+const archivedLoading = ref(false);
+const archivedLoaded = ref(false);
+const archiveQuery = ref('');
+const archiveSort = ref<'archived-desc' | 'created-desc' | 'name-asc'>('archived-desc');
+
+const ARCHIVED_PAGE_SIZE = 100;
+
+async function loadAllArchived(): Promise<void> {
+  if (archivedLoading.value) return;
+  archivedLoading.value = true;
+  archivedLoaded.value = false;
+  try {
+    const all: AppSession[] = [];
+    let beforeId: string | undefined;
+    for (;;) {
+      const page = await client.loadArchivedSessions({ beforeId, pageSize: ARCHIVED_PAGE_SIZE });
+      all.push(...page.items);
+      if (!page.hasMore || page.items.length === 0) break;
+      const next = page.items.at(-1)?.id;
+      if (next === undefined) break;
+      beforeId = next;
+    }
+    archivedItems.value = all;
+    archivedLoaded.value = true;
+  } catch (err) {
+    console.warn('loadAllArchived failed', err);
+  } finally {
+    archivedLoading.value = false;
+  }
+}
+
+function openArchived(): void {
+  view.value = 'archived';
+  archiveQuery.value = '';
+  void loadAllArchived();
+}
+
+function backToMain(): void {
+  view.value = 'main';
+}
+
+const filteredArchived = computed<AppSession[]>(() => {
+  const q = archiveQuery.value.trim().toLowerCase();
+  let rows = archivedItems.value.filter((s) => s.archived === true);
+  if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
+  rows = rows.slice();
+  if (archiveSort.value === 'archived-desc') {
+    rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  } else if (archiveSort.value === 'created-desc') {
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } else {
+    rows.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+  }
+  return rows;
+});
+
+async function onRestore(id: string): Promise<void> {
+  const ok = await client.restoreSession(id);
+  if (ok) archivedItems.value = archivedItems.value.filter((s) => s.id !== id);
+}
+
+function archiveTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Reset to the main view whenever the sheet is closed, so reopening starts at
+// the top rather than mid-list.
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (!open) view.value = 'main';
+  },
+);
 </script>
 
 <template>
@@ -154,6 +245,7 @@ function onLogout(): void {
     :title="t('mobile.settingsTitle')"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <template v-if="view === 'main'">
     <div class="group-title">{{ t('mobile.groupSession') }}</div>
 
     <!-- Model → opens ModelPicker -->
@@ -228,6 +320,15 @@ function onLogout(): void {
 
     <div class="group-title">{{ t('mobile.groupApp') }}</div>
 
+    <!-- Archived sessions → opens the archived restore sub-view -->
+    <button type="button" class="srow" @click="openArchived">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('mobile.archivedSessions') }}</span>
+        <span class="srow-sub">{{ t('mobile.archivedSessionsSub') }}</span>
+      </span>
+      <span class="chev">›</span>
+    </button>
+
     <!-- App preferences (the desktop settings-popover controls) -->
     <div class="srow read-only pref">
       <span class="srow-main">
@@ -297,6 +398,53 @@ function onLogout(): void {
       </span>
       <span class="srow-val dim">{{ serverVersion }}</span>
     </div>
+    </template>
+
+    <template v-else>
+      <!-- Archived sessions sub-view -->
+      <div class="arch-subhead">
+        <button type="button" class="arch-back" @click="backToMain">
+          <span class="chev back">‹</span> {{ t('mobile.archivedBack') }}
+        </button>
+        <span class="arch-count">{{ t('mobile.sessionCount', { n: filteredArchived.length }) }}</span>
+      </div>
+
+      <div class="arch-tools">
+        <Input
+          class="arch-search-input"
+          :model-value="archiveQuery"
+          size="sm"
+          :placeholder="t('settings.archivedSearch')"
+          @update:model-value="archiveQuery = $event"
+        />
+        <SegmentedControl
+          size="sm"
+          :model-value="archiveSort"
+          :options="[
+            { value: 'archived-desc', label: t('settings.archivedSortArchived') },
+            { value: 'created-desc', label: t('settings.archivedSortCreated') },
+            { value: 'name-asc', label: t('settings.archivedSortName') },
+          ]"
+          @update:model-value="archiveSort = $event as 'archived-desc' | 'created-desc' | 'name-asc'"
+        />
+      </div>
+
+      <div v-if="archivedLoading" class="arch-empty">{{ t('settings.archivedLoadingAll') }}</div>
+
+      <template v-else-if="filteredArchived.length > 0">
+        <div v-for="s in filteredArchived" :key="s.id" class="arch-row">
+          <div class="arch-meta">
+            <div class="arch-name">{{ s.title }}</div>
+            <div class="arch-time">{{ t('settings.archivedAt', { time: archiveTime(s.updatedAt) }) }}</div>
+          </div>
+          <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
+        </div>
+      </template>
+
+      <div v-else class="arch-empty">
+        {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
+      </div>
+    </template>
   </BottomSheet>
 </template>
 
@@ -478,4 +626,69 @@ function onLogout(): void {
 .srow,
 .srow-sub,
 .srow-val { font-family: var(--sans); }
+
+/* Archived sessions sub-view */
+.arch-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+.arch-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  padding: var(--space-1) var(--space-2) var(--space-1) 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-accent-hover);
+  cursor: pointer;
+}
+.chev.back { font-size: 20px; }
+.arch-count {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
+.arch-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  flex-wrap: wrap;
+}
+.arch-search-input { flex: 1; min-width: 160px; }
+.arch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-line);
+}
+.arch-row:first-of-type { border-top: none; }
+.arch-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.arch-name {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arch-time {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+.arch-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
 </style>

@@ -235,3 +235,169 @@ describe('latestTodos', () => {
     ).toEqual([{ title: 'new', status: 'done' }]);
   });
 });
+
+describe('messagesToTurns cron', () => {
+  it('renders a cron_job injection as a cron notice with the unwrapped prompt', () => {
+    const envelope =
+      '<cron-fire jobId="a3f9c2" cron="*/5 * * * *" recurring="true" coalescedCount="2" stale="false">\n' +
+      '<prompt>\nCheck the deploy status\n</prompt>\n</cron-fire>';
+    const turns = messagesToTurns(
+      [
+        message('c1', 'user', [{ type: 'text', text: envelope }], {
+          metadata: {
+            origin: {
+              kind: 'cron_job',
+              jobId: 'a3f9c2',
+              cron: '*/5 * * * *',
+              recurring: true,
+              coalescedCount: 2,
+              stale: false,
+            },
+          },
+        }),
+      ],
+      [],
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      role: 'cron',
+      text: 'Check the deploy status',
+      cron: {
+        jobId: 'a3f9c2',
+        cron: '*/5 * * * *',
+        recurring: true,
+        coalescedCount: 2,
+        stale: false,
+      },
+    });
+  });
+
+  it('renders a cron_missed injection as a cron notice carrying the missed count', () => {
+    const envelope = '<cron-fire missed="3">\nDaily report\n</cron-fire>';
+    const turns = messagesToTurns(
+      [
+        message('c2', 'user', [{ type: 'text', text: envelope }], {
+          metadata: { origin: { kind: 'cron_missed', count: 3 } },
+        }),
+      ],
+      [],
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      role: 'cron',
+      text: 'Daily report',
+      cron: { missedCount: 3 },
+    });
+  });
+
+  it('does not also render a user bubble for a cron injection', () => {
+    const turns = messagesToTurns(
+      [
+        message(
+          'c3',
+          'user',
+          [{ type: 'text', text: '<cron-fire>\n<prompt>\nhi\n</prompt>\n</cron-fire>' }],
+          {
+            metadata: {
+              origin: {
+                kind: 'cron_job',
+                jobId: 'j',
+                cron: '* * * * *',
+                recurring: true,
+                coalescedCount: 1,
+                stale: false,
+              },
+            },
+          },
+        ),
+      ],
+      [],
+    );
+
+    expect(turns.some((t) => t.role === 'user')).toBe(false);
+    expect(turns).toHaveLength(1);
+  });
+
+  it('embeds an in-turn cron injection as a block and keeps folding the following tool result', () => {
+    const envelope =
+      '<cron-fire jobId="j" cron="* * * * *" recurring="true" coalescedCount="1" stale="false">\n' +
+      '<prompt>\nCheck BTC\n</prompt>\n</cron-fire>';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'hi' }]),
+        message('a1', 'assistant', [
+          {
+            type: 'toolUse',
+            toolCallId: 'tc1',
+            toolName: 'FetchURL',
+            input: { url: 'https://example.com' },
+          },
+        ]),
+        message('c1', 'user', [{ type: 'text', text: envelope }], {
+          metadata: {
+            origin: {
+              kind: 'cron_job',
+              jobId: 'j',
+              cron: '* * * * *',
+              recurring: true,
+              coalescedCount: 1,
+              stale: false,
+            },
+          },
+        }),
+        message('t1', 'tool', [
+          { type: 'toolResult', toolCallId: 'tc1', output: 'the price is 62k' },
+        ]),
+      ],
+      [],
+    );
+
+    // user turn + one assistant turn (tool + embedded cron block + result).
+    // No standalone cron turn, and the tool result is preserved.
+    expect(turns).toHaveLength(2);
+    const assistant = turns[1]!;
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.tools?.[0]).toMatchObject({
+      id: 'tc1',
+      status: 'ok',
+      output: ['the price is 62k'],
+    });
+    expect(assistant.blocks?.find((b) => b.kind === 'cron')).toMatchObject({
+      kind: 'cron',
+      text: 'Check BTC',
+      cron: { jobId: 'j' },
+    });
+  });
+
+  it('flushes an idle cron fire as its own turn even when no prompt ids are present', () => {
+    const envelope =
+      '<cron-fire jobId="j" cron="* * * * *" recurring="true" coalescedCount="1" stale="false">\n' +
+      '<prompt>\nCheck BTC\n</prompt>\n</cron-fire>';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [{ type: 'text', text: 'hi' }]),
+        message('a1', 'assistant', [{ type: 'text', text: 'answer' }]),
+        message('c1', 'user', [{ type: 'text', text: envelope }], {
+          metadata: {
+            origin: {
+              kind: 'cron_job',
+              jobId: 'j',
+              cron: '* * * * *',
+              recurring: true,
+              coalescedCount: 1,
+              stale: false,
+            },
+          },
+        }),
+        message('a2', 'assistant', [{ type: 'text', text: 'btc is 62k' }]),
+      ],
+      [],
+    );
+
+    // No prompt ids anywhere (REST-shaped): the cron still becomes its own
+    // turn, and the cron-triggered reply does not merge into the first answer.
+    expect(turns.map((t) => t.role)).toEqual(['user', 'assistant', 'cron', 'assistant']);
+  });
+});

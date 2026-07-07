@@ -374,6 +374,15 @@ class KimiStreamedMessage implements StreamedMessage {
 export class KimiChatProvider implements ChatProvider {
   readonly name: string = 'kimi';
 
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. Mirrors the request-time
+   * normalization: `max_completion_tokens` wins over the legacy `max_tokens`
+   * alias.
+   */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_completion_tokens ?? this._generationKwargs.max_tokens;
+  }
+
   private _model: string;
   private _stream: boolean;
   private _apiKey: string | undefined;
