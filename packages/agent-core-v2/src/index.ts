@@ -152,6 +152,9 @@ export * from '#/app/flag/flagRegistryService';
 export * from '#/app/flag/flag';
 export * from '#/app/flag/flagService';
 
+import '#/app/multiServer/flag';
+export * from '#/app/multiServer/flag';
+
 import '#/agent/turn/turn';
 import '#/agent/turn/turnService';
 import '#/agent/plan/profile/plan';

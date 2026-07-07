@@ -429,7 +429,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       origin: GOAL_CONTINUATION_ORIGIN,
     });
     this.context.append(message);
-    this.turnService.launch();
+    this.turnService.launch(GOAL_CONTINUATION_ORIGIN);
   }
 
   private normalizeAfterReplay(): void {

@@ -1,4 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRunResult } from '#/agent/loop/loop';
 
 export type { LoopRunResult as TurnResult } from '#/agent/loop/loop';
@@ -17,7 +18,7 @@ export interface Turn {
 export interface IAgentTurnService {
   readonly _serviceBrand: undefined;
 
-  launch(): Turn;
+  launch(origin?: PromptOrigin): Turn;
   getActiveTurn(): Turn | undefined;
 }
 

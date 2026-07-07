@@ -20,6 +20,7 @@ import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/protocol';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, KimiError, toKimiErrorPayload } from '#/errors';
+import { USER_PROMPT_ORIGIN, type PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -51,7 +52,7 @@ export class AgentTurnService implements IAgentTurnService {
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
   ) {}
 
-  launch(): Turn {
+  launch(origin: PromptOrigin = USER_PROMPT_ORIGIN): Turn {
     if (this.activeTurn !== undefined) {
       throw new KimiError(
         ErrorCodes.TURN_AGENT_BUSY,
@@ -72,6 +73,7 @@ export class AgentTurnService implements IAgentTurnService {
     };
     void ready.catch(() => undefined);
     this.activeTurn = turn;
+    this.eventBus.publish({ type: 'turn.started', turnId: turn.id, origin });
     turn.result = this.runTurn(turn, ready);
     return turn;
   }
@@ -97,7 +99,7 @@ export class AgentTurnService implements IAgentTurnService {
       return result;
     } catch (error) {
       if (turn.abortController.signal.aborted) {
-        result = { reason: 'cancelled', error: turn.abortController.signal.reason };
+        result = { reason: 'cancelled' };
         return result;
       }
       result = { reason: 'failed', error };

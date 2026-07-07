@@ -122,11 +122,7 @@ export class AgentLoopService implements IAgentLoopService {
       } catch (error) {
         if (isAbortError(error) || signal.aborted) {
           this.emitStepInterrupted(turnId, activeStep, 'aborted');
-          return {
-            reason: 'cancelled',
-            error: signal.aborted ? signal.reason : error,
-            steps,
-          };
+          return { reason: 'cancelled', steps };
         }
 
         const reason: LoopInterruptReason = isMaxStepsExceededError(error) ? 'max_steps' : 'error';

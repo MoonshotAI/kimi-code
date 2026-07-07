@@ -13,6 +13,7 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { userCancellationReason } from '#/_base/utils/abort';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { ErrorCodes, KimiError } from '#/errors';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -127,7 +128,7 @@ export class AgentPromptLegacyService implements IAgentPromptLegacyService {
       // Mark and cancel; the turn settles asynchronously and `onTurnSettled`
       // clears `active` and starts the next queued prompt.
       this.abortedPromptIds.add(promptId);
-      this.active.turn.abortController.abort('prompt aborted');
+      this.active.turn.abortController.abort(userCancellationReason());
       return { aborted: true };
     }
 

@@ -13,6 +13,7 @@ import { IAgentTurnService } from '#/agent/turn/turn';
 import { AgentTurnService } from '#/agent/turn/turnService';
 import { TurnModel } from '#/agent/turn/turnOps';
 import { IConfigService } from '#/app/config/config';
+import { IEventBus } from '#/app/event/eventBus';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import { ILogService } from '#/_base/log/log';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -30,6 +31,12 @@ import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLog } from '../log/stubs';
 import { recordingTelemetry } from '../telemetry/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from './stubs';
+
+const noopEventBus: IEventBus = {
+  _serviceBrand: undefined,
+  publish: () => {},
+  subscribe: () => ({ dispose: () => {} }),
+};
 
 describe('AgentTurnService ready', () => {
   let disposables: DisposableStore;
@@ -53,6 +60,7 @@ describe('AgentTurnService ready', () => {
           IAgentWireService,
           disposables.add(new WireService({ logScope: 'wire', logKey: 'turn-ready' })),
         );
+        reg.defineInstance(IEventBus, noopEventBus);
         reg.define(IAgentTurnService, AgentTurnService);
       },
     });
@@ -171,6 +179,7 @@ describe('AgentLoopService onStarted', () => {
           IAgentWireService,
           disposables.add(new WireService({ logScope: 'wire', logKey: 'turn-ready-onstarted' })),
         );
+        reg.defineInstance(IEventBus, noopEventBus);
         reg.define(IAgentLoopService, AgentLoopService);
       },
     });
@@ -315,6 +324,7 @@ describe('AgentTurnService wire state', () => {
       get: () => ({ mode: 'agent' }),
       set: () => {},
     });
+    ix.stub(IEventBus, noopEventBus);
     ix.set(IAgentTurnService, new SyncDescriptor(AgentTurnService));
     log = ix.get(IAppendLogStore);
     turnService = ix.get(IAgentTurnService);
@@ -340,7 +350,7 @@ describe('AgentTurnService wire state', () => {
     turnService.launch();
 
     const records = await readRecords();
-    expect(records).toEqual([{ type: 'turn.launch', turnId: 0 }]);
+    expect(records).toEqual([{ type: 'turn.prompt', turnId: 0 }]);
     expect('payload' in records[0]!).toBe(false);
   });
 
