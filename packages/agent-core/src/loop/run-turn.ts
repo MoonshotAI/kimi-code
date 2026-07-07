@@ -117,7 +117,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         // Passed through unresolved: the step evaluates it AFTER beforeStep,
         // next to buildMessages, so the tool table and the request messages
         // come from the same state (beforeStep can run compaction, which
-        // trims loaded schemas and rewrites the ledger).
+        // discards loaded schemas and empties the ledger).
         buildTools,
         describeMissingTool,
         hooks,
