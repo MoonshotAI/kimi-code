@@ -265,21 +265,27 @@ export class Agent {
       const { requestLogFields, generateOptions } = splitGenerateOptions(options);
       const modelAlias = this.config.modelAlias;
       const run = (requestOptions: Parameters<typeof generate>[5]) => {
-        this.llmRequestLogger.logRequest({
-          provider,
-          modelAlias,
-          systemPrompt,
-          tools,
-          messages: history,
-          fields: requestLogFields,
-        });
-        this.llmRequestRecorder.record({
-          provider,
-          systemPrompt,
-          tools,
-          messages: history,
-          fields: requestLogFields,
-        });
+        // Mirror kosong generate()'s pre-flight abort check: a call whose
+        // signal is already aborted never reaches the wire (generate throws
+        // before dispatching), so it must not leave a request trace or a
+        // diagnostic log line claiming a request was sent.
+        if (requestOptions?.signal?.aborted !== true) {
+          this.llmRequestLogger.logRequest({
+            provider,
+            modelAlias,
+            systemPrompt,
+            tools,
+            messages: history,
+            fields: requestLogFields,
+          });
+          this.llmRequestRecorder.record({
+            provider,
+            systemPrompt,
+            tools,
+            messages: history,
+            fields: requestLogFields,
+          });
+        }
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
       };
       if (generateOptions?.auth !== undefined) {

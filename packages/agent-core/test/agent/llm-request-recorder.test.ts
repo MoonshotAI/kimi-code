@@ -124,6 +124,33 @@ describe('llm request trace records', () => {
     expect(request.systemPrompt).toBe('summarizer prompt');
     expect(request.messageCount).toBe(1);
   });
+
+  it('does not record a call that fails the pre-flight abort check', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure();
+
+    // Already-aborted signal: kosong generate() throws before dispatching,
+    // so the call never reaches the wire and must leave no request trace.
+    const controller = new AbortController();
+    controller.abort();
+    const recordCountBefore = persistence.records.length;
+
+    await expect(
+      ctx.agent.generate(
+        ctx.agent.config.provider,
+        'prompt',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+        undefined,
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(persistence.records).toHaveLength(recordCountBefore);
+    expect(recordsOf(persistence, 'llm.request')).toHaveLength(0);
+    expect(recordsOf(persistence, 'llm.tools_snapshot')).toHaveLength(0);
+  });
 });
 
 describe('mcp.tools_discovered records', () => {
