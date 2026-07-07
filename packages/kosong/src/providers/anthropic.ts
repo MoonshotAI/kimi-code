@@ -159,9 +159,10 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   // Claude Fable 5 documents a 128k output ceiling.
   'fable-5': 128000,
   // Claude Opus per minor version. 4.6 and 4.7 raised the cap to 128k;
-  // 4.5 ships at 64k; 4.1 and the dated 4.0 release stay at 32k.
+  // 4.8 and 4.5 ship at 64k; 4.1 and the dated 4.0 release stay at 32k.
   'opus-4-7': 128000,
   'opus-4-6': 128000,
+  'opus-4-8': 64000,
   'opus-4-5': 64000,
   'opus-4-1': 32000,
   'opus-4-0': 32000,
@@ -967,7 +968,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
     this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
     this._generationKwargs = {
-      max_tokens: resolveDefaultMaxTokens(options.model, options.defaultMaxTokens),
+      max_tokens: options.defaultMaxTokens ?? resolveDefaultMaxTokens(options.model),
       betaFeatures: options.betaFeatures ?? [INTERLEAVED_THINKING_BETA],
     };
   }
