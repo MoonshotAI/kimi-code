@@ -6,11 +6,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveKimiCodeRuntimeAuth } from '@moonshot-ai/kimi-code-oauth';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
-import { ErrorCodes, KimiError } from '#/errors';
 import { IAuthSummaryService, IOAuthService, IOAuthToolkit } from '#/app/auth/auth';
 import { AuthSummaryService, OAuthService } from '#/app/auth/authService';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
@@ -20,7 +20,7 @@ import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
-import { type ModelAlias } from '#/app/model/model';
+import type { ModelAlias } from '#/app/model/model';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/app/provider/provider';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
@@ -183,6 +183,7 @@ describe('OAuthService', () => {
   }
 
   it('startLogin resolves a device-code flow and flips to authenticated on success', async () => {
+    stubManagedModelsFetch();
     toolkit.login.mockImplementation(async (_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
@@ -207,6 +208,7 @@ describe('OAuthService', () => {
   });
 
   it('provisions the managed provider through the provider service after login', async () => {
+    stubManagedModelsFetch();
     toolkit.login.mockImplementation(async (_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
@@ -228,6 +230,7 @@ describe('OAuthService', () => {
 
   it('startLogin resolves a default oauth ref for the managed provider without oauth config', async () => {
     providers[OAUTH_PROVIDER] = { type: 'kimi', baseUrl: 'https://api.example.com' };
+    stubManagedModelsFetch();
     toolkit.login.mockImplementation(async (_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
@@ -319,8 +322,36 @@ describe('OAuthService', () => {
       status: 'pending',
     });
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
+  });
+
+  it('refreshes managed models and sets the default model after a device-code login succeeds', async () => {
+    const fetchMock = stubManagedModelsFetch();
+    toolkit.login.mockImplementation(async (_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return { providerName: OAUTH_PROVIDER, ok: true };
+    });
+    const svc = createService();
+
+    await svc.startLogin(OAUTH_PROVIDER);
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(providerSet).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        type: 'kimi',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      }),
+    );
+    expect(configReplace).toHaveBeenCalledWith(
+      'models',
+      expect.objectContaining({
+        'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
+      }),
+    );
+    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
   });
 
   it('keeps an in-flight OAuth flow alive when unrelated providers change', async () => {
@@ -475,12 +506,22 @@ describe('OAuthService', () => {
 
   it('resolveTokenProvider delegates to the toolkit', () => {
     const svc = createService();
-    const provider = svc.resolveTokenProvider(OAUTH_PROVIDER, { storage: 'file', key: 'k' });
+    const provider = svc.resolveTokenProvider(NON_OAUTH_PROVIDER, { storage: 'file', key: 'k' });
     expect(provider).toEqual({ getAccessToken: expect.any(Function) });
-    expect(toolkit.tokenProvider).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+    expect(toolkit.tokenProvider).toHaveBeenCalledWith(NON_OAUTH_PROVIDER, {
       storage: 'file',
       key: 'k',
     });
+  });
+
+  it('resolveTokenProvider re-derives the managed provider oauth ref from the current base url', () => {
+    const svc = createService();
+    svc.resolveTokenProvider(OAUTH_PROVIDER, { storage: 'file', key: 'stale-key' });
+    const expectedRef = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: 'https://api.example.com',
+      configuredOAuthRef: { storage: 'file', key: 'stale-key' },
+    }).oauthRef;
+    expect(toolkit.tokenProvider).toHaveBeenCalledWith(OAUTH_PROVIDER, expectedRef);
   });
 
   it('refreshOAuthProviderModels returns an empty result when no Kimi Code provider is configured', async () => {
@@ -714,16 +755,10 @@ describe('AuthSummaryService', () => {
     expect(oauthStatus).toHaveBeenCalledWith(OTHER_OAUTH);
   });
 
-  it('ensureReady rejects with AUTH_LOGIN_REQUIRED when the provider is logged out', async () => {
-    oauthStatus.mockResolvedValue({ loggedIn: false });
-    await expect(createSummary().ensureReady(OAUTH_PROVIDER)).rejects.toMatchObject({
-      code: ErrorCodes.AUTH_LOGIN_REQUIRED,
-    });
-  });
-
-  it('ensureReady resolves when the provider is logged in', async () => {
-    oauthStatus.mockResolvedValue({ loggedIn: true, provider: OAUTH_PROVIDER });
-    await expect(createSummary().ensureReady(OAUTH_PROVIDER)).resolves.toBeUndefined();
+  it('ensureReady leaves model and credential readiness to the runtime resolver', async () => {
+    providers = {};
+    await expect(createSummary().ensureReady()).resolves.toBeUndefined();
+    expect(oauthStatus).not.toHaveBeenCalled();
   });
 });
 

@@ -4,11 +4,12 @@
  *
  * Owns the device-code OAuth flows and the auth readiness view; reads and
  * writes provider configuration through `provider`, refreshes the managed
- * OAuth provider's server-side model configuration through `config`, reports
- * through `telemetry`, logs through `log`, and delegates the device-code
- * protocol, token storage, and token refresh to `IOAuthToolkit` (provided by
- * `OAuthToolkitService` over `@moonshot-ai/kimi-code-oauth`, which locates
- * token storage through `bootstrap`). Bound at App scope.
+ * OAuth provider's server-side model configuration through `config`, publishes
+ * model-catalog changes through `event`, reports through `telemetry`,
+ * logs through `log`, and delegates
+ * the device-code protocol, token storage, and token refresh to `IOAuthToolkit`
+ * (provided by `OAuthToolkitService` over `@moonshot-ai/kimi-code-oauth`,
+ * which locates token storage through `bootstrap`). Bound at App scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -42,7 +43,6 @@ import type {
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, KimiError } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
@@ -210,7 +210,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     this.log.info('oauth status: enter', { provider });
     const oauthRef = this.readOAuthRefOptional(provider);
     try {
-      const token = await this.toolkit.getCachedAccessToken(provider, oauthRef);
+      const token = await this.getCachedAccessToken(provider, oauthRef);
       this.log.info('oauth status: got token', { provider, hasToken: token !== undefined });
       return token === undefined ? { loggedIn: false } : { loggedIn: true, provider };
     } catch (error) {
@@ -223,11 +223,11 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined {
-    return this.toolkit.tokenProvider(provider, oauthRef);
+    return this.toolkit.tokenProvider(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
   }
 
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined> {
-    return this.toolkit.getCachedAccessToken(provider, oauthRef);
+    return this.toolkit.getCachedAccessToken(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
   }
 
   async refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
@@ -341,6 +341,15 @@ export class OAuthService extends Disposable implements IOAuthService {
     return this.providerService.get(provider)?.oauth;
   }
 
+  private resolveRuntimeOAuthRef(provider: string, oauthRef?: OAuthRef): OAuthRef | undefined {
+    if (provider !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
+    const config = this.providerService.get(provider);
+    return resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: config?.baseUrl,
+      configuredOAuthRef: oauthRef ?? config?.oauth,
+    }).oauthRef;
+  }
+
   private abortExisting(provider: string): void {
     const existing = this.flows.get(provider);
     if (existing !== undefined && existing.status === 'pending') {
@@ -370,24 +379,31 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   private handleSuccess(state: FlowState): void {
     if (state.status !== 'pending') return;
-    this.setTerminal(state, 'authenticated');
-    void this.provisionProvider(state.provider, state.oauthRef).catch((error: unknown) => {
+    void this.finalizeAuthentication(state);
+  }
+
+  private async completeAlreadyAuthenticatedLogin(state: FlowState): Promise<void> {
+    await this.finalizeAuthentication(state);
+  }
+
+  private async finalizeAuthentication(state: FlowState): Promise<void> {
+    try {
+      await this.provisionProvider(state.provider, state.oauthRef);
+      if (state.status !== 'pending') return;
+      if (state.provider === KIMI_CODE_PROVIDER_NAME) {
+        await this.refreshOAuthProviderModelsBestEffort(state.provider);
+        if (state.status !== 'pending') return;
+      }
+    } catch (error) {
       this.log.warn('oauth provider provisioning failed', {
         provider: state.provider,
         error: error instanceof Error ? error.message : String(error),
       });
-    });
-  }
-
-  private async completeAlreadyAuthenticatedLogin(state: FlowState): Promise<void> {
-    if (state.status !== 'pending') return;
-    await this.provisionProvider(state.provider, state.oauthRef);
-    if (state.status !== 'pending') return;
-    if (state.provider === KIMI_CODE_PROVIDER_NAME) {
-      await this.refreshOAuthProviderModelsBestEffort(state.provider);
-      if (state.status !== 'pending') return;
+    } finally {
+      if (state.status === 'pending') {
+        this.setTerminal(state, 'authenticated');
+      }
     }
-    this.setTerminal(state, 'authenticated');
   }
 
   private async provisionProvider(provider: string, oauthRef: OAuthRef | undefined): Promise<void> {
@@ -516,14 +532,8 @@ export class AuthSummaryService implements IAuthSummaryService {
     return statuses;
   }
 
-  async ensureReady(provider = KIMI_CODE_PROVIDER_NAME): Promise<void> {
-    const status = await this.oauth.status(provider);
-    if (!status.loggedIn) {
-      throw new KimiError(
-        ErrorCodes.AUTH_LOGIN_REQUIRED,
-        `OAuth provider "${provider}" requires login before it can be used.`,
-      );
-    }
+  ensureReady(): Promise<void> {
+    return Promise.resolve();
   }
 }
 

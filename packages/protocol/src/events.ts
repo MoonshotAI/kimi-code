@@ -241,6 +241,10 @@ export type KimiErrorCode =
   | 'model.config_invalid'
   | 'model.not_found'
   | 'auth.login_required'
+  | 'auth.provisioning_required'
+  | 'auth.token_missing'
+  | 'auth.token_unauthorized'
+  | 'auth.model_not_resolved'
   | 'context.overflow'
   | 'loop.max_steps_exceeded'
   | 'provider.api_error'
@@ -1021,6 +1025,10 @@ export const kimiErrorCodeSchema = z.enum([
   'model.config_invalid',
   'model.not_found',
   'auth.login_required',
+  'auth.provisioning_required',
+  'auth.token_missing',
+  'auth.token_unauthorized',
+  'auth.model_not_resolved',
   'context.overflow',
   'loop.max_steps_exceeded',
   'provider.api_error',
