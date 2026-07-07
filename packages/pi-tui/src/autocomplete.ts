@@ -273,11 +273,18 @@ export interface AutocompleteProvider {
 export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
+	private additionalBasePaths: string[];
 	private fdPath: string | null;
 
-	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
+	constructor(
+		commands: (SlashCommand | AutocompleteItem)[] = [],
+		basePath: string,
+		fdPath: string | null = null,
+		additionalBasePaths: readonly string[] = [],
+	) {
 		this.commands = commands;
 		this.basePath = basePath;
+		this.additionalBasePaths = additionalBasePaths.map((p) => toDisplayPath(p));
 		this.fdPath = fdPath;
 	}
 
@@ -518,7 +525,24 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return path;
 	}
 
-	private resolveScopedFuzzyQuery(rawQuery: string): { baseDir: string; query: string; displayBase: string } | null {
+	private searchRoots(): string[] {
+		const seen = new Set<string>();
+		const roots: string[] = [];
+		for (const root of [this.basePath, ...this.additionalBasePaths]) {
+			const key = toDisplayPath(root);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			roots.push(root);
+		}
+		return roots;
+	}
+
+	private resolveScopedFuzzyQuery(
+		rawQuery: string,
+	):
+		| { kind: "relative"; displayBase: string; query: string }
+		| { kind: "absolute"; baseDir: string; displayBase: string; query: string }
+		| null {
 		const normalizedQuery = toDisplayPath(rawQuery);
 		const slashIndex = normalizedQuery.lastIndexOf("/");
 		if (slashIndex === -1) {
@@ -528,24 +552,22 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const displayBase = normalizedQuery.slice(0, slashIndex + 1);
 		const query = normalizedQuery.slice(slashIndex + 1);
 
-		let baseDir: string;
-		if (displayBase.startsWith("~/")) {
-			baseDir = this.expandHomePath(displayBase);
-		} else if (displayBase.startsWith("/")) {
-			baseDir = displayBase;
-		} else {
-			baseDir = join(this.basePath, displayBase);
-		}
-
-		try {
-			if (!statSync(baseDir).isDirectory()) {
+		// Absolute (~/, /) scopes resolve to a single existing directory and do
+		// not fan out across additional roots. Relative scopes are expanded per
+		// search root by the caller.
+		if (displayBase.startsWith("~/") || displayBase.startsWith("/")) {
+			const baseDir = displayBase.startsWith("~/") ? this.expandHomePath(displayBase) : displayBase;
+			try {
+				if (!statSync(baseDir).isDirectory()) {
+					return null;
+				}
+			} catch {
 				return null;
 			}
-		} catch {
-			return null;
+			return { kind: "absolute", baseDir, displayBase, query };
 		}
 
-		return { baseDir, query, displayBase };
+		return { kind: "relative", displayBase, query };
 	}
 
 	private scopedPathForDisplay(displayBase: string, relativePath: string): string {
@@ -716,51 +738,155 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return score;
 	}
 
-	// Fuzzy file search using fd (fast, respects .gitignore)
+	// Fuzzy file search using fd (fast, respects .gitignore). Fans out across
+	// every search root (cwd + additional dirs) so `@` completion covers all
+	// roots while still pushing the query down to fd.
 	private async getFuzzyFileSuggestions(
 		query: string,
 		options: { isQuotedPrefix: boolean; signal: AbortSignal },
 	): Promise<AutocompleteItem[]> {
-		if (!this.fdPath || options.signal.aborted) {
+		const fdPath = this.fdPath;
+		if (!fdPath || options.signal.aborted) {
 			return [];
 		}
 
 		try {
-			const scopedQuery = this.resolveScopedFuzzyQuery(query);
-			const fdBaseDir = scopedQuery?.baseDir ?? this.basePath;
-			const fdQuery = scopedQuery?.query ?? query;
-			const entries = await walkDirectoryWithFd(fdBaseDir, this.fdPath, fdQuery, 100, options.signal);
+			const scoped = this.resolveScopedFuzzyQuery(query);
+
+			type RootTarget = {
+				baseDir: string;
+				pathRoot: string;
+				displayBase: string;
+				fdQuery: string;
+				isAdditional: boolean;
+				absolute: boolean;
+			};
+			const targets: RootTarget[] = [];
+
+			const pushFullPathTarget = (root: string) => {
+				// Whole-tree search for this root using the original query (which
+				// contains "/", so fd runs in --full-path mode).
+				targets.push({
+					baseDir: root,
+					pathRoot: root,
+					displayBase: "",
+					fdQuery: query,
+					isAdditional: root !== this.basePath,
+					absolute: false,
+				});
+			};
+
+			if (scoped?.kind === "absolute") {
+				targets.push({
+					baseDir: scoped.baseDir,
+					pathRoot: scoped.baseDir,
+					displayBase: scoped.displayBase,
+					fdQuery: scoped.query,
+					isAdditional: false,
+					absolute: true,
+				});
+			} else if (scoped?.kind === "relative") {
+				for (const root of this.searchRoots()) {
+					const baseDir = join(root, scoped.displayBase);
+					let isDir = false;
+					try {
+						isDir = statSync(baseDir).isDirectory();
+					} catch {
+						isDir = false;
+					}
+					if (isDir) {
+						targets.push({
+							baseDir,
+							pathRoot: root,
+							displayBase: scoped.displayBase,
+							fdQuery: scoped.query,
+							isAdditional: root !== this.basePath,
+							absolute: false,
+						});
+					} else {
+						// This root does not have the scoped directory. Fall back to a
+						// per-root full-path search so another root having the prefix
+						// does not hide matches that only exist under this root.
+						pushFullPathTarget(root);
+					}
+				}
+			} else {
+				for (const root of this.searchRoots()) {
+					pushFullPathTarget(root);
+				}
+			}
+
+			if (targets.length === 0) {
+				return [];
+			}
+
+			const perRoot = await Promise.all(
+				targets.map(async (target) => {
+					const entries = await walkDirectoryWithFd(target.baseDir, fdPath, target.fdQuery, 100, options.signal);
+					return entries.map((entry) => ({ entry, target }));
+				}),
+			);
 			if (options.signal.aborted) {
 				return [];
 			}
 
-			const scoredEntries = entries
-				.map((entry) => ({
-					...entry,
-					score: fdQuery ? this.scoreEntry(entry.path, fdQuery, entry.isDirectory) : 1,
-				}))
-				.filter((entry) => entry.score > 0);
+			type Scored = {
+				path: string;
+				isDirectory: boolean;
+				score: number;
+				target: RootTarget;
+				absPath: string;
+			};
+			const bestByAbs = new Map<string, Scored>();
+			for (const group of perRoot) {
+				for (const { entry, target } of group) {
+					const score = target.fdQuery ? this.scoreEntry(entry.path, target.fdQuery, entry.isDirectory) : 1;
+					if (score <= 0) continue;
+					const pathWithoutSlash = entry.isDirectory ? entry.path.slice(0, -1) : entry.path;
+					const absPath = target.absolute
+						? toDisplayPath(join(target.displayBase, pathWithoutSlash))
+						: toDisplayPath(join(target.pathRoot, target.displayBase, pathWithoutSlash));
+					const existing = bestByAbs.get(absPath);
+					if (!existing || score > existing.score) {
+						bestByAbs.set(absPath, {
+							path: entry.path,
+							isDirectory: entry.isDirectory,
+							score,
+							target,
+							absPath,
+						});
+					}
+				}
+			}
 
-			scoredEntries.sort((a, b) => b.score - a.score);
-			const topEntries = scoredEntries.slice(0, 20);
+			const scored = [...bestByAbs.values()];
+			scored.sort((a, b) => b.score - a.score);
+			const topEntries = scored.slice(0, 20);
 
 			const suggestions: AutocompleteItem[] = [];
-			for (const { path: entryPath, isDirectory } of topEntries) {
-				const pathWithoutSlash = isDirectory ? entryPath.slice(0, -1) : entryPath;
-				const displayPath = scopedQuery
-					? this.scopedPathForDisplay(scopedQuery.displayBase, pathWithoutSlash)
-					: pathWithoutSlash;
+			for (const item of topEntries) {
+				const pathWithoutSlash = item.isDirectory ? item.path.slice(0, -1) : item.path;
 				const entryName = basename(pathWithoutSlash);
-				const completionPath = isDirectory ? `${displayPath}/` : displayPath;
+				let displayPath: string;
+				if (item.target.absolute) {
+					displayPath = this.scopedPathForDisplay(item.target.displayBase, pathWithoutSlash);
+				} else if (item.target.isAdditional) {
+					displayPath = item.absPath;
+				} else {
+					displayPath = item.target.displayBase
+						? this.scopedPathForDisplay(item.target.displayBase, pathWithoutSlash)
+						: pathWithoutSlash;
+				}
+				const completionPath = item.isDirectory ? `${displayPath}/` : displayPath;
 				const value = buildCompletionValue(completionPath, {
-					isDirectory,
+					isDirectory: item.isDirectory,
 					isAtPrefix: true,
 					isQuotedPrefix: options.isQuotedPrefix,
 				});
 
 				suggestions.push({
 					value,
-					label: entryName + (isDirectory ? "/" : ""),
+					label: entryName + (item.isDirectory ? "/" : ""),
 					description: displayPath,
 				});
 			}

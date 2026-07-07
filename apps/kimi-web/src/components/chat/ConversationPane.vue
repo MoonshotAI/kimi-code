@@ -4,12 +4,10 @@ import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type C
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
-import type { SwarmGroup } from '../../composables/swarmGroups';
 import type { FileItem } from './MentionMenu.vue';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
-import SwarmCard from './SwarmCard.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import Icon from '../ui/Icon.vue';
@@ -26,7 +24,6 @@ const props = defineProps<{
   /** Model-maintained todo list (TodoList tool) — shown as a floating card. */
   todos?: TodoView[];
   goal?: AppGoal | null;
-  swarms?: SwarmGroup[];
   activationBadges?: ActivationBadges;
   status: ConversationStatus;
   thinking?: ThinkingLevel;
@@ -159,18 +156,6 @@ watch(wsPickOpen, (open) => {
   if (!open) wsPickExpanded.value = false;
 });
 
-/** Swarm cards are live progress indicators: keep the bottom stack only while
-    at least one member is still queued, working, or suspended. Once every
-    member has finished (completed or failed), the card is no longer useful as
-    a persistent footer and is removed from the stack. */
-const activeSwarms = computed<SwarmGroup[]>(() => {
-  return (
-    props.swarms?.filter((group) =>
-      group.members.some((member) => member.phase !== 'completed' && member.phase !== 'failed'),
-    ) ?? []
-  );
-});
-
 function pickWorkspace(id: string): void {
   wsPickOpen.value = false;
   if (id !== props.activeWorkspaceId) emit('selectWorkspace', id);
@@ -223,13 +208,6 @@ function focusGoal(): void {
   goalExpandSignal.value++;
 }
 
-function focusSwarm(): void {
-  void nextTick(() => {
-    const first = panesRef.value?.querySelector<HTMLElement>('.swarm-card');
-    first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
-}
-
 const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
 // The dock lists only BACKGROUND subagents. Foreground subagents render inline
 // in the message flow as the `Agent` tool card, so showing them here too would
@@ -257,6 +235,7 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
   return undefined;
 }
 provide('resolveAgentTaskId', resolveAgentTaskId);
+provide('pinScroll', pinScrollFor);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 const hasDockWork = computed(() =>
   bashTasks.value.length > 0 ||
@@ -464,6 +443,11 @@ function onPanesScroll(): void {
   if (!el) return;
   const top = el.scrollTop;
 
+  if (isPinned()) {
+    lastScrollTop = top;
+    return;
+  }
+
   if (performance.now() - lastSmoothScroll < 100) {
     lastScrollTop = top;
     return;
@@ -478,6 +462,7 @@ function onPanesScroll(): void {
   }
   if (top < lastScrollTop - 1 && dist > 1) {
     following.value = false;
+    showPill.value = true;
   } else if (dist <= BOTTOM_THRESHOLD && top > lastScrollTop + 1) {
     following.value = true;
     showPill.value = false;
@@ -601,6 +586,42 @@ function raf(cb: () => void): number {
 function cancelRaf(id: number): void {
   if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
   else clearTimeout(id);
+}
+
+// --- Scroll anchoring for expand/collapse interactions ----------------------
+// Toggling a tool row/group grows or shrinks its body, which would otherwise move
+// the viewport: a collapse near the bottom shrinks scrollHeight and lets the
+// browser clamp scrollTop, and the auto-follow may snap to the tail. While the
+// transition runs we pin the toggled row's viewport position and suppress the
+// auto-follow, so the row stays put and only its body opens downward / collapses
+// upward.
+let pinUntil = 0;
+let pinRaf = 0;
+let pinEl: HTMLElement | null = null;
+let pinTargetTop = 0;
+
+function isPinned(): boolean {
+  return performance.now() < pinUntil;
+}
+
+function pinScrollFor(el: HTMLElement, ms = 260): void {
+  const panes = panesRef.value;
+  if (!panes) return;
+  pinEl = el;
+  pinTargetTop = el.getBoundingClientRect().top;
+  pinUntil = performance.now() + ms;
+  if (pinRaf) return;
+  const tick = () => {
+    pinRaf = 0;
+    if (performance.now() >= pinUntil || !pinEl) {
+      pinEl = null;
+      return;
+    }
+    const delta = pinEl.getBoundingClientRect().top - pinTargetTop;
+    if (delta) panes.scrollTop += delta;
+    pinRaf = raf(tick);
+  };
+  pinRaf = raf(tick);
 }
 
 function scheduleStableFollow(maxFrames = 36): void {
@@ -824,6 +845,8 @@ let contentObserver: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let observedContent: Element | null = null;
 let observedDock: HTMLElement | null = null;
+let lastObservedScrollHeight = 0;
+let lastObservedClientHeight = 0;
 let scrollRaf = 0;
 let pillEligible = false;
 const historyLoadInProgress = ref(false);
@@ -839,6 +862,7 @@ function scheduleFollow(allowPill: boolean): void {
     scrollRaf = 0;
     const wantPill = pillEligible;
     pillEligible = false;
+    if (isPinned()) return;
     if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
     else if (wantPill) showPill.value = true;
   }) as unknown as number;
@@ -877,6 +901,8 @@ function rebindScrollObservers(): void {
     ensureContentObserved();
     ensureDockObserved();
   }
+  lastObservedScrollHeight = el?.scrollHeight ?? 0;
+  lastObservedClientHeight = el?.clientHeight ?? 0;
 }
 
 function onContentMutated(): void {
@@ -926,7 +952,19 @@ onMounted(() => {
     if (typeof ResizeObserver === 'function') {
       resizeObserver = new ResizeObserver(() => {
         updatePanesScrollbarWidth();
-        scheduleFollow(false);
+        const el = panesRef.value;
+        if (!el) return;
+        const { scrollHeight, clientHeight } = el;
+        const grew = scrollHeight > lastObservedScrollHeight + 1;
+        const viewportShrank = clientHeight < lastObservedClientHeight - 1;
+        lastObservedScrollHeight = scrollHeight;
+        lastObservedClientHeight = clientHeight;
+        // Follow the tail on genuine growth (new turns, streaming, or late-loading
+        // media that gain height after scrollKey has already run) or a shrinking
+        // viewport (composer dock growing and hiding the last message). While a tool
+        // row/group is being toggled (the pinned window) suppress follow entirely,
+        // so the row opens downward / collapses upward without moving the viewport.
+        if (!isPinned() && (grew || viewportShrank)) scheduleFollow(false);
       });
     }
     rebindScrollObservers();
@@ -944,6 +982,7 @@ onUnmounted(() => {
   if (resizeObserver) resizeObserver.disconnect();
   if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf);
   if (stableFollowRaf) cancelRaf(stableFollowRaf);
+  if (pinRaf) cancelRaf(pinRaf);
   if (abortToastTimer !== null) clearTimeout(abortToastTimer);
   if (copyConversationCopiedTimer !== null) {
     clearTimeout(copyConversationCopiedTimer);
@@ -1097,7 +1136,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @create-goal="emit('createGoal', $event)"
               @control-goal="emit('controlGoal', $event)"
               @focus-goal="focusGoal"
-              @focus-swarm="focusSwarm"
               @compact="emit('compact')"
               @pick-model="emit('pickModel')"
               @select-model="emit('selectModel', $event)"
@@ -1134,9 +1172,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @edit-queued="handleEditQueued"
               @reorder-queue="handleReorderQueue"
             />
-            <div v-if="activeSwarms.length > 0" class="swarm-stack">
-              <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
-            </div>
           </template>
         </div>
       </div>
@@ -1193,7 +1228,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
           @open-btw="emit('command', '/btw')"
           @create-goal="emit('createGoal', $event)"
           @focus-goal="focusGoal"
-          @focus-swarm="focusSwarm"
           @compact="emit('compact')"
           @pick-model="emit('pickModel')"
           @select-model="emit('selectModel', $event)"
@@ -1269,6 +1303,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 .content-wrap.align-center { margin-left: auto; margin-right: auto; }
 .content-wrap.align-left { margin-left: 0; margin-right: auto; }
@@ -1287,12 +1322,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
     width: 100%;
     min-width: 0;
   }
-}
-.swarm-stack {
-  padding: 0 18px 16px;
-}
-.content-wrap.align-mobile .swarm-stack {
-  padding: 0 14px 18px;
 }
 
 /* Empty-workspace spacers: push the centred Composer to the vertical middle. */

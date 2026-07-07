@@ -11,6 +11,19 @@ export default {
     search: '搜索',
     todo: '待办',
     task: '任务',
+    swarm: 'Swarm',
+    ask_user: '提问',
+  },
+  swarm: {
+    progress: '{done} / {total}',
+    runningSub: '{count} 个进行中',
+    doneSub: '完成 {completed} · 失败 {failed}',
+    phaseQueued: '排队',
+    phaseWorking: '运行中',
+    phaseSuspended: '暂停',
+    phaseCompleted: '完成',
+    phaseFailed: '失败',
+    waiting: '等待子任务加入…',
   },
   chip: {
     lines: '{count} 行',
@@ -24,5 +37,12 @@ export default {
     running: '运行中',
     error: '有失败',
     done: '已完成',
+  },
+  ask: {
+    dismissed: '已忽略',
+    answer: '{count} 个回答',
+    answers: '{count} 个回答',
+    answered: '已回答',
+    more: '（还有 {count} 个）',
   },
 } as const;

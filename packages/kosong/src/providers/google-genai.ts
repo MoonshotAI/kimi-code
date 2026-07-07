@@ -5,6 +5,7 @@ import {
   normalizeAPIStatusError,
 } from '#/errors';
 import type { Message, StreamedMessagePart, ToolCall } from '#/message';
+import { isToolDeclarationOnlyMessage } from '#/message';
 import type {
   ChatProvider,
   FinishReason,
@@ -368,6 +369,15 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     const message = messages[i];
     if (message === undefined) break;
 
+    // Message-level tool declarations are a Kimi wire feature. The system
+    // branch below would already drop the empty leftover via its text-length
+    // check, but skip explicitly so the behavior does not hinge on that
+    // coincidence (and covers a non-system carrier defensively).
+    if (isToolDeclarationOnlyMessage(message)) {
+      i += 1;
+      continue;
+    }
+
     if (message.role === 'system') {
       // Google GenAI's `Content.role` only accepts "user" or "model", so a
       // system message in the history (e.g. from session restore or
@@ -697,6 +707,11 @@ export function convertGoogleGenAIError(error: unknown): ChatProviderError {
 }
 export class GoogleGenAIChatProvider implements ChatProvider {
   readonly name: string = 'google_genai';
+
+  /** See {@link ChatProvider.maxCompletionTokens}. */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.maxOutputTokens;
+  }
 
   private _model: string;
   private _client: GenAIClient | undefined;

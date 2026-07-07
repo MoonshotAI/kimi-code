@@ -856,3 +856,167 @@ describe('POST /api/v1/sessions/{session_id}:archive — archive', () => {
     expect(env.code).toBe(40401);
   });
 });
+
+describe('GET /api/v1/sessions?archived_only — archived-only list', () => {
+  it('returns only archived sessions and hides them from the default list', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-archived-only');
+    const created = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd } },
+      })).json(),
+    ).data!;
+
+    await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}:archive`,
+      payload: {},
+    });
+
+    const defaultList = envelopeOf<{ items: Array<{ id: string }> }>(
+      (await appOf(r).inject({ method: 'GET', url: '/api/v1/sessions' })).json(),
+    );
+    expect(defaultList.data!.items.find((s) => s.id === created.id)).toBeUndefined();
+
+    const archivedOnly = envelopeOf<{ items: Array<{ id: string; archived?: boolean }>; has_more: boolean }>(
+      (await appOf(r).inject({ method: 'GET', url: '/api/v1/sessions?archived_only=true' })).json(),
+    );
+    expect(archivedOnly.code).toBe(0);
+    const listed = archivedOnly.data!.items.find((s) => s.id === created.id);
+    expect(listed).toBeDefined();
+    expect(listed!.archived).toBe(true);
+    // No live session should leak into the archived-only view.
+    expect(archivedOnly.data!.items.every((s) => s.archived === true)).toBe(true);
+  });
+
+  it('paginates archived_only without returning empty filtered pages', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-archived-only-pagination');
+
+    const archivedOlder = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd } },
+      })).json(),
+    ).data!;
+    await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${archivedOlder.id}:archive`,
+      payload: {},
+    });
+
+    const archivedNewer = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd } },
+      })).json(),
+    ).data!;
+    await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${archivedNewer.id}:archive`,
+      payload: {},
+    });
+
+    await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { metadata: { cwd } },
+    });
+    await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { metadata: { cwd } },
+    });
+
+    const first = envelopeOf<{ items: Array<{ id: string; archived?: boolean }>; has_more: boolean }>(
+      (await appOf(r).inject({
+        method: 'GET',
+        url: '/api/v1/sessions?archived_only=true&page_size=1',
+      })).json(),
+    );
+    expect(first.code).toBe(0);
+    expect(first.data!.items).toHaveLength(1);
+    expect(first.data!.items[0]).toMatchObject({ id: archivedNewer.id, archived: true });
+    expect(first.data!.has_more).toBe(true);
+
+    const second = envelopeOf<{ items: Array<{ id: string; archived?: boolean }>; has_more: boolean }>(
+      (await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/sessions?archived_only=true&page_size=1&before_id=${archivedNewer.id}`,
+      })).json(),
+    );
+    expect(second.code).toBe(0);
+    expect(second.data!.items).toHaveLength(1);
+    expect(second.data!.items[0]).toMatchObject({ id: archivedOlder.id, archived: true });
+    expect(second.data!.has_more).toBe(false);
+  });
+
+  it('rejects archived_only together with include_archive', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/sessions?archived_only=true&include_archive=true',
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40001);
+  });
+});
+
+describe('POST /api/v1/sessions/{session_id}:restore — restore', () => {
+  it('restores an archived session so it reappears in the default list', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-restore');
+    const created = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd } },
+      })).json(),
+    ).data!;
+
+    await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}:archive`,
+      payload: {},
+    });
+
+    const restoreRes = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}:restore`,
+      payload: {},
+    });
+    const restoreEnv = envelopeOf<unknown>(restoreRes.json());
+    expect(restoreEnv.code).toBe(0);
+    const session = sessionSchema.parse(restoreEnv.data);
+    expect(session.id).toBe(created.id);
+    expect(session.archived).toBe(false);
+
+    const defaultList = envelopeOf<{ items: Array<{ id: string; archived?: boolean }> }>(
+      (await appOf(r).inject({ method: 'GET', url: '/api/v1/sessions' })).json(),
+    );
+    const relisted = defaultList.data!.items.find((s) => s.id === created.id);
+    expect(relisted).toBeDefined();
+    expect(relisted!.archived).toBe(false);
+
+    const getRes = envelopeOf<unknown>(
+      (await appOf(r).inject({ method: 'GET', url: `/api/v1/sessions/${created.id}` })).json(),
+    );
+    expect(getRes.code).toBe(0);
+    expect(sessionSchema.parse(getRes.data).archived).toBe(false);
+  });
+
+  it('returns 40401 for unknown id', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions/sess_missing:restore',
+      payload: {},
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40401);
+  });
+});

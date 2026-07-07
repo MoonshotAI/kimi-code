@@ -725,6 +725,7 @@ describe('GoogleGenAIChatProvider', () => {
       const config = body['config'] as Record<string, unknown>;
       expect(provider).not.toBe(original);
       expect(config['maxOutputTokens']).toBe(1024);
+      expect(provider.maxCompletionTokens).toBe(1024);
     });
   });
 

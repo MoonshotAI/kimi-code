@@ -2,7 +2,7 @@ import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
-import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
+import type { LoopRecordedEvent } from '../../loop';
 import { extractImageCompressionCaptions } from '../../tools/support/image-compress';
 import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
 import { escapeXml } from '../../utils/xml-escape';
@@ -23,6 +23,7 @@ import {
   type ProjectOptions,
   trimTrailingOpenToolExchange,
 } from './projector';
+import { stripDynamicToolContext } from './dynamic-tools';
 import {
   USER_PROMPT_ORIGIN,
   type AgentContextData,
@@ -31,12 +32,8 @@ import {
 } from './types';
 
 export * from './types';
+export * from './dynamic-tools';
 
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
@@ -175,6 +172,7 @@ export class ContextMemory {
     this._lastAssistantAt = null;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
+    this.agent.tools.onContextCleared();
     this.agent.emitStatusUpdated();
   }
 
@@ -351,6 +349,7 @@ export class ContextMemory {
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextCompacted();
+    this.agent.tools.onContextCompacted();
     this.agent.emitStatusUpdated();
     return result;
   }
@@ -376,8 +375,15 @@ export class ContextMemory {
   }
 
   project(messages: readonly ContextMessage[], options?: ProjectOptions): Message[] {
+    // Shape for the current model BEFORE projecting: a model without the
+    // select_tools capability must not see dynamic-tool schema messages or
+    // loadable-tools announcements (the canonical history keeps them; only
+    // this outgoing view is shaped). Must run pre-projection — project()
+    // strips `origin`, the only anchor for the announcements. setModel never
+    // rewrites history, so a mid-session switch degrades/upgrades losslessly.
+    const shaped = this.agent.toolSelectEnabled ? messages : stripDynamicToolContext(messages);
     const anomalies: ProjectionAnomaly[] = [];
-    const result = project(this.agent.microCompaction.compact(messages), {
+    const result = project(this.agent.microCompaction.compact(shaped), {
       ...options,
       onAnomaly: (anomaly) => {
         anomalies.push(anomaly);
@@ -630,11 +636,16 @@ export class ContextMemory {
         // closed in place at a step boundary (a stale duplicate from an older
         // tail-only finishResume), or its call is gone.
         if (!this.pendingToolResultIds.has(event.toolCallId)) return;
-        const message = createToolMessage(event.toolCallId, toolResultOutputForModel(event.result));
+        // History stores the fact verbatim: the tool's own output plus the
+        // structured isError/note fields. Model-facing status text (error
+        // prefix, empty placeholder) and the note are rendered only at LLM
+        // projection time (see tool-result-render.ts).
+        const message = createToolMessage(event.toolCallId, event.result.output);
         this.pushHistory({
           ...message,
           role: 'tool',
           isError: event.result.isError,
+          note: event.result.note,
         });
         this.pendingToolResultIds.delete(event.toolCallId);
         this.flushDeferredMessagesIfToolExchangeClosed();
@@ -684,40 +695,6 @@ export class ContextMemory {
   }
 }
 
-function toolResultOutputForModel(result: ExecutableToolResult): string | ContentPart[] {
-  const output = result.output;
-  if (typeof output === 'string') {
-    if (result.isError === true) {
-      if (output.length === 0) return TOOL_EMPTY_ERROR_STATUS;
-      if (output.trimStart().startsWith('<system>ERROR:')) return output;
-      return `${TOOL_ERROR_STATUS}\n${output}`;
-    }
-    return isEmptyOutputText(output) ? TOOL_EMPTY_STATUS : output;
-  }
-
-  // Treat an array output with no sendable content (empty, or only empty/
-  // whitespace-only text blocks) the same as an empty string output: emit the
-  // placeholder. Otherwise projection would strip the blank text blocks, leave
-  // the tool message empty, and throw on every send — bricking the session. A
-  // non-text part (image/etc.) or any non-whitespace text keeps the real output.
-  if (isEmptyEquivalentContentArray(output)) {
-    return [
-      {
-        type: 'text',
-        text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS,
-      },
-    ];
-  }
-  if (result.isError === true) {
-    return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
-  }
-  return output;
-}
-
-function isEmptyEquivalentContentArray(output: readonly ContentPart[]): boolean {
-  return output.every((part) => part.type === 'text' && part.text.trim().length === 0);
-}
-
 // Split inline image-compression captions (see buildImageCompressionCaption)
 // out of user prompt content. A caption may be a standalone text part (server
 // route, ACP) or merged into an adjacent text segment (TUI paste), so each
@@ -745,10 +722,6 @@ function splitImageCompressionCaptions(content: readonly ContentPart[]): {
     }
   }
   return { captions, parts };
-}
-
-function isEmptyOutputText(output: string): boolean {
-  return output.trim().length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
 }
 
 function formatUndoUnavailableMessage(

@@ -677,6 +677,10 @@ describe('KimiChatProvider', () => {
 
       expect(body['max_completion_tokens']).toBe(1024);
       expect(body['max_tokens']).toBeUndefined();
+      expect(provider.maxCompletionTokens).toBe(1024);
+      // Without any budget application no cap goes on the wire, and the
+      // exposed value says so.
+      expect(createProvider().maxCompletionTokens).toBeUndefined();
     });
 
     it('withMaxCompletionTokens sizes the cap to the remaining context window', async () => {
@@ -690,6 +694,9 @@ describe('KimiChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['max_completion_tokens']).toBe(70000);
+      // The exposed effective cap matches the clamped wire value, not the
+      // requested budget — the request trace records this field.
+      expect(provider.maxCompletionTokens).toBe(70000);
     });
 
     it('passes constructor generation kwargs into the request body', async () => {

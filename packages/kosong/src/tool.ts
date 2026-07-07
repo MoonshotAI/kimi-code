@@ -12,4 +12,13 @@ export interface Tool {
   description: string;
   /** JSON Schema describing the tool's parameters. */
   parameters: Record<string, unknown>;
+  /**
+   * Client-internal marker: the tool is executable but its schema must not be
+   * serialized into the request's top-level `tools[]` — it was (or will be)
+   * delivered through a message-level `tools` declaration instead, and the
+   * top-level list must stay byte-stable for prompt caching. `generate()`
+   * strips marked tools before the provider builds the request; the marker
+   * itself never reaches the wire.
+   */
+  deferred?: true;
 }

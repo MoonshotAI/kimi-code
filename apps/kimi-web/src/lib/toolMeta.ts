@@ -23,6 +23,8 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   search: 'tools.label.search',
   todo: 'tools.label.todo',
   task: 'tools.label.task',
+  agentswarm: 'tools.label.swarm',
+  askuserquestion: 'tools.label.ask_user',
 };
 
 // ---------------------------------------------------------------------------
@@ -89,13 +91,16 @@ const TOOL_GLYPH: Record<string, IconName> = {
   web_fetch: 'globe',
   todo: 'check-list',
   task: 'sparkles',
+  agentswarm: 'git-pull-request',
+  askuserquestion: 'help-circle',
 };
 
 export function toolGlyph(name: string): string {
   const key = normalizeToolName(name);
   let icon = TOOL_GLYPH[key];
   if (!icon && (name ?? '').trim().toLowerCase().includes('skill')) icon = 'bolt';
-  return icon ? iconSvg(icon, 'sm') : '';
+  if (!icon) icon = 'tool';
+  return iconSvg(icon, 'sm');
 }
 
 // ---------------------------------------------------------------------------

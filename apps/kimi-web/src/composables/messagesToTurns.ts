@@ -11,8 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
-import { phaseForTask } from './swarmGroups';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -189,13 +188,6 @@ export function toAgentMember(task: AppTask): AgentMember {
   };
 }
 
-function sortAgentTasks(a: AppTask, b: AppTask): number {
-  const ai = a.swarmIndex ?? Number.MAX_SAFE_INTEGER;
-  const bi = b.swarmIndex ?? Number.MAX_SAFE_INTEGER;
-  if (ai !== bi) return ai - bi;
-  return a.createdAt.localeCompare(b.createdAt);
-}
-
 // ---------------------------------------------------------------------------
 // Inline buildApprovalBlock (mirrors the one in useKimiWebClient.ts; kept
 // here to avoid a circular import when tests import this module directly).
@@ -351,6 +343,84 @@ interface Group {
 // ---------------------------------------------------------------------------
 
 /**
+ * Pull the prompt body out of a cron-fire envelope. Server-side, a cron
+ * injection reaches the transcript as a user message whose text is wrapped in
+ * `<cron-fire …>\n<prompt>\n…\n</prompt>\n</cron-fire>` (see renderCronFireXml
+ * in agent-core). We surface only the inner prompt, mirroring the TUI's
+ * extractCronPrompt / stripCronEnvelope.
+ */
+function extractCronPrompt(text: string): string {
+  const open = '<prompt>\n';
+  const close = '\n</prompt>';
+  const start = text.indexOf(open);
+  const end = text.lastIndexOf(close);
+  if (start >= 0 && end >= start + open.length) {
+    return text.slice(start + open.length, end);
+  }
+  return stripCronEnvelope(text);
+}
+
+function stripCronEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<cron-fire ') &&
+    lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
+}
+
+function cronOriginKind(msg: AppMessage): 'cron_job' | 'cron_missed' | undefined {
+  const origin = msg.metadata?.['origin'] as { kind?: string } | undefined;
+  if (origin?.kind === 'cron_job' || origin?.kind === 'cron_missed') return origin.kind;
+  return undefined;
+}
+
+function cronPromptText(msg: AppMessage): string {
+  const raw = msg.content
+    .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n');
+  return extractCronPrompt(raw);
+}
+
+function buildCronData(
+  msg: AppMessage,
+  kind: 'cron_job' | 'cron_missed',
+): { text: string; cron: CronTurnData } {
+  const origin = (msg.metadata?.['origin'] ?? {}) as Record<string, unknown>;
+  const text = cronPromptText(msg);
+  if (kind === 'cron_missed') {
+    return {
+      text,
+      cron: { missedCount: typeof origin['count'] === 'number' ? origin['count'] : undefined },
+    };
+  }
+  return {
+    text,
+    cron: {
+      jobId: typeof origin['jobId'] === 'string' ? origin['jobId'] : undefined,
+      cron: typeof origin['cron'] === 'string' ? origin['cron'] : undefined,
+      recurring: typeof origin['recurring'] === 'boolean' ? origin['recurring'] : undefined,
+      coalescedCount: typeof origin['coalescedCount'] === 'number' ? origin['coalescedCount'] : undefined,
+      stale: typeof origin['stale'] === 'boolean' ? origin['stale'] : undefined,
+    },
+  };
+}
+
+function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_missed'): ChatTurn {
+  const { text, cron } = buildCronData(msg, kind);
+  return { id: msg.id, role: 'cron', no, text, createdAt: msg.createdAt, cron };
+}
+
+function buildCronBlock(msg: AppMessage, kind: 'cron_job' | 'cron_missed'): TurnBlock {
+  const { text, cron } = buildCronData(msg, kind);
+  return { kind: 'cron', text, cron };
+}
+
+/**
  * Whether a USER-role message should be shown. Mirrors the TUI's
  * isReplayUserTurnRecord: only real user input (origin `user`/absent, or a
  * user-typed slash command) is displayed; system-injected user turns
@@ -387,6 +457,13 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
   );
 }
 
+/** True while a tool in this group has been called but not yet resolved — i.e.
+ *  the group is mid-tool-call. A cron injection that arrives now is sandwiched
+ *  between the tool use and its result and must not flush the group. */
+function hasRunningTool(group: Group): boolean {
+  return group.tools.some((t) => t.status === 'running');
+}
+
 /** Extract the plan file path from an ExitPlanMode tool result. The approved
  *  output contains `Plan saved to: <path>`; this survives a page reload (unlike
  *  the ephemeral plan_review approval display), so the tool card can still link
@@ -412,7 +489,6 @@ export function messagesToTurns(
    * spinning forever after the turn already finished.
    */
   sessionActive = true,
-  subagentTasks: AppTask[] = [],
   /** Preserved `plan_review` displays keyed by toolCallId — used to link the
    *  ExitPlanMode tool card back to the plan file after the approval resolves. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
@@ -424,20 +500,6 @@ export function messagesToTurns(
   const approvalByTool = new Map<string, AppApprovalRequest>();
   for (const a of approvals) {
     approvalByTool.set(a.toolCallId, a);
-  }
-
-  const subagentsByTool = new Map<string, AppTask[]>();
-  for (const task of subagentTasks) {
-    if (task.kind !== 'subagent') continue;
-    const keys = [task.parentToolCallId, task.id].filter((key): key is string => typeof key === 'string' && key.length > 0);
-    for (const key of keys) {
-      const list = subagentsByTool.get(key) ?? [];
-      list.push(task);
-      subagentsByTool.set(key, list);
-    }
-  }
-  for (const [key, list] of subagentsByTool.entries()) {
-    subagentsByTool.set(key, list.toSorted(sortAgentTasks));
   }
 
   let pendingGroup: Group | null = null;
@@ -497,24 +559,6 @@ export function messagesToTurns(
           else g.blocks.push({ kind: 'thinking', thinking: c.thinking });
         }
       } else if (c.type === 'toolUse') {
-        // A multi-member LIVE swarm renders as its OWN SwarmCard footer while
-        // any member is still active (see buildSwarmGroups / activeSwarms).
-        // Don't ALSO render it inline, or the swarm shows up twice. Once every
-        // member has finished, the footer is removed and we fall through to
-        // render the AgentSwarm call as a normal tool card — the same thing a
-        // refresh shows, when the live subagent tasks are gone.
-        const agentTasks = subagentsByTool.get(c.toolCallId);
-        if (agentTasks && agentTasks.length > 0) {
-          const swarmMembers = agentTasks.filter((t) => t.swarmIndex !== undefined);
-          if (swarmMembers.length > 1) {
-            const live = swarmMembers.some((t) => {
-              const phase = phaseForTask(t);
-              return phase !== 'completed' && phase !== 'failed';
-            });
-            if (live) continue;
-          }
-        }
-
         // Single `Agent` subagent spawns and all other tools render as a normal
         // tool card: the card shows the fixed args (prompt / description) plus
         // the final result when expanded, while a subagent's live progress
@@ -608,7 +652,25 @@ export function messagesToTurns(
 
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
+      const cronKind = cronOriginKind(msg);
+      // A cron injection steered into an in-flight turn can land between a
+      // tool use and its result in the live event stream. It must NOT flush the
+      // pending assistant group then — flushing would orphan the next
+      // tool.result, which only folds into a pending group, leaving the tool
+      // rendered without output. So embed it as a block only while the group
+      // has an in-flight tool. Otherwise — a cron at a turn boundary, including
+      // an idle fire on a REST snapshot that carries no prompt ids (where the
+      // whole transcript shares one group) — flush and render it as its own
+      // turn so it doesn't merge into the previous answer.
+      if (cronKind !== undefined && pendingGroup !== null && hasRunningTool(pendingGroup)) {
+        pendingGroup.blocks.push(buildCronBlock(msg, cronKind));
+        continue;
+      }
       flushGroup();
+      if (cronKind !== undefined) {
+        turns.push(buildCronTurn(msg, no++, cronKind));
+        continue;
+      }
       // Hide system-injected user turns (TUI parity) — they end the previous
       // assistant turn but aren't rendered as a user bubble.
       if (!isDisplayableUserMessage(msg)) continue;

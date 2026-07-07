@@ -16,4 +16,7 @@ export default {
   permYoloSub: '全部自动批准',
   planModeSub: '计划模式',
   swarmModeSub: 'Swarm 模式',
+  archivedSessions: '已归档会话',
+  archivedSessionsSub: '查看并恢复已归档会话',
+  archivedBack: '返回',
 } as const;

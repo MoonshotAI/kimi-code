@@ -1,6 +1,7 @@
 import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import type { ColorPalette } from '#/tui/theme/colors';
 
 import type { ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
@@ -44,6 +45,10 @@ export class TruncatedOutputComponent implements Component {
       // When true, collapsed rendering keeps the latest visual rows instead of
       // the first rows. This is useful for live output from a running command.
       tail?: boolean;
+      // Foreground colour for successful (non-error) output. Defaults to
+      // `textDim`; Bash passes `textMuted` so its result sits one shade below
+      // the `textDim` command. Error output always uses `error`.
+      color?: keyof ColorPalette;
     },
   ) {
     this.expanded = options.expanded;
@@ -52,8 +57,9 @@ export class TruncatedOutputComponent implements Component {
     this.expandHint = options.expandHint ?? true;
     this.tail = options.tail ?? false;
     const cleaned = trimTrailingEmptyLines(output.split('\n')).join('\n');
+    const successColor = options.color ?? 'textDim';
     this.textComponent = new Text(
-      options.isError ? currentTheme.fg('error', cleaned) : currentTheme.dim(cleaned),
+      options.isError ? currentTheme.fg('error', cleaned) : currentTheme.fg(successColor, cleaned),
       this.indent,
       0,
     );

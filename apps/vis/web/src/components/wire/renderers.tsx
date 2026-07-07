@@ -592,6 +592,153 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'goal×',
     headline: () => ({ main: <Dim>goal cleared</Dim> }),
   },
+
+  // Observability records — the request trace (see agent-core records/types.ts).
+
+  'llm.tools_snapshot': {
+    tone: 'tools',
+    label: 'req·tools',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            {r.tools.length} tool{r.tools.length === 1 ? '' : 's'}
+          </Mono>
+          <Dim className="truncate">
+            {r.tools
+              .slice(0, 4)
+              .map((tool) => tool.name)
+              .join(', ')}
+            {r.tools.length > 4 ? ` +${r.tools.length - 4} more` : ''}
+          </Dim>
+        </span>
+      ),
+      right: <Mono>#{r.hash.slice(0, 8)}</Mono>,
+    }),
+  },
+
+  'llm.request': {
+    tone: 'meta',
+    label: 'llm→',
+    headline: (r) => {
+      const parts: string[] = [];
+      if (r.turnStep !== undefined) parts.push(`step ${r.turnStep}`);
+      if (r.attempt !== undefined) parts.push(`attempt ${r.attempt}`);
+      parts.push(`${r.messageCount} msgs`);
+      if (r.maxTokens !== undefined) parts.push(`max ${r.maxTokens} tok`);
+      return {
+        main: (
+          <span className="flex items-center gap-2 min-w-0">
+            <Pill tone={r.kind === 'compaction' ? 'compaction' : 'turn'} variant="soft">
+              {r.kind}
+            </Pill>
+            <Mono>{r.model}</Mono>
+            <Dim className="truncate">{parts.join(' · ')}</Dim>
+          </span>
+        ),
+        right:
+          r.projection !== undefined ? (
+            <Pill tone="warning" variant="soft">
+              {r.projection}
+            </Pill>
+          ) : undefined,
+      };
+    },
+    detail: (r) => (
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="provider">
+          <Mono>{r.provider}</Mono>
+        </FieldRow>
+        <FieldRow label="model">
+          <Mono>{r.model}</Mono>
+        </FieldRow>
+        {r.modelAlias !== undefined ? (
+          <FieldRow label="modelAlias">
+            <Mono>{r.modelAlias}</Mono>
+          </FieldRow>
+        ) : null}
+        {r.thinkingEffort !== undefined ? (
+          <FieldRow label="thinkingEffort">
+            <Mono>{r.thinkingEffort}</Mono>
+          </FieldRow>
+        ) : null}
+        {r.thinkingKeep !== undefined ? (
+          <FieldRow label="thinkingKeep">
+            <Mono>{r.thinkingKeep}</Mono>
+          </FieldRow>
+        ) : null}
+        {r.temperature !== undefined ? (
+          <FieldRow label="temperature">
+            <span className="text-[var(--color-sev-info)]">{r.temperature}</span>
+          </FieldRow>
+        ) : null}
+        {r.topP !== undefined ? (
+          <FieldRow label="topP">
+            <span className="text-[var(--color-sev-info)]">{r.topP}</span>
+          </FieldRow>
+        ) : null}
+        {r.maxTokens !== undefined ? (
+          <FieldRow label="maxTokens">
+            <span className="text-[var(--color-sev-info)]">{r.maxTokens}</span>
+          </FieldRow>
+        ) : null}
+        {r.betaApi !== undefined ? (
+          <FieldRow label="betaApi">
+            <Mono>{String(r.betaApi)}</Mono>
+          </FieldRow>
+        ) : null}
+        <FieldRow label="toolSelect">
+          <Mono>{String(r.toolSelect)}</Mono>
+        </FieldRow>
+        <FieldRow label="toolsHash" wide>
+          <Mono className="break-all">{r.toolsHash}</Mono>
+        </FieldRow>
+        <FieldRow label="systemPromptHash" wide>
+          <Mono className="break-all">{r.systemPromptHash}</Mono>
+        </FieldRow>
+        {r.systemPrompt !== undefined ? (
+          <FieldRow label="systemPrompt" wide>
+            <SizePreview
+              label="systemPrompt"
+              sizeBytes={r.systemPrompt.length}
+              preview={r.systemPrompt}
+            >
+              <pre className="whitespace-pre-wrap break-words text-fg-1">{r.systemPrompt}</pre>
+            </SizePreview>
+          </FieldRow>
+        ) : null}
+        {r.droppedCount !== undefined ? (
+          <FieldRow label="droppedCount">
+            <span className="text-[var(--color-sev-info)]">{r.droppedCount}</span>
+          </FieldRow>
+        ) : null}
+      </div>
+    ),
+  },
+
+  'mcp.tools_discovered': {
+    tone: 'tools',
+    label: 'mcp·list',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.serverName}</Mono>
+          <Dim>
+            {r.tools.length} tool{r.tools.length === 1 ? '' : 's'} · {r.enabledNames.length}{' '}
+            enabled
+          </Dim>
+        </span>
+      ),
+      right:
+        r.collisions !== undefined && r.collisions.length > 0 ? (
+          <Pill tone="warning" variant="soft">
+            {r.collisions.length} collision{r.collisions.length === 1 ? '' : 's'}
+          </Pill>
+        ) : (
+          <Mono>#{r.hash.slice(0, 8)}</Mono>
+        ),
+    }),
+  },
 };
 
 /** Look up a renderer by a runtime `type` string. Returns `undefined` for kinds

@@ -97,6 +97,8 @@ interface OpenAIMessage {
   tool_call_id?: string | undefined;
   name?: string | undefined;
   reasoning_content?: string | undefined;
+  /** Message-level tool declarations (`messages[].tools`), see convertMessage. */
+  tools?: OpenAIToolParam[] | undefined;
 }
 
 interface OpenAIToolCallOut {
@@ -168,6 +170,16 @@ function convertMessage(message: Message): OpenAIMessage {
 
   if (reasoningContent) {
     result.reasoning_content = reasoningContent;
+  }
+
+  // Message-level tool declarations: a system message carrying `tools` loads
+  // those definitions mid-conversation (`messages[].tools` in the Kimi
+  // contract; each entry is a full OpenAI-compatible tool param). Reusing
+  // convertTool keeps schema normalization and the `$` builtin_function
+  // branch identical to the top-level `tools[]` path. Such a message carries
+  // no `content` — the empty-content branch above already omits the field.
+  if (message.tools !== undefined && message.tools.length > 0) {
+    result.tools = message.tools.map((tool) => convertTool(tool));
   }
 
   return result;
@@ -377,6 +389,15 @@ class KimiStreamedMessage implements StreamedMessage {
 }
 export class KimiChatProvider implements ChatProvider {
   readonly name: string = 'kimi';
+
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. Mirrors the request-time
+   * normalization: `max_completion_tokens` wins over the legacy `max_tokens`
+   * alias.
+   */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_completion_tokens ?? this._generationKwargs.max_tokens;
+  }
 
   private _model: string;
   private _stream: boolean;
