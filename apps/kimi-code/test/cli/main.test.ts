@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
     })),
     initializeCliTelemetry: vi.fn(),
     handleUpgrade: vi.fn(),
+    flushDiagnosticLogs: vi.fn(),
     finalizeHeadlessRun: vi.fn(),
     log: {
       info: vi.fn(),
@@ -80,6 +81,7 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async () => {
       mocks.createKimiHarness(...args);
       return mocks.harness;
     },
+    flushDiagnosticLogs: mocks.flushDiagnosticLogs,
     KimiHarness: MockKimiHarness,
     log: mocks.log,
   };
@@ -215,6 +217,7 @@ describe('main entry command handling', () => {
     mocks.harness.close.mockResolvedValue(undefined);
     mocks.shutdownTelemetry.mockResolvedValue(undefined);
     mocks.handleUpgrade.mockResolvedValue(0);
+    mocks.flushDiagnosticLogs.mockResolvedValue(undefined);
   });
 
   it('runs update preflight before starting the shell', async () => {
@@ -299,6 +302,34 @@ describe('main entry command handling', () => {
     // The exit code is resolved lazily so a goal turn that sets process.exitCode wins.
     const forceExitArgs = mocks.finalizeHeadlessRun.mock.calls[0] as unknown as unknown[];
     expect(typeof forceExitArgs[2]).toBe('function');
+  });
+
+  it('sets the failure exit code before awaiting startup failure logging', async () => {
+    const originalExitCode = process.exitCode;
+    const opts: CLIOptions = { ...defaultOpts(), prompt: 'explain the repo' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runPrompt.mockRejectedValue(new Error('provider failed'));
+    mocks.flushDiagnosticLogs.mockImplementation(() => new Promise(() => {}));
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+      throw new ExitCalled(Number(code ?? 0));
+    });
+
+    try {
+      main();
+      const programArgs = mocks.createProgram.mock.calls[0] as unknown as unknown[];
+      const mainAction = programArgs[1] as (opts: CLIOptions) => void;
+      mainAction(opts);
+
+      await waitForAssertion(() => {
+        expect(mocks.flushDiagnosticLogs).toHaveBeenCalledTimes(1);
+      });
+      expect(process.exitCode).toBe(1);
+      expect(exitSpy).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+      process.exitCode = originalExitCode;
+    }
   });
 
   it('keeps shell mode update preflight interactive by default', async () => {
