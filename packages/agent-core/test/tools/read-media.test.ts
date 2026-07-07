@@ -41,6 +41,35 @@ const MP4_HEADER = Buffer.concat([
   Buffer.from('mp42isom'),
 ]);
 
+/**
+ * Insert a minimal EXIF APP1 segment carrying only an Orientation tag right
+ * after the JPEG SOI marker (jimp itself never writes EXIF). Mirrors the
+ * fixture in image-compress.test.ts.
+ */
+function withExifOrientation(jpeg: Uint8Array, orientation: number): Buffer {
+  // TIFF body, little-endian: 8-byte header + IFD0 with a single entry.
+  const tiff = Buffer.alloc(26);
+  tiff.write('II', 0, 'latin1');
+  tiff.writeUInt16LE(42, 2);
+  tiff.writeUInt32LE(8, 4); // offset of IFD0
+  tiff.writeUInt16LE(1, 8); // one directory entry
+  tiff.writeUInt16LE(0x0112, 10); // tag: Orientation
+  tiff.writeUInt16LE(3, 12); // type: SHORT
+  tiff.writeUInt32LE(1, 14); // count
+  tiff.writeUInt16LE(orientation, 18); // value, left-aligned in the 4-byte field
+  tiff.writeUInt32LE(0, 22); // no next IFD
+  const exifBody = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+  const app1Header = Buffer.alloc(4);
+  app1Header.writeUInt16BE(0xff_e1, 0);
+  app1Header.writeUInt16BE(exifBody.length + 2, 2);
+  return Buffer.concat([
+    Buffer.from(jpeg.subarray(0, 2)), // SOI
+    app1Header,
+    exifBody,
+    Buffer.from(jpeg.subarray(2)),
+  ]);
+}
+
 function capabilities(overrides: Partial<ModelCapability> = {}): ModelCapability {
   return {
     image_in: true,
@@ -684,6 +713,62 @@ describe('ReadMediaFileTool', () => {
     const systemText = noteText(result);
     expect(systemText).toContain('3600x3600');
     expect(systemText).toContain(`${String(big.length)} bytes`);
+  });
+
+  it('reports an EXIF-rotated original in the decoded coordinate space', async () => {
+    // Orientation 6 (rotate 90° CW): the header says 3600x1800, but jimp
+    // decodes to 1800x3600 — the space the sent image and any region
+    // readback live in. The note's original size must match that space,
+    // not the pre-rotation header sniff.
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: portrait.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(portrait),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_exif',
+      args: { path: '/workspace/portrait.jpg' },
+      signal,
+    });
+
+    const systemText = noteText(result);
+    expect(systemText).toContain('Original dimensions: 1800x3600');
+    expect(systemText).toMatch(/downsampled to 1500x3000/);
+  });
+
+  it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
+    // Region coordinates live in the decoded (rotated) space; the note's
+    // original size must agree with it even when the header sniff succeeds.
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: portrait.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(portrait),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_exif_region',
+      args: { path: '/workspace/portrait.jpg', region: { x: 0, y: 0, width: 40, height: 40 } },
+      signal,
+    });
+
+    expect(noteText(result)).toContain('Original dimensions: 80x120');
   });
 
   describe('region and full_resolution', () => {

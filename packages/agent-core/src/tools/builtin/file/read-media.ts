@@ -348,8 +348,11 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             region: outcome.region,
             resized: outcome.resized,
           };
-          // The decode knows the true size even when header sniffing does not.
-          dimensions ??= { width: outcome.originalWidth, height: outcome.originalHeight };
+          // The decode is authoritative: jimp applies EXIF orientation, so
+          // the header sniff has width/height swapped for orientations 5-8
+          // (and misses some formats entirely). Region coordinates live in
+          // the decoded space, so the note must report it.
+          dimensions = { width: outcome.originalWidth, height: outcome.originalHeight };
         } else if (args.full_resolution === true) {
           // Native resolution on request — but the provider's per-image byte
           // ceiling is a hard limit, so refuse explicitly rather than degrade.
@@ -395,6 +398,12 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             byteLength: compressed.finalByteLength,
             mimeType: compressed.mimeType,
           };
+          if (compressed.changed) {
+            // Same as the crop path: once a decode happened, its (EXIF-rotated)
+            // dimensions are the space the sent image and any later region
+            // readback live in — the header sniff may have them swapped.
+            dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
+          }
         }
       } else if (this.videoUploader !== undefined) {
         mediaPart = await this.videoUploader({
