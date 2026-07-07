@@ -25,9 +25,9 @@ This page documents the changes in each Kimi Code CLI release.
 - web: Fix the end of a reply staying missing after reopening a session.
 - web: Fix queued media messages not loading back into the composer and keep attachments when undoing a message.
 - web: Keep the composer toolbar from clipping its controls on narrow windows and phones, with the context ring staying visible at every width.
-- web: Fix the font size setting so chat text, composer text, and sidebar text follow the selected size. Thanks @justjavac!
+- web: Fix the font size setting so chat text, composer text, and sidebar text follow the selected size.
 - web: Fix an almost-invisible composer input caret and a washed-out strikethrough on completed todos.
-- web: Show the correct session search shortcut on Windows. Thanks @justjavac!
+- web: Show the correct session search shortcut on Windows.
 - Fix tool calling with Google Gemini models, including Gemini 3 thinking-signature round-trips across turns.
 
 ### Polish
