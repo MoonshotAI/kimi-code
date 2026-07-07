@@ -2,7 +2,7 @@ import { cpus, freemem, loadavg, totalmem } from 'node:os';
 
 import type { TelemetryProperties } from './types';
 
-const DEFAULT_INTERVAL_MS = 30_000;
+const DEFAULT_INTERVAL_MS = 300_000;
 const DEFAULT_WARMUP_SAMPLE_MS = 1_500;
 const SYSTEM_METRICS_EVENT = 'system_metrics';
 
