@@ -4,6 +4,7 @@
 
 import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
+import { traceClientEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
@@ -467,10 +468,34 @@ if (typeof window !== 'undefined') {
   });
 }
 
+/**
+ * When the tab returns to the foreground, the WebSocket may be a silent
+ * half-open: the browser still reports OPEN (so no auto-reconnect) yet no
+ * frames have arrived for a while (frozen background tab, dropped NAT mapping,
+ * daemon restart). On such a socket live streaming tokens freeze mid-turn with
+ * no recovery short of a full page reload.
+ *
+ * If the socket looks stale, force a clean reconnect — the handshake
+ * re-subscribes at the last durable cursor — then refresh the active session
+ * from its authoritative snapshot to re-seed the volatile streaming tokens lost
+ * during the gap.
+ */
+function recoverStaleConnection(): void {
+  if (eventConn === null) return;
+  if (!eventConn.health().stale) return;
+  traceClientEvent('ws: stale socket on focus, reconnecting', {
+    activeSessionId: rawState.activeSessionId,
+  });
+  eventConn.reconnect();
+  const active = rawState.activeSessionId;
+  if (active) snapshotSyncRunner.request(active);
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       clearActiveUnread();
+      recoverStaleConnection();
     }
   });
 }
