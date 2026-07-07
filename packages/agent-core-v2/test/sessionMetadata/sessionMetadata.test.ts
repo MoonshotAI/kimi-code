@@ -95,4 +95,24 @@ describe('SessionMetadata', () => {
     expect(captured).toEqual({ changed: ['title'] });
     sub.dispose();
   });
+
+  it('preserves every concurrently registered agent', async () => {
+    const meta = ix.get(ISessionMetadata);
+
+    await Promise.all([
+      meta.registerAgent('agent-0', {
+        homedir: '/tmp/sessions/wd_test/s1/agents/agent-0',
+        labels: { swarmItem: 'src/a.ts' },
+      }),
+      meta.registerAgent('agent-1', {
+        homedir: '/tmp/sessions/wd_test/s1/agents/agent-1',
+        labels: { swarmItem: 'src/b.ts' },
+      }),
+    ]);
+
+    expect(Object.keys((await meta.read()).agents ?? {}).sort()).toEqual([
+      'agent-0',
+      'agent-1',
+    ]);
+  });
 });

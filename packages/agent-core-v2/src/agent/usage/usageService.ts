@@ -16,7 +16,7 @@ import type { LLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { IAgentWireService, type IWireService } from '#/wire';
 import type { UsageStatus } from './usage';
 import { IAgentUsageService } from './usage';
-import { recordUsage, UsageModel, usageStatusFromState } from './usageOps';
+import { recordUsage, UsageModel, usageStatusFromState, type UsageRecordScope } from './usageOps';
 
 export class AgentUsageService extends Disposable implements IAgentUsageService {
   declare readonly _serviceBrand: undefined;
@@ -26,7 +26,8 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
   }
 
   record(model: string, usage: TokenUsage, source?: LLMRequestSource): void {
-    this.wire.dispatch(recordUsage({ model, usage, context: source }));
+    const usageScope: UsageRecordScope = source?.type === 'turn' ? 'turn' : 'session';
+    this.wire.dispatch(recordUsage({ model, usage, usageScope, context: source }));
   }
 
   status(): UsageStatus {

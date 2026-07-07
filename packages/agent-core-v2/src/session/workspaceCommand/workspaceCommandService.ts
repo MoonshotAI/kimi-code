@@ -1,22 +1,17 @@
 /**
  * `workspaceCommand` domain (L6) — `ISessionWorkspaceCommandService` implementation.
  *
- * Coordinates session-level workspace mutations. `addAdditionalDir` persists
- * the directory into the workspace-local config file when `persist` is true
- * (`<projectRoot>/.kimi-code/local.toml`, through `IHostFileSystem`), updates
- * `ISessionWorkspaceContext`, and mirrors the action's stdout into the main
- * agent's context as a `local-command-stdout` injection (via
- * `IAgentContextMemoryService` on the `main` handle from `agentLifecycle`).
- * If the main agent does not exist yet, the injection is queued and flushed
- * from the `onDidCreateMain` subscription. Bound at Session scope.
+ * Coordinates session-level workspace mutations: resolves and persists
+ * workspace-local config through `workspaceLocalConfig`, updates
+ * `workspaceContext`, and mirrors command output into the main agent through
+ * `agentLifecycle` and `contextMemory`. Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
-import { IBootstrapService } from '#/app/bootstrap';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 
@@ -25,13 +20,6 @@ import {
   ISessionWorkspaceCommandService,
   type WorkspaceAdditionalDirsResult,
 } from './workspaceCommand';
-import {
-  appendWorkspaceAdditionalDir,
-  normalizeAdditionalDirs,
-  readWorkspaceAdditionalDirs,
-  resolveWorkspaceAdditionalDirs,
-  type WorkspaceLocalDeps,
-} from './workspaceLocalConfig';
 
 export class SessionWorkspaceCommandService
   extends Disposable
@@ -42,10 +30,10 @@ export class SessionWorkspaceCommandService
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IWorkspaceLocalConfigService
+    private readonly localConfig: IWorkspaceLocalConfigService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
-    @IHostFileSystem private readonly hostFs: IHostFileSystem,
   ) {
     super();
     this._register(
@@ -65,39 +53,35 @@ export class SessionWorkspaceCommandService
     input: AddAdditionalDirInput,
   ): Promise<WorkspaceAdditionalDirsResult> {
     const persist = input.persist ?? true;
-    const deps: WorkspaceLocalDeps = { fs: this.hostFs, homeDir: this.bootstrap.homeDir };
 
     if (persist) {
-      const persisted = await appendWorkspaceAdditionalDir(
-        deps,
+      const persisted = await this.localConfig.appendAdditionalDir(
         this.workspace.workDir,
         input.path,
       );
-      const additionalDirs = normalizeAdditionalDirs([
+      this.workspace.setAdditionalDirs([
         ...this.workspace.additionalDirs,
         ...persisted.additionalDirs,
       ]);
-      this.workspace.setAdditionalDirs(additionalDirs);
       this.injectAdditionalDirAdded(input.path, true, persisted.configPath);
       return {
         projectRoot: persisted.projectRoot,
         configPath: persisted.configPath,
-        additionalDirs,
+        additionalDirs: this.workspace.additionalDirs,
         persisted: true,
       };
     }
 
-    const workspace = await readWorkspaceAdditionalDirs(deps, this.workspace.workDir);
-    const resolved = await resolveWorkspaceAdditionalDirs(deps, this.workspace.workDir, [
+    const workspace = await this.localConfig.readAdditionalDirs(this.workspace.workDir);
+    const resolved = await this.localConfig.resolveAdditionalDirs(this.workspace.workDir, [
       input.path,
     ]);
-    const additionalDirs = normalizeAdditionalDirs([...this.workspace.additionalDirs, ...resolved]);
-    this.workspace.setAdditionalDirs(additionalDirs);
+    this.workspace.setAdditionalDirs([...this.workspace.additionalDirs, ...resolved]);
     this.injectAdditionalDirAdded(input.path, false, workspace.configPath);
     return {
       projectRoot: workspace.projectRoot,
       configPath: workspace.configPath,
-      additionalDirs,
+      additionalDirs: this.workspace.additionalDirs,
       persisted: false,
     };
   }

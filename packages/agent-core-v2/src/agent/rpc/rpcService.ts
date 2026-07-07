@@ -342,11 +342,6 @@ export class AgentRPCService implements IAgentRPCService {
     await this.updatePromptMetadata(promptMetadataTextFromPluginCommand(payload));
   }
 
-  /**
-   * Delegate to the shared `applyPromptMetadataUpdate` helper (same one the
-   * `/api/v1` legacy entry uses), so the easy-title / `lastPrompt` derivation
-   * and the `session.meta.updated` broadcast stay identical on both surfaces.
-   */
   private async updatePromptMetadata(text: string | undefined): Promise<void> {
     await applyPromptMetadataUpdate(
       {

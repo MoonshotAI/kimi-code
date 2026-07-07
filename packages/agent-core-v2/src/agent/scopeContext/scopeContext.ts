@@ -1,5 +1,5 @@
 /**
- * `agent` domain (L2) — agent-scope identity token.
+ * `scopeContext` domain (L1) — agent-scope identity token.
  *
  * Exposes `IAgentScopeContext`, the identity of the current agent scope (its
  * `agentId`) plus a `scope(subKey?)` helper that returns the agent's

@@ -48,7 +48,7 @@ import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
 import { type ModelAlias, MODELS_SECTION } from '#/app/model/model';
-import { IProviderService, type OAuthRef, type ProviderConfig, PROVIDERS_SECTION } from '#/app/provider/provider';
+import { IProviderService, type OAuthRef, type ProviderConfig, type ProvidersChangedEvent, PROVIDERS_SECTION } from '#/app/provider/provider';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { type AuthStatus, IAuthSummaryService, IOAuthService, IOAuthToolkit } from './auth';
@@ -89,7 +89,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     @IEventService private readonly events: IEventService,
   ) {
     super();
-    this._register(providerService.onDidChangeProviders(() => this.invalidateFlows()));
+    this._register(providerService.onDidChangeProviders((event) => this.invalidateFlows(event)));
   }
 
   async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
@@ -349,16 +349,23 @@ export class OAuthService extends Disposable implements IOAuthService {
     }
   }
 
-  private invalidateFlows(): void {
+  private invalidateFlows(event: ProvidersChangedEvent): void {
+    // Only abort flows whose OAuth provider was actually removed or whose
+    // config changed. Refreshes that merely rewrite the `providers` section
+    // (e.g. model catalog refreshes on startup) must not trip in-flight logins
+    // for unaffected providers.
+    const affected = new Set([...event.removed, ...event.changed]);
+    if (affected.size === 0) return;
     for (const state of this.flows.values()) {
+      if (!affected.has(state.provider)) continue;
       if (state.status === 'pending') {
         state.controller.abort();
       }
       if (state.gcTimer !== undefined) {
         clearTimeout(state.gcTimer);
       }
+      this.flows.delete(state.provider);
     }
-    this.flows.clear();
   }
 
   private handleSuccess(state: FlowState): void {

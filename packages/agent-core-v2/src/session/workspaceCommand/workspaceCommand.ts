@@ -12,7 +12,6 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 export interface AddAdditionalDirInput {
   readonly path: string;
-  /** When `true` (default), persist the directory into `<projectRoot>/.kimi-code/local.toml`. */
   readonly persist?: boolean;
 }
 

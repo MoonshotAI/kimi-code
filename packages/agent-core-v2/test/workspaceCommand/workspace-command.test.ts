@@ -8,12 +8,14 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IAgentContextMemoryService, type ContextMessage } from '#/agent/contextMemory';
 import { IBootstrapService } from '#/app/bootstrap';
+import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig';
 import { ErrorCodes, KimiError } from '#/errors';
 import {
   type HostDirEntry,
   type HostFileStat,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
+import { FileWorkspaceLocalConfigService } from '#/persistence/backends/node-fs/workspaceLocalConfigService';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext';
 import {
@@ -34,6 +36,7 @@ class MemoryHostFs implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
   readonly files = new Map<string, string>();
   readonly dirs = new Set<string>();
+  readonly statErrors = new Map<string, NodeJS.ErrnoException>();
   readonly readsDuringPausedWrite: string[] = [];
   private pausedWrites = 0;
   private nextWritePause:
@@ -99,6 +102,8 @@ class MemoryHostFs implements IHostFileSystem {
   }
 
   async stat(path: string): Promise<HostFileStat> {
+    const error = this.statErrors.get(path);
+    if (error !== undefined) throw error;
     if (this.files.has(path)) {
       return { isFile: true, isDirectory: false, size: this.files.get(path)?.length ?? 0 };
     }
@@ -175,6 +180,7 @@ function bootstrapStub(): IBootstrapService {
   return {
     _serviceBrand: undefined,
     homeDir: '/home/test',
+    osHomeDir: '/users/test',
   } as IBootstrapService;
 }
 
@@ -227,6 +233,7 @@ describe('SessionWorkspaceCommandService', () => {
         reg.define(ISessionWorkspaceContext, SessionWorkspaceContextService);
         reg.defineInstance(IBootstrapService, bootstrapStub());
         reg.defineInstance(IHostFileSystem, fs);
+        reg.define(IWorkspaceLocalConfigService, FileWorkspaceLocalConfigService);
         reg.defineInstance(IAgentLifecycleService, agents);
         reg.define(ISessionWorkspaceCommandService, SessionWorkspaceCommandService);
       },
@@ -361,6 +368,29 @@ describe('SessionWorkspaceCommandService', () => {
     expect(result.additionalDirs).toEqual([sharedDir]);
     expect(workspace.additionalDirs).toEqual([sharedDir]);
     expect(fs.files.has(`${projectRoot}/.kimi-code/local.toml`)).toBe(false);
+  });
+
+  it('expands home-relative dirs against the OS home like v1', async () => {
+    const homeDir = '/users/test/shared';
+    const { svc, workspace } = build([homeDir], true);
+
+    const result = await svc.addAdditionalDir({ path: '~/shared', persist: false });
+
+    expect(result.additionalDirs).toEqual([homeDir]);
+    expect(workspace.additionalDirs).toEqual([homeDir]);
+  });
+
+  it('treats project-root stat errors as absent git markers like v1', async () => {
+    const projectRoot = '/repo';
+    const { svc, fs } = build([EXTRA_DIR], true, WORK_DIR, `${projectRoot}/.git`);
+    const error = new Error('EACCES: cannot stat .git') as NodeJS.ErrnoException;
+    error.code = 'EACCES';
+    fs.statErrors.set(`${WORK_DIR}/.git`, error);
+
+    const result = await svc.addAdditionalDir({ path: 'extra', persist: true });
+
+    expect(result.projectRoot).toBe(projectRoot);
+    expect(result.configPath).toBe(`${projectRoot}/.kimi-code/local.toml`);
   });
 
   it('rejects a relative path that does not resolve to an existing directory', async () => {

@@ -48,6 +48,7 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     new Emitter<SessionMetadataChangedEvent>(),
   );
   private readonly scope: string;
+  private updateQueue: Promise<void> = Promise.resolve();
   private data!: SessionMeta;
 
   constructor(
@@ -69,6 +70,10 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   }
 
   async update(patch: SessionMetaPatch): Promise<void> {
+    return this.enqueueUpdate(() => this.applyUpdate(patch));
+  }
+
+  private async applyUpdate(patch: SessionMetaPatch): Promise<void> {
     await this.ready;
     this.data = { ...this.data, ...patch, updatedAt: Date.now() };
     await this.store.set(this.scope, META_KEY, this.data);
@@ -87,9 +92,17 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   }
 
   async registerAgent(agentId: string, meta: AgentMeta): Promise<void> {
-    await this.ready;
-    const agents = { ...this.data.agents, [agentId]: meta };
-    await this.update({ agents });
+    return this.enqueueUpdate(async () => {
+      await this.ready;
+      const agents = { ...this.data.agents, [agentId]: meta };
+      await this.applyUpdate({ agents });
+    });
+  }
+
+  private enqueueUpdate(work: () => Promise<void>): Promise<void> {
+    const run = this.updateQueue.then(work, work);
+    this.updateQueue = run.catch(() => {});
+    return run;
   }
 
   private async mirrorToReadModel(): Promise<void> {

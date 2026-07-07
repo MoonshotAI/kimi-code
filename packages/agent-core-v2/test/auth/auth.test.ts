@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
 import { ErrorCodes, KimiError } from '#/errors';
 import { IAuthSummaryService, IOAuthService, IOAuthToolkit } from '#/app/auth/auth';
 import { AuthSummaryService, OAuthService } from '#/app/auth/authService';
@@ -20,7 +21,7 @@ import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
 import { type ModelAlias } from '#/app/model/model';
-import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
+import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/app/provider/provider';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
@@ -59,9 +60,11 @@ describe('OAuthService', () => {
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
   let events: DomainEvent[];
+  let providerChangedEmitter: Emitter<ProvidersChangedEvent>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    providerChangedEmitter = new Emitter<ProvidersChangedEvent>();
     providers = {
       [OAUTH_PROVIDER]: {
         type: 'kimi',
@@ -117,7 +120,7 @@ describe('OAuthService', () => {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
           set: providerSet as unknown as IProviderService['set'],
-          onDidChangeProviders: (() => ({ dispose: () => { } })) as IProviderService['onDidChangeProviders'],
+          onDidChangeProviders: providerChangedEmitter.event,
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) => configBacking()[domain]) as IConfigService['get'],
@@ -318,6 +321,34 @@ describe('OAuthService', () => {
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
+  });
+
+  it('keeps an in-flight OAuth flow alive when unrelated providers change', async () => {
+    toolkit.login.mockImplementation(async (_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise(() => { });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    providerChangedEmitter.fire({ added: ['other-provider'], removed: [], changed: [] });
+
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+  });
+
+  it('aborts an in-flight OAuth flow when its provider is removed from config', async () => {
+    toolkit.login.mockImplementation(async (_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise(() => { });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    providerChangedEmitter.fire({ added: [], removed: [OAUTH_PROVIDER], changed: [] });
+
+    expect(svc.getFlow(OAUTH_PROVIDER)).toBeUndefined();
   });
 
   it('cancelLogin aborts a pending flow and marks it cancelled', async () => {

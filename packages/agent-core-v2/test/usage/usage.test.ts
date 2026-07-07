@@ -118,14 +118,29 @@ describe('AgentUsageService (wire-backed)', () => {
     ]);
   });
 
-  it('dispatch persists flat { type, model, usage } records (no payload key)', async () => {
+  it('dispatch persists flat { type, model, usage, usageScope } records (no payload key)', async () => {
     svc.record('model-a', a1);
 
     const records = await readRecords();
     expect(records).toEqual([
-      { type: 'usage.record', model: 'model-a', usage: a1 },
+      { type: 'usage.record', model: 'model-a', usage: a1, usageScope: 'session' },
     ]);
     expect('payload' in records[0]!).toBe(false);
+  });
+
+  it('marks turn-scoped sources with usageScope: turn for v1 wire compatibility', async () => {
+    svc.record('model-a', a1, { type: 'turn', turnId: 7, step: 2 });
+
+    const records = await readRecords();
+    expect(records).toEqual([
+      {
+        type: 'usage.record',
+        model: 'model-a',
+        usage: a1,
+        usageScope: 'turn',
+        context: { type: 'turn', turnId: 7, step: 2 },
+      },
+    ]);
   });
 
   it('replay rebuilds usage from persisted records on a fresh WireService (silent)', async () => {

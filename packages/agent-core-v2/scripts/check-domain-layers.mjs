@@ -67,6 +67,10 @@ const DOMAIN_LAYER = new Map([
   // (`sessionId`/`workspaceId`/`sessionDir`/`metaScope`/`cwd`); a pure seed
   // with no IO, so it sits in L1.
   ['sessionContext', 1],
+  // `scopeContext` is the Agent-scope seeded immutable facts value
+  // (`agentId` plus a persistence scope helper); a pure seed with no IO, so it
+  // sits in L1 beside `sessionContext`.
+  ['scopeContext', 1],
   // `git` is the App-scope `IGitService` that runs `git status` / `git diff`
   // against a local repo. Process spawning goes through `os/interface`
   // (`IHostProcessService`) and the lone path-existence probe through
@@ -83,8 +87,7 @@ const DOMAIN_LAYER = new Map([
   // persistence/ and os/ — the two-level scopes. `interface` holds contracts
   // (same layer as the old domains they replace); `backends` holds
   // implementations that may depend on cross-domain services at various layers.
-  // They are set high enough to absorb their highest real dependency
-  // (`persistence/backends` → `scopeContext` at L4 for the agent blob store).
+  // They are set high enough to absorb their highest real dependency.
   ['persistence/interface', 1],
   ['persistence/backends', 4],
   ['os/interface', 1],
@@ -99,6 +102,7 @@ const DOMAIN_LAYER = new Map([
   ['blob', 2],
   ['file', 2],
   ['config', 2],
+  ['workspaceLocalConfig', 2],
   ['sessionFs', 2],
   ['process', 2],
   ['workspaceRegistry', 2],
@@ -136,7 +140,6 @@ const DOMAIN_LAYER = new Map([
   ['plan', 4],
   ['goal', 4],
   ['swarm', 4],
-  ['scopeContext', 4],
   ['usage', 4],
   ['toolDedupe', 4],
   ['contextMemory', 4],
@@ -181,9 +184,9 @@ const DOMAIN_LAYER = new Map([
   // `workspaceCommand` orchestrates session-level workspace mutations
   // (`addAdditionalDir`): it reaches through `agentLifecycle` (L6) to the
   // `main` agent's `contextMemory` (L4) to mirror the action's stdout, and
-  // reads/writes the workspace-local config through `os/interface` (L1). Its
-  // highest real dependency is `agentLifecycle`, so it sits in L6 beside the
-  // other coordination domains.
+  // delegates project-local config persistence to `workspaceLocalConfig` (L2).
+  // Its highest real dependency is `agentLifecycle`, so it sits in L6 beside
+  // the other coordination domains.
   ['workspaceCommand', 6],
   // L7 — boundary
   ['approval', 7],
@@ -224,6 +227,7 @@ function domainFromRel(rel, { exemptRootFile }) {
     return segments[1] ? `${segments[0]}/${segments[1]}` : segments[0];
   }
   if (SCOPE_DIRS.has(segments[0])) {
+    if (segments.length === 2 && segments[1]?.endsWith('.ts')) return segments[0];
     // `src/{scope}/{domain}/…`
     if (segments[0] === 'agent' && segments[1] === 'task') return 'agentTask';
     if (segments[0] === 'agent' && segments[1] === 'plugin') return 'agentPlugin';

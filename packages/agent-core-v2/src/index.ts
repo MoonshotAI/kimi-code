@@ -73,6 +73,7 @@ export * from '#/app/gateway';
 
 export * from '#/session/workspaceContext';
 export * from '#/session/workspaceCommand';
+export * from '#/app/workspaceLocalConfig';
 export * from '#/app/workspaceRegistry';
 export * from '#/session/process';
 export * from '#/session/sessionFs';

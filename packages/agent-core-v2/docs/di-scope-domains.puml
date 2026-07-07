@@ -1,4 +1,4 @@
-@startuml agent-core-v2-domains
+@startuml di-scope-domains
 top to bottom direction
 skinparam shadowing false
 skinparam nodesep 28
@@ -31,6 +31,7 @@ package "App scope (process-wide)" #EAF3FB {
   rectangle "<b>sessionIndex</b>\n<size:9><i>App</i></size>\n  ISessionIndex" as sessionIndex #D6EAF8
   rectangle "<b>hostFs</b>\n<size:9><i>App</i></size>\n  IHostFileSystem" as hostFs #D6EAF8
   rectangle "<b>workspaceRegistry</b>\n<size:9><i>App</i></size>\n  IWorkspaceRegistry" as workspaceRegistry #D6EAF8
+  rectangle "<b>workspaceLocalConfig</b>\n<size:9><i>App</i></size>\n  IWorkspaceLocalConfigService" as workspaceLocalConfig #D6EAF8
   rectangle "<b>hostFolderBrowser</b>\n<size:9><i>App</i></size>\n  IHostFolderBrowser" as hostFolderBrowser #D6EAF8
   rectangle "<b>hostEnvironment</b>\n<size:9><i>App</i></size>\n  IHostEnvironment" as hostEnvironment #D6EAF8
   rectangle "<b>hostProcess</b>\n<size:9><i>App</i></size>\n  IHostProcessService" as hostProcess #D6EAF8
@@ -123,6 +124,8 @@ sessionExport --> sessionIndex #34495E
 sessionExport --> session_lifecycle #34495E
 sessionExport --> workspaceRegistry #34495E
 sessionExport --> log #34495E
+workspaceLocalConfig --> bootstrap #34495E
+workspaceLocalConfig --> hostFs #34495E
 hostFolderBrowser --> hostFs #34495E
 auth --> provider #34495E
 auth --> config #34495E
@@ -143,10 +146,9 @@ modelCatalog --> model #34495E
 modelCatalog --> config #34495E
 modelCatalog --> auth #34495E
 workspaceContext --> session_context #34495E
-workspaceCommand --> bootstrap #34495E
+workspaceCommand --> workspaceLocalConfig #34495E
 workspaceCommand --> workspaceContext #34495E
 workspaceCommand --> agent_lifecycle #34495E
-workspaceCommand --> hostFs #34495E
 sessionLog --> session_context #34495E
 sessionSkillCatalog --> skillCatalog #34495E
 sessionSkillCatalog --> plugin #34495E
