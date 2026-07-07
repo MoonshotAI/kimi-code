@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
+import { getRenderProfiler } from "./render-profiler.ts";
 import {
 	isOsc11BackgroundColorResponse,
 	parseOsc11BackgroundColor,
@@ -717,6 +718,7 @@ export class TUI extends Container {
 
 		this.terminal.showCursor();
 		this.terminal.stop();
+		getRenderProfiler().close();
 	}
 
 	requestRender(force = false): void {
@@ -1263,6 +1265,8 @@ export class TUI extends Container {
 
 	private doRender(): void {
 		if (this.stopped) return;
+		const profiler = getRenderProfiler();
+		const frameStart = profiler.enabled ? performance.now() : 0;
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
@@ -1278,6 +1282,7 @@ export class TUI extends Container {
 		};
 
 		// Render all components to get new lines
+		const buildStart = profiler.enabled ? performance.now() : 0;
 		let newLines = this.render(width);
 
 		// Composite overlays into the rendered lines (before differential compare)
@@ -1303,6 +1308,18 @@ export class TUI extends Container {
 		}
 
 		newLines = this.applyLineResets(newLines);
+
+		const buildMs = profiler.enabled ? performance.now() - buildStart : 0;
+		const recordFrame = (fullRedraw: boolean): void => {
+			if (!profiler.enabled) return;
+			profiler.recordFrame({
+				fullRedraw,
+				lines: newLines.length,
+				height,
+				buildMs,
+				totalMs: performance.now() - frameStart,
+			});
+		};
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
@@ -1331,6 +1348,7 @@ export class TUI extends Container {
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);
+			recordFrame(true);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
 			// Reset max lines when clearing, otherwise track growth
@@ -1596,6 +1614,7 @@ export class TUI extends Container {
 
 		// Write entire buffer at once
 		this.terminal.write(buffer);
+		recordFrame(false);
 
 		// Track cursor position for next render
 		// cursorRow tracks end of content (for viewport calculation)
