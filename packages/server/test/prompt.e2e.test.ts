@@ -445,7 +445,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const sid = await createSession(r);
 
     const bigPng = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const upload = buildMultipart({
       file: { fieldName: 'file', filename: 'big.png', contentType: 'image/png', data: bigPng },
@@ -488,7 +488,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
       throw new Error('expected a compression caption before the image part');
     }
     expect(caption.text).toContain('Image compressed');
-    expect(caption.text).toContain('3600x3600');
+    expect(caption.text).toContain('3600x1800');
     const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
     expect(pathMatch).not.toBeNull();
     const persisted = await readFile(pathMatch![1]!);
@@ -516,10 +516,10 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     ]);
     const sid = await createSession(r);
 
-    // Solid 3600×3600: over the edge cap but tiny in bytes, so it stays well
+    // Solid 3600×1800: over the edge cap but tiny in bytes, so it stays well
     // under Fastify's inline-JSON limit yet still benefits from downscaling.
     const base64 = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const res = await appOf(r).inject({

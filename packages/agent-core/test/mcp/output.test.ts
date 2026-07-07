@@ -337,7 +337,7 @@ describe('mcpResultToExecutableOutput', () => {
 
   test('downsamples an oversized real image instead of leaving it full-size', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(
@@ -361,7 +361,7 @@ describe('mcpResultToExecutableOutput', () => {
 
   test('annotates a downsampled image with a caption note and a readable original', async () => {
     const bigBytes = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );
 
     const out = await mcpResultToExecutableOutput(
@@ -372,7 +372,7 @@ describe('mcpResultToExecutableOutput', () => {
     // The caption rides the `note` side channel (model-only), keeping its
     // `<system>` wrapping; the output itself carries only the media.
     expect(out.note).toContain('Image compressed');
-    expect(out.note).toContain('3600x3600');
+    expect(out.note).toContain('3600x1800');
     const parts = out.output as ContentPart[];
     expect(parts.some((p) => p.type === 'text' && p.text.includes('Image compressed'))).toBe(
       false,
@@ -407,7 +407,7 @@ describe('mcpResultToExecutableOutput', () => {
   test('persists originals into the provided session originals dir', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const bigBytes = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );
 
     const out = await mcpResultToExecutableOutput(
@@ -432,7 +432,7 @@ describe('mcpResultToExecutableOutput', () => {
     // to prevent — and orphaning the persisted original.
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(
@@ -491,7 +491,7 @@ describe('mcpResultToExecutableOutput', () => {
       'sent 50x50 image/jpeg (100 KB). Fine detail may be lost. ' +
       'The uncompressed original was not preserved.</system>';
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(
@@ -502,9 +502,9 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__t',
     );
 
-    // The real caption (3600x3600) rides the note; the quoted one (100x100)
+    // The real caption (3600x1800) rides the note; the quoted one (100x100)
     // is tool output and stays where the tool put it.
-    expect(out.note).toContain('3600x3600');
+    expect(out.note).toContain('3600x1800');
     expect(out.note).not.toContain('100x100');
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
@@ -517,7 +517,7 @@ describe('mcpResultToExecutableOutput', () => {
     // into an unclosed <system> fragment.
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(

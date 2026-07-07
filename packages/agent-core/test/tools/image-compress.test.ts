@@ -178,7 +178,7 @@ describe('compressImageForModel — byte budget', () => {
   });
 
   it('keeps a translucent PNG as PNG when the budget allows', async () => {
-    const png = await translucentPng(3600, 3600);
+    const png = await translucentPng(3600, 1800);
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
     expect(result.mimeType).toBe('image/png');
@@ -263,7 +263,7 @@ describe('compressImageForModel — invariants', () => {
     const cases: Uint8Array[] = [
       await solidPng(4500, 2250),
       await noisePng(900, 900),
-      await translucentPng(3600, 3600),
+      await translucentPng(3600, 1800),
     ];
     for (const bytes of cases) {
       const result = await compressImageForModel(bytes, 'image/png');
@@ -352,7 +352,7 @@ describe('compressImageContentParts', () => {
   }
 
   it('compresses an oversized inline image part, leaving other parts untouched', async () => {
-    const big = await solidPng(3600, 3600);
+    const big = await solidPng(3600, 1800);
     const parts = [
       { type: 'text' as const, text: 'look at this' },
       { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } },
@@ -385,7 +385,7 @@ describe('compressImageContentParts', () => {
   });
 
   it('keeps an image part id when rewriting the compressed url', async () => {
-    const big = await solidPng(3600, 3600);
+    const big = await solidPng(3600, 1800);
     const parts = [
       { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big), id: 'att-1' } },
     ];
@@ -695,7 +695,7 @@ describe('compressImageContentParts — annotate', () => {
   }
 
   it('collects a caption for a compressed image and persists the original', async () => {
-    const big = await solidPng(3600, 3600);
+    const big = await solidPng(3600, 1800);
     const persisted: { bytes: Uint8Array; mimeType: string }[] = [];
     const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
     const out = await compressImageContentParts(parts, {
@@ -711,7 +711,7 @@ describe('compressImageContentParts — annotate', () => {
     expect(out.parts).toHaveLength(1);
     expect(out.parts[0]?.type).toBe('image_url');
     expect(out.captions).toHaveLength(1);
-    expect(out.captions[0]).toContain('3600x3600');
+    expect(out.captions[0]).toContain('3600x1800');
     expect(out.captions[0]).toContain('/tmp/originals/big.png');
     expect(persisted).toHaveLength(1);
     expect(persisted[0]?.mimeType).toBe('image/png');
@@ -730,7 +730,7 @@ describe('compressImageContentParts — annotate', () => {
   });
 
   it('captions without a path when persistence fails', async () => {
-    const big = await solidPng(3600, 3600);
+    const big = await solidPng(3600, 1800);
     const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
     const out = await compressImageContentParts(parts, {
       annotate: { persistOriginal: () => Promise.resolve(null) },

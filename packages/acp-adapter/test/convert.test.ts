@@ -338,7 +338,7 @@ describe('compressPromptImageParts', () => {
 
   it('downsamples an oversized inline image part and announces the compression', async () => {
     const originalsDir = await mkdtemp(join(tmpdir(), 'acp-originals-'));
-    const originalBase64 = await pngBase64(3600, 3600);
+    const originalBase64 = await pngBase64(3600, 1800);
     const parts = acpBlocksToPromptParts([imageBlock(originalBase64, 'image/png')]);
     const compressed = await compressPromptImageParts(parts, { originalsDir });
 
@@ -348,7 +348,7 @@ describe('compressPromptImageParts', () => {
     const caption = compressed[0];
     if (caption?.type !== 'text') throw new Error('expected a caption text part');
     expect(caption.text).toContain('Image compressed');
-    expect(caption.text).toContain('3600x3600');
+    expect(caption.text).toContain('3600x1800');
 
     const part = compressed[1];
     if (part?.type !== 'image_url') throw new Error('expected an image_url part');

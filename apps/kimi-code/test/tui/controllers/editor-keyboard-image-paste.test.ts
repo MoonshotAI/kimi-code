@@ -89,7 +89,7 @@ describe('clipboard image paste compression', () => {
   });
 
   it('downsamples an oversized pasted image before storing it', async () => {
-    const big = await solidPng(3600, 3600);
+    const big = await solidPng(3600, 1800);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness();
@@ -102,7 +102,7 @@ describe('clipboard image paste compression', () => {
 
     // Stored metadata reflects the compressed size.
     expect(Math.max(att.width, att.height)).toBeLessThanOrEqual(3000);
-    expect(att.placeholder).toContain('3000×3000');
+    expect(att.placeholder).toContain('3000×1500');
 
     // The stored bytes decode to the compressed dimensions — the thumbnail and
     // the submitted image both read from these bytes, so they cannot diverge.
@@ -112,7 +112,7 @@ describe('clipboard image paste compression', () => {
   });
 
   it('records and persists the pre-compression original for an oversized paste', async () => {
-    const big = await solidPng(3600, 3600);
+    const big = await solidPng(3600, 1800);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness();
@@ -122,7 +122,7 @@ describe('clipboard image paste compression', () => {
     if (att?.kind !== 'image') throw new Error('expected image attachment');
     expect(att.original).toBeDefined();
     expect(att.original?.width).toBe(3600);
-    expect(att.original?.height).toBe(3600);
+    expect(att.original?.height).toBe(1800);
     expect(att.original?.byteLength).toBe(big.length);
     expect(att.original?.mime).toBe('image/png');
 
@@ -135,7 +135,7 @@ describe('clipboard image paste compression', () => {
 
   it('persists the original into the session media-originals dir when the session is known', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-paste-session-'));
-    const big = await solidPng(3600, 3600);
+    const big = await solidPng(3600, 1800);
     readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
 
     const { store, pasteImage } = createPasteHarness({ sessionDir });
