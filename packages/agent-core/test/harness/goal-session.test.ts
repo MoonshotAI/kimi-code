@@ -291,7 +291,51 @@ describe('goal session end-to-end', () => {
     );
     const turnStarts = events.filter((e) => e['type'] === 'turn.started').length;
     expect(turnStarts).toBeGreaterThanOrEqual(2);
+    const completionEvent = events.find((event) => {
+      const change = event['change'] as Record<string, unknown> | undefined;
+      return event['type'] === 'goal.updated' && change?.['kind'] === 'completion';
+    });
+    expect(completionEvent?.['change']).toMatchObject({
+      kind: 'completion',
+      stats: expect.objectContaining({ turnsUsed: 2 }),
+    });
     expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+  });
+
+  it('does not start a synthetic continuation when creating the goal exhausts its turn budget', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, [
+      'CreateGoal',
+      'SetGoalBudget',
+    ]);
+    const api = new SessionAPIImpl(session);
+
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'create',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'work' }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'budget',
+      name: 'SetGoalBudget',
+      arguments: JSON.stringify({ value: 1, unit: 'turns' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Goal created with a one-turn budget.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'Please start a one-turn goal' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    expect(goal?.status).toBe('blocked');
+    expect(goal?.turnsUsed).toBe(1);
+    expect(scripted.calls).toHaveLength(3);
+    expect(events.filter((e) => e['type'] === 'turn.started')).toHaveLength(1);
+    expect(JSON.stringify(agent.context.history)).not.toContain(
+      'Continue working toward the active goal',
+    );
   });
 
   it('keeps the active turn alive (cancelable) while driving a goal created mid-turn', async () => {

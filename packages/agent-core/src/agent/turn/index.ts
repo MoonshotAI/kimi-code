@@ -370,6 +370,13 @@ export class TurnFlow {
         end.event.reason !== 'failed' &&
         end.event.reason !== 'filtered'
       ) {
+        // The ordinary turn created or resumed the goal, so it counts as the
+        // first active goal turn before the continuation driver takes over.
+        const countedGoal = await this.agent.goal.incrementTurn();
+        if (countedGoal?.budget.overBudget === true) {
+          await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
+          return end;
+        }
         return await this.driveGoal(
           this.allocateTurnId(),
           [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
