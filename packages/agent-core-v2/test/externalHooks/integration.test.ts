@@ -38,7 +38,7 @@ import {
 import { HookDefSchema, HOOKS_SECTION, hooksFromToml, hooksToToml } from '#/agent/externalHooks/configSection';
 import { makeHookRunner } from './runner-stub';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction';
-import { IAgentLoopService, type TurnAfterStepContext } from '#/agent/loop';
+import { IAgentLoopService, type AfterStepContext } from '#/agent/loop';
 import { IAgentPermissionGate } from '#/agent/permissionGate';
 import { IAgentPromptService } from '#/agent/prompt';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor';
@@ -78,13 +78,13 @@ function stdinScript(body: string): string {
   ].join('\n'));
 }
 
-function makeAfterStep(signal: AbortSignal): TurnAfterStepContext {
+function makeAfterStep(signal: AbortSignal): AfterStepContext {
   return {
     turnId: 0,
     step: 1,
     signal,
     usage: emptyUsage(),
-    stopReason: 'completed',
+    finishReason: 'completed',
     continue: false,
   };
 }
@@ -290,9 +290,9 @@ describe('IExternalHooksRunnerService integration', () => {
       const eventBus = ix.get(IEventBus);
 
       const signal = new AbortController().signal;
-      const filtered: TurnAfterStepContext = {
+      const filtered: AfterStepContext = {
         ...makeAfterStep(signal),
-        stopReason: 'filtered',
+        finishReason: 'filtered',
       };
       await loop.hooks.afterStep.run(filtered);
       expect(filtered.continue).toBe(false);

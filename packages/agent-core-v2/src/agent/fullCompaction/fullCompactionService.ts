@@ -16,7 +16,7 @@ import {
   sleepForRetry,
   type LLMRequestFinish,
 } from '#/agent/llmRequester';
-import { IAgentLoopService, type TurnErrorContext } from '#/agent/loop';
+import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop';
 import { isAbortError, isContextOverflowError } from '#/agent/loop/errors';
 import { IAgentProfileService } from '#/agent/profile';
 import { IAgentTurnService } from '#/agent/turn';
@@ -225,7 +225,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   }
 
   private async onLoopError(
-    context: TurnErrorContext,
+    context: LoopErrorContext,
     next: () => Promise<void>,
   ): Promise<void> {
     if (!isContextOverflowError(context.error)) {

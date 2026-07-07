@@ -155,7 +155,7 @@ function afterStep(
     step,
     signal,
     usage: ZERO_USAGE,
-    stopReason: 'completed',
+    finishReason: 'completed',
     continue: false,
   });
 }

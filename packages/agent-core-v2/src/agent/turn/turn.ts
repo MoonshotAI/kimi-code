@@ -1,7 +1,7 @@
 import { createDecorator } from "#/_base/di/instantiation";
-import type { TurnResult } from '#/agent/loop';
+import type { LoopRunResult } from '#/agent/loop';
 
-export type { TurnResult } from '#/agent/loop';
+export type { LoopRunResult as TurnResult } from '#/agent/loop';
 
 export interface Turn {
   readonly id: number;
@@ -11,7 +11,7 @@ export interface Turn {
    * step completion; rejects if the turn ends earlier.
    */
   readonly ready: Promise<void>;
-  readonly result: Promise<TurnResult>;
+  readonly result: Promise<LoopRunResult>;
 }
 
 export interface IAgentTurnService {

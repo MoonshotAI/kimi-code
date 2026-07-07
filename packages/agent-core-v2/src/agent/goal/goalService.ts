@@ -38,8 +38,8 @@ import {
 } from '#/agent/goal/tools/outcome-prompts';
 import {
   IAgentLoopService,
-  type TurnAfterStepContext,
-  type TurnBeforeStepContext,
+  type AfterStepContext,
+  type BeforeStepContext,
 } from '#/agent/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IAgentTurnService, type TurnResult } from '#/agent/turn';
@@ -370,14 +370,14 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.goalOutcomeContinuationTurns.delete(turnId);
   }
 
-  private async handleBeforeStep(ctx: TurnBeforeStepContext): Promise<void> {
+  private async handleBeforeStep(ctx: BeforeStepContext): Promise<void> {
     if (!this.goalDrivenTurns.has(ctx.turnId)) return;
     if (this.countedGoalTurns.has(ctx.turnId)) return;
     this.countedGoalTurns.add(ctx.turnId);
     await this.incrementTurn();
   }
 
-  private handleAfterStep(ctx: TurnAfterStepContext): void {
+  private handleAfterStep(ctx: AfterStepContext): void {
     if (this.goalDrivenTurns.has(ctx.turnId)) {
       const snapshot = this.accountTokenUsage(tokenUsageTotal(ctx.usage));
       if (snapshot?.budget.overBudget === true) {

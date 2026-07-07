@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentEventSinkService } from '#/agent/eventSink';
 import { IAgentGoalService, type AgentGoalService } from '#/agent/goal';
-import { IAgentLoopService, type TurnAfterStepContext } from '#/agent/loop';
+import { IAgentLoopService, type AfterStepContext } from '#/agent/loop';
 import { IAgentTurnService, type Turn, type TurnResult } from '#/agent/turn';
 import type { PersistedWireRecord, WireRecord } from '#/agent/wireRecord';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
@@ -62,12 +62,12 @@ async function runGoalStep(loopService: IAgentLoopService, turn: Turn): Promise<
     step: 1,
     signal: turn.abortController.signal,
   };
-  const afterStep: TurnAfterStepContext = {
+  const afterStep: AfterStepContext = {
     turnId: turn.id,
     step: 1,
     signal: turn.abortController.signal,
     usage: zeroUsage,
-    stopReason: 'completed' as const,
+    finishReason: 'completed' as const,
     continue: false,
   };
   await loopService.hooks.beforeStep.run(step);
@@ -81,12 +81,12 @@ async function runStepUsageHooks(
   turn: Turn,
   usage: TokenUsage,
 ): Promise<boolean> {
-  const afterStep: TurnAfterStepContext = {
+  const afterStep: AfterStepContext = {
     turnId: turn.id,
     step: 1,
     signal: turn.abortController.signal,
     usage,
-    stopReason: 'completed' as const,
+    finishReason: 'completed' as const,
     continue: false,
   };
   await loopService.hooks.afterStep.run(afterStep);
@@ -665,12 +665,12 @@ describe('AgentGoalService core workflow hooks', () => {
       step: 1,
       signal: turn.abortController.signal,
     };
-    const afterStep: TurnAfterStepContext = {
+    const afterStep: AfterStepContext = {
       turnId: turn.id,
       step: 1,
       signal: turn.abortController.signal,
       usage: zeroUsage,
-      stopReason: 'completed' as const,
+      finishReason: 'completed' as const,
       continue: false,
     };
     await loopService.hooks.beforeStep.run(step);

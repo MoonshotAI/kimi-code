@@ -32,9 +32,9 @@ import {
 } from './errors';
 import {
   IAgentLoopService,
-  type RunOptions,
-  type TurnAfterStepContext,
-  type TurnResult,
+  type LoopRunOptions,
+  type AfterStepContext,
+  type LoopRunResult,
 } from './loop';
 
 declare module '#/app/event/eventBus' {
@@ -74,7 +74,7 @@ export class AgentLoopService implements IAgentLoopService {
     @IConfigService private readonly config: IConfigService,
   ) { }
 
-  async run(options: RunOptions): Promise<TurnResult> {
+  async run(options: LoopRunOptions): Promise<LoopRunResult> {
     const { turnId } = options;
     const signal = options.signal ?? new AbortController().signal;
 
@@ -233,12 +233,12 @@ export class AgentLoopService implements IAgentLoopService {
     markStepStarted();
     this.emitStepCompleted(turnId, currentStep, stepUuid, usage, finishReason, response);
 
-    const afterStepContext: TurnAfterStepContext = {
+    const afterStepContext: AfterStepContext = {
       turnId,
       step: currentStep,
       signal,
       usage,
-      stopReason: finishReason,
+      finishReason,
       continue: false,
     };
     try {
