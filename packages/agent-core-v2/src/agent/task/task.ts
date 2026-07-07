@@ -10,7 +10,6 @@
 
 import { createDecorator } from '#/_base/di/instantiation';
 import type { ITaskHandle } from '#/app/task/task';
-import type { Hooks } from '#/hooks';
 import type {
   AgentTask,
   AgentTaskInfo,

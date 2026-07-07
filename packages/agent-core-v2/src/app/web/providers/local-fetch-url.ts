@@ -1,7 +1,7 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML as rawParseHTML } from 'linkedom';
 
-import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url';
+import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url-types';
 
 // Readability's .d.ts references the global `Document` type, but this
 // package compiles with `lib: ES2023` (no DOM). Extracting the

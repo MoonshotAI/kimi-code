@@ -149,11 +149,10 @@ export class SessionLegacyService implements ISessionLegacyService {
     const handle = await this.lifecycle.fork({
       sourceSessionId: sessionId,
       title: body.title ?? `Child: ${parentTitle || sessionId}`,
-      metadata: {
-        ...(body.metadata ?? {}),
+      metadata: Object.assign({}, body.metadata, {
         parent_session_id: sessionId,
         child_session_kind: CHILD_SESSION_KIND,
-      },
+      }),
     });
     const meta = await handle.accessor.get(ISessionMetadata).read();
     const ctx = handle.accessor.get(ISessionContext);

@@ -12,11 +12,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
-import {
-  SkillParseError,
-  UnsupportedSkillTypeError,
-  parseSkillText,
-} from './parser';
+import { UnsupportedSkillTypeError, parseSkillText } from './parser';
 import type { SkillDiscoveryResult, ISkillDiscovery } from './skillDiscovery';
 import type { SkillDefinition, SkillRoot, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';

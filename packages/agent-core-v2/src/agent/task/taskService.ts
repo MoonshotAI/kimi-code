@@ -54,9 +54,9 @@ import {
 import { LEGACY_BACKGROUND_SECTION, TASK_SECTION, type AgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
 import { TaskModel, taskStarted, taskTerminated } from './taskOps';
-import { TaskListTool } from '#/agent/task/tools/task-list';
-import { TaskOutputTool } from '#/agent/task/tools/task-output';
-import { TaskStopTool } from '#/agent/task/tools/task-stop';
+import '#/agent/task/tools/task-list';
+import '#/agent/task/tools/task-output';
+import '#/agent/task/tools/task-stop';
 
 interface ForegroundRelease {
   readonly promise: Promise<ForegroundTaskReleaseReason>;

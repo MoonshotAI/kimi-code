@@ -12,7 +12,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 import { LocalFetchURLProvider } from './providers/local-fetch-url';
-import type { UrlFetcher } from './tools/fetch-url';
+import type { UrlFetcher } from './tools/fetch-url-types';
 import { IWebFetchService, type WebFetchServiceOptions } from './web';
 
 export class WebFetchService implements IWebFetchService {

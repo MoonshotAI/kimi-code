@@ -72,10 +72,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     return generateHeroSlug(randomUUID(), new Set());
   }
 
-  async enter(
-    id = this.createPlanId(),
-    createFile = false,
-  ): Promise<void> {
+  async enter(id = this.createPlanId(), createFile = false): Promise<void> {
     if (this.isActive) {
       throw new Error('Already in plan mode');
     }

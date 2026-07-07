@@ -1,12 +1,11 @@
 /**
- * `web` domain (L4) — `FetchURL` builtin tool and its `UrlFetcher` contract.
+ * `web` domain (L4) — `FetchURL` builtin tool.
  *
- * Defines the `FetchURL` tool and the host-injected `UrlFetcher` interface
- * (plus `UrlFetchResult` / `HttpFetchError`). The tool reads its fetcher from
- * the App-scope `IWebFetchService` at registry-construction time and
- * self-registers via `registerTool(...)` at module load; the default service
- * falls back to the built-in `LocalFetchURLProvider`, so `FetchURL` is always
- * available without OAuth.
+ * Defines the `FetchURL` tool. The host-injected `UrlFetcher` contract lives
+ * in `fetch-url-types`; the tool reads its fetcher from the App-scope
+ * `IWebFetchService` at registry-construction time and self-registers via
+ * `registerTool(...)` at module load. The default service falls back to the
+ * built-in `LocalFetchURLProvider`, so `FetchURL` is always available without OAuth.
  */
 
 import { z } from 'zod';
@@ -24,48 +23,8 @@ import { ToolResultBuilder } from '#/agent/tool/result-builder';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebFetchService } from '../web';
+import { HttpFetchError, type UrlFetcher } from './fetch-url-types';
 import DESCRIPTION from './fetch-url.md?raw';
-
-// ── Provider interface (host-injected) ───────────────────────────────
-
-/**
- * How the returned content relates to the original response body.
- *
- * - `passthrough` — the body was already plain text / markdown and is
- *   returned verbatim, in full.
- * - `extracted` — the body was an HTML page; only the main article text
- *   was extracted and returned.
- */
-export type UrlFetchKind = 'passthrough' | 'extracted';
-
-export interface UrlFetchResult {
-  /** The text handed to the LLM. */
-  readonly content: string;
-  /** Whether `content` is a verbatim passthrough or extracted main text. */
-  readonly kind: UrlFetchKind;
-}
-
-export interface UrlFetcher {
-  fetch(
-    url: string,
-    options?: { toolCallId?: string; signal?: AbortSignal },
-  ): Promise<UrlFetchResult>;
-}
-
-/**
- * Thrown by a `UrlFetcher` when the upstream HTTP request completed but
- * returned a non-success status. The tool branches on this to surface
- * `Status: N` in the error message; non-HTTP failures (DNS, timeout,
- * connection reset, …) keep flowing through as plain `Error`.
- */
-export class HttpFetchError extends Error {
-  override readonly name = 'HttpFetchError';
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
 
 // ── Input schema ─────────────────────────────────────────────────────
 

@@ -69,7 +69,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
 
     this._register(
       toDisposable(() => {
-        for (const agentId of [...this.agentBindings.keys()]) {
+        for (const agentId of Array.from(this.agentBindings.keys())) {
           this.disposeAgentBindings(agentId);
         }
         this.todos = [];

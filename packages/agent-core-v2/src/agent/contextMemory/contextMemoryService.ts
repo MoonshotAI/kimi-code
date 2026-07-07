@@ -5,7 +5,13 @@
  * (`ContextMessage[]`): reads through `wire.getModel`, writes through the
  * wire-protocol 1.4 Ops (`append` / `clear` / `undo` / `applyCompaction`), with
  * `splice` retained for protocol 1.5 replay and the rare internal single-delete.
- * Every mutation still fires `onSpliced` from the live path only (replay rebuilds
+ * As the sole live mutation gateway for the history, it also cascades a
+ * `context_size.measured` Op alongside every mutation that changes the measured
+ * prefix — `clear` resets it, `applyCompaction` adopts `tokensAfter`, and
+ * `undo` / `splice` rebase it (to an estimate when the measured aggregate is
+ * truncated); `append` leaves the measured prefix untouched since new messages
+ * are the unmeasured tail (see `contextSizeService`). Every mutation still fires
+ * `onSpliced` from the live path only (replay rebuilds
  * the Model silently and never invokes these methods), so existing subscribers
  * (micro-compaction, context-injector, task-notification) observe the same
  * splice-shaped change events regardless of which 1.4 Op was persisted. Message
@@ -17,8 +23,11 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import { IEventBus } from '#/app/event/eventBus';
+import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
 import { IAgentWireService } from '#/wire/tokens';
+import type { Op } from '#/wire/op';
 import type { IWireService } from '#/wire/wireService';
 
 import {
@@ -91,7 +100,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   clear(): void {
     const deleteCount = this.get().length;
     if (deleteCount === 0) return;
-    this.wire.dispatch(contextClear({}));
+    this.wire.dispatch(contextClear({}), contextSizeMeasured({ length: 0, tokens: 0 }));
     this.eventBus.publish({ type: 'context.spliced', start: 0, deleteCount, messages: [] });
   }
 
@@ -99,7 +108,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     const history = this.get();
     const cut = computeUndoCut(history, count);
     if (cut.cutIndex >= 0 && cut.removedCount >= count) {
-      this.wire.dispatch(contextUndo({ count }));
+      this.wire.dispatch(contextUndo({ count }), ...this.sizeOpsForCut(cut.cutIndex, history));
       this.eventBus.publish({ type: 'context.spliced',
         start: cut.cutIndex,
         deleteCount: history.length - cut.cutIndex,
@@ -123,6 +132,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
         keptHeadUserMessageCount: result.keptHeadUserMessageCount,
         droppedCount: result.droppedCount,
       }),
+      contextSizeMeasured({ length: result.messages.length, tokens: result.tokensAfter }),
     );
     this.eventBus.publish({ type: 'context.spliced',
       start: 0,
@@ -142,13 +152,59 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     tokens?: number,
   ): void {
     const stamped = messages.map(ensureMessageId);
-    this.wire.dispatch(contextSplice({ start, deleteCount, messages: stamped, tokens }));
+    this.wire.dispatch(
+      contextSplice({ start, deleteCount, messages: stamped, tokens }),
+      ...this.sizeOpsForSplice(start, deleteCount, stamped, tokens),
+    );
     this.eventBus.publish({ type: 'context.spliced',
       start,
       deleteCount,
       messages: [...stamped],
       tokens,
     });
+  }
+
+  /**
+   * Cascade a `context_size.measured` Op when an undo truncates the measured
+   * prefix (`ContextSizeModel.length`). If the surviving context still covers
+   * the measured prefix, the measurement stays valid and nothing is emitted;
+   * otherwise the prefix is rebased to an estimate of the surviving messages
+   * (an aggregate measured count can't be truncated without per-message data).
+   */
+  private sizeOpsForCut(cutIndex: number, history: readonly ContextMessage[]): Op[] {
+    const model = this.wire.getModel(ContextSizeModel);
+    if (model.length <= cutIndex) return [];
+    return [
+      contextSizeMeasured({
+        length: cutIndex,
+        tokens: estimateTokensForMessages(history.slice(0, cutIndex)),
+      }),
+    ];
+  }
+
+  /**
+   * Cascade a `context_size.measured` Op when a splice touches the measured
+   * prefix. A splice confined to the unmeasured tail leaves the prefix intact
+   * and emits nothing; a splice that reaches into the prefix invalidates the
+   * measured aggregate, so the whole surviving context is rebased to an
+   * estimate (caller-provided `tokens` win when present).
+   */
+  private sizeOpsForSplice(
+    start: number,
+    deleteCount: number,
+    inserted: readonly ContextMessage[],
+    tokens?: number,
+  ): Op[] {
+    const model = this.wire.getModel(ContextSizeModel);
+    if (start >= model.length) return [];
+    const next = this.get().slice();
+    next.splice(start, deleteCount, ...inserted);
+    return [
+      contextSizeMeasured({
+        length: next.length,
+        tokens: tokens ?? estimateTokensForMessages(next),
+      }),
+    ];
   }
 }
 

@@ -1,4 +1,4 @@
-import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url';
+import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url-types';
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean | undefined }): Promise<string>;

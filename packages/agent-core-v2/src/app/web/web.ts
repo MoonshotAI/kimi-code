@@ -11,10 +11,10 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { UrlFetcher } from './tools/fetch-url';
+import type { UrlFetcher } from './tools/fetch-url-types';
 
-export type { UrlFetcher, UrlFetchKind, UrlFetchResult } from './tools/fetch-url';
-export { HttpFetchError } from './tools/fetch-url';
+export type { UrlFetcher, UrlFetchKind, UrlFetchResult } from './tools/fetch-url-types';
+export { HttpFetchError } from './tools/fetch-url-types';
 
 export interface WebFetchServiceOptions {
   /** URL fetch backend. Defaults to the built-in `LocalFetchURLProvider`. */

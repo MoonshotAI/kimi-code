@@ -662,6 +662,41 @@ describe('Agent context', () => {
     expect(contextSize.get(-1, -3)).toEqual({ size: 0, measured: 0, estimated: 0 });
   });
 
+  it('resets the measured context size when the context is cleared', () => {
+    ctx.appendAssistantTextWithUsage(1, 'answer', 1_000);
+    expect(contextSize.get().measured).toBe(1_000);
+
+    context.clear();
+
+    expect(contextSize.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
+  });
+
+  it('rebases the measured prefix to an estimate when undo truncates it', () => {
+    ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
+    ctx.appendAssistantTextWithUsage(2, 'a2', 2_000);
+    // The measured prefix covers the full four-message context.
+    expect(contextSize.get().measured).toBe(2_000);
+
+    ctx.undoHistory(1);
+
+    const surviving = context.get();
+    expect(surviving.map((m) => m.role)).toEqual(['user', 'assistant']);
+    const estimate = estimateTokensForMessages(surviving);
+    // The truncated prefix is rebased to an estimate of the surviving context.
+    expect(contextSize.get()).toEqual({ size: estimate, measured: estimate, estimated: 0 });
+  });
+
+  it('keeps the measured prefix when undo removes only the unmeasured tail', () => {
+    ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
+    ctx.appendUserMessage([{ type: 'text', text: 'unmeasured follow up' }]);
+    expect(contextSize.get().measured).toBe(1_000);
+
+    ctx.undoHistory(1);
+
+    expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(contextSize.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
+  });
+
   it('undo only counts real user prompts, skipping task notifications', () => {
     ctx.appendAssistantText(1, 'first response');
     ctx.appendAssistantText(2, 'second response');
