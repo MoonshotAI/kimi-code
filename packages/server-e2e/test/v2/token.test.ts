@@ -17,7 +17,7 @@ import {
   loadLocalServerToken,
   resolveKimiHome,
   serverTokenPath,
-} from '../../src/v2/index.js';
+} from '../../src/v2/token.js';
 
 describe('local token discovery', () => {
   let home: string | undefined;

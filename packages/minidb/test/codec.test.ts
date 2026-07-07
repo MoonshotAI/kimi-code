@@ -78,8 +78,8 @@ test('crc mismatch throws CorruptFrameError with offset', () => {
 test('finish() reports a torn trailing partial frame at the valid-data offset', () => {
   const p = new FrameParser();
   const good = encodeFrame({ type: TYPE_SET, key: B('ok'), value: B('v') });
-  [...p.feed(good)];
-  [...p.feed(Buffer.from([0x4d, 0x44, 0x01]))]; // magic + type: incomplete header
+  void [...p.feed(good)];
+  void [...p.feed(Buffer.from([0x4d, 0x44, 0x01]))]; // magic + type: incomplete header
   assert.throws(
     () => p.finish(),
     (e) => e instanceof CorruptFrameError && e.offset === good.length,
@@ -90,7 +90,7 @@ test('finish() returns the clean EOF offset when there is no leftover', () => {
   const p = new FrameParser();
   const a = encodeFrame({ type: TYPE_SET, key: B('a'), value: B('1') });
   const b = encodeFrame({ type: TYPE_SET, key: B('b'), value: B('2') });
-  [...p.feed(Buffer.concat([a, b]))];
+  void [...p.feed(Buffer.concat([a, b]))];
   assert.equal(p.finish(), a.length + b.length);
 });
 

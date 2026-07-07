@@ -135,7 +135,7 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     const log2 = ix2.get(IAppendLogStore);
     const fresh = ix2.get(IAgentWireService);
 
-    fresh.replay({ type: 'permission.set_mode', mode: 'auto' });
+    void fresh.replay({ type: 'permission.set_mode', mode: 'auto' });
 
     expect(fresh.getModel(PermissionModeModel)).toBe('auto');
 

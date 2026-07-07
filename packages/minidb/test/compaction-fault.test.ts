@@ -8,7 +8,7 @@
 // fresh import of compaction.ts picks up that test's mocked fs.
 
 import assert from 'node:assert/strict';
-import { afterEach, test, vi } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 
 interface MockHandle {
   read?: (...args: unknown[]) => Promise<{ bytesRead: number }>;
@@ -64,7 +64,7 @@ test('copyFileRange tolerates a source close() failure (best-effort close)', asy
   });
   const { copyFileRange } = await import('../src/compaction.js');
   // The source close failure is swallowed; the copy itself succeeds.
-  await copyFileRange('/tmp/src', '/tmp/dst', 0, 1);
+  await expect(copyFileRange('/tmp/src', '/tmp/dst', 0, 1)).resolves.toBeUndefined();
 });
 
 test('copyFileRange tolerates a destination close() failure (best-effort close)', async () => {
@@ -83,7 +83,7 @@ test('copyFileRange tolerates a destination close() failure (best-effort close)'
   const { copyFileRange } = await import('../src/compaction.js');
   // Empty range (start===end) → no writes, only a dst.sync() then a failing
   // dst.close() that must be swallowed.
-  await copyFileRange('/tmp/src', '/tmp/dst', 0, 0);
+  await expect(copyFileRange('/tmp/src', '/tmp/dst', 0, 0)).resolves.toBeUndefined();
 });
 
 test('fsyncDir swallows a sync() failure and still closes the handle', async () => {

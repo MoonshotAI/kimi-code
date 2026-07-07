@@ -85,7 +85,7 @@ export class WAL {
       this.queuedBytes += frame.length;
       if (!this.flushing && !this.scheduled) {
         this.scheduled = true;
-        setImmediate(() => this.flushBatch());
+        setImmediate(() => { void this.flushBatch(); });
       }
     });
     return { offset, done };
@@ -142,7 +142,7 @@ export class WAL {
         this.inflight = null;
         if (this.queue.length > 0 && !this.closed) {
           this.scheduled = true;
-          setImmediate(() => this.flushBatch());
+          setImmediate(() => { void this.flushBatch(); });
         }
       }
     };

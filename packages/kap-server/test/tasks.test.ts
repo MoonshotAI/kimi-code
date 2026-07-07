@@ -6,8 +6,7 @@ import {
   IAgentLifecycleService,
   IAgentTaskService,
   ISessionLifecycleService,
-  modelResolverSeed,
-  SingleModelResolver,
+  IModelResolver,
   type AgentTask,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -50,17 +49,19 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tasks-'));
     // Seed a stub ISessionModelResolver so the agent scope can instantiate if a
     // transitive service needs it; IAgentTaskService itself does not.
-    const modelResolver = new SingleModelResolver({
-      type: 'openai',
-      model: 'stub',
-      apiKey: 'stub',
-    });
+    const modelResolver: IModelResolver = {
+      _serviceBrand: undefined,
+      resolve: () => {
+        throw new Error('modelResolver.resolve not exercised in this test');
+      },
+      findByName: () => [],
+    };
     server = await startServer({
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: modelResolverSeed(modelResolver),
+      seeds: [[IModelResolver, modelResolver]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });

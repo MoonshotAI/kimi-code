@@ -10,7 +10,7 @@
  *   (default)          rewrite all consumer files (src + test) EXCEPT src/index.ts
  *   --only=<reldir>    limit consumer rewriting to one barrel, e.g. app/event
  *   --entry            regenerate src/index.ts only (no consumer rewriting)
- *   --delete-barrels   delete every domain barrel (src/**/index.ts except entry)
+ *   --delete-barrels   delete every domain barrel (per-domain src index.ts except entry)
  *   --list-registers   print the top-level register* files (coverage set)
  *   --verify-coverage  exit non-zero if any register file is unreachable from entry
  *   --dry-run          report planned edits without writing
@@ -65,7 +65,7 @@ function resolveName(barrel, name) {
       break;
     }
   }
-  if (leafName == null) leafName = (sym && sym.getName()) || name;
+  if (leafName === null) leafName = (sym && sym.getName()) || name;
   return { leafFile: leaf.getFilePath(), leafName };
 }
 
@@ -118,7 +118,7 @@ function allLeavesUnderDir(dirAbs) {
     }
   };
   walk(dirAbs);
-  return out.sort();
+  return out.sort((a, b) => a.localeCompare(b));
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
   const report = { imports: 0, exports: 0, manuals: [], sideEffects: 0 };
 
   // Imports.
-  for (const decl of [...sf.getImportDeclarations()]) {
+  for (const decl of sf.getImportDeclarations()) {
     const barrel = barrelOfDecl(decl);
     if (!barrel) continue;
     if (onlyBarrelPath && barrel.getFilePath() !== onlyBarrelPath) continue;
@@ -187,7 +187,7 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
   }
 
   // Exports.
-  for (const decl of [...sf.getExportDeclarations()]) {
+  for (const decl of sf.getExportDeclarations()) {
     const barrel = barrelOfDecl(decl);
     if (!barrel) continue;
     if (onlyBarrelPath && barrel.getFilePath() !== onlyBarrelPath) continue;

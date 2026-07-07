@@ -310,12 +310,12 @@ describe('CronCreateTool', () => {
       harness.store.add({ cron: '*/5 * * * *', prompt: `seed-${i}`, recurring: true }, harness.now());
     }
 
-    const first = await tool.resolveExecution({
+    const first = tool.resolveExecution({
       cron: '*/5 * * * *',
       prompt: 'first',
       recurring: true,
     });
-    const second = await tool.resolveExecution({
+    const second = tool.resolveExecution({
       cron: '*/5 * * * *',
       prompt: 'second',
       recurring: true,
@@ -375,7 +375,7 @@ describe('CronCreateTool', () => {
   it('uses the execution-time clock for createdAt', async () => {
     const harness = createToolHarness();
     const tool = new CronCreateTool(false, harness.cron);
-    const execution = await tool.resolveExecution({
+    const execution = tool.resolveExecution({
       cron: '*/5 * * * *',
       prompt: 'delayed approval',
       recurring: true,
@@ -396,17 +396,17 @@ describe('CronCreateTool', () => {
     const harness = createToolHarness();
     const tool = new CronCreateTool(false, harness.cron);
 
-    const a = await tool.resolveExecution({
+    const a = tool.resolveExecution({
       cron: '*/5\n* * * *',
       prompt: 'same',
       recurring: true,
     });
-    const b = await tool.resolveExecution({
+    const b = tool.resolveExecution({
       cron: '0 9 * * *',
       prompt: 'same',
       recurring: true,
     });
-    const c = await tool.resolveExecution({
+    const c = tool.resolveExecution({
       cron: '*/5 * * * *',
       prompt: 'different',
       recurring: true,

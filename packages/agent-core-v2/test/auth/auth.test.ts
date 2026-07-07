@@ -5,7 +5,7 @@
  * storage is exercised.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { resolveKimiCodeRuntimeAuth } from '@moonshot-ai/kimi-code-oauth';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -42,7 +42,7 @@ const deviceAuth = {
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 interface FakeToolkit {
-  readonly login: ReturnType<typeof vi.fn>;
+  readonly login: Mock<(...args: any[]) => any>;
   readonly logout: ReturnType<typeof vi.fn>;
   readonly getCachedAccessToken: ReturnType<typeof vi.fn>;
   readonly tokenProvider: ReturnType<typeof vi.fn>;
@@ -109,7 +109,7 @@ describe('OAuthService', () => {
     });
     events = [];
     toolkit = {
-      login: vi.fn(),
+      login: vi.fn<(...args: any[]) => any>(),
       logout: vi.fn().mockResolvedValue({ providerName: OAUTH_PROVIDER, ok: true }),
       getCachedAccessToken: vi.fn().mockResolvedValue(undefined),
       tokenProvider: vi.fn().mockReturnValue({ getAccessToken: async () => 'access-token' }),
@@ -185,7 +185,7 @@ describe('OAuthService', () => {
 
   it('startLogin resolves a device-code flow and flips to authenticated on success', async () => {
     stubManagedModelsFetch();
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
     });
@@ -210,7 +210,7 @@ describe('OAuthService', () => {
 
   it('provisions the managed provider through the provider service after login', async () => {
     stubManagedModelsFetch();
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
     });
@@ -232,7 +232,7 @@ describe('OAuthService', () => {
   it('startLogin resolves a default oauth ref for the managed provider without oauth config', async () => {
     providers[OAUTH_PROVIDER] = { type: 'kimi', baseUrl: 'https://api.example.com' };
     stubManagedModelsFetch();
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
     });
@@ -312,7 +312,7 @@ describe('OAuthService', () => {
   it('keeps a device-code login authenticated when model fetch is unavailable after authorization', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('network disabled in test'));
     vi.stubGlobal('fetch', fetchMock);
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
     });
@@ -329,7 +329,7 @@ describe('OAuthService', () => {
 
   it('refreshes managed models and sets the default model after a device-code login succeeds', async () => {
     const fetchMock = stubManagedModelsFetch();
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return { providerName: OAUTH_PROVIDER, ok: true };
     });
@@ -356,7 +356,7 @@ describe('OAuthService', () => {
   });
 
   it('keeps an in-flight OAuth flow alive when unrelated providers change', async () => {
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return new Promise(() => { });
     });
@@ -370,7 +370,7 @@ describe('OAuthService', () => {
   });
 
   it('aborts an in-flight OAuth flow when its provider is removed from config', async () => {
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return new Promise(() => { });
     });
@@ -385,7 +385,7 @@ describe('OAuthService', () => {
 
   it('cancelLogin aborts a pending flow and marks it cancelled', async () => {
     let capturedSignal: AbortSignal | undefined;
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       capturedSignal = options.signal;
       options.onDeviceCode(deviceAuth);
       return new Promise(() => { });
@@ -400,7 +400,7 @@ describe('OAuthService', () => {
   });
 
   it('logout delegates to the toolkit and clears any pending flow', async () => {
-    toolkit.login.mockImplementation(async (_provider, options) => {
+    toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return new Promise(() => { });
     });
@@ -785,7 +785,7 @@ describe('AuthSummaryService', () => {
       type: 'kimi',
       oauth: { storage: 'file', key: 'oauth/kimi-code' },
     };
-    oauthStatus.mockImplementation(async (name: string) => {
+    oauthStatus.mockImplementation((name: string) => {
       if (name === OTHER_OAUTH) throw new Error('No OAuth manager configured');
       return { loggedIn: true, provider: name };
     });

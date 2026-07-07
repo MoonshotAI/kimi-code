@@ -21,7 +21,7 @@ import {
 } from '#/session/agentLifecycle/tools/subagent-task';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -200,8 +200,8 @@ function createAgentTaskService(options: {
   const ctx = createTestAgent(...overrides);
 
   const emittedEvents: Array<{ type: string; info?: unknown }> = [];
-  const events = ctx.get(IAgentEventSinkService);
-  const disposable = events.on((event) => {
+  const events = ctx.get(IEventBus);
+  const disposable = events.subscribe((event) => {
     emittedEvents.push(event as { type: string; info?: unknown });
   });
 

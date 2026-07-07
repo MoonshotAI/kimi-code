@@ -1,20 +1,23 @@
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextMemoryService } from '#/agent/contextMemory';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentContextProjectorService } from '#/agent/contextProjector';
+import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
-import { IAgentContextSizeService } from '#/agent/contextSize';
-import { IAgentProfileService } from '#/agent/profile';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry';
-import { IAgentUsageService } from '#/agent/usage';
-import { IConfigService } from '#/app/config';
-import { APIStatusError, emptyUsage, type Message, type ModelCapability } from '#/app/llmProtocol';
-import type { Model } from '#/app/model';
-import { ITelemetryService } from '#/app/telemetry';
-import { ILogService } from '#/_base/log';
+import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentUsageService } from '#/agent/usage/usage';
+import { IConfigService } from '#/app/config/config';
+import { APIStatusError } from '#/app/llmProtocol/errors';
+import { emptyUsage } from '#/app/llmProtocol/usage';
+import type { Message } from '#/app/llmProtocol/message';
+import type { ModelCapability } from '#/app/llmProtocol/capability';
+import type { LLMEvent, Model } from '#/app/model/modelInstance';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ILogService } from '#/_base/log/log';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const capabilities: ModelCapability = {
@@ -156,6 +159,8 @@ describe('AgentLLMRequesterService strict resend', () => {
     const model = createModel({ value: 0 });
     Object.defineProperty(model, 'request', {
       value: async function* () {
+        const events: LLMEvent[] = [];
+        for (const event of events) yield event;
         throw new APIStatusError(401, 'unauthorized');
       },
     });

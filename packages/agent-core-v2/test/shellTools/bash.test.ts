@@ -665,7 +665,7 @@ function context(
   signal = new AbortController().signal,
   onForegroundTaskStart?: (taskId: string) => void,
 ) {
-  return { turnId: '0', toolCallId: 'call_bash', args, signal, onForegroundTaskStart };
+  return { turnId: 0, toolCallId: 'call_bash', args, signal, onForegroundTaskStart };
 }
 
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {

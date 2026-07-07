@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 
-import { createTestAgent, execEnvServices, type TestAgentContext } from '../harness';
+import { createTestAgent, execEnvServices, hostEnvironmentServices, type TestAgentContext } from '../harness';
 
 const profile: ResolvedAgentProfile = {
   name: 'agents-profile',
@@ -38,10 +38,8 @@ describe('AgentProfileService.applyProfile', () => {
     // never leak into the assertions.
     const fs = new HostFileSystem();
     ctx = createTestAgent(
-      execEnvServices({
-        hostEnvironment: { homeDir },
-        hostFs: fs,
-      }),
+      execEnvServices({ hostFs: fs }),
+      hostEnvironmentServices(homeDir),
       { cwd: workDir },
     );
     return { ctx, profile: ctx.get(IAgentProfileService) };

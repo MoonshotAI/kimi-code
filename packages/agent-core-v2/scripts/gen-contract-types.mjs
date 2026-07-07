@@ -73,7 +73,7 @@ try {
   });
 } catch (err) {
   const code = err && typeof err === 'object' && 'status' in err ? err.status : 'unknown';
-  log(`tsc exited ${code} (non-fatal; declarations are still emitted)`);
+  log(`tsc exited ${String(code)} (non-fatal; declarations are still emitted)`);
 }
 
 // 2. Detect impl files + registered class names (AST only).

@@ -39,16 +39,16 @@ export async function resolveKimiHome(homeDir?: string): Promise<string> {
     typeof process !== 'undefined' ? process.env?.['KIMI_CODE_HOME'] : undefined;
   if (envHome !== undefined && envHome.length > 0) return envHome;
   if (!isNode()) return `.${'kimi-code'}`;
-  const [{ homedir }, { join }] = await Promise.all([import('node:os'), import('node:path')]);
-  return join(homedir(), `.${'kimi-code'}`);
+  const [{ homedir }, path] = await Promise.all([import('node:os'), import('node:path')]);
+  return path.join(homedir(), `.${'kimi-code'}`);
 }
 
 /** Absolute path of the persistent token file for a given home dir. */
 export async function serverTokenPath(homeDir?: string): Promise<string> {
   const home = await resolveKimiHome(homeDir);
   if (!isNode()) return `${home}/${SERVER_TOKEN_FILE}`;
-  const { join } = await import('node:path');
-  return join(home, SERVER_TOKEN_FILE);
+  const path = await import('node:path');
+  return path.join(home, SERVER_TOKEN_FILE);
 }
 
 /**

@@ -8,8 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  type DomainEvent,
   IAgentContextMemoryService,
-  IAgentEventSinkService,
+  IEventBus,
   IAgentLifecycleService,
   IAgentPromptLegacyService,
   ILogService,
@@ -20,7 +21,7 @@ import {
   ISessionMetadata,
   IWorkspaceRegistry,
 } from '@moonshot-ai/agent-core-v2';
-import { sessionSnapshotResponseSchema, type AgentEvent } from '@moonshot-ai/protocol';
+import { sessionSnapshotResponseSchema } from '@moonshot-ai/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerSnapshotRoutes } from '../src/routes/snapshot';
@@ -260,10 +261,10 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     if (agents.getHandle('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
-  function emit(sessionId: string, event: AgentEvent): void {
+  function emit(sessionId: string, event: DomainEvent): void {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     const main = session!.accessor.get(IAgentLifecycleService).getHandle('main');
-    main!.accessor.get(IAgentEventSinkService).emit(event);
+    main!.accessor.get(IEventBus).publish(event);
   }
 
   async function snapshot(sid: string) {
@@ -296,8 +297,8 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
     emit(sid, {
       type: 'turn.started',
       turnId: 1,
-    } as unknown as AgentEvent); // durable → seq 1
-    emit(sid, { type: 'assistant.delta', turnId: 1, delta: 'Hello' } as unknown as AgentEvent); // volatile
+    } as unknown as DomainEvent); // durable → seq 1
+    emit(sid, { type: 'assistant.delta', turnId: 1, delta: 'Hello' } as unknown as DomainEvent); // volatile
 
     const snap = await snapshot(sid);
     expect(snap.as_of_seq).toBe(1);

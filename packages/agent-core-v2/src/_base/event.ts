@@ -138,7 +138,7 @@ export class AsyncEmitter<T extends IWaitUntil> extends Emitter<T> {
         continue;
       }
 
-      Object.freeze(thenables);
+      void Object.freeze(thenables);
       const settled = await Promise.allSettled(thenables);
       for (const result of settled) {
         if (result.status === 'rejected') {

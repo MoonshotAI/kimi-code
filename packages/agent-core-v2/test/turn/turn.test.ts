@@ -7,8 +7,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { type ModelCapability } from '#/app/llmProtocol/capability';
 import { APIConnectionError, APIEmptyResponseError, APIStatusError, APITimeoutError } from '#/app/llmProtocol/errors';
 import { type ToolCall } from '#/app/llmProtocol/message';
-import { type ProviderRequestAuth } from '#/app/llmProtocol/request';
 import type { ChatProvider } from '#/app/llmProtocol/provider';
+import { IProtocolAdapterRegistry } from '#/app/protocol/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { abortError, abortable } from '#/_base/utils/abort';
@@ -22,8 +22,7 @@ import { makeHookRunner } from '../externalHooks/runner-stub';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
-import { registerMediaTools } from '#/agent/media/registerMediaTools';
-import { type VideoUploader } from '#/agent/media/tools/read-media';
+import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
@@ -1753,10 +1752,27 @@ describe('Agent turn flow', () => {
         throw new APIStatusError(401, 'Unauthorized', 'req-upload-401');
       }),
     } as unknown as ChatProvider;
-    const ctx = testAgent(oauthOptions.services, execEnvServices({ hostFs: createVideoHostFs() }), {
-      initialConfig: oauthOptions.initialConfig,
-      autoConfigure: false,
-    });
+    // The OAuth force-refresh-on-401 behavior now lives inside the `Model`
+    // god-object (`uploadVideo` runs the provider call through the auth-refresh
+    // wrapper). Inject the fake provider via the protocol registry so the
+    // resolved Model uses it, then bind `model.uploadVideo` into the media
+    // tool's `VideoUploader` shape the way the production wiring does.
+    const fakeRegistry = {
+      _serviceBrand: undefined,
+      supportedProtocols: () => ['vertexai'] as const,
+      createChatProvider: () => provider,
+    } satisfies IProtocolAdapterRegistry & { createChatProvider: () => ChatProvider };
+    const ctx = testAgent(
+      oauthOptions.services,
+      appServices((reg) => {
+        reg.defineInstance(IProtocolAdapterRegistry, fakeRegistry);
+      }),
+      execEnvServices({ hostFs: createVideoHostFs() }),
+      {
+        initialConfig: oauthOptions.initialConfig,
+        autoConfigure: false,
+      },
+    );
     const profile = ctx.get(IAgentProfileService);
     profile.update({
       cwd: '/workspace',
@@ -1764,14 +1780,8 @@ describe('Agent turn flow', () => {
       systemPrompt: 'test system prompt',
       thinkingLevel: 'off',
     });
-    const withAuth = ctx.modelResolver.resolveAuth?.('kimi-code');
-    if (withAuth === undefined) throw new Error('OAuth model did not resolve auth wrapper');
-    const videoUploader: VideoUploader = (input) =>
-      withAuth((auth: ProviderRequestAuth) => {
-        const uploadVideo = provider.uploadVideo;
-        if (uploadVideo === undefined) throw new Error('Provider did not expose uploadVideo');
-        return uploadVideo.call(provider, input, { auth });
-      });
+    const videoUploader = createVideoUploader(ctx.modelResolver.resolve('kimi-code'));
+    if (videoUploader === undefined) throw new Error('OAuth model did not resolve a video uploader');
     const registration = registerMediaTools(ctx.get(IAgentToolRegistryService), {
       fs: ctx.get(IHostFileSystem),
       env: ctx.get(IHostEnvironment),

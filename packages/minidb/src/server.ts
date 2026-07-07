@@ -21,7 +21,7 @@ const reply = {
   // utf8).
   bulk: (v: unknown): Buffer => {
     if (v === undefined || v === null) return Buffer.from(NIL);
-    const b = Buffer.isBuffer(v) ? v : Buffer.from(String(v));
+    const b = Buffer.isBuffer(v) ? v : Buffer.from(String(v as string));
     return Buffer.concat([Buffer.from(`$${b.length}${CRLF}`), b, Buffer.from(CRLF)]);
   },
   array: (items: unknown[]): Buffer => {
@@ -165,7 +165,7 @@ export async function startServer({ dir, port = 6379, host = '127.0.0.1', fsyncP
   const server = net.createServer((socket: Socket) => {
     const parser = new RespParser();
     socket.on('data', (chunk: Buffer) => {
-      (async () => {
+      void (async () => {
         try {
           for (const args of parser.feed(chunk)) {
             const res = await handle(db, args);

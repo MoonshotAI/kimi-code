@@ -10,16 +10,17 @@
 import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration } from '#/_base/di/test';
 import { createHooks } from '#/hooks';
-import type { Hooks } from '#/hooks';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
   IAgentContextMemoryService,
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
-import { computeUndoCut } from '#/agent/contextMemory/contextOps';
+import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
 import { ensureMessageId } from '#/agent/contextMemory/messageId';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 
 /**
@@ -52,21 +53,22 @@ export interface StubContextMemory extends IAgentContextMemoryService {
  * and fires `onSpliced`, mirroring `AgentContextMemoryService.applySplice` enough
  * for collaborators (e.g. `DynamicInjectorService`) to react to splices.
  */
-export function stubContextMemory(): StubContextMemory {
+function publishSplice(
+  eventBus: IEventBus | undefined,
+  input: {
+    start: number;
+    deleteCount: number;
+    messages: readonly ContextMessage[];
+    tokens?: number;
+  },
+): void {
+  eventBus?.publish({ type: 'context.spliced', ...input });
+}
+
+export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
   const messages: ContextMessage[] = [];
-  const hooks = {
-    onSpliced: createHooks(['onSpliced'])['onSpliced'],
-  } as unknown as Hooks<{
-    onSpliced: {
-      start: number;
-      deleteCount: number;
-      messages: ContextMessage[];
-      tokens?: number;
-    };
-  }>;
   return {
     _serviceBrand: undefined,
-    hooks,
     get messages() {
       return messages;
     },
@@ -75,20 +77,20 @@ export function stubContextMemory(): StubContextMemory {
       const stamped = inserted.map(ensureMessageId);
       const start = messages.length;
       messages.push(...stamped);
-      void hooks.onSpliced.run({ start, deleteCount: 0, messages: [...stamped] });
+      publishSplice(eventBus, { start, deleteCount: 0, messages: [...stamped] });
     },
     clear: () => {
       const deleteCount = messages.length;
       if (deleteCount === 0) return;
       messages.splice(0, deleteCount);
-      void hooks.onSpliced.run({ start: 0, deleteCount, messages: [] });
+      publishSplice(eventBus, { start: 0, deleteCount, messages: [] });
     },
     undo: (count) => {
       const cut = computeUndoCut(messages, count);
       if (cut.cutIndex >= 0 && cut.removedCount >= count) {
         const deleteCount = messages.length - cut.cutIndex;
         messages.splice(cut.cutIndex, deleteCount);
-        void hooks.onSpliced.run({ start: cut.cutIndex, deleteCount, messages: [] });
+        publishSplice(eventBus, { start: cut.cutIndex, deleteCount, messages: [] });
       }
       return cut;
     },
@@ -96,7 +98,7 @@ export function stubContextMemory(): StubContextMemory {
       const shape = buildContextCompactionShape(messages, input);
       const previousLength = messages.length;
       messages.splice(0, previousLength, ...shape.messages);
-      void hooks.onSpliced.run({
+      publishSplice(eventBus, {
         start: 0,
         deleteCount: previousLength,
         messages: [...shape.messages],
@@ -109,7 +111,7 @@ export function stubContextMemory(): StubContextMemory {
     splice: (start, deleteCount, inserted, tokens) => {
       const stamped = inserted.map(ensureMessageId);
       messages.splice(start, deleteCount, ...stamped);
-      void hooks.onSpliced.run({
+      publishSplice(eventBus, {
         start,
         deleteCount,
         messages: [...stamped],
@@ -120,6 +122,46 @@ export function stubContextMemory(): StubContextMemory {
 }
 
 /**
+ * DI-constructible variant of {@link stubContextMemory}: publishes
+ * `context.spliced` to the Agent-scope {@link IEventBus} so collaborators
+ * (e.g. `AgentContextInjectorService`) react to splices exactly as they do
+ * against the real `AgentContextMemoryService`.
+ */
+class StubContextMemoryService implements IAgentContextMemoryService {
+  declare readonly _serviceBrand: undefined;
+  private readonly impl: StubContextMemory;
+  constructor(@IEventBus eventBus: IEventBus) {
+    this.impl = stubContextMemory(eventBus);
+  }
+  get messages(): readonly ContextMessage[] {
+    return this.impl.messages;
+  }
+  get(): readonly ContextMessage[] {
+    return this.impl.get();
+  }
+  append(...messages: readonly ContextMessage[]): void {
+    this.impl.append(...messages);
+  }
+  clear(): void {
+    this.impl.clear();
+  }
+  undo(count: number): UndoCut {
+    return this.impl.undo(count);
+  }
+  applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
+    return this.impl.applyCompaction(input);
+  }
+  splice(
+    start: number,
+    deleteCount: number,
+    messages: readonly ContextMessage[],
+    tokens?: number,
+  ): void {
+    this.impl.splice(start, deleteCount, messages, tokens);
+  }
+}
+
+/**
  * Register the default collaborators consumed by `AgentContextMemoryService`
  * (`IAgentWireRecordService`) and an in-memory `IAgentContextMemoryService`.
  * Tests that exercise the real `AgentContextMemoryService` should override
@@ -127,5 +169,6 @@ export function stubContextMemory(): StubContextMemory {
  */
 export function registerContextMemoryServices(reg: ServiceRegistration): void {
   reg.defineInstance(IAgentWireRecordService, stubWireRecord());
-  reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+  reg.define(IEventBus, EventBusService);
+  reg.define(IAgentContextMemoryService, StubContextMemoryService);
 }

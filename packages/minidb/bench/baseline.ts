@@ -25,7 +25,7 @@ async function tmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'baseline-bench-'));
 }
 
-async function bench(label: string, fn: () => Promise<unknown> | unknown) {
+async function bench(label: string, fn: () => unknown) {
   if (global.gc) global.gc();
   const t0 = performance.now();
   await fn();

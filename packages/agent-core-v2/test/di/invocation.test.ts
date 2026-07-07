@@ -30,17 +30,14 @@ class Service2 implements IService2 {
 }
 
 class Service1Consumer {
-  constructor(@IService1 service1: IService1) {
-    expect(service1).toBeInstanceOf(Service1);
-    expect(service1.c).toBe(1);
-  }
+  constructor(@IService1 readonly service1: IService1) {}
 }
 
 class Target2Dep {
-  constructor(@IService1 service1: IService1, @IService2 service2: IService2) {
-    expect(service1).toBeInstanceOf(Service1);
-    expect(service2).toBeInstanceOf(Service2);
-  }
+  constructor(
+    @IService1 readonly service1: IService1,
+    @IService2 readonly service2: IService2,
+  ) {}
 }
 
 describe('ServiceCollection', () => {
@@ -71,12 +68,16 @@ describe('ServiceCollection', () => {
     collection.set(IService1, new Service1());
 
     const service = new InstantiationService(collection);
-    service.createInstance(Service1Consumer);
+    const consumer = service.createInstance(Service1Consumer);
+    expect(consumer.service1).toBeInstanceOf(Service1);
+    expect(consumer.service1.c).toBe(1);
 
     // add IService2 AFTER the InstantiationService was built
     collection.set(IService2, new Service2());
 
-    service.createInstance(Target2Dep);
+    const target2 = service.createInstance(Target2Dep);
+    expect(target2.service1).toBeInstanceOf(Service1);
+    expect(target2.service2).toBeInstanceOf(Service2);
     service.invokeFunction((a) => {
       expect(a.get(IService1)).toBeInstanceOf(Service1);
       expect(a.get(IService2)).toBeInstanceOf(Service2);

@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -103,14 +103,16 @@ describe('resume round-trip diff diagnosis', () => {
       await wire2.restore();
       const r2 = wire2.getRecords();
 
+      expect(r2.length).toBe(r1.length);
+
       const a = r1[index] as Record<string, unknown> | undefined;
       const b = r2[index] as Record<string, unknown> | undefined;
       if (a === undefined || b === undefined) {
-        console.log(`r1[${index}] type=${a?.type}, r2[${index}] type=${b?.type} (one side undefined)`);
+        console.log(`r1[${index}] type=${String(a?.['type'])}, r2[${index}] type=${String(b?.['type'])} (one side undefined)`);
         continue;
       }
       const diff = fieldDiff(a, b);
-      console.log(`r1[${index}].type=${a.type}, r2[${index}].type=${b.type}`);
+      console.log(`r1[${index}].type=${String(a['type'])}, r2[${index}].type=${String(b['type'])}`);
       console.log(`changed fields: ${Object.keys(diff).join(', ') || '(none)'}`);
       for (const [key, value] of Object.entries(diff)) {
         console.log(`--- field "${key}" ---`);

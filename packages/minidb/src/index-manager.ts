@@ -54,7 +54,7 @@ export class UniqueViolationError extends Error {
 }
 
 function getField(doc: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((o, k) => (o == null ? undefined : (o as Record<string, unknown>)[k]), doc);
+  return path.split('.').reduce<unknown>((o, k) => (o === null || o === undefined ? undefined : (o as Record<string, unknown>)[k]), doc);
 }
 
 function stableStringify(v: unknown): string {
@@ -66,7 +66,7 @@ function stableStringify(v: unknown): string {
 
 function scalarKey(v: unknown): string {
   const t = typeof v;
-  if (t === 'string' || t === 'number' || t === 'boolean') return `${t}:${v}`;
+  if (t === 'string' || t === 'number' || t === 'boolean') return `${t}:${String(v)}`;
   // Canonicalize property order so {a:1,b:2} and {b:2,a:1} hash to the same
   // key; JSON.stringify alone preserves insertion order and would split them.
   return `json:${stableStringify(v)}`;
@@ -290,8 +290,14 @@ export class IndexManager {
     const idx = this.get(name);
     if (idx.type !== 'range') throw new Error(`index "${name}" is not a range index`);
     const r: RangeOptions<number> = {};
-    if (opts.min !== undefined) (opts.minExclusive ? (r.gt = opts.min) : (r.gte = opts.min));
-    if (opts.max !== undefined) (opts.maxExclusive ? (r.lt = opts.max) : (r.lte = opts.max));
+    if (opts.min !== undefined) {
+      if (opts.minExclusive) r.gt = opts.min;
+      else r.gte = opts.min;
+    }
+    if (opts.max !== undefined) {
+      if (opts.maxExclusive) r.lt = opts.max;
+      else r.lte = opts.max;
+    }
     if (opts.offset) r.offset = opts.offset;
     if (opts.count !== undefined) r.count = opts.count;
     if (opts.reverse) r.reverse = true;

@@ -28,7 +28,6 @@ const gc = (): void => {
   }
 };
 const mib = (n: number): string => (n / 1048576).toFixed(1) + ' MiB';
-const kb = (n: number): string => (n / 1024).toFixed(1) + ' KiB';
 const fmt = (n: number): string => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
 
 interface Snap {

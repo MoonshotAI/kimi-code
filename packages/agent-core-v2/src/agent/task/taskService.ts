@@ -467,7 +467,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     entry.foregroundSignalCleanup = undefined;
     this.applyDetachTimeout(entry);
     try {
-      const onDetach = entry.onDetachFn ?? entry.task?.onDetach;
+      const onDetach =
+        entry.onDetachFn ??
+        (entry.task === undefined ? undefined : entry.task.onDetach?.bind(entry.task));
       onDetach?.();
     } catch {
       /* detach has already succeeded; hooks must not make RPC fail */
@@ -546,7 +548,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
     if (!graceful) {
       try {
-        const forceStop = entry.forceStopFn ?? entry.task?.forceStop;
+        const forceStop =
+          entry.forceStopFn ??
+          (entry.task === undefined ? undefined : entry.task.forceStop?.bind(entry.task));
         await forceStop?.();
       } catch {
         /* best effort */

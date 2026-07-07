@@ -11,7 +11,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { type Model } from '#/app/model/modelInstance';
+import { type LLMEvent, type Model } from '#/app/model/modelInstance';
 import { IModelResolver } from '#/app/model/modelResolver';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -179,7 +179,8 @@ function createRecordingModel(
       return build(thinkingEffort);
     },
     request: async function* () {
-      return;
+      const events: LLMEvent[] = [];
+      for (const event of events) yield event;
     },
   });
   return build(null);
@@ -249,7 +250,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       },
     });
 
-    host.wire.replay(...records);
+    void host.wire.replay(...records);
     expect(modelOf(host.wire).cwd).toBe('/work');
     expect(modelOf(host.wire).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
     expect(replayChdir).toBe(0);
@@ -269,7 +270,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     // Fresh host whose config section would resolve differently is irrelevant:
     // the persisted resolved value ('on') is restored verbatim.
     const host = buildHost('profile-replay-thinking');
-    host.wire.replay(...records);
+    void host.wire.replay(...records);
     expect(modelOf(host.wire).thinkingLevel).toBe('on');
   });
 

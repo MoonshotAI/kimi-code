@@ -98,6 +98,7 @@ class MemoryHostFs implements IHostFileSystem {
   }
 
   async *readLines(): AsyncGenerator<string> {
+    yield* [];
     throw new Error('not implemented');
   }
 

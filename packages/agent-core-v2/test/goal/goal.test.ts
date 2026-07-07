@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { type AgentGoalService } from '#/agent/goal/goalService';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { IAgentTurnService, type Turn, type TurnResult } from '#/agent/turn/turn';
 import type { PersistedWireRecord, WireRecord } from '#/agent/wireRecord/wireRecord';
+import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
-import { ErrorCodes } from '#/errors';
+import { ErrorCodes, toKimiErrorPayload } from '#/errors';
 
 import {
   InMemoryWireRecordPersistence,
@@ -23,10 +24,8 @@ import { stubLoopWithHooks, stubTurn, type StubTurn } from '../turn/stubs';
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
 type GoalRecord = Extract<PersistedWireRecord, { type: `goal.${string}` }>;
-type AgentEvent = Parameters<IAgentEventSinkService['emit']>[0];
+type AgentEvent = DomainEvent;
 type GoalUpdatedEvent = Extract<AgentEvent, { type: 'goal.updated' }>;
-type GoalSnapshot = NonNullable<ReturnType<IAgentGoalService['getGoal']>['goal']>;
-type GoalChange = GoalUpdatedEvent['change'];
 
 const zeroUsage: TokenUsage = {
   inputCacheRead: 0,
@@ -94,12 +93,19 @@ async function runStepUsageHooks(
   return goals.getGoal().goal?.budget.overBudget === true;
 }
 
-async function endTurn(
-  turnService: IAgentTurnService,
+function endTurn(
+  eventBus: IEventBus,
   turn: Turn,
   result: TurnResult = { reason: 'completed' },
-): Promise<void> {
-  await turnService.hooks.onEnded.run({ turn, result });
+): void {
+  const error = result.error !== undefined ? toKimiErrorPayload(result.error) : undefined;
+  eventBus.publish({
+    type: 'turn.ended',
+    turnId: turn.id,
+    reason: result.reason,
+    error,
+    durationMs: 0,
+  });
 }
 
 describe('AgentGoalService', () => {
@@ -107,11 +113,7 @@ describe('AgentGoalService', () => {
   let context: IAgentContextMemoryService;
   let goals: GoalServiceTestManager;
   let records: PersistedWireRecord[];
-  let events: Array<{
-    readonly type: string;
-    readonly snapshot?: GoalSnapshot | null;
-    readonly change?: GoalChange;
-  }>;
+  let events: GoalUpdatedEvent[];
   let telemetry: TelemetryRecord[];
 
   beforeEach(() => {
@@ -125,8 +127,8 @@ describe('AgentGoalService', () => {
     context = ctx.get(IAgentContextMemoryService);
     goals = ctx.get(IAgentGoalService) as GoalServiceTestManager;
     records = persistence.records;
-    const eventSink = ctx.get(IAgentEventSinkService);
-    eventSink.on((event) => {
+    const eventBus = ctx.get(IEventBus);
+    eventBus.subscribe((event) => {
       if (event.type === 'goal.updated') events.push(event);
     });
   });
@@ -537,7 +539,7 @@ describe('AgentGoalService core workflow hooks', () => {
   let goals: IAgentGoalService;
   let turnService: StubTurn;
   let loopService: IAgentLoopService;
-  let eventSink: IAgentEventSinkService;
+  let eventBus: IEventBus;
 
   beforeEach(() => {
     turnService = stubTurn({ hasActiveTurn: true });
@@ -548,7 +550,7 @@ describe('AgentGoalService core workflow hooks', () => {
     );
     context = ctx.get(IAgentContextMemoryService);
     goals = ctx.get(IAgentGoalService);
-    eventSink = ctx.get(IAgentEventSinkService);
+    eventBus = ctx.get(IEventBus);
   });
 
   afterEach(async () => {
@@ -559,9 +561,9 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'finish the task' });
 
     const turn = makeTurn(1);
-    await turnService.hooks.onLaunched.run({ turn });
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
     await runGoalStep(loopService, turn);
-    await endTurn(turnService, turn);
+    endTurn(eventBus, turn);
 
     expect(goals.getGoal().goal).toMatchObject({
       status: 'active',
@@ -580,9 +582,9 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
 
     const turn = makeTurn(11);
-    await turnService.hooks.onLaunched.run({ turn });
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
     await runGoalStep(loopService, turn);
-    await endTurn(turnService, turn);
+    endTurn(eventBus, turn);
 
     expect(goals.getGoal().goal).toMatchObject({
       status: 'blocked',
@@ -597,7 +599,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 7 } }, 'model');
 
     const turn = turnService.launch();
-    await turnService.hooks.onLaunched.run({ turn });
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
 
     expect(
       await runStepUsageHooks(loopService, goals, turn, {
@@ -643,11 +645,11 @@ describe('AgentGoalService core workflow hooks', () => {
 
   it('continues after creating a goal mid-turn without counting the starter turn', async () => {
     const turn = makeTurn(2);
-    await turnService.hooks.onLaunched.run({ turn });
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
     await runGoalStep(loopService, turn);
 
     await goals.createGoal({ objective: 'finish the task' }, 'model');
-    await endTurn(turnService, turn);
+    endTurn(eventBus, turn);
 
     expect(goals.getGoal().goal).toMatchObject({
       status: 'active',
@@ -660,7 +662,7 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'finish the task' });
 
     const turn = makeTurn(3);
-    await turnService.hooks.onLaunched.run({ turn });
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
     const step = {
       turnId: turn.id,
       step: 1,
@@ -678,7 +680,7 @@ describe('AgentGoalService core workflow hooks', () => {
 
     await goals.markComplete({}, 'model');
     await loopService.hooks.afterStep.run(afterStep);
-    await endTurn(turnService, turn);
+    endTurn(eventBus, turn);
 
     expect(afterStep.continue).toBe(true);
     expect(goals.getGoal().goal).toBeNull();
@@ -693,8 +695,8 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'finish the task' });
 
     const turn = makeTurn(4);
-    await turnService.hooks.onLaunched.run({ turn });
-    await endTurn(turnService, turn, { reason: 'failed', error: new Error('boom') });
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    endTurn(eventBus, turn, { reason: 'failed', error: new Error('boom') });
 
     expect(goals.getGoal().goal).toMatchObject({
       status: 'paused',
@@ -707,8 +709,8 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'finish the task' });
 
     const turn = makeTurn(5);
-    await turnService.hooks.onLaunched.run({ turn });
-    await endTurn(turnService, turn, { reason: 'blocked' });
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    endTurn(eventBus, turn, { reason: 'blocked' });
 
     expect(goals.getGoal().goal).toMatchObject({
       status: 'blocked',

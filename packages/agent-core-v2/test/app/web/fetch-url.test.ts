@@ -11,7 +11,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
 import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
-import { FetchURLTool, type UrlFetcher, type UrlFetchResult } from '#/app/web/tools/fetch-url';
+import { FetchURLTool } from '#/app/web/tools/fetch-url';
+import type { UrlFetcher, UrlFetchResult } from '#/app/web/tools/fetch-url-types';
 
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
   return typeof (value as Promise<ToolExecution>).then === 'function';
@@ -70,7 +71,10 @@ describe('FetchURLTool abort signal', () => {
     const result = await execute(tool, 'https://example.com', controller.signal);
 
     expect(result.isError).toBe(true);
-    expect(String(result.output)).toContain('boom');
+    if (typeof result.output !== 'string') {
+      throw new Error('expected string error output');
+    }
+    expect(result.output).toContain('boom');
   });
 });
 

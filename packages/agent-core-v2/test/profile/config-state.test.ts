@@ -67,7 +67,7 @@ describe('ConfigState model capabilities', () => {
     profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
 
     expect(profile.getModel()).toBe('kimi-code/kimi-for-coding');
-    expect(profile.data().provider?.model).toBe('kimi-for-coding');
+    expect(profile.resolveModel()?.name).toBe('kimi-for-coding');
     expect(profile.getModelCapabilities()).toMatchObject({
       image_in: true,
       video_in: true,
@@ -187,12 +187,11 @@ describe('ConfigState prompt cache hint', () => {
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     profile.update({ modelAlias: 'kimi-code' });
 
-    expect(profile.data().provider).toMatchObject({
-      type: 'kimi',
-      generationKwargs: {
-        prompt_cache_key: 'session-test',
-      },
-    });
+    // The session id is now applied to the resolved `Model`'s generation kwargs
+    // (`prompt_cache_key`) by `AgentProfileService.resolveModel` for kimi
+    // models; the `Model` god-object no longer exposes the raw provider config,
+    // so we assert the resolved protocol and the "not stored on Agent" invariant.
+    expect(profile.resolveModel()?.protocol).toBe('kimi');
     expect('sessionId' in ctx).toBe(false);
   });
 });

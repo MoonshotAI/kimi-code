@@ -35,6 +35,8 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTurnService } from '#/agent/turn/turn';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ToolCall } from '#/app/llmProtocol/message';
+import { IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 import { stubApprovalService } from '../approval/stubs';
@@ -126,6 +128,7 @@ describe('AgentPermissionGate', () => {
         });
         reg.defineInstance(IAgentTurnService, stubTurnWithHooks());
         reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+        reg.define(IEventBus, EventBusService);
         reg.defineInstance(IAgentScopeContext, {
           _serviceBrand: undefined,
           agentId: 'main',
@@ -397,13 +400,14 @@ describe('AgentPermissionGate', () => {
     approvalResponse = { decision: 'approved', selectedLabel: 'Approve once' };
     const request = setApprovalRequest(async () => approvalResponse);
     const svc = make();
+    const eventBus = ix.get(IEventBus);
     disposables.add(
-      svc.hooks.onDidRequestApproval.register('test', (ctx) => {
+      eventBus.subscribe('permission.approval.requested', (ctx) => {
         permissionRequest(ctx);
       }),
     );
     disposables.add(
-      svc.hooks.onDidResolveApproval.register('test', (ctx) => {
+      eventBus.subscribe('permission.approval.resolved', (ctx) => {
         permissionResult(ctx);
       }),
     );
@@ -413,6 +417,7 @@ describe('AgentPermissionGate', () => {
 
     expect(request).toHaveBeenCalledTimes(1);
     expect(permissionRequest).toHaveBeenCalledWith({
+      type: 'permission.approval.requested',
       sessionId: 'test-session',
       agentId: 'main',
       turnId: 1,
@@ -427,6 +432,7 @@ describe('AgentPermissionGate', () => {
       },
     });
     expect(permissionResult).toHaveBeenCalledWith({
+      type: 'permission.approval.resolved',
       sessionId: 'test-session',
       agentId: 'main',
       turnId: 1,

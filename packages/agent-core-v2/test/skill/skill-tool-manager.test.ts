@@ -6,7 +6,7 @@ import type { ToolCall } from '#/app/llmProtocol/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { type SkillCatalog, type SkillDefinition } from '#/app/skillCatalog/types';
@@ -295,8 +295,8 @@ describe('ToolManager SkillTool restore behavior', () => {
       telemetryServices(telemetry),
     );
     context = ctx.get(IAgentContextMemoryService);
-    const events = ctx.get(IAgentEventSinkService);
-    emit = vi.spyOn(events, 'emit');
+    const events = ctx.get(IEventBus);
+    emit = vi.spyOn(events, 'publish');
   });
 
   afterEach(async () => {

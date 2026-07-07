@@ -368,7 +368,7 @@ describe('AgentTurnService wire state', () => {
     const log2 = ix2.get(IAppendLogStore);
     const fresh = ix2.get(IAgentWireService);
 
-    fresh.replay(...records);
+    void fresh.replay(...records);
 
     // nextTurnId advances past the replayed turnId (0 -> 1).
     expect(fresh.getModel(TurnModel)).toEqual({ nextTurnId: 1 });

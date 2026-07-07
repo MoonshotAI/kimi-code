@@ -9,7 +9,7 @@
 // their dynamic imports + query-string cache busting do not distort the
 // coverage report of this file (Node's coverage keys scripts by URL).
 
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -142,7 +142,7 @@ test('copyFileRange rejects end < start', async () => {
 test('fsyncDir syncs an existing directory without throwing', async () => {
   const dir = await tmpDir();
   try {
-    await fsyncDir(dir); // should not throw
+    await expect(fsyncDir(dir)).resolves.toBeUndefined();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -152,5 +152,5 @@ test('fsyncDir swallows errors when the directory cannot be opened', async () =>
   // A non-existent path makes fs.open reject → the catch branch runs and the
   // finally closes nothing (fh is null). Best-effort semantics.
   const bogus = path.join(os.tmpdir(), `minidb-no-such-dir-${Date.now()}`);
-  await fsyncDir(bogus); // must not throw
+  await expect(fsyncDir(bogus)).resolves.toBeUndefined();
 });

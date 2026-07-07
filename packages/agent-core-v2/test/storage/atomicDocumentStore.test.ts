@@ -88,7 +88,7 @@ describe('JsonAtomicDocumentStore', () => {
       });
     });
     await config.set<State>('session', 'state.json', { title: 'x' });
-    await fired;
+    await expect(fired).resolves.toBeUndefined();
   });
 });
 
@@ -139,6 +139,6 @@ describe('TomlAtomicDocumentStore', () => {
       });
     });
     await config.set<State>('session', 'config.toml', { title: 'x' });
-    await fired;
+    await expect(fired).resolves.toBeUndefined();
   });
 });

@@ -5,6 +5,7 @@ import { Emitter } from '#/_base/event';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { AgentPluginService } from '#/agent/plugin/agentPluginService';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart, ReloadSummary } from '#/app/plugin/types';
@@ -129,6 +130,7 @@ describe('AgentPluginService plugin session-start wiring', () => {
     ctx.get(IEventBus).publish({
       type: 'turn.started',
       turnId: 2,
+      origin: USER_PROMPT_ORIGIN,
     });
     await injectRegistered(ctx);
 

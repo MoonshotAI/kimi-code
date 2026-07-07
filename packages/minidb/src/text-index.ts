@@ -44,7 +44,7 @@ export function tokenize(str: unknown): string[] {
 }
 
 function stringLeaves(obj: unknown, acc: string[] = []): string[] {
-  if (obj == null) return acc;
+  if (obj === null || obj === undefined) return acc;
   if (typeof obj === 'string') {
     acc.push(obj);
     return acc;

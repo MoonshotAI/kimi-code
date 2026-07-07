@@ -61,7 +61,6 @@ import {
   IAuthSummaryService,
   ISessionBtwService,
   ISessionActivity,
-  ISessionContext,
   ISessionIndex,
   ISessionLifecycleService,
   ISessionMetadata,

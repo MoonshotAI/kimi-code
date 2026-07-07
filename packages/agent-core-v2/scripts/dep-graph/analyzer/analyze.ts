@@ -1039,7 +1039,7 @@ export function summarize(graph: Graph): string {
   const byKind = new Map<string, number>();
   for (const e of graph.edges) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
   const kindSummary = [...byKind.entries()]
-    .sort()
+    .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([k, n]) => `${k}=${n}`)
     .join(' ');
   return `services=${graph.services.length} edges=${graph.edges.length} ${kindSummary}`;

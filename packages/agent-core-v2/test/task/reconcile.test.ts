@@ -12,7 +12,7 @@ import {
   IAgentTaskService,
   type AgentTaskInfo,
 } from '#/agent/task/task';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
   createTestAgent,
@@ -91,8 +91,8 @@ describe('AgentTaskService — loadFromDisk + reconcile', () => {
       ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
       background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
       emittedEvents = [];
-      const events = ctx.get(IAgentEventSinkService);
-      events.on((event) => {
+      const events = ctx.get(IEventBus);
+      events.subscribe((event) => {
         emittedEvents.push(event);
       });
     });

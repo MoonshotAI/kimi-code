@@ -108,7 +108,7 @@ class EchoTool implements ExecutableTool<Record<string, unknown>> {
   constructor(
     readonly name = 'Echo',
     private readonly resultFor: (args: Record<string, unknown>) => ExecutableToolResult = (args) => ({
-      output: String(args['text'] ?? ''),
+      output: typeof args['text'] === 'string' ? args['text'] : '',
     }),
   ) {}
 

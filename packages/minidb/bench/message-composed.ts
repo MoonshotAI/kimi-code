@@ -86,11 +86,10 @@ function loadAllMessages(): Msg[] {
 function scaleTo(real: Msg[], n: number): Msg[] {
   const now = Date.now();
   const span = WINDOW_DAYS * 864e5;
-  const out: Msg[] = new Array(n);
-  for (let i = 0; i < n; i++) {
+  const out: Msg[] = Array.from({ length: n }, (_, i) => {
     const r = real[i % real.length]!;
-    out[i] = { id: `m${i}`, ts: now - Math.floor((i / n) * span), role: r.role, text: r.text };
-  }
+    return { id: `m${i}`, ts: now - Math.floor((i / n) * span), role: r.role, text: r.text };
+  });
   return out;
 }
 

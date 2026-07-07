@@ -3,7 +3,7 @@
 // Fault-injection-only branches (writev short-write, fsync failure, >64MB
 // RESP payload, cross-user EPERM, process-exit hook) are intentionally not
 // covered here — see the coverage summary in the commit message.
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -106,10 +106,10 @@ test('WAL append after close rejects', async () => {
 test('WAL open and close are idempotent', async () => {
   const dir = await tmpDir();
   const wal = new WAL(path.join(dir, 'db.wal'), { fsyncPolicy: 'everysec' });
-  await wal.open();
-  await wal.open(); // second open is a no-op
-  await wal.close();
-  await wal.close(); // second close is a no-op
+  await expect(wal.open()).resolves.toBeUndefined();
+  await expect(wal.open()).resolves.toBeUndefined(); // second open is a no-op
+  await expect(wal.close()).resolves.toBeUndefined();
+  await expect(wal.close()).resolves.toBeUndefined(); // second close is a no-op
   await fs.rm(dir, { recursive: true, force: true });
 });
 

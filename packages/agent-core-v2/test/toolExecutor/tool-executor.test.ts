@@ -338,7 +338,8 @@ describe('AgentToolExecutorService', () => {
         ],
         { turnId: 0, signal: new AbortController().signal },
       )) {
-        yielded.push(String(item.result.output));
+        const output = item.result.output;
+        yielded.push(typeof output === 'string' ? output : JSON.stringify(output));
         if (yielded.length === 1) firstYielded.resolve();
       }
     })();
@@ -720,7 +721,9 @@ class TestTool implements ExecutableTool<Record<string, unknown>> {
         if (this.options.execute !== undefined) {
           return this.options.execute(ctx, args);
         }
-        return this.options.result ?? { output: String(args['text'] ?? `${this.name} result`) };
+        return this.options.result ?? {
+          output: typeof args['text'] === 'string' ? args['text'] : `${this.name} result`,
+        };
       },
     };
   }

@@ -149,7 +149,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     let changes = 0;
     disposables.add(fresh.subscribe(PermissionRulesModel, () => (changes += 1)));
 
-    fresh.replay(...records);
+    void fresh.replay(...records);
 
     expect(fresh.getModel(PermissionRulesModel)).toEqual({
       rules: [allowRule, denyRule],

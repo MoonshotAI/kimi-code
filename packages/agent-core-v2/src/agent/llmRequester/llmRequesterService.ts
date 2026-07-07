@@ -112,7 +112,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     signal?: AbortSignal,
   ): Promise<LLMRequestFinish> {
     signal?.throwIfAborted();
-    return await this.requestWithRetry(overrides, onPart, signal);
+    return this.requestWithRetry(overrides, onPart, signal);
   }
 
   private async requestWithRetry(
@@ -170,7 +170,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       overrides,
       attempt === 1 ? undefined : { attempt: `${String(attempt)}/${String(maxAttempts)}` },
     );
-    return await this.runRequest(request, onPart, signal);
+    return this.runRequest(request, onPart, signal);
   }
 
   private logRequestFailure(
@@ -286,7 +286,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         model: request.model.name,
         ...request.logFields,
       });
-      return await run(true);
+      return run(true);
     }
   }
 

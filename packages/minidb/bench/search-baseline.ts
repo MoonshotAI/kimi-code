@@ -78,7 +78,7 @@ function extractWireText(wirePath: string, full: boolean): string {
 function tokenize(s: string): string[] {
   return s
     .toLowerCase()
-    .split(/[\s,，。.!?！?、;；:：()\[\]{}"'<>/\\|@#%^&*+=~`\-_]+/)
+    .split(/[\s,，。.!?！?、;；:：()[\]{}"'<>/\\|@#%^&*+=~`\-_]+/)
     .filter((t) => t.length > 0);
 }
 

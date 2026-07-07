@@ -41,7 +41,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type {
   InFlightTurn,
-  Message,
   SessionSnapshotResponse,
   SessionStatus,
 } from '@moonshot-ai/protocol';

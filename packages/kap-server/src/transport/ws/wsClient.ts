@@ -64,7 +64,7 @@ export class WsClient {
     this.ws.on('open', () => {
       this.ws.send(JSON.stringify({ type: 'hello', token: opts.token }));
     });
-    this.ws.on('message', (data) => this.onMessage(data.toString()));
+    this.ws.on('message', (data) => this.onMessage((data as Buffer).toString()));
     this.ws.on('error', (err) => {
       this.rejectReady(err);
       for (const p of this.pending.values()) p.reject(err);

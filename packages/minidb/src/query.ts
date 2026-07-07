@@ -32,7 +32,7 @@ function tokenizePath(path: Path): (string | number)[] {
 export function getPath(doc: Doc, path: Path): unknown {
   let cur: unknown = doc;
   for (const t of tokenizePath(path)) {
-    if (cur == null) return undefined;
+    if (cur === null || cur === undefined) return undefined;
     cur = (cur as Record<string | number, unknown>)[t];
   }
   return cur;
@@ -43,7 +43,7 @@ export function setPath(obj: Doc, path: Path, value: unknown): Doc {
   let cur = obj as Record<string | number, unknown>;
   for (let i = 0; i < tokens.length - 1; i++) {
     const t = tokens[i]!;
-    if (cur[t] == null || typeof cur[t] !== 'object') {
+    if (cur[t] === null || cur[t] === undefined || typeof cur[t] !== 'object') {
       cur[t] = typeof tokens[i + 1] === 'number' ? [] : {};
     }
     cur = cur[t] as Record<string | number, unknown>;

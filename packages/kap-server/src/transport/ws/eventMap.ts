@@ -5,7 +5,7 @@
  *
  * Only the high-value streams are exposed for now:
  *   Core    `events`                — process-wide `GlobalEvent` bus (`IEventService`)
- *   Session `interactions`          — pending human-in-the-loop requests (`ISessionInteractionService.onDidChange`)
+ *   Session `interactions`          — pending human-in-the-loop requests (`ISessionInteractionService.onDidChangePending`)
  *   Session `interactions:resolved` — request resolutions (`ISessionInteractionService.onDidResolve`)
  *   Agent   `events`                — per-agent `AgentEvent` stream (live events via
  *                                     the per-agent `IEventBus`)
@@ -44,7 +44,7 @@ export const eventMap: Record<ScopeKind, Record<string, EventSource>> = {
     interactions: {
       subscribe: (scope, listener) => {
         const interaction = scope.accessor.get(ISessionInteractionService);
-        return interaction.onDidChange(() => listener(interaction.listPending()));
+        return interaction.onDidChangePending(() => listener(interaction.listPending()));
       },
     },
     // Pushes `{ id, response }` whenever a pending request is responded to.

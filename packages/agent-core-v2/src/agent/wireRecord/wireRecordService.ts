@@ -176,7 +176,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
       restoredRecords !== undefined &&
       this.log !== undefined
     ) {
-      this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
+      void this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
       await this.log.flush();
     }
     if (completed) {

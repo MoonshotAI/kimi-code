@@ -7,8 +7,7 @@ import {
   IAgentLifecycleService,
   IAgentWireRecordService,
   ISessionLifecycleService,
-  modelResolverSeed,
-  SingleModelResolver,
+  IModelResolver,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -50,12 +49,14 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-messages-'));
     // Seed a stub ISessionModelResolver so the agent scope can instantiate if a
     // transitive service needs it; IContextMemory itself does not.
-    const modelResolver = new SingleModelResolver({
-      type: 'openai',
-      model: 'stub',
-      apiKey: 'stub',
-    });
-    seeds = modelResolverSeed(modelResolver);
+    const modelResolver: IModelResolver = {
+      _serviceBrand: undefined,
+      resolve: () => {
+        throw new Error('modelResolver.resolve not exercised in this test');
+      },
+      findByName: () => [],
+    };
+    seeds = [[IModelResolver, modelResolver]];
     await boot();
   });
 

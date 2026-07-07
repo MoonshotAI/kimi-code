@@ -4,7 +4,7 @@
 // reference model, and assert they always agree. Seeded so any failure is
 // reproducible by re-running with the same seed.
 
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import assert from 'node:assert/strict';
 import { MiniDb } from '../../src/index.js';
 import { Model } from './helpers/model.js';
@@ -61,6 +61,6 @@ async function runSeed(seed, steps) {
 test('fuzz-model: random op sequences match a reference model (many seeds)', async () => {
   const seeds = [1, 2, 3, 42, 12345, 99999, 0xdeadbeef, 0xc0ffee, 777, 20240625];
   for (const seed of seeds) {
-    await runSeed(seed, 500);
+    await expect(runSeed(seed, 500)).resolves.toBeUndefined();
   }
 }, 60_000);

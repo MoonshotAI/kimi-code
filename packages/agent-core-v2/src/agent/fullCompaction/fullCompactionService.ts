@@ -575,15 +575,6 @@ function compactionCancelledReason(active: ActiveCompaction | null): Error {
   return error;
 }
 
-function isTodoItem(value: unknown): value is TodoItem {
-  if (value === null || typeof value !== 'object') return false;
-  const item = value as { title?: unknown; status?: unknown };
-  return (
-    typeof item.title === 'string' &&
-    (item.status === 'pending' || item.status === 'in_progress' || item.status === 'done')
-  );
-}
-
 // Construct eagerly (not delayed): the service registers turn and loop hooks
 // (onLaunched / beforeStep / afterStep / onError) that drive auto
 // compaction. With delayed instantiation the eager `accessor.get(IAgentFullCompactionService)`

@@ -101,7 +101,7 @@ function storageServiceSuite(
       });
       await settle();
       await service.write('s', 'k', enc.encode('v'));
-      await fired;
+      await expect(fired).resolves.toBeUndefined();
     });
 
     it('watch does not fire for an unrelated key', async ({ skip }) => {
@@ -127,7 +127,7 @@ function storageServiceSuite(
       });
       await settle();
       await service.delete('s', 'k');
-      await fired;
+      await expect(fired).resolves.toBeUndefined();
     });
   });
 }

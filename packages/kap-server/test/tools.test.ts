@@ -21,8 +21,7 @@ import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
   ISessionLifecycleService,
-  modelResolverSeed,
-  SingleModelResolver,
+  IModelResolver,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -56,17 +55,19 @@ describe('server-v2 /api/v1 tools + mcp', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tools-'));
-    const modelResolver = new SingleModelResolver({
-      type: 'openai',
-      model: 'stub',
-      apiKey: 'stub',
-    });
+    const modelResolver: IModelResolver = {
+      _serviceBrand: undefined,
+      resolve: () => {
+        throw new Error('modelResolver.resolve not exercised in this test');
+      },
+      findByName: () => [],
+    };
     server = await startServer({
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: modelResolverSeed(modelResolver),
+      seeds: [[IModelResolver, modelResolver]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });

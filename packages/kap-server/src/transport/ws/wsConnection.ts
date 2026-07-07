@@ -143,7 +143,7 @@ export class WsConnection {
         this.cancel(msg.id);
         return;
       case 'listen':
-        this.onListen(msg);
+        void this.onListen(msg);
         return;
       case 'unlisten':
         this.cancel(msg.id);

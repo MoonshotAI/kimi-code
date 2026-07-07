@@ -1,5 +1,5 @@
 // Covers the RESP commands and parser paths not exercised by server.test.ts.
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import fs from 'node:fs/promises';
@@ -116,7 +116,7 @@ test('RESP: QUIT closes the connection', async () => {
   const srv = await startServer({ dir, port: 0, fsyncPolicy: 'no' });
   try {
     const sock = await connect(srv.port);
-    await sendUntilClose(sock, encode('QUIT'));
+    await expect(sendUntilClose(sock, encode('QUIT'))).resolves.toBeUndefined();
   } finally {
     await srv.close();
     await fs.rm(dir, { recursive: true, force: true });

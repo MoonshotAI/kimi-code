@@ -134,11 +134,11 @@ async function main() {
         value: {
           title: `session ${n.id}`,
           workspaceId: 'ws_bench',
-          metadata: {
-            // Only real children carry parent_session_id (+ kind). Roots do
+          // Only real children carry parent_session_id (+ kind). Roots do
             // not, so they stay out of the byParent index entirely.
-            ...(n.parentId ? { parent_session_id: n.parentId, child_session_kind: 'child' } : {}),
-          },
+            metadata: n.parentId
+              ? { parent_session_id: n.parentId, child_session_kind: 'child' }
+              : {},
         },
         dt: { updatedAt: n.updatedAt },
       })),

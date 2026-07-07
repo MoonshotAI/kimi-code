@@ -313,15 +313,15 @@ function sendMappedError(
 }
 
 function authProviderDetails(err: KimiError): { provider_id: string } | undefined {
-  const providerId = err.details?.provider_id;
+  const providerId = err.details?.['provider_id'];
   if (typeof providerId !== 'string') return undefined;
   return { provider_id: providerId };
 }
 
 function authModelDetails(err: KimiError): { model_id?: string; provider_id?: string } | null {
   const details: { model_id?: string; provider_id?: string } = {};
-  const modelId = err.details?.model_id;
-  const providerId = err.details?.provider_id;
+  const modelId = err.details?.['model_id'];
+  const providerId = err.details?.['provider_id'];
   if (typeof modelId === 'string') details.model_id = modelId;
   if (typeof providerId === 'string') details.provider_id = providerId;
   return Object.keys(details).length === 0 ? null : details;

@@ -23,7 +23,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -183,7 +183,7 @@ async function mapPool<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   onProgress?: (done: number) => void,
 ): Promise<R[]> {
-  const results: R[] = new Array(items.length);
+  const results = Array.from<R>({ length: items.length });
   let next = 0;
   let done = 0;
   async function worker(): Promise<void> {
@@ -262,5 +262,8 @@ describe('resume round-trip over real ~/.kimi-code wire logs', () => {
         );
       }
     }
+
+    expect(restoreErrors).toEqual([]);
+    expect(mismatches).toEqual([]);
   }, 60 * 60 * 1000);
 });

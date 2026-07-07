@@ -19,8 +19,6 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = join(__dirname, '..', 'src');
 
-const SCOPE_OF = ['App', 'Session', 'Agent'];
-
 const SCOPE_DIRS = new Set(['app', 'session', 'agent']);
 
 /** Resolve a `src/`-relative file path to its domain, skipping the scope tier. */

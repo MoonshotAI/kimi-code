@@ -300,7 +300,7 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   async activateSkill(payload: ActivateSkillPayload): Promise<void> {
-    this.skills.activate(payload);
+    void this.skills.activate(payload);
     await this.updatePromptMetadata(promptMetadataTextFromSkill(payload));
   }
 

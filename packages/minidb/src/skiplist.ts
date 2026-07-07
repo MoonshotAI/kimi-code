@@ -76,8 +76,8 @@ export class SkipList<K = number, V = string> {
   }
 
   insert(key: K, val: V): SkipNode<K, V> {
-    const update = new Array<SkipNode<K, V>>(MAX_LEVEL);
-    const rank = new Array<number>(MAX_LEVEL).fill(0);
+    const update = Array.from<SkipNode<K, V>>({ length: MAX_LEVEL });
+    const rank = Array.from({ length: MAX_LEVEL }, () => 0);
     let x: SkipNode<K, V> = this.header;
     const target = { key, val };
 
@@ -134,7 +134,7 @@ export class SkipList<K = number, V = string> {
   }
 
   delete(key: K, val: V): boolean {
-    const update = new Array<SkipNode<K, V>>(MAX_LEVEL);
+    const update = Array.from<SkipNode<K, V>>({ length: MAX_LEVEL });
     let x: SkipNode<K, V> = this.header;
     const target = { key, val };
     for (let i = this.level - 1; i >= 0; i--) {

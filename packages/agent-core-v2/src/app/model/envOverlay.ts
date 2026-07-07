@@ -20,9 +20,6 @@ import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
 /** Reserved key for the env-driven synthetic model alias. */
 export const ENV_MODEL_ALIAS_KEY = '__kimi_env_model__';
 
-const ALLOWED_TYPES = ['kimi', 'anthropic', 'openai'] as const;
-type EnvProviderType = (typeof ALLOWED_TYPES)[number];
-
 /** Default context window (256K) used when KIMI_MODEL_MAX_CONTEXT_SIZE is unset. */
 const DEFAULT_MAX_CONTEXT_SIZE = 262144;
 

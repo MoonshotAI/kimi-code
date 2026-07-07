@@ -117,7 +117,7 @@ describe('GET /api/v1/meta — envelope + metaResponseSchema', () => {
       file_upload: true,
       fs_query: true,
       mcp: true,
-      background_tasks: true,
+      tasks: true,
       terminal: true,
     });
     expect(ulidRegex.test(parsed.server_id)).toBe(true);

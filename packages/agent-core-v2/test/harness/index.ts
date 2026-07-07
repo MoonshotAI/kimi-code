@@ -12,6 +12,7 @@ export {
   execEnvServices,
   externalHookServices,
   homeDirServices,
+  hostEnvironmentServices,
   InMemoryWireRecordPersistence,
   llmGenerateServices,
   logServices,

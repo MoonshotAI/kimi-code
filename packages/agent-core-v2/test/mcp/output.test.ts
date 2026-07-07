@@ -9,11 +9,16 @@ import { describe, expect, test } from 'vitest';
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/agent/mcp/types';
+import type { ToolExecution } from '#/agent/tool/toolContract';
 import { sniffImageDimensions } from '#/_base/tools/support/file-type';
 
 const MCP_OUTPUT_TRUNCATED_TEXT =
   '\n\n[Output truncated: exceeded 100000 character limit. ' +
   'Use pagination or more specific queries to get remaining content.]';
+
+function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
+  return typeof (value as Promise<ToolExecution>).then === 'function';
+}
 
 function assertValidMcpBlock<T extends MCPContentBlock>(block: T): T {
   const parsed = ContentBlockSchema.safeParse(block);
@@ -477,7 +482,8 @@ describe('createMcpTool', () => {
       { name: 'tool', description: 'Tool', parameters: {} },
       client,
     );
-    const execution = tool.resolveExecution({});
+    const resolved = tool.resolveExecution({});
+    const execution = isPromiseLike(resolved) ? await resolved : resolved;
     if (execution.isError === true) throw new Error('expected executable tool call');
 
     const result = await execution.execute({

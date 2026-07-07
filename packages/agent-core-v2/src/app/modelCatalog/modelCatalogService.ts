@@ -43,7 +43,6 @@ import {
   type ProviderCredentialState,
   type RefreshProviderModelsOptions,
   IModelCatalogService,
-  modelIdsForProvider,
   toProtocolModel,
   toProtocolProvider,
 } from './modelCatalog';
@@ -186,8 +185,8 @@ export class ModelCatalogService implements IModelCatalogService {
     if (patch.defaultModel !== undefined) {
       await this.config.set(DEFAULT_MODEL_SECTION, patch.defaultModel);
     }
-    if (patch.defaultThinking !== undefined) {
-      await this.config.set(DEFAULT_THINKING_SECTION, patch.defaultThinking);
+    if (patch['defaultThinking'] !== undefined) {
+      await this.config.set(DEFAULT_THINKING_SECTION, patch['defaultThinking']);
     }
     return this.readUserConfigShape();
   }

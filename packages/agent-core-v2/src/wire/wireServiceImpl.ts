@@ -294,7 +294,7 @@ export class WireService extends Disposable implements IWireService {
       });
       return;
     }
-    const dehydrate = model.blobs.dehydrate;
+    const dehydrate = model.blobs.dehydrate.bind(model.blobs);
     const transform: PartsTransformer = (parts) =>
       this.blobService!.offloadParts(
         parts as readonly ContentPart[],

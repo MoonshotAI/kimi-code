@@ -1,4 +1,3 @@
-import type { AgentEvent } from '@moonshot-ai/protocol';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentEventSinkService } from '#/agent/eventSink';
+import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import type { McpConnectionManager, McpServerEntry } from '#/agent/mcp/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
@@ -128,17 +127,17 @@ class FakeMcpManager {
 describe('AgentMcpService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let events: AgentEvent[];
+  let events: DomainEvent[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     events = [];
-    ix.stub(IAgentEventSinkService, {
-      emit: (event) => {
+    ix.stub(IEventBus, {
+      publish: (event) => {
         events.push(event);
       },
-      on: () => toDisposable(() => {}),
+      subscribe: () => toDisposable(() => {}),
     });
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));

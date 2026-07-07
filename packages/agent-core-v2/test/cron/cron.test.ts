@@ -21,7 +21,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentTurnService, type Turn } from '#/agent/turn/turn';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 
-import { IAgentEventSinkService } from '#/agent/eventSink';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubWireRecord } from '../contextMemory/stubs';
 import { stubLog } from '../log/stubs';
@@ -87,7 +86,6 @@ describe('SessionCronService', () => {
       undo: () => 0,
       clear: () => {},
     });
-    ix.stub(IAgentEventSinkService, { emit: () => {}, on: () => ({ dispose: () => {} }) });
     ix.stub(IAgentWireRecordService, stubWireRecord());
     ix.stub(IAgentTurnService, turnService);
     ix.stub(ITelemetryService, { track: () => {} });

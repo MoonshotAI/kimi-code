@@ -759,7 +759,7 @@ function parseRgJsonOutput(
     }
   }
 
-  for (const p of [...fileBuf.keys()]) {
+  for (const p of fileBuf.keys()) {
     finalize(p);
   }
 

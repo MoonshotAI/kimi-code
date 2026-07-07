@@ -265,7 +265,7 @@ interface ResumeStateSnapshot {
   readonly config: {
     readonly cwd: string;
     readonly activeToolNames: readonly string[] | undefined;
-    readonly provider: ProviderConfig | undefined;
+    readonly provider: ReturnType<IProviderService['get']>;
     readonly profileName: string | undefined;
     readonly thinkingLevel: string;
     readonly systemPrompt: string;
@@ -474,6 +474,31 @@ export function homeDirServices(homeDir: string | undefined): TestAgentServiceOv
       reg.defineDescriptor(IFileSystemStorageService, file());
       reg.define(IBlobStore, BlobStoreService);
     }
+  });
+}
+
+/**
+ * Override the App-scope `IHostEnvironment` with a fully-populated POSIX
+ * snapshot whose `homeDir` points at a hermetic test directory. Used by tests
+ * that render system prompts / resolve user-level config so a developer's real
+ * `~/.kimi-code` / `~/.agents` files never leak into the assertions.
+ */
+export function hostEnvironmentServices(homeDir: string): TestAgentServiceOverride {
+  return appServices((reg) => {
+    reg.defineInstance(
+      IHostEnvironment,
+      {
+        _serviceBrand: undefined,
+        osKind: 'Linux',
+        osArch: 'x64',
+        osVersion: 'test',
+        shellName: 'bash',
+        shellPath: '/bin/bash',
+        pathClass: 'posix',
+        homeDir,
+        ready: Promise.resolve(),
+      } satisfies IHostEnvironment,
+    );
   });
 }
 
@@ -1963,10 +1988,13 @@ function isSystemReminderMessage(message: ContextMessage): boolean {
 function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config'] {
   const profile = ctx.get(IAgentProfileService);
   const data = profile.data();
+  const model = profile.resolveModel();
+  const providerConfig =
+    model === undefined ? undefined : ctx.get(IProviderService).get(model.providerName);
   return {
     cwd: data.cwd,
     activeToolNames: data.activeToolNames,
-    provider: data.provider,
+    provider: providerConfig,
     profileName: data.profileName,
     thinkingLevel: data.thinkingLevel,
     systemPrompt: data.systemPrompt,
@@ -2220,7 +2248,7 @@ function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAd
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         defaultHeaders: input.defaultHeaders as Record<string, string> | undefined,
-        ...(input.providerOptions ?? {}),
+        ...input.providerOptions,
       } as ProviderConfig;
       return input.protocol === 'kimi'
         ? new GenerateBackedKimiChatProvider(

@@ -123,7 +123,7 @@ describe('AgentSwarmService', () => {
       new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'swarm-replay' }]),
     );
     const fresh = ix2.get(IAgentWireService);
-    fresh.replay(...records);
+    void fresh.replay(...records);
     expect(fresh.getModel(SwarmModel)).toBe('manual');
   });
 });

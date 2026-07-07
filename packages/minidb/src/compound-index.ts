@@ -36,7 +36,7 @@ interface CompoundEntry {
 }
 
 function getPath(doc: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((o, k) => (o == null ? undefined : (o as Record<string, unknown>)[k]), doc);
+  return path.split('.').reduce<unknown>((o, k) => (o === null || o === undefined ? undefined : (o as Record<string, unknown>)[k]), doc);
 }
 
 export class CompoundIndexManager {
@@ -113,7 +113,7 @@ export class CompoundIndexManager {
     }
   }
 
-  remove(pk: string, doc?: unknown, dt?: Record<string, number> | null): void {
+  remove(pk: string, _doc?: unknown, _dt?: Record<string, number> | null): void {
     for (const entry of this.indexes.values()) {
       const prev = entry.byPk.get(pk);
       if (prev) {

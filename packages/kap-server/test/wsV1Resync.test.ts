@@ -9,11 +9,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  IAgentEventSinkService,
+  type DomainEvent,
+  IEventBus,
   IAgentLifecycleService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentEvent } from '@moonshot-ai/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -48,7 +48,7 @@ function openConn(url: string, token: string): Promise<Conn> {
     ws.on('message', (data) => {
       let frame: Frame;
       try {
-        frame = JSON.parse(data.toString()) as Frame;
+        frame = JSON.parse((data as Buffer).toString()) as Frame;
       } catch {
         return;
       }
@@ -139,13 +139,13 @@ describe('server-v2 /api/v1/ws resync', () => {
     return { ...payload, token: server!.authTokenService.getToken() };
   }
 
-  function emitAgentEvent(sessionId: string, event: AgentEvent): void {
+  function emitAgentEvent(sessionId: string, event: DomainEvent): void {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
     const main = agents.getHandle('main');
     expect(main).toBeDefined();
-    main!.accessor.get(IAgentEventSinkService).emit(event);
+    main!.accessor.get(IEventBus).publish(event);
   }
 
   it('server_hello then client_hello ack with accepted subscription', async () => {
@@ -175,7 +175,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
     await c.next((f) => f.type === 'ack' && f.id === 'h1');
 
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as AgentEvent);
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
 
     const ev = await c.next((f) => f.type === 'turn.started');
     expect(ev.seq).toBe(1);
@@ -195,8 +195,8 @@ describe('server-v2 /api/v1/ws resync', () => {
     await c1.next((f) => f.type === 'server_hello');
     c1.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
     await c1.next((f) => f.type === 'ack' && f.id === 'h1');
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as AgentEvent);
-    emitAgentEvent(sid, { type: 'turn.ended', turnId: 1 } as unknown as AgentEvent);
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+    emitAgentEvent(sid, { type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
     await c1.next((f) => f.type === 'turn.ended');
     c1.ws.close();
     await c1.closed;

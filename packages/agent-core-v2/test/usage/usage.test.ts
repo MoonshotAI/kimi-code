@@ -160,7 +160,7 @@ describe('AgentUsageService (wire-backed)', () => {
     const log2 = ix2.get(IAppendLogStore);
     const fresh = ix2.get(IAgentWireService);
 
-    fresh.replay(...records);
+    void fresh.replay(...records);
 
     expect(fresh.getModel(UsageModel).byModel).toEqual({
       'model-a': { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 },

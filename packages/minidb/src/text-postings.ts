@@ -71,7 +71,7 @@ export function encodePostingList(entries: readonly (readonly [number, number])[
 export function decodePostingList(buf: Buffer): [number, number][] {
   const cur = { i: 0 };
   const count = decodeVarint(buf, cur);
-  const out: [number, number][] = new Array(count);
+  const out = Array.from<[number, number]>({ length: count });
   let prev = 0;
   for (let k = 0; k < count; k++) {
     const d = decodeVarint(buf, cur);

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 
-import { createTestAgent, execEnvServices, type TestAgentContext } from '../harness';
+import { createTestAgent, hostEnvironmentServices, type TestAgentContext } from '../harness';
 
 const MOCK_MODEL = 'mock-model';
 
@@ -27,7 +27,7 @@ describe('AgentProfileService.bind', () => {
   function buildContext(): { ctx: TestAgentContext; profile: IAgentProfileService } {
     // Hermetic home dir so a developer's real ~/.kimi-code / ~/.agents files
     // never leak into the rendered system prompt.
-    ctx = createTestAgent(execEnvServices({ hostEnvironment: { homeDir } }));
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
     return { ctx, profile: ctx.get(IAgentProfileService) };
   }
 

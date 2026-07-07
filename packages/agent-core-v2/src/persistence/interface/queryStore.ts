@@ -38,7 +38,7 @@ export interface ComparisonOp {
 }
 
 export type QueryFilter = {
-  readonly [field: string]: unknown | ComparisonOp;
+  readonly [field: string]: unknown;
 };
 
 export interface IQuery<T> {

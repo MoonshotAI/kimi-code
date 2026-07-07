@@ -212,9 +212,9 @@ export class ModelImpl implements Model {
         `Model "${this.id}" (protocol=${this.protocol}) does not support video upload`,
       );
     }
-    const uploadVideo = provider.uploadVideo;
+    const uploadVideo = provider.uploadVideo.bind(provider);
     return this.runWithAuthRefresh((auth) =>
-      uploadVideo.call(provider, input, { signal: options?.signal, auth }),
+      uploadVideo(input, { signal: options?.signal, auth }),
     );
   }
 

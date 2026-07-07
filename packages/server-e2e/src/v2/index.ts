@@ -41,7 +41,6 @@ export type {
   QuestionsResource,
   InteractionsResource,
   SessionWorkspaceResource,
-  AgentFsResource,
   SessionFsResource,
 } from './resources/session.js';
 export type {
