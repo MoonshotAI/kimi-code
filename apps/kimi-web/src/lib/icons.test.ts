@@ -1,6 +1,6 @@
 // apps/kimi-web/src/lib/icons.test.ts
 import { describe, expect, it } from 'vitest';
-import { ICONS, SIZE_PX, NAME_TO_REMIX, getIcon, iconSvg } from './icons';
+import { ICONS, SIZE_PX, getIcon, iconSvg } from './icons';
 
 describe('ICONS registry', () => {
   it('is non-empty', () => {
@@ -21,20 +21,6 @@ describe('ICONS registry', () => {
   it('every entry svg is on a 24x24 grid with a viewBox', () => {
     for (const [name, entry] of Object.entries(ICONS)) {
       expect(entry.svg, `${name} viewBox`).toContain('viewBox="0 0 24 24"');
-    }
-  });
-});
-
-describe('NAME_TO_REMIX', () => {
-  it('all values are Remix (ri:) ids', () => {
-    for (const [name, ri] of Object.entries(NAME_TO_REMIX)) {
-      expect(ri, `${name}`).toMatch(/^ri:/);
-    }
-  });
-
-  it('every IconName in NAME_TO_REMIX has a matching ICONS entry', () => {
-    for (const name of Object.keys(NAME_TO_REMIX)) {
-      expect(ICONS[name as keyof typeof ICONS], `${name}`).toBeDefined();
     }
   });
 });
