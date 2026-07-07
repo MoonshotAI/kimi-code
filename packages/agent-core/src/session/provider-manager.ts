@@ -141,6 +141,7 @@ export class ProviderManager implements ModelProvider {
       effectiveAlias.offEffort,
       effectiveAlias.adaptiveThinking,
       alias.betaApi,
+      effectiveAlias.effortParam,
     );
 
     return {
@@ -270,6 +271,7 @@ function toKosongProviderConfig(
   offEffort: string | undefined,
   adaptiveThinking: boolean | undefined,
   betaApi: boolean | undefined,
+  effortParam: boolean | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
   const envCustomHeaders = parseKimiCodeCustomHeaders();
@@ -296,6 +298,7 @@ function toKosongProviderConfig(
         ...(provider.type === 'kimi'
           ? { kimiThinking: true, convertError: classifyKimiQuotaError }
           : {}),
+        ...(effortParam !== undefined ? { effortParam } : {}),
         ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).

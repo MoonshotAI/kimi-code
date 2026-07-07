@@ -126,6 +126,10 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
     env['KIMI_MODEL_ADAPTIVE_THINKING'],
     'KIMI_MODEL_ADAPTIVE_THINKING',
   );
+  const effortParam = parseBooleanVar(
+    env['KIMI_MODEL_EFFORT_PARAM'],
+    'KIMI_MODEL_EFFORT_PARAM',
+  );
 
   const alias: ModelAlias = {
     provider: ENV_MODEL_PROVIDER_KEY,
@@ -136,6 +140,7 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
     ...(maxOutputSize !== undefined ? { maxOutputSize } : {}),
     ...(reasoningKey !== undefined ? { reasoningKey } : {}),
     ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
+    ...(effortParam !== undefined ? { effortParam } : {}),
   };
 
   const thinkingEffort = trimmed(env['KIMI_MODEL_THINKING_EFFORT']);

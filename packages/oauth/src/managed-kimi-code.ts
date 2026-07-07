@@ -142,6 +142,7 @@ export interface ManagedKimiModelAliasOverrides {
   displayName?: string | undefined;
   reasoningKey?: string | undefined;
   adaptiveThinking?: boolean | undefined;
+  effortParam?: boolean | undefined;
   supportEfforts?: readonly string[] | undefined;
   defaultEffort?: string | undefined;
   readonly [key: string]: unknown;
@@ -158,6 +159,7 @@ export interface ManagedKimiModelAlias {
   protocol?: ManagedKimiCodeProtocol;
   betaApi?: boolean;
   adaptiveThinking?: boolean | undefined;
+  effortParam?: boolean | undefined;
   overrides?: ManagedKimiModelAliasOverrides | undefined;
   readonly [key: string]: unknown;
 }

@@ -113,6 +113,16 @@ export interface AnthropicOptions {
   supportEfforts?: readonly string[] | undefined;
   kimiThinking?: boolean | undefined;
   /**
+   * Opt-in: declare that this model's endpoint honors Anthropic
+   * `output_config.effort` on the *enabled* thinking path. kosong only emits
+   * `output_config.effort` for model names it recognizes (opus-4-5 / adaptive);
+   * third-party Anthropic-compatible endpoints that honor effort without a
+   * recognizable name (e.g. z.ai GLM over `/api/anthropic`) set this so
+   * `/thinking` effort levels take effect. budget_tokens is still sent
+   * (required by Anthropic's enabled-thinking contract; ignored by z.ai).
+   */
+  effortParam?: boolean | undefined;
+  /**
    * Use the Anthropic **beta** Messages API (`client.beta.messages.create`,
    * `POST /v1/messages?beta=true`) instead of the standard Messages API.
    *
@@ -932,6 +942,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private readonly _supportEfforts: readonly string[] | undefined;
   private readonly _kimiThinking: boolean;
   private readonly _convertErrorHook: ((error: unknown) => ChatProviderError | undefined) | undefined;
+  private _effortParam: boolean | undefined;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
 
@@ -943,6 +954,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._supportEfforts = options.supportEfforts;
     this._kimiThinking = options.kimiThinking ?? false;
     this._convertErrorHook = options.convertError;
+    this._effortParam = options.effortParam;
     this._betaApi = options.betaApi ?? false;
     this._apiKey =
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
@@ -1247,7 +1259,7 @@ export class AnthropicChatProvider implements ChatProvider {
           ? ({ type: 'enabled' } as MessageCreateParams['thinking'])
           : { type: 'enabled', budget_tokens: budgetTokens };
       outputConfig =
-        (profile.supportsEffortParam || budgetTokens === undefined) && effort !== 'on'
+        (profile.supportsEffortParam || this._effortParam === true || budgetTokens === undefined) && effort !== 'on'
           ? ({ effort } as MessageCreateParams['output_config'])
           : undefined;
     }

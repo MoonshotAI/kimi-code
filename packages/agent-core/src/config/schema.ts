@@ -54,6 +54,14 @@ const ModelAliasBaseSchema = z.object({
   // model-name version inference. Needed for custom-named Anthropic endpoints
   // whose model name does not encode a parseable Claude version.
   adaptiveThinking: z.boolean().optional(),
+  // Opt-in: declare that this model's endpoint honors Anthropic
+  // `output_config.effort` on the *enabled* thinking path
+  // (`thinking: { type: 'enabled' }`). kosong only emits `output_config.effort`
+  // for model names it recognizes (opus-4-5 / adaptive); third-party
+  // Anthropic-compatible endpoints (e.g. z.ai GLM over /api/anthropic) honor
+  // effort but are not name-recognized, so set this to make `/thinking`
+  // effort levels actually take effect on them.
+  effortParam: z.boolean().optional(),
   // Efforts (e.g. ["low", "high", "max"]) the model supports for
   // extended thinking, plus the catalog default. Generic to any provider:
   // managed models fill these from the catalog, others can be set by hand in

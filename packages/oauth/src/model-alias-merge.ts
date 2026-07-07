@@ -10,6 +10,7 @@ export const MANAGED_KIMI_MODEL_FIELDS: ReadonlySet<string> = new Set([
   'protocol',
   'betaApi',
   'adaptiveThinking',
+  'effortParam',
   'supportEfforts',
   'defaultEffort',
 ]);

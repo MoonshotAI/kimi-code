@@ -2413,6 +2413,66 @@ describe('AnthropicChatProvider', () => {
       }
     });
 
+    // effortParam opt-in: third-party Anthropic-compatible endpoints (e.g.
+    // z.ai GLM over /api/anthropic) honor output_config.effort on the enabled
+    // thinking path even though their model name is not name-recognized.
+    // adaptiveThinking:false forces budget mode (supportsEffortParam:false),
+    // so effortParam is the ONLY way effort reaches the wire for these models.
+    describe('effortParam opt-in emits output_config.effort', () => {
+      function createWithEffortParam(model: string): AnthropicChatProvider {
+        return new AnthropicChatProvider({
+          model,
+          apiKey: 'test-key',
+          defaultMaxTokens: 1024,
+          stream: false,
+          adaptiveThinking: false,
+          effortParam: true,
+        });
+      }
+
+      it.each(['glm-5.2', 'glm-4.6', 'some-custom-model'])(
+        'emits output_config.effort for non-recognized model %s when effortParam=true',
+        async (model) => {
+          const provider = createWithEffortParam(model).withThinking('high');
+          const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+          // Budget path (enabled + budget_tokens), with effort emitted via the opt-in.
+          expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+          expect(body['output_config']).toEqual({ effort: 'high' });
+        },
+      );
+
+      it('does not emit output_config.effort for the same model without effortParam', async () => {
+        // Same budget-mode config, no opt-in -> budget_tokens only.
+        const provider = new AnthropicChatProvider({
+          model: 'glm-5.2',
+          apiKey: 'test-key',
+          defaultMaxTokens: 1024,
+          stream: false,
+          adaptiveThinking: false,
+        }).withThinking('high');
+        const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+        expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+        expect(body['output_config']).toBeUndefined();
+      });
+
+      it.each([
+        ['low', 1024],
+        ['medium', 4096],
+        ['high', 32000],
+      ] as const)(
+        'effortParam carries each effort level to output_config (effort=%s)',
+        async (effort, budget) => {
+          const provider = createWithEffortParam('glm-5.2').withThinking(effort);
+          const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+          expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: budget });
+          expect(body['output_config']).toEqual({ effort });
+        },
+      );
+    });
+
     // Full adaptive-thinking coverage matrix. Adaptive models must
     // emit { type: 'adaptive' } and output_config; non-adaptive models
     // must fall back to legacy budget thinking.
