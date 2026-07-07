@@ -68,10 +68,10 @@ export function splitGenerateOptions(options: GenerateOptionsWithRequestLogField
   return { requestLogFields, generateOptions };
 }
 
-function toolSignature(tools: readonly Tool[]) {
+export function toolSignature(tools: readonly Tool[]) {
   return tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 }
 
-function fingerprint(content: string): string {
+export function fingerprint(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }

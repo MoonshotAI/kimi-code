@@ -495,7 +495,9 @@ export function projectContext(
       case 'swarm_mode.exit':
         swarm = { active: false };
         break;
-      // Kinds that don't affect the projected timeline / derived state:
+      // Kinds that don't affect the projected timeline / derived state,
+      // including the observability records (request trace — `llm.*`,
+      // `mcp.tools_discovered`), which are never part of context state:
       case 'metadata':
       case 'forked':
       case 'turn.prompt':
@@ -509,6 +511,9 @@ export function projectContext(
       case 'tools.unregister_user_tool':
       case 'tools.set_active_tools':
       case 'tools.update_store':
+      case 'llm.tools_snapshot':
+      case 'llm.request':
+      case 'mcp.tools_discovered':
         break;
       default: {
         const _exhaustive: never = rec;

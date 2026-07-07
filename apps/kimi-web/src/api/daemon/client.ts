@@ -1397,6 +1397,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
       markSideChannelAgent(agentId: string): void {
         projector.markSideChannelAgent(agentId);
       },
+      health(): { connected: boolean; open: boolean; stale: boolean } {
+        return socket.health();
+      },
+      reconnect(): void {
+        socket.reconnect();
+      },
       close(): void {
         socket.close();
       },

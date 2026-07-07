@@ -2619,6 +2619,7 @@ describe('AnthropicChatProvider', () => {
 describe('resolveDefaultMaxTokens', () => {
   it('returns per-version Messages-API caps for known Claude 4 models', () => {
     expect(resolveDefaultMaxTokens('claude-fable-5')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-5-20251101')).toBe(64000);
@@ -2650,6 +2651,7 @@ describe('resolveDefaultMaxTokens', () => {
   });
 
   it('matches dotted version separators', () => {
+    expect(resolveDefaultMaxTokens('claude-opus-4.8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4.6')).toBe(64000);
@@ -2672,12 +2674,15 @@ describe('resolveDefaultMaxTokens', () => {
     expect(resolveDefaultMaxTokens('anthropic.claude-3-5-sonnet-20240620-v1:0')).toBe(8192);
   });
 
-  it('falls back to family-only ceiling for unknown minor versions', () => {
-    // Future opus-4-X release: minor not in table, falls back to opus-4 = 32000.
-    // Better to under-quote and fail loudly than over-quote a model we can't verify.
-    expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(32000);
+  it('falls back to the nearest lower catalogued minor for unknown minors', () => {
+    // opus-4-9/4-10 are not in the table; they reuse opus-4-8's 128k
+    // ceiling (a newer minor inherits at least its predecessor's cap).
+    expect(resolveDefaultMaxTokens('claude-opus-4-9')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4-9')).toBe(64000);
     expect(resolveDefaultMaxTokens('claude-haiku-4-9')).toBe(64000);
+    // A gap between catalogued minors also resolves to the nearest lower one.
+    expect(resolveDefaultMaxTokens('claude-opus-4-3')).toBe(32000);
   });
 
   it('matches case-insensitively', () => {
@@ -2774,6 +2779,25 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
 
     expect(provider).not.toBe(original);
     expect(body['max_tokens']).toBe(2048);
+    expect(provider.maxCompletionTokens).toBe(2048);
+  });
+
+  it('exposes the constructor-resolved max_tokens without any budget application', async () => {
+    // max_tokens is required by the Messages API, so even when completion
+    // budgeting is disabled the wire carries the constructor default; the
+    // exposed cap must reflect it for the request trace.
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(provider.maxCompletionTokens).toBeDefined();
+    expect(provider.maxCompletionTokens).toBe(body['max_tokens']);
   });
 
   it('withMaxCompletionTokens lowers the inferred model default cap', async () => {
@@ -2803,6 +2827,9 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     const body = await captureRequestBody(provider, '', [], history);
 
     expect(body['max_tokens']).toBe(1024);
+    // The exposed effective cap tracks the preserved existing value, not the
+    // requested budget — the request trace records this field.
+    expect(provider.maxCompletionTokens).toBe(1024);
   });
 
   it('withMaxCompletionTokens preserves an existing higher max_tokens cap', async () => {
