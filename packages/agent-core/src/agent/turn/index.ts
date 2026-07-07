@@ -748,20 +748,21 @@ export class TurnFlow {
 
               // Print-mode drain: when `kimi -p` ends a turn while background
               // subagents are still running, hold the turn open and idle-wait
-              // until they finish (or the drain deadline is reached). Their
-              // completions steer into the buffer during the wait and are
-              // flushed afterward, so the model gets one wrap-up step to react
-              // (nominate, backfill, ...) before the turn ends. Gated on a
-              // session flag so interactive / goal modes are unaffected.
+              // until they finish. Their completions steer into the buffer
+              // during the wait and are flushed afterward, so the model gets
+              // one wrap-up step to react (nominate, backfill, ...) before the
+              // turn ends. The wait is bounded by each subagent's own timeout,
+              // not by a separate drain deadline, so late-spawned or long-
+              // running subagents are still observed. Gated on a session flag
+              // so interactive / goal modes are unaffected.
               if (this.agent.printDrainAgentTasksOnStop) {
-                const remaining = this.agent.printDrainDeadlineMs - Date.now();
                 const hasActiveAgentTask = this.agent.background
                   .list(true)
                   .some((task) => task.kind === 'agent');
-                if (hasActiveAgentTask && remaining > 0) {
+                if (hasActiveAgentTask) {
                   await this.agent.background.waitForActiveTasks(
                     (task) => task.kind === 'agent',
-                    { timeoutMs: remaining, signal },
+                    { signal },
                   );
                   this.flushSteerBuffer();
                   return { continue: true };

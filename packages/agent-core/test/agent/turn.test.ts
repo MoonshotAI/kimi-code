@@ -132,7 +132,6 @@ describe('Agent turn flow', () => {
   it('holds the turn until a background subagent finishes, then runs a wrap-up step', async () => {
     const ctx = testAgent();
     ctx.agent.printDrainAgentTasksOnStop = true;
-    ctx.agent.printDrainDeadlineMs = Date.now() + 60_000;
 
     const subDone = createControlledPromise<{ result: string }>();
     ctx.agent.background.registerTask(agentTask(subDone, 'subagent'));
@@ -164,7 +163,6 @@ describe('Agent turn flow', () => {
   it('does not hold the turn for a non-agent (process) background task', async () => {
     const ctx = testAgent();
     ctx.agent.printDrainAgentTasksOnStop = true;
-    ctx.agent.printDrainDeadlineMs = Date.now() + 60_000;
 
     const proc: KaosProcess = {
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
