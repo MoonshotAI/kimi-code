@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix goal mode budgeting, queued starts, and final summaries so goals stop at limits and report terminal outcomes clearly.
+Fix goal token budgets to count model completion tokens and stop without extra continuation steps when the budget is exhausted.
