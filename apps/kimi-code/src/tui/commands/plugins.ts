@@ -169,6 +169,7 @@ async function showPluginsPicker(
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
+    terminal: host.state.terminal,
     onSelect: (selection) => {
       // Each branch of the handler either mounts the next view or restores the
       // editor itself, so do not pre-restore here — that would flash the editor
