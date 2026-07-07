@@ -799,25 +799,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
       saveGoalModeToStorage();
     }
-    // Persist plan/swarm onto the new session's profile so non-prompt origins
-    // (e.g. a skill activation, which carries only `args`) run with the same
-    // modes the UI shows. Awaited so the origin that follows — especially
-    // startSessionAndActivateSkill — can't race ahead of applyAgentState on the
-    // daemon and have its first turn run at the default modes. Sent by id (not
-    // via the active-session setter) for the same race reason as the map writes
-    // above. Plain prompts already send planMode/swarmMode on the prompt request
-    // itself, so awaiting here is redundant but harmless there. Goal mode is a
-    // one-shot flag consumed per send, not a profile field, so there is nothing
-    // to persist for it.
-    if (draftModes.planMode || draftModes.swarmMode) {
-      await persistSessionProfile(
-        {
-          planMode: draftModes.planMode,
-          swarmMode: draftModes.swarmMode,
-        },
-        sid,
-      );
-    }
     draftModes.planMode = false;
     draftModes.swarmMode = false;
     draftModes.goalMode = false;
@@ -848,7 +829,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * counterpart to startSessionAndSendPrompt. Without this, `/<skill>` from the
    * new-session screen silently dropped the activation (`activateSkill` needs a
    * session id). Shares createDraftSession so the model and draft modes are
-   * applied identically to a prompt-started session.
+   * applied identically to a prompt-started session; then persists any draft
+   * plan/swarm modes here, because skill activation carries only `args`.
    */
   async function startSessionAndActivateSkill(
     workspaceId: string,
@@ -858,6 +840,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
+      // Unlike a plain prompt, skill activation only carries `args`, so the
+      // daemon never sees prompt-time planMode/swarmMode. Persist any draft
+      // plan/swarm modes onto this new session's profile and await it before
+      // activating, otherwise the first skill turn can start before applyAgentState
+      // and run at default modes while the UI shows them enabled. Goal mode is
+      // a one-shot flag consumed per send, not a profile field, so there is
+      // nothing to persist for it.
+      const planMode = rawState.planModeBySession[sid] ?? false;
+      const swarmMode = rawState.swarmModeBySession[sid] ?? false;
+      if (planMode || swarmMode) {
+        await persistSessionProfile({ planMode, swarmMode }, sid);
+      }
       await modelProvider.activateSkill(skillName, args, sid);
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
