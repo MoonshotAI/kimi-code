@@ -662,6 +662,11 @@ export const WIRE_RENDERERS: RendererMap = {
             <Mono>{r.thinkingEffort}</Mono>
           </FieldRow>
         ) : null}
+        {r.thinkingKeep !== undefined ? (
+          <FieldRow label="thinkingKeep">
+            <Mono>{r.thinkingKeep}</Mono>
+          </FieldRow>
+        ) : null}
         {r.temperature !== undefined ? (
           <FieldRow label="temperature">
             <span className="text-[var(--color-sev-info)]">{r.temperature}</span>

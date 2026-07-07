@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRecord } from '../../src/agent';
 import {
@@ -53,6 +53,8 @@ describe('llm request trace records', () => {
       expect(request.messageCount).toBeGreaterThan(0);
       expect(request.model).toBe('mock-model');
       expect(request.toolSelect).toBe(false);
+      // Thinking is off, so no keep passthrough is sent or recorded.
+      expect(request.thinkingKeep).toBeUndefined();
     }
     // maxTokens is the provider-clamped wire value: the second request has
     // consumed context, so its remaining-context cap is strictly smaller.
@@ -123,6 +125,28 @@ describe('llm request trace records', () => {
     const request = recordsOf(persistence, 'llm.request').at(-1)!;
     expect(request.systemPrompt).toBe('summarizer prompt');
     expect(request.messageCount).toBe(1);
+  });
+
+  it('records the effective kimi thinking effort and keep passthrough', async () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const persistence = new InMemoryAgentRecordPersistence();
+      const ctx = testAgent({ persistence });
+      ctx.configure();
+      ctx.agent.config.update({ thinkingEffort: 'high' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'ok' });
+      await runTurn(ctx, 'think about it');
+
+      const request = recordsOf(persistence, 'llm.request').at(-1)!;
+      // The Kimi provider derives thinkingEffort from the request body's
+      // thinking payload, so the env override is the recorded wire value.
+      expect(request.thinkingEffort).toBe('max');
+      // Default preserved-thinking passthrough while thinking is on.
+      expect(request.thinkingKeep).toBe('all');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('does not record a call that fails the pre-flight abort check', async () => {

@@ -13,6 +13,7 @@
 import { KimiChatProvider, type ChatProvider, type Message, type Tool } from '@moonshot-ai/kosong';
 
 import { parseFloatEnv } from '#/config/resolve';
+import { resolveThinkingKeep } from '#/config/kimi-env-params';
 
 import type { Agent } from '.';
 import type { LLMRequestLogFields } from '../loop';
@@ -63,8 +64,12 @@ export class LlmRequestRecorder {
     }
 
     const modelAlias = this.agent.config.modelAlias;
-    // Mirror applyKimiEnvSamplingParams: the env overrides only reach Kimi
-    // providers, and provider construction already validated the values.
+    // Mirror the ConfigState.provider pipeline for Kimi-only request params:
+    // env sampling overrides and the preserved-thinking keep passthrough
+    // reach the wire only for Kimi providers, resolved by the same exported
+    // helpers used at construction. thinkingEffort needs no mirroring — the
+    // Kimi provider derives it from the request body's thinking payload, so
+    // env effort overrides are already reflected in the read value.
     const isKimiProvider = provider instanceof KimiChatProvider;
     this.agent.records.logRecord({
       type: 'llm.request',
@@ -73,6 +78,13 @@ export class LlmRequestRecorder {
       model: provider.modelName,
       modelAlias,
       thinkingEffort: provider.thinkingEffort ?? undefined,
+      thinkingKeep: isKimiProvider
+        ? resolveThinkingKeep(
+            process.env,
+            this.agent.kimiConfig?.thinking?.keep,
+            provider.thinkingEffort ?? 'off',
+          )
+        : undefined,
       temperature: isKimiProvider
         ? parseFloatEnv(process.env['KIMI_MODEL_TEMPERATURE'], 'KIMI_MODEL_TEMPERATURE')
         : undefined,
