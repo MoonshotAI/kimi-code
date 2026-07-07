@@ -92,7 +92,18 @@ async function noisePng(width: number, height: number, alpha = false): Promise<U
  */
 async function randomNoisePng(width: number, height: number): Promise<Uint8Array> {
   const image = new Jimp({ width, height, color: 0x000000ff });
-  const data = image.bitmap.data;
+  fillXorshiftNoise(image.bitmap.data);
+  return new Uint8Array(await image.getBuffer('image/png'));
+}
+
+/** JPEG twin of {@link randomNoisePng}, for exercising the JPEG source path. */
+async function randomNoiseJpeg(width: number, height: number): Promise<Uint8Array> {
+  const image = new Jimp({ width, height, color: 0x000000ff });
+  fillXorshiftNoise(image.bitmap.data);
+  return new Uint8Array(await image.getBuffer('image/jpeg', { quality: 90 }));
+}
+
+function fillXorshiftNoise(data: Buffer | Uint8Array): void {
   let state = 0x9e3779b9;
   const next = (): number => {
     state ^= (state << 13) >>> 0;
@@ -107,7 +118,6 @@ async function randomNoisePng(width: number, height: number): Promise<Uint8Array
     data[i + 2] = next();
     data[i + 3] = 0xff;
   }
-  return new Uint8Array(await image.getBuffer('image/png'));
 }
 
 async function decodeAlpha(bytes: Uint8Array): Promise<boolean> {
@@ -253,6 +263,33 @@ describe('compressImageForModel — byte budget', () => {
     expect(result.changed).toBe(true);
     expect(result.mimeType).toBe('image/png');
     expect(Math.max(result.width, result.height)).toBe(2000);
+  });
+
+  it('re-runs the JPEG quality ladder at fallback sizes instead of jumping to q20', async () => {
+    // A JPEG whose quality ladder fails at every size above 1000px, with the
+    // budget tuned so that at 1000px a mid-quality (q60) encode fits. The
+    // fallback must walk the ladder again and return that q60 encode — not
+    // collapse straight to q20 and needlessly destroy detail.
+    // The probe replays the implementation's exact resize chain
+    // (2400 → 2000 → 1000): box-resizing twice does not yield the same
+    // bitmap as resizing once, and JPEG encoding is deterministic, so the
+    // probed q60 size matches the implementation's encode byte-for-byte.
+    const jpeg = await randomNoiseJpeg(2400, 600);
+    const probe = await Jimp.fromBuffer(Buffer.from(jpeg));
+    probe.resize({ w: 2000, h: 500 });
+    probe.resize({ w: 1000, h: 250 });
+    const q60Size = (await probe.getBuffer('image/jpeg', { quality: 60 })).length;
+    const q20Size = (await probe.getBuffer('image/jpeg', { quality: 20 })).length;
+    expect(q60Size).toBeGreaterThan(q20Size); // sanity: the anchor separates the rungs
+
+    const result = await compressImageForModel(jpeg, 'image/jpeg', {
+      byteBudget: q60Size + 256,
+    });
+    expect(result.changed).toBe(true);
+    expect(result.mimeType).toBe('image/jpeg');
+    expect(Math.max(result.width, result.height)).toBe(1000);
+    // The highest quality that fits the budget at 1000px is q60.
+    expect(result.finalByteLength).toBe(q60Size);
   });
 });
 

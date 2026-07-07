@@ -780,8 +780,9 @@ interface EncodeOptions {
  * PNG cannot meet the byte budget:
  *  - PNG source: PNG at the fitted size → smaller PNG rescales, stepping down
  *    the fallback edges → JPEG ladder.
- *  - JPEG source: JPEG quality ladder → smaller rescales at the lowest
- *    quality, stepping down the fallback edges.
+ *  - JPEG source: the full quality ladder at the fitted size, then again at
+ *    each fallback edge — a smaller rescale must not skip the high-quality
+ *    rungs its extra pixels just paid for.
  *
  * Always returns the smallest buffer it produced, even if no attempt met the
  * budget — the caller still gates on whether it actually helped.
@@ -821,7 +822,8 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
     return smallest!;
   }
 
-  // JPEG source: quality ladder, then smaller rescales at the lowest quality.
+  // JPEG source: quality ladder at the fitted size, then the full ladder
+  // again at each fallback rescale.
   for (const quality of JPEG_QUALITY_STEPS) {
     const jpeg = await image.getBuffer('image/jpeg', { quality });
     if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
@@ -829,9 +831,11 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
   }
   for (const edge of fallbackEdges) {
     if (!fitWithinEdge(image, edge)) continue;
-    const jpeg = await image.getBuffer('image/jpeg', { quality: JPEG_QUALITY_STEPS.at(-1) });
-    if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-    consider(jpeg, 'image/jpeg');
+    for (const quality of JPEG_QUALITY_STEPS) {
+      const jpeg = await image.getBuffer('image/jpeg', { quality });
+      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
+      consider(jpeg, 'image/jpeg');
+    }
   }
 
   return smallest!;
