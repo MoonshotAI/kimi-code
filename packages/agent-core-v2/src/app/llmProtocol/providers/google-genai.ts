@@ -76,14 +76,7 @@ function normalizeGoogleGenAIFinishReason(raw: unknown): {
 export interface GoogleGenAIOptions {
   apiKey?: string | undefined;
   model: string;
-  /**
-   * Override the endpoint the SDK talks to (forwarded as
-   * `httpOptions.baseUrl`). When unset, the SDK falls back to its default
-   * (`generativelanguage.googleapis.com` for Gemini, the regional
-   * `*-aiplatform.googleapis.com` for Vertex). Set this to route through a
-   * Gemini-compatible proxy/gateway.
-   */
-  baseUrl?: string | undefined;
+  baseUrl?: string;
   vertexai?: boolean | undefined;
   project?: string | undefined;
   location?: string | undefined;
@@ -93,11 +86,11 @@ export interface GoogleGenAIOptions {
 }
 
 export interface GoogleGenAIGenerationKwargs {
-  maxOutputTokens?: number | undefined;
-  temperature?: number | undefined;
-  topK?: number | undefined;
-  topP?: number | undefined;
-  thinkingConfig?: ThinkingConfig | undefined;
+  maxOutputTokens?: number;
+  temperature?: number;
+  topK?: number;
+  topP?: number;
+  thinkingConfig?: ThinkingConfig;
   [key: string]: unknown;
 }
 
@@ -281,7 +274,6 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
       },
     };
 
-    // Restore thoughtSignature if available
     if (toolCall.extras && 'thought_signature_b64' in toolCall.extras) {
       functionCallPart['thoughtSignature'] = toolCall.extras['thought_signature_b64'] as string;
     }
@@ -355,24 +347,12 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     const message = messages[i];
     if (message === undefined) break;
 
-    // Message-level tool declarations are a Kimi wire feature. The system
-    // branch below would already drop the empty leftover via its text-length
-    // check, but skip explicitly so the behavior does not hinge on that
-    // coincidence (and covers a non-system carrier defensively).
     if (isToolDeclarationOnlyMessage(message)) {
       i += 1;
       continue;
     }
 
     if (message.role === 'system') {
-      // Google GenAI's `Content.role` only accepts "user" or "model", so a
-      // system message in the history (e.g. from session restore or
-      // cross-provider migration) would be rejected by the API. Preserve
-      // the content by wrapping it in a `<system>` tag and attaching it as
-      // a user turn — mirrors the Anthropic provider's behavior. The
-      // dedicated top-level `systemPrompt` still flows into
-      // `systemInstruction` separately; only historical system messages
-      // come through here.
       const text = message.content
         .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
         .map((p) => p.text)
@@ -466,9 +446,6 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     i += 1;
   }
 
-  // Gemini/Vertex require strictly alternating user/model turns. Consecutive
-  // user Contents arise after compaction (`[prompts, summary, reminders]`) and
-  // when a user turn follows a tool result; collapse them into one user turn.
   return mergeConsecutiveUserMessages(contents, {
     isUser: (content) => content.role === 'user',
     isToolResultOnly: (content) =>
@@ -725,12 +702,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   }
 
   private _buildClient(apiKey: string | undefined): GenAIClient {
-    // The Google GenAI SDK reads the endpoint and headers from `httpOptions`,
-    // deep-merging them over its defaults: a `baseUrl` here overrides the
-    // default host (`generativelanguage.googleapis.com` / Vertex regional),
-    // and a `User-Agent` overrides the SDK default (`google-genai-sdk/<ver> …`)
-    // while preserving the other default headers (`x-goog-api-client`,
-    // `Content-Type`). Build the object once so both can coexist.
     const httpOptions: { headers?: Record<string, string>; baseUrl?: string } = {};
     if (this._defaultHeaders !== undefined) {
       httpOptions.headers = this._defaultHeaders;
@@ -747,7 +718,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
             location: this._location,
           }
         : {}),
-      ...(Object.keys(httpOptions).length > 0 ? { httpOptions } : {}),
+      httpOptions: Object.keys(httpOptions).length > 0 ? httpOptions : undefined,
     });
   }
 
@@ -759,12 +730,9 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     const thinkingConfig = this._generationKwargs.thinkingConfig;
     if (thinkingConfig === undefined) return null;
 
-    // For gemini-3 models that use thinkingLevel
     if (thinkingConfig.thinkingLevel !== undefined) {
       switch (thinkingConfig.thinkingLevel) {
         case 'MINIMAL':
-          // MINIMAL + suppressed thoughts is how 'off' is encoded for Gemini 3,
-          // which has no true "disabled" level.
           return thinkingConfig.includeThoughts === false ? 'off' : 'low';
         case 'LOW':
           return 'low';
@@ -777,7 +745,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       }
     }
 
-    // For other models that use thinkingBudget
     if (thinkingConfig.thinkingBudget !== undefined) {
       if (thinkingConfig.thinkingBudget === 0) return 'off';
       if (thinkingConfig.thinkingBudget <= 1024) return 'low';
@@ -879,9 +846,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     const thinkingConfig: ThinkingConfig = { includeThoughts: true };
 
     if (this._model.includes('gemini-3')) {
-      // Gemini 3 models use thinkingLevel (MINIMAL/LOW/MEDIUM/HIGH). The SDK
-      // does not expose a "disabled" level, so 'off' maps to MINIMAL with
-      // thought output suppressed — the lowest thinking intensity available.
       switch (effort) {
         case 'off':
           thinkingConfig.thinkingLevel = 'MINIMAL';

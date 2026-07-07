@@ -114,22 +114,13 @@ interface AnthropicGenerationKwargs {
   thinking?: MessageCreateParams['thinking'] | undefined;
   output_config?: MessageCreateParams['output_config'] | undefined;
   betaFeatures?: string[] | undefined;
-  contextManagement?: AnthropicContextManagement | undefined;
+  contextManagement?: AnthropicContextManagement;
 }
 
-/**
- * Anthropic beta context-management payload (`context-management-2025-06-27`).
- * Only the `clear_thinking_20251015` edit is emitted today, with `keep`
- * forwarded as a string (`"all"`); the `{ type, value }` turn-count form is
- * not used because the shared `[thinking] keep` config is a string.
- */
 interface AnthropicContextManagement {
   edits: Array<{ type: string; keep?: unknown }>;
 }
 
-// Anthropic's native effort values. `ThinkingEffort` is an open string, so after
-// clamping (and ruling out 'off') we narrow to this concrete set before writing
-// `output_config.effort` / computing a token budget.
 type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
@@ -361,9 +352,6 @@ function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): 
   if (effort === 'max' && !adaptive) {
     return 'high';
   }
-  // 'on' (boolean models) or any effort Anthropic does not recognize: fall
-  // back to 'high' so budgetTokensForEffort / output_config.effort never see
-  // an unsupported value.
   if (
     effort !== 'low' &&
     effort !== 'medium' &&
@@ -425,12 +413,6 @@ function injectCacheControlOnLastBlock(messages: MessageParam[]): void {
   }
 }
 
-/**
- * Whether a user MessageParam consists solely of `tool_result` blocks. Used to
- * keep tool results bundled with each other (parallel-tool-use spec) while
- * not merging a tool-result user message into an adjacent plain-text user
- * message — the two carry different semantics and must stay separate.
- */
 function isToolResultOnly(message: MessageParam): boolean {
   if (message.role !== 'user') return false;
   const content = message.content;
@@ -667,11 +649,6 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
   if (error instanceof AnthropicError) {
     return new ChatProviderError(`Anthropic error: ${error.message}`);
   }
-  // Raw, non-SDK errors (e.g. undici's `TypeError: terminated` raised when a
-  // streaming response body is dropped mid-flight) are never wrapped by the
-  // Anthropic SDK during stream iteration. Route them through the shared
-  // transport-layer heuristic so genuine connection failures become retryable
-  // instead of fatal generic errors.
   if (error instanceof Error) {
     return classifyBaseApiError(error.message);
   }
@@ -1033,22 +1010,8 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
-    // Convert messages, then merge consecutive user messages into one. Strict
-    // Anthropic-compatible backends reject consecutive user messages with HTTP
-    // 400 ("roles must alternate"), and api.anthropic.com concatenates them
-    // anyway — so merging is safe for native Anthropic and required for strict
-    // backends. Consecutive plain-text user messages arise naturally after
-    // compaction (kept user prompts + user-role summary + injected reminders)
-    // and from back-to-back system messages converted to user role above; a
-    // tool-result user turn followed by a text turn arises from steering after
-    // a tool result. The shared helper applies the asymmetric merge rule (see
-    // mergeConsecutiveUserMessages) so this provider and Gemini/Vertex stay in
-    // step.
     const messages = mergeConsecutiveUserMessages(
       normalizeToolCallIdsForProvider(
-        // Message-level tool declarations are a Kimi wire feature; here the
-        // whole message is skipped (an empty leftover would serialize as a
-        // garbage `<system></system>` user turn). See isToolDeclarationOnlyMessage.
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
       ).map((msg) =>
@@ -1310,9 +1273,6 @@ export class AnthropicChatProvider implements ChatProvider {
     const betaFeatures = current.includes(CONTEXT_MANAGEMENT_BETA)
       ? current
       : [...current, CONTEXT_MANAGEMENT_BETA];
-    // Preserve any existing context-management edits (e.g. clear_tool_uses) and
-    // keep clear_thinking first, as Anthropic requires when combining edits. Drop
-    // a previous clear_thinking edit so re-applying stays idempotent.
     const existingEdits = this._generationKwargs.contextManagement?.edits ?? [];
     const edits = [
       { type: CLEAR_THINKING_EDIT, keep },
@@ -1322,14 +1282,6 @@ export class AnthropicChatProvider implements ChatProvider {
       contextManagement: { edits },
       betaFeatures,
     });
-    // clear_thinking_20251015 is honored only on the beta Messages API
-    // (client.beta.messages.create), so enabling keep forces the beta endpoint
-    // here even when the provider was constructed with betaApi: false. Setting
-    // `[thinking] keep` to an off-value (or KIMI_MODEL_THINKING_KEEP=off) is the
-    // escape hatch that disables keep and returns requests to the standard
-    // endpoint. This also routes adaptive models (whose withThinking would
-    // otherwise drop the interleaved-thinking beta and leave betaFeatures empty)
-    // onto the beta endpoint with a body `betas=[context-management-...]`.
     clone._betaApi = true;
     return clone;
   }

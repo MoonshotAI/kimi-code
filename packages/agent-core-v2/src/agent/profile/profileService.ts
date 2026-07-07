@@ -282,6 +282,11 @@ export class AgentProfileService implements IAgentProfileService {
     if (this.modelAlias === undefined) return undefined;
     let model: Model = this.modelFactory.resolve(this.modelAlias);
     const thinkingLevel = this.thinkingLevel;
+    const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
+    const forcedKimiThinkingEffort =
+      model.protocol === 'kimi' && thinkingLevel !== 'off'
+        ? normalizeKimiThinkingEffort(thinkingConfig?.effort)
+        : undefined;
     const kwargs: GenerationKwargs = {};
     if (model.protocol === 'kimi') {
       kwargs.prompt_cache_key = this.sessionContext.sessionId;
@@ -297,18 +302,26 @@ export class AgentProfileService implements IAgentProfileService {
     }
     const keep = resolveThinkingKeep(
       overrides?.thinkingKeep,
-      this.config.get<ThinkingConfig>(THINKING_SECTION)?.keep,
+      thinkingConfig?.keep,
       thinkingLevel,
     );
     if (keep !== undefined) {
-      if (model.protocol === 'kimi') {
+      if (model.protocol === 'kimi' && forcedKimiThinkingEffort === undefined) {
         kwargs.extra_body = { thinking: { keep } };
       } else if (model.protocol === 'anthropic') {
         model = model.withThinkingKeep(keep);
       }
     }
     if (Object.keys(kwargs).length > 0) model = model.withGenerationKwargs(kwargs);
-    model = model.withThinking(thinkingLevel);
+    model = model.withThinking(forcedKimiThinkingEffort ?? thinkingLevel);
+    if (forcedKimiThinkingEffort !== undefined) {
+      const thinking: { type: 'enabled'; effort: string; keep?: string } = {
+        type: 'enabled',
+        effort: forcedKimiThinkingEffort,
+      };
+      if (keep !== undefined) thinking.keep = keep;
+      model = model.withGenerationKwargs({ extra_body: { thinking } });
+    }
     return model;
   }
 
@@ -514,6 +527,11 @@ function parseKeepValue(raw: string | undefined): KeepResolution {
   if (trimmed === undefined || trimmed.length === 0) return { specified: false };
   if (KEEP_OFF_VALUES.has(trimmed.toLowerCase())) return { specified: true, value: undefined };
   return { specified: true, value: trimmed };
+}
+
+function normalizeKimiThinkingEffort(raw: string | undefined): ThinkingEffort | undefined {
+  const trimmed = raw?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
 function resolveThinkingKeep(

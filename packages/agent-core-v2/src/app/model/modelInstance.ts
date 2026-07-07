@@ -127,7 +127,6 @@ export interface Model {
   /** Return a new Model wrapper with additional protocol-constructor options applied. */
   withProviderOptions(options: ProtocolProviderOptions): Model;
 
-  /** Return a new Model wrapper with preserved-thinking keep applied when the protocol supports it. */
   withThinkingKeep(keep: string): Model;
 
   /**

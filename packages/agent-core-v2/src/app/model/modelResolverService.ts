@@ -362,9 +362,6 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: maxContextSize,
-    // Message-level tool declarations (select_tools progressive disclosure).
-    // Every kosong capability bit must be forwarded explicitly here, or the
-    // agent layer can never gate progressive disclosure on it.
     select_tools: declared.has('select_tools') || detected.select_tools === true,
   };
 }

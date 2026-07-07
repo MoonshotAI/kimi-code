@@ -13,7 +13,6 @@ export interface CatalogModelEntry {
   readonly limit?: { readonly context?: number; readonly output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
-  /** Accepts message-level tool declarations (`messages[].tools`). Defaults to false. */
   readonly select_tools?: boolean;
   readonly interleaved?: boolean | { readonly field?: string };
   readonly modalities?: {

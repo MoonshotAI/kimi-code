@@ -35,7 +35,7 @@ function projectStrict(history: readonly ContextMessage[]): Message[] {
 
 function dedupeDuplicateToolCalls(messages: readonly Message[]): Message[] {
   const seenToolCallIds = new Set<string>();
-  const seenToolResultIds = new Set<string>();
+  const keptToolResultIndexes = new Map<string, number>();
   const out: Message[] = [];
   for (const message of messages) {
     if (message.role === 'assistant' && message.toolCalls.length > 0) {
@@ -52,8 +52,14 @@ function dedupeDuplicateToolCalls(messages: readonly Message[]): Message[] {
       continue;
     }
     if (message.role === 'tool' && message.toolCallId !== undefined) {
-      if (seenToolResultIds.has(message.toolCallId)) continue;
-      seenToolResultIds.add(message.toolCallId);
+      const previousIndex = keptToolResultIndexes.get(message.toolCallId);
+      if (previousIndex !== undefined) {
+        if (isInterruptedToolResult(out[previousIndex]) && !isInterruptedToolResult(message)) {
+          out[previousIndex] = message;
+        }
+        continue;
+      }
+      keptToolResultIndexes.set(message.toolCallId, out.length);
     }
     out.push(message);
   }
@@ -230,6 +236,12 @@ function createInterruptedToolResult(toolCallId: string): Message {
     toolCallId,
     partial: undefined,
   };
+}
+
+function isInterruptedToolResult(message: Message | undefined): boolean {
+  if (message?.role !== 'tool') return false;
+  const [part] = message.content;
+  return part?.type === 'text' && part.text === TOOL_INTERRUPTED_TEXT;
 }
 
 function isBlankText(part: ContentPart): boolean {

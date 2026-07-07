@@ -296,6 +296,29 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     ]);
   });
 
+  it('forces configured Kimi thinking effort outside declared support_efforts', () => {
+    const generationKwargs: GenerationKwargs[] = [];
+    const thinkingEfforts: ThinkingEffort[] = [];
+    modelResolver = {
+      _serviceBrand: undefined,
+      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
+      findByName: () => [],
+    };
+    const host = buildHost('profile-thinking-effort-force');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+    configValues['thinking'] = { effort: ' max ' };
+
+    host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'on' });
+    const model = host.svc.resolveModel();
+
+    expect(model?.thinkingEffort).toBe('max');
+    expect(thinkingEfforts).toEqual(['max']);
+    expect(generationKwargs).toEqual([
+      { prompt_cache_key: 'session-test' },
+      { extra_body: { thinking: { type: 'enabled', effort: 'max', keep: 'all' } } },
+    ]);
+  });
+
   it('applies thinking.keep model override on the Anthropic path', () => {
     const generationKwargs: GenerationKwargs[] = [];
     const thinkingEfforts: ThinkingEffort[] = [];

@@ -2,6 +2,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
@@ -73,9 +74,12 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
-function createService(model: Model, projector: { project: unknown; projectStrict: unknown }) {
+function createService(
+  model: Model,
+  projector: Pick<IAgentContextProjectorService, 'project' | 'projectStrict'>,
+) {
   const ix = disposables.add(new TestInstantiationService());
-  const profile = {
+  const profile: Partial<IAgentProfileService> = {
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
@@ -87,17 +91,25 @@ function createService(model: Model, projector: { project: unknown; projectStric
     }),
     getProvider: () => model,
     getSystemPrompt: () => 'system',
-    data: () => ({ modelAlias: 'm' }),
+    data: () => ({
+      cwd: '',
+      modelAlias: 'm',
+      modelCapabilities: capabilities,
+      thinkingLevel: 'off',
+      systemPrompt: 'system',
+    }),
     isToolActive: () => true,
   };
   const contextSize = {
-    getStatus: () => ({ contextTokens: 0 }),
+    get: () => ({ size: 0, measured: 0, estimated: 0 }),
     measured: () => undefined,
   };
   const usage = { record: () => undefined };
   const context = { get: () => history };
   const tools = { list: () => [] };
-  const config = { get: () => undefined };
+  const config: Partial<IConfigService> = {
+    get: (() => undefined) as IConfigService['get'],
+  };
   const log = { info: () => undefined, warn: () => undefined };
   const telemetry = { track: () => undefined };
 
@@ -121,11 +133,11 @@ describe('AgentLLMRequesterService strict resend', () => {
     let projectCalls = 0;
     let strictCalls = 0;
     const service = createService(createModel(calls), {
-      project: (messages: readonly Message[]) => {
+      project: (messages: readonly ContextMessage[]) => {
         projectCalls += 1;
         return messages;
       },
-      projectStrict: (messages: readonly Message[]) => {
+      projectStrict: (messages: readonly ContextMessage[]) => {
         strictCalls += 1;
         return messages;
       },
@@ -152,8 +164,8 @@ describe('AgentLLMRequesterService strict resend', () => {
     });
     let strictCalls = 0;
     const service = createService(model, {
-      project: (messages: readonly Message[]) => messages,
-      projectStrict: (messages: readonly Message[]) => {
+      project: (messages: readonly ContextMessage[]) => messages,
+      projectStrict: (messages: readonly ContextMessage[]) => {
         strictCalls += 1;
         return messages;
       },

@@ -2,29 +2,7 @@ import type { Message, StreamedMessagePart, VideoURLPart } from './message';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
-/**
- * Thinking effort passed to {@link ChatProvider.withThinking}.
- *
- * `'off'` and `'on'` are the only reserved values: `'off'` disables thinking,
- * and `'on'` is the on-signal for boolean models (models that do not declare
- * `support_efforts`). Everything else is a model-declared effort (e.g.
- * `"low"`, `"high"`, `"max"`) carried as an open string. The type collapses to
- * `string` at runtime; it exists purely as a semantic marker that a value is
- * expected to be `'off'`, `'on'`, or a model-declared effort.
- *
- * The model's `support_efforts` is the single source of truth for which
- * efforts are valid — providers normalize any unrecognized effort by omitting
- * the effort on the wire rather than rejecting it.
- */
-export type ThinkingEffort =
-  | 'off'
-  | 'on'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max'
-  | (string & {});
+export type ThinkingEffort = 'off' | 'on' | (string & {});
 
 /**
  * Optional context passed to {@link ChatProvider.withMaxCompletionTokens} so a

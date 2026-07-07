@@ -15,12 +15,6 @@ export interface ModelCapability {
   readonly thinking: boolean;
   readonly tool_use: boolean;
   readonly max_context_tokens: number;
-  /**
-   * Model accepts message-level tool declarations (`messages[].tools`), the
-   * primitive behind select_tools progressive disclosure. Absent means
-   * unsupported: only models explicitly catalogued or declared with this
-   * capability may ever receive a message carrying `tools`.
-   */
   readonly select_tools?: boolean;
 }
 
