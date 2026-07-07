@@ -36,6 +36,13 @@ interface McpToolEntry {
   readonly serverName: string;
 }
 
+interface PendingMcpDiscovery {
+  readonly serverName: string;
+  readonly rawTools: readonly MCPToolDefinition[];
+  readonly enabledNames: readonly string[];
+  readonly collisions: readonly McpToolCollision[];
+}
+
 export class ToolManager {
   protected builtinTools: Map<string, BuiltinTool> = new Map();
   protected readonly userTools: Map<string, ExecutableTool> = new Map();
@@ -59,9 +66,17 @@ export class ToolManager {
   /**
    * `serverName\nhash` keys of `mcp.tools_discovered` records already durable
    * in this wire log. Restored on replay; reconnects with an unchanged raw
-   * tool list and allow-list do not re-log.
+   * tool list, allow-list, and collision outcome do not re-log.
    */
   private readonly seenMcpDiscoveries = new Set<string>();
+  /**
+   * Discoveries observed before the record log opened (constructor-time
+   * attach can run before `agent.resume()` replays the wire — see
+   * `AgentRecords.observabilityReady`). The dedup decision must be re-made at
+   * drain time, after replay has restored `seenMcpDiscoveries`.
+   */
+  private readonly pendingMcpDiscoveries: PendingMcpDiscovery[] = [];
+  private mcpDiscoveryDrainSubscribed = false;
 
   /** Abort controllers for in-flight `!` shell commands, keyed by commandId so
    *  the TUI can cancel (Esc / Ctrl+C) a running command. */
@@ -415,6 +430,7 @@ export class ToolManager {
   /**
    * Observability record: the server's verbatim `tools/list` result plus how
    * this agent gated it (allow-list, collisions). See `records/types.ts`.
+   * Parked while the record log has not opened yet (pre-replay window).
    */
   private recordMcpToolsDiscovered(
     serverName: string,
@@ -422,8 +438,42 @@ export class ToolManager {
     enabledNames: ReadonlySet<string>,
     collisions: readonly McpToolCollision[],
   ): void {
-    const sortedEnabled = [...enabledNames].toSorted((a, b) => a.localeCompare(b));
-    const hash = fingerprint(JSON.stringify({ tools: rawTools, enabledNames: sortedEnabled }));
+    const discovery: PendingMcpDiscovery = {
+      serverName,
+      rawTools,
+      enabledNames: [...enabledNames].toSorted((a, b) => a.localeCompare(b)),
+      collisions,
+    };
+    if (!this.agent.records.observabilityReady) {
+      this.pendingMcpDiscoveries.push(discovery);
+      // Lazy one-shot subscription: only agents that actually parked need
+      // the drain callback, and at park time the log is guaranteed unopened.
+      if (!this.mcpDiscoveryDrainSubscribed) {
+        this.mcpDiscoveryDrainSubscribed = true;
+        this.agent.records.onOpened(() => {
+          this.drainPendingMcpDiscoveries();
+        });
+      }
+      return;
+    }
+    this.writeMcpDiscovery(discovery);
+  }
+
+  private drainPendingMcpDiscoveries(): void {
+    const pending = this.pendingMcpDiscoveries.splice(0);
+    for (const discovery of pending) {
+      this.writeMcpDiscovery(discovery);
+    }
+  }
+
+  private writeMcpDiscovery(discovery: PendingMcpDiscovery): void {
+    const { serverName, rawTools, enabledNames, collisions } = discovery;
+    // The hash covers everything the record captures — the raw list, the
+    // allow-list, AND the collision outcome. Collisions depend on which
+    // other servers hold a qualified name at registration time, so the same
+    // server can re-register with identical tools but a different outcome;
+    // that change must produce a new record.
+    const hash = fingerprint(JSON.stringify({ tools: rawTools, enabledNames, collisions }));
     const key = `${serverName}\n${hash}`;
     if (this.seenMcpDiscoveries.has(key)) return;
     this.seenMcpDiscoveries.add(key);
@@ -432,7 +482,7 @@ export class ToolManager {
       serverName,
       hash,
       tools: rawTools,
-      enabledNames: sortedEnabled,
+      enabledNames,
       collisions: collisions.length > 0 ? collisions : undefined,
     });
   }

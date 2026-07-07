@@ -140,6 +140,7 @@ describe('mcp.tools_discovered records', () => {
   ];
 
   function fakeMcp(input: {
+    readonly serverName?: string;
     readonly rawTools: readonly MCPToolDefinition[];
     readonly enabledNames: () => ReadonlySet<string>;
     readonly onListener?: (listener: McpStatusListener) => void;
@@ -153,7 +154,7 @@ describe('mcp.tools_discovered records', () => {
       },
     };
     const entry: McpServerEntry = {
-      name: 'grafana',
+      name: input.serverName ?? 'grafana',
       transport: 'stdio',
       status: 'connected',
       toolCount: input.rawTools.length,
@@ -241,5 +242,106 @@ describe('mcp.tools_discovered records', () => {
     attachFakeMcp(resumed, second.mcp);
 
     expect(recordsOf(resumedPersistence, 'mcp.tools_discovered')).toHaveLength(1);
+  });
+
+  it('parks a pre-resume discovery and dedups it against the replayed record', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure({ tools: ['mcp__*'] });
+    const first = fakeMcp({
+      rawTools: RAW_TOOLS,
+      enabledNames: () => new Set(['query_range']),
+    });
+    attachFakeMcp(ctx, first.mcp);
+    expect(recordsOf(persistence, 'mcp.tools_discovered')).toHaveLength(1);
+
+    // Real Session ordering: MCP servers are already connected when the
+    // resumed agent is constructed, so ToolManager attaches (and observes the
+    // discovery) BEFORE agent.resume() replays the wire.
+    const resumedPersistence = new InMemoryAgentRecordPersistence(
+      structuredClone(persistence.records),
+    );
+    const recordCountBeforeResume = resumedPersistence.records.length;
+    const resumed = testAgent({ persistence: resumedPersistence });
+    const second = fakeMcp({
+      rawTools: RAW_TOOLS,
+      enabledNames: () => new Set(['query_range']),
+    });
+    attachFakeMcp(resumed, second.mcp);
+    // Parked: nothing may be appended before replay — in particular no
+    // duplicate discovery and no stray metadata record.
+    expect(resumedPersistence.records).toHaveLength(recordCountBeforeResume);
+
+    await resumed.agent.resume();
+
+    expect(recordsOf(resumedPersistence, 'mcp.tools_discovered')).toHaveLength(1);
+    expect(
+      resumedPersistence.records.filter((record) => record.type === 'metadata'),
+    ).toHaveLength(1);
+  });
+
+  it('parks a discovery observed before the log opens and writes it after the first record', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    // Attach BEFORE configure: nothing durable exists yet, so the discovery
+    // must park instead of opening the log with an observability record.
+    const { mcp } = fakeMcp({
+      rawTools: RAW_TOOLS,
+      enabledNames: () => new Set(['query_range']),
+    });
+    attachFakeMcp(ctx, mcp);
+    expect(persistence.records).toHaveLength(0);
+
+    ctx.configure({ tools: ['mcp__*'] });
+
+    expect(recordsOf(persistence, 'mcp.tools_discovered')).toHaveLength(1);
+    expect(persistence.records[0]!.type).toBe('metadata');
+    expect(
+      persistence.records.filter((record) => record.type === 'metadata'),
+    ).toHaveLength(1);
+  });
+
+  it('re-records when only the collision outcome changes', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ persistence });
+    ctx.configure({ tools: ['mcp__*'] });
+
+    // "graf.ana" sanitizes to "graf_ana", so both servers qualify their tool
+    // as mcp__graf_ana__query_range; whoever registers first wins the name.
+    const occupant: MCPClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return { content: [], isError: false };
+      },
+    };
+    ctx.agent.tools.registerMcpServer('graf.ana', occupant, [
+      { name: 'query_range', description: 'occupies the qualified name', parameters: {} },
+    ]);
+
+    let statusListener: McpStatusListener | undefined;
+    const { mcp, entry } = fakeMcp({
+      serverName: 'graf_ana',
+      rawTools: RAW_TOOLS,
+      enabledNames: () => new Set(['query_range']),
+      onListener: (listener) => {
+        statusListener = listener;
+      },
+    });
+    attachFakeMcp(ctx, mcp);
+
+    const first = recordsOf(persistence, 'mcp.tools_discovered');
+    expect(first).toHaveLength(1);
+    expect(first[0]!.collisions).toHaveLength(1);
+
+    // Same rawTools and allow-list, but the colliding server is gone: the
+    // outcome flips, so a new record must be written.
+    ctx.agent.tools.unregisterMcpServer('graf.ana');
+    statusListener?.(entry);
+
+    const all = recordsOf(persistence, 'mcp.tools_discovered');
+    expect(all).toHaveLength(2);
+    expect(all[1]!.collisions).toBeUndefined();
   });
 });
