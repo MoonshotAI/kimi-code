@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  IAgentContextMemoryService,
   IAgentLifecycleService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
@@ -178,5 +179,58 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(list.body.code).toBe(0);
     expect(list.body.data.active).toBeNull();
     expect(list.body.data.queued).toEqual([]);
+  });
+
+  it('routes a submitted prompt to the agent named by agent_id (BTW side channel)', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // Fork the main agent into a side-channel child the way `/btw` does.
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const child = await lifecycle.fork('main');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: child.id,
+    });
+    expect(submitted.body.code).toBe(0);
+
+    // The user message is appended to the target agent's context before the turn
+    // runs, so it persists even after the (model-less) turn settles — a durable
+    // signal of which agent actually received the prompt.
+    const contextHasUserText = (
+      handle: { accessor: { get: typeof child.accessor.get } },
+      text: string,
+    ): boolean =>
+      handle.accessor
+        .get(IAgentContextMemoryService)
+        .get()
+        .some(
+          (m) =>
+            m.role === 'user' &&
+            m.content.some((p) => p.type === 'text' && p.text === text),
+        );
+
+    // The side-channel child received the prompt.
+    expect(contextHasUserText(child, 'side question')).toBe(true);
+
+    // The main agent must NOT have received it — previously the route ignored
+    // agent_id and always targeted main, so the reply landed in the main view.
+    const main = lifecycle.getHandle('main');
+    expect(main).toBeDefined();
+    expect(contextHasUserText(main!, 'side question')).toBe(false);
+  });
+
+  it('returns 40401 when agent_id names an unknown agent', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      agent_id: 'agent_does_not_exist',
+    });
+    expect(body.code).toBe(40401);
   });
 });

@@ -6,6 +6,7 @@
  */
 
 import {
+  IAgentLifecycleService,
   IAgentPromptLegacyService,
   ISessionLifecycleService,
   isKimiError,
@@ -25,7 +26,7 @@ import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
+import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 interface PromptRouteHost {
@@ -55,7 +56,11 @@ const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.
 const authProviderDetailsSchema = z.object({ provider_id: z.string() });
 const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
 
-async function resolveLegacy(core: Scope, sessionId: string): Promise<IAgentPromptLegacyService> {
+async function resolveLegacy(
+  core: Scope,
+  sessionId: string,
+  agentId?: string,
+): Promise<IAgentPromptLegacyService> {
   // `resume` (not `get`) so a persisted-but-cold session — created by a previous
   // process, by v1, or closed in this one — is loaded from disk instead of
   // being reported as `session.not_found`. Mirrors the snapshot route. Returns
@@ -64,7 +69,17 @@ async function resolveLegacy(core: Scope, sessionId: string): Promise<IAgentProm
   if (session === undefined) {
     throw new KimiError('session.not_found', `session ${sessionId} does not exist`);
   }
-  const agent = await ensureMainAgent(session);
+  // A prompt may target a forked side-channel agent (e.g. `/btw`) via
+  // `body.agent_id`. Default to `main` when absent; only `main` is
+  // auto-created — any other id must already exist (forked beforehand), or it
+  // is reported as `agent.not_found`.
+  const agent =
+    agentId === undefined || agentId === MAIN_AGENT_ID
+      ? await ensureMainAgent(session)
+      : session.accessor.get(IAgentLifecycleService).getHandle(agentId);
+  if (agent === undefined) {
+    throw new KimiError('agent.not_found', `agent ${agentId} does not exist`);
+  }
   return agent.accessor.get(IAgentPromptLegacyService);
 }
 
@@ -116,7 +131,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const legacy = await resolveLegacy(core, session_id);
+        const legacy = await resolveLegacy(core, session_id, req.body.agent_id);
         const result = await legacy.submit(req.body);
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
