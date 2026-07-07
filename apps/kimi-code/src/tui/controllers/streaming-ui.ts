@@ -560,9 +560,15 @@ export class StreamingUIController {
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
+      // The message is out of the queue but not yet sent. Mark the dispatch
+      // pending *before* setAppState — that call synchronously retries
+      // queued-goal promotion, which would otherwise see an empty queue and an
+      // idle phase and start a goal ahead of this message.
+      state.queuedMessageDispatchPending = true;
       this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
       setTimeout(() => {
+        state.queuedMessageDispatchPending = false;
         sendQueued(next);
       }, 0);
       return;

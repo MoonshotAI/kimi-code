@@ -214,9 +214,11 @@ summary {
 }
 
 /* -- icon primitive (design-system §02) -------------------------------------
-   Shared by the <Icon> component and iconSvg() v-html strings (lib/icons.ts).
-   Icons are Remix Icon (fill="currentColor" on a 24x24 grid), so colour follows
-   text and the rendered size comes from the width/height attributes. */
+   Applied to every design-system icon: the <Icon> component output
+   (components/ui/Icon.vue) and the iconSvg() v-html strings (lib/icons.ts).
+   Both source their SVG from the Remix Icon registry in lib/icons.ts, bundled
+   by unplugin-icons at build time — so only registered icons ship. Colour
+   follows text via fill="currentColor". */
 .kw-icon {
   display: inline-block;
   flex: none;

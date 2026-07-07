@@ -52,6 +52,13 @@ export interface TUIState {
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
   queuedMessages: QueuedMessage[];
+  /**
+   * True while a queued user message has been shifted out of
+   * {@link queuedMessages} but its deferred send has not run yet. The queue
+   * looks empty during this window, so queued-goal promotion must also check
+   * this flag to avoid starting a goal ahead of the user's earlier message.
+   */
+  queuedMessageDispatchPending: boolean;
   swarmModeEntry: 'manual' | 'task' | undefined;
 }
 
@@ -103,6 +110,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     tasksBrowser: undefined,
     externalEditorRunning: false,
     queuedMessages: [],
+    queuedMessageDispatchPending: false,
     swarmModeEntry: undefined,
   };
 }

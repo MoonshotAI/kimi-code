@@ -829,14 +829,8 @@ export class ToolManager {
         ? enabledMcpNames
         : enabledMcpNames.filter((name) => loadedSet.has(name));
     const selectToolsName = disclosure ? [b.SELECT_TOOLS_TOOL_NAME] : [];
-    // Mutation goal tools are only offered to the model while a goal exists.
-    const hideGoalMutationTools = this.agent.goal.getGoal().goal === null;
     return uniq([...this.enabledTools, ...selectToolsName, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
-      .filter(
-        (name) =>
-          !(hideGoalMutationTools && (name === 'SetGoalBudget' || name === 'UpdateGoal')),
-      )
       // select_tools is exposed exclusively through the disclosure gate — a
       // profile or setActiveTools listing the name explicitly must not
       // surface it in inline mode (it was silently dropped back when

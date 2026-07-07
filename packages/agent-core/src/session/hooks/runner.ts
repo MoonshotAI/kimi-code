@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
 
 import { z } from 'zod';
 
@@ -9,6 +9,24 @@ export interface RunHookOptions {
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
+}
+
+export function buildHookSpawnOptions(options: {
+  cwd?: string;
+  env?: Readonly<Record<string, string>>;
+}): SpawnOptionsWithoutStdio {
+  return {
+    shell: true,
+    cwd: options.cwd,
+    stdio: 'pipe',
+    detached: process.platform !== 'win32',
+    // Hide the console Windows would otherwise allocate for the shell child.
+    // Without `windowsHide:true`, each hook flashes a visible console window —
+    // the same regression the Bash tool path already guards against in KAOS
+    // (see `buildLocalSpawnOptions`). Unconditional: it is a no-op on POSIX.
+    windowsHide: true,
+    env: options.env ? { ...process.env, ...options.env } : undefined,
+  };
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -46,13 +64,7 @@ export async function runHook(
 ): Promise<HookResult> {
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = spawn(command, {
-      shell: true,
-      cwd: options.cwd,
-      stdio: 'pipe',
-      detached: process.platform !== 'win32',
-      env: options.env ? { ...process.env, ...options.env } : undefined,
-    });
+    child = spawn(command, buildHookSpawnOptions({ cwd: options.cwd, env: options.env }));
   } catch (error) {
     return allowResult({ stderr: errorMessage(error) });
   }

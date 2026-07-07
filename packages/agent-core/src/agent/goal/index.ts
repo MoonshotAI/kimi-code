@@ -19,6 +19,15 @@ import {
 /** Maximum objective length in characters. */
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 
+/**
+ * Maximum completion-criterion length in characters. The criterion is repeated
+ * in every active/paused/blocked goal reminder, so an unbounded one would bloat
+ * both `state.json` and every continuation prompt. Unlike the objective (which
+ * is rejected when too long), this supplementary field is truncated so an
+ * over-long criterion never fails goal creation outright.
+ */
+const MAX_GOAL_COMPLETION_CRITERION_LENGTH = MAX_GOAL_OBJECTIVE_LENGTH;
+
 const GOAL_CANCELLED_REMINDER = [
   'The user cancelled the current goal.',
   'Ignore earlier active-goal reminders for that goal.',
@@ -760,5 +769,8 @@ function budgetTelemetryProperties(limits: GoalBudgetLimits): TelemetryPropertie
 
 function normalizeCompletionCriterion(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed?.length ? trimmed : undefined;
+  if (!trimmed?.length) return undefined;
+  return trimmed.length > MAX_GOAL_COMPLETION_CRITERION_LENGTH
+    ? trimmed.slice(0, MAX_GOAL_COMPLETION_CRITERION_LENGTH)
+    : trimmed;
 }

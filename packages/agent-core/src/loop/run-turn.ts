@@ -46,8 +46,8 @@ export interface RunTurnInput {
   /**
    * Per-step tool table builder. When present it wins over `tools` and is
    * re-invoked before every step, so a tool loaded mid-turn (select_tools
-   * schema injection) is dispatchable on the very next step and state-driven
-   * visibility (e.g. goal mutation tools) stays fresh. `tools` remains as the
+   * schema injection) is dispatchable on the very next step and runtime tool
+   * visibility stays fresh. `tools` remains as the
    * static per-turn snapshot for hosts without dynamic tool tables.
    */
   readonly buildTools?: (() => readonly ExecutableTool[]) | undefined;

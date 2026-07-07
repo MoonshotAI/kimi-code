@@ -42,11 +42,15 @@ describe('default agent profiles', () => {
 
   it('lists the goal tools on the agent profile but not on subagent profiles', () => {
     const agentTools = DEFAULT_AGENT_PROFILES['agent']?.tools ?? [];
-    expect(agentTools).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
+    expect(agentTools).toEqual(
+      expect.arrayContaining(['CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal']),
+    );
     for (const name of ['coder', 'explore', 'plan']) {
       const tools = DEFAULT_AGENT_PROFILES[name]?.tools ?? [];
       expect(tools).not.toContain('CreateGoal');
       expect(tools).not.toContain('GetGoal');
+      expect(tools).not.toContain('SetGoalBudget');
+      expect(tools).not.toContain('UpdateGoal');
     }
   });
 

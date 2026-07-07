@@ -17,7 +17,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": false,
-    "types": ["vite/client"]
+    "types": ["vite/client", "unplugin-icons/types/vue"]
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "src/env.d.ts"]
 }

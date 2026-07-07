@@ -13,6 +13,11 @@ import type { WireEvent, WireServerFrame } from './wire';
 // Sec-WebSocket-Protocol subprotocol instead.
 const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
 
+// A socket with no incoming frames for this long is presumed half-open even if
+// the browser still reports OPEN (no onclose fired). Derived as 2x the server
+// heartbeat, with a floor so a misconfigured tiny heartbeat can't thrash.
+const STALE_SOCKET_FLOOR_MS = 30_000;
+
 // ---------------------------------------------------------------------------
 // Handler interface
 // ---------------------------------------------------------------------------
@@ -84,6 +89,14 @@ export class DaemonEventSocket {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Server-advertised heartbeat interval (ms); falls back to the daemon default. */
+  private heartbeatMs = 30_000;
+  /**
+   * Epoch ms of the most recent frame (or the connect attempt). Used to detect
+   * a silent-half-open socket that the browser never fires `onclose` for.
+   */
+  private lastActivityAt = 0;
+
   constructor(
     private readonly wsUrl: string,
     private readonly clientId: string,
@@ -94,6 +107,7 @@ export class DaemonEventSocket {
   connect(): void {
     if (this.ws !== null || this.closed) return;
 
+    this.lastActivityAt = Date.now();
     traceWsLifecycle('connect', { url: this.wsUrl, attempt: this.reconnectAttempts });
     const credential = getCredential();
     const protocols =
@@ -107,6 +121,8 @@ export class DaemonEventSocket {
     };
 
     ws.onmessage = (ev: MessageEvent) => {
+      // Any received frame proves the link is alive; reset the stale detector.
+      this.lastActivityAt = Date.now();
       try {
         const frame = JSON.parse(String(ev.data)) as WireServerFrame;
         traceWsIn(frame);
@@ -256,6 +272,61 @@ export class DaemonEventSocket {
     }
   }
 
+  /**
+   * Snapshot the socket's health. `stale` is true when no frame has arrived for
+   * longer than 2x the server heartbeat (floored at {@link STALE_SOCKET_FLOOR_MS}).
+   * The browser may still report OPEN on a half-open connection that no longer
+   * delivers data, so foreground recovery keys on the staleness signal rather
+   * than the raw readyState.
+   */
+  health(): { connected: boolean; open: boolean; stale: boolean } {
+    const open = this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    const threshold = Math.max(this.heartbeatMs * 2, STALE_SOCKET_FLOOR_MS);
+    const stale = this.lastActivityAt > 0 && Date.now() - this.lastActivityAt > threshold;
+    return { connected: this.connected, open, stale };
+  }
+
+  /**
+   * Force a clean reconnect. Used to recover from a silent-half-open socket
+   * (e.g. after the browser froze a background tab) where `onclose` never
+   * fires, so the automatic backoff reconnect wired into `onclose` is never
+   * triggered.
+   *
+   * Tears down the current socket without waiting for `onclose`, resets the
+   * handshake state, and opens a fresh socket immediately; `onServerHello`
+   * re-sends every subscription at the last durable cursor. No-op after
+   * {@link close()}.
+   */
+  reconnect(): void {
+    if (this.closed) return;
+    // Cancel any pending automatic reconnect — we're reconnecting synchronously.
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const old = this.ws;
+    if (old !== null) {
+      // Detach before closing so the old socket's `onclose` doesn't race our
+      // fresh connect (it would call scheduleReconnect and clobber `this.ws`).
+      old.onopen = null;
+      old.onmessage = null;
+      old.onerror = null;
+      old.onclose = null;
+      try {
+        old.close(1000, 'reconnect');
+      } catch {
+        // Ignore — the socket may already be closing.
+      }
+    }
+    const wasConnected = this.connected;
+    this.ws = null;
+    this.connected = false;
+    if (wasConnected) {
+      this.handlers.onConnectionState(false);
+    }
+    this.connect();
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -266,9 +337,12 @@ export class DaemonEventSocket {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const frame = rawFrame as any;
     switch ((rawFrame as { type: string }).type) {
-      case 'server_hello':
+      case 'server_hello': {
+        const hb = (frame.payload as { heartbeat_ms?: unknown } | undefined)?.heartbeat_ms;
+        if (typeof hb === 'number' && hb > 0) this.heartbeatMs = hb;
         this.onServerHello();
         break;
+      }
 
       case 'ping':
         this.send({ type: 'pong', payload: { nonce: frame.payload.nonce } });
