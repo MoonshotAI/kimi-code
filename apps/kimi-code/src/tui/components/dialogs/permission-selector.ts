@@ -6,20 +6,17 @@ const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'manual',
     label: 'Manual',
-    description:
-      'Ask before commands, edits, and other risky actions. Read/search tools run directly; session approval rules are respected.',
+    description: 'Approve every action yourself.',
   },
   {
     value: 'auto',
     label: 'Auto',
-    description:
-      'Run fully non-interactively. Tool actions are approved automatically, and agent questions are skipped so it can decide on its own.',
+    description: 'Run all actions automatically, including risky ones.',
   },
   {
     value: 'yolo',
     label: 'YOLO',
-    description:
-      'Automatically approve tool actions and plan transitions. The agent can still ask you explicit questions when your input is needed.',
+    description: 'AI decides which actions need your approval.',
   },
 ];
 

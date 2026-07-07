@@ -107,7 +107,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     }
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Workspace tools auto-approved.');
+    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
     return;
   }
 
@@ -130,7 +130,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   } else {
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Workspace tools auto-approved.');
+    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
   }
 }
 
@@ -151,7 +151,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
     }
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Tools auto-approved. Agent will not ask questions.');
+    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
     return;
   }
 
@@ -174,7 +174,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   } else {
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Tools auto-approved. Agent will not ask questions.');
+    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
   }
 }
 
