@@ -152,13 +152,6 @@ export class Agent {
    * by the session for print runs; defaults to false everywhere else.
    */
   printDrainAgentTasksOnStop = false;
-  /**
-   * Absolute deadline (ms epoch) bounding all print-mode drain waits for this
-   * agent, derived from `background.printWaitCeilingS`. `Infinity` when the
-   * drain is disabled. Shared across every drain hold within a single print
-   * run so backfill rounds cannot exceed the ceiling in aggregate.
-   */
-  printDrainDeadlineMs = Number.POSITIVE_INFINITY;
 
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;

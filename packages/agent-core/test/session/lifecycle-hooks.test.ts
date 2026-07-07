@@ -402,9 +402,8 @@ describe('Session lifecycle hooks', () => {
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
   });
 
-  it('createMain enables print drain and sets a deadline when drainAgentTasksOnStop is true', async () => {
+  it('createMain enables print drain when drainAgentTasksOnStop is true', async () => {
     const { sessionDir, workDir } = await hookFixture();
-    const before = Date.now();
     const session = new Session({
       kaos: testKaos.withCwd(workDir),
       id: 'session-print-drain',
@@ -417,8 +416,6 @@ describe('Session lifecycle hooks', () => {
     const agent = await session.createMain();
 
     expect(agent.printDrainAgentTasksOnStop).toBe(true);
-    expect(agent.printDrainDeadlineMs).toBeGreaterThanOrEqual(before + 42 * 1000 - 50);
-    expect(agent.printDrainDeadlineMs).toBeLessThanOrEqual(Date.now() + 42 * 1000 + 50);
     await session.close();
   });
 
@@ -434,7 +431,6 @@ describe('Session lifecycle hooks', () => {
     const agent = await session.createMain();
 
     expect(agent.printDrainAgentTasksOnStop).toBe(false);
-    expect(agent.printDrainDeadlineMs).toBe(Number.POSITIVE_INFINITY);
     await session.close();
   });
 
