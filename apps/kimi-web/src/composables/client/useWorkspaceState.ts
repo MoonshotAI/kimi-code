@@ -1592,7 +1592,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // (same path as the first prompt / a new-session skill), then target it.
     let sid = rawState.activeSessionId;
     if (!sid) {
-      const wsId = rawState.activeWorkspaceId;
+      // Use the same fallback as the client-wide computed activeWorkspaceId
+      // (raw value if it exists, else the first sidebar-visible workspace). On a
+      // fresh empty workspace load() never writes rawState.activeWorkspaceId
+      // (there's no most-recent session to anchor it), so a raw read here would
+      // be null and silently no-op even though the UI can still show a usable
+      // workspace. Plain first-prompts and skill activations don't hit this
+      // because App.vue passes the computed activeWorkspaceId in.
+      const raw = rawState.activeWorkspaceId;
+      const wsId =
+        raw && workspacesView.value.some((w) => w.id === raw)
+          ? raw
+          : (workspacesView.value[0]?.id ?? null);
       if (!wsId) return;
       sid = (await createDraftSession(wsId)) ?? undefined;
       if (!sid) return;

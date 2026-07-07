@@ -686,9 +686,8 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     return state;
   }
 
-  it('creates a session, sets the goal profile, and submits the objective', async () => {
-    const state = emptyComposerState();
-    const deps: UseWorkspaceStateDeps = {
+  function goalDeps(): UseWorkspaceStateDeps {
+    return {
       ...createDeps(),
       taskPoller: { loadTasksForSession: vi.fn() } as unknown as UseWorkspaceStateDeps['taskPoller'],
       modelProvider: {
@@ -696,8 +695,15 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      // Something the goal can land in + what's visible in the sidebar.
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
-    };
+      workspacesView: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
+    } as unknown as UseWorkspaceStateDeps;
+  }
+
+  it('creates a session, sets the goal profile, and submits the objective', async () => {
+    const state = emptyComposerState(); // rawState.activeWorkspaceId = 'wd_1'
+    const deps = goalDeps();
     const ws = useWorkspaceState(state, deps);
 
     await ws.createGoal('improve test coverage');
@@ -715,10 +721,30 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });
 
-  it('is a no-op when there is no active session and no active workspace', async () => {
+  it('falls back to the first visible workspace when raw activeWorkspaceId is unset', async () => {
+    // Regression for a real empty-workspace boot: load() never writes
+    // rawState.activeWorkspaceId when there are no sessions, so the raw read is
+    // null, but the sidebar still shows a usable workspace via the computed
+    // fallback. First-session goals must work there too.
     const state = emptyComposerState();
     state.activeWorkspaceId = null;
-    const deps = createDeps();
+    const ws = useWorkspaceState(state, goalDeps());
+
+    await ws.createGoal('improve test coverage');
+
+    expect(apiMock.createSession).toHaveBeenCalledOnce();
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'improve test coverage' });
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+  });
+
+  it('is a no-op when there is no active session and no usable workspace', async () => {
+    const state = emptyComposerState();
+    state.activeWorkspaceId = null;
+    const deps: UseWorkspaceStateDeps = {
+      ...createDeps(),
+      mergedWorkspaces: computed(() => []),
+      workspacesView: computed(() => []),
+    };
     const ws = useWorkspaceState(state, deps);
 
     await ws.createGoal('improve test coverage');
@@ -731,8 +757,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
 
   it('ignores empty/whitespace objectives', async () => {
     const state = emptyComposerState();
-    const deps = createDeps();
-    const ws = useWorkspaceState(state, deps);
+    const ws = useWorkspaceState(state, goalDeps());
 
     await ws.createGoal('   ');
 
