@@ -46,6 +46,7 @@ import {
   resolveMcpToolTimeoutMs,
   resolveSessionMcpConfig,
   mergeCallerMcpServers,
+  filterMcpServersByModel,
   type BeginAuthorizationResult,
   type SessionMcpConfig,
 } from '../mcp';
@@ -389,7 +390,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const pluginCommands = await this.plugins.enabledCommands();
-    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
+    const mcpConfig = filterMcpServersByModel(
+      this.mergePluginMcpConfig(withCallerMcp),
+      modelAlias,
+    );
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
@@ -546,10 +550,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       homeDir: this.homeDir,
     });
     const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, input.mcpServers);
+    // Resume carries no model override in its payload; use the configured
+    // default to decide which model-scoped MCPs load.
+    const modelAlias = config.defaultModel;
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const pluginCommands = await this.plugins.enabledCommands();
-    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
+    const mcpConfig = filterMcpServersByModel(
+      this.mergePluginMcpConfig(withCallerMcp),
+      modelAlias,
+    );
     const runtime = await this.resolveRuntime(config);
     const parentKaos = parentKaosForRead;
     const persistenceKaos = overrides.persistenceKaos ?? parentKaos;

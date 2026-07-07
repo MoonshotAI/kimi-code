@@ -36,3 +36,44 @@ export function mergeCallerMcpServers(
     },
   };
 }
+
+/**
+ * Does `server` apply to `modelAlias`? A server with no `models` restriction
+ * applies everywhere. A restricted server applies only when `modelAlias`
+ * matches one of its entries — exact key match ("zai-coding-plan/glm-5.2") or
+ * a trailing-"*" prefix wildcard ("zai-coding-plan/*"). When the model is
+ * unknown, restricted servers are excluded so a model-specific MCP does not
+ * leak into a session whose model is undecided.
+ */
+export function mcpServerAppliesToModel(
+  server: McpServerConfig,
+  modelAlias: string | undefined,
+): boolean {
+  const models = server.models;
+  if (models === undefined || models.length === 0) return true;
+  if (modelAlias === undefined) return false;
+  return models.some((pattern) =>
+    pattern.endsWith('*')
+      ? modelAlias.startsWith(pattern.slice(0, -1))
+      : pattern === modelAlias,
+  );
+}
+
+/**
+ * Drop MCP servers whose `models` restriction excludes `modelAlias`. Servers
+ * without a restriction are always kept (backward compatible).
+ */
+export function filterMcpServersByModel(
+  config: SessionMcpConfig | undefined,
+  modelAlias: string | undefined,
+): SessionMcpConfig | undefined {
+  if (config === undefined) return undefined;
+  const filtered: Record<string, McpServerConfig> = {};
+  for (const [name, server] of Object.entries(config.servers)) {
+    if (mcpServerAppliesToModel(server, modelAlias)) {
+      filtered[name] = server;
+    }
+  }
+  if (Object.keys(filtered).length === 0) return undefined;
+  return { servers: filtered };
+}

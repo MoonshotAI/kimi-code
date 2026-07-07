@@ -272,6 +272,12 @@ const McpServerCommonFields = {
   toolTimeoutMs: McpTimeoutMsSchema.optional(),
   enabledTools: z.array(z.string()).optional(),
   disabledTools: z.array(z.string()).optional(),
+  // Restrict this server to specific model aliases. Entries are model alias
+  // keys (e.g. "zai-coding-plan/glm-5.2"); a trailing "*" is a prefix
+  // wildcard (e.g. "zai-coding-plan/*"). When set, the server is only loaded
+  // for sessions whose model matches — used to attach model-specific MCPs
+  // (like the z.ai vision server) without exposing them to every model.
+  models: z.array(z.string()).optional(),
 } as const;
 
 export const McpServerStdioConfigSchema = z.object({
