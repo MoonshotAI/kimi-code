@@ -1,6 +1,6 @@
 # Subskill — Server align (expose `agent-core-v2` over `server-v2`)
 
-Wire a v2 domain into `packages/server-v2`, and — when the endpoint already exists in `packages/server` (v1) — keep the wire shape **byte-for-byte compatible**. This is the server-side counterpart of [align.md](align.md): `align.md` ports v1 *business logic* into v2; this file exposes the v2 result over HTTP / WS, reusing the v1 wire contract where it already exists.
+Wire a v2 domain into `packages/kap-server`, and — when the endpoint already exists in `packages/server` (v1) — keep the wire shape **byte-for-byte compatible**. This is the server-side counterpart of [align.md](align.md): `align.md` ports v1 *business logic* into v2; this file exposes the v2 result over HTTP / WS, reusing the v1 wire contract where it already exists.
 
 Use this when the task is "expose the new v2 Service on the server", "port the v1 `/sessions/:sid/...` routes to server-v2", or "make server-v2 speak the same `/api/v1` contract as `packages/server`".
 
@@ -8,8 +8,8 @@ Use this when the task is "expose the new v2 Service on the server", "port the v
 
 `server-v2` serves **two HTTP surfaces** off the same `agent-core-v2` scope tree:
 
-- **`/api/v2/:sa`** — the native v2 RPC surface, driven by the `actionMap` allowlist (`packages/server-v2/src/transport/actionMap.ts`). One `resource:action` segment maps to one `Service.method`. New v2-native capabilities land here. See [edge-exposure.md](edge-exposure.md).
-- **`/api/v1/...`** — the v1-compatible surface, hand-written routes in `packages/server-v2/src/routes/*.ts` that **mirror `packages/server/src/routes/*.ts` path-for-path and schema-for-schema**, mounted by `registerApiV1Routes.ts`. This exists so existing v1 clients keep working against server-v2 unchanged.
+- **`/api/v2/:sa`** — the native v2 RPC surface, driven by the `actionMap` allowlist (`packages/kap-server/src/transport/actionMap.ts`). One `resource:action` segment maps to one `Service.method`. New v2-native capabilities land here. See [edge-exposure.md](edge-exposure.md).
+- **`/api/v1/...`** — the v1-compatible surface, hand-written routes in `packages/kap-server/src/routes/*.ts` that **mirror `packages/server/src/routes/*.ts` path-for-path and schema-for-schema**, mounted by `registerApiV1Routes.ts`. This exists so existing v1 clients keep working against server-v2 unchanged.
 
 The two surfaces can point at **different Services** for the same feature. v2's native `IAgentPromptService` serves `/api/v2`; a v1-shaped `IAgentPromptLegacyService` serves `/api/v1`. Keeping them separate is what lets v2's domain design stay clean while the wire stays compatible.
 
@@ -38,13 +38,13 @@ Pick surface → Read the v1 route (if any) → Reuse / add the protocol schema
 Apply the decision above. For a v1-matched endpoint, open **both** files side by side:
 
 - `packages/server/src/routes/<resource>.ts` — the contract you must match.
-- `packages/server-v2/src/routes/<resource>.ts` — the file you are writing (create it if missing).
+- `packages/kap-server/src/routes/<resource>.ts` — the file you are writing (create it if missing).
 
 The v1 route file is the **spec**. Do not re-derive the wire shape from memory or from the v2 domain model.
 
 ### 2. Reuse (or add) the protocol schema
 
-The wire schema lives in **`@moonshot-ai/protocol`** under `packages/protocol/src/rest/<resource>.ts` (e.g. `promptSubmissionSchema`, `promptListResponseSchema`, `configResponseSchema`). Both `packages/server` and `packages/server-v2` import from it — that single import is what guarantees the two servers speak the same shape.
+The wire schema lives in **`@moonshot-ai/protocol`** under `packages/protocol/src/rest/<resource>.ts` (e.g. `promptSubmissionSchema`, `promptListResponseSchema`, `configResponseSchema`). Both `packages/server` and `packages/kap-server` import from it — that single import is what guarantees the two servers speak the same shape.
 
 Actions:
 
@@ -60,7 +60,7 @@ When the endpoint matches a `packages/server` endpoint, the request and response
 - ❌ **Renaming** a field, **changing** its type, **tightening** its validation, or **changing its meaning** is a wire break — do not do it in a mirror route. If the v2 domain genuinely needs a different shape, that shape belongs on `/api/v2`, not on the `/api/v1` mirror.
 - ❌ Re-declaring the schema inline in server-v2 (even if it "looks identical") is forbidden — it drifts. One schema, one home: `packages/protocol`.
 
-Self-check: "would a client talking to `packages/server` get a byte-identical envelope from `packages/server-v2` for the same request?" If you cannot answer yes from the shared schema, the route is wrong.
+Self-check: "would a client talking to `packages/server` get a byte-identical envelope from `packages/kap-server` for the same request?" If you cannot answer yes from the shared schema, the route is wrong.
 
 ### 3. Choose native Service vs LegacyService
 
@@ -87,8 +87,7 @@ A LegacyService is a normal v2 Service (service-authoring.md) with one extra con
 packages/agent-core-v2/src/<domain>Legacy/
 ├── <domain>Legacy.ts          ← contract: protocol-typed interface + decorator
 ├── <domain>LegacyService.ts   ← impl: delegates to the native v2 Service(s)
-├── errors.ts                  ← v1-compatible error codes (KimiError codes)
-└── index.ts                   ← barrel: import './errors'; export contract + impl
+└── errors.ts                  ← v1-compatible error codes (KimiError codes)
 ```
 
 Skeleton (matches `promptLegacy/`):
@@ -132,7 +131,7 @@ Conventions:
 
 ### 4. Wire the route / actionMap entry
 
-**For `/api/v1` (mirror):** add a route file under `packages/server-v2/src/routes/<resource>.ts` using `defineRoute`, then register it in `registerApiV1Routes.ts`. Resolve the scope from the URL (`session_id` → Session scope, agent → Agent scope via `IAgentLifecycleService.getHandle`), then `accessor.get(IX)` the native or Legacy Service. Mirror the v1 file's verbs, paths (`:sid` / `{session_id}`), and `parseActionSuffix` actions (`:steer`, `:abort`) exactly.
+**For `/api/v1` (mirror):** add a route file under `packages/kap-server/src/routes/<resource>.ts` using `defineRoute`, then register it in `registerApiV1Routes.ts`. Resolve the scope from the URL (`session_id` → Session scope, agent → Agent scope via `IAgentLifecycleService.getHandle`), then `accessor.get(IX)` the native or Legacy Service. Mirror the v1 file's verbs, paths (`:sid` / `{session_id}`), and `parseActionSuffix` actions (`:steer`, `:abort`) exactly.
 
 ```ts
 const route = defineRoute(
@@ -191,7 +190,7 @@ Match the v1 route's status codes and idempotent-conflict envelopes (e.g. `promp
 
 ### 6. Test against the v1 wire shape
 
-Add a `packages/server-v2/test/<resource>.test.ts` that boots the server and hits the route. Assert on the **envelope + protocol shape**, not on the v2 domain internals:
+Add a `packages/kap-server/test/<resource>.test.ts` that boots the server and hits the route. Assert on the **envelope + protocol shape**, not on the v2 domain internals:
 
 - success envelope `{ code: 0, data: <protocol shape>, request_id }`;
 - each declared error envelope `{ code: <ErrorCode>, msg, data, request_id }`;
@@ -201,7 +200,7 @@ Where the route mirrors v1, the test is the regression guard for the schema-fide
 
 ### 7. Verify
 
-- `pnpm -C packages/server-v2 test` — server routes green.
+- `pnpm -C packages/kap-server test` — server routes green.
 - `pnpm -C packages/protocol test` — schema tests green (incl. any new `rest-*.test.ts`).
 - `pnpm -C packages/agent-core-v2 test` — native + Legacy Service tests green.
 - `pnpm -C packages/agent-core-v2 run lint:domain` — a LegacyService is still inside the domain layers (edge adapter, L7); it must not pull business code into the edge or invert scope direction.

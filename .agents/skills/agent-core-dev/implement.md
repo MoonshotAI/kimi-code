@@ -1,14 +1,13 @@
 # Stage 3 — Implement
 
-Write the contract, implementation, registration, barrel, and entry. Each section below introduces one DI building block as you need it. Source lives in `src/_base/di/`.
+Write the contract leaf, implementation leaf (with its registration), and the package-entry lines that load them. Each section below introduces one DI building block as you need it. Source lives in `src/_base/di/`.
 
 ## Standard recipe for a new `IXxxService`
 
-1. **Contract** — `src/<domain>/<domain>.ts`: interface (with `_serviceBrand`) + `createDecorator` identity.
-2. **Impl** — `src/<domain>/<domain>Service.ts`: class with `@IX` constructor deps; top-level `registerScopedService(scope, IX, Impl, type, '<domain>')`.
-3. **Barrel** — `src/<domain>/index.ts`: re-export contract + impl (importing it runs the registration).
-4. **Entry** — `src/index.ts`: add `export * from './<domain>/index';`.
-5. **Tests** — see test.md.
+1. **Contract leaf** — `src/<domain>/<domain>.ts`: interface (with `_serviceBrand`) + `createDecorator` identity.
+2. **Impl leaf** — `src/<domain>/<domain>Service.ts`: class with `@IX` constructor deps; top-level `registerScopedService(scope, IX, Impl, type, '<domain>')`.
+3. **Entry** — `src/index.ts`: load each leaf precisely — `export * from './<domain>/<domain>';` for the contract and `import './<domain>/<domain>Service';` for the impl (importing the impl runs the registration). **No `src/<domain>/index.ts` barrel.**
+4. **Tests** — see test.md.
 
 There is **no central wiring file**: bindings live in each domain's impl file and are collected through import side effects.
 
@@ -52,16 +51,12 @@ registerScopedService(
 
 The scope a class binds to is an **intrinsic property of the class**, decided at the registration point, not the call site.
 
-```ts
-// greet/index.ts
-export * from './greet';
-export * from './greetService';   // importing this line runs registerScopedService
-```
-
-Then add one line to the package entry `src/index.ts`:
+The impl's top-level `registerScopedService` runs as soon as the module is imported. There is no `greet/index.ts` barrel — instead, add the leafs to the package entry `src/index.ts`, one line per leaf:
 
 ```ts
-export * from './greet/index';
+// src/index.ts
+export * from './greet/greet';
+import './greet/greetService';   // this import runs registerScopedService
 ```
 
 Anyone can now `accessor.get(IGreeter)` the single global instance.

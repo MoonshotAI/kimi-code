@@ -10,7 +10,7 @@ Gate not-yet-public features behind `IFlagService.enabled(id)`, per the reposito
 - `src/flag/flagRegistryService.ts` — `FlagRegistryService` impl; in-memory catalog seeded from import-time contributions; App scope.
 - `src/flag/flag.ts` — `IFlagService` token + resolver types (`ExperimentalFlagMap`, `ExperimentalFlagConfig`, `ExperimentalFlagSource`, `ExperimentalFeatureState`) + `ExperimentalConfigSchema` / `ExperimentalConfig` (zod).
 - `src/flag/flagService.ts` — `FlagService` impl + `MASTER_ENV` (`KIMI_CODE_EXPERIMENTAL_FLAG`) + `EXPERIMENTAL_SECTION` (`experimental`); reads definitions from `IFlagRegistry`; self-registers at App scope.
-- `src/flag/index.ts` — barrel; re-exported by `src/index.ts` at the L3 block.
+- `src/flag/index.ts` — **removed (no barrel)**; `src/index.ts` imports the `flag` leafs precisely instead (e.g. `import './flag/flagService'`).
 - `src/<domain>/flag.ts` — each domain that owns a flag declares it here and calls `registerFlagDefinition` at the module top level (e.g. `src/microCompaction/flag.ts`). The directory already names the domain, so the file is just `flag.ts`.
 
 ## Public surface
@@ -68,15 +68,14 @@ export const myFeatureFlag: FlagDefinitionInput = {
 registerFlagDefinition(myFeatureFlag);
 ```
 
-Then load it from the domain barrel so the top-level call runs at import time:
+Then ensure the package entry `src/index.ts` imports the flag leaf precisely so the top-level call runs at import time — there is no `src/<domain>/index.ts` barrel:
 
 ```ts
-// src/<domain>/index.ts
-import './flag';
-export * from './flag';
+// src/index.ts
+import './<domain>/flag';
 ```
 
-`src/index.ts` already re-exports every domain barrel, so the contribution runs during bootstrap, before any scope is created — and therefore before any consumer resolves `IFlagService`.
+`src/index.ts` imports every domain's leaf files precisely (one line per leaf), so the contribution runs during bootstrap, before any scope is created — and therefore before any consumer resolves `IFlagService`.
 
 - `env` must start with `KIMI_CODE_EXPERIMENTAL_`, be unique, and not equal `KIMI_CODE_EXPERIMENTAL_FLAG`.
 - `id` must not be `flag`. A duplicate `id` throws when `FlagRegistryService` drains the contributions.

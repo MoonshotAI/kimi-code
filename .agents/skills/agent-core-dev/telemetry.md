@@ -11,7 +11,7 @@ Telemetry is a **layer-1 root** domain (alongside `log`): pure `App` scope, stat
 - `src/telemetry/consoleAppender.ts`: `ConsoleAppender` — echoes events to a log function (dev / debug).
 - `src/telemetry/cloudAppender.ts`: `CloudAppender` — batches + enriches + posts to the telemetry endpoint.
 - `src/telemetry/cloudTransport.ts`: `CloudTransport` — HTTP transport behind `CloudAppender`.
-- `src/telemetry/index.ts`: barrel.
+- `src/telemetry/index.ts`: **removed (no barrel)**; `src/index.ts` imports the telemetry leafs precisely (e.g. `import './telemetry/telemetryService'`).
 
 ## Emitting events (business services)
 

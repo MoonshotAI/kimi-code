@@ -72,7 +72,7 @@ So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but
 `packages/agent-core-v2/AGENTS.md` mandates a header-only comment style:
 
 - **Header only.** Comments live solely in the top-of-file `/** */` block — never beside functions, methods, or statements. The code is the source of truth for *how*; the header states *what the module exposes and the responsibility it owns*.
-- **Identity line first.** Start with `` `<domain>` domain (Ln) — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is; barrels omit the layer (`` `<domain>` domain barrel — … ``). Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
+- **Identity line first.** Start with `` `<domain>` domain (Ln) — <one-line role>. `` Keep an existing `(cross-cutting)` label as-is. Write the role as a responsibility ("drives the turn lifecycle"), not a symbol list.
 - **Scope is in the filename.** `session*.ts` = Session, `agent*.ts` = Agent, no prefix = App (see service-authoring.md). State the same scope in the header so the two never drift.
 - **Interface files** (`<name>.ts`) state the public contract + scope: which `IXxx` they define and what it is for.
 - **Impl files** (`<name>Service.ts`) add collaborators + scope: list every imported cross-domain collaborator as a role ("persists records through `records`"); read scope from `registerScopedService(LifecycleScope.X, …)`.
@@ -101,17 +101,6 @@ Contribution file example (`config.ts` inside `log/`):
  *
  * Owns the `log` section schema and its env overlay; imported for the
  * registration side effect. Bound at App scope.
- */
-```
-
-Barrel example:
-
-```ts
-/**
- * `sessionMetadata` domain barrel — re-exports the session metadata contract
- * (`sessionMetadata`) and its scoped service (`sessionMetadataService`).
- * Importing this barrel registers the `ISessionMetadata` binding into the scope
- * registry.
  */
 ```
 

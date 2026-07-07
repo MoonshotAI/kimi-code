@@ -13,15 +13,14 @@ One folder per domain, **camelCase**: `session/`, `sessionActivity/`, `contextMe
 ├── <concern>.ts         ← pure function(s): no Service suffix, no class, no registration
 ├── <targetDomain>.ts    ← contribution file (common): registers into another domain's extension point
 ├── <what>.contrib.ts    ← contribution file (uncommon / ad-hoc)
-├── <domain>.types.ts    ← shared types that no single interface owns
-└── index.ts             ← barrel: re-exports everything; importing it runs the domain's registrations
+└── <domain>.types.ts    ← shared types that no single interface owns
 ```
 
 - **Strictly one service per file.** An interface file holds exactly one injectable interface and exactly one `createDecorator(...)`; an impl file holds exactly one service implementation class and exactly one `registerScopedService(...)`. No exceptions for "tightly-coupled" groups: even same-scope collaborators each get their own `<name>.ts` + `<name>Service.ts` pair.
 - **Scope is in the filename.** `session*.ts` = Session, `agent*.ts` = Agent, no scope prefix = App (see [Naming](#naming)). The header comment restates the same scope.
 - A domain therefore has as many impl files as it has services (e.g. `logService.ts` for the App `ILogService`, `sessionLogService.ts` for the Session `ISessionLogService`). See [Multi-Service domains](#multi-service-domains).
 
-The package entry `src/index.ts` re-exports each domain barrel so that importing the package runs every registration side effect.
+The package entry `src/index.ts` imports and `export *`s every domain's leaf files precisely (one line per leaf), so importing the package still runs every `registerScopedService(...)` side effect — exactly as the old per-domain barrels did.
 
 ## Naming
 
@@ -259,26 +258,29 @@ A domain may define several Services. Each Service gets its own pair of files re
 - **Different scopes** → the scope prefix in the Service name makes this obvious (`logService.ts` for App `ILogService`, `sessionLogService.ts` for Session `ISessionLogService`).
 - **Same interface, multiple role tokens** (e.g. `IAtomicDocumentStore` and `IAtomicTomlDocumentStore` share one interface type but are distinct DI tokens) → each token is its own Service identity and must be registered and resolved independently.
 
-The barrel (`index.ts`) re-exports every contract/impl pair so consumers still import the domain's surface from `./<domain>`.
+There is no `index.ts` barrel: consumers import each contract/impl from its precise leaf path (e.g. `import { ILogService } from '#/log/log'`), never the domain directory.
 
-## The barrel (`index.ts`)
+## No barrel — the package entry loads leafs precisely
 
-Re-export the contract, the impl(s), and any public helper modules:
+A domain has **no `index.ts` barrel**. Its files are the contract leaf (`<name>.ts`) and the impl leaf (`<name>Service.ts`), and consumers import the precise file — never the directory:
 
 ```ts
-/**
- * `greet` domain barrel — re-exports the greet contract (`greet`) and its
- * scoped service (`greetService`). Importing this barrel registers the
- * `IGreeter` binding into the scope registry.
- */
-
-export * from './greet';
-export * from './greetService';
+import { IGreeter, type Greeting } from '#/greet/greet';
 ```
 
-- Always export the impl file — importing it is what runs `registerScopedService(...)`.
-- Export helper modules only if they are part of the domain's public surface.
-- The file-header comment states which bindings importing the barrel registers.
+Self-registration is unchanged: `greetService.ts` keeps its top-level `registerScopedService(...)`. The package entry `src/index.ts` loads the domain's leafs precisely — `export *` for the contract, a side-effect `import` for the impl — one line per leaf:
+
+```ts
+// src/index.ts
+export * from './greet/greet';
+import './greet/greetService';
+```
+
+Importing the package therefore fires every `register*` side effect, exactly as the old per-domain barrels did. When you add a new domain, write the contract + impl leafs (with their top-level `register*`), then add the leaf path(s) to `src/index.ts`. **Do not create an `index.ts`.**
+
+- Load the impl file too — its top-level `registerScopedService(...)` only runs when the module is imported.
+- `export *` helper modules only if they are part of the domain's public surface.
+- Each leaf's file-header comment still names the domain, scope, and (for impls) the `register*` binding it owns.
 
 ## Comments
 
@@ -318,19 +320,14 @@ registerScopedService(LifecycleScope.App, IGreeter, Greeter, InstantiationType.E
 ```
 
 ```ts
-// greet/index.ts
-export * from './greet';
-export * from './greetService';
-```
-
-```ts
 // src/index.ts
-export * from './greet/index';
+export * from './greet/greet';
+import './greet/greetService';
 ```
 
 ## Red lines (this topic)
 
-- One folder per domain, camelCase; one service per file pair: contract `<name>.ts` + impl `<name>Service.ts`; barrel `index.ts`.
+- One folder per domain, camelCase; one service per file pair: contract `<name>.ts` + impl `<name>Service.ts`; **no `index.ts` barrel** — `src/index.ts` loads each leaf file precisely.
 - Exactly one injectable interface and one `createDecorator(...)` per contract file.
 - Exactly one service implementation class and one `registerScopedService(...)` per impl file.
 - `IXxxService` / `XxxService` naming; decorator string is lowerCamelCase, globally unique, and stable.
@@ -340,5 +337,5 @@ export * from './greet/index';
 - `createInstance` objects put static parameters before service parameters; scoped services put `@IX` parameters first (static params need defaults).
 - Never `new` a `@IService`-carrying Service — except inside an explicit factory method, which is not a DI request.
 - Events: typed per-Service event → `Event<T>`/`Emitter` from `'#/_base/event'`; cross-domain broadcast → `IEventService` from `'#/event'`.
-- Barrel must export the impl file so its registration side effect runs.
+- `src/index.ts` must import/export every leaf file (including the impl) so each `register*` side effect runs.
 - File-header comment only; methods/fields carry no comments by default; stubs throw `NotImplementedError`.

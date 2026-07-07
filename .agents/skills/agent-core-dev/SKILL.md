@@ -28,7 +28,7 @@ Stages are ordered but not strictly linear: a test failure (stage 4) that reveal
 End-to-end procedures that span the stages. Reach for these before reading the stage files individually.
 
 - [Align (port `agent-core` → `agent-core-v2`)](align.md): split a v1 class into semantic units, fix each unit's domain / scope / Service / dependencies, then migrate the logic and tests. Use when the task is "move feature X from v1 to v2" or "port `IXxxService` to v2".
-- [Server align (expose `agent-core-v2` over `server-v2`)](server-align.md): wire a v2 domain into `packages/server-v2` over `/api/v2` (native) and `/api/v1` (v1-compatible mirror), keep the wire schema byte-compatible with `packages/server` by sharing the `@moonshot-ai/protocol` schema, and isolate v1-only behavior in a `<domain>Legacy` edge adapter instead of distorting the native v2 Service. Use when the task is "expose the new v2 Service on the server", "port the v1 `/api/v1` routes to server-v2", or "keep server-v2 wire-compatible with `packages/server`".
+- [Server align (expose `agent-core-v2` over `server-v2`)](server-align.md): wire a v2 domain into `packages/kap-server` over `/api/v2` (native) and `/api/v1` (v1-compatible mirror), keep the wire schema byte-compatible with `packages/server` by sharing the `@moonshot-ai/protocol` schema, and isolate v1-only behavior in a `<domain>Legacy` edge adapter instead of distorting the native v2 Service. Use when the task is "expose the new v2 Service on the server", "port the v1 `/api/v1` routes to server-v2", or "keep server-v2 wire-compatible with `packages/server`".
 
 ## Stages
 
