@@ -35,7 +35,7 @@ Any feature exposed through Telegram must fit these constraints:
 | **Messages / History** | Paginated history, snapshot, conversation TOC. | **Missing** | `/history` with pagination is feasible, but long output must be chunked or linked. | P2 |
 | **Approvals** | Approve/reject/cancel cards with summary and context. | **Partial** | `event.approval.requested` already notified as plain text. **High-value:** inline keyboard with **Approve** / **Reject** / **Cancel** buttons. | P0 |
 | **Questions** | Single-choice, multi-choice, text, and dismissible question cards. | **Missing** | Inline keyboard or reply-thread answers fit Telegram well. | P1 |
-| **Tasks** | List, view output, cancel background tasks; progress streaming. | **Partial** | `event.task.completed` already notified. Add `/tasks` and streaming progress summaries. | P1 |
+| **Tasks** | List, view output, cancel background tasks; progress streaming. | **Partial** | `task.completed` / `background.task.terminated` already notified. Add `/tasks` and progress summaries (driven by `background.task.started`). | P1 |
 | **Terminals** | Attach, input, resize, and stream terminal I/O via WebSocket. | **Missing** | Limited value in Telegram; can create/close and tail text output, but interactive input is poor. | P3 |
 | **Skills** | List and activate session/workspace skills. | **Missing** | `/skills` and `/skill <name>` commands are feasible; activation can forward to REST endpoint. | P2 |
 | **File System** | List, read, search, grep, git status, diff, download, open in editor. | **Missing** | `/ls`, `/read`, `/search`, `/grep`, `/git_status` commands feasible. Diffs and large files should be summarized or sent as files. | P2 |
@@ -51,7 +51,7 @@ Any feature exposed through Telegram must fit these constraints:
 |---|---|---|
 | Reply threading | **Supported** | Telegram → `kimi-code` and `kimi-code` → Telegram thread mappings are persisted in SQLite. |
 | Update deduplication | **Supported** | In-memory `update_id` window; lost on restart. |
-| WebSocket event stream | **Supported** | Auto-reconnect with exponential backoff. |
+| WebSocket event stream | **Partial** | Transport + auto-reconnect are implemented; per-session `subscribe` frames are not yet sent, so session-scoped event delivery depends on server behavior. |
 | Media / file uploads | **Missing** | Telegram supports file downloads; upload from Telegram to `kimi-code` is feasible but not implemented. |
 
 ---
@@ -86,7 +86,7 @@ Any feature exposed through Telegram must fit these constraints:
    - Prompt queue, slash commands, and `@` mentions are deferred; plain-text prompts cover the common case for now.
 
 5. **Expanded milestone notifications** (`apps/kimigram/src/kimi/events.ts`)
-   - Surface `event.question.requested`, `event.task.created`, `event.task.progress`, and
+   - Surface `event.question.requested`, `background.task.started`, and
      `event.approval.resolved` as Telegram notifications.
 
 6. **Media / file upload from Telegram** (`apps/kimigram/src/bot.ts`, `apps/kimigram/src/kimi/client.ts`)
@@ -119,6 +119,21 @@ Any feature exposed through Telegram must fit these constraints:
 | **Reply thread** | Continuing a conversation about a specific message. | Replying to an assistant message to send a follow-up prompt |
 | **Deep link** | Rich output that cannot fit Telegram constraints. | "View diff in kimi-web" link |
 | **File attachment** | Large output such as logs or diffs. | Send a task log as `.txt` |
+
+---
+
+## Verification Approach
+
+This matrix is documentation, but backlog items should be verifiable with the existing test
+harness:
+
+- **Telegram command / callback handling:** `apps/kimigram/src/bot.test.ts` (grammy test bot + mocked `bot.api`).
+- **REST client calls:** `apps/kimigram/src/kimi/client.test.ts` (mocked `globalThis.fetch`).
+- **Event dispatching:** `apps/kimigram/src/kimi/events.test.ts` (fake `KimiEvent` + in-memory store).
+- **End-to-end flows:** `packages/server-e2e` against a running server.
+
+For each backlog item that is implemented, add at least one test in the matching test file above
+before changing production code.
 
 ---
 
