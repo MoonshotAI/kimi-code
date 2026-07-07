@@ -186,6 +186,17 @@ export interface ChatProvider {
   /** Current thinking effort, or `null` if thinking is not configured. */
   readonly thinkingEffort: ThinkingEffort | null;
   /**
+   * The effective completion-token cap this instance will send on the wire,
+   * derived from its generation kwargs — covering constructor defaults (e.g.
+   * Anthropic's required `max_tokens`), direct kwargs configuration, and
+   * {@link withMaxCompletionTokens} (after any implementation-side clamping:
+   * remaining context window, transport ceilings, model-default resolution).
+   * `undefined` when the instance sends no cap. Read by hosts that record
+   * the outbound request, so the recorded value matches what the provider
+   * actually sends.
+   */
+  readonly maxCompletionTokens?: number;
+  /**
    * Send a conversation to the LLM and return a streamed response.
    *
    * @param systemPrompt - System-level instruction prepended to the request.

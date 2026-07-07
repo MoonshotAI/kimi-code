@@ -196,6 +196,39 @@ describe('GET /api/v1/meta — server_version precedence', () => {
   });
 });
 
+describe('GET /api/v1/meta — dangerous_bypass_auth flag', () => {
+  it('reports false on a normal (token-protected) boot', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({ method: 'GET', url: '/api/v1/meta' });
+    const data = (res.json() as { data: { dangerous_bypass_auth: boolean } }).data;
+    expect(data.dangerous_bypass_auth).toBe(false);
+  });
+
+  it('reports true and admits a token-less request when bypass is enabled', async () => {
+    server = await startServer({
+      serviceOverrides: [fixedTokenAuth()],
+      host: '127.0.0.1',
+      port: 0,
+      lockPath,
+      logger: pino({ level: 'silent' }),
+      coreProcessOptions: { homeDir: bridgeHome },
+      dangerousBypassAuth: true,
+    });
+    // Raw inject with NO authorization header — auth is disabled, so the
+    // request must still succeed and advertise the bypass.
+    const rawApp = server.services.invokeFunction((a) => {
+      const gw = a.get(IRestGateway);
+      return gw.app as unknown as {
+        inject: (req: unknown) => Promise<{ statusCode: number; json: () => unknown }>;
+      };
+    });
+    const res = await rawApp.inject({ method: 'GET', url: '/api/v1/meta' });
+    expect(res.statusCode).toBe(200);
+    const data = (res.json() as { data: { dangerous_bypass_auth: boolean } }).data;
+    expect(data.dangerous_bypass_auth).toBe(true);
+  });
+});
+
 describe('GET /api/v1/meta — request_id propagation (W4.3 contract)', () => {
   it('echoes a client-supplied valid ULID verbatim', async () => {
     const r = await bootDaemon();

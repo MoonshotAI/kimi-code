@@ -5,7 +5,7 @@ import {
   isContextOverflowErrorCode,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
-import { extractText } from '#/message';
+import { extractText, isToolDeclarationOnlyMessage } from '#/message';
 import type {
   ChatProvider,
   FinishReason,
@@ -614,6 +614,10 @@ function convertHistoryMessages(
   };
 
   for (const msg of history) {
+    // Message-level tool declarations are a Kimi wire feature; skipped here
+    // because the leftover content-free message item is rejected by the
+    // Responses API. See isToolDeclarationOnlyMessage.
+    if (isToolDeclarationOnlyMessage(msg)) continue;
     if (msg.role !== 'tool') {
       flushPendingMedia();
     }
@@ -978,6 +982,11 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
 }
 export class OpenAIResponsesChatProvider implements ChatProvider {
   readonly name: string = 'openai-responses';
+
+  /** See {@link ChatProvider.maxCompletionTokens}. */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_output_tokens;
+  }
 
   private _model: string;
   private _stream: boolean;

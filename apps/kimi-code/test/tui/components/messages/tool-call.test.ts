@@ -186,7 +186,7 @@ describe('ToolCallComponent', () => {
     component.appendLiveOutput('line2\n');
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Using Bash');
+    expect(out).toContain('Running a command');
     expect(out).toContain('line1');
     expect(out).toContain('line2');
   });
@@ -209,12 +209,12 @@ describe('ToolCallComponent', () => {
     });
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Used Bash');
+    expect(out).toContain('Ran a command');
     expect(out).toContain('final-only');
     expect(out).not.toContain('streamed-only');
   });
 
-  describe('in-flight Bash command preview (args finalized, no result yet)', () => {
+  describe('Bash command preview', () => {
     const longCommand = Array.from({ length: 15 }, (_, i) => `echo step${String(i + 1)}`).join(
       '\n',
     );
@@ -226,7 +226,7 @@ describe('ToolCallComponent', () => {
       );
 
       const collapsed = strip(component.render(100).join('\n'));
-      expect(collapsed).toContain('Using Bash');
+      expect(collapsed).toContain('Running a command');
       expect(collapsed).toContain('echo step1');
       expect(collapsed).toContain('echo step10');
       expect(collapsed).not.toContain('echo step11');
@@ -238,7 +238,7 @@ describe('ToolCallComponent', () => {
       expect(expanded).toContain('echo step15');
     });
 
-    it('yields command rendering to the result renderer once the result lands', () => {
+    it('keeps the command preview after the result lands to avoid a height collapse', () => {
       const component = new ToolCallComponent(
         { id: 'call_bash_done', name: 'Bash', args: { command: longCommand } },
         undefined,
@@ -249,16 +249,41 @@ describe('ToolCallComponent', () => {
 
       component.setResult({ tool_call_id: 'call_bash_done', output: 'done', is_error: false });
 
-      // Collapsed result view delegates to shellExecutionResultRenderer, which
-      // hides the command — so the in-flight buildCallPreview preview must be
-      // gone, otherwise the command would render twice when expanded.
+      // Collapsed result view still shows the command preview (capped at
+      // COMMAND_PREVIEW_LINES) so a multi-line command with short output does
+      // not collapse the card. The command is owned by buildCallPreview, so it
+      // must appear exactly once — the result renderer no longer renders it.
       const out = strip(component.render(100).join('\n'));
-      expect(out).toContain('Used Bash');
-      expect(out).not.toContain('$ echo step1');
+      expect(out).toContain('Ran a command');
+      expect(out).toContain('$ echo step1');
+      expect(out).toContain('echo step10');
+      expect(out).not.toContain('echo step11');
+      expect(out).toContain('done');
+      expect(out.split('$ echo step1').length - 1).toBe(1);
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('echo step11');
+      expect(expanded).toContain('echo step15');
+    });
+
+    it('keeps the command preview when the command produces no output', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_empty', name: 'Bash', args: { command: 'mkdir -p a/b/c\necho done' } },
+        { tool_call_id: 'call_bash_empty', output: '', is_error: false },
+      );
+
+      // buildContent early-returns on empty output, but the command preview
+      // (owned by buildCallPreview) must still render so the card does not
+      // collapse to just the header.
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Ran a command');
+      expect(out).toContain('$ mkdir -p a/b/c');
+      expect(out).toContain('echo done');
     });
   });
 
-  it('hides tool output bodies that start with a <system tag', () => {
+  it('hides tool output bodies that start with a <system-reminder tag', () => {
     const reminderOutput =
       '<system-reminder>\nThe task tools have not been used recently.\n</system-reminder>';
     const component = new ToolCallComponent(
@@ -275,7 +300,7 @@ describe('ToolCallComponent', () => {
     );
 
     const collapsed = strip(component.render(100).join('\n'));
-    expect(collapsed).toContain(`${STATUS_BULLET}Used Bash`);
+    expect(collapsed).toContain(`${STATUS_BULLET}Ran a command`);
     expect(collapsed).not.toContain('system-reminder');
     expect(collapsed).not.toContain('task tools');
 
@@ -285,7 +310,7 @@ describe('ToolCallComponent', () => {
     expect(expanded).not.toContain('task tools');
   });
 
-  it('hides <system-prefixed output even when the tool result is an error', () => {
+  it('hides <system-reminder-prefixed output even when the tool result is an error', () => {
     const component = new ToolCallComponent(
       {
         id: 'call_hidden_err',
@@ -302,6 +327,29 @@ describe('ToolCallComponent', () => {
     const out = strip(component.render(100).join('\n'));
     expect(out).not.toContain('system-reminder');
     expect(out).not.toContain('do not show');
+  });
+
+  it('renders output that merely starts with a literal <system> tag', () => {
+    // Tool metadata no longer travels inside `output` (it rides the result's
+    // `note` side channel), so real output starting with the literal tag —
+    // a file that contains it, an MCP tool's text — must stay visible.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_literal',
+        name: 'Bash',
+        args: { command: 'cat notes.txt' },
+      },
+      {
+        tool_call_id: 'call_literal',
+        output: '<system>literal text from a user file</system>\nsecond line',
+        is_error: false,
+      },
+    );
+
+    component.setExpanded(true);
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('<system>literal text from a user file</system>');
+    expect(out).toContain('second line');
   });
 
   it('renders AgentSwarm results as a one-line summary without raw XML', () => {

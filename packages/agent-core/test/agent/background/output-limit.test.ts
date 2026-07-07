@@ -1,11 +1,12 @@
 /**
- * Foreground output ceiling.
+ * Output ceiling for shell (process) tasks.
  *
- * A single non-detached command that streams more output than the per-command
- * limit must be force-terminated instead of growing the (unbounded)
- * live-forward buffer until the process runs out of memory. Detached
- * (background) tasks are exempt: their output is ring-buffered and spilled to
- * disk, so it never accumulates in memory.
+ * A single shell command that streams more output than the per-command limit
+ * must be force-terminated instead of growing the (unbounded) live-forward
+ * buffer or the on-disk write chain until the process runs out of memory or
+ * fills the disk. The ceiling applies to process tasks, foreground and
+ * background alike. Subagent and user-question tasks append their bounded result
+ * in one shot and must always be persisted, so they are not capped.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,7 +18,7 @@ import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ProcessBackgroundTask } from '../../../src/agent/background';
-import { createBackgroundManager, waitForTerminal } from './helpers';
+import { agentTask, createBackgroundManager, waitForTerminal } from './helpers';
 
 const MiB = 1024 * 1024;
 const LIMIT_BYTES = 16 * MiB;
@@ -92,7 +93,7 @@ function sigtermIgnoringProcess(chunks: string[]): { proc: KaosProcess; kill: Re
   return { proc, kill };
 }
 
-describe('BackgroundManager — foreground output ceiling', () => {
+describe('BackgroundManager — output ceiling (foreground + background)', () => {
   it('terminates a foreground command that exceeds the output limit and stops forwarding', async () => {
     const { manager } = createBackgroundManager();
     // 20 MiB total, well past the 16 MiB ceiling.
@@ -119,7 +120,7 @@ describe('BackgroundManager — foreground output ceiling', () => {
     expect(forwardedChars).toBeLessThanOrEqual(LIMIT_BYTES);
   });
 
-  it('does not terminate a detached (background) task for the same output', async () => {
+  it('also terminates a detached (background) task that exceeds the output limit', async () => {
     const { manager } = createBackgroundManager();
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc, kill } = streamingProcess(chunks);
@@ -131,8 +132,9 @@ describe('BackgroundManager — foreground output ceiling', () => {
 
     const info = await waitForTerminal(manager, taskId);
 
-    expect(info?.status).toBe('completed');
-    expect(kill).not.toHaveBeenCalledWith('SIGTERM');
+    expect(info?.status).toBe('killed');
+    expect(info?.stopReason ?? '').toMatch(/output limit/i);
+    expect(kill).toHaveBeenCalledWith('SIGTERM');
   });
 
   it('stops enqueuing output to disk once the foreground cap trips', async () => {
@@ -163,6 +165,72 @@ describe('BackgroundManager — foreground output ceiling', () => {
       // write chain (retaining each string until its write drains); afterwards
       // enqueuing stops at the ceiling so the chain cannot grow unbounded.
       expect(persistedChars).toBeLessThanOrEqual(17 * MiB);
+
+      spy.mockRestore();
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops enqueuing output to disk once the cap trips for a background task', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'bpm-limit-bg-'));
+    try {
+      const { manager, persistence } = createBackgroundManager({ sessionDir });
+      let persistedChars = 0;
+      const spy = vi
+        .spyOn(persistence!, 'appendTaskOutput')
+        .mockImplementation(async (_id: string, chunk: string) => {
+          persistedChars += chunk.length;
+        });
+
+      // 20 MiB, and the producer ignores SIGTERM so it keeps writing through
+      // the whole grace window. Background tasks now share the same ceiling.
+      const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+      const { proc } = sigtermIgnoringProcess(chunks);
+
+      const taskId = manager.registerTask(new ProcessBackgroundTask(proc, 'runaway', 'bg', () => {}), {
+        detached: true,
+        timeoutMs: 60_000,
+      });
+
+      const info = await waitForTerminal(manager, taskId);
+
+      expect(info?.status).toBe('killed');
+      // Same guarantee as the foreground case: once the cap trips, subsequent
+      // chunks are dropped before they reach the disk write chain.
+      expect(persistedChars).toBeLessThanOrEqual(17 * MiB);
+
+      spy.mockRestore();
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not cap or drop a detached subagent result larger than the limit', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'bpm-limit-agent-'));
+    try {
+      const { manager, persistence } = createBackgroundManager({ sessionDir });
+      let persistedChars = 0;
+      const spy = vi
+        .spyOn(persistence!, 'appendTaskOutput')
+        .mockImplementation(async (_id: string, chunk: string) => {
+          persistedChars += chunk.length;
+        });
+
+      // 20 MiB result — well past the 16 MiB ceiling — delivered in one shot,
+      // exactly how a subagent appends its completed result.
+      const bigResult = 'y'.repeat(20 * MiB);
+      const taskId = manager.registerTask(
+        agentTask(Promise.resolve({ result: bigResult }), 'big subagent result'),
+        { detached: true, timeoutMs: 60_000 },
+      );
+
+      const info = await waitForTerminal(manager, taskId);
+
+      // Non-process tasks must complete normally and have their full result
+      // persisted; the shell-output ceiling must not drop it.
+      expect(info?.status).toBe('completed');
+      expect(persistedChars).toBe(bigResult.length);
 
       spy.mockRestore();
     } finally {

@@ -156,6 +156,8 @@ export interface ClusteredDiffOptions {
   readonly maxLines?: number;
   readonly isIncomplete?: boolean;
   readonly expandKeyHint?: string;
+  readonly oldStart?: number;
+  readonly newStart?: number;
 }
 
 interface Cluster {
@@ -239,7 +241,13 @@ export function renderDiffLinesClustered(
   const s = makeDiffStyles();
   const contextLines = opts.contextLines ?? 3;
   const maxLines = opts.maxLines;
-  const diffLines = computeDiffLines(oldText, newText, 1, 1, opts.isIncomplete ?? false);
+  const diffLines = computeDiffLines(
+    oldText,
+    newText,
+    opts.oldStart ?? 1,
+    opts.newStart ?? 1,
+    opts.isIncomplete ?? false,
+  );
   const { clusters, changedCount, addedCount, removedCount } = buildClusters(
     diffLines,
     contextLines,

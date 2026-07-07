@@ -11,6 +11,19 @@ export default {
     search: 'Search',
     todo: 'Todo',
     task: 'Task',
+    swarm: 'Swarm',
+    ask_user: 'Question',
+  },
+  swarm: {
+    progress: '{done} / {total}',
+    runningSub: '{count} in progress',
+    doneSub: '{completed} completed · {failed} failed',
+    phaseQueued: 'Queued',
+    phaseWorking: 'Working',
+    phaseSuspended: 'Suspended',
+    phaseCompleted: 'Completed',
+    phaseFailed: 'Failed',
+    waiting: 'Waiting for subagents…',
   },
   chip: {
     lines: '{count} lines',
@@ -24,5 +37,12 @@ export default {
     running: 'running',
     error: 'failed',
     done: 'done',
+  },
+  ask: {
+    dismissed: 'Dismissed',
+    answer: '{count} answer',
+    answers: '{count} answers',
+    answered: 'Answered',
+    more: '(+{count} more)',
   },
 } as const;

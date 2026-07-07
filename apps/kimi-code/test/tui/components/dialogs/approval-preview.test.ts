@@ -138,6 +138,26 @@ describe('ApprovalPreviewViewer', () => {
     expect(text).toContain('BETA');
   });
 
+  it('shows surrounding context lines for a diff block', () => {
+    const viewer = makeViewer({
+      block: {
+        type: 'diff',
+        path: 'src/foo.ts',
+        old_text: ['before1', 'before2', 'old', 'after1', 'after2'].join('\n'),
+        new_text: ['before1', 'before2', 'new', 'after1', 'after2'].join('\n'),
+      },
+      rows: 24,
+    });
+
+    const text = strip(viewer.render(100).join('\n'));
+    expect(text).toContain('before1');
+    expect(text).toContain('before2');
+    expect(text).toContain('old');
+    expect(text).toContain('new');
+    expect(text).toContain('after1');
+    expect(text).toContain('after2');
+  });
+
   // Sanity: rendering is a pure slice — repeated render() calls without
   // input changes produce the same output, no incremental state drift.
   it('renders deterministically across repeated calls', () => {

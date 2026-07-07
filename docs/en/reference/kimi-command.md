@@ -161,10 +161,16 @@ kimi server status             # snapshot of installed/running state
 | `--port <port>` | Bind port; defaults to `58627` |
 | `--log-level <level>` | Enable server logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
+| `--keep-alive` | Keep the server running instead of exiting after 60s with no connected clients; implied by `--host` / `--allowed-host` and always on with `--foreground` |
+| `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
 | `--foreground` | Run in the foreground instead of spawning a background daemon |
 | `--open` | Open the web UI in the default browser once the server is healthy |
 
-`kimi server run` binds to local loopback only. By default it spawns a single background daemon (reused across runs) and exits once the daemon is healthy; the daemon shuts itself down after the last web client disconnects. Pass `--foreground` to run the server in the current process instead — it then stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
+`kimi server run` binds to local loopback only. By default it spawns a single background daemon (reused across runs) and exits once the daemon is healthy; the daemon shuts itself down after the last web client disconnects. Pass `--keep-alive` to keep it running past the idle timeout, or `--foreground` to run the server in the current process instead — it then stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
+
+::: danger
+`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and run `kimi server kill` to stop the server when you are done.
+:::
 
 #### `kimi server install`
 

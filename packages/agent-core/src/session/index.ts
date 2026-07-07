@@ -76,6 +76,12 @@ export interface SessionOptions {
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
   readonly additionalDirs?: readonly string[];
+  /**
+   * Print-mode (`kimi -p`) only: hold the main turn open while background
+   * subagents (`kind === 'agent'`) are still running, idle-waiting until they
+   * finish before the run exits. Set via the SDK `createSession` option.
+   */
+  readonly drainAgentTasksOnStop?: boolean;
 }
 
 export interface SessionSkillConfig {
@@ -117,6 +123,10 @@ export interface SessionMeta {
   isCustomTitle: boolean;
   lastPrompt?: string;
   forkedFrom?: string;
+  /** Absolute working directory the session was created in. Persisted so the
+   *  session directory is self-describing and the global session index does not
+   *  have to be trusted for the (one-way-hashed) workDir. */
+  workDir?: string;
   agents: Record<string, AgentMeta>;
   custom: Record<string, any>;
 }
@@ -293,6 +303,9 @@ export class Session {
     const { agent } = await this.createAgent({ type: 'main' }, {
       profile: DEFAULT_AGENT_PROFILES['agent'],
     });
+    if (this.options.drainAgentTasksOnStop) {
+      agent.printDrainAgentTasksOnStop = true;
+    }
     await this.triggerSessionStart('startup');
     return agent;
   }
@@ -978,6 +991,7 @@ export class Session {
 }
 
 export * from './subagent-host';
+export * from './store';
 
 function initCompletionReminder(agentsMd: string): string {
   const latest =

@@ -8,7 +8,9 @@ import { parseDiff } from '../src/lib/parseDiff';
 import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
+import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
+import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
   coerceThinkingForModel,
   commitLevel,
@@ -17,7 +19,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '../src/lib/modelThinking';
-import type { AppModel } from '../src/api/types';
+import type { AppMessage, AppModel } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
@@ -367,5 +369,102 @@ describe('modelThinking', () => {
       expect(effortLabel('off')).toBe('Off');
       expect(effortLabel('xhigh')).toBe('Xhigh');
     });
+  });
+});
+
+describe('humanizeCron', () => {
+  const dict: Record<string, string> = {
+    'conversation.cron.everyMinute': 'Every minute',
+    'conversation.cron.everyNMinutes': 'Every {n} minutes',
+    'conversation.cron.everyHour': 'Every hour',
+    'conversation.cron.everyNHours': 'Every {n} hours',
+    'conversation.cron.dailyAt': 'Daily at {time}',
+    'conversation.cron.weekdaysAt': 'Weekdays at {time}',
+  };
+  const t = (key: string, params?: Record<string, unknown>): string => {
+    let s = dict[key] ?? key;
+    if (params) for (const [k, v] of Object.entries(params)) s = s.replace(`{${k}}`, String(v));
+    return s;
+  };
+
+  it('labels the common cadences', () => {
+    expect(humanizeCron('* * * * *', t)).toBe('Every minute');
+    expect(humanizeCron('*/5 * * * *', t)).toBe('Every 5 minutes');
+    expect(humanizeCron('*/1 * * * *', t)).toBe('Every minute');
+    expect(humanizeCron('0 * * * *', t)).toBe('Every hour');
+    expect(humanizeCron('0 */2 * * *', t)).toBe('Every 2 hours');
+  });
+
+  it('labels fixed daily and weekday times', () => {
+    expect(humanizeCron('5 9 * * *', t)).toBe('Daily at 9:05');
+    expect(humanizeCron('0 9 * * 1-5', t)).toBe('Weekdays at 9:00');
+  });
+
+  it('falls back to the raw expression for unrecognized shapes', () => {
+    expect(humanizeCron('0 9 1 * *', t)).toBe('0 9 1 * *');
+    expect(humanizeCron('bad', t)).toBe('bad');
+  });
+});
+
+describe('collapsePrompt', () => {
+  it('keeps a short single-line prompt intact with no expand toggle', () => {
+    expect(collapsePrompt('Check the deploy status')).toEqual({
+      text: 'Check the deploy status',
+      hasMore: false,
+    });
+  });
+
+  it('truncates a long one-line prompt with an ellipsis and reports hasMore', () => {
+    const long = 'a'.repeat(150);
+    const result = collapsePrompt(long, 120);
+    expect(result.hasMore).toBe(true);
+    expect(result.text.length).toBeLessThan(long.length);
+    expect(result.text.endsWith('…')).toBe(true);
+  });
+
+  it('shows only the first line for a multi-line prompt', () => {
+    expect(collapsePrompt('first line\nsecond line\nthird line')).toEqual({
+      text: 'first line',
+      hasMore: true,
+    });
+  });
+});
+
+describe('mergeSnapshotMessages', () => {
+  function msg(id: string, createdAt: string): AppMessage {
+    return { id, sessionId: 's1', role: 'assistant', content: [], createdAt };
+  }
+
+  it('keeps loaded messages older than the snapshot window', () => {
+    const loaded = [
+      msg('old-1', '2026-01-01T00:00:00.000Z'),
+      msg('old-2', '2026-01-02T00:00:00.000Z'),
+      msg('recent-live', '2026-01-03T00:00:00.000Z'),
+    ];
+    const snapshot = [
+      msg('m0', '2026-01-03T00:00:00.000Z'),
+      msg('m1', '2026-01-04T00:00:00.000Z'),
+    ];
+    expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual([
+      'old-1',
+      'old-2',
+      'm0',
+      'm1',
+    ]);
+  });
+
+  it('returns the snapshot when there is no older loaded prefix', () => {
+    const loaded = [msg('recent-live', '2026-01-03T00:00:00.000Z')];
+    const snapshot = [
+      msg('m0', '2026-01-03T00:00:00.000Z'),
+      msg('m1', '2026-01-04T00:00:00.000Z'),
+    ];
+    expect(mergeSnapshotMessages(loaded, snapshot)).toBe(snapshot);
+  });
+
+  it('returns the snapshot when either side is empty', () => {
+    const snapshot = [msg('m0', '2026-01-03T00:00:00.000Z')];
+    expect(mergeSnapshotMessages([], snapshot)).toBe(snapshot);
+    expect(mergeSnapshotMessages(snapshot, [])).toEqual([]);
   });
 });

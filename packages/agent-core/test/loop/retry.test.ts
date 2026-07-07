@@ -26,6 +26,36 @@ function makeInput(
 }
 
 describe('chatWithRetry: terminated stream drops', () => {
+  it('preserves caller-set requestLogFields across attempts while owning turnStep/attempt', async () => {
+    // The strict-resend path marks its params with `projection: 'strict'`;
+    // the per-attempt rebuild must merge that marker instead of replacing
+    // the whole fields object.
+    let calls = 0;
+    const seenFields: Array<LLMChatParams['requestLogFields']> = [];
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(params: LLMChatParams): Promise<LLMChatResponse> {
+        calls += 1;
+        seenFields.push(params.requestLogFields);
+        if (calls === 1) throw new APIConnectionError('terminated');
+        return okResponse();
+      },
+    };
+    const input = makeInput(llm, new AbortController().signal);
+
+    await chatWithRetry({
+      ...input,
+      params: { ...input.params, requestLogFields: { projection: 'strict' } },
+    });
+
+    expect(seenFields).toEqual([
+      { projection: 'strict', turnStep: 't.1' },
+      { projection: 'strict', turnStep: 't.1', attempt: '2/3' },
+    ]);
+  });
+
   it('retries an APIConnectionError("terminated") and succeeds on a later attempt', async () => {
     // A mid-stream `terminated` is classified as a retryable APIConnectionError,
     // so an intermittent connection drop should be recovered transparently.

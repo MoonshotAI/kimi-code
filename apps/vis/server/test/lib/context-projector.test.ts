@@ -215,10 +215,12 @@ describe('context-projector', () => {
     ]);
   });
 
-  it('tool.result: error string already starting with <system>ERROR: is passed through (no double prefix)', () => {
-    const text = '<system>ERROR: already wrapped</system>\ndetails here';
+  it('tool.result: error string starting with ERROR: still gets the wrapped status', () => {
+    // The <system>-wrapped status is the harness verdict; the tool's own
+    // "ERROR:" text is data, so the status is added unconditionally.
+    const text = 'ERROR: already wrapped\ndetails here';
     const msg = projectToolResult({ output: text, isError: true });
-    expect(msg.content).toEqual([{ type: 'text', text }]);
+    expect(msg.content).toEqual([{ type: 'text', text: `${TOOL_ERROR_STATUS}\n${text}` }]);
   });
 
   it('tool.result: empty string output (non-error) becomes the empty sentinel', () => {

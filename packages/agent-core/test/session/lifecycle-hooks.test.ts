@@ -402,6 +402,38 @@ describe('Session lifecycle hooks', () => {
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
   });
 
+  it('createMain enables print drain when drainAgentTasksOnStop is true', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-drain',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true, printWaitCeilingS: 42 },
+      drainAgentTasksOnStop: true,
+    });
+    const agent = await session.createMain();
+
+    expect(agent.printDrainAgentTasksOnStop).toBe(true);
+    await session.close();
+  });
+
+  it('createMain leaves print drain disabled by default', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-drain-off',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    const agent = await session.createMain();
+
+    expect(agent.printDrainAgentTasksOnStop).toBe(false);
+    await session.close();
+  });
+
   it('cancels an active foreground turn before closing', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({

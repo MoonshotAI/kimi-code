@@ -13,6 +13,10 @@ export interface TelemetryShutdownOptions {
   readonly timeoutMs?: number;
 }
 
+export interface SystemMetricsCollectorHandle {
+  stop(): void;
+}
+
 const MAX_QUEUE_SIZE = 1000;
 
 interface PendingTelemetryEvent extends TelemetryEvent {
@@ -25,6 +29,7 @@ interface PendingTelemetryEvent extends TelemetryEvent {
 export class TelemetryClient {
   private queue: PendingTelemetryEvent[] = [];
   private sink: EventSink | null = null;
+  private systemMetricsCollector: SystemMetricsCollectorHandle | null = null;
   private deviceId: string | null = null;
   private sessionId: string | null = null;
   private disabled = false;
@@ -36,6 +41,13 @@ export class TelemetryClient {
 
   withContext(input: TelemetryContextIds): TelemetryClient {
     return new ScopedTelemetryClient(this, input);
+  }
+
+  setSystemMetricsCollector(collector: SystemMetricsCollectorHandle): void {
+    if (this.systemMetricsCollector !== null && this.systemMetricsCollector !== collector) {
+      this.systemMetricsCollector.stop();
+    }
+    this.systemMetricsCollector = collector;
   }
 
   attachSink(sink: EventSink): void {
@@ -60,6 +72,8 @@ export class TelemetryClient {
   disable(): void {
     this.disabled = true;
     this.queue = [];
+    this.systemMetricsCollector?.stop();
+    this.systemMetricsCollector = null;
     if (this.sink !== null) {
       this.sink.stopPeriodicFlush();
       this.sink.clearBuffer();
@@ -116,6 +130,8 @@ export class TelemetryClient {
   }
 
   async shutdown(options: TelemetryShutdownOptions = {}): Promise<void> {
+    this.systemMetricsCollector?.stop();
+    this.systemMetricsCollector = null;
     const sink = this.sink;
     if (sink === null) return;
     sink.stopPeriodicFlush();
@@ -139,6 +155,8 @@ export class TelemetryClient {
 
   resetForTests(): void {
     this.sink?.stopPeriodicFlush();
+    this.systemMetricsCollector?.stop();
+    this.systemMetricsCollector = null;
     this.queue = [];
     this.sink = null;
     this.deviceId = null;
@@ -161,6 +179,10 @@ class ScopedTelemetryClient extends TelemetryClient {
 
   override withContext(input: TelemetryContextIds): TelemetryClient {
     return new ScopedTelemetryClient(this.parent, mergeContext(this.context, input));
+  }
+
+  override setSystemMetricsCollector(collector: SystemMetricsCollectorHandle): void {
+    this.parent.setSystemMetricsCollector(collector);
   }
 
   override attachSink(sink: EventSink): void {

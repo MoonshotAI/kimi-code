@@ -136,12 +136,9 @@ describe('current builtin file and shell tools', () => {
     });
 
     const result = await executeTool(tool, context({ path: '/workspace/a.txt' }));
-    expect(result.output).toBe(
-      [
-        '1\talpha',
-        '2\tbeta',
-        '<system>2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.</system>',
-      ].join('\n'),
+    expect(result.output).toBe(['1\talpha', '2\tbeta'].join('\n'));
+    expect(result.note).toBe(
+      '<system>2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.</system>',
     );
   });
 

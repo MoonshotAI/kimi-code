@@ -22,7 +22,7 @@ Kimi Code CLI 把每次对话持久化为一个「会话」，保留消息历史
 ```
 
 - `state.json`：会话标题、创建时间等元数据。
-- `agents/*/wire.jsonl`：Agent 事件流，用于会话恢复和回放。
+- `agents/*/wire.jsonl`：Agent 事件流，用于会话恢复和回放；同时记录发给模型的请求轨迹（工具 schema、请求参数、MCP 工具清单），便于调试。
 
 ::: warning 注意
 `sessions/` 目录下的文件请勿手动编辑，否则可能导致会话无法正常恢复。

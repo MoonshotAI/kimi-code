@@ -6,6 +6,7 @@ import {
   normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
+import { isToolDeclarationOnlyMessage } from '#/message';
 import type {
   ChatProvider,
   FinishReason,
@@ -113,6 +114,17 @@ interface AnthropicGenerationKwargs {
   thinking?: MessageCreateParams['thinking'] | undefined;
   output_config?: MessageCreateParams['output_config'] | undefined;
   betaFeatures?: string[] | undefined;
+  contextManagement?: AnthropicContextManagement | undefined;
+}
+
+/**
+ * Anthropic beta context-management payload (`context-management-2025-06-27`).
+ * Only the `clear_thinking_20251015` edit is emitted today, with `keep`
+ * forwarded as a string (`"all"`); the `{ type, value }` turn-count form is
+ * not used because the shared `[thinking] keep` config is a string.
+ */
+interface AnthropicContextManagement {
+  edits: Array<{ type: string; keep?: unknown }>;
 }
 
 // Anthropic's native effort values. `ThinkingEffort` is an open string, so after
@@ -121,6 +133,8 @@ interface AnthropicGenerationKwargs {
 type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
+const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
+const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
 const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
@@ -137,15 +151,16 @@ const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
  * can silently truncate mid-`tool_use`.
  *
  * Keys are `<family>-<major>[-<minor>]`. Lookups try the most specific
- * key first, then fall back to the family/major-only entry, so an
- * unrecognized minor version (e.g. a future `opus-4-10`) gets the
- * family's baseline rather than the generic fallback.
+ * key first, then the nearest lower catalogued minor of the same
+ * family/major (a not-yet-catalogued `opus-4-8` reuses `opus-4-7`'s
+ * ceiling), and finally the family/major-only baseline entry.
  */
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   // Claude Fable 5 documents a 128k output ceiling.
   'fable-5': 128000,
-  // Claude Opus per minor version. 4.6 and 4.7 raised the cap to 128k;
+  // Claude Opus per minor version. 4.6 through 4.8 document a 128k cap;
   // 4.5 ships at 64k; 4.1 and the dated 4.0 release stay at 32k.
+  'opus-4-8': 128000,
   'opus-4-7': 128000,
   'opus-4-6': 128000,
   'opus-4-5': 64000,
@@ -255,8 +270,16 @@ function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): 
 function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
   const { family, major, minor } = version;
   if (minor !== null) {
-    const exact = CEILING_BY_FAMILY_VERSION[`${family}-${major}-${minor}`];
-    if (exact !== undefined) return exact;
+    // Exact minor first, then walk down to the nearest catalogued minor:
+    // a newer minor release inherits at least its predecessor's ceiling
+    // (Anthropic has never lowered the cap within a major), so a
+    // not-yet-catalogued 4.8 reuses 4.7's value instead of dropping to
+    // the family baseline. The regex caps minors at two digits, so this
+    // walk is bounded.
+    for (let candidate = minor; candidate >= 0; candidate--) {
+      const ceiling = CEILING_BY_FAMILY_VERSION[`${family}-${major}-${candidate}`];
+      if (ceiling !== undefined) return ceiling;
+    }
   }
   return CEILING_BY_FAMILY_VERSION[`${family}-${major}`];
 }
@@ -926,6 +949,15 @@ class AnthropicStreamedMessage implements StreamedMessage {
 export class AnthropicChatProvider implements ChatProvider {
   readonly name: string = 'anthropic';
 
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. `max_tokens` is required by
+   * the Messages API and is initialized in the constructor, so this reflects
+   * the wire value even when no completion budget was applied.
+   */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_tokens;
+  }
+
   private _model: string;
   private _stream: boolean;
   private _client: Anthropic | undefined;
@@ -953,7 +985,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
     this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
     this._generationKwargs = {
-      max_tokens: resolveDefaultMaxTokens(options.model, options.defaultMaxTokens),
+      max_tokens: options.defaultMaxTokens ?? resolveDefaultMaxTokens(options.model),
       betaFeatures: options.betaFeatures ?? [INTERLEAVED_THINKING_BETA],
     };
   }
@@ -1031,7 +1063,13 @@ export class AnthropicChatProvider implements ChatProvider {
     // mergeConsecutiveUserMessages) so this provider and Gemini/Vertex stay in
     // step.
     const messages = mergeConsecutiveUserMessages(
-      normalizeToolCallIdsForProvider(history, ANTHROPIC_TOOL_CALL_ID_POLICY).map((msg) =>
+      normalizeToolCallIdsForProvider(
+        // Message-level tool declarations are a Kimi wire feature; here the
+        // whole message is skipped (an empty leftover would serialize as a
+        // garbage `<system></system>` user turn). See isToolDeclarationOnlyMessage.
+        history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
+        ANTHROPIC_TOOL_CALL_ID_POLICY,
+      ).map((msg) =>
         convertMessage(msg, this._model),
       ),
       {
@@ -1075,6 +1113,9 @@ export class AnthropicChatProvider implements ChatProvider {
     }
     if (this._generationKwargs.output_config !== undefined) {
       kwargs['output_config'] = this._generationKwargs.output_config;
+    }
+    if (this._generationKwargs.contextManagement !== undefined) {
+      kwargs['context_management'] = this._generationKwargs.contextManagement;
     }
 
     // Build the beta feature list. On the standard Messages API these travel
@@ -1279,6 +1320,35 @@ export class AnthropicChatProvider implements ChatProvider {
     if (!supportsEffortParam(this._model, adaptive)) {
       delete clone._generationKwargs.output_config;
     }
+    return clone;
+  }
+
+  withThinkingKeep(keep: string): AnthropicChatProvider {
+    const current = this._generationKwargs.betaFeatures ?? [];
+    const betaFeatures = current.includes(CONTEXT_MANAGEMENT_BETA)
+      ? current
+      : [...current, CONTEXT_MANAGEMENT_BETA];
+    // Preserve any existing context-management edits (e.g. clear_tool_uses) and
+    // keep clear_thinking first, as Anthropic requires when combining edits. Drop
+    // a previous clear_thinking edit so re-applying stays idempotent.
+    const existingEdits = this._generationKwargs.contextManagement?.edits ?? [];
+    const edits = [
+      { type: CLEAR_THINKING_EDIT, keep },
+      ...existingEdits.filter((edit) => edit.type !== CLEAR_THINKING_EDIT),
+    ];
+    const clone = this._withGenerationKwargs({
+      contextManagement: { edits },
+      betaFeatures,
+    });
+    // clear_thinking_20251015 is honored only on the beta Messages API
+    // (client.beta.messages.create), so enabling keep forces the beta endpoint
+    // here even when the provider was constructed with betaApi: false. Setting
+    // `[thinking] keep` to an off-value (or KIMI_MODEL_THINKING_KEEP=off) is the
+    // escape hatch that disables keep and returns requests to the standard
+    // endpoint. This also routes adaptive models (whose withThinking would
+    // otherwise drop the interleaved-thinking beta and leave betaFeatures empty)
+    // onto the beta endpoint with a body `betas=[context-management-...]`.
+    clone._betaApi = true;
     return clone;
   }
 

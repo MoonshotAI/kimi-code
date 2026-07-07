@@ -3,8 +3,10 @@
      scattered in the sidebar account popover: appearance, language, account,
      connection, plus notifications and the troubleshooting-log export. -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
@@ -62,7 +64,7 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced';
+type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
 
 const activeTab = ref<SettingsTab>('general');
 
@@ -71,6 +73,7 @@ const tabs: { id: SettingsTab; labelKey: string }[] = [
   { id: 'agent', labelKey: 'settings.tabs.agent' },
   { id: 'account', labelKey: 'settings.tabs.account' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced' },
+  { id: 'archived', labelKey: 'settings.tabs.archived' },
 ];
 
 const daemonEndpoint = serverEndpointLabel();
@@ -205,6 +208,107 @@ function toggleTelemetry(): void {
 
 function setTab(tab: SettingsTab): void {
   activeTab.value = tab;
+}
+
+// ---------------------------------------------------------------------------
+// Archived-sessions tab — its own list state (server-side `archived_only`
+// filter), kept separate from the per-workspace active list. Search, workspace
+// filter and sort all run client-side over the loaded pages. Restore goes
+// through the composable so the sidebar list updates automatically.
+// ---------------------------------------------------------------------------
+const client = useKimiWebClient();
+
+const archivedItems = ref<AppSession[]>([]);
+const archivedLoading = ref(false);
+const archivedLoaded = ref(false);
+const archiveQuery = ref('');
+const archiveWsFilter = ref<string>('all'); // 'all' | cwd
+const archiveSort = ref<'archived-desc' | 'created-desc' | 'name-asc'>('archived-desc');
+
+// Load every archived session once when the tab opens (no frontend pagination).
+// Search, sort and the workspace filter then run client-side over the full set,
+// so results are always global and there is no empty-page / cursor bookkeeping
+// to get wrong. The user waits a moment on first open in exchange for simplicity.
+const ARCHIVED_PAGE_SIZE = 100;
+
+async function loadAllArchived(): Promise<void> {
+  if (archivedLoading.value || archivedLoaded.value) return;
+  archivedLoading.value = true;
+  try {
+    const all: AppSession[] = [];
+    let beforeId: string | undefined;
+    for (;;) {
+      const page = await client.loadArchivedSessions({ beforeId, pageSize: ARCHIVED_PAGE_SIZE });
+      all.push(...page.items);
+      if (!page.hasMore || page.items.length === 0) break;
+      const next = page.items.at(-1)?.id;
+      if (next === undefined) break;
+      beforeId = next;
+    }
+    archivedItems.value = all;
+    archivedLoaded.value = true;
+  } catch (err) {
+    console.warn('loadAllArchived failed', err);
+  } finally {
+    archivedLoading.value = false;
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'archived' && !archivedLoaded.value) {
+    void loadAllArchived();
+  }
+});
+
+const archiveWorkspaces = computed<string[]>(() => {
+  const set = new Set<string>();
+  for (const s of archivedItems.value) set.add(s.cwd);
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+});
+
+const filteredArchived = computed<AppSession[]>(() => {
+  const q = archiveQuery.value.trim().toLowerCase();
+  // Defensive invariant: this panel must only ever render archived sessions,
+  // even if an older server ignores `archived_only` and falls back to the
+  // default (unarchived) list. Filter again on the client.
+  let rows = archivedItems.value.filter((s) => s.archived === true);
+  if (archiveWsFilter.value !== 'all') {
+    rows = rows.filter((s) => s.cwd === archiveWsFilter.value);
+  }
+  if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
+  rows = rows.slice();
+  if (archiveSort.value === 'archived-desc') {
+    rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  } else if (archiveSort.value === 'created-desc') {
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } else {
+    rows.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+  }
+  return rows;
+});
+
+const groupedArchived = computed<{ cwd: string; items: AppSession[] }[]>(() => {
+  const map = new Map<string, AppSession[]>();
+  for (const s of filteredArchived.value) {
+    const list = map.get(s.cwd) ?? [];
+    list.push(s);
+    map.set(s.cwd, list);
+  }
+  return Array.from(map.entries()).map(([cwd, items]) => ({ cwd, items }));
+});
+
+async function onRestore(id: string): Promise<void> {
+  const ok = await client.restoreSession(id);
+  if (ok) {
+    archivedItems.value = archivedItems.value.filter((s) => s.id !== id);
+  }
+}
+
+function archiveTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 </script>
 
@@ -467,6 +571,69 @@ function setTab(tab: SettingsTab): void {
           </section>
         </section>
 
+        <!-- Archived sessions -->
+        <section v-show="activeTab === 'archived'" class="panel">
+          <div class="panel-head">
+            <div class="panel-kicker">Archived sessions</div>
+            <h4 class="panel-title">{{ t('settings.archivedTitle') }}</h4>
+            <p class="panel-desc">{{ t('settings.archivedDesc') }}</p>
+          </div>
+
+          <div class="archive-toolbar">
+            <label class="archive-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+              <input v-model="archiveQuery" :placeholder="t('settings.archivedSearch')" />
+            </label>
+            <Select
+              :model-value="archiveWsFilter"
+              size="sm"
+              :aria-label="t('settings.archivedAllWorkspaces')"
+              @update:model-value="archiveWsFilter = $event as string"
+            >
+              <option value="all">{{ t('settings.archivedAllWorkspaces') }}</option>
+              <option v-for="ws in archiveWorkspaces" :key="ws" :value="ws">{{ ws }}</option>
+            </Select>
+            <SegmentedControl
+              size="sm"
+              :model-value="archiveSort"
+              :options="[
+                { value: 'archived-desc', label: t('settings.archivedSortArchived') },
+                { value: 'created-desc', label: t('settings.archivedSortCreated') },
+                { value: 'name-asc', label: t('settings.archivedSortName') },
+              ]"
+              @update:model-value="archiveSort = $event as 'archived-desc' | 'created-desc' | 'name-asc'"
+            />
+          </div>
+
+          <div v-if="archivedLoading" class="archive-empty">
+            {{ t('settings.archivedLoadingAll') }}
+          </div>
+
+          <template v-else>
+            <div v-if="groupedArchived.length > 0" class="archive-list">
+              <section v-for="g in groupedArchived" :key="g.cwd" class="archive-card">
+                <div class="archive-workspace">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h6l2 2h10v9H3z" /><path d="M3 7V5h6l2 2" /></svg>
+                  <span class="path">{{ g.cwd }}</span>
+                  <span class="count">{{ t('settings.archivedSessionsCount', { count: g.items.length }) }}</span>
+                </div>
+                <div class="setting-card">
+                  <div v-for="s in g.items" :key="s.id" class="archive-row">
+                    <div class="archive-meta">
+                      <div class="archive-name">{{ s.title }}</div>
+                      <div class="archive-time">{{ t('settings.archivedAt', { time: archiveTime(s.updatedAt) }) }}</div>
+                    </div>
+                    <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div v-else class="archive-empty">
+              {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
+            </div>
+          </template>
+        </section>
+
       </div>
     </div>
   </Dialog>
@@ -615,4 +782,37 @@ function setTab(tab: SettingsTab): void {
     max-width: none;
   }
 }
+/* Archived-sessions tab */
+.setting-card { border: 1px solid var(--color-line); border-radius: var(--radius-xl); overflow: hidden; background: var(--color-bg); }
+.panel-head { margin-bottom: var(--space-4); }
+.panel-kicker { font-size: var(--text-xs); letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-faint); margin-bottom: var(--space-1); }
+.panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.01em; color: var(--color-text); }
+.panel-desc { margin: 0; font-family: var(--font-ui); font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--color-text-muted); max-width: 560px; }
+.archive-toolbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
+.archive-search { flex: 1; min-width: 200px; height: 36px; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-line); color: var(--color-text-faint); font-size: var(--text-sm); background: var(--color-surface-raised); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.archive-search:focus-within { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); color: var(--color-text-muted); }
+.archive-search svg { width: 15px; height: 15px; flex: none; }
+.archive-search input { width: 100%; border: none; outline: none; background: transparent; font: inherit; color: var(--color-text); }
+.archive-list { display: flex; flex-direction: column; gap: var(--space-4); }
+.archive-card .setting-card { margin-bottom: 0; }
+.archive-workspace { display: flex; align-items: center; gap: var(--space-2); margin: 0 2px var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.archive-workspace svg { width: 16px; height: 16px; color: var(--color-text-faint); flex: none; }
+.archive-workspace .path { font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-workspace .count { margin-left: auto; color: var(--color-text-faint); font-weight: var(--weight-regular); font-size: var(--text-xs); flex: none; }
+.archive-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-line); }
+.archive-row:first-child { border-top: none; }
+.archive-row:hover { background: var(--color-surface-sunken); }
+.archive-meta { min-width: 0; }
+.archive-name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-mono); }
+.archive-draining { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-accent-hover); font-size: var(--text-sm); }
+.archive-empty { padding: var(--space-6) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-xl); color: var(--color-text-faint); font-size: var(--text-sm); text-align: center; background: var(--color-bg); }
+@media (max-width: 640px) {
+  .archive-toolbar { flex-direction: column; align-items: stretch; }
+  .archive-search { min-width: 0; }
+}
+/* Enlarge the settings frame a bit (Dialog `xl` = 760px wide, fixed-height
+   680px). Scoped to this dialog only. */
+:deep(.ui-dialog) { width: min(980px, 96vw); }
+:deep(.ui-dialog--fixed-height) { height: min(780px, calc(100vh - var(--space-8) * 2)); }
 </style>

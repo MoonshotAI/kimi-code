@@ -539,6 +539,19 @@ export interface KimiEventConnection {
    * instead of dropping them like background subagents.
    */
   markSideChannelAgent(agentId: string): void;
+  /**
+   * Report the underlying socket's health. Used to detect a silent-half-open
+   * connection after the tab was frozen in the background: the browser still
+   * reports OPEN (so no auto-reconnect) yet no frames have arrived for a while.
+   */
+  health(): { connected: boolean; open: boolean; stale: boolean };
+  /**
+   * Force a clean reconnect of the underlying socket. Used to recover from a
+   * silent-half-open (background-tab freeze) where onclose never fires. The
+   * reconnect handshake re-subscribes at the last durable cursor. No-op after
+   * close().
+   */
+  reconnect(): void;
   close(): void;
 }
 
@@ -644,8 +657,8 @@ export interface AppSessionWarning {
 
 export interface KimiWebApi {
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
-  getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[] }>;
-  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
+  getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean }>;
+  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean; archivedOnly?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;
@@ -653,6 +666,7 @@ export interface KimiWebApi {
   getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus>;
   getSessionWarnings(sessionId: string): Promise<AppSessionWarning[]>;
   archiveSession(sessionId: string): Promise<{ archived: true }>;
+  restoreSession(sessionId: string): Promise<AppSession>;
   listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
   /** v2 initial sync: atomic session state + `asOfSeq` watermark + epoch. */
   getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot>;
@@ -675,6 +689,8 @@ export interface KimiWebApi {
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<{ resolved: true; resolvedAt: string }>;
   dismissQuestion(sessionId: string, questionId: string): Promise<{ dismissed: true; dismissedAt: string }>;
   listSkills(sessionId: string): Promise<AppSkill[]>;
+  /** List skills for a workspace (no session required) — GET /workspaces/{id}/skills. */
+  listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]>;
   activateSkill(sessionId: string, skillName: string, args?: string): Promise<{ activated: true; skillName: string }>;
   listTasks(sessionId: string, status?: AppTaskStatus): Promise<AppTask[]>;
   getTask(sessionId: string, taskId: string, input?: { withOutput?: boolean; outputBytes?: number }): Promise<AppTask>;

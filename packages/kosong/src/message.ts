@@ -1,3 +1,5 @@
+import type { Tool } from './tool';
+
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface TextPart {
@@ -100,6 +102,16 @@ export interface Message {
   readonly toolCallId?: string;
   /** When `true`, indicates the message was not fully received (e.g. stream interrupted). */
   readonly partial?: boolean;
+  /**
+   * Full tool definitions carried by this message. Meaningful only on
+   * `role: 'system'` messages: it is the append-only primitive for loading a
+   * tool mid-conversation without touching the request's top-level `tools[]`
+   * (which must stay byte-stable to preserve the provider's prompt cache).
+   * Providers that support message-level tool declarations (Kimi
+   * `messages[].tools`) serialize it; callers must not send such a message to
+   * a provider without that capability.
+   */
+  readonly tools?: readonly Tool[] | undefined;
 }
 
 /** Check if a streamed part is a ContentPart (text, think, image_url, audio_url, video_url). */
@@ -107,6 +119,24 @@ export function isContentPart(part: StreamedMessagePart): part is ContentPart {
   const t = part.type;
   return (
     t === 'text' || t === 'think' || t === 'image_url' || t === 'audio_url' || t === 'video_url'
+  );
+}
+
+/**
+ * True for a message whose only payload is `tools` — the dynamic tool-loading
+ * primitive (see {@link Message.tools}). Message-level tool declarations are a
+ * Kimi wire feature; every other provider must skip such a message entirely:
+ * their explicit field construction already keeps the `tools` field off the
+ * wire, but the leftover empty message would be rejected (OpenAI: system
+ * message without content) or serialized as a garbage `<system></system>`
+ * turn (Anthropic/Google system-to-user wrapping).
+ */
+export function isToolDeclarationOnlyMessage(message: Message): boolean {
+  return (
+    message.tools !== undefined &&
+    message.tools.length > 0 &&
+    message.content.length === 0 &&
+    message.toolCalls.length === 0
   );
 }
 

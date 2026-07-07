@@ -82,6 +82,10 @@ export type ModelAlias = z.infer<typeof ModelAliasSchema>;
 export const ThinkingConfigSchema = z.object({
   enabled: z.boolean().optional(),
   effort: z.string().optional(),
+  // Moonshot Preserved Thinking passthrough (`thinking.keep`). The value is
+  // forwarded verbatim to the wire; "all" enables it, an off-value
+  // (false/0/no/off/none/null) disables it. Defaults to "all" when unset.
+  keep: z.string().optional(),
 });
 
 export type ThinkingConfig = z.infer<typeof ThinkingConfigSchema>;

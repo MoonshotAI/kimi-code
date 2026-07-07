@@ -226,7 +226,11 @@ export function registerQuestionsRoutes(
       }
 
       const body = bodyParse.data;
-      const inProc = questionToAgentCoreResponse(body);
+      // Read the pending request BEFORE resolve() drops it: the translator
+      // needs the original items/options to map wire ids back to question
+      // text / option labels for the SDK-facing (model-facing) record.
+      const pendingRequest = broker.getPendingRequest(questionId);
+      const inProc = questionToAgentCoreResponse(body, pendingRequest);
       broker.resolve(questionId, inProc);
       broker.markResolved(questionId);
 

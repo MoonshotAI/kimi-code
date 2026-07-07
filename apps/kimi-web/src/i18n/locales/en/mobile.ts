@@ -16,4 +16,7 @@ export default {
   permYoloSub: 'auto-approve all',
   planModeSub: 'Plan mode',
   swarmModeSub: 'Swarm mode',
+  archivedSessions: 'Archived sessions',
+  archivedSessionsSub: 'Browse and restore archived sessions',
+  archivedBack: 'Back',
 } as const;

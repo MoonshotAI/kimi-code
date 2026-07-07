@@ -264,7 +264,7 @@ function onHeaderDragStart(event: DragEvent): void {
 }
 
 .gh-name {
-  font-size: var(--text-lg);
+  font-size: var(--ui-font-size-lg);
   font-weight: var(--weight-medium);
   color: var(--color-text);
   flex: 1;
@@ -280,7 +280,7 @@ function onHeaderDragStart(event: DragEvent): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding-left: calc(var(--sb-gutter) + var(--sb-gap));
-  font-size: var(--text-xs);
+  font-size: var(--ui-font-size-xs);
   max-height: 0;
   opacity: 0;
   transition: max-height var(--duration-base) var(--ease-out),

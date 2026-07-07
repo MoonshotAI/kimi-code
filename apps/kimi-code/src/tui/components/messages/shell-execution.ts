@@ -48,8 +48,15 @@ export class ShellExecutionComponent extends Container {
     const allLines = command.split('\n');
     const lines = previewLines === undefined ? allLines : allLines.slice(0, previewLines);
     for (const [i, line] of lines.entries()) {
-      const prefix = i === 0 ? '$ ' : '  ';
-      this.addChild(new Text(currentTheme.dim(prefix + line), 2, 0));
+      // Distinguish the command (input) from the result (output): the `$`
+      // prompt uses the dedicated shell-mode hue, the command body uses
+      // `textDim`, and the result below is rendered one step dimmer in
+      // `textMuted` so the two stay separable without a connecting glyph.
+      const text =
+        i === 0
+          ? currentTheme.fg('shellMode', '$ ') + currentTheme.dim(line)
+          : `  ${currentTheme.dim(line)}`;
+      this.addChild(new Text(text, 2, 0));
     }
   }
 
@@ -68,24 +75,23 @@ export class ShellExecutionComponent extends Container {
         maxLines: previewLines,
         tail: tailOutput,
         expandHint,
+        color: 'textMuted',
       }),
     );
   }
 }
 
 export const shellExecutionResultRenderer: ResultRenderer = (
-  toolCall: ToolCallBlockData,
+  _toolCall: ToolCallBlockData,
   result: ToolResultBlockData,
   ctx,
 ): Component[] => [
+  // Result only. The command preview is owned by ToolCallComponent's
+  // buildCallPreview across the whole lifecycle (streaming, running, and
+  // done); rendering it here too would duplicate the command once the result
+  // lands.
   new ShellExecutionComponent({
-    command: typeof toolCall.args['command'] === 'string' ? toolCall.args['command'] : '',
     result,
     expanded: ctx.expanded,
-    // Header truncates long bash commands to 60 chars. When the user expands
-    // the card with ctrl+o, reveal the full command (no line cap) so they
-    // can read what actually ran.
-    showCommand: ctx.expanded,
-    commandPreviewLines: undefined,
   }),
 ];

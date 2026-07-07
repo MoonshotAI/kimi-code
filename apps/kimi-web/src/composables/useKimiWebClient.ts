@@ -4,6 +4,7 @@
 
 import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
+import { traceClientEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
@@ -13,6 +14,7 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -64,8 +66,8 @@ import { toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
-import { buildSwarmGroups, countSwarmMembers } from './swarmGroups';
-import type { SwarmGroup } from './swarmGroups';
+import { buildSwarmGroups, countSwarmMembers, swarmMembersByToolCall } from './swarmGroups';
+import type { SwarmGroup, SwarmMember } from './swarmGroups';
 import type {
   ActivityState,
   ActivationBadges,
@@ -280,6 +282,12 @@ interface QueuedPrompt {
 export interface ExtendedState extends KimiClientState {
   connected: boolean;
   serverVersion: string;
+  /**
+   * True when the connected server reports `dangerous_bypass_auth` in `/meta`,
+   * meaning its bearer-token gate is disabled. The UI skips the server-token
+   * prompt and connects without a credential.
+   */
+  dangerousBypassAuth: boolean;
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
@@ -351,6 +359,7 @@ const rawState: ExtendedState = reactive({
   ...createInitialState(),
   connected: false,
   serverVersion: '',
+  dangerousBypassAuth: false,
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
@@ -459,10 +468,34 @@ if (typeof window !== 'undefined') {
   });
 }
 
+/**
+ * When the tab returns to the foreground, the WebSocket may be a silent
+ * half-open: the browser still reports OPEN (so no auto-reconnect) yet no
+ * frames have arrived for a while (frozen background tab, dropped NAT mapping,
+ * daemon restart). On such a socket live streaming tokens freeze mid-turn with
+ * no recovery short of a full page reload.
+ *
+ * If the socket looks stale, force a clean reconnect — the handshake
+ * re-subscribes at the last durable cursor — then refresh the active session
+ * from its authoritative snapshot to re-seed the volatile streaming tokens lost
+ * during the gap.
+ */
+function recoverStaleConnection(): void {
+  if (eventConn === null) return;
+  if (!eventConn.health().stale) return;
+  traceClientEvent('ws: stale socket on focus, reconnecting', {
+    activeSessionId: rawState.activeSessionId,
+  });
+  eventConn.reconnect();
+  const active = rawState.activeSessionId;
+  if (active) snapshotSyncRunner.request(active);
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       clearActiveUnread();
+      recoverStaleConnection();
     }
   });
 }
@@ -593,8 +626,15 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
 }
 
-/** Persist runtime controls to the active session via POST /profile, then
- *  re-read /status. Fire-and-forget: the UI already updated optimistically. */
+/** Persist runtime controls to a session via POST /profile, then re-read
+ *  /status. `sessionId` overrides the active session — used when creating a
+ *  session and immediately persisting its draft modes, so a concurrent session
+ *  switch can't write the patch to the wrong session.
+ *
+ *  Returns the update promise (errors swallowed — the UI already updated
+ *  optimistically). Most callers fire-and-forget via `void persistSessionProfile(...)`;
+ *  call sites that must order strictly after the profile (e.g. a skill
+ *  activation that can't carry its own modes) await it. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -603,11 +643,11 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
-}): void {
-  const sid = rawState.activeSessionId;
-  if (!sid) return;
+}, sessionId?: string): Promise<void> {
+  const sid = sessionId ?? rawState.activeSessionId;
+  if (!sid) return Promise.resolve();
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
-  void Promise.resolve(getKimiWebApi().updateSession(sid, patch))
+  return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
     .then(() => refreshSessionStatus(sid))
     .catch(() => {
       /* ignore — local state already reflects the change */
@@ -1130,7 +1170,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
           ? snap.session.model
           : s.model,
     }));
-    setSessionMessages(sessionId, snap.messages);
+    // The snapshot only carries the most recent page; keep any older pages the
+    // user already loaded so reopening does not reset scrollback.
+    setSessionMessages(
+      sessionId,
+      mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
+    );
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
       [sessionId]: snap.hasMoreMessages,
@@ -1253,38 +1298,19 @@ function dropWsSubscription(sessionId: string): void {
   sessionsWithStaleCursor.delete(sessionId);
 }
 
-function subscribeToSessionEvents(sessionId: string): void {
-  connectEventsIfNeeded();
-  if (eventConn) {
-    // Apply any queued streaming deltas before re-subscribing so the transcript
-    // is current. (These deltas are volatile — never replayed by the server and
-    // they don't advance lastSeqBySession — but flushing here is cheap and
-    // future-proofs the cursor if the batching set ever changes.)
-    enqueueEvent.flush();
-    const seq = rawState.lastSeqBySession[sessionId] ?? 0;
-    const epoch = epochBySession[sessionId];
-    eventConn.subscribe(sessionId, { seq, epoch });
-    retainWsSubscription(sessionId);
-  }
-}
-
-/** Re-open an already-loaded session. If it was evicted from the subscription
- *  cap since it was last open, rebuild from a snapshot: resuming from the kept
- *  cursor would skip the per-session events that arrived while unsubscribed,
- *  and replaying from seq 0 would make the projector regenerate message ids and
- *  duplicate the already-loaded transcript. Otherwise just re-subscribe from the
- *  tracked cursor.
+/** Re-open an already-loaded session: always rebuild from a fresh snapshot.
  *
- * The stale marker is only read here; `syncSessionFromSnapshot` clears it once
- * the snapshot succeeds. If the snapshot fails transiently the marker stays, so
- * the next re-open retries the snapshot instead of falling back to a cursor
- * that may have skipped events while unsubscribed. */
+ *  Volatile `assistant.delta` frames are never journaled or replayed: if a
+ *  transport hiccup covered the tail of a turn while the user was away, the
+ *  local transcript silently lost the model's final text, and a cursor
+ *  resubscribe has nothing to recover it with. Always fetching the authoritative
+ *  snapshot keeps the logic trivially correct (no freshness heuristics, no
+ *  races to reason about); the snapshot is cheap server-side (LRU on the wire
+ *  file). Trade-off: a snapshot GET in flight during a steep local send can
+ *  momentarily overwrite that optimistic message — the user notices immediately
+ *  and the next re-open (or a refresh) reconciles. */
 async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
-  if (sessionsWithStaleCursor.has(sessionId)) {
-    return syncSessionFromSnapshot(sessionId);
-  }
-  subscribeToSessionEvents(sessionId);
-  return 'ok';
+  return syncSessionFromSnapshot(sessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -1620,11 +1646,13 @@ const sessions = computed<Session[]>(() => {
 
 const activeSessionId = computed<string>(() => rawState.activeSessionId ?? '');
 
-/** Slash-invocable skills for the active session (feeds the composer `/` menu). */
+/** Slash-invocable skills for the composer `/` menu — the active session's skills,
+ *  or, before a session exists, the active workspace's skills. */
 const skills = computed<AppSkill[]>(() => {
   const sid = rawState.activeSessionId;
-  if (!sid) return [];
-  return modelProvider.skillsBySession.value[sid] ?? [];
+  if (sid) return modelProvider.skillsBySession.value[sid] ?? [];
+  const wid = activeWorkspaceId.value;
+  return wid ? (modelProvider.skillsByWorkspace.value[wid] ?? []) : [];
 });
 
 const isSending = computed<boolean>(() => {
@@ -1638,6 +1666,7 @@ const sideChat = useSideChat(rawState, {
   nextOptimisticMsgId,
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
+  models: () => modelProvider.models.value,
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {
@@ -1660,7 +1689,6 @@ const turns = computed<ChatTurn[]>(() => {
     approvals,
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
-    activeAppTasks.value,
     rawState.planReviewByToolCallId,
   );
 });
@@ -1672,6 +1700,11 @@ const tasks = computed<TaskItem[]>(() => {
 });
 
 const swarms = computed<SwarmGroup[]>(() => buildSwarmGroups(activeAppTasks.value));
+// Foreground/background subagents keyed by their spawning tool call id — used by
+// the inline AgentSwarm tool card to stream each subagent's live progress.
+const swarmMembersByToolCallId = computed<Map<string, SwarmMember[]>>(() =>
+  swarmMembersByToolCall(activeAppTasks.value),
+);
 
 const goal = computed<AppGoal | null>(() => {
   const sid = rawState.activeSessionId;
@@ -1710,6 +1743,17 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
+
+/**
+ * Drop the cached `dangerous_bypass_auth` value read from `/meta`. Called when
+ * the server demands authentication (HTTP 401) so a stale "bypass" value from
+ * a previous server mode does not keep hiding the token prompt after the same
+ * origin is restarted without `--dangerous-bypass-auth`.
+ */
+function clearDangerousBypassAuth(): void {
+  rawState.dangerousBypassAuth = false;
+}
 
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
@@ -2029,6 +2073,21 @@ const activeWorkspaceId = computed<string | null>(() => {
   if (id && list.some((w) => w.id === id)) return id;
   return list[0]?.id ?? null;
 });
+
+// Pre-warm workspace-scoped skills so the onboarding composer's `/` menu is
+// populated before a session exists. Loaded once per workspace (guard mirrors
+// the per-session guard in refreshSessionSidecars); session skills take over
+// via refreshSessionSidecars once a session is created.
+watch(
+  activeWorkspaceId,
+  (id) => {
+    if (!id) return;
+    if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsByWorkspace.value, id)) {
+      void modelProvider.loadSkillsForWorkspace(id);
+    }
+  },
+  { immediate: true },
+);
 
 /** The active workspace as a sidebar view (or null when none). */
 const visibleWorkspace = computed<WorkspaceView | null>(() => {
@@ -2364,6 +2423,7 @@ export function useKimiWebClient() {
     todos,
     goal,
     swarms,
+    swarmMembersByToolCallId,
     activationBadges,
     compaction,
     status,
@@ -2387,6 +2447,8 @@ export function useKimiWebClient() {
     hasMoreMessages,
     loadMoreMessagesError,
     serverVersion,
+    dangerousBypassAuth,
+    clearDangerousBypassAuth,
     initialized,
     permission,
     thinking,
@@ -2442,6 +2504,8 @@ export function useKimiWebClient() {
     openWorkspace: workspaceState.openWorkspace,
     openWorkspaceDraft: workspaceState.openWorkspaceDraft,
     startSessionAndSendPrompt: workspaceState.startSessionAndSendPrompt,
+    startSessionAndActivateSkill: workspaceState.startSessionAndActivateSkill,
+    startSessionAndOpenSideChat: workspaceState.startSessionAndOpenSideChat,
     addWorkspaceByPath: workspaceState.addWorkspaceByPath,
     browseFs: workspaceState.browseFs,
     getFsHome: workspaceState.getFsHome,
@@ -2485,6 +2549,8 @@ export function useKimiWebClient() {
     reorderWorkspaces,
     setWorkspaceSortMode,
     archiveSession: workspaceState.archiveSession,
+    restoreSession: workspaceState.restoreSession,
+    loadArchivedSessions: workspaceState.loadArchivedSessions,
     compact: workspaceState.compact,
     forkSession: workspaceState.forkSession,
     undo: workspaceState.undo,

@@ -1,5 +1,6 @@
 import { getDefaultTelemetryClient } from './client';
 import { EventSink } from './sink';
+import { SystemMetricsCollector } from './systemMetrics';
 import { AsyncTransport } from './transport';
 
 export const TELEMETRY_DISABLE_ENV = 'KIMI_DISABLE_TELEMETRY';
@@ -65,5 +66,10 @@ export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
 
   client.attachSink(sink);
   sink.startPeriodicFlush();
+
+  const systemMetricsCollector = new SystemMetricsCollector({ client });
+  client.setSystemMetricsCollector(systemMetricsCollector);
+  systemMetricsCollector.start();
+
   void sink.retryDiskEvents().catch(() => {});
 }

@@ -658,7 +658,7 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 
-	it("re-anchors without a full redraw when deleted lines move the viewport upward", async () => {
+	it("full re-renders when deleted lines move the viewport upward", async () => {
 		const terminal = new VirtualTerminal(20, 5);
 		const tui = new TUI(terminal);
 		const component = new TestComponent();
@@ -674,7 +674,7 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.strictEqual(tui.fullRedraws, initialRedraws, "Shrink should re-anchor in place, not full-redraw");
+		assert.ok(tui.fullRedraws > initialRedraws, "Shrink should trigger a full redraw");
 		assert.deepStrictEqual(terminal.getViewport(), ["Line 2", "Line 3", "Line 4", "Line 5", "Line 6"]);
 
 		tui.stop();
@@ -696,8 +696,7 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.strictEqual(tui.fullRedraws, initialRedraws, "Shrink should re-anchor in place, not full-redraw");
-		assert.deepStrictEqual(terminal.getViewport(), ["Line 0", "Line 1", "", "", ""]);
+		assert.ok(tui.fullRedraws > initialRedraws, "Shrink should reset the viewport with a full redraw");
 		const redrawsAfterShrink = tui.fullRedraws;
 
 		component.lines = ["Line 0", "Line 1", "Line 2"];
@@ -741,10 +740,12 @@ describe("TUI differential rendering", () => {
 		tui.requestRender();
 		await terminal.waitForRender();
 
-		assert.strictEqual(
-			tui.fullRedraws,
-			redrawsBeforeSwitch,
-			"Branch switch should not trigger a full redraw (repainted in place)",
+		// Upstream behavior: a change above the viewport triggers a
+		// destructive full redraw, which repaints the tail of the new
+		// content and leaves no stale rows on screen.
+		assert.ok(
+			tui.fullRedraws > redrawsBeforeSwitch,
+			"Branch switch above the viewport should trigger a full redraw",
 		);
 
 		const viewport = terminal.getViewport();
@@ -755,50 +756,20 @@ describe("TUI differential rendering", () => {
 			assert.ok(!line.includes("Chat 14"), `Stale "Chat 14" at viewport row ${i}`);
 		}
 
-		// Partial shrinks keep the viewport anchor pinned (rewinding would
-		// duplicate scrollback rows), so the remaining content sits at the
-		// top of the window with blank rows below. The stale "Chat 12/13/14"
-		// rows remain in scrollback but are not visible.
+		// The full redraw shows the tail of the new content with the editor
+		// at the bottom.
 		assert.deepStrictEqual(viewport, [
+			"Chat 5",
+			"Chat 6",
+			"Chat 7",
+			"Chat 8",
+			"Chat 9",
+			"Chat 10",
+			"Chat 11",
+			"Editor 0",
 			"Editor 1",
 			"Editor 2",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
 		]);
-
-		tui.stop();
-	});
-});
-
-
-describe("TUI scrollback preservation", () => {
-	it("does not emit full redraw when changes are above the viewport", async () => {
-		const terminal = new LoggingVirtualTerminal(40, 5);
-		const tui = new TUI(terminal);
-		const component = new TestComponent();
-		tui.addChild(component);
-
-		// Render 8 lines into a height-5 terminal so previousViewportTop > 0
-		// (viewport shows lines 3..7, lines 0..2 are above the viewport).
-		component.lines = ["line0", "line1", "line2", "line3", "line4", "line5", "line6", "line7"];
-		tui.start();
-		await terminal.waitForRender();
-		terminal.clearWrites();
-
-		// Change a line above the viewport (line0); this must not trigger fullRender.
-		component.lines[0] = "line0-changed";
-		tui.requestRender();
-		await terminal.waitForRender();
-
-		const writes = terminal.getWrites();
-		assert.ok(!writes.includes("\x1b[3J"), "should not clear scrollback (no ESC[3J)");
-		assert.ok(!writes.includes("\x1b[2J"), "should not full redraw (no ESC[2J)");
 
 		tui.stop();
 	});

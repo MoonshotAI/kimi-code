@@ -120,6 +120,11 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       'Extra Host header value to allow through the DNS-rebinding check. Repeat or comma-separate; a leading dot matches a domain suffix (e.g. .example.com).',
     )
     .option(
+      '--keep-alive',
+      'Keep the server running instead of exiting after 60s with no connected clients. Implied automatically by --host / --allowed-host, and always on in --foreground mode.',
+      false,
+    )
+    .option(
       '--insecure-no-tls',
       'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true; only relevant for non-loopback binds.',
       true,
@@ -132,6 +137,11 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     .option(
       '--allow-remote-terminals',
       'On a non-loopback bind, keep the PTY /api/v1/terminals/* routes enabled (default: disabled → 404). Remote shell is high risk.',
+      false,
+    )
+    .option(
+      '--dangerous-bypass-auth',
+      'Disable bearer-token auth on every REST and WebSocket route, and advertise it via /api/v1/meta so the web UI connects without a token. Only use on a trusted network or behind your own authenticating proxy.',
       false,
     )
     .option(
@@ -183,13 +193,27 @@ export async function handleRunCommand(
     await startServerDaemon(parsed);
     return;
   }
+  // Foreground is always keep-alive: a server attached to the operator's
+  // terminal must never idle-kill itself. Background daemons respect the
+  // derived `--keep-alive` flag.
+  const runOptions: ParsedServerOptions =
+    opts.foreground === true ? { ...parsed, keepAlive: true } : parsed;
   // Resolve the persistent token once: it is printed in the ready banner and
   // rides in the opened Web UI URL's `#token=` fragment (M5.5). Falls back to
-  // the plain origin / no token line when unavailable.
+  // the plain origin / no token line when unavailable. When auth is bypassed,
+  // the token is meaningless and is intentionally NOT shown or carried in the
+  // opened URL.
   const writeReady = (result: { origin: string; reused?: boolean; host?: string }): void => {
     const { origin } = result;
     const host = result.host ?? parsed.host;
-    const token = deps.resolveToken?.();
+    // When a daemon is reused, this command's flags were NOT applied to the
+    // already-running server. Don't trust the requested `--dangerous-bypass-auth`
+    // for display/open: treat the server as token-protected so we never hide a
+    // token the user actually needs, nor claim bypass for a server that is
+    // authenticating. (Probing the running server's `/meta` would give its real
+    // mode; we conservatively assume non-bypass on reuse.)
+    const effectiveBypass = result.reused === true ? false : parsed.dangerousBypassAuth;
+    const token = effectiveBypass ? undefined : deps.resolveToken?.();
     let output = '';
     if (result.reused === true) {
       // A daemon was already running, so this command's --host/--port/etc. did
@@ -202,8 +226,9 @@ export async function handleRunCommand(
         ? formatReadyBanner(origin, host, {
             token,
             networkAddresses: deps.networkAddresses,
+            dangerousBypassAuth: effectiveBypass,
           })
-        : formatReadyLine(origin, token);
+        : formatReadyLine(origin, token, effectiveBypass);
     deps.stdout.write(output);
     if (opts.open === true) {
       deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
@@ -211,14 +236,14 @@ export async function handleRunCommand(
   };
   if (opts.foreground === true) {
     const run = deps.startServerForeground ?? startServerForeground;
-    await run(parsed, {
+    await run(runOptions, {
       onReady: (origin) => {
         writeReady({ origin, reused: false, host: parsed.host });
       },
     });
     return;
   }
-  const result = await deps.startServerBackground(parsed);
+  const result = await deps.startServerBackground(runOptions);
   writeReady(result);
 }
 
@@ -230,8 +255,30 @@ function formatReuseNotice(origin: string): string {
   );
 }
 
-function formatReadyLine(origin: string, token: string | undefined): string {
-  return `Kimi server: ${buildOpenableUrl(origin, token)}\n`;
+function formatReadyLine(
+  origin: string,
+  token: string | undefined,
+  dangerousBypassAuth = false,
+): string {
+  const notice = dangerousBypassAuth
+    ? `${formatDangerNoticeLines().join('\n')}\n`
+    : '';
+  return `${notice}Kimi server: ${buildOpenableUrl(origin, token)}\n`;
+}
+
+/**
+ * Red, impossible-to-miss notice emitted when `--dangerous-bypass-auth`
+ * disables the bearer-token gate. Shared by the full ready banner and the
+ * compact one-line output so the warning always shows regardless of log level.
+ */
+function formatDangerNoticeLines(): string[] {
+  const danger = (text: string): string => chalk.hex(darkColors.error)(text);
+  const dangerBold = (text: string): string => chalk.bold.hex(darkColors.error)(text);
+  return [
+    `  ${dangerBold('⚠ DANGER: authentication is DISABLED (--dangerous-bypass-auth).')}`,
+    `  ${danger('Anyone who can reach this port gets full access. Only continue if you understand the risk.')}`,
+    `  ${danger(`If you are unsure, run `)}${dangerBold('kimi server kill')}${danger(' now to stop this process.')}`,
+  ];
 }
 
 /**
@@ -251,6 +298,8 @@ export async function startServerBackground(
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    dangerousBypassAuth: options.dangerousBypassAuth,
+    keepAlive: options.keepAlive,
     allowedHosts: options.allowedHosts,
     idleGraceMs: options.idleGraceMs,
   });
@@ -296,14 +345,18 @@ async function runServerInProcess(
   let running: RunningServer | undefined;
   let stopping = false;
 
-  const idle = mode.daemon
-    ? createIdleShutdownHandler({
-        graceMs: options.idleGraceMs,
-        onIdle: () => {
-          void shutdown('idle');
-        },
-      })
-    : undefined;
+  // Idle auto-shutdown is only for the on-demand personal daemon. It is skipped
+  // in foreground mode (`mode.daemon` is false) and whenever `--keep-alive` is
+  // set — explicitly, or implied by `--host` / `--allowed-host`.
+  const idle =
+    mode.daemon && !options.keepAlive
+      ? createIdleShutdownHandler({
+          graceMs: options.idleGraceMs,
+          onIdle: () => {
+            void shutdown('idle');
+          },
+        })
+      : undefined;
 
   async function shutdown(reason: string): Promise<void> {
     if (stopping) return;
@@ -330,6 +383,7 @@ async function runServerInProcess(
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
+    dangerousBypassAuth: options.dangerousBypassAuth,
     allowedHosts: options.allowedHosts,
     webAssetsDir: serverWebAssetsDir(),
     coreProcessOptions: {
@@ -356,7 +410,9 @@ async function runServerInProcess(
   });
 
   const readyFields = mode.daemon
-    ? { address: running.address, idleGraceMs: options.idleGraceMs }
+    ? options.keepAlive
+      ? { address: running.address, idleShutdown: 'disabled' as const }
+      : { address: running.address, idleGraceMs: options.idleGraceMs }
     : { address: running.address };
   running.logger.info(readyFields, mode.daemon ? 'daemon ready' : 'server ready');
 
@@ -421,6 +477,8 @@ interface FormatReadyBannerOptions {
   token?: string;
   /** Non-loopback interface addresses to list for a wildcard bind. */
   networkAddresses?: NetworkAddress[];
+  /** When true, render a red danger notice (auth is disabled). */
+  dangerousBypassAuth?: boolean;
 }
 
 function formatReadyBanner(
@@ -451,6 +509,12 @@ function formatReadyBanner(
     `  ${primary(logo[1])}  ${dim('Local web UI is available from this machine.')}`,
     '',
   ];
+
+  if (opts.dangerousBypassAuth === true) {
+    // Red, impossible-to-miss notice: the bearer-token gate is off, so anyone
+    // who can reach this port gets full session / filesystem / shell access.
+    lines.push(...formatDangerNoticeLines(), '');
+  }
 
   // Access links.
   for (const { label: text, url: href } of accessUrlLines(

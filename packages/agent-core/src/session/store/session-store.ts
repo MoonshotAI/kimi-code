@@ -1,5 +1,5 @@
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative } from 'pathe';
+import { dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { z } from 'zod';
 
@@ -16,6 +16,7 @@ const SessionSummaryStateSchema = z.object({
   isCustomTitle: z.boolean().optional(),
   lastPrompt: z.string().optional(),
   title: z.string().optional(),
+  workDir: z.string().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -95,7 +96,7 @@ export class SessionStore {
         errorOnExist: true,
       });
       await dropForkedSessionFiles(targetDir);
-      const forkedState = await this.writeForkedState(input, source.sessionDir, targetDir);
+      const forkedState = await this.writeForkedState(input, source.sessionDir, source.workDir, targetDir);
       await appendForkedMarkers(forkedState);
       const summary = await this.summaryFromDir(input.targetId, targetDir, source.workDir);
       await appendSessionIndexEntry(this.homeDir, {
@@ -184,6 +185,98 @@ export class SessionStore {
       return this.listSessionId(sessionId, includeArchive);
     }
     return this.listAll(includeArchive);
+  }
+
+  /**
+   * Rebuild the global session index from the session directories on disk.
+   *
+   * The bucket directory name is a one-way hash of the workDir, so the workDir
+   * can only be recovered from each session's self-describing `state.json`
+   * (`workDir`, falling back to `custom.cwd` for older sessions). Sessions that
+   * record no workDir, or whose recorded workDir does not match the bucket they
+   * live in, are left untouched rather than writing a misleading entry.
+   *
+   * The index is append-only and `readSessionIndex` lets later lines override
+   * earlier ones for the same id, so appending a corrected line both adds
+   * missing entries and repairs stale ones. Best-effort: never throws.
+   */
+  async reindex(): Promise<{ scanned: number; added: number; repaired: number }> {
+    const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+    let bucketEntries;
+    try {
+      bucketEntries = await readdir(this.sessionsDir, { withFileTypes: true });
+    } catch {
+      return { scanned: 0, added: 0, repaired: 0 };
+    }
+
+    let scanned = 0;
+    let added = 0;
+    let repaired = 0;
+
+    for (const bucket of bucketEntries) {
+      if (!bucket.isDirectory()) continue;
+      const bucketDir = join(this.sessionsDir, bucket.name);
+      let sessionEntries;
+      try {
+        sessionEntries = await readdir(bucketDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of sessionEntries) {
+        if (!entry.isDirectory()) continue;
+        const id = entry.name;
+        if (!isSafeSessionId(id)) continue;
+        const sessionDir = join(bucketDir, id);
+        const workDir = await this.recoverWorkDir(sessionDir);
+        if (workDir === undefined) continue;
+        scanned++;
+
+        let expectedDir: string;
+        try {
+          expectedDir = this.sessionDirFor({ id, workDir });
+        } catch {
+          continue;
+        }
+        // Refuse to index a session whose recorded workDir does not match the
+        // bucket it lives in (corrupt or foreign state).
+        if (resolve(sessionDir) !== resolve(expectedDir)) continue;
+
+        const existing = index.get(id);
+        if (
+          existing !== undefined &&
+          resolve(existing.sessionDir) === resolve(sessionDir) &&
+          existing.workDir === workDir
+        ) {
+          continue;
+        }
+
+        await appendSessionIndexEntry(this.homeDir, { sessionId: id, sessionDir, workDir });
+        index.set(id, { sessionId: id, sessionDir, workDir });
+        if (existing === undefined) added++;
+        else repaired++;
+      }
+    }
+    return { scanned, added, repaired };
+  }
+
+  private async recoverWorkDir(sessionDir: string): Promise<string | undefined> {
+    const state = await readOptionalState(sessionDir);
+    if (state?.workDir !== undefined) {
+      try {
+        return normalizeWorkDir(state.workDir);
+      } catch {
+        return undefined;
+      }
+    }
+    const legacyCwd = state?.custom?.['cwd'];
+    if (typeof legacyCwd === 'string' && legacyCwd.length > 0) {
+      try {
+        return normalizeWorkDir(legacyCwd);
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   }
 
   private async listWorkDir(
@@ -275,6 +368,7 @@ export class SessionStore {
   private async writeForkedState(
     input: ForkSessionRecordInput,
     sourceDir: string,
+    sourceWorkDir: string,
     targetDir: string,
   ): Promise<Record<string, unknown>> {
     const statePath = join(targetDir, 'state.json');
@@ -303,6 +397,7 @@ export class SessionStore {
       ...parsed,
       createdAt: now,
       updatedAt: now,
+      workDir: sourceWorkDir,
       title,
       isCustomTitle: input.title === undefined ? parsed['isCustomTitle'] === true : true,
       forkedFrom: input.sourceId,
@@ -327,7 +422,7 @@ export class SessionStore {
     ]);
     return {
       id,
-      workDir,
+      workDir: state?.workDir ?? workDir,
       sessionDir,
       createdAt: timestampOrFallback(dirStat.birthtimeMs, dirStat.ctimeMs),
       updatedAt: Math.max(

@@ -13,6 +13,8 @@ export interface CatalogModelEntry {
   readonly limit?: { readonly context?: number; readonly output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
+  /** Accepts message-level tool declarations (`messages[].tools`). Defaults to false. */
+  readonly select_tools?: boolean;
   readonly interleaved?: boolean | { readonly field?: string };
   readonly modalities?: {
     readonly input?: readonly string[];
@@ -136,6 +138,7 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
       thinking: Boolean(model.reasoning),
       tool_use: model.tool_call ?? true,
       max_context_tokens: context,
+      select_tools: model.select_tools === true,
     },
   };
 }

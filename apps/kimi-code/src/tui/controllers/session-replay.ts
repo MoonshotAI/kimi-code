@@ -472,6 +472,7 @@ export class SessionReplayRenderer {
     this.host.appendTranscriptEntry({
       ...replayEntry(context, 'status', 'Compaction complete', 'plain'),
       compactionData: {
+        summary: record.result.summary,
         tokensBefore: record.result.tokensBefore,
         tokensAfter: record.result.tokensAfter,
         instruction: record.instruction,
