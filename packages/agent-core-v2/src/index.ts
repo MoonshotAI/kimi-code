@@ -321,7 +321,6 @@ export * from '#/agent/fullCompaction/fullCompaction';
 export * from '#/agent/fullCompaction/fullCompactionService';
 export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
-export * from '#/agent/llmRequester/asyncEventQueue';
 export * from '#/agent/llmRequester/llmRequester';
 export * from '#/agent/llmRequester/llmRequesterService';
 export * from '#/agent/llmRequester/retry';
