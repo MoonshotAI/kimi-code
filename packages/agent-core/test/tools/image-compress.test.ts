@@ -24,9 +24,15 @@
  *     `<system>` note (dims, sizes, readback path)
  *   - annotate: compressImageContentParts can collect that caption for
  *     each compressed image and persist the original via a callback
+ *   - quality guards: a 1px checkerboard downscales to flat gray (no
+ *     spectral aliasing) at integer and fractional ratios, with jimp's
+ *     point-sampled BILINEAR mode pinned as the aliasing counter-example;
+ *     fully transparent pixels never bleed color into opaque edges; mean
+ *     brightness survives the downscale; recompressing a compressed
+ *     result is a no-op; extreme aspect ratios never collapse to zero
  */
 
-import { Jimp } from 'jimp';
+import { Jimp, ResizeStrategy } from 'jimp';
 import { describe, expect, it } from 'vitest';
 
 // eslint-disable-next-line import/no-unresolved
@@ -738,5 +744,178 @@ describe('compressImageContentParts — annotate', () => {
     expect(out.parts).toHaveLength(1);
     expect(out.captions).toHaveLength(1);
     expect(out.captions[0]).toMatch(/not preserved/i);
+  });
+});
+
+// ── downscale quality guards ─────────────────────────────────────────
+//
+// Downscaling is a resampling operation: input frequencies above the output
+// Nyquist limit must be filtered out (averaged), or they fold back as
+// low-frequency moiré — spectral aliasing. A 1px checkerboard is the
+// worst-case probe: ALL of its energy sits at the input Nyquist frequency,
+// so a resampler that skips source pixels turns it into high-contrast
+// artifacts, while a correct full-coverage average yields flat ~50% gray.
+// These tests pin the compressor to the correct behavior, keep the aliasing
+// counter-example executable, and cover the other classic downscale bugs
+// (transparent-pixel bleed, brightness drift, iterative degradation,
+// degenerate aspect ratios).
+
+/** 1px checkerboard: every pixel alternates black/white in both axes. */
+async function checkerboardPng(size: number): Promise<Uint8Array> {
+  const image = new Jimp({ width: size, height: size, color: 0x000000ff });
+  const data = image.bitmap.data;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const v = (x + y) % 2 === 0 ? 0 : 255;
+      const i = (y * size + x) * 4;
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 0xff;
+    }
+  }
+  return new Uint8Array(await image.getBuffer('image/png'));
+}
+
+interface GrayStats {
+  readonly min: number;
+  readonly max: number;
+  readonly mean: number;
+}
+
+/** Min/max/mean over the red channel (all probes here are grayscale). */
+function grayStats(image: { bitmap: { data: Buffer | Uint8Array } }): GrayStats {
+  const data = image.bitmap.data;
+  let min = 255;
+  let max = 0;
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const v = data[i]!;
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+  }
+  return { min, max, mean: sum / (data.length / 4) };
+}
+
+describe('compressImageForModel — downscale quality guards', () => {
+  it('averages a 1px checkerboard to flat gray at an integer ratio (no aliasing)', async () => {
+    // 2000 → 500 (4:1). Every output pixel covers a 4×4 block holding 8
+    // black and 8 white pixels, so a full-coverage average lands on ~127.
+    // Aliasing would instead show up as black/white patches or moiré bands.
+    const png = await checkerboardPng(2000);
+    const result = await compressImageForModel(png, 'image/png', { maxEdge: 500 });
+    expect(result.changed).toBe(true);
+    expect(Math.max(result.width, result.height)).toBe(500);
+
+    const decoded = await Jimp.fromBuffer(Buffer.from(result.data));
+    const { min, max } = grayStats(decoded);
+    expect(min).toBeGreaterThanOrEqual(118);
+    expect(max).toBeLessThanOrEqual(138);
+  });
+
+  it('stays alias-free at a non-integer ratio (fractional pixel coverage)', async () => {
+    // 2000 → 780 (≈2.56:1). Non-integer ratios are where phase-dependent
+    // point sampling degrades worst. Fractional window coverage leaves the
+    // average some mild texture, but nothing may approach black or white.
+    const png = await checkerboardPng(2000);
+    const result = await compressImageForModel(png, 'image/png', { maxEdge: 780 });
+    expect(result.changed).toBe(true);
+
+    const decoded = await Jimp.fromBuffer(Buffer.from(result.data));
+    const { min, max } = grayStats(decoded);
+    expect(min).toBeGreaterThanOrEqual(90);
+    expect(max).toBeLessThanOrEqual(165);
+  });
+
+  it('control: jimp point-sampled BILINEAR aliases the same input (keeps the probe honest)', async () => {
+    // Executable counter-example for the constraint documented on
+    // fitWithinEdge: the named ResizeStrategy modes sample a fixed 2×2
+    // neighborhood around the mapped point and skip the rest. At 4:1 the
+    // sample grid lands on a single checkerboard phase and the 50%-gray
+    // pattern collapses to solid black — the pattern's energy is entirely
+    // misrepresented. This proves the two tests above can fail (the probe
+    // distinguishes resamplers) and pins the library behavior the
+    // mode-less default call relies on — if jimp ever changes either
+    // side, revisit the fitWithinEdge comment.
+    const image = await Jimp.fromBuffer(Buffer.from(await checkerboardPng(2000)));
+    image.resize({ w: 500, h: 500, mode: ResizeStrategy.BILINEAR });
+    const { min, max, mean } = grayStats(image);
+    // The correct answer is flat ~127 gray (mean ≈ 127, max-min ≈ 0).
+    // Aliasing shows up as a solid black/white collapse or full-contrast
+    // banding — far from that answer regardless of sampling phase.
+    const aliased = mean < 60 || mean > 195 || max - min > 200;
+    expect(aliased).toBe(true);
+  });
+
+  it('never bleeds color from fully transparent pixels into visible ones', async () => {
+    // Fully transparent pixels still carry RGB values. A resizer that
+    // blends them into the average tints every transparency edge (halo).
+    // Probe: a fully transparent BRIGHT RED field around an opaque blue
+    // square — after a 4:1 downscale no visible pixel may pick up red.
+    const size = 1600;
+    const image = new Jimp({ width: size, height: size, color: 0xff000000 }); // red, alpha 0
+    const data = image.bitmap.data;
+    for (let y = 400; y < 1200; y += 1) {
+      for (let x = 400; x < 1200; x += 1) {
+        const i = (y * size + x) * 4;
+        data[i] = 0;
+        data[i + 1] = 0;
+        data[i + 2] = 0xff;
+        data[i + 3] = 0xff;
+      }
+    }
+    const png = new Uint8Array(await image.getBuffer('image/png'));
+
+    const result = await compressImageForModel(png, 'image/png', { maxEdge: 400 });
+    expect(result.changed).toBe(true);
+    expect(result.mimeType).toBe('image/png'); // alpha survives
+
+    const decoded = await Jimp.fromBuffer(Buffer.from(result.data));
+    const out = decoded.bitmap.data;
+    let visible = 0;
+    for (let i = 0; i < out.length; i += 4) {
+      if (out[i + 3]! >= 8) {
+        visible += 1;
+        expect(out[i]!).toBeLessThanOrEqual(16); // red channel stays ~0
+      }
+    }
+    expect(visible).toBeGreaterThan(0); // the blue square is still there
+  });
+
+  it('preserves mean brightness through the downscale (no energy drift)', async () => {
+    // A normalized filter keeps the image mean; drift here would indicate
+    // non-normalized weights (or a broken gamma pipeline stage).
+    const png = await noisePng(900, 900);
+    const input = await Jimp.fromBuffer(Buffer.from(png));
+    const inputMean = grayStats(input).mean;
+
+    const result = await compressImageForModel(png, 'image/png', { maxEdge: 225 });
+    expect(result.changed).toBe(true);
+    const output = await Jimp.fromBuffer(Buffer.from(result.data));
+    expect(Math.abs(grayStats(output).mean - inputMean)).toBeLessThan(3);
+  });
+
+  it('recompressing a compressed result is a no-op (no iterative degradation)', async () => {
+    // Model-bound bytes can re-enter the pipeline (session replay, MCP
+    // round-trips). Once within budget they must pass through untouched
+    // instead of being shaved a little smaller on every pass.
+    const first = await compressImageForModel(await solidPng(4500, 2250), 'image/png');
+    expect(first.changed).toBe(true);
+
+    const second = await compressImageForModel(first.data, first.mimeType);
+    expect(second.changed).toBe(false);
+    expect(second.data).toBe(first.data); // identity — not even re-decoded
+  });
+
+  it('keeps a degenerate aspect ratio at least 1px tall (no zero-size collapse)', async () => {
+    // 9000×2 scaled to a 3000px edge would round the short side to 0.67px;
+    // the resizer must clamp to 1, not produce an undecodable 3000×0 image.
+    const png = await solidPng(9000, 2);
+    const result = await compressImageForModel(png, 'image/png');
+    expect(result.changed).toBe(true);
+    expect(result.width).toBe(3000);
+    expect(result.height).toBe(1);
+    expect(sniffImageDimensions(result.data)).toEqual({ width: 3000, height: 1 });
   });
 });
