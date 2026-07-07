@@ -52,6 +52,7 @@ import type {
   Event,
   InFlightTurn,
   ModelCatalogChangedEvent,
+  SessionCreatedEvent,
   SessionCursor,
   SessionMetaUpdatedEvent,
 } from '@moonshot-ai/protocol';
@@ -298,6 +299,25 @@ export class SessionEventBroadcaster {
       });
       return;
     }
+    if (event.type === 'event.session.created') {
+      const payload = sessionCreatedPayload(event.payload);
+      if (payload === undefined) return;
+      // Forward creation to every connection (`isGlobalEvent` already matches
+      // `event.session.*`), routed through the real session so the envelope
+      // carries the real `session_id` (not the `__global__` watermark) — exactly
+      // like `session.meta.updated` below. Without this, clients that didn't
+      // issue the create never learn the session exists, so a later
+      // `sessionStatusChanged` reducer is a no-op for the unknown session and
+      // kimi-web's Stop button (gated on session.status === 'running') never
+      // renders. Mirrors v1's `isGlobalSessionEvent` broadcast of creation.
+      void this.dispatchSessionEvent(payload.sessionId, {
+        type: 'event.session.created',
+        session: payload.session,
+        agentId: 'main',
+        sessionId: payload.sessionId,
+      } as Event);
+      return;
+    }
     if (event.type === 'session.meta.updated') {
       const payload = sessionMetaUpdatedPayload(event.payload);
       if (payload === undefined) return;
@@ -376,6 +396,25 @@ export class SessionEventBroadcaster {
     // `DomainEventMap` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
     const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
+    if (event.type === 'turn.started') {
+      // Re-emit the authoritative running status ahead of the turn event. v2
+      // derives session status via `ISessionActivity` (a pure pull) and
+      // publishes nothing, so without this the WS stream never carries the
+      // running transition and kimi-web's Stop button (gated on
+      // `session.status === 'running'`) never renders. Emitted before
+      // `turn.started` so the web projector's `turn.started` synthesis (which
+      // binds the real prompt_id) applies after and keeps `currentPromptId`
+      // intact; idle/aborted are left to the projector's `turn.ended`
+      // synthesis, awaiting states to the client-side approval/question lists.
+      // Mirrors v1's sessionService status_changed emission.
+      this.enqueueDurable(state, {
+        type: 'event.session.status_changed',
+        status: 'running',
+        previous_status: 'idle',
+        agentId: 'main',
+        sessionId,
+      } as unknown as Event);
+    }
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, isVolatileSignal(event.type)))
       .catch(() => {});
@@ -638,4 +677,29 @@ function sessionMetaUpdatedSessionId(payload: unknown): string | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const sessionId = (payload as { sessionId?: unknown }).sessionId;
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+}
+
+/**
+ * Validate the `event.session.created` payload published on the core
+ * `IEventService`. The create/fork/child routes publish
+ * `{ agentId, sessionId, session }`; we unwrap the real session id and wire
+ * session here and re-attach `agentId`/`sessionId` at the edge.
+ */
+function sessionCreatedPayload(
+  payload: unknown,
+): { sessionId: string; session: SessionCreatedEvent['session'] } | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as { sessionId?: unknown; session?: unknown };
+  const sessionId =
+    typeof candidate.sessionId === 'string' && candidate.sessionId.length > 0
+      ? candidate.sessionId
+      : undefined;
+  const session =
+    typeof candidate.session === 'object' &&
+    candidate.session !== null &&
+    !Array.isArray(candidate.session)
+      ? (candidate.session as SessionCreatedEvent['session'])
+      : undefined;
+  if (sessionId === undefined || session === undefined) return undefined;
+  return { sessionId, session };
 }
