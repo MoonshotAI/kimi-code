@@ -209,7 +209,7 @@ function maybeNotifyApproval(sid: string, ctx: NotifyApprovalCtx): void {
     notifyOnApproval.value,
     ctx,
     approvalNotificationCopy(ctx.sessionTitle, ctx.toolName),
-    `kimi-approval-${ctx.approvalId}`,
+    `kimi-approval-${sid}-${ctx.approvalId}`,
   );
 }
 
