@@ -68,8 +68,6 @@ const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 
 /** Origin tag for the synthetic "continue" prompt that drives each goal turn. */
 const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
-export const GOAL_COMPLETION_REMINDER_NAME = 'goal_completion';
-export const GOAL_BLOCKED_REMINDER_NAME = 'goal_blocked';
 const GOAL_RATE_LIMIT_PAUSE_REASON = 'Paused after provider rate limit';
 const GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX = 'Paused after provider connection error';
 const GOAL_PROVIDER_AUTH_PAUSE_PREFIX = 'Paused after provider authentication error';
@@ -677,6 +675,7 @@ export class TurnFlow {
   private async runStepLoop(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
     let goalOutcomeMessageContinuationUsed = false;
+    let goalOutcomeToolResultPending = false;
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
@@ -767,15 +766,16 @@ export class TurnFlow {
                 }
               }
 
-              // 2. After UpdateGoal marks a goal terminal, ask the model for one
-              //    final user-facing outcome message before the turn ends.
+              // 2. After UpdateGoal marks a goal terminal, its tool result carries
+              //    the final-message reminder. Let the model read that result and
+              //    produce one user-facing outcome message before the turn ends.
               if (
                 !goalOutcomeMessageContinuationUsed &&
-                isGoalOutcomeReminderOrigin(this.agent.context.history.at(-1)?.origin)
+                goalOutcomeToolResultPending
               ) {
                 goalOutcomeMessageContinuationUsed = true;
+                goalOutcomeToolResultPending = false;
                 if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
-                  this.agent.context.popMatchedMessage(isGoalOutcomeReminderOrigin);
                   return { continue: false };
                 }
                 return { continue: true };
@@ -841,12 +841,16 @@ export class TurnFlow {
                   toolOutput: isError === true ? undefined : toolOutputText(output).slice(0, 2000),
                 },
               });
-              return budgetToolResultForModel({
+              const modelResult = await budgetToolResultForModel({
                 homedir: this.agent.homedir,
                 toolName: ctx.toolCall.name,
                 toolCallId: ctx.toolCall.id,
                 result: finalResult,
               });
+              if (isTerminalUpdateGoalResult(ctx.toolCall.name, ctx.args, finalResult)) {
+                goalOutcomeToolResultPending = true;
+              }
+              return modelResult;
             },
           },
         });
@@ -1074,16 +1078,21 @@ export class TurnFlow {
   }
 }
 
-function isGoalOutcomeReminderOrigin(origin: PromptOrigin | undefined): boolean {
-  return (
-    origin?.kind === 'system_trigger' &&
-    (origin.name === GOAL_COMPLETION_REMINDER_NAME ||
-      origin.name === GOAL_BLOCKED_REMINDER_NAME)
-  );
-}
-
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
   return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
+}
+
+function isTerminalUpdateGoalResult(
+  toolName: string,
+  args: unknown,
+  result: ExecutableToolResult,
+): boolean {
+  if (toolName !== 'UpdateGoal' || result.isError === true || result.stopTurn !== true) {
+    return false;
+  }
+  if (!isPlainRecord(args)) return false;
+  const status = args['status'];
+  return status === 'complete' || status === 'blocked';
 }
 
 function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined {

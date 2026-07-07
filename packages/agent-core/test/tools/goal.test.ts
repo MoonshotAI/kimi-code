@@ -299,8 +299,8 @@ describe('UpdateGoalTool', () => {
     expect(description).toContain('every required part of the objective is done');
   });
 
-  // Terminal paths append follow-up reminders, so the agent needs a context
-  // exposing appendSystemReminder.
+  // Keep a capturing context here to prove terminal paths no longer append a
+  // separate reminder; the outcome prompt is returned as the tool result.
   function agentWithContext(
     store: GoalMode,
     reminders: Array<{ readonly content: string; readonly origin: unknown }> = [],
@@ -336,11 +336,10 @@ describe('UpdateGoalTool', () => {
     );
     expect(result.isError).toBeFalsy();
     expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('Goal completed successfully.');
+    expect(result.output).toContain('Write a concise final message for the user');
     expect(store.getGoal().goal).toBeNull();
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_completion' });
-    expect(reminders[0]?.content).toContain('Goal completed successfully.');
-    expect(reminders[0]?.content).toContain('Write a concise final message for the user');
+    expect(reminders).toHaveLength(0);
   });
 
   it('`blocked` marks the goal blocked (resumable) and asks for a blocker reason', async () => {
@@ -352,12 +351,11 @@ describe('UpdateGoalTool', () => {
       ctx({ status: 'blocked' }),
     );
     expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('Goal blocked.');
+    expect(result.output).toContain('concrete blocker');
     expect(store.getGoal().goal?.status).toBe('blocked');
     expect(store.getGoal().goal?.terminalReason).toBeUndefined();
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_blocked' });
-    expect(reminders[0]?.content).toContain('Goal blocked.');
-    expect(reminders[0]?.content).toContain('concrete blocker');
+    expect(reminders).toHaveLength(0);
   });
 
   it('`paused` marks the goal paused', async () => {

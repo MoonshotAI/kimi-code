@@ -156,6 +156,11 @@ describe('goal session end-to-end', () => {
 
     // Terminal UpdateGoal asks the model for one final user-facing summary.
     expect(scripted.calls).toHaveLength(3);
+    const completionToolResult = events.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'c1',
+    );
+    expect(String(completionToolResult?.['output'])).toContain('Goal completed successfully.');
+    expect(String(completionToolResult?.['output'])).toContain('Write a concise final message for the user');
     const summaryHistory = JSON.stringify(scripted.calls[2]?.history ?? []);
     expect(summaryHistory).toContain('Goal completed successfully.');
     expect(summaryHistory).toContain('Write a concise final message for the user');
@@ -178,6 +183,7 @@ describe('goal session end-to-end', () => {
     for (const t of ['goal.create', 'goal.update', 'goal.clear']) {
       expect(types.has(t)).toBe(true);
     }
+    expect(JSON.stringify(records)).not.toContain('goal_completion');
     expect(types.has('goal.evaluate')).toBe(false);
     expect(types.has('goal.account_usage')).toBe(false);
     expect(types.has('goal.continuation')).toBe(false);
@@ -356,6 +362,11 @@ describe('goal session end-to-end', () => {
     await agent.turn.waitForCurrentTurn();
 
     expect(scripted.calls).toHaveLength(2);
+    const blockedToolResult = events.find(
+      (event) => event['type'] === 'tool.result' && event['toolCallId'] === 'blocked',
+    );
+    expect(String(blockedToolResult?.['output'])).toContain('Goal blocked.');
+    expect(String(blockedToolResult?.['output'])).toContain('concrete blocker');
     const reasonHistory = JSON.stringify(scripted.calls[1]?.history ?? []);
     expect(reasonHistory).toContain('Goal blocked.');
     expect(reasonHistory).toContain('State that the goal is blocked');
@@ -409,7 +420,9 @@ describe('goal session end-to-end', () => {
       }),
     );
     expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
-    expect(JSON.stringify(agent.context.history)).not.toContain('Write a concise final message');
+    expect(JSON.stringify(agent.context.history)).toContain('Write a concise final message');
+    expect(JSON.stringify(agent.context.history)).not.toContain('This summary should not run.');
+    expect(agent.context.history.at(-1)?.role).toBe('tool');
   });
 
   it('pauses the goal on provider rate limits', async () => {

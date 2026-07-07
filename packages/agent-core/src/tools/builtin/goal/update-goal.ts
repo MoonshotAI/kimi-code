@@ -14,10 +14,6 @@ import type { Agent } from '#/agent';
 import { z } from 'zod';
 
 import {
-  GOAL_BLOCKED_REMINDER_NAME,
-  GOAL_COMPLETION_REMINDER_NAME,
-} from '../../../agent/turn';
-import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
 } from './outcome-prompts';
@@ -57,28 +53,19 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
         }
         if (args.status === 'complete') {
           const completed = await goal.markComplete({}, 'model');
-          // `complete` is transient: markComplete announces then clears the
-          // record. Store the summary request as a system reminder, so the next
-          // provider request ends with a user message after the UpdateGoal tool
-          // result. Anthropic-compatible providers reject trailing assistant
-          // messages as unsupported prefill.
-          if (completed !== null) {
-            this.agent.context.appendSystemReminder(buildGoalCompletionSummaryPrompt(completed), {
-              kind: 'system_trigger',
-              name: GOAL_COMPLETION_REMINDER_NAME,
-            });
-          }
-          return { output: 'Goal marked complete.', stopTurn: true };
+          const output =
+            completed === null
+              ? 'Goal marked complete.'
+              : buildGoalCompletionSummaryPrompt(completed);
+          return { output, stopTurn: true };
         }
         if (args.status === 'blocked') {
           const blocked = await goal.markBlocked({}, 'model');
-          if (blocked !== null) {
-            this.agent.context.appendSystemReminder(buildGoalBlockedReasonPrompt(blocked), {
-              kind: 'system_trigger',
-              name: GOAL_BLOCKED_REMINDER_NAME,
-            });
-          }
-          return { output: 'Goal marked blocked.', stopTurn: true };
+          const output =
+            blocked === null
+              ? 'Goal marked blocked.'
+              : buildGoalBlockedReasonPrompt(blocked);
+          return { output, stopTurn: true };
         }
         await goal.pauseGoal({}, 'model');
         return { output: 'Goal paused.', stopTurn: true };
