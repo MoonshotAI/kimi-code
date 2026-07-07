@@ -737,6 +737,29 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
   });
 
+  it('queues the objective when the active session is running (no queue bypass)', async () => {
+    // Regression: creating a goal against an already-active session must honor
+    // sendPrompt's queue guard, not bypass straight to submitPromptInternal.
+    // Otherwise a /goal message sent while another turn is running races with
+    // the active turn instead of being locally queued like normal sends.
+    const state = createState();
+    state.activeSessionId = 'sess_1';
+    state.permission = 'auto'; // skip the interactive goal-start confirmation
+    const ws = useWorkspaceState(state, createDeps());
+
+    await ws.createGoal('improve test coverage');
+
+    // Didn't create a session: we targeted the existing one.
+    expect(apiMock.createSession).not.toHaveBeenCalled();
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_1', { goalObjective: 'improve test coverage' });
+    // And because the session is running (createDeps' default activity is
+    // 'running'), sendPrompt queues rather than posting immediately.
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession['sess_1']).toEqual([
+      { text: 'improve test coverage', attachments: undefined },
+    ]);
+  });
+
   it('is a no-op when there is no active session and no usable workspace', async () => {
     const state = emptyComposerState();
     state.activeWorkspaceId = null;

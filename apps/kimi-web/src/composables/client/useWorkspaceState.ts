@@ -1636,12 +1636,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       pushOperationFailure('createGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
       return;
     }
-    // Send by explicit sid (not sendPrompt, which reads activeSessionId): a
-    // concurrent session switch during createDraftSession would otherwise
-    // redirect the goal prompt to the wrong session. Plain prompts carry their
-    // own permissionMode / thinking / plan / swarm on the request, so we don't
-    // need to persist them onto the profile here.
-    await submitPromptInternal(sid, trimmed);
+    // Preserve normal send queueing semantics whenever the goal still targets the
+    // active session (the overwhelmingly common case): sendPrompt enqueues when
+    // another turn is running or a prompt is already in flight. Only fall back to
+    // the explicit-session send when activeSessionId moved during the create
+    // window above, so a concurrent session switch can't redirect the goal prompt.
+    // (The new session is otherwise idle+not-in-flight, so this does not race
+    // another turn.)
+    if (rawState.activeSessionId === sid) {
+      await sendPrompt(trimmed);
+    } else {
+      await submitPromptInternal(sid, trimmed);
+    }
   }
 
   /** Send a one-shot goal control action (pause/resume/cancel). */
