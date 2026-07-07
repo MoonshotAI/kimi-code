@@ -1,15 +1,16 @@
 // apps/kimi-web/src/composables/client/useNotification.ts
-// Browser notifications for when the agent needs attention: a turn finished or
-// a question is waiting for an answer. Each kind has its own on/off preference
-// (persisted) plus the shared OS permission + Notification API. Pure UI action
-// module — it never reads rawState or calls the API. The rawState-dependent
-// bits (is the session active & visible, its title, the click-to-select action)
-// are passed in by the caller via the ctx objects.
+// Browser notifications for when the agent needs attention: a turn finished, a
+// question waiting for an answer, or a tool needing approval. Each kind has its
+// own on/off preference (persisted) plus the shared OS permission + Notification
+// API. Pure UI action module — it never reads rawState or calls the API. The
+// rawState-dependent bits (is the session active & visible, its title, the
+// click-to-select action) are passed in by the caller via the ctx objects.
 //
-// Why two preferences: completion notifications default on (existing behavior),
-// but question notifications surface question text and default OFF, so an
-// existing user who only opted into completion alerts doesn't start receiving
-// question content on their desktop without explicitly opting in.
+// Why three preferences: completion notifications default on (existing
+// behavior), but question and approval notifications surface request text/tool
+// names and default OFF, so an existing user who only opted into completion
+// alerts doesn't start receiving sensitive content on their desktop without
+// explicitly opting in.
 
 import { ref, type Ref } from 'vue';
 import { i18n } from '../../i18n';
@@ -212,12 +213,13 @@ function maybeNotifyQuestion(sid: string, ctx: NotifyQuestionCtx): void {
 
 /** Fire a notification when a tool needs approval, but only when the user
     explicitly opted into approval notifications and isn't already looking. */
-function maybeNotifyApproval(sid: string, ctx: NotifyApprovalCtx): void {
+function maybeNotifyApproval(_sid: string, ctx: NotifyApprovalCtx): void {
+  void _sid;
   maybeNotify(
     notifyOnApproval.value,
     ctx,
     approvalNotificationCopy(ctx.sessionTitle, ctx.toolName),
-    `kimi-approval-${sid}-${ctx.approvalId}`,
+    `kimi-approval-${ctx.approvalId}`,
   );
 }
 
