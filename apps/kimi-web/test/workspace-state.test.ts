@@ -608,11 +608,12 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('write-goal', 'ship it', 'sess_new');
   });
 
-  it('awaits the profile POST before activating, so plan/swarm apply first', async () => {
+  it('awaits the profile POST before activating, so draft controls apply first', async () => {
     // Skill activation only carries `args`, so the daemon never sees the per-
-    // prompt planMode/swarmMode flags. We persist them to the new session's
-    // profile and must WAIT for it; otherwise the :activate request can race
-    // ahead of applyAgentState and the first skill turn runs at default modes.
+    // prompt controls (plan/swarm plus permission and thinking) the user set on
+    // the draft. We persist them to the new session's profile and must WAIT for
+    // it; otherwise :activate can race ahead of applyAgentState and the first
+    // skill turn runs at daemon defaults while the UI shows otherwise.
     let resolveProfile!: () => void;
     const profileGate = new Promise<void>((r) => {
       resolveProfile = r;
@@ -624,7 +625,10 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       persistSessionProfile,
       draftModes: { planMode: true, swarmMode: true, goalMode: false },
     };
-    const ws = useWorkspaceState(createState(), deps);
+    const state = createState();
+    state.permission = 'auto';
+    state.thinking = 'high';
+    const ws = useWorkspaceState(state, deps);
 
     const pending = ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
     // Yield a macrotask so createDraftSession's chain (which awaits selectSession
@@ -632,7 +636,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // Activation must NOT have started while /profile is still pending.
     await new Promise((r) => setTimeout(r, 0));
     expect(persistSessionProfile).toHaveBeenCalledWith(
-      { planMode: true, swarmMode: true },
+      { planMode: true, swarmMode: true, permissionMode: 'auto', thinking: 'high' },
       'sess_new',
     );
     expect(activateSkill).not.toHaveBeenCalled();

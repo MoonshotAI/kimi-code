@@ -841,17 +841,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
       // Unlike a plain prompt, skill activation only carries `args`, so the
-      // daemon never sees prompt-time planMode/swarmMode. Persist any draft
-      // plan/swarm modes onto this new session's profile and await it before
-      // activating, otherwise the first skill turn can start before applyAgentState
-      // and run at default modes while the UI shows them enabled. Goal mode is
-      // a one-shot flag consumed per send, not a profile field, so there is
-      // nothing to persist for it.
+      // daemon never sees the prompt-time controls the user may have changed on
+      // the draft (plan/swarm, plus permission via /auto|/yolo and thinking via
+      // /thinking). Persist them onto this new session's profile and await it
+      // before activating, otherwise the first skill turn can start before
+      // applyAgentState and run at daemon defaults while the UI shows otherwise.
+      // Goal mode is a one-shot flag consumed per send, not a profile field, so
+      // there is nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
-      if (planMode || swarmMode) {
-        await persistSessionProfile({ planMode, swarmMode }, sid);
-      }
+      await persistSessionProfile(
+        {
+          planMode,
+          swarmMode,
+          permissionMode: rawState.permission,
+          thinking: rawState.thinking,
+        },
+        sid,
+      );
       await modelProvider.activateSkill(skillName, args, sid);
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
