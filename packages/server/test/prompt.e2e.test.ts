@@ -445,7 +445,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const sid = await createSession(r);
 
     const bigPng = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const upload = buildMultipart({
       file: { fieldName: 'file', filename: 'big.png', contentType: 'image/png', data: bigPng },
@@ -479,7 +479,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const sentBytes = Buffer.from(part.source.data, 'base64');
     const decoded = await Jimp.fromBuffer(sentBytes);
     // The model-facing copy is downsampled to the edge cap.
-    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(3000);
 
     // Compression is announced next to the image, and the caption points at
     // the stored file (which keeps the original bytes) for readback.
@@ -488,7 +488,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
       throw new Error('expected a compression caption before the image part');
     }
     expect(caption.text).toContain('Image compressed');
-    expect(caption.text).toContain('2600x2600');
+    expect(caption.text).toContain('3600x3600');
     const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
     expect(pathMatch).not.toBeNull();
     const persisted = await readFile(pathMatch![1]!);
@@ -516,10 +516,10 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     ]);
     const sid = await createSession(r);
 
-    // Solid 2600×2600: over the edge cap but tiny in bytes, so it stays well
+    // Solid 3600×3600: over the edge cap but tiny in bytes, so it stays well
     // under Fastify's inline-JSON limit yet still benefits from downscaling.
     const base64 = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const res = await appOf(r).inject({
@@ -538,7 +538,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
       throw new Error('expected a base64 image part');
     }
     const decoded = await Jimp.fromBuffer(Buffer.from(part.source.data, 'base64'));
-    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(3000);
 
     // Inline base64 has no stored file, so the original is persisted into the
     // session's media-originals dir and the caption points there.

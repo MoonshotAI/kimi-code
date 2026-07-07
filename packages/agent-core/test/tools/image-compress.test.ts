@@ -81,6 +81,36 @@ async function decodeAlpha(bytes: Uint8Array): Promise<boolean> {
   return image.hasAlpha();
 }
 
+/**
+ * Insert a minimal EXIF APP1 segment carrying only an Orientation tag right
+ * after the JPEG SOI marker (jimp itself never writes EXIF).
+ */
+function withExifOrientation(jpeg: Uint8Array, orientation: number): Uint8Array {
+  // TIFF body, little-endian: 8-byte header + IFD0 with a single entry.
+  const tiff = Buffer.alloc(26);
+  tiff.write('II', 0, 'latin1');
+  tiff.writeUInt16LE(42, 2);
+  tiff.writeUInt32LE(8, 4); // offset of IFD0
+  tiff.writeUInt16LE(1, 8); // one directory entry
+  tiff.writeUInt16LE(0x0112, 10); // tag: Orientation
+  tiff.writeUInt16LE(3, 12); // type: SHORT
+  tiff.writeUInt32LE(1, 14); // count
+  tiff.writeUInt16LE(orientation, 18); // value, left-aligned in the 4-byte field
+  tiff.writeUInt32LE(0, 22); // no next IFD
+  const exifBody = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+  const app1Header = Buffer.alloc(4);
+  app1Header.writeUInt16BE(0xff_e1, 0);
+  app1Header.writeUInt16BE(exifBody.length + 2, 2);
+  return new Uint8Array(
+    Buffer.concat([
+      Buffer.from(jpeg.subarray(0, 2)), // SOI
+      app1Header,
+      exifBody,
+      Buffer.from(jpeg.subarray(2)),
+    ]),
+  );
+}
+
 // ── fast path ────────────────────────────────────────────────────────
 
 describe('compressImageForModel — fast path', () => {
@@ -106,15 +136,15 @@ describe('compressImageForModel — fast path', () => {
 
 describe('compressImageForModel — dimension cap', () => {
   it('scales the longest edge down to MAX_IMAGE_EDGE_PX, preserving aspect', async () => {
-    const png = await solidPng(3000, 1500);
+    const png = await solidPng(4500, 2250);
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
     expect(Math.max(result.width, result.height)).toBe(MAX_IMAGE_EDGE_PX);
-    // 3000x1500 → 2000x1000 (aspect 2:1 preserved).
-    expect(result.width).toBe(2000);
-    expect(result.height).toBe(1000);
+    // 4500x2250 → 3000x1500 (aspect 2:1 preserved).
+    expect(result.width).toBe(3000);
+    expect(result.height).toBe(1500);
     const dims = sniffImageDimensions(result.data);
-    expect(dims).toEqual({ width: 2000, height: 1000 });
+    expect(dims).toEqual({ width: 3000, height: 1500 });
   });
 
   it('respects a custom maxEdge', async () => {
@@ -128,7 +158,7 @@ describe('compressImageForModel — dimension cap', () => {
   it('keeps a downscaled opaque PNG lossless (no needless JPEG conversion)', async () => {
     // A screenshot-like opaque PNG that only needs downscaling must stay PNG so
     // sharp text is not degraded by JPEG artifacts.
-    const png = await solidPng(3000, 1500);
+    const png = await solidPng(4500, 2250);
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
     expect(result.mimeType).toBe('image/png');
@@ -148,7 +178,7 @@ describe('compressImageForModel — byte budget', () => {
   });
 
   it('keeps a translucent PNG as PNG when the budget allows', async () => {
-    const png = await translucentPng(2600, 2600);
+    const png = await translucentPng(3600, 3600);
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
     expect(result.mimeType).toBe('image/png');
@@ -219,7 +249,7 @@ describe('compressImageForModel — fallback', () => {
 
   it('skips compression for payloads over the byte cap without decoding', async () => {
     // Over the edge (so not the fast path), but capped by maxDecodeBytes.
-    const png = await solidPng(3000, 100);
+    const png = await solidPng(3200, 100);
     const result = await compressImageForModel(png, 'image/png', { maxDecodeBytes: 64 });
     expect(result.changed).toBe(false);
     expect(result.data).toBe(png); // passthrough → Jimp was never called
@@ -231,9 +261,9 @@ describe('compressImageForModel — fallback', () => {
 describe('compressImageForModel — invariants', () => {
   it('changed always yields a within-cap, decodable payload', async () => {
     const cases: Uint8Array[] = [
-      await solidPng(3000, 1500),
+      await solidPng(4500, 2250),
       await noisePng(900, 900),
-      await translucentPng(2600, 2600),
+      await translucentPng(3600, 3600),
     ];
     for (const bytes of cases) {
       const result = await compressImageForModel(bytes, 'image/png');
@@ -276,7 +306,7 @@ describe('compressBase64ForModel', () => {
   });
 
   it('skips a base64 payload over the byte cap without decoding', async () => {
-    const png = await solidPng(3000, 100); // over edge, would otherwise compress
+    const png = await solidPng(3200, 100); // over edge, would otherwise compress
     const base64 = Buffer.from(png).toString('base64');
     const result = await compressBase64ForModel(base64, 'image/png', { maxDecodeBytes: 64 });
     expect(result.changed).toBe(false);
@@ -300,7 +330,7 @@ describe('compressImageForModel — performance', () => {
   });
 
   it('compresses a large image within a generous time bound', async () => {
-    const png = await solidPng(3000, 2000);
+    const png = await solidPng(4500, 3000);
     const start = performance.now();
     const result = await compressImageForModel(png, 'image/png');
     const elapsed = performance.now() - start;
@@ -310,7 +340,7 @@ describe('compressImageForModel — performance', () => {
 
   it('exposes a sane default budget', () => {
     expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
-    expect(MAX_IMAGE_EDGE_PX).toBe(2000);
+    expect(MAX_IMAGE_EDGE_PX).toBe(3000);
   });
 });
 
@@ -322,7 +352,7 @@ describe('compressImageContentParts', () => {
   }
 
   it('compresses an oversized inline image part, leaving other parts untouched', async () => {
-    const big = await solidPng(2600, 2600);
+    const big = await solidPng(3600, 3600);
     const parts = [
       { type: 'text' as const, text: 'look at this' },
       { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } },
@@ -355,7 +385,7 @@ describe('compressImageContentParts', () => {
   });
 
   it('keeps an image part id when rewriting the compressed url', async () => {
-    const big = await solidPng(2600, 2600);
+    const big = await solidPng(3600, 3600);
     const parts = [
       { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big), id: 'att-1' } },
     ];
@@ -369,6 +399,22 @@ describe('compressImageContentParts', () => {
 
 // ── original-dimension metadata ──────────────────────────────────────
 
+describe('compressImageForModel — EXIF orientation', () => {
+  it('reports original dimensions in the decoded (EXIF-rotated) space', async () => {
+    // Orientation 6 (rotate 90° CW): the file header says 120x80, but jimp
+    // decodes to 80x120 — the space the sent image and any later crop region
+    // actually live in. The reported original dimensions must match it, not
+    // the pre-rotation header sniff.
+    const jpeg = withExifOrientation(await solidJpeg(120, 80), 6);
+    const result = await compressImageForModel(jpeg, 'image/jpeg', { maxEdge: 64 });
+    expect(result.changed).toBe(true);
+    expect(result.originalWidth).toBe(80);
+    expect(result.originalHeight).toBe(120);
+    // The sent image keeps the rotated (portrait) aspect.
+    expect(result.width).toBeLessThan(result.height);
+  });
+});
+
 describe('compressImageForModel — original dimensions metadata', () => {
   it('reports original dimensions on passthrough and compressed results', async () => {
     const small = await solidPng(64, 64);
@@ -377,23 +423,23 @@ describe('compressImageForModel — original dimensions metadata', () => {
     expect(pass.originalWidth).toBe(64);
     expect(pass.originalHeight).toBe(64);
 
-    const big = await solidPng(3000, 1500);
+    const big = await solidPng(4500, 2250);
     const shrunk = await compressImageForModel(big, 'image/png');
     expect(shrunk.changed).toBe(true);
-    expect(shrunk.originalWidth).toBe(3000);
-    expect(shrunk.originalHeight).toBe(1500);
-    expect(shrunk.width).toBe(2000);
+    expect(shrunk.originalWidth).toBe(4500);
+    expect(shrunk.originalHeight).toBe(2250);
+    expect(shrunk.width).toBe(3000);
   });
 
   it('reports original dimensions through the base64 wrapper', async () => {
-    const big = await solidPng(2600, 1300);
+    const big = await solidPng(3900, 1950);
     const base64 = Buffer.from(big).toString('base64');
     const result = await compressBase64ForModel(base64, 'image/png');
     expect(result.changed).toBe(true);
-    expect(result.originalWidth).toBe(2600);
-    expect(result.originalHeight).toBe(1300);
-    expect(result.width).toBe(2000);
-    expect(result.height).toBe(1000);
+    expect(result.originalWidth).toBe(3900);
+    expect(result.originalHeight).toBe(1950);
+    expect(result.width).toBe(3000);
+    expect(result.height).toBe(1500);
   });
 });
 
@@ -464,18 +510,18 @@ describe('cropImageForModel', () => {
   });
 
   it('downscales an oversized crop to the edge cap by default', async () => {
-    const png = await solidPng(3000, 1500);
+    const png = await solidPng(4500, 2250);
     const result = await cropImageForModel(png, 'image/png', {
       x: 0,
       y: 0,
-      width: 2500,
+      width: 4000,
       height: 1200,
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.resized).toBe(true);
     expect(Math.max(result.width, result.height)).toBeLessThanOrEqual(MAX_IMAGE_EDGE_PX);
-    expect(result.region).toEqual({ x: 0, y: 0, width: 2500, height: 1200 });
+    expect(result.region).toEqual({ x: 0, y: 0, width: 4000, height: 1200 });
   });
 
   it('keeps native resolution with skipResize', async () => {
@@ -649,7 +695,7 @@ describe('compressImageContentParts — annotate', () => {
   }
 
   it('collects a caption for a compressed image and persists the original', async () => {
-    const big = await solidPng(2600, 2600);
+    const big = await solidPng(3600, 3600);
     const persisted: { bytes: Uint8Array; mimeType: string }[] = [];
     const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
     const out = await compressImageContentParts(parts, {
@@ -665,7 +711,7 @@ describe('compressImageContentParts — annotate', () => {
     expect(out.parts).toHaveLength(1);
     expect(out.parts[0]?.type).toBe('image_url');
     expect(out.captions).toHaveLength(1);
-    expect(out.captions[0]).toContain('2600x2600');
+    expect(out.captions[0]).toContain('3600x3600');
     expect(out.captions[0]).toContain('/tmp/originals/big.png');
     expect(persisted).toHaveLength(1);
     expect(persisted[0]?.mimeType).toBe('image/png');
@@ -684,7 +730,7 @@ describe('compressImageContentParts — annotate', () => {
   });
 
   it('captions without a path when persistence fails', async () => {
-    const big = await solidPng(2600, 2600);
+    const big = await solidPng(3600, 3600);
     const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
     const out = await compressImageContentParts(parts, {
       annotate: { persistOriginal: () => Promise.resolve(null) },

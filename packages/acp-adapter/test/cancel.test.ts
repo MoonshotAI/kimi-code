@@ -163,10 +163,10 @@ describe('AcpServer cancel', () => {
 
     const { sessionId } = await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
-    // A solid 2600×2600 image is small in bytes but slow enough to compress
+    // A solid 3600×3600 image is small in bytes but slow enough to compress
     // that the cancel below reliably lands mid-compression, before any turn.
     const data = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const promptP = client.prompt({
@@ -203,7 +203,7 @@ describe('AcpServer cancel', () => {
     const { sessionId } = await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
     const data = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
     const imageBlock = { type: 'image' as const, data, mimeType: 'image/png' };
 

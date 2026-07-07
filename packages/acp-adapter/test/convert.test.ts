@@ -338,7 +338,7 @@ describe('compressPromptImageParts', () => {
 
   it('downsamples an oversized inline image part and announces the compression', async () => {
     const originalsDir = await mkdtemp(join(tmpdir(), 'acp-originals-'));
-    const originalBase64 = await pngBase64(2600, 2600);
+    const originalBase64 = await pngBase64(3600, 3600);
     const parts = acpBlocksToPromptParts([imageBlock(originalBase64, 'image/png')]);
     const compressed = await compressPromptImageParts(parts, { originalsDir });
 
@@ -348,14 +348,14 @@ describe('compressPromptImageParts', () => {
     const caption = compressed[0];
     if (caption?.type !== 'text') throw new Error('expected a caption text part');
     expect(caption.text).toContain('Image compressed');
-    expect(caption.text).toContain('2600x2600');
+    expect(caption.text).toContain('3600x3600');
 
     const part = compressed[1];
     if (part?.type !== 'image_url') throw new Error('expected an image_url part');
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(part.imageUrl.url);
     expect(match).not.toBeNull();
     const decoded = await Jimp.fromBuffer(Buffer.from(match![2]!, 'base64'));
-    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(3000);
 
     // The caption points at a persisted copy of the ORIGINAL bytes, placed in
     // the provided (session-scoped) originals dir.

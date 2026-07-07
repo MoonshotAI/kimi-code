@@ -655,9 +655,9 @@ describe('ReadMediaFileTool', () => {
 
   it('downsamples an oversized image but reports original dimensions', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
     );
-    expect(sniffImageDimensions(big)).toEqual({ width: 2600, height: 2600 });
+    expect(sniffImageDimensions(big)).toEqual({ width: 3600, height: 3600 });
 
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
@@ -678,11 +678,11 @@ describe('ReadMediaFileTool', () => {
     // The image actually sent to the model is downsampled to the edge cap.
     const sentBytes = Buffer.from(match![2]!, 'base64');
     const sentDims = sniffImageDimensions(sentBytes);
-    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(3000);
 
     // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
-    expect(systemText).toContain('2600x2600');
+    expect(systemText).toContain('3600x3600');
     expect(systemText).toContain(`${String(big.length)} bytes`);
   });
 
@@ -725,7 +725,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     it('announces a downsampled delivery and the region readback in the <system> block', async () => {
-      const big = await bigPng(2600, 2600);
+      const big = await bigPng(3600, 3600);
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_note',
@@ -734,11 +734,11 @@ describe('ReadMediaFileTool', () => {
       });
 
       const systemText = noteText(result);
-      expect(systemText).toContain('2600x2600');
+      expect(systemText).toContain('3600x3600');
       // Wording must not depend on serialization order: some providers keep
       // the note inline after the media, others flatten tool text and
       // re-attach the image after it — so no "above"/"below".
-      expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
+      expect(systemText).toMatch(/The attached image was downsampled to 3000x3000/);
       expect(systemText).toMatch(/fine detail/i);
       expect(systemText).toContain('region');
     });
@@ -797,7 +797,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     it('serves full_resolution when the bytes fit the per-image budget', async () => {
-      const big = await bigPng(2600, 1300); // over the edge cap, tiny in bytes
+      const big = await bigPng(3900, 1950); // over the edge cap, tiny in bytes
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_fullres',

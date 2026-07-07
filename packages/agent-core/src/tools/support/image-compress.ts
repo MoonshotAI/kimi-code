@@ -31,7 +31,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import { sniffImageDimensions } from './file-type';
 
 /** Longest-edge ceiling (px). Larger images are scaled down to fit. */
-export const MAX_IMAGE_EDGE_PX = 2000;
+export const MAX_IMAGE_EDGE_PX = 3000;
 
 /**
  * Raw-byte budget for a single image. base64 inflates bytes by ~4/3, so a
@@ -90,9 +90,13 @@ export interface CompressImageResult {
   readonly width: number;
   /** Pixel height of `data`; falls back to the input size when unknown. */
   readonly height: number;
-  /** Pixel width of the input image; 0 when it cannot be sniffed. */
+  /**
+   * Pixel width of the input image. When re-encoded this is the decoded
+   * (EXIF-rotated) width — the space crop regions live in; on passthrough it
+   * is the header sniff (0 when unknown).
+   */
   readonly originalWidth: number;
-  /** Pixel height of the input image; 0 when it cannot be sniffed. */
+  /** Pixel height of the input image; see {@link originalWidth}. */
   readonly originalHeight: number;
   /** True only when `data` differs from the input bytes. */
   readonly changed: boolean;
@@ -151,6 +155,12 @@ export async function compressImageForModel(
     const { Jimp } = await import('jimp');
     const image = await Jimp.fromBuffer(Buffer.from(bytes));
     const sourceIsPng = normalizedMime === 'image/png';
+    // Jimp applies EXIF orientation while decoding, so the bitmap — not the
+    // header sniff, whose width/height are swapped for orientations 5-8 — is
+    // the coordinate space the encoded result and any later crop region
+    // (see cropImageForModel, which decodes the same way) actually live in.
+    const decodedWidth = image.width;
+    const decodedHeight = image.height;
 
     // Scale so the longest edge fits maxEdge (never enlarges).
     fitWithinEdge(image, maxEdge);
@@ -165,10 +175,10 @@ export async function compressImageForModel(
     // (a smaller image costs fewer vision tokens even if the byte count is
     // flat, as with near-solid graphics). Otherwise the re-encode bought us
     // nothing — send the original.
-    const originalPixels = (dims?.width ?? 0) * (dims?.height ?? 0);
+    const originalPixels = decodedWidth * decodedHeight;
     const finalPixels = encoded.width * encoded.height;
     const shrankBytes = encoded.data.length < bytes.length;
-    const shrankPixels = originalPixels > 0 && finalPixels < originalPixels;
+    const shrankPixels = finalPixels < originalPixels;
     if (!shrankBytes && !shrankPixels) return passthrough();
 
     return {
@@ -176,8 +186,8 @@ export async function compressImageForModel(
       mimeType: encoded.mimeType,
       width: encoded.width,
       height: encoded.height,
-      originalWidth: dims?.width ?? 0,
-      originalHeight: dims?.height ?? 0,
+      originalWidth: decodedWidth,
+      originalHeight: decodedHeight,
       changed: true,
       originalByteLength: bytes.length,
       finalByteLength: encoded.data.length,
@@ -195,9 +205,13 @@ export interface CompressBase64Result {
   readonly width: number;
   /** Pixel height of the (possibly re-encoded) payload; 0 when unknown. */
   readonly height: number;
-  /** Pixel width of the input image; 0 when it cannot be sniffed. */
+  /**
+   * Pixel width of the input image. When re-encoded this is the decoded
+   * (EXIF-rotated) width — the space crop regions live in; on passthrough it
+   * is the header sniff (0 when unknown).
+   */
   readonly originalWidth: number;
-  /** Pixel height of the input image; 0 when it cannot be sniffed. */
+  /** Pixel height of the input image; see {@link originalWidth}. */
   readonly originalHeight: number;
   readonly changed: boolean;
   readonly originalByteLength: number;
@@ -369,7 +383,10 @@ export interface CompressAnnotateOptions {
 
 // ── crop ─────────────────────────────────────────────────────────────
 
-/** Crop rectangle in ORIGINAL-image pixel coordinates. */
+/**
+ * Crop rectangle in ORIGINAL-image pixel coordinates — the decoded,
+ * EXIF-rotated space that compression results report as the original size.
+ */
 export interface ImageCropRegion {
   readonly x: number;
   readonly y: number;
@@ -741,6 +758,13 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
 /**
  * Scale `image` so its longest edge is at most `edge`, preserving aspect
  * ratio. No-op (returns false) when the image already fits.
+ *
+ * Deliberately passes no `mode`: without one, jimp's default resizer
+ * downscales with a full-coverage area average (every source pixel
+ * contributes to the output), which does not alias. The named
+ * ResizeStrategy modes (BILINEAR, BICUBIC, …) switch to point-sampled
+ * interpolation that skips source pixels beyond ~2x reduction and produces
+ * moiré on text and fine patterns — do not "upgrade" this call to one.
  */
 function fitWithinEdge(image: JimpImage, edge: number): boolean {
   const longest = Math.max(image.width, image.height);
