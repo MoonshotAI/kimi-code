@@ -12,7 +12,7 @@ export default {
   newChat: 'New Chat',
   newWorkspace: 'New Workspace',
   emptyState: 'No sessions yet · click New Session to start',
-  archiveConfirm: 'Archive session?',
+  archiveConfirm: 'Archive this session? You can restore it later from Settings.',
   options: 'Options',
   rename: 'Rename',
   copyPath: 'Copy path',
@@ -38,7 +38,7 @@ export default {
   collapseSidebar: 'Collapse sidebar',
   expandSidebar: 'Expand sidebar',
   searchPlaceholder: 'Search sessions',
-  searchShortcut: 'Search sessions (⌘K)',
+  searchShortcut: 'Search sessions ({shortcut})',
   searchHint: '↑↓ navigate · ↵ open · Esc close',
   searchNoResults: 'No matching sessions',
 } as const;

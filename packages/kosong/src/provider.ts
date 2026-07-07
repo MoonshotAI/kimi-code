@@ -2,6 +2,24 @@ import type { Message, StreamedMessagePart, VideoURLPart } from './message';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
+export type JsonSchemaObject = Record<string, unknown>;
+
+export interface JsonObjectResponseFormat {
+  readonly type: 'json_object';
+}
+
+export interface JsonSchemaResponseFormat {
+  readonly type: 'json_schema';
+  readonly jsonSchema: {
+    readonly name: string;
+    readonly schema: JsonSchemaObject;
+    readonly strict?: boolean | undefined;
+    readonly description?: string | undefined;
+  };
+}
+
+export type ResponseFormat = JsonObjectResponseFormat | JsonSchemaResponseFormat;
+
 /**
  * Thinking effort passed to {@link ChatProvider.withThinking}.
  *
@@ -119,6 +137,11 @@ export interface GenerateOptions {
    */
   auth?: ProviderRequestAuth;
   /**
+   * Optional model-output format constraint. Providers map this to their native
+   * structured-output field when supported.
+   */
+  responseFormat?: ResponseFormat;
+  /**
    * Host-side instrumentation hook fired immediately before invoking the
    * provider adapter's generate call.
    */
@@ -185,6 +208,17 @@ export interface ChatProvider {
   readonly modelName: string;
   /** Current thinking effort, or `null` if thinking is not configured. */
   readonly thinkingEffort: ThinkingEffort | null;
+  /**
+   * The effective completion-token cap this instance will send on the wire,
+   * derived from its generation kwargs — covering constructor defaults (e.g.
+   * Anthropic's required `max_tokens`), direct kwargs configuration, and
+   * {@link withMaxCompletionTokens} (after any implementation-side clamping:
+   * remaining context window, transport ceilings, model-default resolution).
+   * `undefined` when the instance sends no cap. Read by hosts that record
+   * the outbound request, so the recorded value matches what the provider
+   * actually sends.
+   */
+  readonly maxCompletionTokens?: number;
   /**
    * Send a conversation to the LLM and return a streamed response.
    *

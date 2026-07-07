@@ -60,6 +60,55 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
   });
 
+  it('preserves tool call extras (Gemini thought_signature) through to projection', () => {
+    // Regression: Gemini 3 requires the thought_signature returned on a
+    // functionCall to be echoed back when the call is re-sent in the next turn.
+    // The signature travels as ToolCall.extras.thought_signature_b64; it must
+    // survive the loop tool.call event -> context recording -> projection so
+    // the provider can put it back on the outbound functionCall part.
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 'sig-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'sig-tool',
+        turnId: '',
+        step: 1,
+        stepUuid: 'sig-step',
+        toolCallId: 'call_sig',
+        name: 'Bash',
+        args: { command: 'echo hi' },
+        extras: { thought_signature_b64: 'c2lnbmF0dXJl' },
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.end', uuid: 'sig-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'sig-tool',
+        toolCallId: 'call_sig',
+        result: { output: 'hi' },
+      },
+    });
+
+    const expectedExtras = { thought_signature_b64: 'c2lnbmF0dXJl' };
+    const recorded = ctx.agent.context.history.find((m) => m.role === 'assistant');
+    expect(recorded?.toolCalls[0]?.extras).toEqual(expectedExtras);
+    const projected = ctx.agent.context.messages.find((m) => m.role === 'assistant');
+    expect(projected?.toolCalls[0]?.extras).toEqual(expectedExtras);
+  });
+
   it('reroutes an inline image-compression caption into a hidden system reminder', () => {
     const ctx = testAgent();
     ctx.configure();
@@ -351,7 +400,10 @@ describe('Agent context', () => {
       {
         role: 'tool',
         content: [
-          { type: 'text', text: '<system>ERROR: Tool execution failed.</system>\npermission denied' },
+          {
+            type: 'text',
+            text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
+          },
         ],
         toolCallId: 'call_error',
       },
@@ -361,6 +413,100 @@ describe('Agent context', () => {
         toolCallId: 'call_empty',
       },
     ]);
+  });
+
+  it('keeps raw tool result output in history; error status is added only in projection', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_raw',
+        turnId: 't',
+        step: 1,
+        stepUuid: 's1',
+        toolCallId: 'call_raw',
+        name: 'Run',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_raw',
+        toolCallId: 'call_raw',
+        result: { output: 'permission denied', isError: true },
+      },
+    });
+
+    // History stores the fact: the tool's own output plus the structured
+    // isError flag. The ERROR status line is a model-projection concern and
+    // must not be materialized here (UIs read history/replay verbatim).
+    const stored = ctx.agent.context.history.find((m) => m.toolCallId === 'call_raw')!;
+    expect(stored.content).toEqual([{ type: 'text', text: 'permission denied' }]);
+    expect(stored.isError).toBe(true);
+
+    const projected = ctx.agent.context.messages.find((m) => m.toolCallId === 'call_raw')!;
+    expect(projected.content).toEqual([
+      {
+        type: 'text',
+        text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
+      },
+    ]);
+  });
+
+  it('carries a tool result note into history and appends it in the LLM projection', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_note',
+        turnId: 't',
+        step: 1,
+        stepUuid: 's1',
+        toolCallId: 'call_note',
+        name: 'Run',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_note',
+        toolCallId: 'call_note',
+        result: { output: 'file body', note: '<system>10 lines read.</system>' },
+      },
+    });
+
+    // The note rides the message as a structured field (like origin/isError):
+    // output stays pure data, so UIs can render it without any stripping.
+    const stored = ctx.agent.context.history.find((m) => m.toolCallId === 'call_note')!;
+    expect(stored.content).toEqual([{ type: 'text', text: 'file body' }]);
+    expect(stored.note).toBe('<system>10 lines read.</system>');
+
+    // The model projection joins the note into the text-only output (single
+    // part keeps providers on the plain-string tool content path) and drops
+    // the structured field from the wire message.
+    const projected = ctx.agent.context.messages.find((m) => m.toolCallId === 'call_note')!;
+    expect(projected.content).toEqual([
+      { type: 'text', text: 'file body\n<system>10 lines read.</system>' },
+    ]);
+    expect('note' in projected).toBe(false);
   });
 
   it('drops empty and whitespace-only text parts in LLM projection', () => {
@@ -433,7 +579,7 @@ describe('Agent context', () => {
     expect(history[1]?.content).toEqual([{ type: 'text', text: '' }]);
   });
 
-  it('rejects tool result messages left empty by LLM projection cleanup', () => {
+  it('heals an empty tool result into the placeholder during LLM projection', () => {
     const history: ContextMessage[] = [
       {
         role: 'assistant',
@@ -448,9 +594,17 @@ describe('Agent context', () => {
       },
     ];
 
-    expect(() => project(history)).toThrow(
-      'Tool result message content cannot be empty after removing empty text blocks.',
-    );
+    // History stores the empty output as a fact; the projection renders it
+    // into the model-visible placeholder so strict providers never see an
+    // empty tool message.
+    expect(project(history)).toMatchObject([
+      { role: 'assistant' },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
+        toolCallId: 'call_empty',
+      },
+    ]);
   });
 
   it('projects hook result messages into LLM projection', async () => {

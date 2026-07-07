@@ -179,6 +179,7 @@ export async function runPrompt(
       version,
       uiMode: PROMPT_UI_MODE,
       model: telemetryModel,
+      sessionId: session.id,
     });
     setCrashPhase('runtime');
 
@@ -338,6 +339,7 @@ async function resolvePromptSession(
     model,
     permission: 'auto',
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    drainAgentTasksOnStop: true,
   });
   installHeadlessHandlers(session);
   return {

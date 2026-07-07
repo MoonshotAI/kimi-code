@@ -30,6 +30,8 @@ export type {
   SessionLogHandle,
 } from './logging/types';
 export { USER_PROMPT_ORIGIN } from './agent/context';
+export { renderToolResultForModel } from './agent/context/tool-result-render';
+export type { RenderableToolResult } from './agent/context/tool-result-render';
 export type {
   AgentContextData,
   ContextMessage,
@@ -45,9 +47,11 @@ export type {
 } from './agent/background';
 export type { ToolServices } from './tools/support/services';
 
-// Image compression — the input-stage helper each ingestion site (CLI paste,
-// server upload resolution, ACP, ReadMediaFile, MCP) calls to shrink oversized
-// images while constructing the content part. Compression is never silent:
+// Image compression — prompt-ingestion sites (CLI paste, server upload
+// resolution, ACP) call compressBase64ForModel / compressImageForModel per
+// image while constructing the content part; the MCP tool-result pipeline
+// walks whole part lists with compressImageContentParts, which returns the
+// generated captions as data. Compression is never silent:
 // buildImageCompressionCaption renders the shared "what was compressed" note,
 // persistOriginalImage keeps the pre-compression bytes readable, and
 // cropImageForModel reads a region of an original back at full fidelity.
@@ -65,12 +69,14 @@ export {
 } from './tools/support/image-compress';
 export type {
   CompressAnnotateOptions,
+  CompressedContentParts,
   CompressImageOptions,
   CompressImageResult,
   CompressBase64Result,
   CropImageOptions,
   CropImageOutcome,
   ImageCompressionCaptionInput,
+  ImageCompressionTelemetry,
   ImageCropRegion,
   ImageVariantDescription,
 } from './tools/support/image-compress';

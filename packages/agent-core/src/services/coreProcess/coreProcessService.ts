@@ -6,6 +6,7 @@ import { createRPC, KimiCore } from '../../rpc';
 import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
+import { noopTelemetryClient, type TelemetryClient } from '../../telemetry';
 import {
   createKimiDefaultHeaders,
   type KimiHostIdentity,
@@ -32,6 +33,8 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
   public readonly rpc: CoreRPC;
 
   public readonly kimiRequestHeaders: Record<string, string> | undefined;
+
+  public readonly telemetry: TelemetryClient;
 
   /**
    * The in-process `KimiCore` instance. Kept private so daemon-side code can't
@@ -96,6 +99,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     this.kimiRequestHeaders =
       options.kimiRequestHeaders ??
       CoreProcessService._defaultKimiRequestHeaders(env.homeDir, options.identity);
+    this.telemetry = options.telemetry ?? noopTelemetryClient;
 
     // `appVersion` flows into Session records (`app_version`) and tool
     // call ctx. Prefer explicit > identity.version so callers can pin

@@ -1444,6 +1444,20 @@ export class ToolCallComponent extends Container {
       return `${bullet}${currentTheme.boldFg(tone, label)}`;
     }
 
+    if (toolCall.name === 'Bash') {
+      // The command itself is rendered in the body (with a `$` prompt), so the
+      // header only names the action — repeating the command in parentheses
+      // would duplicate the body. Wording mirrors the other label-only headers
+      // (e.g. AskUserQuestion): the whole label takes the tone colour.
+      if (isTruncated) {
+        return `${bullet}${currentTheme.fg('error', 'Truncated')} ${currentTheme.boldFg('primary', 'Bash')}`;
+      }
+      const label = isFinished ? 'Ran a command' : 'Running a command';
+      const tone = isError ? 'error' : 'primary';
+      const chipStr = isFinished && result !== undefined ? this.buildHeaderChip(result) : '';
+      return `${bullet}${currentTheme.boldFg(tone, label)}${chipStr}`;
+    }
+
     const goalHeader = buildGoalToolHeader({
       toolCall,
       result,
@@ -1921,7 +1935,14 @@ export class ToolCallComponent extends Container {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
     }
-    const shouldCap = this.result !== undefined && !this.expanded;
+    // Cap Edit's diff as soon as args finalize, not only when the result
+    // lands — mirroring Write's writeShouldCap below. Otherwise the render
+    // tick between finalized args (streamingArguments cleared by the
+    // `tool.call.started` payload) and the result draws the full diff, then
+    // snaps back to the cap: a height collapse that triggers pi-tui's full
+    // redraw and wipes scrollback. Streaming frames (streamingArguments set)
+    // still take buildStreamingPreview above and never reach here.
+    const shouldCap = !this.expanded;
     if (name === 'Write') {
       const content = str(this.toolCall.args['content']);
       if (content.length === 0) return;
@@ -1962,11 +1983,15 @@ export class ToolCallComponent extends Container {
       for (const line of lines) {
         this.addChild(new Text(line, 2, 0));
       }
-    } else if (name === 'Bash' && this.result === undefined) {
-      // While a long-running Bash call is in-flight (args finalized, no result
-      // yet), surface its command in the body so the user can see what is
-      // running and expand it with ctrl+o. Once the result lands, buildContent's
-      // shellExecutionResultRenderer takes over command rendering.
+    } else if (name === 'Bash') {
+      // Surface the command in the body across the whole lifecycle — while
+      // streaming, running, and after the result lands. Keeping the collapsed
+      // command preview here (instead of yielding to the result renderer once
+      // the result lands) avoids a height collapse when a multi-line command
+      // finishes with short output: the command block stays put and only the
+      // live-output tail swaps for the result. Owned solely by buildCallPreview
+      // so the command never renders twice; shellExecutionResultRenderer
+      // renders the result only.
       const command = str(this.toolCall.args['command']);
       if (command.length === 0) return;
       this.addChild(
@@ -2039,7 +2064,7 @@ export class ToolCallComponent extends Container {
         new ShellExecutionComponent({
           command: cmd,
           showCommand: true,
-          commandPreviewLines: COMMAND_PREVIEW_LINES,
+          commandPreviewLines: this.expanded ? undefined : COMMAND_PREVIEW_LINES,
         }),
       );
     }
@@ -2105,10 +2130,14 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    // Outputs that start with a `<system…>` tag are harness-injected
-    // reminders piggy-backing on a tool result. They are noise for the
-    // user, so suppress the body while keeping the header chip intact.
-    if (result.output.trimStart().startsWith('<system')) {
+    // Outputs that start with a `<system-reminder>` tag are harness-injected
+    // reminders piggy-backing on a tool result (e.g. a finalize hook rewrote
+    // the output). They are noise for the user, so suppress the body while
+    // keeping the header chip intact. Match the full reminder tag only: tool
+    // metadata no longer travels inside `output` (it rides the result's
+    // `note` side channel), so real output starting with a literal `<system>`
+    // is user data and must stay visible.
+    if (result.output.trimStart().startsWith('<system-reminder>')) {
       return;
     }
 

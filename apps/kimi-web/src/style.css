@@ -197,12 +197,14 @@ summary {
   --r-sm: var(--radius-md);
   --r-md: var(--radius-lg);
   --r-lg: var(--radius-xl);
-  --ui-font-size: 14px;
+  --base-ui-font-size: 14px;
+  --ui-font-size: var(--base-ui-font-size);
   --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
   --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
   --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
   --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
-  --content-font-size: 15px;
+  --content-font-size: calc(var(--base-ui-font-size) + 1px);
+  --sidebar-ui-font-size: calc(var(--base-ui-font-size) + 1px);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Body/UI font follows the design-system canonical token (system UI font
      first; Inter intentionally NOT in the body chain — it stays reserved for
@@ -212,13 +214,26 @@ summary {
 }
 
 /* -- icon primitive (design-system §02) -------------------------------------
-   Shared by the <Icon> component and iconSvg() v-html strings (lib/icons.ts).
-   Icons are Remix Icon (fill="currentColor" on a 24x24 grid), so colour follows
-   text and the rendered size comes from the width/height attributes. */
+   Applied to every design-system icon: the <Icon> component output
+   (components/ui/Icon.vue) and the iconSvg() v-html strings (lib/icons.ts).
+   Both source their SVG from the Remix Icon registry in lib/icons.ts, bundled
+   by unplugin-icons at build time — so only registered icons ship. Colour
+   follows text via fill="currentColor". */
 .kw-icon {
   display: inline-block;
   flex: none;
   vertical-align: -0.15em;
+}
+
+/* Render code literally: disable the ligatures coding fonts enable by default
+   (e.g. `!=` collapsing to `≠`, `=>` to `⇒`). */
+code,
+pre,
+kbd,
+samp,
+tt {
+  font-feature-settings: "liga" 0, "calt" 0, "ss01" 0;
+  font-variant-ligatures: none;
 }
 
 /* color-scheme drives UA-rendered parts (scrollbars, form controls, etc.).
@@ -633,6 +648,10 @@ body {
   text-rendering: auto;
   font-synthesis: none;
   text-size-adjust: 100%;
+  /* Never insert a hyphen glyph at line breaks (the page is `lang="en"`);
+     word-break/overflow-wrap still decide where lines wrap. */
+  -webkit-hyphens: none;
+  hyphens: none;
 }
 
 /* ---------------------------------------------------------------------------
@@ -742,10 +761,6 @@ body {
 /* ---- Composer: permission pill, model menu, queue strip ---- */
 /* ---- Floating menus + status line ---- */
 /* ---- Entrance / micro keyframes (shared by component-scoped rules) ---- */
-@keyframes kimi-bubble-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 @keyframes kimi-card-in {
   from { opacity: 0; transform: translateY(8px) scale(0.995); }
   to { opacity: 1; transform: translateY(0) scale(1); }

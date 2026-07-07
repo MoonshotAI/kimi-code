@@ -88,12 +88,18 @@ function paramsForAttempt(
   maxAttempts: number,
 ): LLMChatParams {
   const turnStep = `${input.turnId}.${String(input.currentStep)}`;
+  // Preserve caller-set fields (e.g. the strict-resend projection marker);
+  // only the per-attempt turnStep/attempt pair is owned here.
   return {
     ...input.params,
     requestLogFields:
       attempt === 1
-        ? { turnStep }
-        : { turnStep, attempt: `${String(attempt)}/${String(maxAttempts)}` },
+        ? { ...input.params.requestLogFields, turnStep }
+        : {
+            ...input.params.requestLogFields,
+            turnStep,
+            attempt: `${String(attempt)}/${String(maxAttempts)}`,
+          },
   };
 }
 

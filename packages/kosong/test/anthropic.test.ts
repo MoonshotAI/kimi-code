@@ -1,6 +1,7 @@
 import { ChatProviderError } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { AnthropicChatProvider, resolveDefaultMaxTokens } from '#/providers/anthropic';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -50,6 +51,7 @@ type AnthropicGenerationState = {
     | undefined;
   output_config?: { effort: string } | undefined;
   betaFeatures?: string[] | undefined;
+  contextManagement?: { edits: Array<{ type: string; keep?: unknown }> } | undefined;
 };
 
 function getGenerationState(provider: AnthropicChatProvider): AnthropicGenerationState {
@@ -62,6 +64,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedParams: Record<string, unknown> | undefined;
   let capturedOptions: Record<string, unknown> | undefined;
@@ -74,7 +77,7 @@ async function captureRequestBody(
       return Promise.resolve(makeAnthropicResponse());
     });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -218,6 +221,129 @@ describe('betaApi', () => {
   });
 });
 
+describe('withThinkingKeep (context_management)', () => {
+  const history: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+  ];
+
+  it('forces the beta endpoint and emits context_management clear_thinking keep with the context-management beta', async () => {
+    // betaApi is left at its default (false); withThinkingKeep must force it on.
+    const provider = createProvider().withThinkingKeep('all');
+    const body = await captureBetaRequestBody(provider, '', [], history);
+
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+    expect(body['betas']).toContain('interleaved-thinking-2025-05-14');
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toBeUndefined();
+  });
+
+  it('prepends clear_thinking before existing context-management edits and keeps them', () => {
+    const provider = createProvider()
+      .withGenerationKwargs({
+        contextManagement: {
+          edits: [{ type: 'clear_tool_uses_20250919', keep: { type: 'tool_uses', value: 2 } }],
+        },
+      })
+      .withThinkingKeep('all');
+    const state = getGenerationState(provider);
+    expect(state.contextManagement).toEqual({
+      edits: [
+        { type: 'clear_thinking_20251015', keep: 'all' },
+        { type: 'clear_tool_uses_20250919', keep: { type: 'tool_uses', value: 2 } },
+      ],
+    });
+  });
+
+  it('emits no context_management and stays off the beta endpoint when withThinkingKeep is not applied', async () => {
+    const body = await captureRequestBody(createProvider(), '', [], history);
+    expect(body['context_management']).toBeUndefined();
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).not.toContain('context-management-2025-06-27');
+  });
+
+  it('does not duplicate the context-management beta or the clear_thinking edit across repeated calls', () => {
+    const provider = createProvider().withThinkingKeep('all').withThinkingKeep('all');
+    const state = getGenerationState(provider);
+    const betas = state.betaFeatures ?? [];
+    expect(betas.filter((b) => b === 'context-management-2025-06-27')).toHaveLength(1);
+    expect(state.contextManagement).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+  });
+
+  // Capture a streaming (stream: true) beta-endpoint request by mocking
+  // client.beta.messages.create to return a minimal valid stream.
+  async function captureBetaStreamBody(
+    provider: AnthropicChatProvider,
+    history: Message[],
+  ): Promise<Record<string, unknown>> {
+    let capturedParams: Record<string, unknown> | undefined;
+    let capturedOptions: Record<string, unknown> | undefined;
+    (provider as any)._client.beta.messages.create = vi
+      .fn()
+      .mockImplementation((params: unknown, options?: unknown) => {
+        capturedParams = params as Record<string, unknown>;
+        capturedOptions = options as Record<string, unknown> | undefined;
+        return Promise.resolve(
+          mockStream([
+            {
+              type: 'message_start',
+              message: { id: 'm', usage: { input_tokens: 1, output_tokens: 0 } },
+            },
+            { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+            { type: 'content_block_stop', index: 0 },
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn' },
+              usage: { output_tokens: 1 },
+            },
+            { type: 'message_stop' },
+          ]),
+        );
+      });
+    const stream = await provider.generate('', [], history);
+    for await (const part of stream) void part;
+    if (capturedParams === undefined) {
+      throw new Error('Expected provider.generate() to call beta.messages.create');
+    }
+    const result = { ...capturedParams };
+    if (capturedOptions !== undefined && capturedOptions['headers'] !== undefined) {
+      result['_extra_headers'] = capturedOptions['headers'];
+    }
+    return result;
+  }
+
+  it('emits context_management on the streaming beta endpoint too', async () => {
+    const provider = createStreamProvider().withThinkingKeep('all');
+    const body = await captureBetaStreamBody(provider, history);
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toBeUndefined();
+  });
+
+  it('forces the beta endpoint even when constructed with betaApi: false', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'kimi-for-coding',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+      betaApi: false,
+    }).withThinkingKeep('all');
+    const body = await captureBetaRequestBody(provider, '', [], history);
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+  });
+});
+
 describe('AnthropicChatProvider', () => {
   it('does not read ANTHROPIC_API_KEY from process.env inside the adapter', () => {
     const previousApiKey = process.env['ANTHROPIC_API_KEY'];
@@ -279,6 +405,50 @@ describe('AnthropicChatProvider', () => {
       expect(body['system']).toEqual([
         { type: 'text', text: 'You are helpful.', cache_control: { type: 'ephemeral' } },
       ]);
+    });
+
+    it('maps json_schema response format to output_config.format', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['output_config']).toEqual({
+        format: {
+          type: 'json_schema',
+          schema,
+        },
+      });
+    });
+
+    it('rejects json_object response format because Anthropic requires a schema', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+
+      await expect(
+        provider.generate('', [], history, {
+          responseFormat: { type: 'json_object' },
+        }),
+      ).rejects.toThrow('Anthropic provider requires a JSON schema for structured response output.');
     });
 
     it('multi-turn conversation', async () => {
@@ -2495,6 +2665,7 @@ describe('AnthropicChatProvider', () => {
 describe('resolveDefaultMaxTokens', () => {
   it('returns per-version Messages-API caps for known Claude 4 models', () => {
     expect(resolveDefaultMaxTokens('claude-fable-5')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-5-20251101')).toBe(64000);
@@ -2526,6 +2697,7 @@ describe('resolveDefaultMaxTokens', () => {
   });
 
   it('matches dotted version separators', () => {
+    expect(resolveDefaultMaxTokens('claude-opus-4.8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4.6')).toBe(64000);
@@ -2548,12 +2720,15 @@ describe('resolveDefaultMaxTokens', () => {
     expect(resolveDefaultMaxTokens('anthropic.claude-3-5-sonnet-20240620-v1:0')).toBe(8192);
   });
 
-  it('falls back to family-only ceiling for unknown minor versions', () => {
-    // Future opus-4-X release: minor not in table, falls back to opus-4 = 32000.
-    // Better to under-quote and fail loudly than over-quote a model we can't verify.
-    expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(32000);
+  it('falls back to the nearest lower catalogued minor for unknown minors', () => {
+    // opus-4-9/4-10 are not in the table; they reuse opus-4-8's 128k
+    // ceiling (a newer minor inherits at least its predecessor's cap).
+    expect(resolveDefaultMaxTokens('claude-opus-4-9')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4-9')).toBe(64000);
     expect(resolveDefaultMaxTokens('claude-haiku-4-9')).toBe(64000);
+    // A gap between catalogued minors also resolves to the nearest lower one.
+    expect(resolveDefaultMaxTokens('claude-opus-4-3')).toBe(32000);
   });
 
   it('matches case-insensitively', () => {
@@ -2630,8 +2805,8 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 200 })).toBe(200);
   });
 
-  it('clamps defaultMaxTokens above the documented ceiling for known models', async () => {
-    expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(128000);
+  it('honors explicit defaultMaxTokens above the ceiling for known models', async () => {
+    expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(999999);
   });
 
   it('withMaxCompletionTokens sets max_tokens when no existing cap is present', async () => {
@@ -2650,6 +2825,25 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
 
     expect(provider).not.toBe(original);
     expect(body['max_tokens']).toBe(2048);
+    expect(provider.maxCompletionTokens).toBe(2048);
+  });
+
+  it('exposes the constructor-resolved max_tokens without any budget application', async () => {
+    // max_tokens is required by the Messages API, so even when completion
+    // budgeting is disabled the wire carries the constructor default; the
+    // exposed cap must reflect it for the request trace.
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(provider.maxCompletionTokens).toBeDefined();
+    expect(provider.maxCompletionTokens).toBe(body['max_tokens']);
   });
 
   it('withMaxCompletionTokens lowers the inferred model default cap', async () => {
@@ -2679,6 +2873,9 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     const body = await captureRequestBody(provider, '', [], history);
 
     expect(body['max_tokens']).toBe(1024);
+    // The exposed effective cap tracks the preserved existing value, not the
+    // requested budget — the request trace records this field.
+    expect(provider.maxCompletionTokens).toBe(1024);
   });
 
   it('withMaxCompletionTokens preserves an existing higher max_tokens cap', async () => {
@@ -2694,6 +2891,21 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     const body = await captureRequestBody(provider, '', [], history);
 
     expect(body['max_tokens']).toBe(128000);
+  });
+
+  it('withMaxCompletionTokens preserves explicit defaultMaxTokens above the ceiling for known models', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 999999,
+    }).withMaxCompletionTokens(1024);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(999999);
   });
 
   it('withMaxCompletionTokens clamps above the documented ceiling for known models', async () => {

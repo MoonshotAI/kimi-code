@@ -2,6 +2,8 @@ export type TelemetryPrimitive = boolean | number | string | undefined | null;
 export type TelemetryProperties = Record<string, TelemetryPrimitive>;
 export type TelemetryContext = Record<string, TelemetryPrimitive>;
 
+const MAX_TELEMETRY_NUMBER_MAGNITUDE = Number.MAX_SAFE_INTEGER;
+
 export interface TelemetryEvent {
   readonly event_id: string;
   device_id: string | null;
@@ -27,6 +29,10 @@ export function isTelemetryPrimitive(value: unknown): value is TelemetryPrimitiv
     value === undefined ||
     typeof value === 'boolean' ||
     typeof value === 'string' ||
-    (typeof value === 'number' && Number.isFinite(value))
+    (typeof value === 'number' && isTelemetryNumber(value))
   );
+}
+
+function isTelemetryNumber(value: number): boolean {
+  return Number.isFinite(value) && Math.abs(value) <= MAX_TELEMETRY_NUMBER_MAGNITUDE;
 }

@@ -20,6 +20,7 @@ import { copyTextToClipboard } from '../../lib/clipboard';
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
 import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
 import Tooltip from '../ui/Tooltip.vue';
+import Icon from '../ui/Icon.vue';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op
@@ -383,14 +384,24 @@ const segments = computed<Segment[]>(() => {
   return out;
 });
 
-// Lines of a diff block, classed by +/- for colouring (escaped by Vue's text
-// interpolation in the template).
-function diffLines(code: string): { cls: string; text: string }[] {
+// Lines of a diff block, split into a sign + the code text so the row can be
+// skinned like the ~/diff panel (DiffLines.vue): the code text keeps the normal
+// ink colour and only the +/- sign carries the add/del colour. The leading
+// marker (a single '+', '-', or the context-line space) is stripped from the
+// text so the code columns line up. Escaped by Vue's text interpolation.
+type DiffRowType = 'add' | 'del' | 'hunk' | 'ctx';
+interface DiffRow {
+  type: DiffRowType;
+  sign: string;
+  text: string;
+}
+function diffLines(code: string): DiffRow[] {
   return code.split('\n').map((line) => {
-    if (/^\+(?!\+\+)/.test(line)) return { cls: 'diff-add', text: line };
-    if (/^-(?!--)/.test(line)) return { cls: 'diff-del', text: line };
-    if (line.startsWith('@@')) return { cls: 'diff-hunk', text: line };
-    return { cls: 'diff-ctx', text: line };
+    if (line.startsWith('@@')) return { type: 'hunk', sign: '', text: line };
+    if (/^\+(?!\+\+)/.test(line)) return { type: 'add', sign: '+', text: line.slice(1) };
+    if (/^-(?!--)/.test(line)) return { type: 'del', sign: '-', text: line.slice(1) };
+    if (line.startsWith(' ')) return { type: 'ctx', sign: '', text: line.slice(1) };
+    return { type: 'ctx', sign: '', text: line };
   });
 }
 
@@ -433,16 +444,17 @@ function copyDiff(code: string, idx: number) {
         <div class="diff-bar">
           <span class="diff-lang">diff</span>
           <Tooltip :text="t('filePreview.copyCode')">
-            <button class="diff-copy" @click="copyDiff(seg.code, i)">
-              {{ copiedDiff === i ? '✓' : '⧉' }}
+            <button class="diff-copy" :aria-label="t('filePreview.copyCode')" @click="copyDiff(seg.code, i)">
+              <Icon :name="copiedDiff === i ? 'check' : 'copy'" size="sm" />
             </button>
           </Tooltip>
         </div>
         <pre class="diff-pre"><code><span
           v-for="(ln, j) in diffLines(seg.code)"
           :key="j"
-          :class="ln.cls"
-        >{{ ln.text }}</span></code></pre>
+          class="diff-line"
+          :class="`diff-${ln.type}`"
+        ><span v-if="ln.type !== 'hunk'" class="diff-sign">{{ ln.sign }}</span><span class="diff-text">{{ ln.text }}</span></span></code></pre>
       </div>
     </template>
   </div>
@@ -508,7 +520,7 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.markdown-renderer blockquote),
 .md :deep(.markdown-renderer td),
 .md :deep(.markdown-renderer th) {
-  font-size: 15px;
+  font-size: var(--content-font-size);
 }
 
 /* Emphasis — bold steps up from the body (medium/500) to semibold (700). */
@@ -526,10 +538,10 @@ function copyDiff(code: string, idx: number) {
   margin: 0.85em 0 0.35em;
   line-height: var(--leading-tight);
 }
-.md :deep(h1) { font-size: var(--text-xl); border-bottom: 1px solid var(--color-line); padding-bottom: 4px; }
-.md :deep(h2) { font-size: var(--text-lg); }
-.md :deep(h3) { font-size: var(--text-lg); }
-.md :deep(h4) { font-size: var(--text-base); color: var(--color-text-muted); }
+.md :deep(h1) { font-size: max(var(--text-xl), calc(var(--content-font-size) + 3px)); border-bottom: 1px solid var(--color-line); padding-bottom: 4px; }
+.md :deep(h2) { font-size: max(var(--text-lg), calc(var(--content-font-size) + 2px)); }
+.md :deep(h3) { font-size: max(var(--text-lg), calc(var(--content-font-size) + 1px)); }
+.md :deep(h4) { font-size: max(var(--text-base), calc(var(--content-font-size) + 1px)); color: var(--color-text-muted); }
 
 /* Paragraphs */
 .md :deep(p) {
@@ -745,9 +757,12 @@ function copyDiff(code: string, idx: number) {
 }
 
 /* ---------------------------------------------------------------------------
-   Local ```diff renderer — same look as the code blocks above, with the
-   original +/- line colouring (green additions, red deletions). markstream
-   would strip the markers + drop deletions, so we render diffs ourselves.
+   Local ```diff renderer — same chrome as the code blocks above, with the
+   diff rows skinned like the ~/diff panel (DiffLines.vue): a soft row
+   background and an inset accent bar mark the change, the +/- sign carries
+   the colour, and the code text itself keeps the normal ink colour so it
+   stays legible. markstream would strip the markers + drop deletions, so we
+   render diffs ourselves.
 --------------------------------------------------------------------------- */
 .diff-wrap {
   margin: 0.6em 0;
@@ -760,61 +775,85 @@ function copyDiff(code: string, idx: number) {
 .diff-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 4px 12px;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-line);
+  color: var(--color-text-muted);
+  font: var(--text-xs) var(--font-mono);
 }
 .diff-lang {
-  font: var(--text-xs) var(--font-mono);
-  color: var(--color-text-muted);
   margin-right: auto;
-  letter-spacing: 0.04em;
 }
+/* Copy button — mirrors the §03 IconButton / code-block action: muted glyph,
+   sunken hover, soft radius, shared focus ring. */
 .diff-copy {
-  background: none;
-  border: none;
-  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-muted);
-  font: var(--text-sm) var(--font-mono);
-  padding: 0 2px;
-  line-height: 1;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 2px 6px;
+  transition: background var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
 }
 .diff-copy:hover {
-  color: var(--color-accent);
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+.diff-copy:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
 }
 .diff-pre {
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px 0;
   overflow-x: auto;
   background: var(--color-surface-sunken);
 }
 .diff-pre code {
-  font: var(--text-sm) var(--font-mono);
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  font: var(--text-sm)/1.65 var(--font-mono);
   color: var(--color-text);
 }
-.diff-pre code span {
+.diff-line {
   display: block;
-  padding-left: 8px;
-  border-left: 2px solid transparent;
-  margin-left: -12px;
-  padding-right: 12px;
+  width: 100%;
+  padding: 0 14px;
+}
+.diff-sign {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  color: var(--color-text-muted);
+  user-select: none;
+}
+.diff-text {
+  color: var(--color-text);
 }
 .diff-add {
+  background: var(--color-success-soft);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-success) 55%, transparent);
+}
+.diff-add .diff-sign {
   color: var(--color-success);
-  background: color-mix(in srgb, var(--color-success) 10%, transparent);
-  border-left-color: var(--color-success) !important;
 }
 .diff-del {
+  background: var(--color-danger-soft);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-danger) 55%, transparent);
+}
+.diff-del .diff-sign {
   color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
-  border-left-color: var(--color-danger) !important;
 }
 .diff-hunk {
-  color: var(--color-accent);
+  background: var(--color-surface);
 }
-.diff-ctx {
+.diff-hunk .diff-text {
   color: var(--color-text-muted);
 }
 

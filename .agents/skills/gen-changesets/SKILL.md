@@ -148,7 +148,7 @@ Clarify session status typing for internal SDK callers.
 `@moonshot-ai/kimi-web` is ignored by changesets and must **never** appear in a changeset frontmatter. Because the web app is bundled into the CLI release artifact, any web change that ships must list `@moonshot-ai/kimi-code` instead and describe the actual web-facing change in the text.
 
 - Prefix the changelog entry text with `web: ` (for example `web: Fix the chat not scrolling to the bottom after sending a message.`) so the synced docs changelog can mark web UI entries. Apply this whenever the change is to the web project (`@moonshot-ai/kimi-web`).
-- If a PR contains both web UI changes and server API changes, split them into separate changesets so each entry has a focused description.
+- If a PR ships a web UI feature backed by server API changes that exist solely to power that feature, prefer a single `web:` entry describing what the web user gets. Do not add a separate server-API changeset unless the API has independent user value (a public endpoint that SDK or server consumers call directly). The docs changelog sync also deduplicates this pattern, but catching it here avoids duplicate changesets.
 - Do not enumerate every micro-tweak; keep it to one sentence that captures what the web user gets.
 
 Web-only fix:
@@ -161,7 +161,7 @@ Web-only fix:
 web: Fix the chat not scrolling to the bottom after sending a message.
 ```
 
-Web UI plus server APIs in the same PR (split into two changesets):
+Web UI plus backing server APIs in the same PR (prefer a single `web:` entry; the API is plumbing):
 
 ```markdown
 ---
@@ -171,13 +171,7 @@ Web UI plus server APIs in the same PR (split into two changesets):
 web: Add the server-hosted web UI, including chat layout and session list behaviors.
 ```
 
-```markdown
----
-"@moonshot-ai/kimi-code": minor
----
-
-Add the server REST and WebSocket APIs that power the web UI.
-```
+Split into two changesets only when the API has independent user value on its own (for example, a public endpoint SDK consumers call directly). In that case add the web entry above plus a separate one such as `Add a public REST API to list archived sessions for SDK consumers.`
 
 ## `@moonshot-ai/pi-tui` changes
 
@@ -228,3 +222,4 @@ Fix the transcript jumping to the top when scrolling up through history during s
 - The entry includes real internal identifiers instead of neutral placeholders.
 - A change that only touches `@moonshot-ai/pi-tui` lists `@moonshot-ai/kimi-code` instead of `@moonshot-ai/pi-tui`, or mixes both packages in one frontmatter.
 - A web app change entry is missing the `web: ` prefix.
+- A server/API changeset exists only to back a web feature that a `web:` changeset already describes (use one `web:` entry instead, unless the API has independent user value).

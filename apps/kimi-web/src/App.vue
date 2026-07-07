@@ -34,6 +34,7 @@ import { useFilePreview, type DetailTarget } from './composables/useFilePreview'
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
 import { openDialogCount } from './composables/dialogStack';
+import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
@@ -45,11 +46,25 @@ import Icon from './components/ui/Icon.vue';
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
 const hasServerCredential = initServerAuth();
-const showServerAuth = ref(!hasServerCredential);
+const authRequired = ref(!hasServerCredential);
 let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
+// When the server runs with `--dangerous-bypass-auth`, `/meta` advertises it
+// and we skip the token prompt entirely — there is no credential to enter.
+const showServerAuth = computed(
+  () => !client.dangerousBypassAuth.value && authRequired.value,
+);
 provide('resolveImage', client.resolveImageUrl);
+// Live swarm member roster for the inline AgentSwarm tool card. Sourced from the
+// AppTask store so the card shows each subagent's live phase; on refresh the
+// tasks are gone and the card falls back to the parsed tool result. Includes
+// single-member "swarms" (e.g. AgentSwarm with one resume_agent_ids entry),
+// which buildSwarmGroups filters out for the badge counter.
+provide(
+  'resolveSwarmMembers',
+  (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
+);
 const { t } = useI18n();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.
@@ -124,7 +139,10 @@ onMounted(() => {
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
   offAuthRequired = onAuthRequired(() => {
-    showServerAuth.value = true;
+    authRequired.value = true;
+    // The server now demands a token, so any cached "bypass" state from a
+    // previous mode is stale — drop it so the token prompt can show.
+    client.clearDangerousBypassAuth();
   });
 });
 
@@ -369,10 +387,13 @@ async function handleLoginSuccess(): Promise<void> {
 
 // Edit + resend the last user message: undo the latest exchange on the daemon,
 // then drop that message's text back into the composer for editing.
-async function handleEditMessage(text: string): Promise<void> {
+async function handleEditMessage(payload: {
+  text: string;
+  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+}): Promise<void> {
   await client.undo(1);
   await nextTick();
-  conversationPaneRef.value?.loadComposerForEdit(text);
+  conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.images);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
@@ -467,11 +488,18 @@ function handleCommand(cmd: string): void {
       // Not a built-in command → treat it as a session skill activation
       // (the user picked `/<skill>` from the menu, or typed `/<skill> args`).
       // The daemon answers an unknown name with skill.not_found, surfaced as a
-      // warning, so a stray slash is harmless.
+      // warning, so a stray slash is harmless. With no active session, create
+      // one first (same path as the first prompt) so the activation isn't
+      // silently dropped on the new-session screen.
       const space = cmd.indexOf(' ');
       const name = (space === -1 ? cmd : cmd.slice(0, space)).slice(1);
       const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
-      if (name) void client.activateSkill(name, args);
+      if (!name) break;
+      if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
+        void client.startSessionAndActivateSkill(client.activeWorkspaceId.value, name, args);
+      } else {
+        void client.activateSkill(name, args);
+      }
       break;
     }
   }
@@ -670,7 +698,6 @@ function openPr(url: string): void {
       :tasks="client.tasks.value"
       :todos="client.todos.value"
       :goal="client.goal.value"
-      :swarms="client.swarms.value"
       :activation-badges="client.activationBadges.value"
       :status="client.status.value"
       :thinking="client.thinking.value"

@@ -80,12 +80,25 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const composerRef = ref<{ loadForEdit: (value: string) => void; focus: () => void } | null>(null);
+const composerRef = ref<{
+  loadForEdit: (value: string) => boolean;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  focus: () => void;
+} | null>(null);
 const workPanelRef = ref<HTMLElement | null>(null);
 const workbarRef = ref<HTMLElement | null>(null);
 
-function loadForEdit(value: string): void {
-  composerRef.value?.loadForEdit(value);
+function loadForEdit(value: string): boolean {
+  // The nested Composer is only rendered in ChatDock's v-else — when a pending
+  // question or approval is shown it is unmounted, so report unavailability so
+  // the caller doesn't dequeue a prompt it can't actually load.
+  if (!composerRef.value) return false;
+  composerRef.value.loadForEdit(value);
+  return true;
+}
+
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+  composerRef.value?.loadAttachmentsForEdit(atts);
 }
 
 function focus(): void {
@@ -117,7 +130,7 @@ onUnmounted(() => {
   }
 });
 
-defineExpose({ loadForEdit, focus });
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 </script>
 
 <template>

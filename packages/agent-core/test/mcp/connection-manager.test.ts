@@ -161,6 +161,14 @@ describe('McpConnectionManager', () => {
       const resolved = cm.resolved('filtered');
       expect(resolved).toBeDefined();
       expect([...(resolved?.enabledNames ?? [])]).toEqual(['echo']);
+      // The raw tools/list result stays verbatim and unfiltered — the
+      // allow-list only gates registration, not the discovery trace.
+      const rawNames = resolved?.rawTools.map((tool) => tool.name) ?? [];
+      expect(rawNames).toContain('echo');
+      expect(rawNames).toContain('boom');
+      for (const rawTool of resolved?.rawTools ?? []) {
+        expect(rawTool.inputSchema).toBeDefined();
+      }
       const entry = cm.get('filtered');
       expect(entry?.toolCount).toBe(1);
     } finally {

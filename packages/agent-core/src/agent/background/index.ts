@@ -67,9 +67,8 @@ interface ManagedTask {
   /** Total UTF-8 bytes observed, including chunks dropped from the live ring buffer. */
   outputSizeBytes: number;
   /**
-   * True once a foreground command has crossed `MAX_FOREGROUND_OUTPUT_BYTES`
-   * and termination has been requested. One-shot guard so the ceiling fires
-   * exactly once.
+   * True once a command has crossed `MAX_TASK_OUTPUT_BYTES` and termination has
+   * been requested. One-shot guard so the ceiling fires exactly once.
    */
   outputLimitTripped: boolean;
   status: BackgroundTaskStatus;
@@ -123,20 +122,20 @@ const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 
 /**
- * Hard ceiling on the combined output a single *foreground* command may stream
- * before it is force-terminated (SIGTERM → grace → SIGKILL). It guards the
- * live-forward path — which has no memory bound of its own — from a runaway
- * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow the
- * process heap until Node aborts with an out-of-memory crash.
- *
- * Detached (background) tasks are exempt: their output is ring-buffered and
- * spilled to disk, so it never accumulates unbounded in memory.
+ * Hard ceiling on the combined output a single shell command may stream before
+ * it is force-terminated (SIGTERM → grace → SIGKILL). It guards both the
+ * live-forward path and the on-disk `output.log` write chain from a runaway
+ * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow
+ * without bound — filling the disk, or retaining each pending-write chunk until
+ * Node aborts with an out-of-memory crash. Scoped to process tasks (foreground
+ * and background); subagent and user-question results are appended once and must
+ * always be persisted, so they are intentionally not capped here.
  */
-const MAX_FOREGROUND_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
 
-/** Terminal `stopReason` recorded when a foreground command trips the output ceiling. */
-function foregroundOutputLimitReason(): string {
-  const mib = Math.floor(MAX_FOREGROUND_OUTPUT_BYTES / (1024 * 1024));
+/** Terminal `stopReason` recorded when a command trips the output ceiling. */
+function outputLimitReason(): string {
+  const mib = Math.floor(MAX_TASK_OUTPUT_BYTES / (1024 * 1024));
   return (
     `Output limit exceeded: the command produced more than ${mib} MiB and was ` +
     'terminated. Redirect large output to a file (e.g. `command > out.txt`) and ' +
@@ -535,6 +534,45 @@ export class BackgroundManager {
   }
 
   /**
+   * Wait until no active (non-terminal) task matching `predicate` remains.
+   *
+   * Used by print-mode (`kimi -p`) turn draining to hold a turn open while
+   * background subagents are still running. Re-enumerates after each batch
+   * settles so tasks registered during the wait (fan-out) are picked up.
+   * Resolves immediately when nothing matches. Bounded by `timeoutMs`; once
+   * the deadline passes the method returns without waiting for stragglers.
+   * Rejects with the abort reason when `signal` is aborted.
+   */
+  async waitForActiveTasks(
+    predicate: (info: BackgroundTaskInfo) => boolean,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const deadline =
+      options.timeoutMs !== undefined && options.timeoutMs > 0
+        ? Date.now() + options.timeoutMs
+        : undefined;
+    const signal = options.signal;
+    while (true) {
+      signal?.throwIfAborted();
+      const active = this.list(true).filter(predicate);
+      if (active.length === 0) return;
+      let perTaskTimeout: number | undefined;
+      if (deadline !== undefined) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return;
+        perTaskTimeout = remaining;
+      }
+      const batch = Promise.all(active.map((t) => this.wait(t.taskId, perTaskTimeout)));
+      if (signal === undefined) {
+        await batch;
+      } else {
+        await Promise.race([batch, abortRejecter(signal)]);
+      }
+      // Re-enumerate: settled tasks (and any fan-out) show up in the next list().
+    }
+  }
+
+  /**
    * Wait until a foreground task either detaches from the current tool call or
    * reaches a terminal state. Detached tasks return immediately.
    */
@@ -642,18 +680,20 @@ export class BackgroundManager {
       entry.outputRingChars -= removed.length;
     }
 
-    // Foreground output ceiling: a single non-detached command must not grow
-    // the (unbounded) live-forward buffer until the process runs out of memory.
-    // Trip once, then request graceful termination through the shared stop path
-    // (SIGTERM → grace → SIGKILL). Detached tasks are exempt — their output is
-    // ring-buffered and spilled to disk, so it never accumulates in memory.
+    // Output ceiling: a single shell command must not grow the (unbounded)
+    // live-forward buffer or the on-disk write chain until the process runs out
+    // of memory or fills the disk. Trip once, then request graceful termination
+    // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
+    // process tasks (foreground and background): subagent and user-question tasks
+    // append their bounded result in one shot and must always persist it, so they
+    // are intentionally not capped here.
     if (
       !entry.outputLimitTripped &&
-      !this.isDetached(entry) &&
-      entry.outputSizeBytes > MAX_FOREGROUND_OUTPUT_BYTES
+      entry.task.kind === 'process' &&
+      entry.outputSizeBytes > MAX_TASK_OUTPUT_BYTES
     ) {
       entry.outputLimitTripped = true;
-      void this.stop(entry.taskId, foregroundOutputLimitReason());
+      void this.stop(entry.taskId, outputLimitReason());
     }
 
     // Once the cap has tripped the task is being terminated: keep only the
@@ -994,4 +1034,17 @@ function buildBackgroundTaskNotificationBody(info: BackgroundTaskInfo): string {
   ].join('\n');
 
   return `${baseLine}${recovery}`;
+}
+
+function abortRejecter(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new Error('Aborted'));
+  }
+  return new Promise<never>((_, reject) => {
+    signal.addEventListener(
+      'abort',
+      () => reject(signal.reason ?? new Error('Aborted')),
+      { once: true },
+    );
+  });
 }

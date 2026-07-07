@@ -120,7 +120,8 @@ export class WSGateway extends Disposable implements IWSGateway {
     }
 
     const authTokenService = this.authTokenService;
-    if (authTokenService !== undefined) {
+    // `--dangerous-bypass-auth`: skip token validation on the upgrade path too.
+    if (authTokenService !== undefined && this.options.dangerousBypassAuth !== true) {
       const authorization = req.headers.authorization;
       const token = authorization?.startsWith('Bearer ')
         ? authorization.slice('Bearer '.length)

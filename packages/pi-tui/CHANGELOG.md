@@ -1,5 +1,17 @@
 # @moonshot-ai/pi-tui
 
+## 0.80.7
+
+### Patch Changes
+
+- [#1408](https://github.com/MoonshotAI/kimi-code/pull/1408) [`fc259ab`](https://github.com/MoonshotAI/kimi-code/commit/fc259abdb415fe9ac10132a142bdb5ce507ccda2) Thanks [@liruifengv](https://github.com/liruifengv)! - Support searching multiple workspace roots for `@` file completion through fd, deduplicated by absolute path.
+
+## 0.80.6
+
+### Patch Changes
+
+- [#1367](https://github.com/MoonshotAI/kimi-code/pull/1367) [`23daf0f`](https://github.com/MoonshotAI/kimi-code/commit/23daf0f3c199b4aaa9bd9388a2903d7827f98d32) - Revert the fork's viewport and scrollback rendering patches, restoring the upstream differential-rendering behavior. The narrow-terminal fixes (width clamping, overwide-line truncation) are kept.
+
 ## 0.80.5
 
 ### Patch Changes

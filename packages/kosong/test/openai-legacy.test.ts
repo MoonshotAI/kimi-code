@@ -1,6 +1,7 @@
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { OpenAILegacyChatProvider } from '#/providers/openai-legacy';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -42,6 +43,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -52,7 +54,7 @@ async function captureRequestBody(
       return Promise.resolve(makeChatCompletionResponse());
     });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -603,6 +605,39 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['max_tokens']).toBe(2048);
     });
 
+    it('maps json_schema response format to response_format', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['response_format']).toEqual({
+        type: 'json_schema',
+        json_schema: {
+          name: 'contact',
+          schema,
+          strict: true,
+          description: undefined,
+        },
+      });
+    });
+
     it('withMaxCompletionTokens sets max_tokens on the cloned provider', async () => {
       const original = createProvider();
       const provider = original.withMaxCompletionTokens(1024);
@@ -654,6 +689,9 @@ describe('OpenAILegacyChatProvider', () => {
 
       // 1000000 - 30000 = 970000, clamped to 131072
       expect(body['max_tokens']).toBe(131072);
+      // The exposed effective cap matches the ceiling-clamped wire value —
+      // the request trace records this field.
+      expect(provider.maxCompletionTokens).toBe(131072);
     });
   });
 
@@ -670,6 +708,9 @@ describe('OpenAILegacyChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
       expect(body['max_tokens']).toBe(1024);
+      // The constructor-level cap is on the wire without any budget
+      // application, so the exposed cap must reflect it too.
+      expect(provider.maxCompletionTokens).toBe(1024);
     });
 
     it('does not inject max_tokens when maxTokens option is omitted', async () => {

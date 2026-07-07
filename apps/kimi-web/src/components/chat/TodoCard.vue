@@ -57,7 +57,6 @@ function glyphStatus(status: TodoView['status']): StatusGlyphStatus {
 .tc-row.s-done .tc-name {
   color: var(--color-text-faint);
   text-decoration: line-through;
-  text-decoration-color: var(--color-line-strong);
 }
 
 .tc-empty {

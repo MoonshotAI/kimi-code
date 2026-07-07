@@ -738,7 +738,8 @@ export class SessionEventHandler {
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
       this.host.state.appState.streamingPhase === 'idle' &&
-      this.host.state.queuedMessages.length === 0
+      this.host.state.queuedMessages.length === 0 &&
+      !this.host.state.queuedMessageDispatchPending
     );
   }
 
@@ -984,7 +985,11 @@ export class SessionEventHandler {
     event: CompactionCompletedEvent,
     sendQueued: (item: QueuedMessage) => void,
   ): void {
-    this.host.streamingUI.endCompaction(event.result.tokensBefore, event.result.tokensAfter);
+    this.host.streamingUI.endCompaction(
+      event.result.tokensBefore,
+      event.result.tokensAfter,
+      event.result.summary,
+    );
     this.finishCompaction(sendQueued);
   }
 
@@ -999,14 +1004,18 @@ export class SessionEventHandler {
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn) {
+      const next = this.host.shiftQueuedMessage();
+      if (next !== undefined) {
+        this.host.state.queuedMessageDispatchPending = true;
+      }
       this.host.setAppState({
         isCompacting: false,
         streamingPhase: 'idle',
       });
       this.host.resetLivePane();
-      const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {
         setTimeout(() => {
+          this.host.state.queuedMessageDispatchPending = false;
           sendQueued(next);
         }, 0);
       }

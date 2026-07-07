@@ -103,8 +103,16 @@ export async function generate(
     throwAbortError();
   }
 
+  // Deferred tools are executable client-side but must not appear in the
+  // request's top-level `tools[]` (their schemas travel via message-level
+  // `tools` declarations; the top-level list stays byte-stable for prompt
+  // caching). This is the single strip point for every provider call.
+  const wireTools = tools.some((tool) => tool.deferred === true)
+    ? tools.filter((tool) => tool.deferred !== true)
+    : tools;
+
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, tools, history, options);
+  const stream = await provider.generate(systemPrompt, wireTools, history, options);
 
   // Post-await abort check: `provider.generate()` may have resolved before
   // noticing a mid-flight abort. Reject immediately rather than draining

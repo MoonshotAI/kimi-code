@@ -2,6 +2,7 @@ import { generate } from '#/generate';
 import type { ContentPart, Message, ToolCall } from '#/message';
 import { extractUsageFromChunk, KimiChatProvider } from '#/providers/kimi';
 import { extractUsage } from '#/providers/openai-common';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -51,6 +52,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -61,7 +63,7 @@ async function captureRequestBody(
       return Promise.resolve(makeChatCompletionResponse('kimi-k2'));
     });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -619,6 +621,39 @@ describe('KimiChatProvider', () => {
       expect(body['max_tokens']).toBeUndefined();
     });
 
+    it('maps json_schema response format to response_format', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['response_format']).toEqual({
+        type: 'json_schema',
+        json_schema: {
+          name: 'contact',
+          schema,
+          strict: true,
+          description: undefined,
+        },
+      });
+    });
+
     it('prefers max_completion_tokens when both fields are set', async () => {
       const provider = createProvider().withGenerationKwargs({
         max_completion_tokens: 2048,
@@ -642,6 +677,10 @@ describe('KimiChatProvider', () => {
 
       expect(body['max_completion_tokens']).toBe(1024);
       expect(body['max_tokens']).toBeUndefined();
+      expect(provider.maxCompletionTokens).toBe(1024);
+      // Without any budget application no cap goes on the wire, and the
+      // exposed value says so.
+      expect(createProvider().maxCompletionTokens).toBeUndefined();
     });
 
     it('withMaxCompletionTokens sizes the cap to the remaining context window', async () => {
@@ -655,6 +694,9 @@ describe('KimiChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['max_completion_tokens']).toBe(70000);
+      // The exposed effective cap matches the clamped wire value, not the
+      // requested budget — the request trace records this field.
+      expect(provider.maxCompletionTokens).toBe(70000);
     });
 
     it('passes constructor generation kwargs into the request body', async () => {

@@ -29,6 +29,13 @@ export const metaResponseSchema = z.object({
   server_id: z.string().min(1),
   started_at: isoDateTimeSchema,
   open_in_apps: z.array(fsOpenInAppIdSchema),
+  /**
+   * True when the server was started with `--dangerous-bypass-auth`, meaning
+   * the bearer-token gate is disabled on every REST and WebSocket route. The
+   * web UI reads this to skip the token prompt and connect without a
+   * credential. Defaults to false on hardened boots.
+   */
+  dangerous_bypass_auth: z.boolean(),
 });
 
 export type MetaResponse = z.infer<typeof metaResponseSchema>;

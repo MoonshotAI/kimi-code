@@ -209,6 +209,7 @@ describe('runPrompt', () => {
       model: 'k2',
       permission: 'auto',
       additionalDirs: undefined,
+      drainAgentTasksOnStop: true,
     });
     expect(mocks.session.setPermission).not.toHaveBeenCalled();
     expect(mocks.session.setApprovalHandler).toHaveBeenCalledWith(expect.any(Function));
@@ -216,6 +217,9 @@ describe('runPrompt', () => {
     expect(mocks.session.prompt).toHaveBeenCalledWith('say hello');
     expect(stdout.text()).toBe('• hello world\n\n');
     expect(stderr.text()).toBe('To resume this session: kimi -r ses_prompt\n');
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'ses_prompt' }),
+    );
     expect(mocks.shutdownTelemetry).toHaveBeenCalled();
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
@@ -334,6 +338,7 @@ describe('runPrompt', () => {
       model: 'kimi-code/k2.5',
       permission: 'auto',
       additionalDirs: undefined,
+      drainAgentTasksOnStop: true,
     });
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
@@ -351,6 +356,7 @@ describe('runPrompt', () => {
       model: 'k2',
       permission: 'auto',
       additionalDirs: ['../shared', '/tmp/extra'],
+      drainAgentTasksOnStop: true,
     });
   });
 

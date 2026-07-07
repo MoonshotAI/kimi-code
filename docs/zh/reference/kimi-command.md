@@ -161,10 +161,16 @@ kimi server status             # 查看安装与运行状态
 | `--port <port>` | 绑定端口；默认 `58627` |
 | `--log-level <level>` | 按所选级别开启服务日志；默认不输出 |
 | `--debug-endpoints` | 挂载 `/api/v1/debug/*` 调试路由（默认关闭） |
+| `--keep-alive` | 让服务在没有客户端连接 60 秒后继续运行，不会因空闲退出；`--host` / `--allowed-host` 会自动启用，`--foreground` 模式下始终开启 |
+| `--dangerous-bypass-auth` | 关闭所有 REST 与 WebSocket 路由的 bearer token 鉴权，使 web UI 无需 token 即可连接；仅用于可信网络或自有鉴权代理之后 |
 | `--foreground` | 前台运行，不 spawn 后台守护进程 |
 | `--open` | 服务健康后用默认浏览器打开 web UI |
 
-`kimi server run` 只绑定本机 loopback 地址。默认会 spawn 一个后台守护进程（多次运行会复用同一个），健康后即退出；守护进程在最后一个 web 客户端断开后自行关闭。加 `--foreground` 则在当前进程中运行——保持挂在终端，在 `SIGINT` / `SIGTERM` 时干净退出。
+`kimi server run` 只绑定本机 loopback 地址。默认会 spawn 一个后台守护进程（多次运行会复用同一个），健康后即退出；守护进程在最后一个 web 客户端断开后自行关闭。加 `--keep-alive` 可让它在空闲超时后继续运行，或加 `--foreground` 则在当前进程中运行——保持挂在终端，在 `SIGINT` / `SIGTERM` 时干净退出。
+
+::: danger 警告
+`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后运行 `kimi server kill` 停止服务。
+:::
 
 #### `kimi server install`
 

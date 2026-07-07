@@ -60,6 +60,7 @@ export interface CreateSessionPayload {
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
+  readonly drainAgentTasksOnStop?: boolean;
 }
 
 export interface CloseSessionPayload {
@@ -273,6 +274,10 @@ export interface ActivateSkillPayload {
   readonly args?: string | undefined;
 }
 
+export interface ListWorkspaceSkillsPayload {
+  readonly workDir: string;
+}
+
 export interface ActivatePluginCommandPayload {
   readonly pluginId: string;
   readonly commandName: string;
@@ -452,6 +457,7 @@ export interface CoreAPI extends SessionAPIWithId {
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;
+  listWorkspaceSkills: (payload: ListWorkspaceSkillsPayload) => Promise<readonly SkillSummary[]>;
   listPlugins: (payload: EmptyPayload) => readonly PluginSummary[];
   installPlugin: (payload: InstallPluginPayload) => PluginSummary;
   setPluginEnabled: (payload: SetPluginEnabledPayload) => void;

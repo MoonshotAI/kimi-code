@@ -118,6 +118,32 @@ describe('createAuthHook (onRequest middleware)', () => {
   });
 });
 
+describe('createAuthHook — disabled option (--dangerous-bypass-auth)', () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    app = Fastify();
+    app.addHook('onRequest', createAuthHook(fixedImpl(), { disabled: true }));
+    app.get('/api/v1/sessions', async () => ({ ok: true }));
+    app.get('/openapi.json', async () => ({ openapi: '3.1.0' }));
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('admits a token-less request to a normally gated API route', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/sessions' });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('admits a token-less request to /openapi.json (bypass is global)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/openapi.json' });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 /**
  * Raw HTTP GET that lets us spoof the `Host` header. Node's `http.request`
  * honors an explicit `headers.Host`, whereas `fetch` (undici) treats `Host` as

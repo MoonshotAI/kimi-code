@@ -87,6 +87,7 @@ export type {
   CompressImageResult,
   CompressBase64Result,
   ImageCompressionCaptionInput,
+  ImageCompressionTelemetry,
 } from '@moonshot-ai/agent-core';
 
 // Experimental feature flags — types only. Resolved values come from

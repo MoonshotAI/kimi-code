@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import {
@@ -27,13 +27,13 @@ interface FsMentionCandidate {
 /**
  * Kimi wrapper around pi-tui's combined autocomplete provider.
  *
- * File / folder mention behavior uses pi-tui's fd-backed provider when fd is
- * available and only the current working directory is involved. While managed fd
- * is downloading, when it is unavailable, or when the session has additional
- * roots, a small filesystem fallback keeps `@` file and folder completion usable
- * across every root. Ordinary path completion is still handled by pi-tui's
- * readdir-backed path completer. This wrapper also keeps Kimi-specific
- * slash-command guards.
+ * File / folder mention behavior uses pi-tui's fd-backed provider whenever fd
+ * is available, fanning out across the working directory and any additional
+ * roots so `@` completion pushes the query down to fd instead of enumerating
+ * every file. A small filesystem fallback is used only while managed fd is
+ * downloading, when it is unavailable, or if fd fails to spawn. Ordinary path
+ * completion is still handled by pi-tui's readdir-backed path completer. This
+ * wrapper also keeps Kimi-specific slash-command guards.
  */
 export class FileMentionProvider implements AutocompleteProvider {
   private readonly inner: CombinedAutocompleteProvider;
@@ -56,7 +56,7 @@ export class FileMentionProvider implements AutocompleteProvider {
         expanded.push({ ...cmd, name: alias });
       }
     }
-    this.inner = new CombinedAutocompleteProvider(expanded, workDir, fdPath);
+    this.inner = new CombinedAutocompleteProvider(expanded, workDir, fdPath, this.additionalDirs);
   }
 
   async getSuggestions(
@@ -75,7 +75,11 @@ export class FileMentionProvider implements AutocompleteProvider {
     // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
-      if (this.fdPath === null || this.additionalDirs.length > 0) {
+      // fd backs `@` completion across every root (cwd + additional dirs). Fall
+      // back to the filesystem scanner when fd is unavailable, not executable
+      // (e.g. the managed binary was removed or lost execute permission), or if
+      // spawning it fails below. A genuine fd no-match still returns null.
+      if (this.fdPath === null || !isExecutableFd(this.fdPath)) {
         return getFsMentionSuggestions(
           this.workDir,
           this.additionalDirs,
@@ -225,6 +229,21 @@ export function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+function isExecutableFd(fdPath: string): boolean {
+  // Bare command names (for example "fd" discovered on the system PATH) are
+  // trusted: spawn resolves them through PATH. Only absolute/relative paths are
+  // probed, which is how the managed fd is referenced and which can go stale.
+  if (!fdPath.includes('/') && !fdPath.includes('\\')) {
+    return true;
+  }
+  try {
+    accessSync(fdPath, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

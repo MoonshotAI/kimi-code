@@ -136,15 +136,15 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle auto-approve mode',
-    priority: 100,
+    description: 'Toggle YOLO mode: AI auto-approves safe actions, asks for approval on risky ones.',
+    priority: 101,
     availability: 'always',
   },
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle auto permission mode',
-    priority: 100,
+    description: 'Toggle Auto mode: run all actions automatically, including risky ones.',
+    priority: 99,
     availability: 'always',
   },
   {

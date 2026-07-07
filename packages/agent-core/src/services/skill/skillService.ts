@@ -31,6 +31,11 @@ export class SkillService extends Disposable implements ISkillService {
     return raw.map(toProtocolSkill);
   }
 
+  async listForWorkDir(workDir: string): Promise<readonly SkillDescriptor[]> {
+    const raw = await this.core.rpc.listWorkspaceSkills({ workDir });
+    return raw.map(toProtocolSkill);
+  }
+
   async activate(sessionId: string, skillName: string, args?: string): Promise<void> {
     await this._requireLoadedSession(sessionId);
     try {

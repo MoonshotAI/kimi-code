@@ -50,6 +50,7 @@ describe('CompactionComponent', () => {
 
       expect(text).toContain('Compaction complete');
       expect(text).not.toContain('Tip:');
+      expect(text).not.toContain('Ctrl-O');
     } finally {
       component.dispose();
     }
@@ -65,6 +66,83 @@ describe('CompactionComponent', () => {
 
       expect(text).toContain('Compaction cancelled');
       expect(text).not.toContain('Compacting context...');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('keeps the completed compaction summary hidden until expanded', () => {
+    const component = new CompactionComponent();
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      const collapsed = component.render(120).map(strip).join('\n');
+
+      expect(collapsed).toContain('Compaction complete');
+      expect(collapsed).toContain('120 → 24 tokens');
+      expect(collapsed).toContain('Ctrl-O to show compaction summary');
+      expect(collapsed).not.toContain('Keep the src/tui compaction notes.');
+
+      component.setExpanded(true);
+      const expanded = component.render(120).map(strip).join('\n');
+
+      expect(expanded).toContain('Compaction complete');
+      expect(expanded).toContain('Ctrl-O to hide compaction summary');
+      expect(expanded).toContain('Keep the src/tui compaction notes.');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('hides the compaction summary again when collapsed', () => {
+    const component = new CompactionComponent();
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      component.setExpanded(true);
+      component.setExpanded(false);
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('Compaction complete');
+      expect(text).toContain('Ctrl-O to show compaction summary');
+      expect(text).not.toContain('Ctrl-O to hide compaction summary');
+      expect(text).not.toContain('Keep the src/tui compaction notes.');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('preserves the expanded summary when invalidating with an instruction', () => {
+    const component = new CompactionComponent(undefined, 'keep the recent files only');
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      component.setExpanded(true);
+      component.invalidate();
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('keep the recent files only');
+      expect(text).toContain('Keep the src/tui compaction notes.');
+      expect(text.match(/keep the recent files only/g)).toHaveLength(1);
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('keeps expanded summary child order on invalidate', () => {
+    const component = new CompactionComponent(undefined, 'keep the recent files only');
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      component.setExpanded(true);
+      currentTheme.setPalette(lightColors);
+      component.invalidate();
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('Keep the src/tui compaction notes.');
+      expect(text.indexOf('keep the recent files only')).toBeLessThan(
+        text.indexOf('Keep the src/tui compaction notes.'),
+      );
     } finally {
       component.dispose();
     }

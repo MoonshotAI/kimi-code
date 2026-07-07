@@ -6,6 +6,7 @@ import type {
   GenerateOptions,
   MaxCompletionTokensOptions,
   ProviderRequestAuth,
+  ResponseFormat,
   StreamedMessage,
   ThinkingEffort,
   VideoUploadInput,
@@ -96,6 +97,8 @@ interface OpenAIMessage {
   tool_call_id?: string | undefined;
   name?: string | undefined;
   reasoning_content?: string | undefined;
+  /** Message-level tool declarations (`messages[].tools`), see convertMessage. */
+  tools?: OpenAIToolParam[] | undefined;
 }
 
 interface OpenAIToolCallOut {
@@ -169,6 +172,16 @@ function convertMessage(message: Message): OpenAIMessage {
     result.reasoning_content = reasoningContent;
   }
 
+  // Message-level tool declarations: a system message carrying `tools` loads
+  // those definitions mid-conversation (`messages[].tools` in the Kimi
+  // contract; each entry is a full OpenAI-compatible tool param). Reusing
+  // convertTool keeps schema normalization and the `$` builtin_function
+  // branch identical to the top-level `tools[]` path. Such a message carries
+  // no `content` — the empty-content branch above already omits the field.
+  if (message.tools !== undefined && message.tools.length > 0) {
+    result.tools = message.tools.map((tool) => convertTool(tool));
+  }
+
   return result;
 }
 function convertTool(tool: Tool): OpenAIToolParam {
@@ -185,6 +198,21 @@ function convertTool(tool: Tool): OpenAIToolParam {
     function: {
       ...converted.function,
       parameters: normalizeKimiToolSchema(tool.parameters),
+    },
+  };
+}
+
+function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
+  if (format.type === 'json_object') {
+    return { type: 'json_object' };
+  }
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: format.jsonSchema.name,
+      schema: format.jsonSchema.schema,
+      strict: format.jsonSchema.strict,
+      description: format.jsonSchema.description,
     },
   };
 }
@@ -362,6 +390,15 @@ class KimiStreamedMessage implements StreamedMessage {
 export class KimiChatProvider implements ChatProvider {
   readonly name: string = 'kimi';
 
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. Mirrors the request-time
+   * normalization: `max_completion_tokens` wins over the legacy `max_tokens`
+   * alias.
+   */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_completion_tokens ?? this._generationKwargs.max_tokens;
+  }
+
   private _model: string;
   private _stream: boolean;
   private _apiKey: string | undefined;
@@ -484,6 +521,9 @@ export class KimiChatProvider implements ChatProvider {
       ...requestKwargs,
       ...(extraBody as Record<string, unknown> | undefined),
     };
+    if (options?.responseFormat !== undefined) {
+      createParams['response_format'] = responseFormatToOpenAI(options.responseFormat);
+    }
 
     if (tools.length > 0) {
       createParams['tools'] = tools.map((t) => convertTool(t));
