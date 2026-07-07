@@ -55,6 +55,9 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
       stopBatchAfterThis: overBudgetAfterSet,
       approvalRule: this.name,
       execute: async () => {
+        if (goal.getGoal().goal === null) {
+          return { output: 'Goal budget not set: no current goal.' };
+        }
         if (budget === null) {
           return {
             output:

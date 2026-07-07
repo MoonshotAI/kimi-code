@@ -413,19 +413,19 @@ describe('disclosure mode — model switch projection', () => {
 });
 
 describe('disclosure mode — executable table freshness', () => {
-  it('reflects goal-state tool visibility without waiting for a new turn snapshot', async () => {
-    // The loop re-reads loopTools per step (buildTools); the same mechanism
-    // that makes a selected tool dispatchable mid-turn also makes goal-gated
-    // mutation tools appear as soon as a goal exists.
+  it('keeps goal tools visible without waiting for goal state changes', async () => {
     const ctx = await disclosureAgent();
     ctx.configure({
       tools: ['Read', 'UpdateGoal', 'SetGoalBudget', 'mcp__*'],
       provider: DISCLOSURE_PROVIDER,
       modelCapabilities: DISCLOSURE_CAPABILITIES,
     });
-    expect(ctx.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
+
     await ctx.agent.goal.createGoal({ objective: 'ship the feature' });
     expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
   });
 
   it('rebuilds the ledger from a replayed history with no in-memory state (resume path)', () => {

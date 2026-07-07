@@ -216,6 +216,15 @@ describe('SetGoalBudgetTool', () => {
     expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBe(30 * 60 * 1000);
   });
 
+  it('reports no current goal instead of throwing when no goal exists', async () => {
+    const tool = new SetGoalBudgetTool(fakeAgent());
+
+    const result = await executeTool(tool, ctx({ value: 20, unit: 'turns' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('Goal budget not set: no current goal.');
+  });
+
   it('rounds fractional turn and token budgets before setting them', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
@@ -378,6 +387,24 @@ describe('UpdateGoalTool', () => {
     expect(result.output).toBe('Goal resumed.');
     expect(store.getGoal().goal?.status).toBe('active');
   });
+
+  it.each([
+    ['active', 'Goal not resumed: no current goal.'],
+    ['complete', 'Goal not completed: no active goal.'],
+    ['blocked', 'Goal not blocked: no active goal.'],
+    ['paused', 'Goal not paused: no current goal.'],
+  ] as const)('reports a no-goal result for `%s` without stopping the turn', async (status, output) => {
+    const tool = new UpdateGoalTool(agentWithContext(makeStore()));
+    const execution = tool.resolveExecution({ status });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+
+    expect(execution.stopBatchAfterThis).toBeFalsy();
+    const result = await execution.execute({ turnId: '0', toolCallId: 'call_1', signal });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.stopTurn).toBeFalsy();
+    expect(result.output).toBe(output);
+  });
 });
 
 describe('ToolManager goal tool registration', () => {
@@ -386,7 +413,7 @@ describe('ToolManager goal tool registration', () => {
       type,
     });
     // configure() gives the agent a provider so builtin tools can initialize.
-    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget'] });
+    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] });
     // Re-run registration so the gate reads the scoped flag resolver state.
     ctxAgent.agent.tools.initializeBuiltinTools();
     return ctxAgent.agent.tools.loopTools.map((tool) => tool.name);
@@ -394,8 +421,9 @@ describe('ToolManager goal tool registration', () => {
 
   it('exposes goal tools to the main agent', () => {
     const names = loopToolNames('main');
-    expect(names).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
-    expect(names).not.toContain('SetGoalBudget');
+    expect(names).toEqual(
+      expect.arrayContaining(['CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal']),
+    );
   });
 
   it('does not expose goal tools to subagents even when enabled', () => {
@@ -403,9 +431,10 @@ describe('ToolManager goal tool registration', () => {
     expect(names).not.toContain('CreateGoal');
     expect(names).not.toContain('GetGoal');
     expect(names).not.toContain('SetGoalBudget');
+    expect(names).not.toContain('UpdateGoal');
   });
 
-  it('hides goal mutation tools until a goal exists, then exposes them', async () => {
+  it('keeps goal mutation tools visible across goal lifecycle states', async () => {
     const store = makeStore();
     const ctxAgent = testAgent({
       type: 'main',
@@ -413,17 +442,16 @@ describe('ToolManager goal tool registration', () => {
     });
     ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] });
     ctxAgent.agent.tools.initializeBuiltinTools();
-    // No goal yet -> mutation tools are filtered out of the model's tool list.
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('SetGoalBudget');
-    // Once a goal exists, it appears.
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
+
     await store.createGoal({ objective: 'work' });
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
 
     await store.markComplete({}, 'model');
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('SetGoalBudget');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
   });
 });
 
