@@ -6,6 +6,33 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.1 (2026-07-07)
+
+### Bug Fixes
+
+- Fix `kimi -p` abandoning background subagents that start late or run long, so their results reach the main agent.
+- web: Recover chat streaming after a stale background-tab WebSocket instead of requiring a page refresh.
+- Fix some third-party models (e.g. Opus 4.8) falling back to the family default max output tokens; an unrecognized minor now reuses the nearest earlier known version's limit.
+- Honor explicit Anthropic `max_output_size` settings instead of clamping them to built-in ceilings.
+- Stop showing tool-produced `<system>` metadata in tool outputs; failed tools now show their own error text.
+- Fix goal completion and blocked updates to produce one final user-facing outcome summary from the tool result.
+- Fix goal startup and queue handling so failed starts restore permission mode and queued goals wait behind new user messages.
+- Fix goal token budgets to count model completion tokens and stop without extra continuation steps when the budget is exhausted.
+- Fix goal tools being unavailable to the main agent, and return clear messages for invalid goal-control calls.
+- Respect the `--skills-dir` flag in interactive mode.
+- web: Fix several slash commands and skills not working on the new-session screen: `/goal <objective>` and slash skill activations (for example `/pre-changelog`) silently did nothing, and `/btw [<question>]` opened an empty side chat.
+
+### Polish
+
+- Preserve prior turns' thinking by default on the Anthropic provider (Claude and Kimi's Anthropic-compatible mode), matching the Kimi default. Disable with `[thinking] keep = "off"` or `KIMI_MODEL_THINKING_KEEP=off`.
+- Clarify the permission mode descriptions shown by `/permission`, `/auto`, and `/yolo`, and reorder `/auto` and `/yolo` in the command list.
+- Show long-running goal wall-clock budget reminders in hours.
+- Tighten goal-mode guidance so agents continue reasonable work across turns instead of ending goals prematurely.
+
+### Refactors
+
+- Record a per-request trace in the session wire log, so model requests can be reconstructed for debugging.
+
 ## 0.23.0 (2026-07-06)
 
 ### Features
