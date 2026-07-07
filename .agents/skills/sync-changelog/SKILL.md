@@ -90,16 +90,16 @@ Use upstream order: newest version first.
 
 ### 3. Strip Decorations And Extract Entry Text
 
-Upstream entries look like this (with the changelog thanks feature enabled, each entry carries a `Thanks ...!` credit):
+Upstream entries look like this:
 
 ```markdown
 - [#317](https://github.com/...) [`2f51db4`](https://github.com/...) Thanks [@user](https://github.com/...)! - Clean up lint warnings ...
 ```
 
-Keep:
+Changesets may add a `Thanks ...!` credit, but it must be removed every time. Keep:
 
 - Version headings such as `## 0.2.0`.
-- Only the body text of each entry, after the PR/hash/thanks decoration.
+- Only the body text of each entry, after the PR/hash decoration and any `Thanks ...!` credit have been removed.
 
 Remove:
 
@@ -107,9 +107,9 @@ Remove:
 - Changesets subheadings such as `### Patch Changes`, `### Minor Changes`, and `### Major Changes`.
 - PR links such as `[#317](...)`.
 - Commit hash links such as ``[`2f51db4`](...)``.
-- The `Thanks [@user](...)!` credit is handled by the "Contributor credit" rule below: drop it for team members, but preserve it for external contributors. Do not silently drop an external contributor's credit.
+- The `Thanks [@user](...)!` credit, including the multi-author form `Thanks [@a](...), [@b](...)!`. Drop the whole `Thanks ...!` segment every time, regardless of whether the feature is enabled.
 
-After stripping, each entry is `- <body text>`, optionally followed by a preserved contributor credit (see below).
+After stripping, each entry is `- <body text>`.
 
 Drop SDK-only and provider-internal detail. This changelog serves `@moonshot-ai/kimi-code` CLI and web users. Within an entry, keep only what CLI/web users can perceive, and remove sentences that document internals instead of user-visible behavior. Apply this on both the English and Chinese pages:
 
@@ -127,22 +127,6 @@ Web UI prefix: if the entry is a web UI change, prefix the body text with `web: 
 
 An entry counts as a web UI change when its upstream commit touches `apps/kimi-web/`. Check with `git show --name-only <hash>` (the commit hash is the one stripped above). `gen-changesets` writes this prefix for web changes, so it is usually already present in upstream — preserve it when it is there, and add it when a web entry lacks it. When a commit touches both web and non-web code, use `web:` only if the user-facing change described by the entry is in the web UI. Keep the `web:` prefix on the Chinese page too — it is a scope marker, not translated text.
 
-Contributor credit (`Thanks ...!`): the upstream line ends with `Thanks [@user](https://github.com/<user>)!`, naming the author of the PR that introduced the change. Decide whether to keep it by resolving the source PR (the `[#NNNN]` link on the same entry) and reading `author_association`:
-
-```bash
-gh api repos/MoonshotAI/kimi-code/pulls/<NNNN> --jq .author_association
-```
-
-- `OWNER`, `MEMBER`, or `COLLABORATOR` → treat as **team** → **drop** the credit. Rationale: MoonshotAI team members push branches to the main repo, so they show up as `COLLABORATOR` (org membership is usually private); external contributors submit from forks and show up as `CONTRIBUTOR` / `FIRST_TIME_CONTRIBUTOR`.
-- `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `NONE`, `null`, or an unresolvable PR → external contributor, or unknown → **preserve** the credit.
-
-When preserved, append the credit to the entry body:
-
-- English page: ` Thanks @user!`
-- Chinese page: `（感谢 @user）`
-
-Group entries by the thanks handle; one PR lookup per unique handle is enough. Bias toward preserving when the lookup is inconclusive — wrongly dropping an external contributor's credit is worse than thanking someone on the team. If a classification still looks wrong, note it and confirm with the reviewer rather than guessing silently.
-
 Upstream language rule: `gen-changesets` requires changelog entries to be English. If the upstream CLI changelog contains a non-English entry, stop and report it to the user. Do not silently rewrite it while syncing docs.
 
 Public-text rule: do not copy real internal endpoints, key names, account names, or service names into docs changelogs. Replace examples with neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY` while preserving the user-visible meaning.
@@ -158,7 +142,6 @@ Before classifying, merge related entries and drop redundant ones from the user-
   - Keep `web:` if the merged fixes are all web-facing. Classify as `Bug Fixes`.
   - **Do not over-merge.** Leave a fix standalone when it is broad, high-value, or genuinely distinct (for example model/provider tool-calling bugs, session-list corruption, file-completion gaps). Merging is for low-reader-value, similar-shape fixes that read as a wall of similar bullets.
 - **Drop server/API plumbing covered by a web entry.** If one entry adds a web UI feature (for example, an Archived sessions page) and another entry only adds the server or REST/WebSocket endpoints that exist solely to power that web feature, keep the `web:` entry and drop the API entry. CLI and web users perceive the web page; the backing API is implementation detail with no independent user value on this changelog. Keep the API entry only when it has independent user value — a new public endpoint that SDK or server consumers call directly, or a capability usable outside the web feature. When unsure, keep both and let the reviewer decide.
-- **Do not lose external credit.** When you drop or merge an entry that carried an external-contributor thanks, attach that thanks to the surviving entry so the contribution is still credited.
 
 The docs changelog uses five section types:
 
@@ -336,7 +319,8 @@ Check:
 - Each version has the same section set and order on both pages.
 - Each section has the same number of entries on both pages.
 - Within each section, the most valuable, obvious, and larger entries appear before smaller or narrower entries.
-- PR links and commit hashes were stripped; the `Thanks ...!` credit was dropped for team members and preserved for external contributors.
+- PR links and commit hashes were stripped.
+- No `Thanks ...!` credit remains (remove it every time).
 - Real internal identifiers were replaced with neutral placeholders.
 - There are no empty sections.
 - Markdown indentation and blank lines are intact.
@@ -453,7 +437,7 @@ Return the PR URL to the user when done.
 |---|---|
 | Adding entries directly to the English docs page without reading upstream | Use `apps/kimi-code/CHANGELOG.md` as the source |
 | Copying PR links or commit hashes into docs | Strip them; keep only body text |
-| Dropping every `Thanks ...!` credit | Drop it only for team members; preserve `Thanks @user!` (EN) / `（感谢 @user）` (ZH) for external contributors |
+| Leaving the `Thanks ...!` credit in docs | Remove it every time, including the multi-author form |
 | Leaving near-duplicate micro-tweaks as separate bullets | Merge small tweaks to the same surface into one higher-level entry (e.g. composer height + font → composer's default styling) |
 | Listing many narrow fixes to the same surface as separate bullets | When three or more fixes target the same UI area or the same class of problem, merge them into one higher-level fix entry; keep genuinely distinct or high-value fixes standalone |
 | Listing a server/API entry that only backs a web feature already listed | Drop the API entry and keep the `web:` entry, unless the API has independent user value |
