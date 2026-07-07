@@ -5,6 +5,7 @@ import {
   approvalNotificationCopy,
   completionNotificationCopy,
   questionNotificationCopy,
+  shouldNotifyCompletion,
   useNotification,
 } from '../src/composables/client/useNotification';
 
@@ -164,5 +165,23 @@ describe('notification copy', () => {
       title: 'Kimi Code · 待回答',
       body: '有提问等待你回答',
     });
+  });
+});
+
+describe('shouldNotifyCompletion', () => {
+  it('returns true only for idle + no pending approval + no pending question', () => {
+    expect(shouldNotifyCompletion('idle', false, false)).toBe(true);
+  });
+
+  it('returns false for aborted', () => {
+    expect(shouldNotifyCompletion('aborted', false, false)).toBe(false);
+  });
+
+  it('returns false when pending approval exists', () => {
+    expect(shouldNotifyCompletion('idle', true, false)).toBe(false);
+  });
+
+  it('returns false when pending question exists', () => {
+    expect(shouldNotifyCompletion('idle', false, true)).toBe(false);
   });
 });

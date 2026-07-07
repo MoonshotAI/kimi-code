@@ -30,7 +30,7 @@ import {
 } from '../lib/storage';
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
-import { useNotification } from './client/useNotification';
+import { useNotification, shouldNotifyCompletion } from './client/useNotification';
 import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
@@ -2350,22 +2350,19 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
   // Browser notification when the user isn't watching this session.
   // Only real completions notify; aborted turns and turns that ended up
   // blocked on approval/question do not fire the generic "Turn finished" alert.
-  if (status === 'idle') {
-    const hasPendingAttention =
-      (rawState.approvalsBySession[sid] ?? []).length > 0 ||
-      (rawState.questionsBySession[sid] ?? []).length > 0;
-    if (!hasPendingAttention) {
-      notification.maybeNotifyCompletion(sid, {
-        isActiveAndVisible:
-          sid === rawState.activeSessionId &&
-          typeof document !== 'undefined' &&
-          document.visibilityState === 'visible',
-        sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
-        onClick: () => {
-          void workspaceState.selectSession(sid);
-        },
-      });
-    }
+  const hasPendingApproval = (rawState.approvalsBySession[sid] ?? []).length > 0;
+  const hasPendingQuestion = (rawState.questionsBySession[sid] ?? []).length > 0;
+  if (shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion)) {
+    notification.maybeNotifyCompletion(sid, {
+      isActiveAndVisible:
+        sid === rawState.activeSessionId &&
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible',
+      sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+      onClick: () => {
+        void workspaceState.selectSession(sid);
+      },
+    });
   }
 
   // Completion sound — only for real completions (aborted/cancelled turns stay

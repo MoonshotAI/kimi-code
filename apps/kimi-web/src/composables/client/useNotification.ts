@@ -15,6 +15,14 @@ import { ref, type Ref } from 'vue';
 import { i18n } from '../../i18n';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 
+export function shouldNotifyCompletion(
+  status: 'idle' | 'aborted',
+  hasPendingApproval: boolean,
+  hasPendingQuestion: boolean,
+): boolean {
+  return status === 'idle' && !hasPendingApproval && !hasPendingQuestion;
+}
+
 function loadNotify(key: string, defaultOn: boolean): boolean {
   const v = safeGetString(key);
   return v === null ? defaultOn : v === '1';
