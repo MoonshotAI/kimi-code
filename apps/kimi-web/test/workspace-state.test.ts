@@ -833,6 +833,36 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     expect(apiMock.updateSession).not.toHaveBeenCalled();
   });
 
+  it('clears staged goal mode so the objective prompt is submitted once', async () => {
+    // Regression for: empty composer with bare `/goal` staged (draftModes.goalMode),
+    // then `/goal <objective>`. createDraftSession copies draftModes.goalMode into
+    // goalModeBySession[sid]. If we don't clear it after the explicit
+    // updateSession(goalObjective), submitPromptInternal re-POSTs a goalObjective,
+    // the daemon rejects it (existing goal), and the objective prompt never sends.
+    const state = emptyComposerState();
+    const deps: UseWorkspaceStateDeps = {
+      ...goalDeps(),
+      draftModes: { planMode: false, swarmMode: false, goalMode: true },
+    };
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.createGoal('improve test coverage');
+
+    // The explicit goal objective went through...
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'improve test coverage' });
+    // ...and the objective prompt itself was submitted exactly once as a user prompt.
+    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(1);
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_new',
+      expect.objectContaining({
+        content: [{ type: 'text', text: 'improve test coverage' }],
+      }),
+    );
+    // goal mode flag was consumed by the explicit goal.
+    expect(state.goalModeBySession['sess_new']).toBe(false);
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
   it('surfaces session-creation failures instead of leaking an unhandled rejection', async () => {
     // App.vue invokes createGoal fire-and-forget, so a rejection from
     // createDraftSession must be caught and reported via pushOperationFailure —

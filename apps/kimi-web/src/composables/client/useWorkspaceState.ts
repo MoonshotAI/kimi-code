@@ -1655,6 +1655,18 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       pushOperationFailure('createGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
       return;
     }
+    // The goal objective is set explicitly above. If goal mode was staged on the
+    // draft (e.g. the user ran bare `/goal`, then `/goal <objective>`),
+    // createDraftSession copied it into this session's goalModeBySession map.
+    // Leaving it on would make submitPromptInternal (via sendPrompt) re-POST
+    // another goalObjective — which the daemon rejects because a goal already
+    // exists — and the user's objective prompt would never be submitted.
+    // Clear the one-shot flag here: an explicit `/goal <objective>` has exactly
+    // the same effect as the goal-mode flag's consumption.
+    if (rawState.goalModeBySession[sid]) {
+      rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: false };
+      saveGoalModeToStorage();
+    }
     // Preserve normal send queueing semantics whenever the goal still targets the
     // active session (the overwhelmingly common case): sendPrompt enqueues when
     // another turn is running or a prompt is already in flight. Only fall back to
