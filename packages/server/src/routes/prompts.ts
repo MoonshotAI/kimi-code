@@ -13,7 +13,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, compressImageForModel, compressBase64ForModel, persistOriginalImage, sessionMediaOriginalsDir, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, compressImageForModel, compressBase64ForModel, persistOriginalImage, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -132,7 +132,12 @@ export function registerPromptsRoutes(
           const core = a.get(ICoreProcessService);
           const cacheDir = join(a.get(IEnvironmentService).homeDir, 'cache');
           const resolved = await resolvePromptMediaFiles(body, fileStore, cacheDir, {
-            telemetry: core.telemetry,
+            // Scoped to the session so prompt-ingestion image_compress events
+            // carry the same context as the per-session agent telemetry.
+            telemetry:
+              core.telemetry === undefined
+                ? undefined
+                : withTelemetryContext(core.telemetry, { sessionId: session_id }),
             // Resolved lazily — only when an inline base64 image actually
             // got compressed — so image-free prompts never pay the lookup.
             resolveOriginalsDir: async () => {

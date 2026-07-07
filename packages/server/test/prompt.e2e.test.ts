@@ -32,7 +32,12 @@ import { WebSocket } from 'ws';
 import { Jimp } from 'jimp';
 
 import type { Event, PromptSubmission } from '@moonshot-ai/protocol';
-import { IEventService, IPromptService, PromptService } from '@moonshot-ai/agent-core';
+import {
+  IEventService,
+  IPromptService,
+  PromptService,
+  type TelemetryClient,
+} from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type ServerStartOptions, type RunningServer } from '../src';
 import { fixedTokenAuth } from './helpers/serverHarness';
@@ -61,13 +66,14 @@ afterEach(async () => {
 
 async function bootDaemon(
   serviceOverrides?: ServerStartOptions['serviceOverrides'],
+  telemetry?: TelemetryClient,
 ): Promise<RunningServer> {
   server = await startServer({
     host: '127.0.0.1',
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    coreProcessOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome, telemetry },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
     serviceOverrides: [fixedTokenAuth(), ...(serviceOverrides ?? [])],
   });
@@ -557,6 +563,54 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     expect(pathMatch![1]!).toContain('/media-originals/');
     const persisted = await readFile(pathMatch![1]!);
     expect(persisted.equals(Buffer.from(base64, 'base64'))).toBe(true);
+  });
+
+  it('scopes prompt image compression telemetry to the session', async () => {
+    // The agent-side image_compress sources inherit the session context from
+    // their per-session telemetry client; the prompt-ingestion sources must
+    // match, or prompt_inline/prompt_file events cannot be correlated with
+    // the session they belong to.
+    const events: { event: string; sessionId: string | null | undefined }[] = [];
+    const makeClient = (ctx: { sessionId?: string | null }): TelemetryClient => ({
+      track: (event) => events.push({ event, sessionId: ctx.sessionId }),
+      withContext: (patch) => makeClient({ ...ctx, ...patch }),
+    });
+    const r = await bootDaemon(
+      [
+        [
+          IPromptService,
+          createPromptServiceOverride({
+            submit: async (_sid, body) => ({
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            }),
+          }),
+        ],
+      ],
+      makeClient({}),
+    );
+    const sid = await createSession(r);
+
+    const base64 = Buffer.from(
+      await new Jimp({ width: 3600, height: 400, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: base64 } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const compress = events.filter((e) => e.event === 'image_compress');
+    expect(compress).toHaveLength(1);
+    expect(compress[0]!.sessionId).toBe(sid);
   });
 
   it('returns 40407 when prompt image file_id is unknown', async () => {
