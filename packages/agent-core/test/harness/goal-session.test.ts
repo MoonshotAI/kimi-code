@@ -152,6 +152,12 @@ describe('goal session end-to-end', () => {
     expect(continuationHistory).toContain('Keep the self-audit brief');
     expect(continuationHistory).toContain('do not run another goal turn');
     expect(continuationHistory).toContain('end the turn normally without calling UpdateGoal');
+    expect(continuationHistory).toContain('Completion audit');
+    expect(continuationHistory).toContain('Blocked audit');
+    expect(continuationHistory).toContain('3 consecutive goal turns');
+    expect(continuationHistory).toContain('fresh blocked audit');
+    expect(continuationHistory).toContain('impossible, unsafe, or contradictory');
+    expect(continuationHistory).toContain('do not run more goal turns just to satisfy the audit');
     expect(continuationHistory).toContain('only for a genuine impasse');
 
     // Terminal UpdateGoal asks the model for one final user-facing summary.
