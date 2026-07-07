@@ -2,10 +2,13 @@
  * `promptLegacy` domain — `IAgentPromptLegacyService` implementation.
  *
  * Per-agent v1-compatible scheduler. Owns the active submission and a FIFO
- * queue; launches turns through `IAgentPromptService` and observes them to
- * auto-start the next queued prompt. Legacy `prompt.*` lifecycle events are
- * not emitted (they are not part of the v2 `AgentEvent` union); the HTTP
- * responses carry the same information.
+ * queue; gates submissions through `auth`, launches turns through `prompt`,
+ * observes active turns through `turn`, applies request overrides through
+ * `profile` / `permissionMode`, persists prompt metadata through
+ * `sessionMetadata`, publishes updates through `event`, and reads the
+ * session identity from `sessionContext`. Legacy `prompt.*` lifecycle events
+ * are not emitted (they are not part of the v2 `AgentEvent` union); the HTTP
+ * responses carry the same information. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -21,6 +24,7 @@ import {
   promptMetadataTextFromContentParts,
 } from '#/agent/rpc/prompt-metadata';
 import type { ContentPart } from '#/app/llmProtocol/message';
+import { IAuthSummaryService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -63,6 +67,7 @@ export class AgentPromptLegacyService implements IAgentPromptLegacyService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @IEventService private readonly eventService: IEventService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAuthSummaryService private readonly authSummary: IAuthSummaryService,
   ) {}
 
   list(): PromptListResponse {
@@ -73,6 +78,7 @@ export class AgentPromptLegacyService implements IAgentPromptLegacyService {
   }
 
   async submit(body: PromptSubmission): Promise<PromptSubmitResult> {
+    await this.authSummary.ensureReady();
     await this.applyOverrides(body);
 
     const record = this.createRecord(body);

@@ -80,6 +80,7 @@ package "Agent scope (per agent)" #FDF5E6 {
   rectangle "<b>systemReminder</b>\n<size:9><i>Agent</i></size>\n  IAgentSystemReminderService" as systemReminder #FDEBD0
   rectangle "<b>profile</b>\n<size:9><i>Agent</i></size>\n  IAgentProfileService" as profile #FDEBD0
   rectangle "<b>prompt</b>\n<size:9><i>Agent</i></size>\n  IAgentPromptService" as prompt #FDEBD0
+  rectangle "<b>promptLegacy</b>\n<size:9><i>Agent</i></size>\n  IAgentPromptLegacyService" as promptLegacy #FDEBD0
   rectangle "<b>turn</b>\n<size:9><i>Agent</i></size>\n  IAgentTurnService" as turn #FDEBD0
   rectangle "<b>loop</b>\n<size:9><i>Agent</i></size>\n  IAgentLoopService" as loop #FDEBD0
   rectangle "<b>llmRequester</b>\n<size:9><i>Agent</i></size>\n  IAgentLLMRequesterService" as llmRequester #FDEBD0
@@ -193,6 +194,14 @@ prompt --> contextMemory #34495E
 prompt --> turn #34495E
 prompt --> loop #34495E
 prompt --> wireRecord #34495E
+promptLegacy --> prompt #34495E
+promptLegacy --> turn #34495E
+promptLegacy --> profile #34495E
+promptLegacy --> permissionMode #34495E
+promptLegacy --> session_metadata #34495E
+promptLegacy --> event #34495E
+promptLegacy --> session_context #34495E
+promptLegacy --> auth #34495E
 turn --> loop #34495E
 turn --> wire #34495E
 turn --> contextMemory #34495E

@@ -51,7 +51,9 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
+const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
+const authProviderDetailsSchema = z.object({ provider_id: z.string() });
+const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
 
 async function resolveLegacy(core: Scope, sessionId: string): Promise<IAgentPromptLegacyService> {
   // `resume` (not `get`) so a persisted-but-cold session — created by a previous
@@ -98,7 +100,11 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       params: sessionIdParamSchema,
       success: { data: promptSubmitResultSchema },
       errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema: validationDetailsSchema },
+        [ErrorCode.AUTH_PROVISIONING_REQUIRED]: {},
+        [ErrorCode.AUTH_TOKEN_MISSING]: { detailsSchema: authProviderDetailsSchema },
+        [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
+        [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: { detailsSchema: authModelDetailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
@@ -220,6 +226,66 @@ function sendMappedError(
       case 'validation.failed':
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId));
         return;
+      case 'auth.provisioning_required':
+        reply.send({
+          code: ErrorCode.AUTH_PROVISIONING_REQUIRED,
+          msg: err.message,
+          data: null,
+          request_id: requestId,
+          details: null,
+        });
+        return;
+      case 'auth.token_missing': {
+        const details = authProviderDetails(err);
+        if (details === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.INTERNAL_ERROR,
+              `auth error ${err.code} missing provider_id`,
+              requestId,
+            ),
+          );
+          return;
+        }
+        reply.send({
+          code: ErrorCode.AUTH_TOKEN_MISSING,
+          msg: err.message,
+          data: null,
+          request_id: requestId,
+          details,
+        });
+        return;
+      }
+      case 'auth.token_unauthorized': {
+        const details = authProviderDetails(err);
+        if (details === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.INTERNAL_ERROR,
+              `auth error ${err.code} missing provider_id`,
+              requestId,
+            ),
+          );
+          return;
+        }
+        reply.send({
+          code: ErrorCode.AUTH_TOKEN_UNAUTHORIZED,
+          msg: err.message,
+          data: null,
+          request_id: requestId,
+          details,
+        });
+        return;
+      }
+      case 'auth.model_not_resolved':
+        reply.send({
+          code: ErrorCode.AUTH_MODEL_NOT_RESOLVED,
+          msg: err.message,
+          data: null,
+          request_id: requestId,
+          details: authModelDetails(err),
+        });
+        return;
     }
   }
   reply.send(
@@ -229,4 +295,19 @@ function sendMappedError(
       requestId,
     ),
   );
+}
+
+function authProviderDetails(err: KimiError): { provider_id: string } | undefined {
+  const providerId = err.details?.provider_id;
+  if (typeof providerId !== 'string') return undefined;
+  return { provider_id: providerId };
+}
+
+function authModelDetails(err: KimiError): { model_id?: string; provider_id?: string } | null {
+  const details: { model_id?: string; provider_id?: string } = {};
+  const modelId = err.details?.model_id;
+  const providerId = err.details?.provider_id;
+  if (typeof modelId === 'string') details.model_id = modelId;
+  if (typeof providerId === 'string') details.provider_id = providerId;
+  return Object.keys(details).length === 0 ? null : details;
 }

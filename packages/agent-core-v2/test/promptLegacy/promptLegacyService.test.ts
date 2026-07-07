@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -11,6 +11,10 @@ import type { PromptSubmission } from '@moonshot-ai/protocol';
 
 import { IAgentPromptLegacyService } from '#/agent/promptLegacy/promptLegacy';
 import { AgentPromptLegacyService } from '#/agent/promptLegacy/promptLegacyService';
+import { IAuthSummaryService } from '#/app/auth/auth';
+import { IEventService } from '#/app/event/event';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 interface ControlledTurn {
   readonly turn: Turn;
@@ -40,6 +44,7 @@ interface Harness {
   readonly turns: Turn[];
   readonly settleActive: (result: TurnResult) => void;
   readonly steered: string[];
+  readonly ensureReady: ReturnType<typeof vi.fn>;
 }
 
 function createHarness(options: { readonly blockPrompt?: boolean } = {}): Harness {
@@ -104,12 +109,34 @@ function createHarness(options: { readonly blockPrompt?: boolean } = {}): Harnes
     setMode: () => {},
   } as unknown as IAgentPermissionModeService;
 
+  const ensureReady = vi.fn().mockResolvedValue(undefined);
+  const authSummary = {
+    ensureReady,
+    summarize: vi.fn().mockResolvedValue([]),
+  } as unknown as IAuthSummaryService;
+
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
       reg.defineInstance(IAgentPromptService, prompt);
       reg.defineInstance(IAgentTurnService, turnService);
       reg.defineInstance(IAgentProfileService, profile);
       reg.defineInstance(IAgentPermissionModeService, permissionMode);
+      reg.defineInstance(IAuthSummaryService, authSummary);
+      reg.definePartialInstance(ISessionContext, {
+        sessionId: 'session_test',
+      });
+      reg.definePartialInstance(ISessionMetadata, {
+        read: vi.fn().mockResolvedValue({
+          id: 'session_test',
+          createdAt: 0,
+          updatedAt: 0,
+          archived: false,
+        }),
+        update: vi.fn().mockResolvedValue(undefined),
+      });
+      reg.definePartialInstance(IEventService, {
+        publish: vi.fn(),
+      });
       reg.define(IAgentPromptLegacyService, AgentPromptLegacyService);
     },
   });
@@ -118,6 +145,7 @@ function createHarness(options: { readonly blockPrompt?: boolean } = {}): Harnes
     service,
     turns,
     steered,
+    ensureReady,
     settleActive: (result) => activeSettle?.(result),
   };
 }
@@ -130,6 +158,13 @@ describe('AgentPromptLegacyService', () => {
     expect(result.prompt_id).toMatch(/^msg_/);
     expect(turns).toHaveLength(1);
     expect(service.list().active?.prompt_id).toBe(result.prompt_id);
+  });
+
+  it('checks auth readiness without the request model override to match v1', async () => {
+    const { service, ensureReady } = createHarness();
+    await service.submit({ ...textBody('hi'), model: 'request-model' });
+    expect(ensureReady).toHaveBeenCalledTimes(1);
+    expect(ensureReady).toHaveBeenCalledWith();
   });
 
   it('queues a second submit while a turn is active', async () => {
@@ -156,9 +191,7 @@ describe('AgentPromptLegacyService', () => {
     await service.submit(textBody('first'));
     const second = await service.submit(textBody('second'));
     settleActive({ reason: 'completed' });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(turns).toHaveLength(2);
+    await vi.waitFor(() => expect(turns).toHaveLength(2));
     expect(service.list().active?.prompt_id).toBe(second.prompt_id);
   });
 
@@ -169,9 +202,7 @@ describe('AgentPromptLegacyService', () => {
     const aborted = await service.abort(first.prompt_id);
     expect(aborted.aborted).toBe(true);
     settleActive({ reason: 'cancelled' });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(turns).toHaveLength(2);
+    await vi.waitFor(() => expect(turns).toHaveLength(2));
     expect(service.list().active?.prompt_id).toBe(second.prompt_id);
   });
 

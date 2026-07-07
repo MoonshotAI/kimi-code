@@ -6,8 +6,8 @@
  * to resolve a per-provider `BearerTokenProvider`, and to refresh a managed
  * OAuth provider's server-side model configuration, the `IOAuthToolkit`
  * device-code client that `IOAuthService` delegates the OAuth protocol to, and
- * the `IAuthSummaryService` used to summarize auth state and assert readiness.
- * App-scoped — shared across the application.
+ * the `IAuthSummaryService` used to summarize auth state and provide the
+ * prompt auth-readiness gate. App-scoped — shared across the application.
  */
 
 import type {
@@ -69,7 +69,7 @@ export interface IAuthSummaryService {
   readonly _serviceBrand: undefined;
 
   summarize(): Promise<readonly AuthStatus[]>;
-  ensureReady(provider?: string): Promise<void>;
+  ensureReady(): Promise<void>;
 }
 
 export const IAuthSummaryService: ServiceIdentifier<IAuthSummaryService> =
