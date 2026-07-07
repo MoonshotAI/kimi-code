@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { i18n } from '../src/i18n';
 import { STORAGE_KEYS, safeGetString } from '../src/lib/storage';
 import {
+  approvalNotificationCopy,
   completionNotificationCopy,
   questionNotificationCopy,
   useNotification,
@@ -41,11 +42,17 @@ function installStorage(storage: Storage): void {
 // Singleton — module-level refs + setters. The OS Notification API is absent in
 // the test env, so the *enable* path is a no-op; the disable path and the
 // load-from-storage defaults are what we exercise here.
-const { notifyOnComplete, notifyOnQuestion, setNotifyOnComplete, setNotifyOnQuestion } = useNotification();
-// Captured at import (before beforeEach touches the refs), so these reflect the
-// load-from-storage defaults when nothing has been stored yet.
+const {
+  notifyOnComplete,
+  notifyOnQuestion,
+  notifyOnApproval,
+  setNotifyOnComplete,
+  setNotifyOnQuestion,
+  setNotifyOnApproval,
+} = useNotification();
 const importedCompleteDefault = notifyOnComplete.value;
 const importedQuestionDefault = notifyOnQuestion.value;
+const importedApprovalDefault = notifyOnApproval.value;
 
 describe('useNotification preferences', () => {
   beforeEach(() => {
@@ -64,6 +71,10 @@ describe('useNotification preferences', () => {
     expect(importedQuestionDefault).toBe(false);
   });
 
+  it('approval notifications default to off', () => {
+    expect(importedApprovalDefault).toBe(false);
+  });
+
   it('disabling question notifications persists "0" and updates the ref', () => {
     void setNotifyOnQuestion(false);
     expect(notifyOnQuestion.value).toBe(false);
@@ -74,6 +85,12 @@ describe('useNotification preferences', () => {
     void setNotifyOnComplete(false);
     expect(notifyOnComplete.value).toBe(false);
     expect(safeGetString(STORAGE_KEYS.notifyOnComplete)).toBe('0');
+  });
+
+  it('disabling approval notifications persists "0" and updates the ref', () => {
+    void setNotifyOnApproval(false);
+    expect(notifyOnApproval.value).toBe(false);
+    expect(safeGetString(STORAGE_KEYS.notifyOnApproval)).toBe('0');
   });
 });
 
@@ -107,6 +124,32 @@ describe('notification copy', () => {
     expect(questionNotificationCopy('Storage migration', ' ')).toEqual({
       title: 'Kimi Code · Needs answer',
       body: 'Storage migration',
+    });
+  });
+
+  it('uses tool name in approval notifications', () => {
+    expect(approvalNotificationCopy('Refactor auth flow', 'bash')).toEqual({
+      title: 'Kimi Code · Approval required',
+      body: 'bash',
+    });
+  });
+
+  it('falls back to session title and then generic approval line', () => {
+    expect(approvalNotificationCopy('Refactor auth flow', ' ')).toEqual({
+      title: 'Kimi Code · Approval required',
+      body: 'Refactor auth flow',
+    });
+    expect(approvalNotificationCopy('  ', '  ')).toEqual({
+      title: 'Kimi Code · Approval required',
+      body: 'A tool needs your approval',
+    });
+  });
+
+  it('localizes approval notification copy', () => {
+    i18n.global.locale.value = 'zh';
+    expect(approvalNotificationCopy('', '')).toEqual({
+      title: 'Kimi Code · 等待审批',
+      body: '有工具等待你审批',
     });
   });
 

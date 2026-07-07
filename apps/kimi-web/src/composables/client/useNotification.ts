@@ -22,6 +22,7 @@ function loadNotify(key: string, defaultOn: boolean): boolean {
 
 const notifyOnComplete = ref(loadNotify(STORAGE_KEYS.notifyOnComplete, true));
 const notifyOnQuestion = ref(loadNotify(STORAGE_KEYS.notifyOnQuestion, false));
+const notifyOnApproval = ref(loadNotify(STORAGE_KEYS.notifyOnApproval, false));
 const notifyPermission = ref<string>(
   typeof Notification !== 'undefined' ? Notification.permission : 'denied',
 );
@@ -61,6 +62,11 @@ function setNotifyOnQuestion(on: boolean): Promise<void> {
   return setNotifyPref(notifyOnQuestion, STORAGE_KEYS.notifyOnQuestion, on);
 }
 
+/** Enable/disable approval notifications. Off by default. */
+function setNotifyOnApproval(on: boolean): Promise<void> {
+  return setNotifyPref(notifyOnApproval, STORAGE_KEYS.notifyOnApproval, on);
+}
+
 export interface NotifyCompletionCtx {
   /** True when the target session is the active one and the page is visible —
       in which case we suppress the notification. */
@@ -75,6 +81,13 @@ export interface NotifyQuestionCtx extends NotifyCompletionCtx {
   /** Short preview of the question, used as the notification body. Falls back
       to the session title, then to a generic line when empty. */
   questionPreview: string;
+}
+
+export interface NotifyApprovalCtx extends NotifyCompletionCtx {
+  /** Tool call name needing approval, used as the notification body. */
+  toolName: string;
+  /** Unique approval request id; used to deduplicate notifications per request. */
+  approvalId: string;
 }
 
 export interface NotificationCopy {
@@ -107,6 +120,20 @@ export function questionNotificationCopy(
       questionPreview,
       sessionTitle,
       i18n.global.t('settings.notifyQuestionFallback'),
+    ),
+  };
+}
+
+export function approvalNotificationCopy(
+  sessionTitle: string,
+  toolName: string,
+): NotificationCopy {
+  return {
+    title: i18n.global.t('settings.notifyApprovalTitle'),
+    body: firstText(
+      toolName,
+      sessionTitle,
+      i18n.global.t('settings.notifyApprovalFallback'),
     ),
   };
 }
@@ -175,14 +202,28 @@ function maybeNotifyQuestion(sid: string, ctx: NotifyQuestionCtx): void {
   );
 }
 
+/** Fire a notification when a tool needs approval, but only when the user
+    explicitly opted into approval notifications and isn't already looking. */
+function maybeNotifyApproval(sid: string, ctx: NotifyApprovalCtx): void {
+  maybeNotify(
+    notifyOnApproval.value,
+    ctx,
+    approvalNotificationCopy(ctx.sessionTitle, ctx.toolName),
+    `kimi-approval-${ctx.approvalId}`,
+  );
+}
+
 export function useNotification() {
   return {
     notifyOnComplete,
     notifyOnQuestion,
+    notifyOnApproval,
     notifyPermission,
     setNotifyOnComplete,
     setNotifyOnQuestion,
+    setNotifyOnApproval,
     maybeNotifyCompletion,
     maybeNotifyQuestion,
+    maybeNotifyApproval,
   };
 }
