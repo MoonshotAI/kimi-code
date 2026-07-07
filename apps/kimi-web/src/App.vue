@@ -1247,10 +1247,10 @@ function openPr(url: string): void {
   .auth-page {
     align-items: flex-start;
     padding:
-      max(48px, env(safe-area-inset-top))
-      max(20px, env(safe-area-inset-right))
-      max(24px, env(safe-area-inset-bottom))
-      max(20px, env(safe-area-inset-left));
+      max(48px, var(--safe-top))
+      max(20px, var(--safe-right))
+      max(24px, var(--safe-bottom))
+      max(20px, var(--safe-left));
   }
   .auth-page-copy h1 {
     font-size: 26px;
