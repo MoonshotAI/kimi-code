@@ -22,7 +22,7 @@
  *     honors skipResize with a hard byte-budget failure
  *   - caption: buildImageCompressionCaption renders a consistent
  *     `<system>` note (dims, sizes, readback path)
- *   - annotate: compressImageContentParts can insert that caption next to
+ *   - annotate: compressImageContentParts can collect that caption for
  *     each compressed image and persist the original via a callback
  */
 
@@ -327,7 +327,7 @@ describe('compressImageContentParts', () => {
       { type: 'text' as const, text: 'look at this' },
       { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } },
     ];
-    const out = await compressImageContentParts(parts);
+    const { parts: out } = await compressImageContentParts(parts);
 
     expect(out[0]).toEqual({ type: 'text', text: 'look at this' });
     const imagePart = out[1];
@@ -342,7 +342,7 @@ describe('compressImageContentParts', () => {
     const small = await solidPng(48, 48);
     const url = dataUrl('image/png', small);
     const parts = [{ type: 'image_url' as const, imageUrl: { url } }];
-    const out = await compressImageContentParts(parts);
+    const { parts: out } = await compressImageContentParts(parts);
     expect(out[0]).toEqual({ type: 'image_url', imageUrl: { url } });
   });
 
@@ -350,7 +350,7 @@ describe('compressImageContentParts', () => {
     const parts = [
       { type: 'image_url' as const, imageUrl: { url: 'https://example.com/pic.png' } },
     ];
-    const out = await compressImageContentParts(parts);
+    const { parts: out } = await compressImageContentParts(parts);
     expect(out[0]).toEqual({ type: 'image_url', imageUrl: { url: 'https://example.com/pic.png' } });
   });
 
@@ -359,7 +359,7 @@ describe('compressImageContentParts', () => {
     const parts = [
       { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big), id: 'att-1' } },
     ];
-    const out = await compressImageContentParts(parts);
+    const { parts: out } = await compressImageContentParts(parts);
     const imagePart = out[0];
     if (imagePart?.type !== 'image_url') throw new Error('expected image_url');
     expect(imagePart.imageUrl.id).toBe('att-1');
@@ -648,7 +648,7 @@ describe('compressImageContentParts — annotate', () => {
     return `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
   }
 
-  it('inserts a caption before a compressed image and persists the original', async () => {
+  it('collects a caption for a compressed image and persists the original', async () => {
     const big = await solidPng(2600, 2600);
     const persisted: { bytes: Uint8Array; mimeType: string }[] = [];
     const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
@@ -661,25 +661,26 @@ describe('compressImageContentParts — annotate', () => {
       },
     });
 
-    expect(out).toHaveLength(2);
-    const caption = out[0];
-    if (caption?.type !== 'text') throw new Error('expected caption text part');
-    expect(caption.text).toContain('2600x2600');
-    expect(caption.text).toContain('/tmp/originals/big.png');
-    expect(out[1]?.type).toBe('image_url');
+    // The caption comes back as data, never inserted into the parts.
+    expect(out.parts).toHaveLength(1);
+    expect(out.parts[0]?.type).toBe('image_url');
+    expect(out.captions).toHaveLength(1);
+    expect(out.captions[0]).toContain('2600x2600');
+    expect(out.captions[0]).toContain('/tmp/originals/big.png');
     expect(persisted).toHaveLength(1);
     expect(persisted[0]?.mimeType).toBe('image/png');
     expect(persisted[0]?.bytes.length).toBe(big.length);
   });
 
-  it('adds no caption when the image passes through unchanged', async () => {
+  it('collects no caption when the image passes through unchanged', async () => {
     const small = await solidPng(48, 48);
     const url = dataUrl('image/png', small);
     const out = await compressImageContentParts([{ type: 'image_url' as const, imageUrl: { url } }], {
       annotate: {},
     });
-    expect(out).toHaveLength(1);
-    expect(out[0]).toEqual({ type: 'image_url', imageUrl: { url } });
+    expect(out.parts).toHaveLength(1);
+    expect(out.parts[0]).toEqual({ type: 'image_url', imageUrl: { url } });
+    expect(out.captions).toEqual([]);
   });
 
   it('captions without a path when persistence fails', async () => {
@@ -688,9 +689,8 @@ describe('compressImageContentParts — annotate', () => {
     const out = await compressImageContentParts(parts, {
       annotate: { persistOriginal: () => Promise.resolve(null) },
     });
-    expect(out).toHaveLength(2);
-    const caption = out[0];
-    if (caption?.type !== 'text') throw new Error('expected caption text part');
-    expect(caption.text).toMatch(/not preserved/i);
+    expect(out.parts).toHaveLength(1);
+    expect(out.captions).toHaveLength(1);
+    expect(out.captions[0]).toMatch(/not preserved/i);
   });
 });

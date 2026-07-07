@@ -7,7 +7,6 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   APITimeoutError,
-  grandTotal,
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
@@ -69,8 +68,6 @@ const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 
 /** Origin tag for the synthetic "continue" prompt that drives each goal turn. */
 const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
-export const GOAL_COMPLETION_REMINDER_NAME = 'goal_completion';
-export const GOAL_BLOCKED_REMINDER_NAME = 'goal_blocked';
 const GOAL_RATE_LIMIT_PAUSE_REASON = 'Paused after provider rate limit';
 const GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX = 'Paused after provider connection error';
 const GOAL_PROVIDER_AUTH_PAUSE_PREFIX = 'Paused after provider authentication error';
@@ -90,13 +87,21 @@ const GOAL_CONTINUATION_PROMPT = [
   'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',
   'do not run another goal turn. Explain briefly if useful, then call UpdateGoal with `complete`',
   'or `blocked` in the same turn. Otherwise, weigh the objective and any completion criteria',
-  'against the work done so far. Goal mode is iterative: do one coherent slice of work, then',
-  'reassess. Call UpdateGoal with `complete` only when all required work is done, any stated',
-  'validation has passed, and there is no useful next action. Do not mark complete after only',
-  'producing a plan, summary, first pass, or partial result. If an external condition or required',
-  'user input prevents progress, or the objective cannot be completed as stated, call UpdateGoal',
-  'with `blocked`. Otherwise keep going — use the existing conversation context and your tools,',
-  'and do not ask the user for input unless a real blocker prevents progress.',
+  'against the work done so far, choose one bounded, useful slice of work, and use the existing',
+  'conversation context and your tools. Do not try to finish a broad goal in one turn unless the',
+  'whole goal is genuinely small. Most goal turns should not call UpdateGoal: after completing a',
+  'useful slice, if material work remains, end the turn normally without calling UpdateGoal so',
+  'the runtime can continue the goal in the next turn. Call UpdateGoal with `complete` only when',
+  'all required work is done, any stated validation has passed, and there is no useful next',
+  'action. Do not mark complete after only producing a plan, summary, first pass, or partial',
+  'result. Before calling `complete`, check that every required part of the objective is done,',
+  'completion criteria are satisfied, requested or expected validation passed or has been',
+  'reported as impossible, and no known material task remains. Call UpdateGoal with `blocked`',
+  'only for a genuine impasse: an external condition, required user input, missing credentials',
+  'or permissions, a persistent technical failure, or an impossible, unsafe, or contradictory',
+  'objective. Do not use `blocked` because the work is large, hard, slow, uncertain, partial,',
+  'still needs validation, or needs more goal turns. Do not ask the user for input unless a real',
+  'blocker prevents progress.',
 ].join(' ');
 
 export class TurnFlow {
@@ -384,8 +389,8 @@ export class TurnFlow {
    * Drives an active goal as a sequence of ordinary turns — the autonomous
    * equivalent of the user repeatedly typing "continue". Each iteration runs one
    * full turn, then reads the goal status the model set via `UpdateGoal`:
-   * `complete` (the record is cleared) / `blocked` / `paused` stop the loop;
-   * `active` (the model didn't decide) re-injects the goal reminder and runs the
+   * `complete` (the record is cleared) / `blocked` stop the loop; `active`
+   * (the model didn't decide) re-injects the goal reminder and runs the
    * next continuation turn. Aborted or failed turns pause the goal. Goal-state
    * blockers, such as explicit `UpdateGoal('blocked')`, prompt-hook blocks, and
    * budget limits, block it (all resumable). Returns the final turn's result.
@@ -428,8 +433,9 @@ export class TurnFlow {
       }
 
       // The model decides via UpdateGoal: a cleared record means `complete`;
-      // anything non-active means it stopped (blocked / paused). Only a still
-      // `active` goal continues to another turn.
+      // `blocked` remains as a non-active record. Runtime failures and user
+      // interrupts can still leave the goal paused. Only a still `active` goal
+      // continues to another turn.
       const goal = this.agent.goal.getGoal().goal;
       if (goal === null || goal.status !== 'active') {
         return end;
@@ -687,6 +693,7 @@ export class TurnFlow {
   private async runStepLoop(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
     let goalOutcomeMessageContinuationUsed = false;
+    let goalOutcomeToolResultPending = false;
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
@@ -719,7 +726,7 @@ export class TurnFlow {
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
           recordStepUsage: async (usage) => {
             try {
-              const snapshot = await this.agent.goal.recordTokenUsage(grandTotal(usage));
+              const snapshot = await this.agent.goal.recordTokenUsage(usage.output);
               stopForGoalBudget = snapshot?.budget.overBudget === true;
             } catch (error) {
               this.agent.log.warn('goal token accounting failed', { error });
@@ -749,41 +756,56 @@ export class TurnFlow {
             // oxlint-disable-next-line no-loop-func -- stop hook continuation state is scoped to this turn.
             shouldContinueAfterStop: async (ctx) => {
               const { signal } = ctx;
-              // 1. Flush any steered user messages.
-              if (this.flushSteerBuffer()) return { continue: true };
+              const flushedSteeredMessages = this.flushSteerBuffer();
+              // 0. A reached hard goal budget is a deterministic ceiling. While
+              //    the goal is still active, never extend the turn — neither a
+              //    steered message nor a Stop-hook continuation — past it; end
+              //    the turn so the goal driver blocks the goal at the boundary.
+              //    Buffered steers are still flushed above so real-time user
+              //    input is preserved in context even when the budget stops the
+              //    turn. A goal the model just marked terminal is no longer
+              //    active, so its final outcome message (step 2 below) still runs.
+              if (stopForGoalBudget && this.agent.goal.getActiveGoal() !== null) {
+                return { continue: false };
+              }
+              // 1. If steered user messages were flushed and no active-goal
+              //    budget stopped the turn, let the model react to them.
+              if (flushedSteeredMessages) return { continue: true };
               signal.throwIfAborted();
 
               // Print-mode drain: when `kimi -p` ends a turn while background
               // subagents are still running, hold the turn open and idle-wait
-              // until they finish (or the drain deadline is reached). Their
-              // completions steer into the buffer during the wait and are
-              // flushed afterward, so the model gets one wrap-up step to react
-              // (nominate, backfill, ...) before the turn ends. Gated on a
-              // session flag so interactive / goal modes are unaffected.
+              // until they finish. Their completions steer into the buffer
+              // during the wait and are flushed afterward, so the model gets
+              // one wrap-up step to react (nominate, backfill, ...) before the
+              // turn ends. The wait is bounded by each subagent's own timeout,
+              // not by a separate drain deadline, so late-spawned or long-
+              // running subagents are still observed. Gated on a session flag
+              // so interactive / goal modes are unaffected.
               if (this.agent.printDrainAgentTasksOnStop) {
-                const remaining = this.agent.printDrainDeadlineMs - Date.now();
                 const hasActiveAgentTask = this.agent.background
                   .list(true)
                   .some((task) => task.kind === 'agent');
-                if (hasActiveAgentTask && remaining > 0) {
+                if (hasActiveAgentTask) {
                   await this.agent.background.waitForActiveTasks(
                     (task) => task.kind === 'agent',
-                    { timeoutMs: remaining, signal },
+                    { signal },
                   );
                   this.flushSteerBuffer();
                   return { continue: true };
                 }
               }
 
-              // 2. After UpdateGoal marks a goal terminal, ask the model for one
-              //    final user-facing outcome message before the turn ends.
+              // 2. After UpdateGoal marks a goal terminal, its tool result carries
+              //    the final-message reminder. Let the model read that result and
+              //    produce one user-facing outcome message before the turn ends.
               if (
                 !goalOutcomeMessageContinuationUsed &&
-                isGoalOutcomeReminderOrigin(this.agent.context.history.at(-1)?.origin)
+                goalOutcomeToolResultPending
               ) {
                 goalOutcomeMessageContinuationUsed = true;
+                goalOutcomeToolResultPending = false;
                 if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
-                  this.agent.context.popMatchedMessage(isGoalOutcomeReminderOrigin);
                   return { continue: false };
                 }
                 return { continue: true };
@@ -849,12 +871,16 @@ export class TurnFlow {
                   toolOutput: isError === true ? undefined : toolOutputText(output).slice(0, 2000),
                 },
               });
-              return budgetToolResultForModel({
+              const modelResult = await budgetToolResultForModel({
                 homedir: this.agent.homedir,
                 toolName: ctx.toolCall.name,
                 toolCallId: ctx.toolCall.id,
                 result: finalResult,
               });
+              if (isTerminalUpdateGoalResult(ctx.toolCall.name, ctx.args, finalResult)) {
+                goalOutcomeToolResultPending = true;
+              }
+              return modelResult;
             },
           },
         });
@@ -1091,16 +1117,21 @@ export class TurnFlow {
   }
 }
 
-function isGoalOutcomeReminderOrigin(origin: PromptOrigin | undefined): boolean {
-  return (
-    origin?.kind === 'system_trigger' &&
-    (origin.name === GOAL_COMPLETION_REMINDER_NAME ||
-      origin.name === GOAL_BLOCKED_REMINDER_NAME)
-  );
-}
-
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
   return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
+}
+
+function isTerminalUpdateGoalResult(
+  toolName: string,
+  args: unknown,
+  result: ExecutableToolResult,
+): boolean {
+  if (toolName !== 'UpdateGoal' || result.isError === true || result.stopTurn !== true) {
+    return false;
+  }
+  if (!isPlainRecord(args)) return false;
+  const status = args['status'];
+  return status === 'complete' || status === 'blocked';
 }
 
 function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined {

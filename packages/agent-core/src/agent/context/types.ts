@@ -103,6 +103,12 @@ export type PromptOrigin =
 export type ContextMessage = Message & {
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  /**
+   * Tool-result side channel rendered to the model but never to UIs; see
+   * `ExecutableToolResult.note`. Appended to the projected tool message at
+   * the provider boundary and stripped from the wire message itself.
+   */
+  readonly note?: string;
 };
 
 export interface UserMessageRecord {

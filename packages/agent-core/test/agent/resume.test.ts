@@ -753,7 +753,7 @@ describe('Agent resume', () => {
       'user',
     ]);
     expect(textContent(llmHistory[3])).toContain(
-      '<system>ERROR: Tool execution failed.</system>',
+      'ERROR: Tool execution failed.',
     );
     expect(textContent(llmHistory[3])).toContain(
       'Tool execution was interrupted before its result was recorded',

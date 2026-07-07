@@ -19,7 +19,8 @@ import {
   isLoadableToolsAnnouncement,
 } from '../../src/agent/context/dynamic-tools';
 import { ToolManager } from '../../src/agent/tool';
-import type { Agent } from '../../src/agent';
+import type { Agent, AgentRecord } from '../../src/agent';
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import type { MCPClient } from '../../src/mcp/types';
 import { estimateTokensForMessage } from '../../src/utils/tokens';
@@ -274,6 +275,45 @@ describe('disclosure mode — select_tools three branches and dispatch', () => {
     expect(step2.history.some((m) => m.tools !== undefined && m.tools.length > 0)).toBe(true);
   });
 
+  it('keeps the top-level tools snapshot stable across select_tools loads', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOn(), persistence });
+    ctx.configure({
+      tools: ['Read', 'mcp__*'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await registerGrafana(ctx);
+
+    ctx.mockNextResponse({ type: 'text', text: 'loading' }, selectCall('call-1', [GRAFANA_TOOL]));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await runTurn(ctx, 'load it');
+    ctx.mockNextResponse({ type: 'text', text: 'two' });
+    await runTurn(ctx, 'again');
+
+    // Loaded schemas travel via message-level tools declarations (recorded as
+    // context messages); the byte-stable top level stays one snapshot.
+    const snapshots = persistence.records.filter(
+      (record): record is Extract<AgentRecord, { type: 'llm.tools_snapshot' }> =>
+        record.type === 'llm.tools_snapshot',
+    );
+    expect(snapshots).toHaveLength(1);
+    const snapshotNames = snapshots[0]!.tools.map((tool) => tool.name);
+    expect(snapshotNames).toContain('select_tools');
+    expect(snapshotNames).toContain('Read');
+    expect(snapshotNames.some((name) => name.startsWith('mcp__'))).toBe(false);
+
+    const requests = persistence.records.filter(
+      (record): record is Extract<AgentRecord, { type: 'llm.request' }> =>
+        record.type === 'llm.request',
+    );
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      expect(request.toolsHash).toBe(snapshots[0]!.hash);
+      expect(request.toolSelect).toBe(true);
+    }
+  });
+
   it('reports Already available without re-injecting, and Unknown per name', async () => {
     const ctx = await disclosureAgent();
 
@@ -413,19 +453,19 @@ describe('disclosure mode — model switch projection', () => {
 });
 
 describe('disclosure mode — executable table freshness', () => {
-  it('reflects goal-state tool visibility without waiting for a new turn snapshot', async () => {
-    // The loop re-reads loopTools per step (buildTools); the same mechanism
-    // that makes a selected tool dispatchable mid-turn also makes goal-gated
-    // mutation tools appear as soon as a goal exists.
+  it('keeps goal tools visible without waiting for goal state changes', async () => {
     const ctx = await disclosureAgent();
     ctx.configure({
       tools: ['Read', 'UpdateGoal', 'SetGoalBudget', 'mcp__*'],
       provider: DISCLOSURE_PROVIDER,
       modelCapabilities: DISCLOSURE_CAPABILITIES,
     });
-    expect(ctx.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
+
     await ctx.agent.goal.createGoal({ objective: 'ship the feature' });
     expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
   });
 
   it('rebuilds the ledger from a replayed history with no in-memory state (resume path)', () => {

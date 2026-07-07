@@ -2,7 +2,7 @@ import { cpus, freemem, loadavg, totalmem } from 'node:os';
 
 import type { TelemetryProperties } from './types';
 
-const DEFAULT_INTERVAL_MS = 30_000;
+const DEFAULT_INTERVAL_MS = 300_000;
 const DEFAULT_WARMUP_SAMPLE_MS = 1_500;
 const SYSTEM_METRICS_EVENT = 'system_metrics';
 
@@ -79,8 +79,7 @@ export class SystemMetricsCollector {
 
     const mem = process.memoryUsage();
     const constrainedMemory = getConstrainedMemoryBytes();
-
-    this.client.track(SYSTEM_METRICS_EVENT, {
+    const properties: TelemetryProperties = {
       process_started_at: this.processStartedAtSeconds,
       process_uptime_ms: Math.round(process.uptime() * 1000),
       rss_bytes: mem.rss,
@@ -88,7 +87,6 @@ export class SystemMetricsCollector {
       heap_total_bytes: mem.heapTotal,
       external_bytes: mem.external,
       array_buffers_bytes: mem.arrayBuffers,
-      constrained_memory_bytes: constrainedMemory,
       cpu_user_us: cpu.user,
       cpu_system_us: cpu.system,
       cpu_elapsed_us: Math.round(elapsedUs),
@@ -96,12 +94,17 @@ export class SystemMetricsCollector {
       free_mem_bytes: freemem(),
       total_mem_bytes: totalmem(),
       cpu_count: cpus().length,
-    });
+    };
+    if (constrainedMemory !== undefined) {
+      properties['constrained_memory_bytes'] = constrainedMemory;
+    }
+
+    this.client.track(SYSTEM_METRICS_EVENT, properties);
   }
 }
 
 function getConstrainedMemoryBytes(): number | undefined {
   if (typeof process.constrainedMemory !== 'function') return undefined;
   const value = process.constrainedMemory();
-  return Number.isFinite(value) ? value : undefined;
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }

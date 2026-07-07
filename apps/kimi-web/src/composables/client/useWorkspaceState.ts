@@ -126,7 +126,7 @@ export interface UseWorkspaceStateDeps {
   reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch) => void;
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
@@ -737,6 +737,75 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
+   * Create a session in a workspace for an immediate first action — the first
+   * prompt (`startSessionAndSendPrompt`) or a skill activation
+   * (`startSessionAndActivateSkill`) from the empty-session composer. Returns
+   * the new session id, or null if the workspace is unknown. Applies the staged
+   * draft model + modes onto the new session. Throws on daemon failure so the
+   * caller can surface the error via pushOperationFailure.
+   */
+  async function createDraftSession(workspaceId: string): Promise<string | null> {
+    const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
+    if (!ws) return null;
+    const api = getKimiWebApi();
+    let workspaceIdForCreate: string | undefined;
+    let cwdForCreate = ws.root;
+    try {
+      const registered = await api.addWorkspace({ root: ws.root });
+      workspaceIdForCreate = registered.id;
+      cwdForCreate = registered.root;
+      upsertWorkspacePreserveOrder(registered);
+    } catch {
+      // Older daemons may not have /workspaces.
+    }
+    const draftPick = modelProvider.draftModel.value ?? undefined;
+    const session = await api.createSession({
+      workspaceId: workspaceIdForCreate,
+      cwd: cwdForCreate,
+      model: draftPick,
+    });
+    modelProvider.draftModel.value = null; // applied — the next draft starts from the default
+    // The create echo may return model as '' (same daemon quirk as /profile);
+    // keep the user's pick so the status line doesn't snap back to the default.
+    const created =
+      draftPick !== undefined && (!session.model || session.model.length === 0)
+        ? { ...session, model: draftPick }
+        : session;
+    upsertSessionFront(created);
+    selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
+    // session" (createSession), here we immediately act on it: keeping
+    // sessionLoading=true through the snapshot avoids flashing the empty-session
+    // composer before the optimistic first turn lands. selectSession resolves,
+    // then the caller adds the first turn synchronously (no await in between),
+    // so the view goes loading → message with no empty-composer frame.
+    await selectSession(session.id);
+    // Carry any mode toggles the user staged in the empty composer into the
+    // newly-created session, so the first action honors them. Write them to
+    // this session's per-session maps by id (not via the activeSessionId-based
+    // setters): if the user switches to another session while selectSession is
+    // awaiting the snapshot, the setters would otherwise read the then-current
+    // activeSessionId and pollute that session while this one loses the modes.
+    const sid = session.id;
+    if (draftModes.planMode) {
+      rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
+      savePlanModeToStorage();
+    }
+    if (draftModes.swarmMode) {
+      rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: true };
+      saveSwarmModeToStorage();
+    }
+    if (draftModes.goalMode) {
+      rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
+      saveGoalModeToStorage();
+    }
+    draftModes.planMode = false;
+    draftModes.swarmMode = false;
+    draftModes.goalMode = false;
+    return sid;
+  }
+
+  /**
    * Create a session and immediately submit the first prompt.
    * This is the unified path when there is no active session (e.g. after
    * clicking "+" or in an empty workspace).
@@ -746,67 +815,85 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     text: string,
     attachments?: PromptAttachment[],
   ): Promise<void> {
-    const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-    if (!ws) return;
     try {
-      const api = getKimiWebApi();
-      let workspaceIdForCreate: string | undefined;
-      let cwdForCreate = ws.root;
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        cwdForCreate = registered.root;
-        upsertWorkspacePreserveOrder(registered);
-      } catch {
-        // Older daemons may not have /workspaces.
-      }
-      const draftPick = modelProvider.draftModel.value ?? undefined;
-      const session = await api.createSession({
-        workspaceId: workspaceIdForCreate,
-        cwd: cwdForCreate,
-        model: draftPick,
-      });
-      modelProvider.draftModel.value = null; // applied — the next draft starts from the default
-      // The create echo may return model as '' (same daemon quirk as /profile);
-      // keep the user's pick so the status line doesn't snap back to the default.
-      const created =
-        draftPick !== undefined && (!session.model || session.model.length === 0)
-          ? { ...session, model: draftPick }
-          : session;
-      upsertSessionFront(created);
-      selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-      // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
-      // session" (createSession), here we immediately send a prompt: keeping
-      // sessionLoading=true through the snapshot avoids flashing the empty-session
-      // composer before the optimistic user message lands. selectSession resolves,
-      // then submitPromptInternal adds the user turn synchronously (no await in
-      // between), so the view goes loading → message with no empty-composer frame.
-      await selectSession(session.id);
-      // Carry any mode toggles the user staged in the empty composer into the
-      // newly-created session, so the first prompt honors them. Write them to
-      // this session's per-session maps by id (not via the activeSessionId-based
-      // setters): if the user switches to another session while selectSession is
-      // awaiting the snapshot, the setters would otherwise read the then-current
-      // activeSessionId and pollute that session while this one loses the modes.
-      const sid = session.id;
-      if (draftModes.planMode) {
-        rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
-        savePlanModeToStorage();
-      }
-      if (draftModes.swarmMode) {
-        rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: true };
-        saveSwarmModeToStorage();
-      }
-      if (draftModes.goalMode) {
-        rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: true };
-        saveGoalModeToStorage();
-      }
-      draftModes.planMode = false;
-      draftModes.swarmMode = false;
-      draftModes.goalMode = false;
-      await submitPromptInternal(session.id, text, attachments);
+      const sid = await createDraftSession(workspaceId);
+      if (!sid) return;
+      await submitPromptInternal(sid, text, attachments);
     } catch (err) {
       pushOperationFailure('startSessionAndSendPrompt', err);
+    }
+  }
+
+  /**
+   * Create a session and immediately activate a skill — the empty-composer
+   * counterpart to startSessionAndSendPrompt. Without this, `/<skill>` from the
+   * new-session screen silently dropped the activation (`activateSkill` needs a
+   * session id). Shares createDraftSession so the model and draft modes are
+   * applied identically to a prompt-started session; then persists any draft
+   * plan/swarm modes here, because skill activation carries only `args`.
+   */
+  async function startSessionAndActivateSkill(
+    workspaceId: string,
+    skillName: string,
+    args?: string,
+  ): Promise<void> {
+    try {
+      const sid = await createDraftSession(workspaceId);
+      if (!sid) return;
+      // Unlike a plain prompt, skill activation only carries `args`, so the
+      // daemon never sees the prompt-time controls the user may have changed on
+      // the draft (plan/swarm, plus permission via /auto|/yolo and thinking via
+      // /thinking). Persist them onto this new session's profile and await it
+      // before activating, otherwise the first skill turn can start before
+      // applyAgentState and run at daemon defaults while the UI shows otherwise.
+      // Goal mode is a one-shot flag consumed per send, not a profile field, so
+      // there is nothing to persist for it.
+      const planMode = rawState.planModeBySession[sid] ?? false;
+      const swarmMode = rawState.swarmModeBySession[sid] ?? false;
+      // Coerce thinking against the new session's model the same way the
+      // first-prompt path does (coercePromptThinking below): a value carried
+      // over from another/default model (e.g. 'max' from an effort model) would
+      // otherwise be persisted verbatim, and the first skill turn would run at
+      // a level the UI wouldn't send for this model.
+      const promptSession = rawState.sessions.find((s) => s.id === sid);
+      const model =
+        (promptSession?.model && promptSession.model.length > 0
+          ? promptSession.model
+          : rawState.defaultModel) ?? undefined;
+      await persistSessionProfile(
+        {
+          planMode,
+          swarmMode,
+          permissionMode: rawState.permission,
+          thinking: coercePromptThinking(model),
+        },
+        sid,
+      );
+      await modelProvider.activateSkill(skillName, args, sid);
+    } catch (err) {
+      pushOperationFailure('startSessionAndActivateSkill', err);
+    }
+  }
+
+  /**
+   * Create a session and open a BTW side chat under it — the empty-composer
+   * counterpart to startSessionAndSendPrompt. Without this, `/btw <question>`
+   * from the new-session screen silently no-ops (the panel still opens, but
+   * empty), because openSideChat reads the active session id directly. The side
+   * chat prompt itself carries model / thinking / permissionMode / plan / swarm
+   * (see sendSideChatPromptOn), so unlike skill activation we don't need to
+   * persist them onto the parent profile here.
+   */
+  async function startSessionAndOpenSideChat(
+    workspaceId: string,
+    prompt?: string,
+  ): Promise<void> {
+    try {
+      const sid = await createDraftSession(workspaceId);
+      if (!sid) return;
+      await sideChat.openSideChatOn(sid, prompt);
+    } catch (err) {
+      pushOperationFailure('startSessionAndOpenSideChat', err);
     }
   }
 
@@ -1462,7 +1549,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (sid) {
       rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: on };
       savePlanModeToStorage();
-      persistSessionProfile({ planMode: on });
+      void persistSessionProfile({ planMode: on });
     } else {
       draftModes.planMode = on;
     }
@@ -1482,7 +1569,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (sid) {
       rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sid]: on };
       saveSwarmModeToStorage();
-      persistSessionProfile({ swarmMode: on });
+      void persistSessionProfile({ swarmMode: on });
     } else {
       draftModes.swarmMode = on;
     }
@@ -1533,15 +1620,66 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       });
       if (!ok) return;
     }
-    const sid = rawState.activeSessionId;
-    if (!sid) return;
+    // Empty-composer heal: `/goal <objective>` from the new-session screen
+    // would otherwise silently clear and run nothing. Create the session first
+    // (same path as the first prompt / a new-session skill), then target it.
+    let sid = rawState.activeSessionId;
+    if (!sid) {
+      // Use the same fallback as the client-wide computed activeWorkspaceId
+      // (raw value if it exists, else the first sidebar-visible workspace). On a
+      // fresh empty workspace load() never writes rawState.activeWorkspaceId
+      // (there's no most-recent session to anchor it), so a raw read here would
+      // be null and silently no-op even though the UI can still show a usable
+      // workspace. Plain first-prompts and skill activations don't hit this
+      // because App.vue passes the computed activeWorkspaceId in.
+      const raw = rawState.activeWorkspaceId;
+      const wsId =
+        raw && workspacesView.value.some((w) => w.id === raw)
+          ? raw
+          : (workspacesView.value[0]?.id ?? null);
+      if (!wsId) return;
+      // App.vue invokes createGoal fire-and-forget, so a rejection here would
+      // otherwise surface as an unhandled rejection instead of an operation
+      // failure. Mirror the other draft-session paths (skill / BTW / first
+      // prompt) which wrap createDraftSession.
+      try {
+        sid = (await createDraftSession(wsId)) ?? undefined;
+      } catch (err) {
+        pushOperationFailure('createGoal', err);
+        return;
+      }
+      if (!sid) return;
+    }
     try {
       await getKimiWebApi().updateSession(sid, { goalObjective: trimmed });
     } catch (err) {
       pushOperationFailure('createGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
       return;
     }
-    await sendPrompt(trimmed);
+    // The goal objective is set explicitly above. If goal mode was staged on the
+    // draft (e.g. the user ran bare `/goal`, then `/goal <objective>`),
+    // createDraftSession copied it into this session's goalModeBySession map.
+    // Leaving it on would make submitPromptInternal (via sendPrompt) re-POST
+    // another goalObjective — which the daemon rejects because a goal already
+    // exists — and the user's objective prompt would never be submitted.
+    // Clear the one-shot flag here: an explicit `/goal <objective>` has exactly
+    // the same effect as the goal-mode flag's consumption.
+    if (rawState.goalModeBySession[sid]) {
+      rawState.goalModeBySession = { ...rawState.goalModeBySession, [sid]: false };
+      saveGoalModeToStorage();
+    }
+    // Preserve normal send queueing semantics whenever the goal still targets the
+    // active session (the overwhelmingly common case): sendPrompt enqueues when
+    // another turn is running or a prompt is already in flight. Only fall back to
+    // the explicit-session send when activeSessionId moved during the create
+    // window above, so a concurrent session switch can't redirect the goal prompt.
+    // (The new session is otherwise idle+not-in-flight, so this does not race
+    // another turn.)
+    if (rawState.activeSessionId === sid) {
+      await sendPrompt(trimmed);
+    } else {
+      await submitPromptInternal(sid, trimmed);
+    }
   }
 
   /** Send a one-shot goal control action (pause/resume/cancel). */
@@ -1560,7 +1698,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   function setPermission(mode: PermissionMode): void {
     rawState.permission = mode;
     savePermissionToStorage(mode);
-    persistSessionProfile({ permissionMode: mode });
+    void persistSessionProfile({ permissionMode: mode });
   }
 
   /** Dismiss a warning by index */
@@ -1995,6 +2133,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     clearActiveSession,
     openWorkspaceDraft,
     startSessionAndSendPrompt,
+    startSessionAndActivateSkill,
+    startSessionAndOpenSideChat,
     addWorkspaceByPath,
     browseFs,
     getFsHome,

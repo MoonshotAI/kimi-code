@@ -1,6 +1,7 @@
 import type { ContentPart, Message, TextPart } from '@moonshot-ai/kosong';
 
 import { ErrorCodes, KimiError } from '../../errors';
+import { renderToolResultForModel } from './tool-result-render';
 import type { ContextMessage } from './types';
 
 export interface ProjectOptions {
@@ -359,26 +360,34 @@ function prepareMessageForProjection(
 ): ContextMessage | null {
   if (message.partial === true) return null;
 
+  // Tool results are stored as facts (raw output + structured isError/note).
+  // Render the model-visible form — error status prefix, empty-output
+  // placeholder, trailing note — exactly here, at the projection boundary.
+  const source =
+    message.role === 'tool'
+      ? { ...message, content: renderToolResultForModel({ output: message.content, note: message.note, isError: message.isError }) }
+      : message;
+
   let content: ContentPart[] | undefined;
-  for (const [index, part] of message.content.entries()) {
+  for (const [index, part] of source.content.entries()) {
     // Strict providers reject a text block that is empty OR whitespace-only
     // ("text content blocks must contain non-whitespace text"). Drop both; a
     // block with surrounding whitespace but real content is kept verbatim.
     if (part.type === 'text' && part.text.trim().length === 0) {
-      content ??= message.content.slice(0, index);
+      content ??= source.content.slice(0, index);
       // Report only whitespace-only (non-empty) blocks: a truly empty `''` block
       // is routine cleanup (e.g. a trailing empty text part after a tool call),
       // whereas a block that is non-empty yet all-whitespace signals something
       // upstream fed blank content and is worth surfacing for debugging.
       if (part.text.length > 0) {
-        onAnomaly?.({ kind: 'whitespace_text_dropped', role: message.role });
+        onAnomaly?.({ kind: 'whitespace_text_dropped', role: source.role });
       }
       continue;
     }
     content?.push(part);
   }
 
-  const next = content === undefined ? message : { ...message, content };
+  const next = content === undefined ? source : { ...source, content };
   if (next.role === 'tool' && next.content.length === 0) {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,

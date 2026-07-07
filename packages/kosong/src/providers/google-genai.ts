@@ -694,6 +694,11 @@ export function convertGoogleGenAIError(error: unknown): ChatProviderError {
 export class GoogleGenAIChatProvider implements ChatProvider {
   readonly name: string = 'google_genai';
 
+  /** See {@link ChatProvider.maxCompletionTokens}. */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.maxOutputTokens;
+  }
+
   private _model: string;
   private _client: GenAIClient | undefined;
   private _generationKwargs: GoogleGenAIGenerationKwargs;

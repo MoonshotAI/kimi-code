@@ -283,7 +283,7 @@ describe('ToolCallComponent', () => {
     });
   });
 
-  it('hides tool output bodies that start with a <system tag', () => {
+  it('hides tool output bodies that start with a <system-reminder tag', () => {
     const reminderOutput =
       '<system-reminder>\nThe task tools have not been used recently.\n</system-reminder>';
     const component = new ToolCallComponent(
@@ -310,7 +310,7 @@ describe('ToolCallComponent', () => {
     expect(expanded).not.toContain('task tools');
   });
 
-  it('hides <system-prefixed output even when the tool result is an error', () => {
+  it('hides <system-reminder-prefixed output even when the tool result is an error', () => {
     const component = new ToolCallComponent(
       {
         id: 'call_hidden_err',
@@ -327,6 +327,29 @@ describe('ToolCallComponent', () => {
     const out = strip(component.render(100).join('\n'));
     expect(out).not.toContain('system-reminder');
     expect(out).not.toContain('do not show');
+  });
+
+  it('renders output that merely starts with a literal <system> tag', () => {
+    // Tool metadata no longer travels inside `output` (it rides the result's
+    // `note` side channel), so real output starting with the literal tag —
+    // a file that contains it, an MCP tool's text — must stay visible.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_literal',
+        name: 'Bash',
+        args: { command: 'cat notes.txt' },
+      },
+      {
+        tool_call_id: 'call_literal',
+        output: '<system>literal text from a user file</system>\nsecond line',
+        is_error: false,
+      },
+    );
+
+    component.setExpanded(true);
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('<system>literal text from a user file</system>');
+    expect(out).toContain('second line');
   });
 
   it('renders AgentSwarm results as a one-line summary without raw XML', () => {
