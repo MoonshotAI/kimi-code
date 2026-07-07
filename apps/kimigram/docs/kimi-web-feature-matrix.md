@@ -31,11 +31,11 @@ Any feature exposed through Telegram must fit these constraints:
 | Feature Area | kimi-web Capability | kimigram Status | Telegram Feasibility | Priority |
 |---|---|---|---|---|
 | **Chat / Prompts** | Full composer with streaming, prompt queue, `/steer`, abort, slash commands, `@` mentions, attachments. | **Partial** | Plain-text prompts and replies already work. Queue/steer/abort can be commands; attachments limited; tool-call cards must be summarized. | P1 |
-| **Sessions** | List, create, fork, archive, undo, compact, update profile/status, child sessions, BTW side chat. | **Missing** | Commands such as `/status`, `/new`, `/fork`, `/archive`, `/compact` are feasible with confirmation prompts. | P2 |
+| **Sessions** | List, create, fork, archive, undo, compact, update profile/status, child sessions, BTW side chat. | **Missing** | Commands such as `/status`, `/new`, `/fork`, `/archive`, `/undo`, `/compact` are feasible with confirmation prompts. | P2 |
 | **Messages / History** | Paginated history, snapshot, conversation TOC. | **Missing** | `/history` with pagination is feasible, but long output must be chunked or linked. | P2 |
-| **Approvals** | Approve/reject/cancel cards with summary and context. | **Partial** | Event already notified as plain text. **High-value:** inline keyboard with **Approve** / **Reject** / **Cancel** buttons. | P0 |
+| **Approvals** | Approve/reject/cancel cards with summary and context. | **Partial** | `event.approval.requested` already notified as plain text. **High-value:** inline keyboard with **Approve** / **Reject** / **Cancel** buttons. | P0 |
 | **Questions** | Single-choice, multi-choice, text, and dismissible question cards. | **Missing** | Inline keyboard or reply-thread answers fit Telegram well. | P1 |
-| **Tasks** | List, view output, cancel background tasks; progress streaming. | **Partial** | `task.completed` already notified. Add `/tasks` and streaming progress summaries. | P1 |
+| **Tasks** | List, view output, cancel background tasks; progress streaming. | **Partial** | `event.task.completed` already notified. Add `/tasks` and streaming progress summaries. | P1 |
 | **Terminals** | Attach, input, resize, and stream terminal I/O via WebSocket. | **Missing** | Limited value in Telegram; can create/close and tail text output, but interactive input is poor. | P3 |
 | **Skills** | List and activate session/workspace skills. | **Missing** | `/skills` and `/skill <name>` commands are feasible; activation can forward to REST endpoint. | P2 |
 | **File System** | List, read, search, grep, git status, diff, download, open in editor. | **Missing** | `/ls`, `/read`, `/search`, `/grep`, `/git_status` commands feasible. Diffs and large files should be summarized or sent as files. | P2 |
@@ -74,6 +74,7 @@ Any feature exposed through Telegram must fit these constraints:
    - Listen for `event.question.requested`.
    - Render single/multi-choice questions as inline keyboards; text questions via reply thread.
    - POST answers to `/api/v1/sessions/{id}/questions/{qid}`.
+   - Add a dismiss action mapping to `POST /api/v1/sessions/{id}/questions/{qid}:dismiss`.
 
 3. **Task list command** (`apps/kimigram/src/bot.ts`, `apps/kimigram/src/kimi/client.ts`)
    - Add `/tasks` command listing active tasks for the paired session.
@@ -81,6 +82,8 @@ Any feature exposed through Telegram must fit these constraints:
 
 4. **Prompt lifecycle commands** (`apps/kimigram/src/bot.ts`, `apps/kimigram/src/kimi/client.ts`)
    - Add `/abort` → `POST /api/v1/sessions/{id}:abort`.
+   - Add `/steer` → `POST /api/v1/sessions/{id}/prompts:steer`.
+   - Prompt queue, slash commands, and `@` mentions are deferred; plain-text prompts cover the common case for now.
 
 5. **Expanded milestone notifications** (`apps/kimigram/src/kimi/events.ts`)
    - Surface `event.question.requested`, `event.task.created`, `event.task.progress`, and
