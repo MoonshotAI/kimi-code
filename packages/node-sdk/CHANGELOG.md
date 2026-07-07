@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.13.0
+
+### Minor Changes
+
+- [#1369](https://github.com/MoonshotAI/kimi-code/pull/1369) [`f0896a5`](https://github.com/MoonshotAI/kimi-code/commit/f0896a53b01f7e5b9bf5b8f93d2cd7387d765f07) Thanks [@starquakee](https://github.com/starquakee)! - Add experimental progressive tool disclosure (`select_tools`). When the `tool-select` experimental flag is on and the active model declares the `select_tools` capability, MCP tool schemas stay out of the request's top-level `tools[]` (preserving the provider prompt cache); the model loads tools on demand by exact name via the new built-in `select_tools` tool, guided by `<tools_added>/<tools_removed>` announcements. Off by default and inert on models without the capability — behavior is unchanged until a supporting model is catalogued. The SDK additionally maps the `select_tools` capability when building model aliases from a catalog and reports the new flag through `getExperimentalFeatures()`.
+
 ## 0.12.1
 
 ### Patch Changes

@@ -412,6 +412,7 @@ describe('kimi export', () => {
       version: expect.any(String),
       uiMode: 'shell',
       model: 'k2',
+      sessionId: undefined,
       getAccessToken: expect.any(Function),
     });
     expect(mocks.initializeTelemetry.mock.invocationCallOrder[0]).toBeLessThan(

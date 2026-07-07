@@ -83,6 +83,7 @@ const emit = defineEmits<{
 // Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
 const showSearch = ref(false);
+const sessionSearchShortcut = isAppleShortcutPlatform() ? '⌘K' : 'Ctrl K';
 
 function openSearch(): void {
   // Sessions are loaded per-workspace (first page only); lazily drain the rest
@@ -100,6 +101,14 @@ function onSearchKeydown(e: KeyboardEvent): void {
 
 onMounted(() => window.addEventListener('keydown', onSearchKeydown));
 onBeforeUnmount(() => window.removeEventListener('keydown', onSearchKeydown));
+
+function isAppleShortcutPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (/Mac|iPod|iPhone|iPad/.test(navigator.platform)) return true;
+
+  const userAgentData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  return userAgentData?.platform === 'macOS' || userAgentData?.platform === 'iOS';
+}
 
 // Scroll-linked header seam: the .btn-wrap bottom border/shadow only appears
 // once the session list has actually scrolled, so an unscrolled list shows no
@@ -590,7 +599,7 @@ onBeforeUnmount(() => {
       <!-- Session search — opens the Spotlight-style search dialog -->
       <button class="search" type="button" @click="openSearch">
         <Icon class="search-icon" name="search" />
-        <span class="search-input">{{ t('sidebar.searchShortcut') }}</span>
+        <span class="search-input">{{ t('sidebar.searchShortcut', { shortcut: sessionSearchShortcut }) }}</span>
       </button>
 
       <!-- New chat + new workspace buttons -->
@@ -752,10 +761,13 @@ onBeforeUnmount(() => {
       @select="onSelectSession"
       @close="showSearch = false"
     />
+    <!-- Keep inside <aside>: a top-level <Teleport> makes Sidebar multi-root,
+         which breaks v-show on the host (Vue can't apply display:none to a
+         Fragment). Teleport still renders to body regardless of placement. -->
+    <Teleport to="body">
+      <DesignSystemView v-if="showDesignSystem" @close="showDesignSystem = false" />
+    </Teleport>
   </aside>
-  <Teleport to="body">
-    <DesignSystemView v-if="showDesignSystem" @close="showDesignSystem = false" />
-  </Teleport>
 </template>
 
 <style scoped>
@@ -772,10 +784,9 @@ onBeforeUnmount(() => {
   --sb-pad-x: var(--space-4);  /* row horizontal padding */
   --sb-gutter: 20px;           /* leading icon slot (14px folder icon + 6px margin) */
   --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
-  /* Sidebar reads at 16px, matching the chat content size. Override the global
-     14px UI font on this subtree so the brand / action buttons / search (which
-     derive from --ui-font-size) all scale up together. */
-  --ui-font-size: 15px;
+  /* Sidebar stays one step above compact UI chrome, but still follows the
+     user-controlled font-size preference. */
+  --ui-font-size: var(--sidebar-ui-font-size);
 }
 
 /* Session column. Width is set inline from the App resize handle. */
@@ -846,7 +857,7 @@ onBeforeUnmount(() => {
   touch-action: none;
 }
 .ch-name {
-  font-size: 15px;
+  font-size: var(--ui-font-size);
   font-weight: 500;
   line-height: 22px;
   color: var(--color-text);

@@ -265,7 +265,8 @@ onUnmounted(() => {
             </ul>
 
             <h3 class="sub">Type scale &amp; weight</h3>
-            <p>The type scale keeps and formalizes the existing <code>--ui-font-size</code> (UI, default 14px) / <code>--content-font-size</code> (body, 16px) dual tracks: <b>UI controls / buttons / forms</b> use <code>--text-base</code> (14px); <b>reading body — including chat Markdown, message bubbles, etc.</b> uses <code>--text-lg</code> (16px, relaxed line-height) for readability; the <b>sidebar session list</b> uses <code>calc(var(--ui-font-size) - 1px)</code> (15px, one step below the sidebar's 16px base) for density.
+            <p>The user font-size preference writes <code>--base-ui-font-size</code>. Compact UI chrome follows it through <code>--ui-font-size</code>, while chat reading surfaces and the sidebar derive one readable step above it through <code>--content-font-size</code> and <code>--sidebar-ui-font-size</code>.</p>
+            <p>The fixed product type tokens still define component defaults: <b>UI controls / buttons / forms</b> use <code>--text-base</code> (14px); <b>reading body — including chat Markdown, message bubbles, etc.</b> stays one step larger than compact chrome for readability; the <b>sidebar session list</b> follows that same readable step while keeping list density.
             Drop stray <code>font-weight: 650 / 750</code>; converge on two weights, 400 / 500 (regular / emphasis).</p>
             <div class="panel panel-pad" style="margin:16px 0">
               <div class="type-row"><div class="type-sample" style="font-size:22px;font-weight:500">Page Title</div><div class="type-meta">--text-2xl · 22 / 500</div></div>
@@ -280,6 +281,9 @@ onUnmounted(() => {
               <tbody>
                 <tr><td class="tk">--font-ui</td><td class="val">-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"…</td><td>UI &amp; body (system fonts first)</td></tr>
                 <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>code, tool names, line numbers, diffs</td></tr>
+                <tr><td class="tk">--base-ui-font-size</td><td class="val">14px user preference</td><td>root setting that drives UI, reading body, and sidebar font sizes</td></tr>
+                <tr><td class="tk">--content-font-size</td><td class="val">calc(base + 1px)</td><td>chat Markdown, message bubbles, composer</td></tr>
+                <tr><td class="tk">--sidebar-ui-font-size</td><td class="val">calc(base + 1px)</td><td>sidebar brand, search, workspace and session rows</td></tr>
                 <tr><td class="tk">--leading-tight/normal/relaxed</td><td class="val">1.25 / 1.5 / 1.7</td><td>headings / UI / long text</td></tr>
                 <tr><td class="tk">--weight-regular/medium</td><td class="val">400 / 500</td><td>body / emphasis</td></tr>
               </tbody>
@@ -2132,7 +2136,7 @@ onUnmounted(() => {
   .p-tool-row.expanded .tr-car { transform: rotate(90deg); }
 
   /* Detail after a row is expanded (code / output) */
-  .p-tool-detail { padding: 0 11px 11px 36px; background: var(--p-surface-sunken); border-top: 1px solid var(--p-line); }
+  .p-tool-detail { padding: 0 11px 11px; background: var(--p-surface-sunken); border-top: 1px solid var(--p-line); }
   .p-tool-detail .p-code { margin-top: 10px; }
 
   /* ===== Chat: Composer ===== */

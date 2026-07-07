@@ -228,6 +228,87 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(!values?.includes("@packages/ai/src/autocomplete.ts"));
 		});
 
+		test("searches additional base paths with fd for @ mentions", async () => {
+			setupFolder(baseDir, {
+				files: { "shared-cwd.ts": "export {};" },
+			});
+			setupFolder(outsideDir, {
+				files: { "shared-extra.ts": "export {};" },
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir]);
+			const result = await getSuggestions(provider, ["@shared"], 0, 7);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.ok(values.includes("@shared-cwd.ts"));
+			assert.ok(values.includes(`@${join(outsideDir, "shared-extra.ts").replace(/\\/g, "/")}`));
+		});
+
+		test("scopes @dir/ queries across every root", async () => {
+			setupFolder(baseDir, {
+				files: { "sub/cwd-file.ts": "export {};" },
+			});
+			setupFolder(outsideDir, {
+				files: { "sub/extra-file.ts": "export {};" },
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir]);
+			const result = await getSuggestions(provider, ["@sub/file"], 0, 9);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.ok(values.includes("@sub/cwd-file.ts"));
+			assert.ok(values.includes(`@${join(outsideDir, "sub", "extra-file.ts").replace(/\\/g, "/")}`));
+		});
+
+		test("deduplicates entries when an additional root is inside cwd", async () => {
+			const nestedDir = join(baseDir, "extra");
+			setupFolder(nestedDir, {
+				files: { "Overlap.ts": "export {};" },
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [nestedDir]);
+			const result = await getSuggestions(provider, ["@overlap"], 0, 8);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			const absValue = `@${join(nestedDir, "Overlap.ts").replace(/\\/g, "/")}`;
+			const relValue = "@extra/Overlap.ts";
+			const overlapCount = values.filter((v) => v === absValue || v === relValue).length;
+			assert.strictEqual(overlapCount, 1);
+		});
+
+		test("merges empty @ query across roots within the result cap", async () => {
+			const cwdFiles: Record<string, string> = {};
+			for (let i = 0; i < 15; i++) cwdFiles[`f${i}.ts`] = "export {};";
+			setupFolder(baseDir, { files: cwdFiles });
+			const extraFiles: Record<string, string> = {};
+			for (let i = 0; i < 15; i++) extraFiles[`g${i}.ts`] = "export {};";
+			setupFolder(outsideDir, { files: extraFiles });
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir]);
+			const result = await getSuggestions(provider, ["@"], 0, 1);
+
+			const count = result?.items.length ?? 0;
+			assert.ok(count <= 20, `expected <= 20 items, got ${count}`);
+			assert.ok(count > 0);
+		});
+
+		test("falls back to full-path per root when another root has the scoped directory", async () => {
+			setupFolder(baseDir, {
+				files: { "packages/tui/src/autocomplete.ts": "export {};" },
+			});
+			// outsideDir has a top-level src/ but no matching file; a global fallback
+			// would skip cwd's full-path search entirely and hide the cwd match.
+			setupFolder(outsideDir, {
+				files: { "src/other.ts": "export {};" },
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir]);
+			const result = await getSuggestions(provider, ["@src/auto"], 0, 9);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.ok(values.includes("@packages/tui/src/autocomplete.ts"));
+		});
+
 		test("matches directory in middle of path with --full-path", async () => {
 			setupFolder(baseDir, {
 				files: {

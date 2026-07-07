@@ -1,5 +1,5 @@
 {
-  "changelog": ["@changesets/changelog-github", { "repo": "MoonshotAI/kimi-code", "disableThanks": true }],
+  "changelog": ["@changesets/changelog-github", { "repo": "MoonshotAI/kimi-code" }],
   "commit": false,
   "fixed": [],
   "linked": [],
@@ -10,8 +10,7 @@
     "@moonshot-ai/server-e2e",
     "@moonshot-ai/vis",
     "@moonshot-ai/vis-server",
-    "@moonshot-ai/vis-web",
-    "kimi-migration-legacy"
+    "@moonshot-ai/vis-web"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

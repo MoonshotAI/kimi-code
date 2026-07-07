@@ -217,6 +217,9 @@ describe('runPrompt', () => {
     expect(mocks.session.prompt).toHaveBeenCalledWith('say hello');
     expect(stdout.text()).toBe('• hello world\n\n');
     expect(stderr.text()).toBe('To resume this session: kimi -r ses_prompt\n');
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'ses_prompt' }),
+    );
     expect(mocks.shutdownTelemetry).toHaveBeenCalled();
     expect(mocks.harnessClose).toHaveBeenCalled();
   });

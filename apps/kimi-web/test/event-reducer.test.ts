@@ -233,6 +233,38 @@ describe('reduceAppEvent taskProgress', () => {
     );
     expect(next.tasksBySession['s1']?.[0]?.text).toBe('partial');
   });
+
+  it('preserves subagent identity metadata across a taskCreated replacement with omitted fields', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: {
+        's1': [
+          {
+            ...makeSubagentTask('t1', 's1'),
+            parentToolCallId: 'call-1',
+            swarmIndex: 2,
+            subagentType: 'explore',
+            runInBackground: true,
+            outputLines: ['old line'],
+            text: 'partial',
+          },
+        ],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'taskCreated', sessionId: 's1', task: makeSubagentTask('t1', 's1') },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]).toMatchObject({
+      parentToolCallId: 'call-1',
+      swarmIndex: 2,
+      subagentType: 'explore',
+      runInBackground: true,
+      outputLines: ['old line'],
+      text: 'partial',
+    });
+  });
 });
 
 describe('reduceAppEvent sessions reference stability', () => {
@@ -273,5 +305,51 @@ describe('reduceAppEvent sessions reference stability', () => {
     );
     expect(next.sessions).not.toBe(state.sessions);
     expect(next.sessions.map((s) => s.id)).toEqual(['s2', 's1']);
+  });
+});
+
+describe('reduceAppEvent messageCreated cron origin', () => {
+  it('appends a cron-origin user message instead of reconciling it into an optimistic echo', () => {
+    const sid = 's-cron';
+    const optimistic: AppMessage = {
+      id: 'opt_1',
+      sessionId: sid,
+      role: 'user',
+      content: [{ type: 'text', text: 'check the BTC price' }],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      promptId: 'pr_user',
+      metadata: { 'kimiWeb.optimisticUserMessage': true },
+    };
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession(sid, '2026-01-01T00:00:00.000Z')],
+      messagesBySession: { [sid]: [optimistic] },
+    };
+    const cronMessage: AppMessage = {
+      id: 'cron_1',
+      sessionId: sid,
+      role: 'user',
+      content: [{ type: 'text', text: 'check the BTC price' }],
+      createdAt: '2026-01-01T00:01:00.000Z',
+      promptId: 'cron_pr_x',
+      metadata: {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'j',
+          cron: '* * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'messageCreated', message: cronMessage },
+      { sessionId: sid, seq: 2 },
+    );
+    const msgs = next.messagesBySession[sid]!;
+    expect(msgs).toHaveLength(2);
+    expect(msgs.map((m) => m.id)).toEqual(['opt_1', 'cron_1']);
   });
 });

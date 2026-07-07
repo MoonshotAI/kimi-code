@@ -609,7 +609,17 @@ export class TurnFlow {
       this.agent.emitEvent(errorEvent);
     }
     if (ended.reason !== 'completed') {
-      this.trackTurnInterrupted(turnId, this.currentStepByTurn.get(turnId) ?? this.currentStep);
+      // Fallback for turns that end abnormally without a `turn.interrupted`
+      // loop event reaching `trackLoopTelemetry` (e.g. a user-prompt hook block
+      // or an abort that bypasses the step loop). `ended.reason` maps onto the
+      // same interrupt-reason taxonomy the loop-event path uses; for a
+      // `cancelled` end the signal's reason decides user_cancelled vs aborted.
+      const interruptReason = telemetryInterruptReason(ended.reason, isUserCancellation(signal.reason));
+      this.trackTurnInterrupted(
+        turnId,
+        this.currentStepByTurn.get(turnId) ?? this.currentStep,
+        interruptReason,
+      );
     }
     this.telemetryModeByTurn.delete(turnId);
     this.currentStepByTurn.delete(turnId);
@@ -682,6 +692,10 @@ export class TurnFlow {
     // there is no active goal). Each goal continuation is its own turn, so this
     // re-injects the reminder once per turn rather than per step, preserving prompt caching.
     await this.agent.injection.injectGoal();
+    // Announce loadable-tool changes at the same boundary cadence: a diff is
+    // appended only when the loadable set actually changed, so quiet turns
+    // keep the prompt cache fully warm.
+    this.agent.injection.injectToolsDiff();
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
@@ -695,7 +709,10 @@ export class TurnFlow {
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
           dispatchEvent: this.buildDispatchEvent(turnId),
-          tools: this.agent.tools.loopTools,
+          // Re-read per step (not snapshotted per turn) so a select_tools load
+          // is dispatchable on the very next step of the same turn.
+          buildTools: () => this.agent.tools.loopTools,
+          describeMissingTool: (name) => this.agent.tools.missingToolMessage(name),
           log: this.agent.log,
           maxSteps: loopControl?.maxStepsPerTurn,
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
@@ -746,20 +763,21 @@ export class TurnFlow {
 
               // Print-mode drain: when `kimi -p` ends a turn while background
               // subagents are still running, hold the turn open and idle-wait
-              // until they finish (or the drain deadline is reached). Their
-              // completions steer into the buffer during the wait and are
-              // flushed afterward, so the model gets one wrap-up step to react
-              // (nominate, backfill, ...) before the turn ends. Gated on a
-              // session flag so interactive / goal modes are unaffected.
+              // until they finish. Their completions steer into the buffer
+              // during the wait and are flushed afterward, so the model gets
+              // one wrap-up step to react (nominate, backfill, ...) before the
+              // turn ends. The wait is bounded by each subagent's own timeout,
+              // not by a separate drain deadline, so late-spawned or long-
+              // running subagents are still observed. Gated on a session flag
+              // so interactive / goal modes are unaffected.
               if (this.agent.printDrainAgentTasksOnStop) {
-                const remaining = this.agent.printDrainDeadlineMs - Date.now();
                 const hasActiveAgentTask = this.agent.background
                   .list(true)
                   .some((task) => task.kind === 'agent');
-                if (hasActiveAgentTask && remaining > 0) {
+                if (hasActiveAgentTask) {
                   await this.agent.background.waitForActiveTasks(
                     (task) => task.kind === 'agent',
-                    { timeoutMs: remaining, signal },
+                    { signal },
                   );
                   this.flushSteerBuffer();
                   return { continue: true };
@@ -951,7 +969,11 @@ export class TurnFlow {
       if (event.reason === 'error' && event.activeStep !== undefined) {
         this.stepFailureByTurn.set(turnId, event);
       }
-      this.trackTurnInterrupted(turnId, interruptedStep(event));
+      this.trackTurnInterrupted(
+        turnId,
+        interruptedStep(event),
+        event.interruptReason ?? telemetryInterruptReason(event.reason, false),
+      );
       return;
     }
     this.trackToolLifecycle(event, turnId);
@@ -1037,12 +1059,17 @@ export class TurnFlow {
     return false;
   }
 
-  private trackTurnInterrupted(turnId: number, atStep: number): void {
+  private trackTurnInterrupted(
+    turnId: number,
+    atStep: number,
+    interruptReason: TelemetryInterruptReason,
+  ): void {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
     this.agent.telemetry.track('turn_interrupted', {
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       at_step: atStep,
+      interrupt_reason: interruptReason,
       ...this.requestProtocolProps(),
     });
   }
@@ -1248,6 +1275,34 @@ function toolOutputText(output: ExecutableToolResult['output']): string {
 
 function interruptedStep(event: LoopTurnInterruptedEvent): number {
   return event.activeStep ?? event.attemptedSteps;
+}
+
+/**
+ * Telemetry-facing interrupt reason. The loop reports `LoopInterruptReason`
+ * (`aborted` | `max_steps` | `error`); we split `aborted` into a deliberate
+ * user cancel vs. any other programmatic abort so telemetry can tell them
+ * apart. `filtered` is folded in for the fallback path (turn ends flagged
+ * `filtered` never emit a `turn.interrupted` loop event).
+ */
+type TelemetryInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered';
+
+function telemetryInterruptReason(
+  reason: LoopTurnInterruptedEvent['reason'] | Exclude<TurnEndedEvent['reason'], 'completed'>,
+  userCancelled: boolean,
+): TelemetryInterruptReason {
+  if ((reason === 'aborted' || reason === 'cancelled') && userCancelled) {
+    return 'user_cancelled';
+  }
+  if (reason === 'aborted' || reason === 'cancelled') return 'aborted';
+  if (reason === 'failed') return 'error';
+  // Remaining values are `max_steps` | `error` | `filtered`, which match the
+  // telemetry enum.
+  return reason;
 }
 
 interface ApiErrorClassification {

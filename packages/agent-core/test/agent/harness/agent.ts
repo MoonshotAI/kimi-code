@@ -1094,6 +1094,7 @@ function capabilityNames(capabilities: ModelCapability | undefined): string[] {
     capabilities.audio_in ? 'audio_in' : undefined,
     capabilities.thinking ? 'thinking' : undefined,
     capabilities.tool_use ? 'tool_use' : undefined,
+    capabilities.select_tools === true ? 'select_tools' : undefined,
   ].filter((capability): capability is string => capability !== undefined);
 }
 

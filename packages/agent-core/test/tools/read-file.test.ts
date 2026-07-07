@@ -66,6 +66,6 @@ describe('ReadTool — total-lines message channel', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('3\tc');
-    expect(result.output).toContain('Total lines in file: 5.');
+    expect(result.note).toContain('Total lines in file: 5.');
   });
 });

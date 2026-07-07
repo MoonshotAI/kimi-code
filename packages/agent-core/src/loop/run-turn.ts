@@ -10,6 +10,7 @@ import { addUsage, emptyUsage, type TokenUsage } from '@moonshot-ai/kosong';
 
 import type { Logger } from '#/logging/types';
 
+import { isUserCancellation } from '../utils/abort';
 import {
   createMaxStepsExceededError,
   errorMessage,
@@ -42,6 +43,21 @@ export interface RunTurnInput {
   readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly tools?: readonly ExecutableTool[] | undefined;
+  /**
+   * Per-step tool table builder. When present it wins over `tools` and is
+   * re-invoked before every step, so a tool loaded mid-turn (select_tools
+   * schema injection) is dispatchable on the very next step and state-driven
+   * visibility (e.g. goal mutation tools) stays fresh. `tools` remains as the
+   * static per-turn snapshot for hosts without dynamic tool tables.
+   */
+  readonly buildTools?: (() => readonly ExecutableTool[]) | undefined;
+  /**
+   * Optional wording override for a tool call whose name resolves to no
+   * executable tool. Lets the host distinguish "loaded but its server is
+   * disconnected" from a plain unknown name under progressive disclosure.
+   * Returning `undefined` keeps the default "not found" message.
+   */
+  readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
   readonly maxSteps?: number | undefined;
@@ -60,6 +76,8 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     buildMessagesStrict,
     dispatchEvent,
     tools,
+    buildTools,
+    describeMissingTool,
     hooks,
     log,
     maxSteps,
@@ -96,6 +114,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         dispatchEvent,
         llm,
         tools,
+        // Passed through unresolved: the step evaluates it AFTER beforeStep,
+        // next to buildMessages, so the tool table and the request messages
+        // come from the same state (beforeStep can run compaction, which
+        // trims loaded schemas and rewrites the ledger).
+        buildTools,
+        describeMissingTool,
         hooks,
         log,
         currentStep: steps,
@@ -125,7 +149,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     }
   } catch (error) {
     if (isAbortError(error) || signal.aborted) {
-      dispatchEvent(makeInterruptedEvent('aborted', steps, activeStep));
+      // A deliberate user cancel travels as the signal's reason (and may be the
+      // thrown error itself). Report it distinctly from a timeout or other
+      // programmatic abort so telemetry can tell the two apart.
+      const interruptReason =
+        isUserCancellation(signal.reason) || isUserCancellation(error) ? 'user_cancelled' : 'aborted';
+      dispatchEvent(makeInterruptedEvent('aborted', steps, activeStep, undefined, interruptReason));
       return { stopReason: 'aborted', steps, usage };
     }
     const reason: LoopInterruptReason = isMaxStepsExceededError(error) ? 'max_steps' : 'error';
@@ -141,6 +170,7 @@ function makeInterruptedEvent(
   attemptedSteps: number,
   activeStep: number | undefined,
   message?: string | undefined,
+  interruptReason: LoopTurnInterruptedEvent['interruptReason'] = reason,
 ): LoopTurnInterruptedEvent {
   return {
     type: 'turn.interrupted',
@@ -148,5 +178,6 @@ function makeInterruptedEvent(
     attemptedSteps,
     ...(activeStep !== undefined ? { activeStep } : {}),
     ...(message !== undefined ? { message } : {}),
+    interruptReason,
   };
 }

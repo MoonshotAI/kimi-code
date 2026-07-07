@@ -38,6 +38,11 @@ export interface QuestionItem {
 }
 
 export type QuestionAnswerMethod = 'enter' | 'space' | 'number_key';
+/**
+ * Flattened answers keyed by question text; values are the chosen option
+ * label(s) (comma-joined for multi-select) or free-form "Other" text.
+ * `true` marks a question as answered without echoing a concrete value.
+ */
 export type QuestionAnswers = Record<string, string | true>;
 
 export interface QuestionResponse {

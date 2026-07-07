@@ -152,13 +152,6 @@ export class Agent {
    * by the session for print runs; defaults to false everywhere else.
    */
   printDrainAgentTasksOnStop = false;
-  /**
-   * Absolute deadline (ms epoch) bounding all print-mode drain waits for this
-   * agent, derived from `background.printWaitCeilingS`. `Infinity` when the
-   * drain is disabled. Shared across every drain hold within a single print
-   * run so backfill rounds cannot exceed the ceiling in aggregate.
-   */
-  printDrainDeadlineMs = Number.POSITIVE_INFINITY;
 
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;
@@ -236,6 +229,25 @@ export class Agent {
     if (this.config.hasProvider) {
       this.tools.initializeBuiltinTools();
     }
+  }
+
+  /**
+   * Single decision point for select_tools progressive disclosure. All three
+   * gates must be open: the model declares the `select_tools` capability, the
+   * model declares `tool_use` (a model without tool use registering
+   * select_tools is a contradiction), and the `tool-select` experimental flag
+   * is on. Every consumer — top-level tools[] convergence, select_tools
+   * registration, manifest announcements, projection shaping — reads this
+   * instead of re-deriving the conditions, so degradation is lossless: any
+   * closed gate reproduces the inline behavior byte-for-byte.
+   */
+  get toolSelectEnabled(): boolean {
+    const capability = this.config.modelCapabilities;
+    return (
+      capability.select_tools === true &&
+      capability.tool_use &&
+      this.experimentalFlags.enabled('tool-select')
+    );
   }
 
   get generate(): typeof generate {

@@ -645,7 +645,7 @@ export interface AppSessionWarning {
 export interface KimiWebApi {
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
   getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean }>;
-  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
+  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean; archivedOnly?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;
@@ -653,6 +653,7 @@ export interface KimiWebApi {
   getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus>;
   getSessionWarnings(sessionId: string): Promise<AppSessionWarning[]>;
   archiveSession(sessionId: string): Promise<{ archived: true }>;
+  restoreSession(sessionId: string): Promise<AppSession>;
   listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
   /** v2 initial sync: atomic session state + `asOfSeq` watermark + epoch. */
   getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot>;
