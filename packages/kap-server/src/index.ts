@@ -18,3 +18,18 @@ export type {
 } from './services/pinoLoggerService';
 export { acquireLock, getLiveLock, DEFAULT_LOCK_PATH, DEFAULT_LOCK_DIR } from './lock';
 export type { AcquireLockOptions, AcquireLockResult, LockContents } from './lock';
+export {
+  createInstanceRegistry,
+  listLiveServerInstances,
+  getLiveServerInstance,
+  resolveServerInstancesDir,
+  DEFAULT_SERVER_DIR,
+  DEFAULT_SERVER_INSTANCES_DIR,
+  HEARTBEAT_INTERVAL_MS,
+} from './instanceRegistry';
+export type {
+  IInstanceRegistry,
+  InstanceRegistration,
+  InstanceRegistryOptions,
+  ServerInstanceInfo,
+} from './instanceRegistry';

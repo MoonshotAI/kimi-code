@@ -12,6 +12,7 @@ import {
   IConfigService,
   IModelCatalogService,
   logSeed,
+  MULTI_SERVER_FLAG_ENV,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -22,7 +23,8 @@ import { createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
-import { acquireLock, ServerLockedError } from './lock';
+import { acquireLock, type AcquireLockResult, ServerLockedError } from './lock';
+import { createInstanceRegistry, type InstanceRegistration } from './instanceRegistry';
 import { transformOpenApiDocument } from './openapi/transforms';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
@@ -115,26 +117,64 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
+/**
+ * Resolve the `multi_server` gate from the environment *before* bootstrap.
+ *
+ * The lock-vs-registry decision must be made ahead of `bootstrap()` so the
+ * legacy single-instance lock is still taken early (fail-fast, and ahead of any
+ * bootstrap-time writes to shared home-dir files). The decision keys off the
+ * dedicated `KIMI_CODE_EXPERIMENTAL_MULTI_SERVER` env only — deliberately NOT
+ * the master `KIMI_CODE_EXPERIMENTAL_FLAG`: that switch already enables the v2
+ * engine itself, and coupling the lock contract to it would make every v2
+ * server skip the legacy lock before CLI consumers learn to read the instance
+ * registry. Keeping the gate specific makes multi-server strictly opt-in.
+ */
+function isMultiServerEnabled(env: NodeJS.ProcessEnv): boolean {
+  const raw = (env[MULTI_SERVER_FLAG_ENV] ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
 export { ServerLockedError };
 
 export async function startServer(opts: ServerStartOptions = {}): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
   const homeDir = resolveKimiHome(opts.homeDir);
-  // Single-instance lock (matches v1): two servers on the same homeDir cannot
-  // run concurrently. Acquired before bind so a second instance fails fast with
-  // `ServerLockedError` rather than racing the port. Released on close and on
-  // any boot refusal below.
-  const lockHandle = acquireLock({
-    port,
-    host,
-    lockPath: opts.lockPath ?? join(homeDir, 'server', 'lock'),
-    hostVersion: getServerVersion(),
-    entry: process.argv[1],
-  });
+  // Instance discovery (matches v1 when `multi_server` is off):
+  //   - flag off: take the single-instance `<home>/server/lock` so a second
+  //     server on the same homeDir fails fast with `ServerLockedError` rather
+  //     than racing the port.
+  //   - flag on: register this process under `<home>/server/instances/` so
+  //     multiple servers can share the homeDir; port conflicts are resolved by
+  //     the `port + 1` retry below instead of the lock.
+  // Either handle is released on close and on any boot refusal below.
+  const hostVersion = getServerVersion();
+  let lockHandle: AcquireLockResult | undefined;
+  let registration: InstanceRegistration | undefined;
+  if (isMultiServerEnabled(process.env)) {
+    const registry = createInstanceRegistry({
+      instancesDir: join(homeDir, 'server', 'instances'),
+    });
+    registration = await registry.register({
+      pid: process.pid,
+      host,
+      port,
+      startedAt: Date.now(),
+      hostVersion,
+    });
+  } else {
+    lockHandle = acquireLock({
+      port,
+      host,
+      lockPath: opts.lockPath ?? join(homeDir, 'server', 'lock'),
+      hostVersion,
+      entry: process.argv[1],
+    });
+  }
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
-    lockHandle.release();
+    await registration?.release();
+    lockHandle?.release();
     throw new Error(
       `Refusing to bind ${host} (${exposureClass}) without TLS; terminate TLS at a reverse proxy or pass --insecure-no-tls.`,
     );
@@ -240,7 +280,8 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     core.dispose();
-    lockHandle.release();
+    await registration?.release();
+    lockHandle?.release();
   };
 
   const connectionRegistry = new ConnectionRegistry();
@@ -409,10 +450,16 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     await registerWebAssetRoutes(app, opts.webAssetsDir);
   }
 
-  // Bind with port+1 retry on EADDRINUSE (mirrors v1). The single-instance
-  // lock is acquired above, so any "address in use" here is a third-party
-  // listener — never another kimi server — and bumping the port is the desired
-  // policy. Port 0 (ephemeral) is never retried.
+  // Bind with port+1 retry on EADDRINUSE (mirrors v1). Port 0 (ephemeral) is
+  // never retried.
+  //
+  // When `multi_server` is off the single-instance lock above guarantees any
+  // "address in use" here is a third-party listener — never another kimi
+  // server — so bumping the port is the desired policy. When `multi_server` is
+  // on there is no lock: a busy port is likely a sibling kimi instance, and
+  // the same `port + 1` walk is exactly how the second instance yields to
+  // 58628 (and so on), so the retry doubles as the multi-instance coexistence
+  // mechanism.
   try {
     await listenWithPortRetry({
       listen: (h, p) => app.listen({ host: h, port: p }),
@@ -434,9 +481,11 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
 
   const address = app.server.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : port;
-  // Advertise the actually-bound port (e.g. ephemeral when `port: 0`) so a
-  // status/kill lookup against the lock file finds the real listener.
-  lockHandle.updatePort(boundPort);
+  // Advertise the actually-bound port (e.g. ephemeral when `port: 0`, or the
+  // `port + 1` retry winner) so a status/kill lookup against the lock file or
+  // the instance registry finds the real listener.
+  await registration?.update({ port: boundPort });
+  lockHandle?.updatePort(boundPort);
 
   void modelCatalogRefreshScheduler.start().catch((error) => {
     logger.warn(
@@ -471,14 +520,17 @@ export interface ListenWithPortRetryOptions {
 }
 
 /**
- * Bind the listener, retrying on `port + 1` when the port is held by a
- * third-party process.
+ * Bind the listener, retrying on `port + 1` when the port is held.
  *
- * Why this is the right layer: {@link startServer} acquires the single-instance
- * lock *before* listening, so by the time we reach `listen` a live kimi server
- * would already have thrown `ServerLockedError`. Any `EADDRINUSE` here is
- * therefore a third-party listener, and bumping the port is the desired policy
- * ("if the port is taken by something other than kimi server itself, +1").
+ * Why this is the right layer: when the `multi_server` flag is off,
+ * {@link startServer} takes the single-instance lock *before* listening, so by
+ * the time we reach `listen` a live kimi server would already have thrown
+ * `ServerLockedError`; any `EADDRINUSE` is then a third-party listener and
+ * bumping the port is the desired policy ("if the port is taken by something
+ * other than kimi server itself, +1"). When `multi_server` is on, the lock is
+ * replaced by the instance registry, so a busy port may be a sibling kimi
+ * instance — the same `port + 1` walk then serves as the multi-instance
+ * coexistence mechanism (second instance lands on the next free port).
  *
  * Port `0` (OS-assigned ephemeral) is never retried: the kernel already picks a
  * free port, so `EADDRINUSE` cannot arise from a specific-port conflict.

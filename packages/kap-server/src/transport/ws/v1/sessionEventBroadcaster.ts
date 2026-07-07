@@ -301,21 +301,41 @@ export class SessionEventBroadcaster {
     if (event.type === 'session.meta.updated') {
       const payload = sessionMetaUpdatedPayload(event.payload);
       if (payload === undefined) return;
-      // v1 broadcasts title changes to every connection (not just subscribers of
-      // the session) so session lists stay in sync — route via the global state,
-      // and `isGlobalEvent` fans it out to all targets. agentId/sessionId are
-      // attached here (the protocol event itself carries only title/patch).
-      void this.dispatchGlobal({
+      // The originating session id travels on the core payload (the v1 protocol
+      // event itself carries only title/patch). Recover it so the WS envelope is
+      // addressed to the real session: routing through the global state would
+      // stamp `session_id = '__global__'`, and clients would fail to match the
+      // event to any sidebar session — so the auto-generated title (or a rename
+      // from another client) would never appear. `isGlobalEvent` still fans the
+      // dispatch out to every connection, so non-subscribed clients stay in sync
+      // exactly like v1.
+      const sessionId = sessionMetaUpdatedSessionId(event.payload);
+      if (sessionId === undefined) return;
+      void this.dispatchSessionEvent(sessionId, {
         type: 'session.meta.updated',
         ...payload,
         agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
+        sessionId,
       } as Event);
     }
   }
 
   private async dispatchGlobal(event: Event): Promise<void> {
     const state = await this.ensureGlobalState();
+    state.queue = state.queue
+      .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
+      .catch(() => {});
+  }
+
+  /**
+   * Dispatch an event through a real session's state so the WS envelope carries
+   * the real `session_id` (not the global `'__global__'` watermark). Used for
+   * session-scoped core events that must still fan out to every connection
+   * (e.g. `session.meta.updated`); `isGlobalEvent` keeps the fan-out global.
+   */
+  private async dispatchSessionEvent(sessionId: string, event: Event): Promise<void> {
+    const state = await this.ensureState(sessionId);
+    if (state === undefined) return;
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
       .catch(() => {});
@@ -591,9 +611,11 @@ function modelCatalogChangedPayload(
 
 /**
  * Validate the `session.meta.updated` payload published on the core
- * `IEventService` by the `POST /sessions/{id}/profile` route. The route wraps
- * the v1 fields under `payload`; we unwrap them here and re-attach
- * agentId/sessionId at the edge.
+ * `IEventService`. Both the first-prompt auto-title path
+ * (`agent-core-v2`'s `applyPromptMetadataUpdate`) and the
+ * `POST /sessions/{id}/profile` rename route wrap the v1 fields under
+ * `payload` alongside `agentId`/`sessionId`; we unwrap the title/patch here
+ * and re-attach `agentId`/`sessionId` at the edge.
  */
 function sessionMetaUpdatedPayload(
   payload: unknown,
@@ -609,4 +631,11 @@ function sessionMetaUpdatedPayload(
       : undefined;
   if (title === undefined && patch === undefined) return undefined;
   return { title, patch };
+}
+
+/** Recover the originating session id carried on the core payload. */
+function sessionMetaUpdatedSessionId(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const sessionId = (payload as { sessionId?: unknown }).sessionId;
+  return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
 }

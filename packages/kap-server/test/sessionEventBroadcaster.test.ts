@@ -307,6 +307,55 @@ describe('SessionEventBroadcaster', () => {
     expect(await bc.subscribe('nope', target)).toBe(false);
   });
 
+  it('broadcasts session.meta.updated under the real session id and fans out to every connection', async () => {
+    // Regression: a new session's first prompt auto-generates a title and the
+    // daemon announces it via `session.meta.updated`. The event must be
+    // addressed to the real session so clients can match it to a sidebar row;
+    // stamping `session_id = '__global__'` left the row title stuck empty.
+    // (No agents attached — `session.meta.updated` is a core event, not an
+    // agent event, so the agent subscription path is irrelevant here.)
+    sessions.set('s1', new FakeLifecycle());
+
+    // A second, unrelated session with its own subscriber proves the meta
+    // update still fans out globally (clients not subscribed to s1 learn the
+    // new title too), even though the envelope is addressed to s1.
+    sessions.set('s2', new FakeLifecycle());
+
+    const s1View = collectingTarget();
+    const s2View = collectingTarget();
+    await bc.subscribe('s1', s1View.target);
+    await bc.subscribe('s2', s2View.target);
+
+    eventBus.emit({
+      type: 'session.meta.updated',
+      payload: {
+        agentId: 'main',
+        sessionId: 's1',
+        title: '测试',
+        patch: { title: '测试', isCustomTitle: false, lastPrompt: '测试' },
+      },
+    });
+
+    await vi.waitFor(() => expect(s1View.envelopes).toHaveLength(1));
+    await vi.waitFor(() => expect(s2View.envelopes).toHaveLength(1));
+
+    expect(s1View.envelopes[0]).toMatchObject({
+      type: 'session.meta.updated',
+      session_id: 's1',
+      payload: {
+        type: 'session.meta.updated',
+        agentId: 'main',
+        sessionId: 's1',
+        title: '测试',
+        patch: { title: '测试', lastPrompt: '测试' },
+      },
+    });
+    expect(s1View.envelopes[0]!.session_id).not.toBe('__global__');
+    // Fanned out to the non-subscriber under the same real session id.
+    expect(s2View.envelopes[0]!.session_id).toBe('s1');
+    expect(s1View.envelopes[0]!.volatile).toBeUndefined();
+  });
+
   it('broadcasts question requested / answered as durable v1 events', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');

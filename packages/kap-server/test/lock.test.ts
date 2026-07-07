@@ -22,6 +22,7 @@ import {
   type LockContents,
 } from '../src/lock';
 import { type RunningServer, startServer } from '../src/start';
+import { listLiveServerInstances } from '../src/instanceRegistry';
 
 let tmpDir: string;
 let lockPath: string;
@@ -305,5 +306,65 @@ describe('startServer — single-instance lock wiring', () => {
       logLevel: 'silent',
     });
     await restarted.close();
+  });
+});
+
+describe('startServer — multi_server flag wiring', () => {
+  const ENV = 'KIMI_CODE_EXPERIMENTAL_MULTI_SERVER';
+  let home: string | undefined;
+  let prevEnv: string | undefined;
+  const servers: RunningServer[] = [];
+
+  beforeEach(() => {
+    prevEnv = process.env[ENV];
+    process.env[ENV] = '1';
+  });
+
+  afterEach(async () => {
+    if (prevEnv === undefined) delete process.env[ENV];
+    else process.env[ENV] = prevEnv;
+    while (servers.length > 0) {
+      await servers.pop()!.close();
+    }
+    if (home !== undefined) {
+      rmSync(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  it('lets two servers share one homeDir, each registering a distinct instance and port', async () => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-server-v2-multi-server-'));
+    const a = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(a);
+    const b = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(b);
+
+    // Each instance binds its own (ephemeral) port and registers it.
+    expect(b.port).not.toBe(a.port);
+
+    const live = await listLiveServerInstances(home);
+    expect(live).toHaveLength(2);
+    expect(new Set(live.map((i) => i.serverId)).size).toBe(2);
+    expect(live.map((i) => i.port).sort((x, y) => x - y)).toEqual(
+      [a.port, b.port].sort((x, y) => x - y),
+    );
+    // The legacy single-instance lock is NOT created in multi-server mode.
+    expect(existsSync(join(home, 'server', 'lock'))).toBe(false);
+  });
+
+  it('removes its instance file on close so peers no longer list it', async () => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-server-v2-multi-server-'));
+    const a = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(a);
+    const b = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(b);
+    expect(await listLiveServerInstances(home)).toHaveLength(2);
+
+    await a.close();
+    servers.splice(servers.indexOf(a), 1);
+
+    const live = await listLiveServerInstances(home);
+    expect(live).toHaveLength(1);
+    expect(live[0]?.port).toBe(b.port);
   });
 });
