@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Emitter } from '#/_base/event';
 import {
-  IPluginSessionStartInjectorService,
-  PluginSessionStartInjectorService,
-} from '#/agent/contextInjector/pluginSessionStart';
+  IAgentPluginService,
+  AgentPluginService,
+} from '#/agent/plugin';
+import { IAgentContextInjectorService } from '#/agent/contextInjector';
+import { IEventBus } from '#/app/event/eventBus';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart, ReloadSummary } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -64,7 +66,11 @@ function messageText(message: { readonly content: readonly { readonly type: stri
   return message.content.map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('');
 }
 
-describe('PluginSessionStartInjectorService (production wiring)', () => {
+async function injectRegistered(ctx: TestAgentContext): Promise<void> {
+  await (ctx.get(IAgentContextInjectorService) as unknown as { inject(): Promise<void> }).inject();
+}
+
+describe('AgentPluginService plugin session-start wiring', () => {
   let ctx: TestAgentContext | undefined;
 
   afterEach(async () => {
@@ -72,7 +78,7 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
     ctx = undefined;
   });
 
-  it('injects the plugin session-start reminder through the real service during a turn', async () => {
+  it('injects the plugin session-start reminder through the real service registration', async () => {
     const catalog = new InMemorySkillCatalog();
     catalog.register(pluginSkill());
 
@@ -84,17 +90,15 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
       ),
       skillServices(catalog),
       agentService(
-        IPluginSessionStartInjectorService,
-        new SyncDescriptor(PluginSessionStartInjectorService),
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
       ),
     );
 
-    // Force-instantiate the real injector (production does this from createMain).
-    ctx.get(IPluginSessionStartInjectorService);
+    // Force-instantiate the real service (production does this from createMain).
+    ctx.get(IAgentPluginService);
 
-    ctx.mockNextResponse({ type: 'text', text: 'done' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    await ctx.untilTurnEnd();
+    await injectRegistered(ctx);
 
     const injected = findPluginSessionStartMessages(ctx).at(-1);
     expect(injected).toBeDefined();
@@ -102,6 +106,35 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
     expect(text).toContain('<plugin_session_start plugin="demo" skill="demo-skill">');
     expect(text).toContain('Do the demo thing.');
     expect(text).toContain('Always be helpful.');
+  });
+
+  it('does not re-inject the plugin session-start reminder on later turns while it remains live', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(pluginSkill());
+
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        pluginServiceStub({ sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }] }),
+      ),
+      skillServices(catalog),
+      agentService(
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
+      ),
+    );
+
+    ctx.get(IAgentPluginService);
+
+    await injectRegistered(ctx);
+    ctx.get(IEventBus).publish({
+      type: 'turn.started',
+      turnId: 2,
+    });
+    await injectRegistered(ctx);
+
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
   });
 
   it('does not inject when no plugin session starts are enabled', async () => {
@@ -113,16 +146,14 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
       appService(IPluginService, pluginServiceStub({ sessionStarts: [] })),
       skillServices(catalog),
       agentService(
-        IPluginSessionStartInjectorService,
-        new SyncDescriptor(PluginSessionStartInjectorService),
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
       ),
     );
 
-    ctx.get(IPluginSessionStartInjectorService);
+    ctx.get(IAgentPluginService);
 
-    ctx.mockNextResponse({ type: 'text', text: 'done' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    await ctx.untilTurnEnd();
+    await injectRegistered(ctx);
 
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(0);
   });
@@ -150,25 +181,22 @@ describe('PluginSessionStartInjectorService (production wiring)', () => {
       ),
       skillServices(skillCatalog),
       agentService(
-        IPluginSessionStartInjectorService,
-        new SyncDescriptor(PluginSessionStartInjectorService),
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
       ),
     );
 
-    ctx.get(IPluginSessionStartInjectorService);
+    ctx.get(IAgentPluginService);
 
-    ctx.mockNextResponse({ type: 'text', text: 'done' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    await ctx.untilTurnEnd();
+    await injectRegistered(ctx);
 
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
 
     // Simulate the skill-catalog sink firing onDidChange (e.g. after a plugin
-    // reload re-pulls the plugin source). appendReminderOnReload is async
+    // reload re-pulls the plugin source). appendFreshSessionStartReminder is async
     // (awaits skillCatalog.ready); let it settle.
     sinkChange.fire();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const messages = findPluginSessionStartMessages(ctx);
     expect(messages.length).toBeGreaterThanOrEqual(2);

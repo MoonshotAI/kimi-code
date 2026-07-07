@@ -11,7 +11,7 @@ import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleSe
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IAgentBlobService } from '#/agent/blob';
-import { IPluginSessionStartInjectorService } from '#/agent/contextInjector';
+import { IAgentPluginService } from '#/agent/plugin';
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -178,8 +178,9 @@ describe('AgentLifecycleService', () => {
       acquire: () => ({ dispose: () => {} }),
     } satisfies IAtomicDocumentStore);
     ix.stub(ILogService, noopLog);
-    ix.stub(IPluginSessionStartInjectorService, {
+    ix.stub(IAgentPluginService, {
       _serviceBrand: undefined,
+      appendFreshSessionStartReminder: async () => {},
     });
     ix.stub(IAgentToolRegistryService, {
       _serviceBrand: undefined,

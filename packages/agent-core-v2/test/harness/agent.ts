@@ -1199,12 +1199,14 @@ export class AgentTestContext {
       this.pluginSessionStartRegistered = true;
       this.get(IAgentContextInjectorService).register(
         'plugin_session_start',
-        async () =>
-          renderPluginSessionStartReminder(
+        async ({ injectedPositions }) => {
+          if (injectedPositions.length > 0) return undefined;
+          return renderPluginSessionStartReminder(
             sessionStarts,
             skillCatalog,
             this.options['log'] as { warn(message: string, payload?: unknown): void } | undefined,
-          ),
+          );
+        },
         { cadence: 'turn' },
       );
     }

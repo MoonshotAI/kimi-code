@@ -1,49 +1,35 @@
 /**
- * `contextInjector` domain (L4) — plugin session-start reminder injection.
+ * `agentPlugin` domain (L4) — `IAgentPluginService` implementation.
  *
- * Production equivalent of v1's `agent/injection/plugin-session-start.ts`.
- * Registers a turn-cadence `plugin_session_start` injection with
- * `IAgentContextInjectorService` so enabled plugins' `sessionStart` skills are
- * rendered into the main agent's context once per turn (deduped against
- * replayed history by the context-injector). On the Session skill-catalog
- * sink's `onDidChange`, force-appends a fresh reminder — or a neutralizing
- * reminder when no session start is resolvable but stale guidance may linger —
- * mirroring the `/reload` re-injection flow.
+ * Renders enabled plugins' `sessionStart` skills into the main agent's context.
+ * The normal injection path mirrors v1: add one reminder while no live
+ * `plugin_session_start` injection exists. Reload paths force-append a fresh
+ * reminder, or neutralize stale guidance when no session start is active.
  */
 
-import { Disposable } from '#/_base/di/lifecycle';
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { InstantiationType } from '#/_base/di/extensions';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { escapeXmlAttr } from '#/_base/utils/xml-escape';
-import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { ILogService } from '#/_base/log/log';
+import { escapeXmlAttr } from '#/_base/utils/xml-escape';
+import { IAgentContextInjectorService } from '#/agent/contextInjector';
+import { IAgentContextMemoryService } from '#/agent/contextMemory';
+import { IAgentSystemReminderService } from '#/agent/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
-import { IAgentSystemReminderService } from '#/agent/systemReminder';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 
-import { IAgentContextInjectorService } from './contextInjector';
+import { IAgentPluginService } from './agentPlugin';
 
-const INJECTION_VARIANT = 'plugin_session_start';
+const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
 
-export interface IPluginSessionStartInjectorService {
-  readonly _serviceBrand: undefined;
-}
-
-export const IPluginSessionStartInjectorService: ServiceIdentifier<IPluginSessionStartInjectorService> =
-  createDecorator<IPluginSessionStartInjectorService>('pluginSessionStartInjectorService');
-
-export class PluginSessionStartInjectorService
-  extends Disposable
-  implements IPluginSessionStartInjectorService
-{
+export class AgentPluginService extends Disposable implements IAgentPluginService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentContextInjectorService private readonly injector: IAgentContextInjectorService,
+    @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IPluginService private readonly plugins: IPluginService,
@@ -53,16 +39,23 @@ export class PluginSessionStartInjectorService
   ) {
     super();
     this._register(
-      this.injector.register(INJECTION_VARIANT, () => this.renderReminder(), { cadence: 'turn' }),
+      injector.register(
+        SESSION_START_INJECTION_VARIANT,
+        async ({ injectedPositions }) => {
+          if (injectedPositions.length > 0) return undefined;
+          return this.renderSessionStartReminder();
+        },
+        { cadence: 'turn' },
+      ),
     );
     this._register(
       this.skillCatalog.onDidChange(() => {
-        void this.appendReminderOnReload();
+        void this.appendFreshSessionStartReminder();
       }),
     );
   }
 
-  private async renderReminder(): Promise<string | undefined> {
+  private async renderSessionStartReminder(): Promise<string | undefined> {
     const sessionStarts = await this.plugins.enabledSessionStarts();
     if (sessionStarts.length === 0) return undefined;
     await this.skillCatalog.ready;
@@ -74,38 +67,31 @@ export class PluginSessionStartInjectorService
     });
   }
 
-  private async appendReminderOnReload(): Promise<void> {
-    const sessionStarts = await this.plugins.enabledSessionStarts();
-    await this.skillCatalog.ready;
-    const reminder = renderPluginSessionStartReminder({
-      sessionStarts,
-      catalog: this.skillCatalog.catalog,
-      log: this.log,
-      sessionId: this.sessionContext.sessionId,
-    });
+  async appendFreshSessionStartReminder(): Promise<void> {
+    const reminder = await this.renderSessionStartReminder();
     if (reminder !== undefined) {
       this.reminders.appendSystemReminder(
         `${reminder}\n\nThis supersedes any earlier plugin_session_start reminder in this session.`,
-        { kind: 'injection', variant: INJECTION_VARIANT },
+        { kind: 'injection', variant: SESSION_START_INJECTION_VARIANT },
       );
     } else if (shouldNeutralizePluginSessionStart(this.context.get())) {
       this.reminders.appendSystemReminder(
         'There are currently no active plugin session starts. ' +
           'This supersedes any earlier plugin_session_start reminder in this session.',
-        { kind: 'injection', variant: INJECTION_VARIANT },
+        { kind: 'injection', variant: SESSION_START_INJECTION_VARIANT },
       );
     }
   }
 }
 
-export interface RenderPluginSessionStartReminderInput {
+interface RenderPluginSessionStartReminderInput {
   readonly sessionStarts: readonly EnabledPluginSessionStart[];
   readonly catalog: SkillCatalog | undefined;
   readonly log?: { warn(message: string, payload?: unknown): void };
   readonly sessionId?: string;
 }
 
-export function renderPluginSessionStartReminder(
+function renderPluginSessionStartReminder(
   input: RenderPluginSessionStartReminderInput,
 ): string | undefined {
   const { sessionStarts, catalog, log, sessionId } = input;
@@ -128,18 +114,13 @@ export function renderPluginSessionStartReminder(
   return blocks.length > 0 ? blocks.join('\n') : undefined;
 }
 
-/**
- * True when the context may still carry stale plugin guidance — an earlier
- * `<plugin_session_start>` reminder or a compaction summary that may have
- * folded one in — so a neutralizing reminder should replace it.
- */
-export function shouldNeutralizePluginSessionStart(
+function shouldNeutralizePluginSessionStart(
   history: readonly { readonly origin?: { readonly kind: string; readonly variant?: string } }[],
 ): boolean {
   return history.some((message) => {
     const kind = message.origin?.kind;
     if (kind === 'injection') {
-      return message.origin?.variant === INJECTION_VARIANT;
+      return message.origin?.variant === SESSION_START_INJECTION_VARIANT;
     }
     return kind === 'compaction_summary';
   });
@@ -158,8 +139,8 @@ function renderSessionStartBlock(
 
 registerScopedService(
   LifecycleScope.Agent,
-  IPluginSessionStartInjectorService,
-  PluginSessionStartInjectorService,
+  IAgentPluginService,
+  AgentPluginService,
   InstantiationType.Delayed,
-  'contextInjector',
+  'agentPlugin',
 );

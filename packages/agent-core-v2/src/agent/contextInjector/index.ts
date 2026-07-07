@@ -4,4 +4,3 @@
 
 export * from './contextInjector';
 export * from './contextInjectorService';
-export * from './pluginSessionStart';

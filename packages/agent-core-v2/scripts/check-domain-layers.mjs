@@ -141,6 +141,7 @@ const DOMAIN_LAYER = new Map([
   ['toolDedupe', 4],
   ['contextMemory', 4],
   ['contextInjector', 4],
+  ['agentPlugin', 4],
   ['systemReminder', 4],
   ['contextProjector', 4],
   ['contextSize', 4],
@@ -225,6 +226,7 @@ function domainFromRel(rel, { exemptRootFile }) {
   if (SCOPE_DIRS.has(segments[0])) {
     // `src/{scope}/{domain}/…`
     if (segments[0] === 'agent' && segments[1] === 'task') return 'agentTask';
+    if (segments[0] === 'agent' && segments[1] === 'plugin') return 'agentPlugin';
     return segments[1];
   }
   // Top-level `src/*.ts` facades are not domains — exempt from layering.

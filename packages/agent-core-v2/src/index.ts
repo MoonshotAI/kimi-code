@@ -93,6 +93,7 @@ export * from '#/agent/systemReminder';
 export * from '#/agent/contextProjector';
 export * from '#/agent/contextSize';
 export * from '#/agent/contextInjector';
+export * from '#/agent/plugin';
 export * from '#/agent/externalHooks';
 export * from '#/agent/fullCompaction';
 export * from '#/agent/llmRequester';
