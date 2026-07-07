@@ -83,6 +83,43 @@ async function solidPng(width: number, height: number): Promise<Uint8Array> {
   );
 }
 
+async function solidJpeg(width: number, height: number): Promise<Uint8Array> {
+  return new Uint8Array(
+    await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/jpeg', { quality: 90 }),
+  );
+}
+
+/**
+ * Insert a minimal EXIF APP1 segment carrying only an Orientation tag right
+ * after the JPEG SOI marker (jimp itself never writes EXIF). Mirrors the
+ * fixture in agent-core's image-compress tests.
+ */
+function withExifOrientation(jpeg: Uint8Array, orientation: number): Uint8Array {
+  // TIFF body, little-endian: 8-byte header + IFD0 with a single entry.
+  const tiff = Buffer.alloc(26);
+  tiff.write('II', 0, 'latin1');
+  tiff.writeUInt16LE(42, 2);
+  tiff.writeUInt32LE(8, 4); // offset of IFD0
+  tiff.writeUInt16LE(1, 8); // one directory entry
+  tiff.writeUInt16LE(0x0112, 10); // tag: Orientation
+  tiff.writeUInt16LE(3, 12); // type: SHORT
+  tiff.writeUInt32LE(1, 14); // count
+  tiff.writeUInt16LE(orientation, 18); // value, left-aligned in the 4-byte field
+  tiff.writeUInt32LE(0, 22); // no next IFD
+  const exifBody = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+  const app1Header = Buffer.alloc(4);
+  app1Header.writeUInt16BE(0xff_e1, 0);
+  app1Header.writeUInt16BE(exifBody.length + 2, 2);
+  return new Uint8Array(
+    Buffer.concat([
+      Buffer.from(jpeg.subarray(0, 2)), // SOI
+      app1Header,
+      exifBody,
+      Buffer.from(jpeg.subarray(2)),
+    ]),
+  );
+}
+
 describe('clipboard image paste compression', () => {
   beforeEach(() => {
     readClipboardMedia.mockReset();
@@ -163,5 +200,53 @@ describe('clipboard image paste compression', () => {
     expect(att.height).toBe(80);
     expect(att.bytes).toBe(small); // identity: no re-encode on the fast path
     expect(att.original).toBeUndefined();
+  });
+
+  it('records an EXIF-rotated compressed original in display space', async () => {
+    // Orientation 6 (rotate 90° CW): the header says 3600x1800, but the image
+    // decodes to 1800x3600 — the space the compressed bytes and any later
+    // ReadMediaFile region readback live in. The recorded original (which
+    // drives the submit-time compression caption) must match that space, or
+    // the caption contradicts the sent image's aspect and region coordinates
+    // land axis-swapped.
+    const portrait = withExifOrientation(await solidJpeg(3600, 1800), 6);
+    readClipboardMedia.mockResolvedValue({
+      kind: 'image',
+      bytes: portrait,
+      mimeType: 'image/jpeg',
+    });
+
+    const { store, pasteImage } = createPasteHarness();
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.original?.width).toBe(1800);
+    expect(att.original?.height).toBe(3600);
+    // The compressed attachment itself keeps the portrait aspect.
+    expect(att.width).toBeLessThan(att.height);
+    await unlink(att.original!.path!).catch(() => undefined);
+  });
+
+  it('stores display-space dimensions for an EXIF-rotated untouched paste', async () => {
+    // Within budgets → sent byte-for-byte, but the placeholder and metadata
+    // must still describe the display (rotated) space.
+    const portrait = withExifOrientation(await solidJpeg(120, 80), 6);
+    readClipboardMedia.mockResolvedValue({
+      kind: 'image',
+      bytes: portrait,
+      mimeType: 'image/jpeg',
+    });
+
+    const { store, pasteImage } = createPasteHarness();
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    expect(att.bytes).toBe(portrait); // fast path — untouched
+    expect(att.original).toBeUndefined();
+    expect(att.width).toBe(80);
+    expect(att.height).toBe(120);
+    expect(att.placeholder).toContain('80×120');
   });
 });
