@@ -389,8 +389,8 @@ export class TurnFlow {
    * Drives an active goal as a sequence of ordinary turns — the autonomous
    * equivalent of the user repeatedly typing "continue". Each iteration runs one
    * full turn, then reads the goal status the model set via `UpdateGoal`:
-   * `complete` (the record is cleared) / `blocked` / `paused` stop the loop;
-   * `active` (the model didn't decide) re-injects the goal reminder and runs the
+   * `complete` (the record is cleared) / `blocked` stop the loop; `active`
+   * (the model didn't decide) re-injects the goal reminder and runs the
    * next continuation turn. Aborted or failed turns pause the goal. Goal-state
    * blockers, such as explicit `UpdateGoal('blocked')`, prompt-hook blocks, and
    * budget limits, block it (all resumable). Returns the final turn's result.
@@ -437,8 +437,9 @@ export class TurnFlow {
       }
 
       // The model decides via UpdateGoal: a cleared record means `complete`;
-      // anything non-active means it stopped (blocked / paused). Only a still
-      // `active` goal continues to another turn.
+      // `blocked` remains as a non-active record. Runtime failures and user
+      // interrupts can still leave the goal paused. Only a still `active` goal
+      // continues to another turn.
       const goal = this.agent.goal.getGoal().goal;
       if (goal === null || goal.status !== 'active') {
         return end;

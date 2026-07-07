@@ -1,8 +1,7 @@
-Set the status of the current goal. This is how you resume, end, or yield an autonomous goal.
+Set the status of the current goal. This is how you resume, complete, or block an autonomous goal.
 
 - `active` — resume a paused or blocked goal when the user explicitly asks you to work on that goal.
 - `complete` — the objective is satisfied and any stated validation has passed. The goal ends and a completion summary is recorded.
 - `blocked` — a genuine impasse prevents useful progress: an external condition, required user input, missing credentials or permissions, a persistent technical failure, or an impossible, unsafe, or contradictory objective. The goal stops but can be resumed later. Do not use `blocked` because the work is large, hard, slow, uncertain, partial, still needs validation, or needs more goal turns.
-- `paused` — set the goal aside for now (e.g. to hand control back to the user). It can be resumed later.
 
 Most active goal turns should not call this tool. If you complete one useful slice of work and material work remains, end the turn normally without calling UpdateGoal; the runtime will prompt you to continue in the next goal turn. Call `complete` only when all required work is done, any stated validation has passed, and there is no useful next action. Before calling `complete`, check that every required part of the objective is done, completion criteria are satisfied, requested or expected validation passed or has been reported as impossible, and no known material task remains. Do not call `complete` after only producing a plan, summary, first pass, or partial result. If you call `blocked`, you will be prompted to explain the blocker in your next message. Setting the status is the machine-readable signal; the completion summary or blocker explanation is yours to write in the following message.

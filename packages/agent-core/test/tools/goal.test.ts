@@ -325,14 +325,30 @@ describe('UpdateGoalTool', () => {
     } as unknown as Agent;
   }
 
-  it('accepts only active / complete / paused / blocked', () => {
-    for (const status of ['active', 'complete', 'paused', 'blocked']) {
+  it('accepts only active / complete / blocked', () => {
+    for (const status of ['active', 'complete', 'blocked']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);
     }
     expect(UpdateGoalToolInputSchema.safeParse({ status: 'blocked', reason: 'x' }).success).toBe(false);
-    for (const status of ['impossible', 'cancelled', '']) {
+    for (const status of ['paused', 'impossible', 'cancelled', '']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(false);
     }
+  });
+
+  it('forbids model-driven goal pauses', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const tool = new UpdateGoalTool(agentWithContext(store));
+    const validator = compileToolArgsValidator(tool.parameters);
+
+    expect(validateToolArgs(validator, { status: 'paused' })).not.toBeNull();
+
+    const execution = tool.resolveExecution({ status: 'paused' } as never);
+    expect(execution).toMatchObject({
+      isError: true,
+      output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+    });
+    expect(store.getGoal().goal?.status).toBe('active');
   });
 
   it('`complete` marks the goal complete and clears it (transient)', async () => {
@@ -367,17 +383,6 @@ describe('UpdateGoalTool', () => {
     expect(reminders).toHaveLength(0);
   });
 
-  it('`paused` marks the goal paused', async () => {
-    const store = makeStore();
-    await store.createGoal({ objective: 'work' });
-    const result = await executeTool(
-      new UpdateGoalTool(agentWithContext(store)),
-      ctx({ status: 'paused' }),
-    );
-    expect(result.stopTurn).toBe(true);
-    expect(store.getGoal().goal?.status).toBe('paused');
-  });
-
   it('`active` resumes a paused goal', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
@@ -392,7 +397,6 @@ describe('UpdateGoalTool', () => {
     ['active', 'Goal not resumed: no current goal.'],
     ['complete', 'Goal not completed: no active goal.'],
     ['blocked', 'Goal not blocked: no active goal.'],
-    ['paused', 'Goal not paused: no current goal.'],
   ] as const)('reports a no-goal result for `%s` without stopping the turn', async (status, output) => {
     const tool = new UpdateGoalTool(agentWithContext(makeStore()));
     const execution = tool.resolveExecution({ status });
