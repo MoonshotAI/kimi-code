@@ -9,10 +9,11 @@
 
 import { computed, ref } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage } from '../../api/types';
+import type { AppMessage, AppModel } from '../../api/types';
 import type { KimiEventConnection } from '../../api/types';
 import { messagesToTurns } from '../messagesToTurns';
 import type { ChatTurn } from '../../types';
+import { coerceThinkingForModel } from '../../lib/modelThinking';
 import type { ExtendedState } from '../useKimiWebClient';
 
 export interface UseSideChatDeps {
@@ -24,6 +25,10 @@ export interface UseSideChatDeps {
   nextOptimisticMsgId: () => string;
   connectEventsIfNeeded: () => void;
   getEventConn: () => KimiEventConnection | null;
+  /** Provider model catalog — used to coerce thinking against the parent
+   *  session's model the same way normal prompts do (so a value carried over
+   *  from another model isn't submitted raw). */
+  models: () => AppModel[];
 }
 
 export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
@@ -208,11 +213,21 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
+      // Coerce thinking against the parent model the same way a normal prompt
+      // does (coercePromptThinking in useWorkspaceState): a level carried over
+      // from another/default model would otherwise be submitted raw and run
+      // differently from what the UI shows.
+      const promptModel =
+        model === undefined
+          ? undefined
+          : deps.models().find(
+              (m) => m.model === model || m.id === model || m.displayName === model,
+            );
       const result = await getKimiWebApi().submitPrompt(sid, {
         content: [{ type: 'text', text: trimmed }],
         agentId,
         model,
-        thinking: rawState.thinking,
+        thinking: coerceThinkingForModel(promptModel, rawState.thinking),
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

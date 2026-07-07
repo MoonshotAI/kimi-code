@@ -1641,6 +1641,7 @@ const sideChat = useSideChat(rawState, {
   nextOptimisticMsgId,
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
+  models: () => modelProvider.models.value,
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {

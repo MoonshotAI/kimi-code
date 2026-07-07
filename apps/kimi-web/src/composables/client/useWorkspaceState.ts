@@ -850,12 +850,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // there is nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
+      // Coerce thinking against the new session's model the same way the
+      // first-prompt path does (coercePromptThinking below): a value carried
+      // over from another/default model (e.g. 'max' from an effort model) would
+      // otherwise be persisted verbatim, and the first skill turn would run at
+      // a level the UI wouldn't send for this model.
+      const promptSession = rawState.sessions.find((s) => s.id === sid);
+      const model =
+        (promptSession?.model && promptSession.model.length > 0
+          ? promptSession.model
+          : rawState.defaultModel) ?? undefined;
       await persistSessionProfile(
         {
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
-          thinking: rawState.thinking,
+          thinking: coercePromptThinking(model),
         },
         sid,
       );
@@ -1627,7 +1637,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           ? raw
           : (workspacesView.value[0]?.id ?? null);
       if (!wsId) return;
-      sid = (await createDraftSession(wsId)) ?? undefined;
+      // App.vue invokes createGoal fire-and-forget, so a rejection here would
+      // otherwise surface as an unhandled rejection instead of an operation
+      // failure. Mirror the other draft-session paths (skill / BTW / first
+      // prompt) which wrap createDraftSession.
+      try {
+        sid = (await createDraftSession(wsId)) ?? undefined;
+      } catch (err) {
+        pushOperationFailure('createGoal', err);
+        return;
+      }
       if (!sid) return;
     }
     try {

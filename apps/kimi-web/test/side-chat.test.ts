@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { useSideChat } from '../src/composables/client/useSideChat';
+import type { AppModel } from '../src/api/types';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 
 const apiMock = vi.hoisted(() => ({
@@ -66,6 +67,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      models: () => [],
     });
 
     await sideChat.openSideChatOn('sess_1', 'what changed?');
@@ -83,5 +85,43 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       }),
     );
     expect(pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('coerces a stale thinking level against the parent model', async () => {
+    // Regression for: switching the parent session from an effort model to one
+    // that doesn't support thinking leaves rawState.thinking at a stale effort
+    // (e.g. 'max'). Normal prompts coerce this; BTW prompts must too, otherwise
+    // the first BTW turn runs at a level the UI wouldn't send.
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_opt_btw' });
+
+    const state = createState();
+    state.thinking = 'max';
+    // 'kimi-code' here doesn't declare thinking → 'unsupported' → coerced to 'off'.
+    const models: AppModel[] = [
+      {
+        id: 'kimi-code',
+        model: 'kimi-code',
+        provider: 'kimi',
+        displayName: 'kimi-code',
+        capabilities: [],
+      } as unknown as AppModel,
+    ];
+    const sideChat = useSideChat(state, {
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      models: () => models,
+    });
+
+    await sideChat.openSideChatOn('sess_1', 'what changed?');
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ thinking: 'off' }),
+    );
   });
 });

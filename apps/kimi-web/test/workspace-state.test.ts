@@ -649,6 +649,51 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
+  it('coerces a stale thinking level against the new session model before persisting', async () => {
+    // Regression for: rawState.thinking can be stale relative to the new
+    // session's model (e.g. 'max' carried over from an effort model). Persisting
+    // the raw value would make the first skill turn run at a level the UI
+    // wouldn't send for this model; we must coerce it like the first-prompt
+    // path does.
+    const activateSkill2 = vi.fn().mockResolvedValue(undefined);
+    const persistSessionProfile2 = vi.fn().mockResolvedValue(undefined);
+    const state2 = createState();
+    state2.thinking = 'max';
+    const deps2: UseWorkspaceStateDeps = {
+      ...skillDeps(activateSkill2),
+      persistSessionProfile: persistSessionProfile2,
+      // upsertSessionFront must actually land the new session in rawState.sessions
+      // so startSessionAndActivateSkill can read its model.
+      upsertSessionFront: vi.fn((s) => {
+        state2.sessions = [s, ...state2.sessions.filter((x) => x.id !== s.id)];
+      }),
+      draftModes: { planMode: true, swarmMode: false, goalMode: false },
+    };
+    // 'kimi-code' declares efforts ['low','medium','high']; 'max' isn't in the
+    // list so coercion picks the default (middle) level → 'medium'.
+    (deps2.modelProvider as unknown as { models: unknown }).models = ref([
+      {
+        id: 'kimi-code',
+        model: 'kimi-code',
+        provider: 'kimi',
+        displayName: 'kimi-code',
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'medium', 'high'],
+      },
+    ]);
+    const ws2 = useWorkspaceState(state2, deps2);
+
+    await ws2.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+
+    // Effort model default level = middle of supportEfforts: 'medium'.
+    // Confirms the raw carry-over 'max' was coerced, not persisted verbatim.
+    expect(persistSessionProfile2).toHaveBeenCalledWith(
+      expect.objectContaining({ thinking: 'medium' }),
+      'sess_new',
+    );
+    expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
+  });
+
   it('is a no-op for an unknown workspace', async () => {
     const activateSkill = vi.fn().mockResolvedValue(undefined);
     const deps = skillDeps(activateSkill);
@@ -786,6 +831,23 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
 
     expect(apiMock.createSession).not.toHaveBeenCalled();
     expect(apiMock.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('surfaces session-creation failures instead of leaking an unhandled rejection', async () => {
+    // App.vue invokes createGoal fire-and-forget, so a rejection from
+    // createDraftSession must be caught and reported via pushOperationFailure —
+    // mirroring the other draft-session paths (skill / BTW / first prompt).
+    const state = emptyComposerState();
+    const deps = goalDeps();
+    const ws = useWorkspaceState(state, deps);
+    const err = new Error('snapshot failed');
+    apiMock.createSession.mockRejectedValue(err);
+
+    await expect(ws.createGoal('improve test coverage')).resolves.toBeUndefined();
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('createGoal', err);
+    expect(apiMock.updateSession).not.toHaveBeenCalled();
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
   });
 });
 
