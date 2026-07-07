@@ -12,7 +12,6 @@ import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  AgentBackgroundTask,
   BackgroundTaskPersistence,
   type BackgroundManager,
   type BackgroundTaskInfo,
@@ -21,6 +20,7 @@ import { TaskListTool } from '../../../src/tools/background/task-list';
 import { TaskOutputTool } from '../../../src/tools/background/task-output';
 import { TaskStopTool } from '../../../src/tools/background/task-stop';
 import {
+  agentTask,
   createBackgroundManager,
   registerProcess,
   waitForOutput,
@@ -272,7 +272,7 @@ describe('TaskOutputTool', () => {
   it('returns agent metadata and final summary without process fields', async () => {
     const { manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(
+      agentTask(
         Promise.resolve({ result: 'SUBAGENT-FINAL-SUMMARY\n' }),
         'agent output test',
         { agentId: 'agent-child', subagentType: 'coder' },
@@ -338,12 +338,16 @@ describe('TaskOutputTool', () => {
   });
 
   it('surfaces timeout terminal metadata', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createBackgroundManager();
     const taskId = manager.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'will time out', { timeoutMs: 1 }),
+      agentTask(new Promise(() => {}), 'will time out'),
+      { timeoutMs: 1 },
     );
 
-    await manager.wait(taskId);
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(5_010);
+    await terminal;
     const content = await taskOutput(manager, taskId, true);
 
     expect(content).toContain('status: timed_out');
@@ -566,6 +570,14 @@ describe('background tool descriptions', () => {
     expect(description).toMatch(/block/);
     expect(description).toMatch(/output_path/);
     expect(description).toMatch(/Read/);
+    // terminal_reason can also be `failed` (task-output.ts terminalReason), not
+    // just timed_out / stopped — the description must enumerate it.
+    expect(description).toContain('`failed`');
+    // ...but a plain non-zero command exit carries no terminal_reason/stop_reason —
+    // the description must point the model at exit_code for that common failure.
+    expect(description).toContain('exit_code');
+    // Backstop: don't let the model use TaskOutput to sit and wait for a result it needs.
+    expect(description).toContain('run that task in the foreground instead');
   });
 
   it('TaskList description mentions active_only default, read-only, and plan-mode safety', () => {
@@ -575,6 +587,8 @@ describe('background tool descriptions', () => {
     expect(description).toMatch(/read[- ]only/i);
     expect(description).toMatch(/plan[- ]mode/i);
     expect(description).toMatch(/background tasks?/i);
+    // command/PID/exit-code are shell-task fields only (ProcessBackgroundTaskInfo).
+    expect(description).toMatch(/shell tasks/i);
   });
 
   it('TaskStop description clarifies destructive cancellation and generic behavior', () => {

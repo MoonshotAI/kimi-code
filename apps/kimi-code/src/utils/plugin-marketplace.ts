@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,12 +76,37 @@ export interface LoadPluginMarketplaceOptions {
 export async function loadPluginMarketplace(
   options: LoadPluginMarketplaceOptions,
 ): Promise<PluginMarketplace> {
+  const configuredSource = options.source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
   const location = resolveMarketplaceLocation(
-    options.source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    configuredSource ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL,
     options.workDir,
   );
-  const raw = await readMarketplaceText(location, options.fetchImpl ?? fetch);
-  return parsePluginMarketplace(raw, location);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  let raw: string;
+  try {
+    raw = await readMarketplaceText(location, fetchImpl);
+  } catch (error) {
+    const fallback =
+      configuredSource === undefined ? await getSourceCheckoutMarketplaceLocation() : undefined;
+    if (fallback === undefined) throw error;
+    raw = await readMarketplaceText(fallback, fetchImpl);
+    return withLatestVersions(parsePluginMarketplace(raw, fallback), fetchImpl);
+  }
+  return withLatestVersions(parsePluginMarketplace(raw, location), fetchImpl);
+}
+
+async function withLatestVersions(
+  marketplace: PluginMarketplace,
+  fetchImpl: typeof fetch,
+): Promise<PluginMarketplace> {
+  const plugins = await Promise.all(
+    marketplace.plugins.map(async (entry) => {
+      if (entry.version !== undefined) return entry;
+      const latest = await resolveLatestGithubRelease(entry.source, fetchImpl);
+      return latest === undefined ? entry : { ...entry, version: latest };
+    }),
+  );
+  return { ...marketplace, plugins };
 }
 
 export function parsePluginMarketplace(raw: string, location: MarketplaceLocation): PluginMarketplace {
@@ -124,6 +149,14 @@ function resolveMarketplaceLocation(source: string, workDir: string): Marketplac
   return { raw: trimmed, kind: 'local', resolved: resolveLocalPath(trimmed, workDir) };
 }
 
+async function getSourceCheckoutMarketplaceLocation(): Promise<MarketplaceLocation | undefined> {
+  const sourceDir = dirname(fileURLToPath(import.meta.url));
+  const marketplacePath = resolve(sourceDir, '../../../../plugins/marketplace.json');
+  const info = await stat(marketplacePath).catch(() => undefined);
+  if (info?.isFile() !== true) return undefined;
+  return { raw: marketplacePath, kind: 'local', resolved: marketplacePath };
+}
+
 async function readMarketplaceText(
   location: MarketplaceLocation,
   fetchImpl: typeof fetch,
@@ -147,22 +180,37 @@ function parseMarketplaceEntry(
     throw new TypeError(`Plugin marketplace entry ${index + 1} must be an object.`);
   }
   const id = requiredString(value, 'id', index);
+  validateMarketplaceEntryType(value, id);
   const source = stringField(value, 'source') ??
     stringField(value, 'url') ??
     stringField(value, 'downloadUrl');
   if (source === undefined) {
     throw new Error(`Plugin marketplace entry ${id} must define "source".`);
   }
+  const resolvedSource = resolveEntrySource(source, location);
   return {
     id,
     displayName: stringField(value, 'displayName') ?? stringField(value, 'name') ?? id,
-    source: resolveEntrySource(source, location),
+    source: resolvedSource,
     tier: parseMarketplaceTier(value, id),
-    version: stringField(value, 'version'),
+    version: stringField(value, 'version') ?? deriveVersionFromGithubSource(resolvedSource),
     description: stringField(value, 'description') ?? stringField(value, 'shortDescription'),
     homepage: stringField(value, 'homepage') ?? stringField(value, 'websiteURL'),
     keywords: stringArrayField(value, 'keywords'),
   };
+}
+
+function validateMarketplaceEntryType(value: Record<string, unknown>, id: string): void {
+  const raw = value['type'];
+  if (raw === undefined) return;
+  if (typeof raw !== 'string') {
+    throw new TypeError(`Plugin marketplace entry ${id} "type" must be a string.`);
+  }
+  const type = raw.trim();
+  if (type === 'plugin' || type === 'managed' || type === 'guide') return;
+  throw new Error(
+    `Plugin marketplace entry ${id} "type" must be "plugin". Legacy aliases "managed" and "guide" are also accepted.`,
+  );
 }
 
 function parseMarketplaceTier(
@@ -200,6 +248,105 @@ function resolveEntrySource(source: string, location: MarketplaceLocation): stri
     return new URL(trimmed, location.resolved).toString();
   }
   return resolve(dirname(location.resolved), trimmed);
+}
+
+/**
+ * Best-effort derivation of a semver version from a GitHub source URL that pins
+ * a specific ref. Lets a marketplace entry omit `version` when the source
+ * already encodes the release (for example `/releases/tag/v6.0.3`), keeping the
+ * source URL the single source of truth and avoiding drift between the two.
+ *
+ * Only refs shaped like semver (`v6.0.3`, `6.0.3`, `6.0.3-rc.1`) are accepted;
+ * bare repo URLs, branch names and commit SHAs yield `undefined`, so update
+ * detection degrades to "unknown" instead of comparing meaningless values.
+ */
+function deriveVersionFromGithubSource(source: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') {
+    return undefined;
+  }
+  // Pathname shape: /<owner>/<repo>/<tail...>. Recognized tails:
+  //   releases/tag/<tag>
+  //   tree/<ref>
+  //   commit/<sha>
+  const [, , kind, a, b] = url.pathname.split('/').filter(Boolean);
+  const ref =
+    kind === 'releases' && a === 'tag' ? b : kind === 'tree' || kind === 'commit' ? a : undefined;
+  if (ref === undefined) return undefined;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(ref);
+  } catch {
+    decoded = ref;
+  }
+  const candidate = decoded.replace(/^v/i, '');
+  return valid(candidate) !== null ? candidate : undefined;
+}
+
+async function resolveLatestGithubRelease(
+  source: string,
+  fetchImpl: typeof fetch,
+): Promise<string | undefined> {
+  const repo = parseGithubRepo(source);
+  if (repo === undefined) return undefined;
+  try {
+    const tag = await fetchLatestReleaseTag(repo.owner, repo.repo, fetchImpl);
+    if (tag === undefined) return undefined;
+    const candidate = tag.replace(/^v/i, '');
+    return valid(candidate) !== null ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGithubRepo(source: string): { owner: string; repo: string } | undefined {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') return undefined;
+  // Only bare repo URLs (/<owner>/<repo>) qualify — URLs with a ref tail are
+  // already handled by deriveVersionFromGithubSource.
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length !== 2) return undefined;
+  const [owner, repo] = segments;
+  return { owner: owner!, repo: repo! };
+}
+
+async function fetchLatestReleaseTag(
+  owner: string,
+  repo: string,
+  fetchImpl: typeof fetch,
+): Promise<string | undefined> {
+  // Avoid api.github.com: its anonymous quota is shared with the user's browser
+  // and other tools, and a first-time lookup failing because something else
+  // burned the budget is unacceptable. The /releases/latest UI route 302s to
+  // the tag and is not part of the API quota.
+  const url = `https://github.com/${owner}/${repo}/releases/latest`;
+  const resp = await fetchImpl(url, { redirect: 'manual' });
+  if (resp.status === 404) return undefined;
+  if (resp.status !== 301 && resp.status !== 302) {
+    throw new Error(
+      `Could not look up latest release of ${owner}/${repo}: HTTP ${resp.status} (${url}).`,
+    );
+  }
+  const location = resp.headers.get('location');
+  if (location === null) return undefined;
+  const match = /\/releases\/tag\/([^/?#]+)/.exec(location);
+  const tag = match?.[1];
+  if (tag === undefined) return undefined;
+  try {
+    return decodeURIComponent(tag);
+  } catch {
+    return tag;
+  }
 }
 
 function resolveLocalPath(input: string, workDir: string): string {

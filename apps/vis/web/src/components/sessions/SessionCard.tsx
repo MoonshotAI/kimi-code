@@ -40,9 +40,22 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
           <div className="flex min-w-0 items-center gap-2">
             <span
               className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
-              style={{ backgroundColor: 'var(--color-fg-3)' }}
+              style={{ backgroundColor: session.imported ? 'var(--color-cat-subagent)' : 'var(--color-fg-3)' }}
             />
             <span className="shrink-0 font-mono text-[12px] text-fg-0">{shortId}</span>
+            {session.imported ? (
+              <span
+                className="shrink-0 border px-1 py-0 font-mono text-[9px] uppercase tracking-[0.08em]"
+                style={{ borderColor: 'var(--color-cat-subagent)', color: 'var(--color-cat-subagent)' }}
+                title={
+                  session.importMeta?.originalName
+                    ? `imported from ${session.importMeta.originalName}`
+                    : 'imported debug bundle'
+                }
+              >
+                imported
+              </span>
+            ) : null}
           </div>
           <span className="shrink-0 font-mono text-[10.5px] text-fg-3 tabular">
             {formatRelativeTime(session.updatedAt)}
@@ -58,6 +71,11 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
           {subagentCount > 0 ? (
             <span className="tabular text-[var(--color-cat-subagent)]">
               {subagentCount}sub
+            </span>
+          ) : null}
+          {session.imported && session.importMeta?.manifest?.kimiCodeVersion ? (
+            <span className="tabular text-fg-3" title="kimi-code version that produced this bundle">
+              v{session.importMeta.manifest.kimiCodeVersion}
             </span>
           ) : null}
           {session.health !== 'ok' ? (

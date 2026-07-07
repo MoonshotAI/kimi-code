@@ -181,6 +181,7 @@ describe('runShell', () => {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      addDirs: ['../shared', '/tmp/extra'],
     };
 
     await runShell(cliOptions, '1.2.3-test');
@@ -191,13 +192,14 @@ describe('runShell', () => {
           userAgentProduct: 'kimi-code-cli',
           version: '1.2.3-test',
         }),
+        sessionStartedProperties: { yolo: true, auto: false, plan: true, afk: false },
       }),
     );
     expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
     expect(mocks.harnessEnsureConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.harnessGetConfig.mock.invocationCallOrder[0]!,
     );
-    expect(execSync).toHaveBeenCalledWith('stty -ixon', { stdio: 'ignore' });
+    expect(execSync).toHaveBeenCalledWith('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
     expect(mocks.kimiTuiConstructor).toHaveBeenCalledTimes(1);
     expect(mocks.createKimiDeviceId).toHaveBeenCalledWith(
       '/tmp/kimi-code-test-home',
@@ -211,6 +213,7 @@ describe('runShell', () => {
       version: '1.2.3-test',
       uiMode: 'shell',
       model: 'k2',
+      sessionId: undefined,
       getAccessToken: expect.any(Function),
     });
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
@@ -219,6 +222,7 @@ describe('runShell', () => {
     expect(harness).toBeTypeOf('object');
     expect(startupInput).toMatchObject({
       cliOptions,
+      additionalDirs: ['../shared', '/tmp/extra'],
       tuiConfig: {
         theme: 'dark',
         editorCommand: null,
@@ -228,21 +232,41 @@ describe('runShell', () => {
       workDir: process.cwd(),
     });
     expect(mocks.tuiStart).toHaveBeenCalledOnce();
-    expect(mocks.harnessTrack).not.toHaveBeenCalledWith('started', expect.anything());
     expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-startup' });
-    expect(mocks.lifecycleTrack).toHaveBeenCalledWith('started', {
-      resumed: false,
-      yolo: true,
-      auto: false,
-      plan: true,
-      afk: false,
-    });
     expect(mocks.lifecycleTrack).toHaveBeenCalledWith('startup_perf', {
       duration_ms: expect.any(Number),
       config_ms: expect.any(Number),
       init_ms: expect.any(Number),
       mcp_ms: 47,
     });
+  });
+
+  it('forwards skillsDirs from CLI options to the harness', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: ['/skills'],
+      },
+      '1.2.3-test',
+    );
+
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ skillDirs: ['/skills'] }),
+    );
   });
 
   it('tracks first launch when device id creation reports first launch', async () => {
@@ -327,39 +351,6 @@ describe('runShell', () => {
     expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
   });
 
-  it('marks resumed lifecycle starts from session flags', async () => {
-    mocks.loadTuiConfig.mockResolvedValue({
-      theme: 'dark',
-      editorCommand: null,
-      notifications: { enabled: true, condition: 'unfocused' },
-    });
-    mocks.tuiStart.mockResolvedValue(undefined);
-    mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
-
-    await runShell(
-      {
-        session: 'ses-1',
-        continue: false,
-        yolo: false,
-        auto: false,
-        plan: false,
-        model: undefined,
-        outputFormat: undefined,
-        prompt: undefined,
-        skillsDirs: [],
-      },
-      '1.2.3-test',
-    );
-
-    expect(mocks.lifecycleTrack).toHaveBeenCalledWith('started', {
-      resumed: true,
-      yolo: false,
-      auto: false,
-      plan: false,
-      afk: false,
-    });
-  });
-
   it('binds startup_perf to the session captured before MCP metrics resolve', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
@@ -389,9 +380,9 @@ describe('runShell', () => {
       '1.2.3-test',
     );
 
-    expect(mocks.withTelemetryContext).toHaveBeenNthCalledWith(1, { sessionId: 'ses-startup' });
-    expect(mocks.withTelemetryContext).toHaveBeenNthCalledWith(2, { sessionId: 'ses-startup' });
-    expect(mocks.lifecycleTrack).toHaveBeenNthCalledWith(2, 'startup_perf', {
+    expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-startup' });
+    expect(mocks.withTelemetryContext).not.toHaveBeenCalledWith({ sessionId: 'ses-later' });
+    expect(mocks.lifecycleTrack).toHaveBeenCalledWith('startup_perf', {
       duration_ms: expect.any(Number),
       config_ms: expect.any(Number),
       init_ms: expect.any(Number),
@@ -436,13 +427,13 @@ describe('runShell', () => {
     harnessOptions.onOAuthRefresh({ success: false, reason: 'unauthorized' });
     harnessOptions.onOAuthRefresh({ success: false, reason: 'network_or_other' });
 
-    expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', { success: true });
+    expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', { outcome: 'success' });
     expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', {
-      success: false,
+      outcome: 'error',
       reason: 'unauthorized',
     });
     expect(mocks.telemetryTrack).toHaveBeenCalledWith('oauth_refresh', {
-      success: false,
+      outcome: 'error',
       reason: 'network_or_other',
     });
   });
@@ -531,7 +522,7 @@ describe('runShell', () => {
           session: undefined,
           continue: false,
           yolo: false,
-        auto: false,
+          auto: false,
           plan: false,
           model: undefined,
           outputFormat: undefined,
@@ -543,7 +534,7 @@ describe('runShell', () => {
     ).rejects.toThrow('boom');
 
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
-    expect(mocks.harnessTrack).toHaveBeenCalledWith('exit', { duration_s: expect.any(Number) });
+    expect(mocks.harnessTrack).toHaveBeenCalledWith('exit', { duration_ms: expect.any(Number) });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
     expect(mocks.harnessClose).toHaveBeenCalledOnce();
   });
@@ -568,7 +559,7 @@ describe('runShell', () => {
           session: undefined,
           continue: false,
           yolo: false,
-        auto: false,
+          auto: false,
           plan: false,
           model: undefined,
           outputFormat: undefined,
@@ -589,12 +580,59 @@ describe('runShell', () => {
       expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
       expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-1' });
       expect(mocks.lifecycleTrack).toHaveBeenCalledWith('exit', {
-        duration_s: expect.any(Number),
+        duration_ms: expect.any(Number),
       });
       expect(mocks.harnessTrack).not.toHaveBeenCalledWith('exit', expect.anything());
       expect(mocks.shutdownTelemetry).toHaveBeenCalledOnce();
       expect(stdout.text()).toBe(' Bye!\n');
       expect(stderr.text()).toContain(' To resume this session: kimi -r ses-1');
+    } finally {
+      exitSpy.mockRestore();
+      stdout.restore();
+      stderr.restore();
+    }
+  });
+
+  it('prints the opened web URL from the TUI exit handler when set', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+    mocks.tuiGetCurrentSessionId.mockReturnValue('ses-1');
+    mocks.tuiHasSessionContent.mockReturnValue(true);
+
+    const stdout = captureProcessWrite('stdout');
+    const stderr = captureProcessWrite('stderr');
+    const exitSpy = mockProcessExit();
+
+    try {
+      await runShell(
+        {
+          session: undefined,
+          continue: false,
+          yolo: false,
+          auto: false,
+          plan: false,
+          model: undefined,
+          outputFormat: undefined,
+          prompt: undefined,
+          skillsDirs: [],
+        },
+        '1.2.3-test',
+      );
+      const [tui] = mocks.kimiTuiConstructor.mock.calls[0]!;
+      const openedUrl = 'http://127.0.0.1:58627/sessions/ses-1#token=tok-1';
+      (tui as { exitOpenUrl?: string }).exitOpenUrl = openedUrl;
+
+      await expect((tui as { onExit: () => Promise<void> }).onExit()).rejects.toBeInstanceOf(
+        ExitCalled,
+      );
+
+      expect(stderr.text()).toContain(' To resume this session: kimi -r ses-1');
+      expect(stderr.text()).toContain('open ');
+      expect(stderr.text()).toContain(openedUrl);
     } finally {
       exitSpy.mockRestore();
       stdout.restore();
@@ -621,7 +659,7 @@ describe('runShell', () => {
           session: undefined,
           continue: false,
           yolo: false,
-        auto: false,
+          auto: false,
           plan: false,
           model: undefined,
           outputFormat: undefined,

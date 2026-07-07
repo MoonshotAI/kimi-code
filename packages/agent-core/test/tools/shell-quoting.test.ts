@@ -4,6 +4,7 @@ import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BashInputSchema, BashTool } from '../../src/tools/builtin/shell/bash';
+import { createBackgroundManager } from '../agent/background/helpers';
 import { executeTool } from './fixtures/execute-tool';
 import { createFakeKaos } from './fixtures/fake-kaos';
 
@@ -57,7 +58,11 @@ function captureCommandRewrite(
 ): Promise<{ rewritten: string; argv: readonly string[] }> {
   const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
   const cwd = env.osKind === 'Windows' ? 'C:\\work' : '/work';
-  const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: env }), cwd);
+  const tool = new BashTool(
+    createFakeKaos({ execWithEnv, osEnv: env }),
+    cwd,
+    createBackgroundManager().manager,
+  );
 
   return executeTool(tool, {
     turnId: '0',
@@ -155,7 +160,11 @@ describe('BashTool streaming output updates', () => {
     );
     const execWithEnv = vi.fn().mockResolvedValue(proc);
     const onUpdate = vi.fn();
-    const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: linuxEnv }), '/work');
+    const tool = new BashTool(
+      createFakeKaos({ execWithEnv, osEnv: linuxEnv }),
+      '/work',
+      createBackgroundManager().manager,
+    );
 
     const result = await executeTool(tool, {
       turnId: '0',

@@ -23,10 +23,4 @@ When NOT to use:
 - User gave very specific, detailed instructions
 - Pure research/exploration tasks
 
-## What Happens in Plan Mode
-In plan mode, you will:
-1. Identify 2-3 key questions about the codebase that are critical to your plan. If you are not confident about the codebase structure or relevant code paths, use `Agent(subagent_type="explore")` to investigate these questions first - this is strongly recommended for non-trivial tasks.
-2. Explore the codebase using Glob, Grep, Read, and other read-only tools for any remaining quick lookups. Use Bash only when needed; Bash follows the normal permission mode and rules.
-3. Design an implementation approach based on your findings
-4. Write your plan to the current plan file with Write or Edit
-5. Present your plan to the user via ExitPlanMode for approval
+Once you are in plan mode, a reminder walks you through the workflow (explore → design → write the plan file → `ExitPlanMode`) and enforces read-only access. For non-trivial tasks where you are unsure of the codebase structure or relevant code paths, use `Agent(subagent_type="explore")` to investigate first when the `Agent` tool is available.

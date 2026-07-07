@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 const OLD_CONFIG_TOML = `default_model = "internal-vibe"
-default_thinking = true
+merge_all_available_skills = true
 theme = "dark"
 default_editor = "code --wait"
 default_yolo = false
@@ -56,7 +56,7 @@ describe('migrateConfigStep', () => {
     expect(r.migrated).toBe(true);
     expect(r.wroteSiblingDueToConflict).toBe(false);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    expect(cfg).toContain('default_thinking = true');
+    expect(cfg).toContain('merge_all_available_skills = true');
     expect(cfg).not.toContain('"vllm"'); // dropped provider
     expect(cfg).not.toContain('"internal-vibe"'); // dropped model
     expect(cfg).not.toContain('theme'); // moved to tui
@@ -69,14 +69,14 @@ describe('migrateConfigStep', () => {
 
   it('additively merges into a user-modified target config', async () => {
     await writeFile(join(src, 'config.toml'), OLD_CONFIG_TOML);
-    await writeFile(join(tgt, 'config.toml'), 'default_thinking = false\n');
+    await writeFile(join(tgt, 'config.toml'), 'merge_all_available_skills = false\n');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.wroteSiblingDueToConflict).toBe(false);
-    // default_thinking is set on both, differently → target's value is kept
+    // merge_all_available_skills is set on both, differently → target's value is kept
     // and the key is reported as a conflict.
-    expect(r.configConflicts).toContain('default_thinking');
+    expect(r.configConflicts).toContain('merge_all_available_skills');
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    expect(cfg).toContain('default_thinking = false'); // target value kept
+    expect(cfg).toContain('merge_all_available_skills = false'); // target value kept
     expect(cfg).toContain('telemetry = true'); // additively brought over
     expect(cfg).toContain('kimi-code/kimi-for-coding'); // migrated model added
   });
@@ -106,23 +106,23 @@ base_url = "https://target.example/v1"
   it('drops top-level keys kimi-code does not support', async () => {
     await writeFile(
       join(src, 'config.toml'),
-      'show_thinking_stream = true\ndefault_thinking = true\n',
+      'show_thinking_stream = true\nmerge_all_available_skills = true\n',
     );
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.droppedKeys).toContain('show_thinking_stream');
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(cfg).not.toContain('show_thinking_stream');
-    expect(cfg).toContain('default_thinking');
+    expect(cfg).toContain('merge_all_available_skills');
   });
 
   it('falls back to a sibling file when the target config is unparseable', async () => {
-    await writeFile(join(src, 'config.toml'), 'default_thinking = true\n');
+    await writeFile(join(src, 'config.toml'), 'merge_all_available_skills = true\n');
     await writeFile(join(tgt, 'config.toml'), 'this is = = not valid toml [[[');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.wroteSiblingDueToConflict).toBe(true);
     expect(
       await readFile(join(tgt, 'config.migrated-from-kimi-cli.toml'), 'utf-8'),
-    ).toContain('default_thinking');
+    ).toContain('merge_all_available_skills');
     // the unparseable target is left untouched
     expect(await readFile(join(tgt, 'config.toml'), 'utf-8')).toContain('not valid toml');
   });
@@ -183,18 +183,18 @@ model = "kimi-for-coding"
 
   it('does not write an empty hooks array', async () => {
     // An empty `hooks` array yields no kept hooks, so no `hooks` key is written.
-    await writeFile(join(src, 'config.toml'), 'hooks = []\ndefault_thinking = true\n');
+    await writeFile(join(src, 'config.toml'), 'hooks = []\nmerge_all_available_skills = true\n');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(cfg).not.toContain('hooks');
-    expect(cfg).toContain('default_thinking');
+    expect(cfg).toContain('merge_all_available_skills');
   });
 
   it('drops default_model when it points at a model that was not kept', async () => {
     await writeFile(
       join(src, 'config.toml'),
-      'default_model = "ghost-model"\ndefault_thinking = true\n',
+      'default_model = "ghost-model"\nmerge_all_available_skills = true\n',
     );
     await writeFile(join(tgt, 'config.toml'), DEFAULT_CONFIG_FILE_TEXT);
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
@@ -203,7 +203,7 @@ model = "kimi-for-coding"
     // `ghost-model` has no [models."ghost-model"] entry — a dangling
     // default_model would fail the next session-create.
     expect(cfg).not.toContain('default_model');
-    expect(cfg).toContain('default_thinking');
+    expect(cfg).toContain('merge_all_available_skills');
   });
 
   it('drops a model whose provider has no entry anywhere', async () => {
@@ -233,7 +233,7 @@ max_context_size = 1000
   });
 
   it('drops a supported top-level key whose value the schema rejects', async () => {
-    await writeFile(join(src, 'config.toml'), 'telemetry = "false"\ndefault_thinking = true\n');
+    await writeFile(join(src, 'config.toml'), 'telemetry = "false"\nmerge_all_available_skills = true\n');
     await writeFile(join(tgt, 'config.toml'), DEFAULT_CONFIG_FILE_TEXT);
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migrated).toBe(true);
@@ -242,13 +242,13 @@ max_context_size = 1000
     expect(r.droppedKeys).toContain('telemetry');
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
     expect(cfg).not.toContain('telemetry');
-    expect(cfg).toContain('default_thinking');
+    expect(cfg).toContain('merge_all_available_skills');
   });
 
   it('keeps default_model that points at a model only present in the target config', async () => {
     await writeFile(
       join(src, 'config.toml'),
-      'default_model = "target-only"\ndefault_thinking = true\n',
+      'default_model = "target-only"\nmerge_all_available_skills = true\n',
     );
     // A user-modified target (merge mode) that already defines the alias.
     await writeFile(
@@ -372,7 +372,7 @@ base_url = "https://target.example/v1"
       join(src, 'config.toml'),
       '[[hooks]]\nevent = "PreToolUse"\ncommand = "echo from-cli"\n',
     );
-    await writeFile(join(tgt, 'config.toml'), 'default_thinking = false\n');
+    await writeFile(join(tgt, 'config.toml'), 'merge_all_available_skills = false\n');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
     expect(r.migratedHooks).toBe(1);
     expect(r.configConflicts).not.toContain('hooks');
@@ -403,7 +403,7 @@ base_url = "https://target.example/v1"
     await writeFile(
       join(src, 'config.toml'),
       [
-        'default_thinking = true',
+        'merge_all_available_skills = true',
         '[providers.openai]',
         'type = "openai"',
         'api_key = "k"',
@@ -433,7 +433,7 @@ base_url = "https://target.example/v1"
   it('drops legacy migration fields but keeps supported loop and background fields', async () => {
     await writeFile(
       join(src, 'config.toml'),
-      'default_thinking = true\n' +
+      'merge_all_available_skills = true\n' +
         'plan_mode = true\n' +
         'yolo = true\n' +
         '[experimental]\n' +
@@ -458,8 +458,11 @@ base_url = "https://target.example/v1"
 
     expect(r.migrated).toBe(true);
     const cfg = await readFile(join(tgt, 'config.toml'), 'utf-8');
-    expect(cfg).toContain('[experimental]');
-    expect(cfg).toContain('micro_compaction = false');
+    // No experimental flags are currently registered, so the whole
+    // `[experimental]` section (including the former `micro_compaction`) is
+    // dropped along with unknown flags during migration.
+    expect(cfg).not.toContain('[experimental]');
+    expect(cfg).not.toContain('micro_compaction');
     expect(cfg).not.toContain('unknown_flag');
     expect(cfg).toContain('[loop_control]');
     expect(cfg).toContain('max_retries_per_step = 2');

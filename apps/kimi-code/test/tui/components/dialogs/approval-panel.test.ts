@@ -1,4 +1,4 @@
-import { CURSOR_MARKER } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER } from '@moonshot-ai/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
@@ -59,6 +59,33 @@ describe('ApprovalPanelComponent', () => {
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('1/2/3/4 choose');
     expect(out).not.toContain('y/a/n/f');
+  });
+
+  it('renders choice descriptions beneath the label when present', () => {
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_goal',
+        tool_call_id: 'tool_goal',
+        tool_name: 'CreateGoal',
+        action: 'Creating a goal',
+        description: '',
+        display: [],
+        choices: [
+          {
+            label: 'Switch to Auto and start',
+            response: 'approved',
+            selected_label: 'auto',
+            description: 'Tools are approved automatically, and questions are skipped.',
+          },
+          { label: 'Do not start', response: 'cancelled', selected_label: 'cancel' },
+        ],
+      },
+    };
+    const out = strip(new ApprovalPanelComponent(pending, () => {}).render(80).join('\n'));
+    expect(out).toContain('1. Switch to Auto and start');
+    expect(out).toContain('Tools are approved automatically, and questions are skipped.');
+    // A choice without a description stays label-only — no stray blank helper line.
+    expect(out).toContain('2. Do not start');
   });
 
   it('renders dangerous shell warnings with simple copy and no icon', () => {

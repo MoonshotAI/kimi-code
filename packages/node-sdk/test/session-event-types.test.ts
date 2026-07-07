@@ -28,6 +28,18 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'turn.step.completed'>['llmStreamDurationMs']>().toEqualTypeOf<
       number | undefined
     >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmRequestBuildMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmServerFirstTokenMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmServerDecodeMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmClientConsumeMs']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('narrows subagent lifecycle events by type', () => {
@@ -56,8 +68,16 @@ describe('Event public types', () => {
       switch (event.type) {
         case 'agent.status.updated':
         case 'session.meta.updated':
+        case 'event.session.created':
+        case 'event.session.status_changed':
+        case 'event.workspace.created':
+        case 'event.workspace.updated':
+        case 'event.workspace.deleted':
+        case 'event.config.changed':
+        case 'event.model_catalog.changed':
         case 'goal.updated':
         case 'skill.activated':
+        case 'plugin_command.activated':
         case 'error':
         case 'warning':
         case 'turn.started':
@@ -72,6 +92,8 @@ describe('Event public types', () => {
         case 'tool.call.delta':
         case 'tool.call.started':
         case 'tool.progress':
+        case 'shell.output':
+        case 'shell.started':
         case 'tool.result':
         case 'tool.list.updated':
         case 'mcp.server.status':
@@ -87,6 +109,7 @@ describe('Event public types', () => {
         case 'background.task.started':
         case 'background.task.terminated':
         case 'cron.fired':
+        case 'prompt.submitted':
           return;
         default:
           assertNever(event);

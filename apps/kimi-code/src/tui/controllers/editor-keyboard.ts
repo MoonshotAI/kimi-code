@@ -1,4 +1,5 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
@@ -7,13 +8,14 @@ import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/exte
 import {
   CTRL_C_HINT,
   CTRL_D_HINT,
+  DOUBLE_ESC_WINDOW_MS,
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import type { PendingExit } from '../types';
+import type { PendingExit, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
 
@@ -25,21 +27,27 @@ export interface EditorKeyboardHost {
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
   steerMessage(session: Session, input: string[]): void;
-  recallLastQueued(): string | undefined;
+  recallLastQueued(): QueuedMessage | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
+  toggleTodoPanelExpansion(): void;
+  detachCurrentForegroundTask(): void;
+  cancelRunningShellCommand(): void;
   hideSessionPicker(): void;
+  openUndoSelector(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
+  handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
 }
 
 export class EditorKeyboardController {
   private pendingExit: PendingExit | null = null;
+  private pendingUndoEsc: { readonly timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(
     private readonly host: EditorKeyboardHost,
@@ -59,6 +67,47 @@ export class EditorKeyboardController {
       host.updateEditorBorderHighlight(text);
     };
 
+    // bash mode recalls only shell (`!`-prefixed) history entries; prompt mode
+    // recalls everything. The filter is locked to the mode captured when the
+    // user first enters history browsing (see onHistoryDraftSave), so landing on
+    // a shell entry mid-browse doesn't switch the filter to shell-only.
+    let browseMode: 'prompt' | 'bash' | null = null;
+    editor.setHistoryFilter((entry: string) => {
+      const mode = browseMode ?? editor.inputMode;
+      return mode === 'bash' ? entry.startsWith('!') : true;
+    });
+
+    // Recalling a `!`-prefixed entry strips the marker and returns to bash
+    // mode; recalling a plain entry returns to prompt mode. The filter above
+    // guarantees bash mode only ever lands on `!` entries, so this never
+    // misfires on commands typed in bash mode.
+    editor.onRecall = (entry: string) => {
+      if (entry.startsWith('!')) {
+        editor.setInputMode('bash');
+        return entry.slice(1);
+      }
+      editor.setInputMode('prompt');
+      return undefined;
+    };
+
+    // Save/restore the input mode alongside pi-tui's history draft. Without
+    // this, recalling a shell entry and then pressing Down back to an empty
+    // draft would leave the editor stuck in bash mode, so the next typed
+    // message would be submitted as a shell command. Also locks the history
+    // filter (browseMode) for the duration of the browse session.
+    editor.onHistoryDraftSave = () => {
+      browseMode = editor.inputMode;
+      return editor.inputMode;
+    };
+    editor.onHistoryDraftRestore = (state: unknown) => {
+      editor.setInputMode(state as 'prompt' | 'bash');
+      browseMode = null;
+    };
+
+    editor.onNonEscapeInput = () => {
+      this.clearPendingUndoEsc();
+    };
+
     editor.onCtrlC = () => {
       if (host.cancelInFlight !== undefined) {
         const cancel = host.cancelInFlight;
@@ -70,6 +119,9 @@ export class EditorKeyboardController {
 
       if (host.state.appState.isCompacting) {
         this.clearPendingExit();
+
+        if (this.clearEditorTextIfPresent()) return;
+
         this.cancelCurrentCompaction();
         return;
       }
@@ -86,10 +138,7 @@ export class EditorKeyboardController {
       if (host.state.appState.streamingPhase !== 'idle') {
         this.clearPendingExit();
 
-        if (editor.getText().length > 0) {
-          editor.setText('');
-          return;
-        }
+        if (this.clearEditorTextIfPresent()) return;
 
         this.cancelCurrentStream();
         return;
@@ -120,18 +169,30 @@ export class EditorKeyboardController {
       if (this.pendingExit) this.clearPendingExit();
       if (host.state.activeDialog === 'session-picker') {
         host.hideSessionPicker();
+        this.clearPendingUndoEsc();
         return;
       }
       if (host.state.appState.isCompacting) {
         this.cancelCurrentCompaction();
+        this.clearPendingUndoEsc();
         return;
       }
       if (host.btwPanelController.closeOrCancel()) {
+        this.clearPendingUndoEsc();
         return;
       }
       if (host.state.appState.streamingPhase !== 'idle') {
         this.cancelCurrentStream();
+        this.clearPendingUndoEsc();
+        return;
       }
+      // Idle: a second Esc within the double-tap window opens the undo selector.
+      if (this.pendingUndoEsc !== null) {
+        this.clearPendingUndoEsc();
+        host.openUndoSelector();
+        return;
+      }
+      this.armPendingUndoEsc();
     };
 
     editor.onShiftTab = () => {
@@ -145,6 +206,10 @@ export class EditorKeyboardController {
       host.handlePlanToggle(next);
     };
 
+    editor.onInputModeChange = (mode) => {
+      host.handleInputModeChange(mode);
+    };
+
     editor.onOpenExternalEditor = () => {
       host.track('shortcut_editor');
       void this.openExternalEditor();
@@ -155,21 +220,41 @@ export class EditorKeyboardController {
       host.toggleToolOutputExpansion();
     };
 
+    editor.onToggleTodoExpand = (): boolean => {
+      if (!host.state.todoPanel.hasOverflow()) return false;
+      // Disarm a pending double-press exit confirmation so expanding the
+      // todo list in between two Ctrl-C presses does not accidentally exit.
+      this.clearPendingExit();
+      host.track('shortcut_todo_expand');
+      host.toggleTodoPanelExpansion();
+      return true;
+    };
+
     editor.onCtrlS = () => {
-      if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) return;
+      if (
+        host.state.appState.streamingPhase === 'idle' ||
+        host.state.appState.streamingPhase === 'shell' ||
+        host.state.appState.isCompacting
+      )
+        return;
       const text = editor.getText().trim();
-      const queuedTexts = host.state.queuedMessages.map((m) => m.text);
-      host.clearQueuedMessages();
+      const editorIsBash = editor.inputMode === 'bash';
+
+      // Bash commands (`! …`) are not steerable: keep them queued so they run
+      // after the current task instead of being injected into the turn as text.
+      const queued = host.state.queuedMessages;
+      const steerable = queued.filter((m) => m.mode !== 'bash');
+      host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
 
       const parts: string[] = [];
-      for (const q of queuedTexts) {
-        const trimmed = q.trim();
+      for (const m of steerable) {
+        const trimmed = m.text.trim();
         if (trimmed.length > 0) parts.push(trimmed);
       }
-      if (text.length > 0) parts.push(text);
+      if (!editorIsBash && text.length > 0) parts.push(text);
 
       if (parts.length > 0) {
-        editor.setText('');
+        if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
           host.showError(LLM_NOT_SET_MESSAGE);
@@ -181,12 +266,19 @@ export class EditorKeyboardController {
       host.state.ui.requestRender();
     };
 
-    editor.onUndo = () => {
-      host.track('undo');
+    editor.onCtrlB = (): boolean => {
+      // Shell command execution is treated as a streaming phase ('shell'), so
+      // this gate already covers it; only idle + not-compacting falls through.
+      if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) {
+        return false;
+      }
+      host.track('shortcut_background_task');
+      host.detachCurrentForegroundTask();
+      return true;
     };
 
-    editor.onInsertNewline = () => {
-      host.track('shortcut_newline');
+    editor.onUndo = () => {
+      host.track('undo');
     };
 
     editor.onTextPaste = () => {
@@ -198,7 +290,14 @@ export class EditorKeyboardController {
       if (host.state.appState.streamingPhase === 'idle' && !host.state.appState.isCompacting) return false;
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
-        editor.setText(recalled);
+        editor.setText(recalled.text);
+        // Restore the queued item's mode so a recalled `!` command runs as a
+        // shell command again instead of being submitted as a normal prompt.
+        const mode = recalled.mode ?? 'prompt';
+        if (editor.inputMode !== mode) {
+          editor.inputMode = mode;
+          editor.onInputModeChange?.(mode);
+        }
         host.updateQueueDisplay();
         host.state.ui.requestRender();
         return true;
@@ -218,6 +317,27 @@ export class EditorKeyboardController {
     this.pendingExit = null;
   }
 
+  dispose(): void {
+    this.clearPendingExit();
+    this.clearPendingUndoEsc();
+  }
+
+  private armPendingUndoEsc(): void {
+    this.clearPendingUndoEsc();
+    const timer = setTimeout(() => {
+      if (this.pendingUndoEsc?.timer === timer) {
+        this.pendingUndoEsc = null;
+      }
+    }, DOUBLE_ESC_WINDOW_MS);
+    this.pendingUndoEsc = { timer };
+  }
+
+  private clearPendingUndoEsc(): void {
+    if (!this.pendingUndoEsc) return;
+    clearTimeout(this.pendingUndoEsc.timer);
+    this.pendingUndoEsc = null;
+  }
+
   private armPendingExit(kind: 'ctrl-c' | 'ctrl-d', hint: string): void {
     this.clearPendingExit();
     this.host.state.footer.setTransientHint(hint);
@@ -233,7 +353,17 @@ export class EditorKeyboardController {
     this.host.state.ui.requestRender();
   }
 
+  private clearEditorTextIfPresent(): boolean {
+    const editor = this.host.state.editor;
+    if (editor.getText().length === 0) return false;
+    editor.setText('');
+    return true;
+  }
+
   private cancelCurrentStream(): void {
+    // Cancel any running `!` shell command (treated as a streaming phase) in
+    // addition to the agent turn, so Esc / Ctrl+C interrupts it too.
+    this.host.cancelRunningShellCommand();
     void this.host.session?.cancel();
   }
 
@@ -269,7 +399,35 @@ export class EditorKeyboardController {
 
     const meta = parseImageMeta(media.bytes);
     if (meta === null) return false;
-    const attachment = this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
+    // Compress at ingestion — a pure data step while building the attachment, so
+    // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
+    // and the submitted image all agree, and the agent core only ever sees an
+    // already-compressed image. Best effort: originals pass through on failure.
+    // When compression changed the bytes, the original is persisted (into the
+    // session's media-originals dir when known, else the temp-dir fallback)
+    // and recorded on the attachment, so submit-time expansion can announce
+    // the compression and point the model at the full-fidelity copy.
+    const compressed = await compressImageForModel(media.bytes, meta.mime);
+    const sessionDir = this.host.session?.summary?.sessionDir;
+    const attachment = compressed.changed
+      ? this.imageStore.addImage(
+          compressed.data,
+          compressed.mimeType,
+          compressed.width,
+          compressed.height,
+          {
+            path: await persistOriginalImage(
+              media.bytes,
+              meta.mime,
+              sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
+            ),
+            width: meta.width,
+            height: meta.height,
+            byteLength: media.bytes.length,
+            mime: meta.mime,
+          },
+        )
+      : this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
     this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
     this.host.state.ui.requestRender();
     this.host.track('shortcut_paste', { kind: 'image' });

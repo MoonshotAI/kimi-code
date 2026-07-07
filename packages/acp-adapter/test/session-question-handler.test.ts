@@ -163,7 +163,7 @@ describe('AcpSession.handleQuestion', () => {
     expect(req.toolCall.content).toEqual([
       { type: 'content', content: { type: 'text', text: '哪个口味？' } },
     ]);
-    expect(trackCalls).toEqual([{ event: 'question_answered', properties: undefined }]);
+    expect(trackCalls).toEqual([{ event: 'question_answered', properties: { answered: 1 } }]);
   });
 
   it('skip: q0_skip resolves to null with question_dismissed telemetry', async () => {
@@ -207,7 +207,7 @@ describe('AcpSession.handleQuestion', () => {
     // Telemetry: degraded(multi_question) first, then answered.
     expect(trackCalls).toEqual([
       { event: 'question_degraded', properties: { reason: 'multi_question', dropped: 2 } },
-      { event: 'question_answered', properties: undefined },
+      { event: 'question_answered', properties: { answered: 1 } },
     ]);
     // log.warn fired with the dropped count.
     expect(warnSpy).toHaveBeenCalledWith(
@@ -236,7 +236,7 @@ describe('AcpSession.handleQuestion', () => {
     expect(raw.permissionRequests).toHaveLength(1);
     expect(trackCalls).toEqual([
       { event: 'question_degraded', properties: { reason: 'multi_select' } },
-      { event: 'question_answered', properties: undefined },
+      { event: 'question_answered', properties: { answered: 1 } },
     ]);
   });
 

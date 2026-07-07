@@ -16,7 +16,6 @@
  * supported, or every fallback fails.
  */
 
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,6 +24,20 @@ import { fileURLToPath } from 'node:url';
 
 import { parseImageMeta } from '#/utils/image/image-mime';
 
+import {
+  DEFAULT_LIST_TIMEOUT_MS,
+  SUPPORTED_IMAGE_MIME_TYPES,
+  baseMimeType,
+  isFileLikeNativeFormat,
+  isSupportedImageMimeType,
+  isWaylandSession,
+  isWSL,
+  parseTargetList,
+  runCommand as runCommandBase,
+  safeAvailableFormats,
+  type RunCommand,
+  type RunCommandOptions,
+} from './clipboard-common';
 import { clipboard, type ClipboardModule } from './clipboard-native';
 
 export interface ClipboardImage {
@@ -49,14 +62,6 @@ export class ClipboardMediaError extends Error {
   }
 }
 
-type RunCommandOptions = { timeoutMs?: number; env?: NodeJS.ProcessEnv };
-type RunCommand = (
-  command: string,
-  args: string[],
-  options?: RunCommandOptions,
-) => { stdout: Buffer; ok: boolean };
-
-const SUPPORTED_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 
 const VIDEO_MIME_BY_SUFFIX: Readonly<Record<string, string>> = Object.freeze({
@@ -75,10 +80,8 @@ const VIDEO_MIME_BY_SUFFIX: Readonly<Record<string, string>> = Object.freeze({
   '.3g2': 'video/3gpp2',
 });
 
-const DEFAULT_LIST_TIMEOUT_MS = 1000;
 const DEFAULT_READ_TIMEOUT_MS = 3000;
 const DEFAULT_POWERSHELL_TIMEOUT_MS = 5000;
-const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 
 const MACOS_FILE_PATH_SCRIPT = String.raw`
 ObjC.import('AppKit');
@@ -114,28 +117,6 @@ if (String(pb) !== '[id nil]') {
 }
 out.join('\n');
 `.trim();
-
-function isWaylandSession(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env['WAYLAND_DISPLAY']) || env['XDG_SESSION_TYPE'] === 'wayland';
-}
-
-function isWSL(env: NodeJS.ProcessEnv): boolean {
-  if (env['WSL_DISTRO_NAME'] !== undefined || env['WSLENV'] !== undefined) return true;
-  try {
-    return /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf-8'));
-  } catch {
-    return false;
-  }
-}
-
-function baseMimeType(raw: string): string {
-  return raw.split(';')[0]?.trim().toLowerCase() ?? raw.toLowerCase();
-}
-
-function isSupportedImageMimeType(mime: string): boolean {
-  const base = baseMimeType(mime);
-  return (SUPPORTED_IMAGE_MIME_TYPES as readonly string[]).includes(base);
-}
 
 function selectPreferredImageMimeType(candidates: string[]): string | null {
   const normalized = candidates
@@ -253,29 +234,11 @@ function readMediaFromText(text: string): ClipboardMedia | null {
   return readMediaFromPaths(parseClipboardPaths(text));
 }
 
-function runCommand(
-  command: string,
-  args: string[],
-  options?: RunCommandOptions,
-): { stdout: Buffer; ok: boolean } {
-  const result = spawnSync(command, args, {
-    timeout: options?.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS,
-    maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
+function runCommand(command: string, args: string[], options?: RunCommandOptions): { stdout: Buffer; ok: boolean } {
+  return runCommandBase(command, args, {
+    timeoutMs: options?.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS,
     env: options?.env,
   });
-  if (result.error !== undefined || result.status !== 0) {
-    return { ok: false, stdout: Buffer.alloc(0) };
-  }
-  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? '');
-  return { ok: true, stdout };
-}
-
-function parseTargetList(output: Buffer): string[] {
-  return output
-    .toString('utf-8')
-    .split(/\r?\n/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
 }
 
 function readClipboardFileMediaViaWlPaste(): ClipboardMedia | null {
@@ -392,28 +355,6 @@ function readClipboardFilePathsViaMacOs(run: RunCommand): string[] {
   });
   if (!result.ok || result.stdout.length === 0) return [];
   return parseClipboardPaths(result.stdout.toString('utf-8'));
-}
-
-function isFileLikeNativeFormat(format: string): boolean {
-  const f = format.toLowerCase();
-  const base = baseMimeType(format);
-  return (
-    f.includes('file-url') ||
-    f.includes('file url') ||
-    f.includes('nsfilenames') ||
-    f.includes('com.apple.finder') ||
-    base === 'text/uri-list' ||
-    base === 'public.url'
-  );
-}
-
-function safeAvailableFormats(clip: ClipboardModule | null): string[] {
-  if (clip?.availableFormats === undefined) return [];
-  try {
-    return clip.availableFormats();
-  } catch {
-    return [];
-  }
 }
 
 async function readClipboardFileMediaViaNativeText(

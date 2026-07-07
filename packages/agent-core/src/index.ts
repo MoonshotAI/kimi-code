@@ -30,6 +30,8 @@ export type {
   SessionLogHandle,
 } from './logging/types';
 export { USER_PROMPT_ORIGIN } from './agent/context';
+export { renderToolResultForModel } from './agent/context/tool-result-render';
+export type { RenderableToolResult } from './agent/context/tool-result-render';
 export type {
   AgentContextData,
   ContextMessage,
@@ -44,6 +46,45 @@ export type {
   QuestionBackgroundTaskInfo,
 } from './agent/background';
 export type { ToolServices } from './tools/support/services';
+
+// Image compression — prompt-ingestion sites (CLI paste, server upload
+// resolution, ACP) call compressBase64ForModel / compressImageForModel per
+// image while constructing the content part; the MCP tool-result pipeline
+// walks whole part lists with compressImageContentParts, which returns the
+// generated captions as data. Compression is never silent:
+// buildImageCompressionCaption renders the shared "what was compressed" note,
+// persistOriginalImage keeps the pre-compression bytes readable, and
+// cropImageForModel reads a region of an original back at full fidelity.
+// Re-exported from the package root so consumers (node-sdk, server) import
+// them without a deep subpath.
+export {
+  buildImageCompressionCaption,
+  compressImageForModel,
+  compressBase64ForModel,
+  compressImageContentParts,
+  cropImageForModel,
+  formatByteSize,
+  IMAGE_BYTE_BUDGET,
+  MAX_IMAGE_EDGE_PX,
+} from './tools/support/image-compress';
+export type {
+  CompressAnnotateOptions,
+  CompressedContentParts,
+  CompressImageOptions,
+  CompressImageResult,
+  CompressBase64Result,
+  CropImageOptions,
+  CropImageOutcome,
+  ImageCompressionCaptionInput,
+  ImageCropRegion,
+  ImageVariantDescription,
+} from './tools/support/image-compress';
+export {
+  originalImageCacheDir,
+  persistOriginalImage,
+  sessionMediaOriginalsDir,
+} from './tools/support/image-originals';
+export type { PersistOriginalImageOptions } from './tools/support/image-originals';
 export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,
@@ -62,6 +103,16 @@ export type {
 export { AGENT_WIRE_PROTOCOL_VERSION } from './agent/records';
 export type { AgentConfigUpdateData } from './agent/config';
 export type { CompactionBeginData, CompactionResult } from './agent/compaction';
+export {
+  COMPACT_USER_MESSAGE_HEAD_TOKENS,
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  COMPACTION_ELISION_VARIANT,
+  buildCompactionElisionText,
+  collectCompactableUserMessages,
+  isRealUserInput,
+  selectCompactionUserMessages,
+  selectRecentUserMessages,
+} from './agent/compaction';
 export type {
   PermissionApprovalResultRecord,
   PermissionMode,
@@ -81,3 +132,29 @@ export type {
   ExecutableToolSuccessResult,
   ExecutableToolErrorResult,
 } from './loop/types';
+
+// ─── Dependency injection container ────────────────────────────────────────
+export * from './di';
+
+// ─── Base — Event<T> / Emitter<T> ──────────────────────────────────────────
+// NOTE: only `Emitter` is re-exported from the top-level barrel — the new
+// VSCode-style `Event<T>` symbol collides with `./rpc`'s `Event` (agent-core
+// protocol Event union, exported via `export * from './rpc'` above). Callers
+// that need the emitter `Event<T>` type import it from the explicit sub-path
+// `@moonshot-ai/agent-core/base/common/event` (declared in `package.json`
+// `exports`). This keeps the existing top-level `Event` semantics stable for
+// consumers like `services/src/event/event.ts` while letting new code reach
+// for the emitter type without naming clashes.
+export { Emitter } from './base/common/event';
+
+// ─── In-process services (merged from @moonshot-ai/services) ─────────────────
+// Re-exports the `IXxxService` contracts, default `XxxService` implementations,
+// `toProtocol*` translators and error classes. Importing this barrel triggers
+// the `registerSingleton(...)` side-effects at the bottom of each `*Service.ts`,
+// populating the DI registry consumed by `getSingletonServiceDescriptors()`.
+//
+// NOTE: `ApprovalRequest` / `ApprovalResponse` / `QuestionRequest` /
+// `QuestionResult` are intentionally NOT re-exported here — they are the
+// canonical protocol shapes already exported via `./rpc` (`rpc/sdk-api.ts`),
+// and re-exporting them again would collide (TS2308).
+export * from './services';

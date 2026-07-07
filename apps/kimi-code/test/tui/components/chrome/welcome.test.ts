@@ -1,4 +1,4 @@
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -12,11 +12,12 @@ const TRUECOLOR_PATTERN = /\u001B\[38;2;(\d+);(\d+);(\d+)m/g;
 const appState: AppState = {
   version: '1.2.3',
   workDir: '/tmp/project',
+  additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
   model: 'kimi-k2',
   permissionMode: 'manual',
-  thinking: false,
+  thinkingEffort: 'off',
   contextUsage: 0,
   contextTokens: 0,
   maxContextTokens: 0,
@@ -25,6 +26,7 @@ const appState: AppState = {
   streamingPhase: 'idle',
   streamingStartTime: 0,
   planMode: false,
+  inputMode: 'prompt',
   swarmMode: false,
   theme: 'dark',
   editorCommand: null,

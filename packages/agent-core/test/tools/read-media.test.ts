@@ -4,6 +4,7 @@
 
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ContentPart, ModelCapability } from '@moonshot-ai/kosong';
+import { Jimp } from 'jimp';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
@@ -12,7 +13,7 @@ import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
-import { MEDIA_SNIFF_BYTES } from '../../src/tools/support/file-type';
+import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -76,6 +77,14 @@ function outputParts(result: ExecutableToolResult): ContentPart[] {
   return result.output as ContentPart[];
 }
 
+// The media summary rides the result's `note` side channel (rendered to the
+// model at projection time, never to UIs); the tool keeps its own `<system>`
+// wrapping as a wording choice.
+function noteText(result: ExecutableToolResult): string {
+  expect(typeof result.note).toBe('string');
+  return result.note as string;
+}
+
 describe('ReadMediaFileTool', () => {
   it('has name, parameters, and path-scoped resource accesses', () => {
     const tool = makeReadMediaTool();
@@ -122,7 +131,7 @@ describe('ReadMediaFileTool', () => {
     ).toThrow(/image_in or video_in/);
   });
 
-  it('returns a system/text/image/text wrap for PNG files', async () => {
+  it('returns a text/image/text wrap plus a <system> note for PNG files', async () => {
     const data = Buffer.concat([PNG_HEADER, Buffer.from('pngdata')]);
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
@@ -136,16 +145,15 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
+    expect(noteText(result)).toMatch(/^<system>.*<\/system>$/s);
     const parts = outputParts(result);
-    expect(parts).toHaveLength(4);
-    expect(parts[0]).toMatchObject({ type: 'text' });
-    expect((parts[0] as { text: string }).text).toMatch(/^<system>.*<\/system>$/s);
-    expect(parts[1]).toEqual({ type: 'text', text: '<image path="/workspace/sample.png">' });
-    expect(parts[2]).toMatchObject({ type: 'image_url' });
-    expect((parts[2] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '<image path="/workspace/sample.png">' });
+    expect(parts[1]).toMatchObject({ type: 'image_url' });
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
       `data:image/png;base64,${data.toString('base64')}`,
     );
-    expect(parts[3]).toEqual({ type: 'text', text: '</image>' });
+    expect(parts[2]).toEqual({ type: 'text', text: '</image>' });
   });
 
   it('emits a <system> summary with mime type and byte size for images', async () => {
@@ -162,8 +170,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('image/png');
     expect(systemText).toContain(`${String(data.length)} bytes`);
     // The re-read reminder is included regardless of dimensions.
@@ -189,8 +196,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('4x2');
     // With the original size known, the coordinate guidance is included.
     expect(systemText).toMatch(/relative coordinates first/i);
@@ -214,8 +220,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     // mime type and byte size are still reported …
     expect(systemText).toContain('image/png');
     expect(systemText).toContain(`${String(data.length)} bytes`);
@@ -242,8 +247,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('video/mp4');
     expect(systemText).toContain(`${String(MP4_HEADER.length)} bytes`);
     // The re-read reminder is included for videos too.
@@ -265,8 +269,8 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    expect(parts[1]).toEqual({ type: 'text', text: '<image path="/workspace/sample">' });
-    expect((parts[2] as { imageUrl: { url: string } }).imageUrl.url).toContain('image/png');
+    expect(parts[0]).toEqual({ type: 'text', text: '<image path="/workspace/sample">' });
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toContain('image/png');
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {
@@ -287,7 +291,7 @@ describe('ReadMediaFileTool', () => {
     const parts = outputParts(result);
     expect(readBytes).toHaveBeenCalledWith('/home/test/images/sample.png', MEDIA_SNIFF_BYTES);
     expect(readBytes).toHaveBeenCalledWith('/home/test/images/sample.png');
-    expect(parts[1]).toEqual({ type: 'text', text: '<image path="/home/test/images/sample.png">' });
+    expect(parts[0]).toEqual({ type: 'text', text: '<image path="/home/test/images/sample.png">' });
   });
 
   it('returns a text/video/text wrap for MP4 files', async () => {
@@ -306,16 +310,15 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
+    expect(noteText(result)).toMatch(/^<system>.*<\/system>$/s);
     const parts = outputParts(result);
-    expect(parts).toHaveLength(4);
-    expect(parts[0]).toMatchObject({ type: 'text' });
-    expect((parts[0] as { text: string }).text).toMatch(/^<system>.*<\/system>$/s);
-    expect(parts[1]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mp4">' });
-    expect(parts[2]).toMatchObject({ type: 'video_url' });
-    expect((parts[2] as { videoUrl: { url: string } }).videoUrl.url).toBe(
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mp4">' });
+    expect(parts[1]).toMatchObject({ type: 'video_url' });
+    expect((parts[1] as { videoUrl: { url: string } }).videoUrl.url).toBe(
       `data:video/mp4;base64,${MP4_HEADER.toString('base64')}`,
     );
-    expect(parts[3]).toEqual({ type: 'text', text: '</video>' });
+    expect(parts[2]).toEqual({ type: 'text', text: '</video>' });
   });
 
   it('falls back to a media extension when the header cannot be sniffed', async () => {
@@ -333,8 +336,8 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    expect(parts[1]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mpg">' });
-    expect((parts[2] as { videoUrl: { url: string } }).videoUrl.url).toBe(
+    expect(parts[0]).toEqual({ type: 'text', text: '<video path="/workspace/sample.mpg">' });
+    expect((parts[1] as { videoUrl: { url: string } }).videoUrl.url).toBe(
       `data:video/mpeg;base64,${data.toString('base64')}`,
     );
   });
@@ -370,7 +373,7 @@ describe('ReadMediaFileTool', () => {
       filename: 'sample.mp4',
     });
     const parts = outputParts(result);
-    expect(parts[2]).toEqual({
+    expect(parts[1]).toEqual({
       type: 'video_url',
       videoUrl: { url: 'ms://file-123', id: 'file-123' },
     });
@@ -492,8 +495,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('Read image file');
     expect(systemText).toContain('image/png');
     expect(systemText).toContain('3x4 pixels');
@@ -516,8 +518,7 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('Read image file');
     expect(systemText).toContain('image/png');
     expect(systemText).toContain(`${String(data.length)} bytes`);
@@ -581,5 +582,281 @@ describe('ReadMediaFileTool', () => {
     });
     expect(relative.isError).toBe(true);
     expect(readBytes).not.toHaveBeenCalled();
+  });
+
+  it('uses the sniffed MIME over a mismatched image extension', async () => {
+    // `.png` path but JPEG bytes — the data URL must advertise `image/jpeg`
+    // (the real bytes), not `image/png` (the extension), otherwise the model
+    // API rejects it as `application/octet-stream`.
+    const data = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('jpegdata')]);
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_mismatch',
+      args: { path: '/workspace/actually-jpeg.png' },
+      signal,
+    });
+
+    const parts = outputParts(result);
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+      `data:image/jpeg;base64,${data.toString('base64')}`,
+    );
+  });
+
+  it('ships sniffed image formats to the provider without gating', async () => {
+    // A `.png` file that is actually a BMP is reported as `image/bmp`. The
+    // tool does not gate on image format — it ships the real bytes with the
+    // sniffed MIME, and the provider decides which formats it accepts.
+    const data = Buffer.concat([Buffer.from('BM'), Buffer.from('bmpdata')]);
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_bmp',
+      args: { path: '/workspace/photo.png' },
+      signal,
+    });
+
+    const parts = outputParts(result);
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+      `data:image/bmp;base64,${data.toString('base64')}`,
+    );
+  });
+
+  it('rejects a media-extension file whose bytes are not a supported image', async () => {
+    // `.png` path with garbage bytes (no NUL) fails to sniff; the tool must
+    // report "not a supported image or video file" instead of building a
+    // mismatched data URL.
+    const data = Buffer.from('this is not an image, just plain ascii text');
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_garbage',
+      args: { path: '/workspace/fake.png' },
+      signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe(
+      '"/workspace/fake.png" is not a supported image or video file. Use Read for text files, or Bash or an MCP tool for other binary formats.',
+    );
+  });
+
+  it('downsamples an oversized image but reports original dimensions', async () => {
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    expect(sniffImageDimensions(big)).toEqual({ width: 2600, height: 2600 });
+
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(big),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_big',
+      args: { path: '/workspace/big.png' },
+      signal,
+    });
+
+    const parts = outputParts(result);
+    const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
+    expect(match).not.toBeNull();
+    // The image actually sent to the model is downsampled to the edge cap.
+    const sentBytes = Buffer.from(match![2]!, 'base64');
+    const sentDims = sniffImageDimensions(sentBytes);
+    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
+
+    // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
+    const systemText = noteText(result);
+    expect(systemText).toContain('2600x2600');
+    expect(systemText).toContain(`${String(big.length)} bytes`);
+  });
+
+  describe('region and full_resolution', () => {
+    async function bigPng(width: number, height: number): Promise<Buffer> {
+      return Buffer.from(
+        await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/png'),
+      );
+    }
+
+    function toolFor(data: Buffer): ReadMediaFileTool {
+      return makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+      });
+    }
+
+    it('accepts region and full_resolution in the input schema', () => {
+      expect(
+        ReadMediaFileInputSchema.safeParse({
+          path: 'a.png',
+          region: { x: 0, y: 0, width: 10, height: 10 },
+        }).success,
+      ).toBe(true);
+      expect(
+        ReadMediaFileInputSchema.safeParse({ path: 'a.png', full_resolution: true }).success,
+      ).toBe(true);
+      expect(
+        ReadMediaFileInputSchema.safeParse({
+          path: 'a.png',
+          region: { x: -1, y: 0, width: 10, height: 10 },
+        }).success,
+      ).toBe(false);
+      expect(
+        ReadMediaFileInputSchema.safeParse({
+          path: 'a.png',
+          region: { x: 0, y: 0, width: 0, height: 10 },
+        }).success,
+      ).toBe(false);
+    });
+
+    it('announces a downsampled delivery and the region readback in the <system> block', async () => {
+      const big = await bigPng(2600, 2600);
+      const result = await executeTool(toolFor(big), {
+        turnId: 't1',
+        toolCallId: 'c_note',
+        args: { path: '/workspace/big.png' },
+        signal,
+      });
+
+      const systemText = noteText(result);
+      expect(systemText).toContain('2600x2600');
+      // Wording must not depend on serialization order: some providers keep
+      // the note inline after the media, others flatten tool text and
+      // re-attach the image after it — so no "above"/"below".
+      expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
+      expect(systemText).toMatch(/fine detail/i);
+      expect(systemText).toContain('region');
+    });
+
+    it('does not claim downsampling for an image sent untouched', async () => {
+      // A real 3x4 PNG passes through unchanged — the <system> block must not
+      // carry a downsample note (that would be its own kind of misreporting).
+      const png = Buffer.from(
+        '89504e470d0a1a0a0000000d49484452000000030000000408020000003a' +
+          '63dc1c0000001949444154789c63606060f8cf80019aa0a8a020' +
+          '00000000ffff03000c1d03014b0000000049454e44ae426082',
+        'hex',
+      );
+      const result = await executeTool(toolFor(png), {
+        turnId: 't1',
+        toolCallId: 'c_untouched',
+        args: { path: '/workspace/small.png' },
+        signal,
+      });
+      const systemText = noteText(result);
+      expect(systemText).not.toMatch(/downsampled/i);
+    });
+
+    it('reads a region crop at native resolution', async () => {
+      const big = await bigPng(2600, 2600);
+      const result = await executeTool(toolFor(big), {
+        turnId: 't1',
+        toolCallId: 'c_crop',
+        args: { path: '/workspace/big.png', region: { x: 100, y: 50, width: 400, height: 300 } },
+        signal,
+      });
+
+      const parts = outputParts(result);
+      const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
+      const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
+      const sentDims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
+      expect(sentDims).toEqual({ width: 400, height: 300 });
+
+      const systemText = noteText(result);
+      expect(systemText).toContain('2600x2600');
+      expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
+      expect(systemText).toMatch(/native resolution/);
+      expect(systemText).toContain('offset');
+    });
+
+    it('rejects a region outside the image with the original size in the error', async () => {
+      const big = await bigPng(2600, 2600);
+      const result = await executeTool(toolFor(big), {
+        turnId: 't1',
+        toolCallId: 'c_crop_oob',
+        args: { path: '/workspace/big.png', region: { x: 5000, y: 0, width: 100, height: 100 } },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('2600x2600');
+    });
+
+    it('serves full_resolution when the bytes fit the per-image budget', async () => {
+      const big = await bigPng(2600, 1300); // over the edge cap, tiny in bytes
+      const result = await executeTool(toolFor(big), {
+        turnId: 't1',
+        toolCallId: 'c_fullres',
+        args: { path: '/workspace/big.png', full_resolution: true },
+        signal,
+      });
+
+      const parts = outputParts(result);
+      expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+        `data:image/png;base64,${big.toString('base64')}`,
+      );
+      const systemText = noteText(result);
+      expect(systemText).toMatch(/native resolution/);
+    });
+
+    it('fails full_resolution explicitly when the file exceeds the per-image budget', async () => {
+      // PNG magic followed by 4MB of filler: recognizably an image, over the
+      // 3.75MB byte budget — full_resolution must refuse, not silently shrink.
+      const data = Buffer.concat([PNG_HEADER, Buffer.alloc(4 * 1024 * 1024, 1)]);
+      const result = await executeTool(toolFor(data), {
+        turnId: 't1',
+        toolCallId: 'c_fullres_big',
+        args: { path: '/workspace/huge.png', full_resolution: true },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toMatch(/full_resolution/);
+      expect(result.output).toMatch(/region/);
+      // Exact byte counts accompany the rounded sizes: a file a hair over
+      // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
+      expect(result.output).toContain(`${String(data.length)} bytes`);
+      expect(result.output).toContain('3932160-byte');
+    });
+
+    it('rejects region and full_resolution for video files', async () => {
+      const tool = makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MP4_HEADER.length,
+        }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(MP4_HEADER),
+      });
+
+      const withRegion = await executeTool(tool, {
+        turnId: 't1',
+        toolCallId: 'c_vid_region',
+        args: { path: '/workspace/clip.mp4', region: { x: 0, y: 0, width: 10, height: 10 } },
+        signal,
+      });
+      expect(withRegion.isError).toBe(true);
+      expect(withRegion.output).toMatch(/image files/i);
+
+      const withFullRes = await executeTool(tool, {
+        turnId: 't1',
+        toolCallId: 'c_vid_fullres',
+        args: { path: '/workspace/clip.mp4', full_resolution: true },
+        signal,
+      });
+      expect(withFullRes.isError).toBe(true);
+    });
   });
 });

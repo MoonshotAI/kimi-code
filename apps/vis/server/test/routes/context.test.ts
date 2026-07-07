@@ -69,28 +69,31 @@ describe('context route', () => {
     cleanup = c;
     const app = contextRoute(home);
 
-    // Default (model view): the pre-compaction message is dropped, leaving
-    // [summary, after-compaction].
+    // Default (model view): the real user prompt before compaction is KEPT, the
+    // assistant reply is dropped, then the summary, then the post-compaction tail.
     const modelRes = await app.request('/session_fixture/context?agent=main');
     expect(modelRes.status).toBe(200);
     const modelBody = (await modelRes.json()) as {
       messages: { source: string; message: { content: { type: string; text?: string }[] } }[];
     };
     expect(modelBody.messages.map((m) => m.source)).toEqual([
-      'compaction_summary', 'append_message',
+      'append_message', 'compaction_summary', 'append_message',
     ]);
+    expect(modelBody.messages[0]!.message.content[0]).toMatchObject({ text: 'before compaction' });
+    expect(modelBody.messages[2]!.message.content[0]).toMatchObject({ text: 'after compaction' });
 
-    // Full history: the pre-compaction message is KEPT, then the summary marker,
-    // then the post-compaction tail.
+    // Full history: every pre-compaction message (user prompt + assistant reply)
+    // is KEPT, then the summary marker, then the post-compaction tail.
     const fullRes = await app.request('/session_fixture/context?agent=main&history=full');
     expect(fullRes.status).toBe(200);
     const fullBody = (await fullRes.json()) as {
       messages: { source: string; message: { content: { type: string; text?: string }[] } }[];
     };
     expect(fullBody.messages.map((m) => m.source)).toEqual([
-      'append_message', 'compaction_summary', 'append_message',
+      'append_message', 'append_message', 'compaction_summary', 'append_message',
     ]);
     expect(fullBody.messages[0]!.message.content[0]).toMatchObject({ text: 'before compaction' });
-    expect(fullBody.messages[2]!.message.content[0]).toMatchObject({ text: 'after compaction' });
+    expect(fullBody.messages[1]!.message.content[0]).toMatchObject({ text: 'assistant reply' });
+    expect(fullBody.messages[3]!.message.content[0]).toMatchObject({ text: 'after compaction' });
   });
 });

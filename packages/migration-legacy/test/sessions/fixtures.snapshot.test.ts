@@ -55,7 +55,8 @@ describe.each(SCENARIOS)('migration snapshot: %s', (name) => {
       .replace(/"updatedAt": ".+?"/, '"updatedAt": "<REDACTED>"')
       .replace(/"imported_at": ".+?"/, '"imported_at": "<REDACTED>"')
       .replace(/"kimi_cli_source_path": ".+?"/, '"kimi_cli_source_path": "<REDACTED>"')
-      .split(target)
+      .replaceAll('\\\\', '/')
+      .split(target.replaceAll('\\', '/'))
       .join('<TARGET>');
     // Redact wire created_at timestamp (derived from wire_mtime or Date.now()).
     const stableWire = wire.replace(/"created_at":\s*\d+/, '"created_at":<REDACTED>');

@@ -1,6 +1,6 @@
 ---
 name: sync-changelog
-description: Use after a release succeeds, when maintainers need to sync apps/kimi-code/CHANGELOG.md into docs/en/release-notes/changelog.md and docs/zh/release-notes/changelog.md.
+description: Use after a release succeeds, when maintainers need to sync apps/kimi-code/CHANGELOG.md into docs/en/release-notes/changelog.md and docs/zh/release-notes/changelog.md, then open a PR on a dedicated branch.
 ---
 
 # Sync Changelog
@@ -15,7 +15,7 @@ apps/kimi-code/CHANGELOG.md
 
 This file is the **only upstream source** for the documentation-site changelog. Internal package changelogs such as `packages/*/CHANGELOG.md` do not go into the documentation site.
 
-After the release flow finishes (Release PR merged → `Version Packages` completed → npm publish succeeded), maintainers manually run this skill to copy the new CLI changelog entries into the docs site and translate the English increment into Chinese.
+After the release flow finishes (Release PR merged → `Version Packages` completed → npm publish succeeded), maintainers manually run this skill to copy the new CLI changelog entries into the docs site, translate the English increment into Chinese, wait for an optional human review, then commit on a dedicated branch and open a PR.
 
 ## When To Use
 
@@ -41,39 +41,65 @@ Before editing, confirm:
 
 - The released version exists on npm (`npm view @moonshot-ai/kimi-code versions --json`) or has a matching GitHub Release tag.
 - The top of `apps/kimi-code/CHANGELOG.md` is that new version.
-- The current branch is clean, or you are on a dedicated docs-sync branch.
 
 If any condition is not true, stop and confirm with the user.
 
+Do **not** edit or commit directly on `main`. All sync work happens on a dedicated branch created in step 1.
+
 ## Workflow
 
-### 1. Find The Version Range
+### 1. Prepare Branch
+
+Start from an up-to-date default branch:
 
 ```bash
-# Upstream versions
-rg '^## ' apps/kimi-code/CHANGELOG.md | head -20
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+```
 
-# Latest version already synced into the English docs page
+Before creating the branch, peek at the version range so the branch name matches the newest version being synced:
+
+```bash
+rg '^## ' apps/kimi-code/CHANGELOG.md | head -5
 rg '^## ' docs/en/release-notes/changelog.md | head -5
 ```
+
+Name the branch after the newest upstream version that is not yet in the English docs page:
+
+```text
+docs/changelog-sync-<newest-version>
+```
+
+Example: syncing `0.2.1` only → `docs/changelog-sync-0.2.1`.
+
+```bash
+git checkout -b docs/changelog-sync-<newest-version>
+```
+
+If the branch already exists locally or on the remote, stop and confirm with the user instead of reusing it.
+
+### 2. Find The Version Range
+
+Use the same version lists from step 1. Confirm:
 
 - First sync: copy all upstream version blocks into the English page.
 - Incremental sync: copy every upstream version block above the latest version already present in the English page.
 
 Use upstream order: newest version first.
 
-### 2. Strip Decorations And Extract Entry Text
+### 3. Strip Decorations And Extract Entry Text
 
 Upstream entries look like this:
 
 ```markdown
-- [#317](https://github.com/...) [`2f51db4`](https://github.com/...) - Clean up lint warnings ...
+- [#317](https://github.com/...) [`2f51db4`](https://github.com/...) Thanks [@user](https://github.com/...)! - Clean up lint warnings ...
 ```
 
-Keep:
+Changesets may add a `Thanks ...!` credit, but it must be removed every time. Keep:
 
 - Version headings such as `## 0.2.0`.
-- Only the body text of each entry, after the PR/hash decoration.
+- Only the body text of each entry, after the PR/hash decoration and any `Thanks ...!` credit have been removed.
 
 Remove:
 
@@ -81,18 +107,41 @@ Remove:
 - Changesets subheadings such as `### Patch Changes`, `### Minor Changes`, and `### Major Changes`.
 - PR links such as `[#317](...)`.
 - Commit hash links such as ``[`2f51db4`](...)``.
+- The `Thanks [@user](...)!` credit, including the multi-author form `Thanks [@a](...), [@b](...)!`. Drop the whole `Thanks ...!` segment every time, regardless of whether the feature is enabled.
 
-After stripping, each entry should be only:
+After stripping, each entry is `- <body text>`.
+
+Drop SDK-only and provider-internal detail. This changelog serves `@moonshot-ai/kimi-code` CLI and web users. Within an entry, keep only what CLI/web users can perceive, and remove sentences that document internals instead of user-visible behavior. Apply this on both the English and Chinese pages:
+
+- Drop sentences about how the SDK maps a capability, builds model aliases, or exposes a flag through an API such as `getExperimentalFeatures()` — that belongs in the SDK changelog, not here.
+- Drop provider / wire-format implementation mechanics (XML markers like `<tools_added>`, protocol field explanations, "the wire protocol is unchanged", cache-hit mechanics) unless they are the behavior a user perceives.
+- Keep the user-facing effect and any constraints users must follow (for example "question texts must be unique").
+
+Do not change facts or drop a real user-facing behavior — only trim the internal-only scaffolding. For over-long, internal-heavy entries, this trim applies on the English page too, not only in translation.
+
+Web UI prefix: if the entry is a web UI change, prefix the body text with `web: ` so readers can tell it affects the web UI:
 
 ```markdown
-- <body text>
+- web: <body text>
 ```
+
+An entry counts as a web UI change when its upstream commit touches `apps/kimi-web/`. Check with `git show --name-only <hash>` (the commit hash is the one stripped above). `gen-changesets` writes this prefix for web changes, so it is usually already present in upstream — preserve it when it is there, and add it when a web entry lacks it. When a commit touches both web and non-web code, use `web:` only if the user-facing change described by the entry is in the web UI. Keep the `web:` prefix on the Chinese page too — it is a scope marker, not translated text.
 
 Upstream language rule: `gen-changesets` requires changelog entries to be English. If the upstream CLI changelog contains a non-English entry, stop and report it to the user. Do not silently rewrite it while syncing docs.
 
 Public-text rule: do not copy real internal endpoints, key names, account names, or service names into docs changelogs. Replace examples with neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY` while preserving the user-visible meaning.
 
-### 3. Classify Entries
+### 4. Merge, Deduplicate, And Classify Entries
+
+Before classifying, merge related entries and drop redundant ones from the user-facing changelog:
+
+- **Merge micro-tweaks to the same surface.** Collapse several small tweaks to the same UI area or feature into one concise entry at the higher level. For example, "change the composer's default height" and "change the composer's default font" merge into "Polish the composer's default styling." Use the most specific common ancestor (composer, settings page, tool card, and so on). Classify the merged entry by its combined effect, and keep the `web:` prefix if the combined change is still web-facing.
+- **Merge same-surface or same-kind fixes when you have three or more.** The `Bug Fixes` section tends to accumulate many narrow UI/polish fixes that read as noise when listed one by one. When three or more fixes target the same area (for example several tool cards in the TUI, or the web session/conversation surface) or the same class of problem (for example several "jumping/flickering/collapsing during streaming" fixes), merge them into one higher-level entry. Examples:
+  - "Fix the Bash tool card collapsing...", "Fix the Edit tool card jumping in height...", "Fix the Edit tool card flickering while its result streams in" → "Fix several TUI tool cards jumping, flickering, or collapsing in height when results stream in or end with short output."
+  - "Fix the collapsed sidebar not hiding...", "Stop the chat history from replaying its entrance animation...", "Fix tool components jumping the conversation when expanded/collapsed" → "web: Fix several layout and display glitches when switching sessions, including the collapsed sidebar not hiding, the chat history replaying its entrance animation, and tool components jumping the conversation."
+  - Keep `web:` if the merged fixes are all web-facing. Classify as `Bug Fixes`.
+  - **Do not over-merge.** Leave a fix standalone when it is broad, high-value, or genuinely distinct (for example model/provider tool-calling bugs, session-list corruption, file-completion gaps). Merging is for low-reader-value, similar-shape fixes that read as a wall of similar bullets.
+- **Drop server/API plumbing covered by a web entry.** If one entry adds a web UI feature (for example, an Archived sessions page) and another entry only adds the server or REST/WebSocket endpoints that exist solely to power that web feature, keep the `web:` entry and drop the API entry. CLI and web users perceive the web page; the backing API is implementation detail with no independent user value on this changelog. Keep the API entry only when it has independent user value — a new public endpoint that SDK or server consumers call directly, or a capability usable outside the web feature. When unsure, keep both and let the reviewer decide.
 
 The docs changelog uses five section types:
 
@@ -114,6 +163,8 @@ Classification process:
 
 Features vs. Polish: ask whether the entry introduces something the user could not do before. If yes (new command, flag, mode, viewer, or capability), use `Features`. If it only improves an existing surface (a UI panel that already existed, an existing prompt, an existing tool card, an existing payload pipeline), use `Polish`. Verbs like `Add` do not automatically mean `Features` — a small visual addition to an existing UI is still polish.
 
+Default-behavior changes: changing the default value of an existing capability (for example flipping a feature on by default) is usually `Polish`, because the capability already existed. Use `Features` only when the new default materially changes the out-of-box experience for most users in a way they could not get before. When genuinely ambiguous, flag it and confirm with the reviewer rather than guessing.
+
 Keyword hints:
 
 - **Features**: `Add ... command/flag/option/mode/viewer`, `Introduce`, `Support`, `Allow`, `Enable`, `Implement`, `New ... command/flag/option`
@@ -132,11 +183,12 @@ Omit empty sections. Within each section, order entries by reader value, not ups
 
 1. Put the most valuable, obvious, and larger changes first.
 2. Prefer broad user-visible features, workflow-changing fixes, high-frequency bugs, and large cross-cutting improvements over small polish, narrow edge cases, and internal cleanup.
-3. If entries have similar value, preserve upstream order.
+3. Within `Polish`, put directly user-visible UX or performance improvements (something users can see or feel) before protocol or internal-behavior adjustments (something that makes the model or pipeline behave more reliably but is invisible to users).
+4. If entries have similar value, preserve upstream order.
 
 Do not reword or exaggerate entries just to make them look more important; only reorder existing entries.
 
-### 4. Write The English Page
+### 5. Write The English Page
 
 Never change the English page header:
 
@@ -177,7 +229,7 @@ Example:
 - Update the native release workflow to use current GitHub artifact actions.
 ```
 
-### 5. Translate The Increment Into Chinese
+### 6. Translate The Increment Into Chinese
 
 After updating the English page, translate only the newly added English content into `docs/zh/release-notes/changelog.md`.
 
@@ -205,7 +257,54 @@ Chinese page requirements:
 - Translate only entry body text. Do not add entries that are not present in English.
 - Follow `docs/AGENTS.md` for Chinese typography: full-width punctuation, spaces between Chinese and English, and the glossary.
 
-### 6. Verify
+#### Chinese wording style
+
+Structural fidelity does not mean literal translation. The Chinese entries should read like a concise, idiomatic Chinese changelog. Keep the same facts as the English entry, but rephrase for natural Chinese prose.
+
+Guidelines:
+
+- **One entry, one sentence.** Avoid chaining multiple effects with commas or semicolons. If the English entry is long, split it into shorter sentences or keep only the most important effect.
+- **Drop SDK-only and provider-internal detail.** Apply the trim from step 3 while translating: keep the user-facing effect and required constraints, drop SDK-mapping sentences, provider / wire-format mechanics, and internal XML markers. A long internal entry should collapse to one short Chinese sentence about what the user gets.
+- **Prefer common changelog verbs**: 新增、支持、修复、优化、改进、调整.
+- **Avoid indirect "through... make..." structures**. Do not write "通过 X，使 Y"; prefer direct cause-effect or just state the result.
+  - Bad: `通过缓存已渲染消息行，使终端在长篇对话中保持响应。`
+  - Better: `缓存已渲染消息行，提升长对话下终端的响应速度。`
+- **Be specific, not vague**. Prefer concrete actions over abstract quality words.
+  - Bad: `加固默认系统提示词和内置工具描述。`
+  - Better: `优化默认系统提示词与内置工具描述，避免 Agent 阻塞后台任务。`
+- **Name concrete files or config keys when it helps clarity**.
+  - Bad: `插件现在可以在其清单中声明 hooks。`
+  - Better: `插件现支持在 kimi.plugin.json 中声明生命周期 hooks。`
+- **Include required argument placeholders in CLI options**.
+  - Bad: `--allowed-host`
+  - Better: `--allowed-host <host>`
+- **Keep usage hints to one short clause**.
+  - Bad: `传入 --allowed-host 以允许额外的 host。例如 ... （多句展开）`
+  - Better: `例如 kimi web --allowed-host example.com。`
+- **Do not translate technical identifiers**: keep command names, flag names, file names, env vars, config keys, and the `web:` scope prefix as-is.
+- **Keep parallel rhythm within a section.** When several entries fix similar web surfaces (layout, animation, sizing), phrase them with a consistent structure (for example 修复 <问题>，现 <行为>) so the section reads as a tidy list rather than a mix of shapes.
+
+Example — translating a feature entry:
+
+English source:
+
+```markdown
+- Add a --allowed-host flag to kimi web that lets extra Host header values pass the DNS-rebinding check, and include allow guidance in the 403 error message. Pass --allowed-host <host> to allow an extra host.
+```
+
+Before (literal, wordy):
+
+```markdown
+- 为 `kimi web` 新增 `--allowed-host` 标志，允许额外的 Host 请求头值通过 DNS 重绑定检查，并在 403 错误消息中包含允许指引。传入 `--allowed-host <host>` 以允许额外的 host。例如 `kimi web --allowed-host example.com`。
+```
+
+After (concise, idiomatic):
+
+```markdown
+- `kimi web` 新增 `--allowed-host <host>` 选项，可将指定 Host 加入 DNS 重绑定白名单；403 错误会提示如何通过 `--allowed-host` 或 `KIMI_CODE_ALLOWED_HOSTS` 放行，例如 `kimi web --allowed-host example.com`。
+```
+
+### 7. Verify
 
 Review:
 
@@ -221,6 +320,7 @@ Check:
 - Each section has the same number of entries on both pages.
 - Within each section, the most valuable, obvious, and larger entries appear before smaller or narrower entries.
 - PR links and commit hashes were stripped.
+- No `Thanks ...!` credit remains (remove it every time).
 - Real internal identifiers were replaced with neutral placeholders.
 - There are no empty sections.
 - Markdown indentation and blank lines are intact.
@@ -231,7 +331,36 @@ Then run the docs build:
 pnpm --filter docs run build
 ```
 
-### 7. Commit
+### 8. Human Review Checkpoint
+
+After verification passes, **before committing**, ask the user whether they want to review the sync result. Use `AskQuestion` with options such as:
+
+- **Review first** — show the diff and wait for the user to finish checking.
+- **Skip review, commit and open PR** — proceed directly to steps 9 and 10.
+
+If the user chooses review:
+
+1. Show the uncommitted diff:
+
+   ```bash
+   git diff docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
+   ```
+
+2. Summarize synced versions, section counts, and anything that needed manual classification.
+3. Tell the user to reply when they are done reviewing, or to ask for edits.
+4. Do **not** commit, push, or open a PR until the user explicitly says review is complete, or asks to proceed.
+
+If the user requests edits during review, make the changes, re-run verification from step 7, and return to this checkpoint.
+
+### 9. Commit
+
+Only run this step when the user skipped review or confirmed review is complete.
+
+Stage only the changelog docs files:
+
+```bash
+git add docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
+```
 
 Use a neutral docs-sync commit message:
 
@@ -241,12 +370,66 @@ docs(changelog): sync <version range> from apps/kimi-code/CHANGELOG.md
 
 Do **not** create a changeset for changelog docs sync. Docs sync does not enter the bundle.
 
+### 10. Push And Open PR
+
+Run immediately after step 9.
+
+Push the branch:
+
+```bash
+git push -u origin HEAD
+```
+
+Create the PR with `gh pr create`. Title follows Conventional Commits:
+
+```text
+docs(changelog): sync <version range> from apps/kimi-code/CHANGELOG.md
+```
+
+Fill in `.github/pull_request_template.md`. For changelog sync PRs:
+
+- **Related Issue**: write `N/A — post-release docs maintenance` (no issue required).
+- **Problem**: the docs-site changelog is behind the published CLI release(s).
+- **What changed**: list synced version(s), note English source + Chinese translation, and mention verification (`pnpm --filter docs run build`).
+- **Checklist**: check CONTRIBUTING; explain no issue, no tests, no changeset, and that `gen-docs` is not needed because this is the dedicated changelog sync flow.
+
+Example body:
+
+```markdown
+## Related Issue
+
+N/A — post-release docs maintenance
+
+## Problem
+
+The docs-site changelog has not yet been synced for `<version range>` after the npm release.
+
+## What changed
+
+- Synced `<version range>` from `apps/kimi-code/CHANGELOG.md` into `docs/en/release-notes/changelog.md`
+- Translated the new English increment into `docs/zh/release-notes/changelog.md`
+- Verified with `pnpm --filter docs run build`
+
+## Checklist
+
+- [x] I have read the CONTRIBUTING document.
+- [x] I have linked a related issue, or explained the problem above.
+- [ ] I have added tests that prove my feature works. (N/A — docs-only sync)
+- [x] Ran `gen-changesets` skill, or this PR needs no changeset. (No changeset — docs sync is out of bundle)
+- [x] Ran `gen-docs` skill, or this PR needs no doc update. (This PR is the dedicated changelog sync)
+```
+
+Return the PR URL to the user when done.
+
 ## Rules
 
 - The English docs changelog is the source of truth.
 - Never edit upstream `apps/kimi-code/CHANGELOG.md`.
 - Do not backfill unreleased `.changeset/*.md` drafts into the docs site.
+- Prefix web UI entries with `web: ` (when the upstream commit touches `apps/kimi-web/`), and keep the prefix on both the English and Chinese pages.
 - If upstream wording is wrong, leave upstream alone and fix it in a future changeset.
+- Always sync on a `docs/changelog-sync-*` branch and open a PR; never push changelog docs sync directly to `main`.
+- Wait for the human review checkpoint before committing, pushing, or opening a PR.
 
 ## Common Mistakes
 
@@ -254,6 +437,10 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 |---|---|
 | Adding entries directly to the English docs page without reading upstream | Use `apps/kimi-code/CHANGELOG.md` as the source |
 | Copying PR links or commit hashes into docs | Strip them; keep only body text |
+| Leaving the `Thanks ...!` credit in docs | Remove it every time, including the multi-author form |
+| Leaving near-duplicate micro-tweaks as separate bullets | Merge small tweaks to the same surface into one higher-level entry (e.g. composer height + font → composer's default styling) |
+| Listing many narrow fixes to the same surface as separate bullets | When three or more fixes target the same UI area or the same class of problem, merge them into one higher-level fix entry; keep genuinely distinct or high-value fixes standalone |
+| Listing a server/API entry that only backs a web feature already listed | Drop the API entry and keep the `web:` entry, unless the API has independent user value |
 | Rewording upstream English entries | Upstream is frozen; copy the body text unless the user explicitly asks otherwise |
 | Leaving English text untranslated in the Chinese page | The Chinese page must be fully Chinese except preserved technical terms |
 | Editing upstream changelog text | Do not edit upstream |
@@ -268,8 +455,11 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 | Putting everything under Other for convenience | Classify what can be classified first |
 | Translating tool names, command names, or config keys | Keep them as written |
 | Creating a changeset for docs sync | Do not create one |
+| Committing or pushing directly on `main` | Create `docs/changelog-sync-<version>`, commit there, then open a PR |
+| Committing or opening a PR before the user skips review or confirms review is done | Wait at the human review checkpoint |
 | Using curly quotes or half-width Chinese punctuation | Follow `docs/AGENTS.md` |
 | Omitting the release date from a version heading, or guessing it | Add ` (YYYY-MM-DD)` (full-width `（）` in Chinese) taken from the published tag |
+| Forgetting or translating the `web:` prefix on web UI entries | Prefix web UI entries (commit touches `apps/kimi-web/`) with `web: ` on both pages; keep the prefix as-is when translating |
 
 ## Stop Signals
 
@@ -279,3 +469,5 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 - English and Chinese versions, entry counts, or section sets do not match.
 - A section is empty.
 - A Chinese term is uncertain and `docs/AGENTS.md` does not answer it.
+- A `docs/changelog-sync-*` branch already exists for the same version and you cannot confirm whether it is stale.
+- The user asked to review but has not yet confirmed review is complete.

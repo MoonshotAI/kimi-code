@@ -75,4 +75,32 @@ describe('wrapWithSideBorders', () => {
     // first column was a space → replaced with │; last column was 'c' → kept
     expect(out[1]).toBe('│ abc');
   });
+
+  it('overlays a label on the top border, replacing leading dashes', () => {
+    const top = '─'.repeat(30);
+    const out = wrapWithSideBorders([top, '   x   ', top], id, { label: ' ! shell mode ' });
+    expect(out[0]).toBe(`╭ ! shell mode ${'─'.repeat(14)}╮`);
+    // width is preserved: corner + label + dashes + corner == input width
+    expect(out[0]).toHaveLength(top.length);
+    // bottom border is untouched
+    expect(out[2]).toBe(`╰${'─'.repeat(28)}╯`);
+  });
+
+  it('does not inject the label when it is wider than the top border', () => {
+    const out = wrapWithSideBorders(['──────', '  x  ', '──────'], id, {
+      label: ' ! shell mode ',
+    });
+    // falls back to a plain border — label must not leak or overflow
+    expect(out[0]).toBe('╭────╮');
+    expect(out[0]).not.toContain('shell mode');
+  });
+
+  it('does not inject the label onto a scroll-indicator top border', () => {
+    const top = '─── ↑ 5 more ────';
+    const out = wrapWithSideBorders([top, '   x             ', '─── ↓ 3 more ────'], id, {
+      label: ' ! shell mode ',
+    });
+    expect(out[0]).toContain('↑ 5 more');
+    expect(out[0]).not.toContain('shell mode');
+  });
 });

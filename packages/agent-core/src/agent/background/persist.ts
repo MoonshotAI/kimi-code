@@ -168,7 +168,10 @@ export class BackgroundTaskPersistence {
 
 function normalizePersistedTask(task: DiskPersistedTask): PersistedTask {
   if (isLegacyPersistedTask(task)) return legacyPersistedTaskToInfo(task);
-  return task;
+  return {
+    ...task,
+    detached: task.detached ?? true,
+  };
 }
 
 type LegacyBackgroundTaskStatus =
@@ -203,6 +206,7 @@ function legacyPersistedTaskToInfo(task: LegacyPersistedTask): PersistedTask {
     taskId: task.task_id,
     description: task.description,
     status,
+    detached: true,
     startedAt: task.started_at,
     endedAt: task.ended_at,
     stopReason,

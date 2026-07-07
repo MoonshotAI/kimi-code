@@ -11,6 +11,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
 import DESCRIPTION from './get-goal.md?raw';
+import { goalResultForModel } from './serialize';
 
 export const GetGoalToolInputSchema = z.object({}).strict();
 export type GetGoalToolInput = z.infer<typeof GetGoalToolInputSchema>;
@@ -29,7 +30,7 @@ export class GetGoalTool implements BuiltinTool<GetGoalToolInput> {
       approvalRule: this.name,
       execute: async () => {
         const result = store.getGoal();
-        return { output: JSON.stringify(result, null, 2) };
+        return { output: JSON.stringify(goalResultForModel(result), null, 2) };
       },
     };
   }

@@ -14,6 +14,7 @@ The following keys are always available in the input box:
 | `Esc` | Close a popup / cancel completion / interrupt streaming output or context compaction |
 | `Ctrl-C` | Interrupt the current streaming output, or clear the input box |
 | `Ctrl-D` | Exit Kimi Code CLI when the input box is empty |
+| `Ctrl-T` | Expand or collapse the todo list when it is truncated |
 
 Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed.
 
@@ -24,8 +25,11 @@ Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirm
 | Shortcut | Function |
 | --- | --- |
 | `Shift-Tab` | Toggle Plan mode |
+| `!` | Enter shell mode (in an empty input box) |
 
 Press `Shift-Tab` to enable or disable Plan mode. When enabled, the Agent prioritizes read-only tools for research and planning and can write to the current plan file; `Bash` is subject to the current permission mode and regular rules, without any additional separate approval triggered by Plan mode. Simply toggling does not create an empty plan file. Press `Shift-Tab` again to exit Plan mode.
+
+Type `!` in an empty input box to enter shell mode and run terminal commands directly; while a command is running, press `Ctrl+B` to move it to a background task. See [Interaction and input](../guides/interaction.md#shell-mode).
 
 ## Input & Editing
 
@@ -35,6 +39,7 @@ Press `Shift-Tab` to enable or disable Plan mode. When enabled, the Agent priori
 | `Ctrl-V` | Paste an image or video from the clipboard (Unix / macOS) |
 | `Alt-V` | Paste an image or video from the clipboard (Windows) |
 | `Ctrl--` | Undo |
+| `Esc` `Esc` | Open the undo selector (double-press while idle) |
 
 Pressing `Ctrl-G` opens an external editor, selected according to the following priority:
 
@@ -62,9 +67,9 @@ Pressing `Ctrl-S` causes the model to see your message at the next interruptible
 
 | Shortcut | Function |
 | --- | --- |
-| `Ctrl-O` | Expand or collapse tool output |
+| `Ctrl-O` | Expand or collapse tool output and compaction summaries |
 
-When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views.
+When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views. After compaction, the same shortcut shows or hides the compaction summary in the compaction block.
 
 ## Approval Panel
 

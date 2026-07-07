@@ -1,18 +1,19 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import {
   deleteAllKittyImages,
   resetCapabilitiesCache,
   setCapabilities,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
@@ -23,26 +24,50 @@ import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector'
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
 import {
+  PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
-  PluginMarketplaceSelectorComponent,
   PluginRemoveConfirmComponent,
-  PluginsOverviewSelectorComponent,
+  PluginsPanelComponent,
 } from '#/tui/components/dialogs/plugins-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
+import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
+import { uploadArchive } from '../../src/feedback/upload';
 import {
+  promptFeedbackAttachment,
   promptFeedbackInput,
   runModelSelector,
+  type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
-  return { ...actual, promptFeedbackInput: vi.fn() };
+  return {
+    ...actual,
+    promptFeedbackInput: vi.fn(),
+    promptFeedbackAttachment: vi.fn(),
+  };
 });
 
+vi.mock('../../src/feedback/codebase', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/feedback/codebase')>();
+  return {
+    ...actual,
+    scanCodebase: vi.fn().mockResolvedValue(undefined),
+    packageCodebase: vi.fn(),
+  };
+});
+
+vi.mock('../../src/feedback/upload', () => ({
+  uploadArchive: vi.fn(),
+}));
+
+// /feedback falls back to opening GitHub Issues in a browser when not signed in
+// or when submission fails — stub it out so the test suite never spawns a
+// browser window.
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 const ESC = String.fromCodePoint(0x1b);
@@ -64,12 +89,13 @@ interface MessageDriver {
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
+  sendQueuedMessage(session: unknown, item: QueuedMessage): void;
   getCurrentSessionId(): string;
 }
 
 interface FeedbackDriver extends MessageDriver {
   handleFeedbackCommand(): Promise<void>;
-  promptFeedbackInput(): Promise<string | undefined>;
+  promptFeedbackInput(): Promise<FeedbackPromptResult | undefined>;
 }
 
 interface ModelSelectorDriver extends MessageDriver {
@@ -102,6 +128,7 @@ function makeStartupInput(): KimiTUIStartupInput {
     },
     tuiConfig: {
       theme: 'dark',
+      disablePasteBurst: false,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -125,7 +152,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
       model: 'k2',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       permission: 'manual',
       planMode: false,
       contextTokens: 0,
@@ -149,7 +176,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
         main: {
           status: {
             model: 'k2',
-            thinkingLevel: 'off',
+            thinkingEffort: 'off',
             permission: 'manual',
             planMode: false,
             contextTokens: 0,
@@ -173,12 +200,14 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       mcpServerCount: 0,
       enabledMcpServerCount: 0,
       hasErrors: false,
+      source: 'local-path',
     })),
     setPluginEnabled: vi.fn(async () => {}),
     setPluginMcpServerEnabled: vi.fn(async () => {}),
     removePlugin: vi.fn(async () => {}),
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
     reloadSession: vi.fn(async () => ({})),
+    activateSkill: vi.fn(async () => {}),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -212,6 +241,12 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
     listSessions: vi.fn(async () => []),
+    exportSession: vi.fn(async () => ({
+      zipPath: '/tmp/fake-session.zip',
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    })),
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
@@ -228,8 +263,11 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
       submitFeedback: vi.fn(
-        async (): Promise<{ kind: 'ok' } | { kind: 'error'; status?: number; message: string }> => ({
+        async (): Promise<
+          { kind: 'ok'; feedbackId: number } | { kind: 'error'; status?: number; message: string }
+        > => ({
           kind: 'ok',
+          feedbackId: 3,
         }),
       ),
     },
@@ -323,6 +361,14 @@ async function makeTempHome(): Promise<string> {
   return dir;
 }
 
+async function makeExportedSessionZip(content = 'session zip'): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-code-feedback-export-'));
+  tempDirs.push(dir);
+  const zipPath = join(dir, 'session.zip');
+  await writeFile(zipPath, content);
+  return zipPath;
+}
+
 afterEach(async () => {
   resetCapabilitiesCache();
   for (const dir of tempDirs.splice(0)) {
@@ -355,7 +401,6 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     harness.track.mockClear();
 
-    driver.state.editor.handleInput('\u001B[106;5u');
     driver.state.editor.handleInput('\u001F');
     delete process.env['VISUAL'];
     delete process.env['EDITOR'];
@@ -363,7 +408,6 @@ describe('KimiTUI message flow', () => {
     driver.state.editor.onToggleToolExpand?.();
     driver.state.editor.onTextPaste?.();
 
-    expect(harness.track).toHaveBeenCalledWith('shortcut_newline', undefined);
     expect(harness.track).toHaveBeenCalledWith('undo', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_editor', undefined);
     expect(harness.track).toHaveBeenCalledWith('shortcut_expand', undefined);
@@ -466,8 +510,9 @@ command = "vim"
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
-    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok' });
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
     harness.track.mockClear();
 
     await handleFeedbackCommand(feedbackDriver as any);
@@ -481,6 +526,309 @@ command = "vim"
       }),
     );
     expect(harness.track).toHaveBeenCalledWith('feedback_submitted', undefined);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+  });
+
+  it('submits text feedback before preparing requested attachments', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+
+    const zipPath = await makeExportedSessionZip();
+    let resolveExport!: () => void;
+    const exportBlocked = new Promise<{
+      zipPath: string;
+      entries: string[];
+      sessionDir: string;
+      manifest: Record<string, never>;
+    }>((resolve) => {
+      resolveExport = () => {
+        resolve({
+          zipPath,
+          entries: ['manifest.json', 'state.json'],
+          sessionDir: '/tmp/session-a',
+          manifest: {},
+        });
+      };
+    });
+    harness.exportSession.mockImplementationOnce(() => exportBlocked);
+
+    let settled = false;
+    const command = handleFeedbackCommand(feedbackDriver as any).then(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.exportSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'ses-1',
+          includeGlobalLog: true,
+          version: '0.0.0-test',
+        }),
+      );
+    });
+    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ content: 'useful feedback' }),
+    );
+    expect(harness.auth.submitFeedback.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.exportSession.mock.invocationCallOrder[0]!,
+    );
+    expect(settled).toBe(false);
+
+    resolveExport();
+    await command;
+  });
+
+  it('waits for the codebase upload to finish before returning', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    harness.exportSession.mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    vi.mocked(uploadArchive).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([
+      { id: 'ses-1', sessionDir: '/tmp/session-a' },
+    ] as never);
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    const sessionZipPath = await makeExportedSessionZip();
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
+    vi.mocked(packageCodebase).mockResolvedValueOnce({
+      path: '/tmp/fake-codebase.zip',
+      size: 4,
+      sha256: 'hash-123',
+      fingerprint: 'fp-123',
+      fileCount: 1,
+    });
+
+    let resolveCodebaseUpload!: () => void;
+    const codebaseUploadBlocked = new Promise<void>((resolve) => {
+      resolveCodebaseUpload = resolve;
+    });
+    vi.mocked(uploadArchive).mockImplementation((_api, archive) => {
+      if (archive.path === sessionZipPath) return Promise.resolve();
+      return codebaseUploadBlocked;
+    });
+
+    let settled = false;
+    const command = handleFeedbackCommand(feedbackDriver as any).then(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => {
+      expect(uploadArchive).toHaveBeenCalledTimes(2);
+    });
+    expect(settled).toBe(false);
+
+    resolveCodebaseUpload();
+    await command;
+    expect(settled).toBe(true);
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: sessionZipPath }),
+      3,
+      { filename: 'session.zip' },
+    );
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: '/tmp/fake-codebase.zip' }),
+      3,
+      { filename: 'repo.zip' },
+    );
+    expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
+      expect.not.objectContaining({ info: expect.anything() }),
+    );
+  });
+
+  it('uploads session logs when codebase scanning fails but the session directory is available', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    harness.exportSession.mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    vi.mocked(uploadArchive).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    const sessionZipPath = await makeExportedSessionZip();
+    vi.mocked(scanCodebase).mockRejectedValueOnce(new Error('scan failed'));
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.exportSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ses-1', includeGlobalLog: true }),
+    );
+    expect(packageCodebase).not.toHaveBeenCalled();
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: sessionZipPath }),
+      3,
+      { filename: 'session.zip' },
+    );
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
+  });
+
+  it('tells the user when feedback is sent but codebase packaging fails', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(scanCodebase).mockReset();
+    vi.mocked(packageCodebase).mockReset();
+    harness.exportSession.mockReset();
+    vi.mocked(uploadArchive).mockReset();
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+    harness.listSessions.mockResolvedValueOnce([{ id: 'ses-1', sessionDir: '/tmp/session-a' }] as never);
+    const sessionZipPath = await makeExportedSessionZip();
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    harness.exportSession.mockResolvedValueOnce({
+      zipPath: sessionZipPath,
+      entries: ['manifest.json', 'state.json'],
+      sessionDir: '/tmp/session-a',
+      manifest: {},
+    });
+    vi.mocked(packageCodebase).mockRejectedValueOnce(new Error('zip failed'));
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    const calls = harness.auth.submitFeedback.mock.calls as unknown as Array<[Record<string, unknown>]>;
+    expect(calls[0]?.[0]?.['info']).toBeUndefined();
+    expect(uploadArchive).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ path: sessionZipPath }),
+      3,
+      { filename: 'session.zip' },
+    );
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
+  });
+
+  it('tells the user when the codebase upload fails', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'logs+codebase');
+    harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok', feedbackId: 3 });
+
+    vi.mocked(scanCodebase).mockResolvedValueOnce({
+      root: '/tmp/proj-a',
+      files: [{ path: 'keep.ts', size: 4 }],
+      fingerprint: 'fp-123',
+      usedGitIgnore: false,
+    } as any);
+    vi.mocked(packageCodebase).mockResolvedValueOnce({
+      path: '/tmp/fake-codebase.zip',
+      size: 4,
+      sha256: 'hash-123',
+      fingerprint: 'fp-123',
+      fileCount: 1,
+    });
+    vi.mocked(uploadArchive).mockRejectedValueOnce(new Error('upload failed'));
+
+    await handleFeedbackCommand(feedbackDriver as any);
+
+    expect(harness.auth.submitFeedback).toHaveBeenCalledOnce();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Feedback ID: 3');
+    expect(transcript).toContain('attachment upload failed');
   });
 
   it('shows feedback API error messages without replacing them with HTTP status text', async () => {
@@ -499,7 +847,8 @@ command = "vim"
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => ({ value: 'useful feedback' }));
+    vi.mocked(promptFeedbackAttachment).mockImplementation(async () => 'none');
     harness.auth.submitFeedback.mockResolvedValueOnce({
       kind: 'error',
       status: 500,
@@ -563,7 +912,7 @@ command = "vim"
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
         permission: 'manual',
         planMode: true,
         contextTokens: 0,
@@ -1025,6 +1374,49 @@ command = "vim"
     expect(transcript).not.toContain('Approved: Run shell command');
   });
 
+  it('removes debug timing status from undone turns', async () => {
+    const { driver, session } = await makeDriver();
+    const previousDebug = process.env['KIMI_CODE_DEBUG'];
+    process.env['KIMI_CODE_DEBUG'] = '1';
+    try {
+      driver.handleUserInput('hello');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          llmFirstTokenLatencyMs: 120,
+          llmStreamDurationMs: 800,
+        } as Event,
+        () => {},
+      );
+
+      await vi.waitFor(() => {
+        expect(stripSgr(renderTranscript(driver))).toContain('[Debug]');
+      });
+
+      driver.state.appState.streamingPhase = 'idle';
+      driver.handleUserInput('/undo');
+      await confirmUndoSelection(driver);
+
+      await vi.waitFor(() => {
+        expect(session.undoHistory).toHaveBeenCalledWith(1);
+      });
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).not.toContain('hello');
+      expect(transcript).not.toContain('[Debug]');
+    } finally {
+      if (previousDebug === undefined) {
+        delete process.env['KIMI_CODE_DEBUG'];
+      } else {
+        process.env['KIMI_CODE_DEBUG'] = previousDebug;
+      }
+    }
+  });
+
   it('undoes multiple turns when a count is provided', async () => {
     const { driver, session } = await makeDriver();
 
@@ -1242,6 +1634,151 @@ command = "vim"
     }
   });
 
+  it('queues bash input with mode bash while a turn is streaming', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('dispatches a queued bash item to runShellCommand instead of prompt', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+
+    driver.sendQueuedMessage(session, { text: 'ls', mode: 'bash' });
+    await Promise.resolve();
+
+    expect(runShellCommand).toHaveBeenCalledWith(
+      'ls',
+      expect.objectContaining({ commandId: expect.any(String) }),
+    );
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('persists bash input to input history with a leading !', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+
+    expect(driver.persistInputHistory).toHaveBeenCalledWith('!ls');
+  });
+
+  it('persists normal input to input history', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+
+    expect(driver.persistInputHistory).toHaveBeenCalledWith('hello');
+  });
+
+  it('does not steer queued bash commands, keeping them queued', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+      { text: 'focus on tests', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith('focus on tests');
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'ls', agentId: 'main', mode: 'bash' },
+    ]);
+  });
+
+  it('does not steer while a shell command is running', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'shell';
+    driver.state.queuedMessages = [{ text: 'summarize the output', agentId: 'main' }];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      { text: 'summarize the output', agentId: 'main' },
+    ]);
+  });
+
+  it('does not steer the editor draft while it is in bash mode', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.inputMode = 'bash';
+    driver.state.editor.setText('ls');
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.editor.getText()).toBe('ls');
+  });
+
+  it('recalls a queued bash command back into bash mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'ls', agentId: 'main', mode: 'bash' }];
+    // After a bash command is queued the editor is reset to prompt mode.
+    driver.state.editor.inputMode = 'prompt';
+    driver.state.appState.inputMode = 'prompt';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('ls');
+    expect(driver.state.editor.inputMode).toBe('bash');
+    expect(driver.state.appState.inputMode).toBe('bash');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('recalls a queued prompt message in prompt mode on Up', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.queuedMessages = [{ text: 'hello', agentId: 'main' }];
+    driver.state.editor.inputMode = 'bash';
+    driver.state.appState.inputMode = 'bash';
+
+    const handled = driver.state.editor.onUpArrowEmpty?.();
+
+    expect(handled).toBe(true);
+    expect(driver.state.editor.getText()).toBe('hello');
+    expect(driver.state.editor.inputMode).toBe('prompt');
+    expect(driver.state.appState.inputMode).toBe('prompt');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('echoes a bash command with a $ prompt in the transcript', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver, harness } = await makeDriver(session);
+    driver.state.appState.inputMode = 'bash';
+    driver.state.editor.inputMode = 'bash';
+
+    driver.handleUserInput('ls');
+    await Promise.resolve();
+
+    expect(harness.track).toHaveBeenCalledWith('shell_command', undefined);
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('$ ls');
+    expect(transcript).not.toContain('! ls');
+  });
+
   it('renders cron fired events as distinct transcript entries', async () => {
     const { driver } = await makeDriver();
 
@@ -1327,7 +1864,7 @@ command = "vim"
       await vi.runOnlyPendingTimersAsync();
 
       expect(updateSpy).toHaveBeenCalledTimes(1);
-      expect(updateSpy).toHaveBeenLastCalledWith('abc');
+      expect(updateSpy).toHaveBeenLastCalledWith('abc', { transient: true });
     } finally {
       vi.useRealTimers();
     }
@@ -1424,6 +1961,30 @@ command = "vim"
     expect(session.cancelCompaction).toHaveBeenCalledTimes(1);
   });
 
+  it('clears editor text before cancelling compaction on Ctrl-C', async () => {
+    const { driver, session } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        trigger: 'manual',
+      } as Event,
+      vi.fn(),
+    );
+    driver.state.editor.setText('draft while compacting');
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(driver.state.editor.getText()).toBe('');
+    expect(session.cancelCompaction).not.toHaveBeenCalled();
+    expect(driver.state.appState.isCompacting).toBe(true);
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancelCompaction).toHaveBeenCalledTimes(1);
+  });
+
   it('dispatches the next queued message after compaction is cancelled', async () => {
     vi.useFakeTimers();
     try {
@@ -1460,6 +2021,83 @@ command = "vim"
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('stores the live compaction summary and expands it with tool output expansion', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        trigger: 'manual',
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: {
+          summary: 'Keep the src/tui compaction notes.',
+          compactedCount: 4,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+      } as Event,
+      sendQueued,
+    );
+
+    const collapsed = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
+    expect(collapsed).toContain('Compaction complete');
+    expect(collapsed).not.toContain('Keep the src/tui compaction notes.');
+
+    driver.state.editor.onToggleToolExpand?.();
+
+    const expanded = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
+    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(expanded).toContain('Keep the src/tui compaction notes.');
+  });
+
+  it('honors existing tool output expansion when a compaction block is created', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.state.editor.onToggleToolExpand?.();
+    expect(driver.state.toolOutputExpanded).toBe(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        trigger: 'manual',
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: {
+          summary: 'Keep the src/tui compaction notes.',
+          compactedCount: 4,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+      } as Event,
+      sendQueued,
+    );
+
+    const transcript = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
+    expect(transcript).toContain('Compaction complete');
+    expect(transcript).toContain('Keep the src/tui compaction notes.');
   });
 
   it('renders an error instead of prompting when no model is selected', async () => {
@@ -2925,7 +3563,7 @@ command = "vim"
     const session = makeSession({
       getStatus: vi.fn(async () => ({
         model: 'k2',
-        thinkingLevel: 'high',
+        thinkingEffort: 'high',
         permission: 'auto',
         planMode: true,
         contextTokens: 25,
@@ -2945,7 +3583,7 @@ command = "vim"
       expect(output).toContain(' Status ');
       expect(output).toContain('>_ Kimi Code');
       expect(output).toContain('Model');
-      expect(output).toContain('thinking on');
+      expect(output).toContain('thinking high');
       expect(output).toContain('Permissions  auto');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');
@@ -3069,15 +3707,46 @@ command = "vim"
     expect(session.installPlugin).not.toHaveBeenCalled();
   });
 
-  it('installs from a positional source on /plugins install', async () => {
+  it('installs from a positional source on /plugins install after trusting it', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
     driver.handleUserInput('/plugins install ./plugins/kimi-datasource');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith('/tmp/proj-a/plugins/kimi-datasource');
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
     });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.installPlugin).toHaveBeenCalledWith(
+        resolve('/tmp/proj-a', './plugins/kimi-datasource'),
+      );
+    });
+  });
+
+  it('does not install when the third-party trust prompt is dismissed', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins install ./plugins/kimi-datasource');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\r'); // default option is "Exit"
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBe(driver.state.editor);
+    });
+    expect(session.installPlugin).not.toHaveBeenCalled();
   });
 
   it('loads a local plugin marketplace file and installs from it', async () => {
@@ -3089,9 +3758,10 @@ command = "vim"
         plugins: [
           {
             id: 'kimi-datasource',
+            tier: 'official',
             displayName: 'Kimi Datasource',
             description: 'Datasource plugin',
-            source: './kimi-datasource',
+            source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
           },
         ],
       }),
@@ -3104,21 +3774,191 @@ command = "vim"
     driver.handleUserInput('/plugins marketplace');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginMarketplaceSelectorComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
     });
-    const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-    picker.handleInput('\r');
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    // Official loads its catalog lazily; wait for the entry to render before install.
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
+    });
+    panel.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'kimi-datasource'));
+      expect(session.installPlugin).toHaveBeenCalledWith(
+        'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+      );
     });
     await vi.waitFor(() => {
       const transcript = stripSgr(renderTranscript(driver));
-      expect(transcript).toContain('Installing or updating Kimi Datasource from marketplace...');
-      expect(transcript).toContain('Installed or updated Demo');
+      expect(transcript).toContain('Installed Demo');
+      expect(transcript).toContain('Run /new or /reload to apply plugin changes.');
     });
+    // Installing closes the panel so the success notice / reload tip is visible.
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBe(driver.state.editor);
+    });
+  });
+
+  it('returns to the plugin list when a marketplace install fails', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-datasource',
+            tier: 'official',
+            displayName: 'Kimi Datasource',
+            source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = marketplacePath;
+    const installPlugin = vi.fn(async () => {
+      throw new Error('install failed');
+    });
+    const session = makeSession({ installPlugin });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins marketplace');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+    });
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
+    });
+    panel.handleInput('\r');
+
+    // The panel must not get stuck on the one-way "Installing…" view; it should
+    // return to the list so the user can retry.
+    await vi.waitFor(() => {
+      const rendered = stripSgr(panel.render(120).join('\n'));
+      expect(rendered).toContain('Kimi Datasource');
+      expect(rendered).not.toContain('Installing');
+    });
+  });
+
+  it('prompts for trust before installing a third-party marketplace entry', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'superpowers',
+            tier: 'curated',
+            displayName: 'Superpowers',
+            description: 'Curated plugin',
+            source: './superpowers',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    // Passing the marketplace path opens the panel directly on the Third-party tab.
+    driver.handleUserInput(`/plugins marketplace ${marketplacePath}`);
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+    });
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Superpowers');
+    });
+    panel.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'superpowers'));
+    });
+  });
+
+  it('restores the panel when a third-party marketplace install fails', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'superpowers',
+            tier: 'curated',
+            displayName: 'Superpowers',
+            source: './superpowers',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const installPlugin = vi.fn(async () => {
+      throw new Error('install failed');
+    });
+    const session = makeSession({ installPlugin });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput(`/plugins marketplace ${marketplacePath}`);
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+    });
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    await vi.waitFor(() => {
+      expect(stripSgr(panel.render(120).join('\n'))).toContain('Superpowers');
+    });
+    panel.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginInstallTrustConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginInstallTrustConfirmComponent;
+    confirm.handleInput('\u001B[B'); // switch from "Exit" to "Trust and install"
+    confirm.handleInput('\r');
+
+    // The failed install must return the user to the marketplace panel so they
+    // can retry, rather than dropping them back at the editor.
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBe(panel);
+    });
+  });
+
+  it('removes a plugin record without auto-running any cleanup skill', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins remove kimi-webbridge');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginRemoveConfirmComponent,
+      );
+    });
+    const confirm = driver.state.editorContainer.children[0] as PluginRemoveConfirmComponent;
+    confirm.handleInput('\u001B[B');
+    confirm.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.removePlugin).toHaveBeenCalledWith('kimi-webbridge');
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
   it('installs default marketplace entries through plain install', async () => {
@@ -3141,12 +3981,13 @@ command = "vim"
       driver.handleUserInput('/plugins marketplace');
 
       await vi.waitFor(() => {
-        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-          PluginMarketplaceSelectorComponent,
-        );
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
       });
-      const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-      picker.handleInput('\r');
+      const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+      await vi.waitFor(() => {
+        expect(stripSgr(panel.render(120).join('\n'))).toContain('Kimi Datasource');
+      });
+      panel.handleInput('\r');
 
       await vi.waitFor(() => {
         expect(session.installPlugin).toHaveBeenCalledWith(
@@ -3159,7 +4000,41 @@ command = "vim"
     }
   });
 
-  it('toggles plugins from the overview with space', async () => {
+  it('shows an inline Official error when the marketplace is unreachable, keeping the panel open', async () => {
+    const originalFetch = globalThis.fetch;
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = 'https://example.test/marketplace.json';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('fetch failed');
+      }),
+    );
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    try {
+      driver.handleUserInput('/plugins');
+
+      // The panel opens immediately on the Installed tab — no marketplace fetch.
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
+      });
+      const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+      panel.handleInput('\t'); // → Official, which lazily (and unsuccessfully) loads
+
+      await vi.waitFor(() => {
+        expect(stripSgr(panel.render(120).join('\n'))).toContain(
+          'Marketplace unavailable: fetch failed',
+        );
+      });
+      // The panel stays mounted; the failure does not close /plugins.
+      expect(driver.state.editorContainer.children[0]).toBe(panel);
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
+  it('toggles plugins from the Installed tab with space', async () => {
     let enabled = true;
     const session = makeSession({
       listPlugins: vi.fn(async () => [
@@ -3173,6 +4048,7 @@ command = "vim"
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ]),
       setPluginEnabled: vi.fn(async (_id: string, nextEnabled: boolean) => {
@@ -3184,31 +4060,25 @@ command = "vim"
     driver.handleUserInput('/plugins');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginsOverviewSelectorComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
     });
-    const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
-    overview.handleInput(' ');
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    panel.handleInput(' ');
 
-    // Toggling refreshes the picker in place: it must not flash back to the
-    // editor between the keypress and the refreshed picker mounting.
-    expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-      PluginsOverviewSelectorComponent,
-    );
+    // Toggling refreshes the panel in place: it must not flash back to the
+    // editor between the keypress and the refreshed panel mounting.
+    expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
 
     await vi.waitFor(() => {
       expect(session.setPluginEnabled).toHaveBeenCalledWith('demo', false);
     });
-    // The picker stays mounted the whole time (no editor flash), so wait for the
-    // refreshed render rather than for an instance swap.
     await vi.waitFor(() => {
       const refreshed = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-      expect(refreshed).toContain('❯ Demo  disabled  require run /new to apply');
+      expect(refreshed).toContain('❯ Demo  disabled  run /reload or /new to apply');
     });
-    const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).not.toContain('Space enable');
-    expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new to apply.');
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Disabled demo. Run /reload or /new to apply.',
+    );
   });
 
   it('toggles plugin MCP servers from the overview MCP picker', async () => {
@@ -3272,12 +4142,10 @@ command = "vim"
     driver.handleUserInput('/plugins');
 
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginsOverviewSelectorComponent,
-      );
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
     });
-    const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
-    overview.handleInput('m');
+    const panel = driver.state.editorContainer.children[0] as PluginsPanelComponent;
+    panel.handleInput('m');
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
@@ -3299,9 +4167,9 @@ command = "vim"
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ data  disabled  require run /new to apply');
+    expect(out).toContain('❯ data  disabled  run /reload or /new to apply');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
-      'Disabled MCP server data for kimi-datasource. Run /new to apply.',
+      'Disabled MCP server data for kimi-datasource. Run /reload or /new to apply.',
     );
   });
 
@@ -3375,7 +4243,7 @@ command = "vim"
           },
         },
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       })),
       setConfig,
     });
@@ -3404,11 +4272,56 @@ command = "vim"
       expect(session.setThinking).toHaveBeenCalledWith('on');
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'turbo',
-        defaultThinking: true,
+        thinking: { enabled: true },
       });
     });
     expect(driver.state.appState.model).toBe('turbo');
-    expect(driver.state.appState.thinking).toBe(true);
+    expect(driver.state.appState.thinkingEffort).toBe('on');
+  });
+
+  it('applies /model selection to the session only on Alt+S without persisting', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Kimi Turbo',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: false },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0];
+    // /model turbo preselects turbo; Alt+S applies it to the current session only.
+    (picker as TabbedModelSelectorComponent).handleInput(`${ESC}s`);
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('turbo');
+      expect(session.setThinking).toHaveBeenCalledWith('on');
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinkingEffort).toBe('on');
   });
 
   it('persists /model selection even when runtime state is unchanged', async () => {
@@ -3426,7 +4339,7 @@ command = "vim"
           },
         },
         defaultModel: 'old-default',
-        defaultThinking: true,
+        thinking: { enabled: true },
       })),
       setConfig,
     });
@@ -3442,7 +4355,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'k2',
-        defaultThinking: false,
+        thinking: { enabled: false },
       });
     });
     expect(session.setModel).not.toHaveBeenCalled();
@@ -3694,6 +4607,58 @@ command = "vim"
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
   });
 
+  it('keeps the waiting moon spinner while reasoning streams only empty (encrypted) thinking deltas', async () => {
+    const { driver } = await makeDriver();
+
+    // Turn begins -> waiting mode shows the moon spinner.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+      } as Event,
+      vi.fn(),
+    );
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.livePane.mode).toBe('waiting');
+
+    // Encrypted reasoning: thinking.delta events whose visible text is empty.
+    for (let i = 0; i < 3; i++) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'thinking.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          delta: '',
+        } as Event,
+        vi.fn(),
+      );
+    }
+
+    // The moon must stay up: still waiting, no orphan thinking component, and
+    // the activity pane still renders a moon frame (no blank, spinner-less gap).
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.livePane.mode).toBe('waiting');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+    const activity = stripSgr(renderActivity(driver));
+    expect(MOON_SPINNER_FRAMES.some((frame) => activity.includes(frame))).toBe(true);
+
+    // Real thinking text finally arrives -> transition into thinking mode.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: 'actual reasoning',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(driver.state.appState.streamingPhase).toBe('thinking');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(true);
+  });
+
   it('finalizes an orphaned thinking component on turn end', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'thinking';
@@ -3795,5 +4760,83 @@ command = "vim"
     expect(transcript).toContain('UserPromptSubmit hook');
     expect(transcript).toContain('(empty)');
     expect(transcript).not.toContain('<hook_result');
+  });
+});
+
+describe('/model status displayName override', () => {
+  it('shows the overridden display name in the switch status', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Remote Turbo',
+            capabilities: ['thinking'],
+            overrides: { displayName: 'Custom Turbo' },
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: false },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true },
+      });
+    });
+
+    expect(renderTranscript(driver)).toContain('Switched to Custom Turbo with thinking on.');
+    expect(renderTranscript(driver)).not.toContain('Remote Turbo');
+  });
+});
+
+describe('/effort support_efforts override', () => {
+  it('rejects efforts hidden by support_efforts override', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            overrides: { supportEfforts: ['low', 'high'] },
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Unsupported thinking effort "max" for k2. Available: off, low, high');
+    });
+    expect(renderTranscript(driver)).not.toContain('Switched to Kimi K2 with thinking max.');
   });
 });

@@ -1,5 +1,57 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.13.0
+
+### Minor Changes
+
+- [#1369](https://github.com/MoonshotAI/kimi-code/pull/1369) [`f0896a5`](https://github.com/MoonshotAI/kimi-code/commit/f0896a53b01f7e5b9bf5b8f93d2cd7387d765f07) Thanks [@starquakee](https://github.com/starquakee)! - Add experimental progressive tool disclosure (`select_tools`). When the `tool-select` experimental flag is on and the active model declares the `select_tools` capability, MCP tool schemas stay out of the request's top-level `tools[]` (preserving the provider prompt cache); the model loads tools on demand by exact name via the new built-in `select_tools` tool, guided by `<tools_added>/<tools_removed>` announcements. Off by default and inert on models without the capability — behavior is unchanged until a supporting model is catalogued. The SDK additionally maps the `select_tools` capability when building model aliases from a catalog and reports the new flag through `getExperimentalFeatures()`.
+
+## 0.12.1
+
+### Patch Changes
+
+- [#1349](https://github.com/MoonshotAI/kimi-code/pull/1349) [`e9db9ca`](https://github.com/MoonshotAI/kimi-code/commit/e9db9cafcf7a0d26122b2cac247d866d7724fd7a) - Record model response ids in session wire logs to make individual model requests easier to trace.
+
+## 0.12.0
+
+### Minor Changes
+
+- [#1243](https://github.com/MoonshotAI/kimi-code/pull/1243) [`ace7901`](https://github.com/MoonshotAI/kimi-code/commit/ace79010669d19ad175bc25443b6efb41ca2e2ac) - Automatically compress oversized images before they reach the model. Whatever the source — pasted into the CLI, uploaded from the web/desktop client, sent over ACP, read via `ReadMediaFile`, or returned by an MCP tool — images are downsampled (longest edge ≤ 2000px) and re-encoded to fit a per-image byte budget, cutting vision-token cost and avoiding provider image-size errors. Screenshots stay lossless PNG and only degrade to JPEG when the byte budget cannot otherwise be met. Compression runs as an input-stage step at each ingestion point (while the content part is built), and guards against decompression bombs by skipping absurdly large pixel/byte payloads before decoding. Best-effort: if it fails for any reason the original image is sent unchanged.
+
+## 0.11.0
+
+### Minor Changes
+
+- [#1132](https://github.com/MoonshotAI/kimi-code/pull/1132) [`108299b`](https://github.com/MoonshotAI/kimi-code/commit/108299be3cdffc31a23f64efd3ff5ba50976b412) - Refactor the thinking effort system
+
+## 0.10.1
+
+### Patch Changes
+
+- [#1120](https://github.com/MoonshotAI/kimi-code/pull/1120) [`e736349`](https://github.com/MoonshotAI/kimi-code/commit/e736349a7c8ff55b73e05cc0192dfaf0114745fa) - Add optional feedback attachments for diagnostic logs and codebase context.
+
+## 0.10.0
+
+### Minor Changes
+
+- [#812](https://github.com/MoonshotAI/kimi-code/pull/812) [`c0eeca2`](https://github.com/MoonshotAI/kimi-code/commit/c0eeca24692edd736eecd3c2541d7566bac9f80f) - Added the ability to add extra workspace directories:
+
+  - Use the `/add-dir <path>` command to add extra working directories to the current session, or remember them for the project.
+  - Use `kimi --add-dir <path>` to add them on startup.
+  - Project-level local config is now managed in `.kimi-code/local.toml`; we recommend adding it to your `.gitignore`.
+
+### Patch Changes
+
+- [#821](https://github.com/MoonshotAI/kimi-code/pull/821) [`ba64072`](https://github.com/MoonshotAI/kimi-code/commit/ba64072559c1e9bb3447ede39991ac2e8bdb7645) - Allow long-running foreground commands and subagents to be moved into background tasks with Ctrl+B, and inspect them via the `/tasks` panel.
+
+## 0.9.4
+
+### Patch Changes
+
+- [#838](https://github.com/MoonshotAI/kimi-code/pull/838) [`843a731`](https://github.com/MoonshotAI/kimi-code/commit/843a731097fc18b2e41ab0405b5fbcb6149ba55c) - Show the underlying connection error when OAuth token refresh fails after internal retries, instead of prompting for login. Token refresh failures are no longer re-retried at the agent loop level.
+
+- [#625](https://github.com/MoonshotAI/kimi-code/pull/625) [`9a8fea5`](https://github.com/MoonshotAI/kimi-code/commit/9a8fea5c85177cd887896108c05ba9e174f28250) - Add host-side config helpers `loadRuntimeConfigSafe` and `resolveConfigPath` for inspecting config without spinning up a full KimiCore.
+
 ## 0.9.3
 
 ### Patch Changes

@@ -63,8 +63,10 @@ describe('ExitPlanModeTool', () => {
     expect(tool.description.length).toBeGreaterThan(0);
     expect(tool.description).toContain('This tool does NOT take the plan content as a parameter');
     expect(tool.description).toContain('For research tasks');
-    expect(tool.description).toContain('append "(Recommended)"');
+    expect(tool.description).toContain('Reject and Revise controls');
     expect(tool.description).toContain('If rejected, revise based on feedback');
+    // The description must teach what a good plan looks like (concrete, verifiable).
+    expect(tool.description.toLowerCase()).toContain('verifiable');
     expect(ExitPlanModeInputSchema.safeParse({}).success).toBe(true);
     expect(ExitPlanModeInputSchema.safeParse({ plan: '' }).success).toBe(false);
     expect(ExitPlanModeInputSchema.safeParse({ plan: 'a plan' }).success).toBe(false);

@@ -11,6 +11,7 @@ import type { KimiError } from '#/index';
 import {
   SessionStore,
   encodeWorkDirKey,
+  normalizeWorkDir,
   sessionIndexPath,
 } from '../../agent-core/src/session/store';
 import { TEST_IDENTITY } from './test-identity';
@@ -56,7 +57,7 @@ describe('SessionStore.list', () => {
 
     expect(summary).toMatchObject({
       id: 'ses_list_full',
-      workDir,
+      workDir: normalizeWorkDir(workDir),
       title: undefined,
     });
     expect(summary.sessionDir).not.toBe(join(homeDir, 'sessions', 'ses_list_full'));
@@ -69,7 +70,7 @@ describe('SessionStore.list', () => {
     const indexRaw = await readFile(sessionIndexPath(homeDir), 'utf-8');
     expect(indexRaw).toContain('"sessionId":"ses_list_full"');
     expect(indexRaw).toContain(summary.sessionDir);
-    expect(indexRaw).toContain(`"workDir":"${workDir}"`);
+    expect(indexRaw).toContain(`"workDir":"${normalizeWorkDir(workDir)}"`);
   });
 
   it('forks a session directory, rewrites metadata, and drops reserved goal state', async () => {
@@ -145,7 +146,9 @@ describe('SessionStore.list', () => {
     expect(forkState.title).toBe('Fork title');
     expect(forkState.isCustomTitle).toBe(true);
     expect(forkState.forkedFrom).toBe(source.id);
-    expect(forkState.agents?.main?.homedir).toBe(join(fork.sessionDir, 'agents', 'main'));
+    expect(forkState.agents?.main?.homedir).toBe(
+      normalizeWorkDir(join(fork.sessionDir, 'agents', 'main')),
+    );
     expect(forkState.custom).toMatchObject({ source: true, child: true });
     expect(forkState.custom).not.toHaveProperty('goal');
     expect(existsSync(join(fork.sessionDir, 'upcoming-goals.json'))).toBe(false);
@@ -219,7 +222,7 @@ describe('SessionStore.list', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
       id: other.id,
-      workDir: otherWorkDir,
+      workDir: normalizeWorkDir(otherWorkDir),
     });
   });
 

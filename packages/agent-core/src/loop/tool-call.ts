@@ -27,6 +27,7 @@ import { PathSecurityError } from '../tools/policies/path-access';
 import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
+import { parseToolCallArguments } from './tool-args-parse';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
@@ -62,6 +63,8 @@ function abortedToolOutput(toolName: string, signal: AbortSignal): string {
 
 export interface ToolCallStepContext {
   readonly tools?: readonly ExecutableTool[] | undefined;
+  /** See RunTurnInput.describeMissingTool. */
+  readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
@@ -125,7 +128,7 @@ export async function runToolCallBatch(
 ): Promise<ToolCallBatchResult> {
   if (response.toolCalls.length === 0) return { stopTurn: false };
   const batchStep: ToolCallBatchContext = { ...step, toolCalls: response.toolCalls };
-  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step.tools, toolCall));
+  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step, toolCall));
   const scheduler = new ToolScheduler<PendingToolResult>();
   const pendingResults: Array<Promise<PendingToolResult>> = [];
   let stopTurn = false;
@@ -173,31 +176,31 @@ export async function runToolCallBatch(
  * events. Validator compilation may populate the local cache.
  */
 function preflightToolCall(
-  tools: readonly ExecutableTool[] | undefined,
+  step: Pick<ToolCallStepContext, 'tools' | 'describeMissingTool' | 'log'>,
   toolCall: ToolCall,
 ): PreflightedToolCall {
   const toolName = toolCall.name;
   const parsedArgs = parseToolCallArguments(toolCall.arguments);
-  const args = parsedArgs.success ? parsedArgs.data : {};
-  const tool = tools?.find((candidate) => candidate.name === toolName);
+  const tool = step.tools?.find((candidate) => candidate.name === toolName);
   if (tool === undefined) {
     return {
       kind: 'rejected',
       toolCall,
       toolName,
-      args,
-      output: `Tool "${toolName}" not found`,
+      args: parsedArgs.data,
+      output: step.describeMissingTool?.(toolName) ?? `Tool "${toolName}" not found`,
     };
   }
-  if (!parsedArgs.success) {
-    return {
-      kind: 'rejected',
-      toolCall,
+
+  if (parsedArgs.parseFailed) {
+    step.log?.debug('tool args JSON parse failed', {
       toolName,
-      args,
-      output: `Invalid args for tool "${toolName}": malformed JSON in arguments: ${parsedArgs.error}`,
-    };
+      toolCallId: toolCall.id,
+      rawLength: toolCall.arguments?.length ?? 0,
+      error: parsedArgs.error,
+    });
   }
+
   const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
   if (validationError !== null) {
     return {
@@ -209,21 +212,6 @@ function preflightToolCall(
     };
   }
   return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
-}
-
-function parseToolCallArguments(
-  raw: string | null,
-):
-  | { readonly success: true; readonly data: unknown }
-  | { readonly success: false; readonly error: string } {
-  if (raw === null || raw.length === 0) {
-    return { success: true, data: {} };
-  }
-  try {
-    return { success: true, data: JSON.parse(raw) as unknown };
-  } catch (error) {
-    return { success: false, error: errorMessage(error) };
-  }
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
@@ -671,7 +659,19 @@ function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
-  return r.isError === true ? { output, isError: true } : { output };
+  // Rebuild keeps the persisted contract only: `note` rides into the record
+  // (the model reads it at projection), while `stopTurn`/`message` are
+  // loop/UI-local and are dropped here. Tools are arbitrary JS, so this is
+  // also where the note contract (string | undefined) is enforced: a
+  // malformed or empty note is discarded — the tool's actual output is
+  // still valid, and everything downstream trusts the contract.
+  const base: { output: typeof output; note?: string; truncated?: true } = { output };
+  if (typeof r.note === 'string' && r.note.length > 0) base.note = r.note;
+  if (r.truncated === true) base.truncated = true;
+  if (r.isError === true) {
+    return { ...base, isError: true };
+  }
+  return base;
 }
 
 function makeToolResult(
@@ -722,5 +722,6 @@ async function dispatchToolCall(
     args,
     description: displayFields?.description,
     display: displayFields?.display,
+    extras: toolCall.extras,
   });
 }

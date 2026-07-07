@@ -13,6 +13,7 @@ import {
   resolveKimiCodeOAuthKey,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  type ManagedKimiCodeModelInfo,
   type ManagedKimiConfigShape,
 } from '../src/managed-kimi-code';
 import { OAuthUnauthorizedError } from '../src/errors';
@@ -356,7 +357,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'custom-default',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'custom-default': {
           provider: 'custom',
@@ -385,7 +386,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
     expect(config.defaultModel).toBe('custom-default');
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
     expect(config.models?.['kimi-code/stale']).toBeUndefined();
     expect(config.models?.['kimi-code/kimi-for-coding']?.displayName).toBe('Kimi for Coding');
   });
@@ -422,7 +423,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('preserves explicit default_thinking when preserving a custom default without capabilities', async () => {
@@ -434,7 +435,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'custom-default',
-      defaultThinking: true,
+      thinking: { enabled: true },
       models: {
         'custom-default': {
           provider: 'custom',
@@ -457,7 +458,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('defaults default_thinking to false when a preserved custom default has no signal', async () => {
@@ -491,7 +492,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('does not infer default_thinking from preserved custom default capabilities', async () => {
@@ -526,7 +527,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('keeps default_thinking off even when preserved custom default has thinking capability', async () => {
@@ -561,7 +562,7 @@ describe('provisionManagedKimiCodeConfig', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('falls back to the first fetched model when the preserved default was removed', async () => {
@@ -573,7 +574,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'kimi-code/stale',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'kimi-code/stale': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -597,7 +598,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(false);
     expect(config.defaultModel).toBe('kimi-code/kimi-for-coding');
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('removes managed provider, models, services, and default model on logout', () => {
@@ -613,7 +614,7 @@ describe('provisionManagedKimiCodeConfig', () => {
         },
       },
       defaultModel: 'kimi-code/kimi-for-coding',
-      defaultThinking: true,
+      thinking: { enabled: true },
       models: {
         'kimi-code/kimi-for-coding': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -944,7 +945,7 @@ describe('supports_thinking_type', () => {
   });
 
   it('forces default thinking on when the selected default model is thinking-only', async () => {
-    const config: ManagedKimiConfigShape = { providers: {}, defaultThinking: false };
+    const config: ManagedKimiConfigShape = { providers: {}, thinking: { enabled: false } };
 
     const result = await provisionManagedKimiCodeConfig({
       accessToken: 'oauth-access-token',
@@ -958,7 +959,7 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('forces default thinking on when preserving a thinking-only managed default', async () => {
@@ -970,7 +971,7 @@ describe('supports_thinking_type', () => {
         },
       },
       defaultModel: 'kimi-code/kimi-for-coding',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'kimi-code/kimi-for-coding': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -994,7 +995,7 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
     expect(result.defaultThinking).toBe(true);
-    expect(config.defaultThinking).toBe(true);
+    expect(config.thinking?.enabled).toBe(true);
   });
 
   it('forces default thinking off when preserving a no-thinking managed default', async () => {
@@ -1006,7 +1007,7 @@ describe('supports_thinking_type', () => {
         },
       },
       defaultModel: 'kimi-code/kimi-plain',
-      defaultThinking: true,
+      thinking: { enabled: true },
       models: {
         'kimi-code/kimi-plain': {
           provider: KIMI_CODE_PROVIDER_NAME,
@@ -1030,7 +1031,7 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('kimi-code/kimi-plain');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
   });
 
   it('keeps a preserved non-managed default thinking selection untouched', async () => {
@@ -1042,7 +1043,7 @@ describe('supports_thinking_type', () => {
         },
       },
       defaultModel: 'custom-default',
-      defaultThinking: false,
+      thinking: { enabled: false },
       models: {
         'custom-default': {
           provider: 'custom',
@@ -1065,6 +1066,326 @@ describe('supports_thinking_type', () => {
 
     expect(result.defaultModel).toBe('custom-default');
     expect(result.defaultThinking).toBe(false);
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(false);
+  });
+});
+
+describe('support_efforts / default_effort', () => {
+  function makeEffortModelsResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        data: [
+          {
+            id: 'kimi-for-coding',
+            context_length: 262144,
+            supports_reasoning: true,
+            supports_thinking_type: 'both',
+            think_efforts: {
+              support: true,
+              valid_efforts: ['low', 'high', 'max'],
+              default_effort: 'high',
+            },
+            display_name: 'Kimi For Coding',
+          },
+          {
+            // Empty / non-string entries are filtered; absent fields stay undefined.
+            id: 'kimi-plain',
+            context_length: 128000,
+            supports_reasoning: true,
+            think_efforts: { support: true, valid_efforts: ['low', '', 42] },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  it('parses think_efforts from the models endpoint', async () => {
+    const models = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeEffortModelsResponse()) as unknown as typeof fetch,
+    });
+
+    expect(models[0]?.supportEfforts).toEqual(['low', 'high', 'max']);
+    expect(models[0]?.defaultEffort).toBe('high');
+    // The empty string and number are filtered out of valid_efforts.
+    expect(models[1]?.supportEfforts).toEqual(['low']);
+    expect(models[1]?.defaultEffort).toBeUndefined();
+  });
+
+  it('ignores think_efforts entirely when support is not true', async () => {
+    const models = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-no-effort',
+                context_length: 128000,
+                supports_reasoning: true,
+                think_efforts: {
+                  support: false,
+                  valid_efforts: ['low', 'high'],
+                  default_effort: 'high',
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+
+    // support !== true gates the whole object — valid_efforts / default_effort
+    // are ignored.
+    expect(models[0]?.supportEfforts).toBeUndefined();
+    expect(models[0]?.defaultEffort).toBeUndefined();
+  });
+
+  it('ignores legacy flat fields even when think_efforts is absent', async () => {
+    // The legacy support_efforts / default_effort fields are no longer read;
+    // only the nested think_efforts object is honored.
+    const models = await fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-k2',
+                context_length: 128000,
+                supports_reasoning: true,
+                support_efforts: ['low', 'high'],
+                default_effort: 'high',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+
+    expect(models[0]?.supportEfforts).toBeUndefined();
+    expect(models[0]?.defaultEffort).toBeUndefined();
+  });
+
+  it('writes supportEfforts and defaultEffort onto the provisioned model entry', async () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+
+    await provisionManagedKimiCodeConfig({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeEffortModelsResponse()) as unknown as typeof fetch,
+      adapter: {
+        read: () => config,
+        write: vi.fn(),
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    const alias = config.models?.['kimi-code/kimi-for-coding'];
+    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias?.['defaultEffort']).toBe('high');
+  });
+});
+
+describe('selective merge', () => {
+  const baseOptions = {
+    baseUrl: 'https://api.example.test/coding/v1',
+    oauthKey: 'test-key',
+  };
+
+  it('preserves non-managed user fields but drops stale managed fields', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'kimi-code/kimi-k2': {
+          provider: 'kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+          capabilities: ['thinking'],
+          maxOutputSize: 4096,
+          supportEfforts: ['low', 'high', 'max'],
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyManagedKimiCodeConfig(config, {
+      ...baseOptions,
+      models: [
+        {
+          id: 'kimi-k2',
+          contextLength: 262144,
+          supportsReasoning: true,
+          supportsImageIn: false,
+          supportsVideoIn: false,
+          supportsThinkingType: 'both',
+        },
+      ],
+    });
+
+    const alias = config.models?.['kimi-code/kimi-k2'];
+    expect(alias?.['maxOutputSize']).toBe(4096);
+    expect(alias?.['supportEfforts']).toBeUndefined();
+    expect(alias?.['maxContextSize']).toBe(262144);
+  });
+
+  it('preserves overrides when upstream declares managed fields', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'kimi-code/kimi-k2': {
+          provider: 'kimi-code',
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+          overrides: { supportEfforts: ['low'] },
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyManagedKimiCodeConfig(config, {
+      ...baseOptions,
+      models: [
+        {
+          id: 'kimi-k2',
+          contextLength: 262144,
+          supportsReasoning: true,
+          supportsImageIn: false,
+          supportsVideoIn: false,
+          supportEfforts: ['low', 'high', 'max'],
+          defaultEffort: 'high',
+        },
+      ],
+    });
+
+    const alias = config.models?.['kimi-code/kimi-k2'];
+    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias?.['defaultEffort']).toBe('high');
+    expect(alias?.['overrides']).toEqual({ supportEfforts: ['low'] });
+  });
+
+  it('removes managed models that upstream no longer lists', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'kimi-code/kimi-k2': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'kimi-k2',
+          maxContextSize: 262144,
+        },
+        'kimi-code/removed': {
+          provider: KIMI_CODE_PROVIDER_NAME,
+          model: 'removed',
+          maxContextSize: 128000,
+        },
+      },
+    };
+
+    applyManagedKimiCodeConfig(config, {
+      ...baseOptions,
+      models: [
+        {
+          id: 'kimi-k2',
+          contextLength: 262144,
+          supportsReasoning: true,
+          supportsImageIn: false,
+          supportsVideoIn: false,
+        },
+      ],
+    });
+
+    expect(config.models?.['kimi-code/kimi-k2']).toBeDefined();
+    expect(config.models?.['kimi-code/removed']).toBeUndefined();
+  });
+});
+
+function makeModelInfo(
+  id: string,
+  overrides: Partial<ManagedKimiCodeModelInfo> = {},
+): ManagedKimiCodeModelInfo {
+  return {
+    id,
+    contextLength: 200000,
+    supportsReasoning: false,
+    supportsImageIn: false,
+    supportsVideoIn: false,
+    ...overrides,
+  };
+}
+
+const KIMI_BASE_URL = 'https://api.kimi.com/coding/v1';
+
+describe('managed protocol routing', () => {
+  it('reads protocol from the /models response', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-for-coding', context_length: 262144, protocol: 'anthropic' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ) as unknown as typeof fetch;
+
+    const models = await fetchManagedKimiCodeModels({ accessToken: 't', fetchImpl });
+    expect(models).toHaveLength(1);
+    expect(models[0]?.protocol).toBe('anthropic');
+  });
+
+  it('keeps the provider on the kimi REST base and records the model protocol when anthropic', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding', { protocol: 'anthropic' })],
+    });
+
+    // The provider stays on the kimi wire + REST base; the anthropic transport
+    // is resolved per-model at runtime, not baked into the provider config, so
+    // the REST base keeps flowing to OAuth key derivation and plugin env.
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+      apiKey: '',
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']).toMatchObject({
+      provider: KIMI_CODE_PROVIDER_NAME,
+      protocol: 'anthropic',
+      betaApi: true,
+    });
+  });
+
+  it('keeps the kimi protocol and baseUrl when the model has no anthropic protocol', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding')],
+    });
+
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+      apiKey: '',
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']?.provider).toBe(KIMI_CODE_PROVIDER_NAME);
+    expect(config.models?.['kimi-code/kimi-for-coding']?.protocol).toBeUndefined();
+  });
+
+  it('drops the model protocol on refresh when the server stops declaring anthropic', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding', { protocol: 'anthropic' })],
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']?.protocol).toBe('anthropic');
+
+    applyManagedKimiCodeConfig(config, {
+      baseUrl: KIMI_BASE_URL,
+      models: [makeModelInfo('kimi-for-coding')],
+    });
+    // The provider never leaves the kimi wire / REST base across refreshes —
+    // only the per-model protocol annotation changes.
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      type: 'kimi',
+      baseUrl: KIMI_BASE_URL,
+    });
+    expect(config.models?.['kimi-code/kimi-for-coding']?.protocol).toBeUndefined();
   });
 });

@@ -138,23 +138,9 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
     ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
   };
 
-  const thinkingMode = trimmed(env['KIMI_MODEL_THINKING_MODE']);
   const thinkingEffort = trimmed(env['KIMI_MODEL_THINKING_EFFORT']);
   const thinking: ThinkingConfig | undefined =
-    thinkingMode !== undefined || thinkingEffort !== undefined
-      ? {
-          ...config.thinking,
-          // Cast: thinkingMode is a raw string passed through to validateConfig
-          // for enum validation (auto/on/off). The cast avoids a TS compile error
-          // without skipping runtime validation.
-          ...(thinkingMode !== undefined ? { mode: thinkingMode as ThinkingConfig['mode'] } : {}),
-          ...(thinkingEffort !== undefined ? { effort: thinkingEffort } : {}),
-        }
-      : config.thinking;
-  const defaultThinking = parseBooleanVar(
-    env['KIMI_MODEL_DEFAULT_THINKING'],
-    'KIMI_MODEL_DEFAULT_THINKING',
-  );
+    thinkingEffort !== undefined ? { ...config.thinking, effort: thinkingEffort } : config.thinking;
 
   const merged: KimiConfig = {
     ...config,
@@ -162,12 +148,11 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
     models: { ...config.models, [ENV_MODEL_ALIAS_KEY]: alias },
     defaultModel: ENV_MODEL_ALIAS_KEY,
     ...(thinking !== undefined ? { thinking } : {}),
-    ...(defaultThinking !== undefined ? { defaultThinking } : {}),
   };
 
-  // Re-validate so the synthesized entries honor the same schema constraints
-  // (e.g. thinking.mode must be auto/on/off). `validateConfig` throws
-  // KimiError(CONFIG_INVALID) on violation, matching the explicit checks above.
+  // Re-validate so the synthesized entries honor the same schema constraints.
+  // `validateConfig` throws KimiError(CONFIG_INVALID) on violation, matching
+  // the explicit checks above.
   return validateConfig(merged);
 }
 
@@ -178,7 +163,7 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
  * config.toml — including via a `getConfig` -> `setConfig` patch round-trip,
  * where the runtime config (carrying the env provider and its shell API key)
  * would otherwise be merged back and written out. Every env-injected top-level
- * field (default_model, thinking, default_thinking) is restored to its on-disk
+ * field (default_model, thinking) is restored to its on-disk
  * value from `config.raw` rather than erased, so real values already in
  * config.toml survive the round-trip.
  */
@@ -203,23 +188,17 @@ export function stripEnvModelConfig(config: KimiConfig): KimiConfig {
     ...(models !== undefined ? { models } : {}),
     // Restore env-injected top-level fields from raw instead of persisting the
     // shell overrides: the env default_model (when it points at the env alias),
-    // and the env thinking / default_thinking. Reaching here means env-model
-    // mode is active (the synthetic provider/model exist), so these may be env
-    // values; an unset raw field restores to undefined (i.e. drops it).
+    // and the env thinking. Reaching here means env-model mode is active (the
+    // synthetic provider/model exist), so these may be env values; an unset raw
+    // field restores to undefined (i.e. drops it).
     ...(defaultIsEnv ? { defaultModel: rawDefaultModel(config) } : {}),
     thinking: rawThinking(config),
-    defaultThinking: rawDefaultThinking(config),
   };
 }
 
 function rawDefaultModel(config: KimiConfig): string | undefined {
   const raw = config.raw?.['default_model'];
   return typeof raw === 'string' ? raw : undefined;
-}
-
-function rawDefaultThinking(config: KimiConfig): boolean | undefined {
-  const raw = config.raw?.['default_thinking'];
-  return typeof raw === 'boolean' ? raw : undefined;
 }
 
 function rawThinking(config: KimiConfig): ThinkingConfig | undefined {

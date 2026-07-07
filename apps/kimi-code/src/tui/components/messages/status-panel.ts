@@ -5,7 +5,13 @@
  * separate from the TUI orchestration layer.
  */
 
-import type { ModelAlias, PermissionMode, SessionStatus } from '@moonshot-ai/kimi-code-sdk';
+import {
+  effectiveModelAlias,
+  type ModelAlias,
+  type PermissionMode,
+  type SessionStatus,
+  type ThinkingEffort,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { PRODUCT_NAME } from '#/constant/app';
 import { currentTheme } from '#/tui/theme';
@@ -30,7 +36,7 @@ export interface StatusReportOptions {
   readonly workDir: string;
   readonly sessionId: string;
   readonly sessionTitle: string | null;
-  readonly thinking: boolean;
+  readonly thinkingEffort: ThinkingEffort;
   readonly permissionMode: PermissionMode;
   readonly planMode: boolean;
   readonly contextUsage: number;
@@ -47,17 +53,16 @@ type Colorize = (text: string) => string;
 
 function displayModelName(alias: string, models: Record<string, ModelAlias>): string {
   const model = models[alias];
-  return model?.displayName ?? model?.model ?? alias;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.displayName ?? effective?.model ?? alias;
 }
 
 function formatModelStatus(options: StatusReportOptions): string {
   const model = options.status?.model ?? options.model;
   if (model.trim().length === 0) return 'not set';
 
-  const thinking = (options.status?.thinkingLevel ?? (options.thinking ? 'on' : 'off')) === 'off'
-    ? 'off'
-    : 'on';
-  return `${displayModelName(model, options.availableModels)} (thinking ${thinking})`;
+  const effort = options.status?.thinkingEffort ?? options.thinkingEffort;
+  return `${displayModelName(model, options.availableModels)} (thinking ${effort})`;
 }
 
 function addFieldRows(

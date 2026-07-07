@@ -11,7 +11,7 @@ export interface GoalStartPermissionPromptOptions {
   readonly onCancel: () => void;
 }
 
-const MANUAL_OPTIONS: readonly StartPermissionOption[] = [
+export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
   {
     value: 'auto',
     label: 'Switch to Auto and start',
@@ -37,7 +37,7 @@ const MANUAL_OPTIONS: readonly StartPermissionOption[] = [
   },
 ];
 
-const YOLO_OPTIONS: readonly StartPermissionOption[] = [
+export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption[] = [
   {
     value: 'auto',
     label: 'Switch to Auto and start',
@@ -56,6 +56,14 @@ const YOLO_OPTIONS: readonly StartPermissionOption[] = [
     description: 'Return to the input box with your goal command.',
   },
 ];
+
+export function goalStartOptions(mode: 'manual' | 'yolo'): readonly StartPermissionOption[] {
+  return mode === 'yolo' ? GOAL_START_YOLO_OPTIONS : GOAL_START_MANUAL_OPTIONS;
+}
+
+const MANUAL_OPTIONS = GOAL_START_MANUAL_OPTIONS;
+
+const YOLO_OPTIONS = GOAL_START_YOLO_OPTIONS;
 
 const MANUAL_NOTICE_LINES = [
   'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',

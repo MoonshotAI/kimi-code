@@ -7,6 +7,14 @@ export interface SessionIndexEntry {
   readonly workDir: string;
 }
 
+// Per-homeDir append chain. Within one process, concurrent index appends are
+// serialized so two lines can never be interleaved at the filesystem layer.
+// Cross-process, a single short line written with O_APPEND is atomic on POSIX
+// (well under PIPE_BUF), so this closes the realistic same-process tearing gap
+// without taking a file lock. A failed append is reported to its caller but does
+// not poison the chain for later appends.
+const appendQueues = new Map<string, Promise<void>>();
+
 export function sessionIndexPath(homeDir: string): string {
   return join(homeDir, 'session_index.jsonl');
 }
@@ -16,8 +24,14 @@ export async function appendSessionIndexEntry(
   entry: SessionIndexEntry,
 ): Promise<void> {
   const indexPath = sessionIndexPath(homeDir);
-  await mkdir(dirname(indexPath), { recursive: true, mode: 0o700 });
-  await appendFile(indexPath, `${JSON.stringify(entry)}\n`, 'utf-8');
+  const line = `${JSON.stringify(entry)}\n`;
+  const previous = appendQueues.get(homeDir) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    await mkdir(dirname(indexPath), { recursive: true, mode: 0o700 });
+    await appendFile(indexPath, line, 'utf-8');
+  });
+  appendQueues.set(homeDir, next.then(() => undefined, () => undefined));
+  return next;
 }
 
 export async function readSessionIndex(
@@ -39,13 +53,15 @@ export async function readSessionIndex(
     if (entry === undefined) continue;
     const sessionDir = resolve(entry.sessionDir);
     if (!isAbsolute(entry.sessionDir)) continue;
-    if (!isAbsolute(entry.workDir)) continue;
     if (!isPathInside(sessionsDir, sessionDir)) continue;
     if (basename(sessionDir) !== entry.sessionId) continue;
+    // `workDir` is no longer authoritative: summaries prefer the workDir stored
+    // in each session's self-describing state.json, so a stale or relocated
+    // index workDir must not drop an otherwise valid entry.
     result.set(entry.sessionId, {
       sessionId: entry.sessionId,
       sessionDir,
-      workDir: resolve(entry.workDir),
+      workDir: entry.workDir,
     });
   }
   return result;

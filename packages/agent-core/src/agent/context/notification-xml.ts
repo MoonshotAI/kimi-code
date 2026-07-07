@@ -7,14 +7,11 @@
  *   Title: ...
  *   Severity: ...
  *   <body>
- *   <task-notification>   (only when source_kind === 'background_task' and tail_output is non-empty)
- *   <truncated tail>
- *   </task-notification>
+ *   <children...>
  *   </notification>
  *
- * The opening-tag names (`<notification ` / `<task-notification>`) are
- * load-bearing for the projector's `mergeAdjacentUserMessages` detector
- * — rename requires updating the detector too.
+ * The opening tag name (`<notification `) is load-bearing for notification
+ * consumers that detect chat-history injections.
  *
  * `agent_id` is emitted only for background_task notifications whose
  * source task is an agent subagent — surfacing it structurally lets the
@@ -36,6 +33,7 @@ export function renderNotificationXml(data: Record<string, unknown>): string {
   const title = typeof data['title'] === 'string' ? data['title'] : '';
   const severity = typeof data['severity'] === 'string' ? data['severity'] : '';
   const body = typeof data['body'] === 'string' ? data['body'] : '';
+  const children = childBlocks(data['children'] ?? data['extraBlocks']);
 
   const agentIdAttr = agentId === undefined ? '' : ` agent_id="${agentId}"`;
   const lines: string[] = [
@@ -44,34 +42,10 @@ export function renderNotificationXml(data: Record<string, unknown>): string {
   if (title.length > 0) lines.push(`Title: ${title}`);
   if (severity.length > 0) lines.push(`Severity: ${severity}`);
   if (body.length > 0) lines.push(body);
-
-  if (data['source_kind'] === 'background_task') {
-    const tailRaw = typeof data['tail_output'] === 'string' ? data['tail_output'] : '';
-    if (tailRaw.length > 0) {
-      const truncated = truncateTailOutput(tailRaw, 20, 3000);
-      lines.push('<task-notification>');
-      lines.push(truncated);
-      lines.push('</task-notification>');
-    }
-  }
+  lines.push(...children);
 
   lines.push('</notification>');
   return lines.join('\n');
-}
-
-/**
- * Truncate tail output to at most `maxLines` lines and `maxChars`
- * characters. Takes the *last* N lines, then trims from the front if
- * the character budget is exceeded.
- */
-function truncateTailOutput(raw: string, maxLines: number, maxChars: number): string {
-  const allLines = raw.split('\n');
-  const tailLines = allLines.length > maxLines ? allLines.slice(-maxLines) : allLines;
-  let result = tailLines.join('\n');
-  if (result.length > maxChars) {
-    result = result.slice(-maxChars);
-  }
-  return result;
 }
 
 function stringAttr(value: unknown, fallback: string): string {
@@ -84,4 +58,10 @@ function stringAttr(value: unknown, fallback: string): string {
 function optionalStringAttr(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length === 0) return undefined;
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+}
+
+function childBlocks(value: unknown): string[] {
+  if (typeof value === 'string' && value.length > 0) return [value];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
 }

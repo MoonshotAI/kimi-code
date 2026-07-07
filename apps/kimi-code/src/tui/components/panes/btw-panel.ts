@@ -1,10 +1,10 @@
-import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
+import type { Component, MarkdownTheme } from '@moonshot-ai/pi-tui';
 import {
   Markdown,
   Text,
   truncateToWidth,
   visibleWidth,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import { THINKING_PREVIEW_LINES } from '../../constant/rendering';

@@ -1,0 +1,18 @@
+export default {
+  openInEditor: '在编辑器中打开',
+  openInEditorShort: '打开',
+  chooseOpenApp: '选择应用',
+  copyAll: '复制全部对话为 Markdown',
+  copyFinalSummary: '仅复制最终总结',
+  copied: '已复制',
+  copyPath: '复制路径',
+  changed: '{n} 处改动',
+  gitTooltip: '打开「文件 > 改动」',
+  detached: '游离',
+  openPr: '打开 Pull Request',
+  options: '选项',
+  copySessionId: '复制 Session ID',
+  renameSession: '重命名',
+  forkSession: '分叉会话',
+  archiveSession: '归档',
+};

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildHookSpawnOptions } from '../../src/session/hooks/runner';
+
 const RUNNER_MODULE = '../../src/session/hooks/runner' as string;
 
 interface HookResult {
@@ -33,7 +35,7 @@ describe('runHook process runner', () => {
 
   it('parses stdout JSON message into a hook result message', async () => {
     const runHook = await importRunHook();
-    const result = await runHook('echo \'{"message":"hook says hi"}\'', {}, { timeout: 5 });
+    const result = await runHook("node -e \"process.stdout.write(JSON.stringify({message:'hook says hi'}))\"", {}, { timeout: 5 });
     expect(result.action).toBe('allow');
     expect(result.message).toBe('hook says hi');
     expect(result.structuredOutput).toBe(true);
@@ -42,13 +44,13 @@ describe('runHook process runner', () => {
   it('marks structured stdout JSON without message as empty hook output', async () => {
     const runHook = await importRunHook();
 
-    const emptyObject = await runHook("echo '{}'", {}, { timeout: 5 });
+    const emptyObject = await runHook("node -e \"process.stdout.write('{}')\"", {}, { timeout: 5 });
     expect(emptyObject.action).toBe('allow');
     expect(emptyObject.message).toBeUndefined();
     expect(emptyObject.structuredOutput).toBe(true);
 
     const emptyHookSpecificOutput = await runHook(
-      'echo \'{"hookSpecificOutput":{}}\'',
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))\"",
       {},
       { timeout: 5 },
     );
@@ -60,7 +62,7 @@ describe('runHook process runner', () => {
   it('returns block when the hook exits 2 and captures stderr as the reason', async () => {
     const runHook = await importRunHook();
     const result = await runHook(
-      "echo 'blocked' >&2; exit 2",
+      "node -e \"process.stderr.write('blocked');process.exit(2)\"",
       { tool_name: 'Shell' },
       { timeout: 5 },
     );
@@ -84,7 +86,7 @@ describe('runHook process runner', () => {
   it('parses stdout JSON permissionDecision=deny into a block result with the supplied reason', async () => {
     const runHook = await importRunHook();
     const cmd =
-      'echo \'{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "use rg"}}\'';
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'deny',permissionDecisionReason:'use rg'}}))\"";
     const result = await runHook(cmd, { tool_name: 'Bash' }, { timeout: 5 });
     expect(result.action).toBe('block');
     expect(result.reason).toBe('use rg');
@@ -96,5 +98,29 @@ describe('runHook process runner', () => {
       'node -e "let s=\\"\\";process.stdin.on(\\"data\\",d=>s+=d);process.stdin.on(\\"end\\",()=>{const o=JSON.parse(s);process.stdout.write(o.tool_name);})"';
     const result = await runHook(cmd, { tool_name: 'WriteFile' }, { timeout: 5 });
     expect(result.stdout?.trim()).toBe('WriteFile');
+  });
+});
+
+// Regression coverage for the "every hook flashes an empty console window on
+// Windows" bug. With `shell:true` and no `windowsHide`, Node allocates a
+// visible console for each hook child process on Windows. The fix is to pass
+// `windowsHide:true` (mirrors KAOS' `buildLocalSpawnOptions` and the runner's
+// own taskkill spawn). The flag is only observable on Windows, so we assert
+// the spawn options builder directly.
+describe('buildHookSpawnOptions (Windows console-window regression)', () => {
+  it('sets windowsHide:true so hooks do not flash a console on Windows', () => {
+    expect(buildHookSpawnOptions({}).windowsHide).toBe(true);
+  });
+
+  it('runs through the shell with stdio piped', () => {
+    const options = buildHookSpawnOptions({});
+    expect(options.shell).toBe(true);
+    expect(options.stdio).toBe('pipe');
+  });
+
+  it('merges hook env onto process.env and forwards cwd', () => {
+    const options = buildHookSpawnOptions({ cwd: '/repo', env: { FOO: 'bar' } });
+    expect(options.cwd).toBe('/repo');
+    expect(options.env).toMatchObject({ FOO: 'bar' });
   });
 });

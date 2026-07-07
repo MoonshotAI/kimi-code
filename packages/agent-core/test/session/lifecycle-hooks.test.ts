@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
-import { AgentBackgroundTask, ProcessBackgroundTask } from '../../src/agent/background';
+import { ProcessBackgroundTask } from '../../src/agent/background';
+import { agentTask } from '../agent/background/helpers';
 
 
 const tempDirs: string[] = [];
@@ -19,7 +20,7 @@ const tempDirs: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
-    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -200,10 +201,11 @@ describe('Session lifecycle hooks', () => {
       turnSettled.resolve();
     });
     vi.spyOn(child.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
-    const abort = vi.fn();
+    const abortController = new AbortController();
+    const abort = vi.spyOn(abortController, 'abort');
     const taskId = main.background.registerTask(
-      new AgentBackgroundTask(new Promise(() => {}), 'keep background agent alive', {
-        abort,
+      agentTask(new Promise(() => {}), 'keep background agent alive', {
+        abortController,
         agentId: childId,
         subagentType: 'coder',
       }),
@@ -215,6 +217,166 @@ describe('Session lifecycle hooks', () => {
     expect(waitSpy).not.toHaveBeenCalled();
     expect(abort).not.toHaveBeenCalled();
     expect(main.background.getTask(taskId)?.status).toBe('running');
+  });
+
+  it('waitForBackgroundTasksOnPrint returns immediately when keepAliveOnExit is false', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-wait-disabled',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: false },
+    });
+    const agent = await session.createMain();
+    const { proc, killSpy } = pendingProcess();
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'no wait'),
+    );
+
+    await session.waitForBackgroundTasksOnPrint();
+
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(agent.background.getTask(taskId)?.status).toBe('running');
+    await session.close();
+  });
+
+  it('waitForBackgroundTasksOnPrint waits for background tasks to finish when keepAliveOnExit is true', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-wait',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true },
+    });
+    const agent = await session.createMain();
+    const { proc } = pendingProcess(0);
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'wait for me'),
+    );
+
+    let settled = false;
+    const waitPromise = session.waitForBackgroundTasksOnPrint().then(() => {
+      settled = true;
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    await proc.kill('SIGTERM');
+    await waitPromise;
+    expect(settled).toBe(true);
+    expect(agent.background.getTask(taskId)?.status).toBe('completed');
+    await session.close();
+  });
+
+  it('waitForBackgroundTasksOnPrint times out after printWaitCeilingS', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-wait-timeout',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true, printWaitCeilingS: 1 },
+    });
+    const agent = await session.createMain();
+    const { proc } = pendingProcess();
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'times out'),
+    );
+
+    await session.waitForBackgroundTasksOnPrint();
+
+    expect(agent.background.getTask(taskId)?.status).toBe('running');
+    await session.close();
+  });
+
+  it('waitForBackgroundTasksOnPrint waits for tasks spawned after the first enumeration', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-wait-fanout',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true },
+    });
+    const agent = await session.createMain();
+    const first = pendingProcess(0);
+    const firstTaskId = agent.background.registerTask(
+      new ProcessBackgroundTask(first.proc, 'sleep 60', 'first'),
+    );
+
+    let settled = false;
+    const waitPromise = session.waitForBackgroundTasksOnPrint().then(() => {
+      settled = true;
+    });
+
+    // Let the first enumeration run and suspend on the first task.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    // Fan out a second background task after the first enumeration.
+    const second = pendingProcess(0);
+    const secondTaskId = agent.background.registerTask(
+      new ProcessBackgroundTask(second.proc, 'sleep 60', 'second'),
+    );
+
+    // Finish the first task; the wait must not settle while the second is running.
+    await first.proc.kill('SIGTERM');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    // Finish the second task; the wait should now settle.
+    await second.proc.kill('SIGTERM');
+    await waitPromise;
+    expect(settled).toBe(true);
+    expect(agent.background.getTask(firstTaskId)?.status).toBe('completed');
+    expect(agent.background.getTask(secondTaskId)?.status).toBe('completed');
+    await session.close();
+  });
+
+  it('suppresses notifications for every active task before awaiting any of them', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-wait-suppress-race',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true },
+    });
+    const agent = await session.createMain();
+    const steerSpy = vi.spyOn(agent.turn, 'steer');
+
+    // Detached tasks fire a completion notification unless suppressed.
+    const first = pendingProcess(0);
+    agent.background.registerTask(new ProcessBackgroundTask(first.proc, 'sleep 60', 'first'), {
+      detached: true,
+    });
+    const second = pendingProcess(0);
+    agent.background.registerTask(
+      new ProcessBackgroundTask(second.proc, 'sleep 60', 'second'),
+      { detached: true },
+    );
+
+    const waitPromise = session.waitForBackgroundTasksOnPrint();
+
+    // Let the synchronous enumeration run so both tasks get suppressed.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Complete both tasks after suppression but before the wait settles.
+    await first.proc.kill('SIGTERM');
+    await second.proc.kill('SIGTERM');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(steerSpy).not.toHaveBeenCalled();
+    await waitPromise;
+    await session.close();
   });
 
   it('lets the environment override config when deciding background task cleanup', async () => {
@@ -238,6 +400,38 @@ describe('Session lifecycle hooks', () => {
 
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
+  });
+
+  it('createMain enables print drain when drainAgentTasksOnStop is true', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-drain',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true, printWaitCeilingS: 42 },
+      drainAgentTasksOnStop: true,
+    });
+    const agent = await session.createMain();
+
+    expect(agent.printDrainAgentTasksOnStop).toBe(true);
+    await session.close();
+  });
+
+  it('createMain leaves print drain disabled by default', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-drain-off',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    const agent = await session.createMain();
+
+    expect(agent.printDrainAgentTasksOnStop).toBe(false);
+    await session.close();
   });
 
   it('cancels an active foreground turn before closing', async () => {

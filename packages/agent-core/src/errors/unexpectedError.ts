@@ -7,7 +7,7 @@
  * **Startup-timing constraint (plan §4.5)**: the default handler intentionally
  * does NOT resolve `ILogService` at module-load time. At import time the DI
  * container is empty — touching `ILogService` would NPE. Instead, the default
- * stays as a plain `console.error` until the daemon's `startDaemon` later
+ * stays as a plain `console.error` until the daemon's `startServer` later
  * calls `setUnexpectedErrorHandler(...)` with a logger-bound version (once
  * `ILogger` has been resolved from the accessor). Until that handoff,
  * exceptions routed here surface on stderr — visible but unstructured.
@@ -29,7 +29,7 @@ let currentHandler: UnexpectedErrorHandler = defaultHandler;
 
 /**
  * Install a new global handler. Replaces any previously-installed handler.
- * `startDaemon` calls this once after the DI container is fully wired so
+ * `startServer` calls this once after the DI container is fully wired so
  * later exceptions route through `ILogService` instead of stderr.
  */
 export function setUnexpectedErrorHandler(handler: UnexpectedErrorHandler): void {

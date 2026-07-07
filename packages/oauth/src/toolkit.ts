@@ -3,13 +3,26 @@ import { join } from 'node:path';
 
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
 import { OAuthUnauthorizedError } from './errors';
-import { assertKimiHostIdentity, createKimiDeviceHeaders, type KimiHostIdentity } from './identity';
+import {
+  assertKimiHostIdentity,
+  createKimiDefaultHeaders,
+  createKimiDeviceHeaders,
+  type KimiHostIdentity,
+} from './identity';
 import {
   fetchSubmitFeedback,
   kimiCodeFeedbackUrl,
   type FetchSubmitFeedbackResult,
   type SubmitFeedbackBody,
 } from './managed-feedback';
+import {
+  fetchCompleteFeedbackUpload,
+  fetchCreateFeedbackUploadUrl,
+  type CompleteFeedbackUploadBody,
+  type CreateFeedbackUploadUrlBody,
+  type FetchCompleteFeedbackUploadResult,
+  type FetchCreateFeedbackUploadUrlResult,
+} from './managed-feedback-upload';
 import {
   KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PROVIDER_NAME,
@@ -99,6 +112,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     'now' | 'sleep' | 'deviceCodeTimeoutMs' | 'refreshThreshold' | 'onRefresh'
   >;
   private readonly managers = new Map<string, OAuthManager>();
+  private _identityHeaders: Record<string, string> | undefined;
 
   constructor(options: KimiOAuthToolkitOptions<TConfig>) {
     this.identity =
@@ -179,6 +193,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
           oauthHost,
           preserveDefaultModel: hadToken,
           fetchImpl: this.fetchImpl,
+          headers: this.identityHeaders(),
         });
       try {
         provision = await provisionWithToken(accessToken);
@@ -293,18 +308,63 @@ export class KimiOAuthToolkit<TConfig = unknown> {
       readonly baseUrl?: string | undefined;
     } = {},
   ): Promise<FetchSubmitFeedbackResult> {
+    return this.withAccessToken(
+      providerName,
+      options,
+      (accessToken) => fetchSubmitFeedback(managedFeedbackUrl(options.baseUrl), accessToken, body),
+    );
+  }
+
+  private async withAccessToken<T>(
+    providerName: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    },
+    run: (accessToken: string) => Promise<T>,
+  ): Promise<T | { readonly kind: 'error'; readonly message: string }> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     try {
       const accessToken = await this.ensureFresh(name, {
         oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
       });
-      return await fetchSubmitFeedback(managedFeedbackUrl(options.baseUrl), accessToken, body);
+      return await run(accessToken);
     } catch (error) {
       return {
         kind: 'error',
         message: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async createFeedbackUploadUrl(
+    body: CreateFeedbackUploadUrlBody,
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<FetchCreateFeedbackUploadUrlResult> {
+    return this.withAccessToken(
+      providerName,
+      options,
+      (accessToken) => fetchCreateFeedbackUploadUrl(accessToken, body, { baseUrl: options.baseUrl }),
+    );
+  }
+
+  async completeFeedbackUpload(
+    body: CompleteFeedbackUploadBody,
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<FetchCompleteFeedbackUploadResult> {
+    return this.withAccessToken(
+      providerName,
+      options,
+      (accessToken) => fetchCompleteFeedbackUpload(accessToken, body, { baseUrl: options.baseUrl }),
+    );
   }
 
   managerFor(
@@ -364,17 +424,21 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   ): string {
     return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
   }
+
+  private identityHeaders(): Record<string, string> | undefined {
+    if (this.identity === undefined) return undefined;
+    this._identityHeaders ??= createKimiDefaultHeaders({
+      homeDir: this.homeDir,
+      ...this.identity,
+    });
+    return this._identityHeaders;
+  }
 }
 
 export function resolveKimiTokenStorageName(input: {
   readonly providerName?: string | undefined;
   readonly oauthKey?: string | undefined;
 }): string {
-  const providerName = input.providerName ?? KIMI_CODE_PROVIDER_NAME;
-  if (providerName !== KIMI_CODE_PROVIDER_NAME) {
-    throw new Error(`No OAuth manager configured for provider "${providerName}".`);
-  }
-
   const key = input.oauthKey ?? KIMI_CODE_OAUTH_KEY;
   if (key === 'kimi-code' || key === KIMI_CODE_OAUTH_KEY) return 'kimi-code';
 
@@ -399,8 +463,7 @@ function managedUsageUrl(baseUrl: string | undefined): string {
 }
 
 function managedFeedbackUrl(baseUrl: string | undefined): string {
-  if (baseUrl === undefined) return kimiCodeFeedbackUrl();
-  return `${baseUrl.replace(/\/+$/, '')}/feedback`;
+  return kimiCodeFeedbackUrl(baseUrl);
 }
 
 function normalizeOAuthHost(oauthHost: string): string {

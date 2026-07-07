@@ -11,6 +11,7 @@ import {
   SensitiveFileAccessAskPermissionPolicy,
 } from './file-access-ask';
 import { GitCwdWriteApprovePermissionPolicy } from './git-cwd-write-approve';
+import { GoalStartReviewAskPermissionPolicy } from './goal-start-review-ask';
 import { PlanModeGuardDenyPermissionPolicy } from './plan-mode-guard-deny';
 import { PlanModeToolApprovePermissionPolicy } from './plan-mode-tool-approve';
 import { PreToolCallHookPermissionPolicy } from './pre-tool-call-hook';
@@ -46,6 +47,10 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     new UserConfiguredAllowPermissionPolicy(agent),
     // ExitPlanMode with active plan_review + non-empty plan + non-auto → ask (tracks plan_submitted/plan_resolved itself). Runs before session history so a stale session approval can't bypass review of a new plan body.
     new ExitPlanModeReviewAskPermissionPolicy(agent),
+    // CreateGoal (non-auto) → ask with the same start menu as /goal: choose the
+    // permission mode to run the goal under, or decline. Applies the mode, then
+    // lets the tool create the goal.
+    new GoalStartReviewAskPermissionPolicy(agent),
     // EnterPlanMode, Write/Edit on the plan file, or ExitPlanMode with no actionable plan_review → approve.
     new PlanModeToolApprovePermissionPolicy(agent),
     // Access touches a sensitive file (.env, SSH key, credentials) → ask.

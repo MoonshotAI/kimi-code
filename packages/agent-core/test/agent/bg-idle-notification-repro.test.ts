@@ -23,7 +23,8 @@ import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 
 import { testAgent } from './harness/agent';
-import { AgentBackgroundTask, BackgroundTaskPersistence } from '../../src/agent/background';
+import { BackgroundTaskPersistence } from '../../src/agent/background';
+import { agentTask } from './background/helpers';
 
 describe('background notification → main agent (real Agent instance)', () => {
   it('IDLE: completed bg agent auto-starts a new turn with <notification> XML', async () => {
@@ -36,7 +37,7 @@ describe('background notification → main agent (real Agent instance)', () => {
     // The expected auto-launched turn will call generate once, then end.
     ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
 
-    const taskId = ctx.agent.background.registerTask(new AgentBackgroundTask(
+    const taskId = ctx.agent.background.registerTask(agentTask(
       Promise.resolve({ result: 'background agent finished its job' }),
       'idle-state repro',
     ));
@@ -58,7 +59,9 @@ describe('background notification → main agent (real Agent instance)', () => {
     expect(flatHistoryText).toContain('<notification');
     expect(flatHistoryText).toContain('task.completed');
     expect(flatHistoryText).toContain(taskId);
+    expect(flatHistoryText).toContain('idle-state repro completed');
     expect(flatHistoryText).toContain('background agent finished its job');
+    expect(flatHistoryText).toContain('<output-preview');
   });
 
   it('BUSY: completed bg agent during an active turn is flushed before the next LLM call', async () => {
@@ -93,7 +96,7 @@ describe('background notification → main agent (real Agent instance)', () => {
     // Right after kicking off, register a background task that
     // completes immediately. The notification should be steer()d
     // while activeTurn is still set, landing in the steerBuffer.
-    const taskId = ctx.agent.background.registerTask(new AgentBackgroundTask(
+    const taskId = ctx.agent.background.registerTask(agentTask(
       Promise.resolve({ result: 'busy-state bg result' }),
       'busy-state repro',
     ));
@@ -120,7 +123,9 @@ describe('background notification → main agent (real Agent instance)', () => {
     expect(flatContext).toContain('<notification');
     expect(flatContext).toContain('task.completed');
     expect(flatContext).toContain(taskId);
+    expect(flatContext).toContain('busy-state repro completed');
     expect(flatContext).toContain('busy-state bg result');
+    expect(flatContext).toContain('<output-preview');
   });
 
   it('IDLE × N: a GROUP of bg agents completes — all notifications should reach the LLM', async () => {
@@ -132,15 +137,15 @@ describe('background notification → main agent (real Agent instance)', () => {
     ctx.mockNextResponse({ type: 'text', text: 'ack group' });
 
     const taskIds = [
-      ctx.agent.background.registerTask(new AgentBackgroundTask(
+      ctx.agent.background.registerTask(agentTask(
         Promise.resolve({ result: 'bg #1 result' }),
         'group-1',
       )),
-      ctx.agent.background.registerTask(new AgentBackgroundTask(
+      ctx.agent.background.registerTask(agentTask(
         Promise.resolve({ result: 'bg #2 result' }),
         'group-2',
       )),
-      ctx.agent.background.registerTask(new AgentBackgroundTask(
+      ctx.agent.background.registerTask(agentTask(
         Promise.resolve({ result: 'bg #3 result' }),
         'group-3',
       )),
@@ -165,9 +170,13 @@ describe('background notification → main agent (real Agent instance)', () => {
     for (const id of taskIds) {
       expect(flatHistoryText).toContain(id);
     }
+    expect(flatHistoryText).toContain('group-1 completed');
+    expect(flatHistoryText).toContain('group-2 completed');
+    expect(flatHistoryText).toContain('group-3 completed');
     expect(flatHistoryText).toContain('bg #1 result');
     expect(flatHistoryText).toContain('bg #2 result');
     expect(flatHistoryText).toContain('bg #3 result');
+    expect(flatHistoryText).toContain('<output-preview');
   });
 
   it('RACE: bg completion fires AFTER LLM returns but BEFORE activeTurn is cleared', async () => {
@@ -205,7 +214,7 @@ describe('background notification → main agent (real Agent instance)', () => {
     // completion — this is the IDLE path, NOT the racy one. We
     // queue an LLM response so the auto-launched turn can run.
     ctx.mockNextResponse({ type: 'text', text: 'auto ack from bg notification' });
-    const taskId = ctx.agent.background.registerTask(new AgentBackgroundTask(
+    const taskId = ctx.agent.background.registerTask(agentTask(
       Promise.resolve({ result: 'post-turn bg result' }),
       'race-after-turn',
     ));
@@ -224,7 +233,9 @@ describe('background notification → main agent (real Agent instance)', () => {
     const flatHistoryText = JSON.stringify(lastCall.history);
     expect(flatHistoryText).toContain('<notification');
     expect(flatHistoryText).toContain(taskId);
+    expect(flatHistoryText).toContain('race-after-turn completed');
     expect(flatHistoryText).toContain('post-turn bg result');
+    expect(flatHistoryText).toContain('<output-preview');
   });
 
   it('RESUME: terminal bg tasks discovered on reconcile are SILENTLY injected (no auto-turn)', async () => {
@@ -297,7 +308,9 @@ describe('background notification → main agent (real Agent instance)', () => {
 
       // Both notifications are in context, waiting for the user.
       const flatContext = JSON.stringify(ctx.agent.context.data());
-      expect(flatContext).toContain('previous bash output');
+      expect(flatContext).toContain('<output-file');
+      expect(flatContext).toContain(backgroundPersistence.taskOutputFile('bash-prev0000'));
+      expect(flatContext).not.toContain('previous bash output');
       expect(flatContext).toMatch(/task\.completed/);
       expect(flatContext).toMatch(/task\.lost/);
     } finally {

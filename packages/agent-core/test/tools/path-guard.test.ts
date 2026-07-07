@@ -264,6 +264,26 @@ describe('path access policy', () => {
     expect(result).toEqual({ path: '/extra/lib/file.py', outsideWorkspace: false });
   });
 
+  it('treats additionalDir descendants as inside the workspace', () => {
+    expect(isWithinWorkspace('/extra/src/nested/file.ts', WORKSPACE)).toBe(true);
+
+    const result = resolvePathAccess('/extra/src/nested/file.ts', '/workspace', WORKSPACE, {
+      operation: 'read',
+      policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+    });
+    expect(result).toEqual({ path: '/extra/src/nested/file.ts', outsideWorkspace: false });
+  });
+
+  it('does not treat shared-prefix directories as additionalDir descendants', () => {
+    expect(isWithinWorkspace('/extra-evil/file.ts', WORKSPACE)).toBe(false);
+
+    const result = resolvePathAccess('/extra-evil/file.ts', '/workspace', WORKSPACE, {
+      operation: 'read',
+      policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+    });
+    expect(result).toEqual({ path: '/extra-evil/file.ts', outsideWorkspace: true });
+  });
+
   it('treats multiple additionalDir entries as a union', () => {
     const multi: WorkspaceConfig = {
       workspaceDir: '/workspace',

@@ -32,6 +32,7 @@ export interface ReplayRenderContext {
   toolCalls: Map<string, ToolCallBlockData>;
   completedToolCallIds: Set<string>;
   skillActivationIds: Set<string>;
+  pluginCommandActivationIds: Set<string>;
   suppressNextPlanModeOffNotice: boolean;
 }
 
@@ -40,6 +41,14 @@ export interface SkillActivationProjection {
   readonly skillName: string;
   readonly skillArgs?: string;
   readonly trigger: SkillActivationTrigger;
+}
+
+export interface PluginCommandProjection {
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
 }
 
 export interface ReplayBackgroundProjection {
@@ -114,6 +123,7 @@ export function createReplayRenderContext(): ReplayRenderContext {
     toolCalls: new Map(),
     completedToolCallIds: new Set(),
     skillActivationIds: new Set(),
+    pluginCommandActivationIds: new Set(),
     suppressNextPlanModeOffNotice: false,
   };
 }
@@ -135,7 +145,7 @@ export function replayEntry(
   kind: TranscriptEntry['kind'],
   content: string,
   renderMode: TranscriptEntry['renderMode'],
-  extras: { detail?: string } = {},
+  extras: { detail?: string; bullet?: string } = {},
 ): TranscriptEntry {
   return {
     id: nextTranscriptId(),
@@ -144,6 +154,7 @@ export function replayEntry(
     renderMode,
     content,
     detail: extras.detail,
+    bullet: extras.bullet,
   };
 }
 
@@ -212,6 +223,19 @@ export function skillActivationFromOrigin(
   };
 }
 
+export function pluginCommandFromOrigin(
+  origin: PromptOrigin | undefined,
+): PluginCommandProjection | undefined {
+  if (origin?.kind !== 'plugin_command') return undefined;
+  return {
+    activationId: origin.activationId,
+    pluginId: origin.pluginId,
+    commandName: origin.commandName,
+    commandArgs: origin.commandArgs,
+    trigger: origin.trigger,
+  };
+}
+
 export function formatHookResultMessageForTranscript(
   text: string,
   fallbackEvent: string,
@@ -250,6 +274,11 @@ function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
       return true;
     case 'skill_activation':
       return message.origin.trigger === 'user-slash';
+    case 'plugin_command':
+      return message.origin.trigger === 'user-slash';
+    case 'shell_command':
+      // A `!` command's input is a user-turn anchor; its output is not.
+      return message.origin.phase === 'input';
     case 'background_task':
     case 'compaction_summary':
     case 'cron_job':

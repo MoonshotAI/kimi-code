@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,6 +19,10 @@ import {
   nativeSmokeHome,
   SEA_SENTINEL_FUSE,
 } from '../../../scripts/native/paths.mjs';
+
+// paths.mjs builds every path with node:path.resolve (backslashes on Windows).
+// Build expectations the same way so they match on every platform.
+const p = (...segments: string[]): string => resolve(appRoot, ...segments);
 
 describe('targetTriple', () => {
   it('returns platform-arch when env unset', () => {
@@ -49,27 +55,27 @@ describe('executableName', () => {
 
 describe('path helpers', () => {
   it('returns absolute intermediates dir under app root', () => {
-    expect(nativeIntermediatesDir()).toBe(`${appRoot}/dist-native/intermediates`);
+    expect(nativeIntermediatesDir()).toBe(p('dist-native/intermediates'));
   });
 
   it('returns absolute bin dir per target', () => {
-    expect(nativeBinDir('darwin-arm64')).toBe(`${appRoot}/dist-native/bin/darwin-arm64`);
+    expect(nativeBinDir('darwin-arm64')).toBe(p('dist-native/bin/darwin-arm64'));
   });
 
   it('returns absolute bin path with executable name', () => {
     expect(nativeBinPath('darwin-arm64', 'darwin')).toBe(
-      `${appRoot}/dist-native/bin/darwin-arm64/kimi`,
+      p('dist-native/bin/darwin-arm64/kimi'),
     );
     expect(nativeBinPath('win32-x64', 'win32')).toBe(
-      `${appRoot}/dist-native/bin/win32-x64/kimi.exe`,
+      p('dist-native/bin/win32-x64/kimi.exe'),
     );
   });
 
   it('returns intermediate artifact paths', () => {
-    expect(nativeJsBundlePath()).toBe(`${appRoot}/dist-native/intermediates/main.cjs`);
-    expect(nativeBlobPath()).toBe(`${appRoot}/dist-native/intermediates/kimi.blob`);
+    expect(nativeJsBundlePath()).toBe(p('dist-native/intermediates/main.cjs'));
+    expect(nativeBlobPath()).toBe(p('dist-native/intermediates/kimi.blob'));
     expect(nativeSeaConfigPath()).toBe(
-      `${appRoot}/dist-native/intermediates/sea-config.json`,
+      p('dist-native/intermediates/sea-config.json'),
     );
   });
 
@@ -78,21 +84,21 @@ describe('path helpers', () => {
   });
 
   it('returns native dist root', () => {
-    expect(nativeDistRoot()).toBe(`${appRoot}/dist-native`);
+    expect(nativeDistRoot()).toBe(p('dist-native'));
   });
 
   it('returns manifest dir for target', () => {
     expect(nativeManifestDir('darwin-arm64')).toBe(
-      `${appRoot}/dist-native/intermediates/native-assets/darwin-arm64`,
+      p('dist-native/intermediates/native-assets/darwin-arm64'),
     );
   });
 
   it('returns artifacts dir', () => {
-    expect(nativeArtifactsDir()).toBe(`${appRoot}/dist-native/artifacts`);
+    expect(nativeArtifactsDir()).toBe(p('dist-native/artifacts'));
   });
 
   it('returns smoke home', () => {
-    expect(nativeSmokeHome()).toBe(`${appRoot}/dist-native/smoke-home`);
+    expect(nativeSmokeHome()).toBe(p('dist-native/smoke-home'));
   });
 
   it('has correct SEA sentinel fuse value', () => {

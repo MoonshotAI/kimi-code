@@ -161,6 +161,67 @@ describe('AgentRecords persistence metadata', () => {
     expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
   });
 
+  it('replays legacy tool-baked <system> metadata verbatim without migration', async () => {
+    // Pre-note records carry tool metadata inline in the output. They are
+    // intentionally NOT migrated: the model view stays byte-identical to
+    // what the model originally saw, and UIs show the legacy text as-is.
+    const summary =
+      '<system>Read image file. Mime type: image/png. Size: 70 bytes. ' +
+      'Original dimensions: 4x2 pixels.</system>';
+    const legacyOutput = [
+      { type: 'text', text: summary },
+      { type: 'text', text: '<image path="/tmp/a.png">' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,A' } },
+      { type: 'text', text: '</image>' },
+    ];
+    const persistence = new RecordingInMemoryAgentRecordPersistence([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+      } as unknown as AgentRecord,
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call_media',
+          turnId: 't',
+          step: 1,
+          stepUuid: 's1',
+          toolCallId: 'call_media',
+          name: 'ReadMediaFile',
+          args: {},
+        },
+      } as unknown as AgentRecord,
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call_media',
+          toolCallId: 'call_media',
+          result: { output: legacyOutput },
+        },
+      } as unknown as AgentRecord,
+    ]);
+    const agent = testAgent({ persistence }).agent;
+
+    await agent.records.replay();
+
+    expect(persistence.rewrites).toEqual([]);
+    const stored = agent.context.history.find((m) => m.toolCallId === 'call_media')!;
+    expect(stored.note).toBeUndefined();
+    expect(stored.content).toEqual(legacyOutput);
+
+    // Projection passes the legacy content through untouched — the model
+    // sees exactly the bytes it saw before the note side channel existed.
+    const projected = agent.context.messages.find((m) => m.toolCallId === 'call_media')!;
+    expect(projected.content).toEqual(legacyOutput);
+  });
+
   it('warns but continues when replaying records from a newer wire version', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       {
@@ -337,7 +398,7 @@ describe('agent replay range build', () => {
       {
         type: 'config.update',
         cwd: process.cwd(),
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       },
       {
         type: 'usage.record',
@@ -425,9 +486,11 @@ describe('agent replay range build', () => {
         instruction: 'keep facts',
         result: {
           summary: 'Compacted summary.',
+          contextSummary: 'Compacted summary.',
           compactedCount: 0,
           tokensBefore: 10,
           tokensAfter: 3,
+          keptUserMessageCount: 0,
         },
       }),
     ]);

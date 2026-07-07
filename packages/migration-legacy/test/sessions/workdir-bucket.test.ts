@@ -1,29 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { computeWorkdirBucket, oldMd5BucketName } from '../../src/sessions/workdir-bucket.js';
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core/session/store';
 import { createHash } from 'node:crypto';
-import { basename, resolve } from 'node:path';
 
 /**
- * Reference re-implementation of kimi-core `encodeWorkDirKey` +
- * `slugifyWorkDirName` (packages/kimi-core/src/harness/session-manager/
- * workdir-key.ts + utils/workdir-slug.ts). Kept inline because those
- * functions are not part of kimi-core's public export surface. The migrator's
- * `computeWorkdirBucket` MUST stay byte-identical to this — the session picker
- * locates migrated sessions via `readdir(encodeWorkDirKey(...))`.
+ * `computeWorkdirBucket` now aliases agent-core's `encodeWorkDirKey`, so the
+ * migrator and the running app share one implementation. The `byte-identical`
+ * suite below guards against regressing back to a divergent local copy.
  */
-function referenceEncodeWorkDirKey(workDir: string): string {
-  const normalized = resolve(workDir);
-  const name = basename(normalized);
-  const slug0 = name
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9._-]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replaceAll(/^-+|-+$/g, '');
-  const slug = slug0 === '' || slug0 === '.' || slug0 === '..' ? 'workspace' : slug0;
-  const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 12);
-  return `wd_${slug}_${hash}`;
-}
 
 describe('computeWorkdirBucket', () => {
   it('produces wd_<slug>_<sha256-12> for a normal path', () => {
@@ -54,7 +38,7 @@ describe('computeWorkdirBucket matches kimi-core encodeWorkDirKey', () => {
     '/Users/example/proj/.', // trailing dot
     '/Users/example/Some Folder', // spaces
   ])('byte-identical for %s', (p) => {
-    expect(computeWorkdirBucket(p)).toBe(referenceEncodeWorkDirKey(p));
+    expect(computeWorkdirBucket(p)).toBe(encodeWorkDirKey(p));
   });
 });
 

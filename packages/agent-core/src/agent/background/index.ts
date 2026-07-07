@@ -12,10 +12,13 @@
 
 import { randomBytes } from 'node:crypto';
 
+import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
 import { errorMessage } from '../../loop/errors';
+import { resettableTimeoutOutcome, timeoutOutcome, type ResettableTimeoutPromise } from '../../utils/promise';
+import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
 import { type BackgroundTaskPersistence } from './persist';
@@ -55,24 +58,53 @@ interface ManagedTask {
   readonly taskId: string;
   readonly task: BackgroundTask;
   readonly outputChunks: string[];
+  /**
+   * Running total of characters currently held in `outputChunks`, maintained
+   * incrementally so the ring-buffer cap stays O(1) per chunk instead of
+   * re-summing every chunk (which was O(n²) over a command's lifetime).
+   */
+  outputRingChars: number;
   /** Total UTF-8 bytes observed, including chunks dropped from the live ring buffer. */
   outputSizeBytes: number;
+  /**
+   * True once a command has crossed `MAX_TASK_OUTPUT_BYTES` and termination has
+   * been requested. One-shot guard so the ceiling fires exactly once.
+   */
+  outputLimitTripped: boolean;
   status: BackgroundTaskStatus;
+  /** Normalized registration options. Current mutable state stays on ManagedTask. */
+  readonly options: RegisterBackgroundTaskOptions;
   readonly startedAt: number;
   endedAt: number | null;
-  /** Listeners awaiting task completion. */
-  readonly waiters: Array<() => void>;
-  /** True once terminal notification/event side effects have already run. */
-  terminalFired: boolean;
+  /** Foreground tool call release signal, present only for non-detached starts. */
+  foregroundRelease?: ControlledPromise<ForegroundTaskReleaseReason>;
+  /** Resettable deadline timer; reset on detach to apply `detachTimeoutMs`. */
+  timeoutHandle?: ResettableTimeoutPromise<TerminalOutcome>;
+  /** User/tool stop request. */
+  readonly stop: ControlledPromise<StopRequest>;
+  /** Resolved once manager has finalized the task. */
+  readonly terminal: ControlledPromise<void>;
   /** Human-readable reason for the terminal status, when available. */
   stopReason?: string | undefined;
   /** Suppress automatic terminal notifications/reminders for this task. */
   terminalNotificationSuppressed?: boolean | undefined;
   /** Cancellation signal owned by the manager and observed by the concrete task. */
   readonly abortController: AbortController;
-  lifecyclePromise: Promise<void>;
   persistWriteQueue: Promise<void>;
   outputWriteQueue: Promise<void>;
+  /**
+   * Full output buffered in memory while a foreground task has not yet
+   * persisted to disk. Flushed to `output.log` (in order, ahead of the live
+   * stream) when the task detaches or spills, then released.
+   */
+  pendingOutput: string[];
+  pendingOutputBytes: number;
+  /**
+   * Whether `output.log` writes have begun. True from the start for tasks
+   * registered already-detached; flipped on detach or memory-bound spill for
+   * foreground tasks. Until then output stays in `pendingOutput`.
+   */
+  outputPersistStarted: boolean;
 }
 
 /**
@@ -87,8 +119,32 @@ interface ManagedTask {
  * reads the persisted log when available.
  */
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
+const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+
+/**
+ * Hard ceiling on the combined output a single shell command may stream before
+ * it is force-terminated (SIGTERM → grace → SIGKILL). It guards both the
+ * live-forward path and the on-disk `output.log` write chain from a runaway
+ * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow
+ * without bound — filling the disk, or retaining each pending-write chunk until
+ * Node aborts with an out-of-memory crash. Scoped to process tasks (foreground
+ * and background); subagent and user-question results are appended once and must
+ * always be persisted, so they are intentionally not capped here.
+ */
+const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+
+/** Terminal `stopReason` recorded when a command trips the output ceiling. */
+function outputLimitReason(): string {
+  const mib = Math.floor(MAX_TASK_OUTPUT_BYTES / (1024 * 1024));
+  return (
+    `Output limit exceeded: the command produced more than ${mib} MiB and was ` +
+    'terminated. Redirect large output to a file (e.g. `command > out.txt`) and ' +
+    'inspect it in slices instead.'
+  );
+}
 
 const SIGTERM_GRACE_MS = 5_000;
+const USER_INTERRUPT_REASON = 'Interrupted by user';
 
 const _ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
@@ -138,7 +194,7 @@ type BackgroundTaskNotification = Record<string, unknown> & {
   readonly title: string;
   readonly severity: 'info' | 'warning';
   readonly body: string;
-  readonly tail_output: string;
+  readonly children?: readonly string[] | undefined;
 };
 
 interface BackgroundTaskNotificationContext {
@@ -147,7 +203,35 @@ interface BackgroundTaskNotificationContext {
   readonly notification: BackgroundTaskNotification;
 }
 
-const NOTIFICATION_TAIL_BYTES = 3_000;
+export interface RegisterBackgroundTaskOptions {
+  /**
+   * When false, the task is tracked by the manager but a foreground tool call
+   * is still waiting for it. It can later be detached through RPC.
+   */
+  readonly detached?: boolean;
+  /** Deadline owned by BackgroundManager. `0` and `undefined` do not arm a timer. */
+  readonly timeoutMs?: number;
+  /**
+   * When set, detaching a foreground task resets its deadline to this value
+   * (counted from the detach moment). Lets a command started with a short
+   * foreground timeout run longer once it is moved to the background.
+   */
+  readonly detachTimeoutMs?: number;
+  /** Foreground caller signal. Ignored for tasks created already detached. */
+  readonly signal?: AbortSignal;
+}
+
+export type ForegroundTaskReleaseReason = 'detached' | 'terminal';
+
+interface StopRequest {
+  readonly reason?: string;
+  readonly abortReason?: unknown;
+}
+
+type TerminalOutcome =
+  | { readonly kind: 'worker'; readonly settlement: BackgroundTaskSettlement }
+  | { readonly kind: 'timeout' }
+  | { readonly kind: 'stop'; readonly request: StopRequest };
 
 // ── Manager ──────────────────────────────────────────────────────────
 
@@ -168,15 +252,8 @@ export class BackgroundManager {
     private readonly persistence?: BackgroundTaskPersistence,
   ) { }
 
-  /**
-   * Fire terminal side effects for a live task. Idempotent: the second
-   * invocation for the same task is a no-op so a lagging `wait()`
-   * resolver or a race between `stop()` and natural exit cannot yield
-   * duplicate notifications/events.
-   */
   private fireTerminalEffects(entry: ManagedTask): void {
-    if (entry.terminalFired) return;
-    entry.terminalFired = true;
+    if (!this.isDetached(entry)) return;
     const info = this.toInfo(entry);
     void this.notifyBackgroundTask(info).catch(() => { });
     this.emitTaskTerminated(info);
@@ -193,70 +270,77 @@ export class BackgroundManager {
     this.agent.emitEvent({ type: 'background.task.terminated', info });
     this.agent.telemetry.track('background_task_completed', {
       kind: info.kind,
-      duration: info.endedAt !== null ? info.endedAt - info.startedAt : null,
+      duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
       status: info.status,
     });
   }
 
-  private resolveWaiters(entry: ManagedTask): void {
-    const waiters = entry.waiters.splice(0);
-    for (const resolve of waiters) resolve();
-  }
-
-  private assertCanRegister(): void {
+  private assertCanRegister(startedInBackground: boolean): void {
     const maxRunningTasks = this.agent.kimiConfig?.background?.maxRunningTasks;
     if (maxRunningTasks === undefined) return;
-    if (this.activeTaskCount() < maxRunningTasks) return;
+    if (!startedInBackground) return;
+    if (this.activeBackgroundAdmissionCount() < maxRunningTasks) return;
     throw new Error('Too many background tasks are already running.');
   }
 
-  private activeTaskCount(): number {
+  private activeBackgroundAdmissionCount(): number {
     let count = 0;
     for (const entry of this.tasks.values()) {
-      if (!TERMINAL_STATUSES.has(entry.status)) count++;
+      if (!TERMINAL_STATUSES.has(entry.status) && this.startedInBackground(entry)) count++;
     }
     return count;
   }
 
-  registerTask(task: BackgroundTask): string {
-    this.assertCanRegister();
+  private startedInBackground(entry: ManagedTask): boolean {
+    return entry.options.detached !== false;
+  }
+
+  private isDetached(entry: ManagedTask): boolean {
+    return entry.foregroundRelease === undefined;
+  }
+
+  registerTask(task: BackgroundTask, options: RegisterBackgroundTaskOptions = {}): string {
+    const detached = options.detached ?? true;
+    const timeoutMs = options.timeoutMs ?? task.timeoutMs;
+    const entryOptions: RegisterBackgroundTaskOptions = {
+      detached,
+      timeoutMs,
+      detachTimeoutMs: options.detachTimeoutMs,
+      signal: detached ? undefined : options.signal,
+    };
+    this.assertCanRegister(detached);
     const taskId = generateTaskId(task.idPrefix);
     const entry: ManagedTask = {
       taskId,
       task,
       outputChunks: [],
+      outputRingChars: 0,
       outputSizeBytes: 0,
+      outputLimitTripped: false,
       status: 'running',
+      options: entryOptions,
       startedAt: Date.now(),
       endedAt: null,
-      waiters: [],
-      terminalFired: false,
+      foregroundRelease: detached ? undefined : createControlledPromise(),
+      stop: createControlledPromise(),
+      terminal: createControlledPromise(),
       abortController: new AbortController(),
-      lifecyclePromise: Promise.resolve(),
       persistWriteQueue: Promise.resolve(),
       outputWriteQueue: Promise.resolve(),
+      pendingOutput: [],
+      pendingOutputBytes: 0,
+      outputPersistStarted: detached,
     };
     this.tasks.set(taskId, entry);
+    void this.runTaskLifecycle(entry);
 
-    entry.lifecyclePromise = Promise.resolve()
-      .then(() => task.start({
-        signal: entry.abortController.signal,
-        appendOutput: (chunk) => {
-          this.appendOutput(entry, chunk);
-        },
-        settle: (settlement) => this.settleTask(entry, settlement),
-      }))
-      .catch(async (error: unknown) => {
-        const aborted = entry.abortController.signal.aborted;
-        await this.settleTask(entry, {
-          status: aborted ? 'killed' : 'failed',
-          stopReason: aborted ? undefined : errorMessage(error),
-        });
-      });
-
-    // Initial persistence (snapshot at start).
-    void this.persistLive(entry);
-    this.emitTaskStarted(this.toInfo(entry));
+    // Initial persistence (snapshot at start). Foreground tasks defer all
+    // persistence until they detach (or spill) — see appendOutput / detach /
+    // finalizeTask — so ordinary commands leave nothing undiscoverable on disk.
+    if (this.isDetached(entry)) {
+      void this.persistLive(entry);
+      this.emitTaskStarted(this.toInfo(entry));
+    }
 
     return taskId;
   }
@@ -280,17 +364,25 @@ export class BackgroundManager {
   list(activeOnly = true, limit?: number): BackgroundTaskInfo[] {
     const result: BackgroundTaskInfo[] = [];
     for (const entry of this.tasks.values()) {
-      if (activeOnly && TERMINAL_STATUSES.has(entry.status)) continue;
-      result.push(this.toInfo(entry));
+      const info = this.toInfo(entry);
+      if (!this.shouldListTask(info, activeOnly)) continue;
+      result.push(info);
       if (limit !== undefined && result.length >= limit) return result;
     }
     if (!activeOnly) {
       for (const ghost of this.ghosts.values()) {
+        if (!this.shouldListTask(ghost, activeOnly)) continue;
         result.push(ghost);
         if (limit !== undefined && result.length >= limit) return result;
       }
     }
     return result;
+  }
+
+  private shouldListTask(info: BackgroundTaskInfo, activeOnly: boolean): boolean {
+    if (!TERMINAL_STATUSES.has(info.status)) return true;
+    if (activeOnly) return false;
+    return info.detached !== false;
   }
 
   /**
@@ -357,6 +449,37 @@ export class BackgroundManager {
     await this.persistLive(entry);
   }
 
+  detach(taskId: string): BackgroundTaskInfo | undefined {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined) return this.ghosts.get(taskId);
+    if (TERMINAL_STATUSES.has(entry.status)) return this.toInfo(entry);
+    const foregroundRelease = entry.foregroundRelease;
+    if (foregroundRelease === undefined) return this.toInfo(entry);
+
+    entry.foregroundRelease = undefined;
+    if (entry.options.detachTimeoutMs !== undefined) {
+      entry.timeoutHandle?.reset(entry.options.detachTimeoutMs);
+    }
+    try {
+      entry.task.onDetach?.();
+    } catch {
+      /* detach has already succeeded; hooks must not make RPC fail */
+    }
+    // Flush buffered pre-detach output to disk before the live stream resumes,
+    // so output.log stays the complete, in-order record.
+    this.startOutputPersist(entry);
+    void this.persistLive(entry);
+    this.emitTaskStarted(this.toInfo(entry));
+    foregroundRelease.resolve('detached');
+    return this.toInfo(entry);
+  }
+
+  persistOutput(taskId: string): void {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined) return;
+    this.startOutputPersist(entry);
+  }
+
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
   async stop(taskId: string, reason?: string): Promise<BackgroundTaskInfo | undefined> {
     const entry = this.tasks.get(taskId);
@@ -375,46 +498,8 @@ export class BackgroundManager {
 
     entry.stopReason = stopReason;
     entry.abortController.abort(stopReason);
-
-    // Wait up to 5s for the lifecycle path to settle, then SIGKILL.
-    // Waiting on lifecyclePromise, rather than the task directly, lets a
-    // natural completion win the race instead of being overwritten here.
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-    const graceful = await Promise.race([
-      entry.lifecyclePromise.then(
-        () => true,
-        () => true,
-      ),
-      new Promise<false>((resolve) => {
-        graceTimer = setTimeout(() => {
-          resolve(false);
-        }, SIGTERM_GRACE_MS);
-      }),
-    ]);
-    if (graceTimer !== undefined) clearTimeout(graceTimer);
-
-    if (TERMINAL_STATUSES.has(entry.status)) {
-      await entry.persistWriteQueue;
-      return this.toInfo(entry);
-    }
-
-    if (!graceful) {
-      try {
-        await entry.task.forceStop?.();
-      } catch {
-        /* ignore */
-      }
-    }
-
-    if (TERMINAL_STATUSES.has(entry.status)) {
-      await entry.persistWriteQueue;
-      return this.toInfo(entry);
-    }
-
-    // Tasks whose lifecycle promise never settles need an explicit terminal
-    // finalize here after their stop/force-stop hooks have had a chance.
-    await this.settleTask(entry, { status: 'killed', stopReason });
-
+    entry.stop.resolve({ reason: stopReason });
+    await entry.terminal;
     return this.toInfo(entry);
   }
 
@@ -436,30 +521,81 @@ export class BackgroundManager {
       return this.toInfo(entry);
     }
 
-    let terminalWaiter: (() => void) | undefined;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          terminalWaiter = resolve;
-          entry.waiters.push(resolve);
-        }),
-        new Promise<void>((resolve) => {
-          timeout = setTimeout(resolve, timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
-      if (terminalWaiter !== undefined) {
-        const index = entry.waiters.indexOf(terminalWaiter);
-        if (index !== -1) entry.waiters.splice(index, 1);
-      }
+    if (timeoutMs <= 0) {
+      return this.toInfo(entry);
     }
+    const timeout = timeoutOutcome(timeoutMs, undefined);
+    await Promise.race([entry.terminal, timeout]).finally(() => timeout.clear());
 
     if (TERMINAL_STATUSES.has(entry.status)) {
       await entry.persistWriteQueue;
     }
     return this.toInfo(entry);
+  }
+
+  /**
+   * Wait until no active (non-terminal) task matching `predicate` remains.
+   *
+   * Used by print-mode (`kimi -p`) turn draining to hold a turn open while
+   * background subagents are still running. Re-enumerates after each batch
+   * settles so tasks registered during the wait (fan-out) are picked up.
+   * Resolves immediately when nothing matches. Bounded by `timeoutMs`; once
+   * the deadline passes the method returns without waiting for stragglers.
+   * Rejects with the abort reason when `signal` is aborted.
+   */
+  async waitForActiveTasks(
+    predicate: (info: BackgroundTaskInfo) => boolean,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const deadline =
+      options.timeoutMs !== undefined && options.timeoutMs > 0
+        ? Date.now() + options.timeoutMs
+        : undefined;
+    const signal = options.signal;
+    while (true) {
+      signal?.throwIfAborted();
+      const active = this.list(true).filter(predicate);
+      if (active.length === 0) return;
+      let perTaskTimeout: number | undefined;
+      if (deadline !== undefined) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return;
+        perTaskTimeout = remaining;
+      }
+      const batch = Promise.all(active.map((t) => this.wait(t.taskId, perTaskTimeout)));
+      if (signal === undefined) {
+        await batch;
+      } else {
+        await Promise.race([batch, abortRejecter(signal)]);
+      }
+      // Re-enumerate: settled tasks (and any fan-out) show up in the next list().
+    }
+  }
+
+  /**
+   * Wait until a foreground task either detaches from the current tool call or
+   * reaches a terminal state. Detached tasks return immediately.
+   */
+  async waitForForegroundRelease(
+    taskId: string,
+  ): Promise<ForegroundTaskReleaseReason | undefined> {
+    const entry = this.tasks.get(taskId);
+    if (!entry) return undefined;
+    if (TERMINAL_STATUSES.has(entry.status)) {
+      await entry.persistWriteQueue;
+      return 'terminal';
+    }
+    if (this.isDetached(entry)) return 'detached';
+
+    const foregroundRelease = entry.foregroundRelease;
+    const reason = await Promise.race([
+      foregroundRelease,
+      entry.terminal.then(() => 'terminal' as const),
+    ]);
+    if (reason === 'terminal') {
+      await entry.persistWriteQueue;
+    }
+    return reason;
   }
 
   // ── persistence + reconcile ────────────────────────────────────────
@@ -532,19 +668,79 @@ export class BackgroundManager {
   private appendOutput(entry: ManagedTask, chunk: string): void {
     entry.outputSizeBytes += Buffer.byteLength(chunk, 'utf-8');
     entry.outputChunks.push(chunk);
-    // Enforce output cap: drop oldest chunks when over budget.
-    let total = entry.outputChunks.reduce((s, c) => s + c.length, 0);
-    while (total > MAX_OUTPUT_BYTES && entry.outputChunks.length > 1) {
+    entry.outputRingChars += chunk.length;
+    // Enforce the ring-buffer cap: drop oldest chunks when over budget. The
+    // running total keeps this O(1) amortized per chunk; re-summing the whole
+    // buffer on every chunk was O(n²) over a command's lifetime and could
+    // starve the event loop (and so the foreground timeout) under a high-rate
+    // output stream.
+    while (entry.outputRingChars > MAX_OUTPUT_BYTES && entry.outputChunks.length > 1) {
       const removed = entry.outputChunks.shift();
       if (removed === undefined) break;
-      total -= removed.length;
+      entry.outputRingChars -= removed.length;
     }
 
+    // Output ceiling: a single shell command must not grow the (unbounded)
+    // live-forward buffer or the on-disk write chain until the process runs out
+    // of memory or fills the disk. Trip once, then request graceful termination
+    // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
+    // process tasks (foreground and background): subagent and user-question tasks
+    // append their bounded result in one shot and must always persist it, so they
+    // are intentionally not capped here.
+    if (
+      !entry.outputLimitTripped &&
+      entry.task.kind === 'process' &&
+      entry.outputSizeBytes > MAX_TASK_OUTPUT_BYTES
+    ) {
+      entry.outputLimitTripped = true;
+      void this.stop(entry.taskId, outputLimitReason());
+    }
+
+    // Once the cap has tripped the task is being terminated: keep only the
+    // bounded in-memory ring buffer above and stop feeding the (unbounded) disk
+    // write chain. A producer that ignores SIGTERM could otherwise keep the
+    // chain — and the chunk strings each pending write retains — growing through
+    // the grace window until SIGKILL, re-introducing the OOM this cap prevents.
+    if (entry.outputLimitTripped) return;
+
+    if (this.persistence === undefined) return;
+
+    // Foreground tasks keep their full output in memory and only touch disk
+    // once they detach. A memory-bound spill begins disk persistence early so
+    // a never-detached command can't grow the buffer without limit.
+    if (!entry.outputPersistStarted) {
+      entry.pendingOutput.push(chunk);
+      entry.pendingOutputBytes += Buffer.byteLength(chunk, 'utf-8');
+      if (entry.pendingOutputBytes > MAX_OUTPUT_BYTES) this.startOutputPersist(entry);
+      return;
+    }
+
+    this.appendTaskOutput(entry, chunk);
+  }
+
+  /** Enqueue an `output.log` append, serialized per task. No-op when detached managers omit persistence. */
+  private appendTaskOutput(entry: ManagedTask, chunk: string): void {
     const persistence = this.persistence;
     if (persistence === undefined) return;
     entry.outputWriteQueue = entry.outputWriteQueue
       .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
       .catch(() => { });
+  }
+
+  /**
+   * Begin persisting `output.log` for a task that buffered while foreground.
+   * Flushes the buffered pre-detach output first (in order, ahead of the live
+   * stream) so the on-disk log stays complete, then releases the buffer.
+   * Idempotent.
+   */
+  private startOutputPersist(entry: ManagedTask): void {
+    if (entry.outputPersistStarted) return;
+    entry.outputPersistStarted = true;
+    if (entry.pendingOutput.length > 0) {
+      this.appendTaskOutput(entry, entry.pendingOutput.join(''));
+    }
+    entry.pendingOutput = [];
+    entry.pendingOutputBytes = 0;
   }
 
   private async restoreBackgroundTaskNotifications(): Promise<void> {
@@ -571,6 +767,7 @@ export class BackgroundManager {
   private async buildBackgroundTaskNotificationContext(
     info: BackgroundTaskInfo,
   ): Promise<BackgroundTaskNotificationContext | undefined> {
+    if (info.detached === false) return undefined;
     if (this.isTerminalNotificationSuppressed(info.taskId)) return undefined;
     const origin: BackgroundTaskOrigin = {
       kind: 'background_task',
@@ -583,8 +780,10 @@ export class BackgroundManager {
     if (this.deliveredNotificationKeys.has(key)) return;
 
     this.scheduledNotificationKeys.add(key);
-    const tailOutput = (await this.getOutputSnapshot(info.taskId, NOTIFICATION_TAIL_BYTES))
-      .preview;
+    let output = await this.getOutputSnapshot(info.taskId, 0);
+    if (!output.fullOutputAvailable) {
+      output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
+    }
     if (this.isTerminalNotificationSuppressed(info.taskId)) return undefined;
     const notification: BackgroundTaskNotification = {
       id: origin.notificationId,
@@ -596,7 +795,7 @@ export class BackgroundManager {
       title: `Background ${info.kind} ${info.status}`,
       severity: info.status === 'completed' ? 'info' : 'warning',
       body: buildBackgroundTaskNotificationBody(info),
-      tail_output: tailOutput,
+      children: backgroundTaskNotificationChildren(output),
     };
     const content = [
       {
@@ -633,27 +832,134 @@ export class BackgroundManager {
     );
   }
 
-  private async settleTask(
+  private async runTaskLifecycle(entry: ManagedTask): Promise<void> {
+    const worker = createControlledPromise<BackgroundTaskSettlement>();
+    let workerSettled = false;
+    const settleWorker = (settlement: BackgroundTaskSettlement): boolean => {
+      if (workerSettled) return false;
+      workerSettled = true;
+      worker.resolve(settlement);
+      return true;
+    };
+
+    void Promise.resolve()
+      .then(() => entry.task.start({
+        signal: entry.abortController.signal,
+        appendOutput: (chunk) => {
+          this.appendOutput(entry, chunk);
+        },
+        settle: async (settlement) => settleWorker(settlement),
+      }))
+      .catch((error: unknown) => {
+        settleWorker({
+          status: entry.abortController.signal.aborted ? 'killed' : 'failed',
+          stopReason: entry.abortController.signal.aborted ? undefined : errorMessage(error),
+        });
+      });
+
+    const timeout = resettableTimeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
+    entry.timeoutHandle = timeout;
+    const outcome = await Promise.race([
+      worker.then((settlement): TerminalOutcome => ({ kind: 'worker', settlement })),
+      timeout,
+      entry.stop.then((request): TerminalOutcome => ({ kind: 'stop', request })),
+      this.signalOutcome(entry),
+    ]).finally(() => {
+      timeout.clear();
+      entry.timeoutHandle = undefined;
+    });
+    const settlement = await this.settlementForOutcome(entry, outcome, worker);
+    await this.finalizeTask(entry, settlement);
+  }
+
+  private signalOutcome(entry: ManagedTask): Promise<TerminalOutcome> {
+    const signal = entry.options.signal;
+    if (signal === undefined) return new Promise<never>(() => {});
+    const outcome = (): TerminalOutcome => ({
+      kind: 'stop',
+      request: { reason: USER_INTERRUPT_REASON, abortReason: signal.reason },
+    });
+    if (signal.aborted) return Promise.resolve(outcome());
+    return new Promise((resolve) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          if (!this.isDetached(entry)) resolve(outcome());
+        },
+        { once: true },
+      );
+    });
+  }
+
+  private async settlementForOutcome(
+    entry: ManagedTask,
+    outcome: TerminalOutcome,
+    worker: Promise<BackgroundTaskSettlement>,
+  ): Promise<BackgroundTaskSettlement> {
+    if (outcome.kind === 'worker') return outcome.settlement;
+
+    const timedOut = outcome.kind === 'timeout';
+    const stopReason = outcome.kind === 'stop' ? outcome.request.reason : undefined;
+    let abortReason: unknown;
+    if (timedOut) {
+      abortReason = 'Timed out';
+    } else if (outcome.kind === 'stop') {
+      abortReason = outcome.request.abortReason ?? stopReason;
+    }
+    entry.stopReason = stopReason;
+    entry.abortController.abort(abortReason);
+
+    const graceTimeout = timeoutOutcome(SIGTERM_GRACE_MS, undefined);
+    const workerAfterAbort = await Promise.race([
+      worker,
+      graceTimeout,
+    ]).finally(() => graceTimeout.clear());
+
+    if (
+      outcome.kind === 'stop' &&
+      workerAfterAbort !== undefined &&
+      workerAfterAbort.status !== 'killed' &&
+      workerAfterAbort.status !== 'timed_out'
+    ) {
+      return workerAfterAbort;
+    }
+
+    if (workerAfterAbort === undefined) {
+      try {
+        await entry.task.forceStop?.();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return {
+      status: timedOut ? 'timed_out' : 'killed',
+      stopReason,
+    };
+  }
+
+  private async finalizeTask(
     entry: ManagedTask,
     settlement: BackgroundTaskSettlement,
-  ): Promise<boolean> {
-    if (TERMINAL_STATUSES.has(entry.status)) {
-      if (entry.status === 'killed' && settlement.status === 'killed') {
-        entry.endedAt = Math.max(Date.now(), (entry.endedAt ?? 0) + 1);
-        await this.persistLive(entry);
-        this.fireTerminalEffects(entry);
-        this.resolveWaiters(entry);
-      }
-      return false;
-    }
+  ): Promise<void> {
     entry.status = settlement.status;
     entry.endedAt = Date.now();
     entry.stopReason =
       settlement.stopReason ?? (settlement.status === 'killed' ? entry.stopReason : undefined);
-    await this.persistLive(entry);
+    // Persist the terminal record only when the task actually touched disk:
+    // detached tasks, and foreground tasks that spilled past the in-memory
+    // buffer. A foreground task whose output stayed in memory leaves nothing on
+    // disk — release the buffer and skip persistence so it never accumulates as
+    // an undiscoverable log.
+    if (entry.outputPersistStarted) {
+      await this.persistLive(entry);
+    } else {
+      entry.pendingOutput = [];
+      entry.pendingOutputBytes = 0;
+    }
     this.fireTerminalEffects(entry);
-    this.resolveWaiters(entry);
-    return true;
+    entry.foregroundRelease?.resolve('terminal');
+    entry.terminal.resolve();
   }
 
   private toInfo(entry: ManagedTask): BackgroundTaskInfo {
@@ -661,14 +967,44 @@ export class BackgroundManager {
       taskId: entry.taskId,
       description: entry.task.description,
       status: entry.status,
+      detached: this.isDetached(entry),
       startedAt: entry.startedAt,
       endedAt: entry.endedAt,
       stopReason: entry.stopReason,
       terminalNotificationSuppressed: entry.terminalNotificationSuppressed,
-      timeoutMs: entry.task.timeoutMs,
+      timeoutMs: entry.options.timeoutMs,
     };
     return entry.task.toInfo(base);
   }
+}
+
+function backgroundTaskNotificationChildren(
+  output: BackgroundTaskOutputSnapshot,
+): readonly string[] | undefined {
+  if (output.fullOutputAvailable && output.outputPath !== undefined) {
+    return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
+  }
+  if (output.preview.length === 0) return undefined;
+  return [renderOutputPreviewBlock(output)];
+}
+
+function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
+  return [
+    `<output-file path="${escapeXmlAttr(outputPath)}" bytes="${String(outputSizeBytes)}">`,
+    `Read the output file to retrieve the result: ${escapeXml(outputPath)}`,
+    '</output-file>',
+  ].join('\n');
+}
+
+function renderOutputPreviewBlock(output: BackgroundTaskOutputSnapshot): string {
+  return [
+    `<output-preview bytes="${String(output.previewBytes)}" total_bytes="${String(output.outputSizeBytes)}" truncated="${String(output.truncated)}">`,
+    output.truncated
+      ? `Showing the last ${String(output.previewBytes)} bytes. No persisted full output is available.`
+      : 'No persisted full output is available; this preview is the currently buffered task output.',
+    escapeXml(output.preview),
+    '</output-preview>',
+  ].join('\n');
 }
 
 function notificationKey(origin: BackgroundTaskOrigin): string {
@@ -698,4 +1034,17 @@ function buildBackgroundTaskNotificationBody(info: BackgroundTaskInfo): string {
   ].join('\n');
 
   return `${baseLine}${recovery}`;
+}
+
+function abortRejecter(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new Error('Aborted'));
+  }
+  return new Promise<never>((_, reject) => {
+    signal.addEventListener(
+      'abort',
+      () => reject(signal.reason ?? new Error('Aborted')),
+      { once: true },
+    );
+  });
 }

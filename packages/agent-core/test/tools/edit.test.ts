@@ -41,6 +41,8 @@ describe('EditTool', () => {
     expect(tool.description).toContain('`old_string` must be unique');
     expect(tool.description).toContain('only when they do not target the same file');
     expect(tool.description).toContain('DO NOT issue consecutive Edit calls on the same file');
+    // replace_all should be framed with its positive rename-across-file use-case.
+    expect(tool.description.toLowerCase()).toContain('renam');
     // Editing files should go through Edit, not Write and not a Bash `sed`
     // command. The prompt names both alternatives explicitly.
     expect(tool.description).toContain('DO NOT use Write or Bash `sed`');

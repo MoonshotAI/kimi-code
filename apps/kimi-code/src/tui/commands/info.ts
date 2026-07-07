@@ -9,17 +9,21 @@ import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
   FEEDBACK_STATUS_FALLBACK,
+  FEEDBACK_STATUS_NETWORK_ERROR,
   FEEDBACK_STATUS_NOT_SIGNED_IN,
   FEEDBACK_STATUS_SUBMITTING,
   FEEDBACK_STATUS_SUCCESS,
+  FEEDBACK_STATUS_UPLOAD_FAILED,
   FEEDBACK_TELEMETRY_EVENT,
+  feedbackIdLine,
   feedbackSessionLine,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
 import { isManagedUsageProvider } from '../constant/kimi-tui';
+import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
 import { formatErrorMessage } from '../utils/event-payload';
 import { openUrl } from '#/utils/open-url';
-import { promptFeedbackInput } from './prompts';
+import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -39,30 +43,60 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
     return;
   }
 
-  const content = await promptFeedbackInput(host);
-  if (content === undefined) {
+  // Stage 1: collect the free-form feedback text.
+  const input = await promptFeedbackInput(host);
+  if (input === undefined) {
     host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
   }
 
-  const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
-  const res = await host.harness.auth.submitFeedback({
-    content,
-    sessionId: host.state.appState.sessionId,
-    version: withFeedbackVersionPrefix(host.state.appState.version),
-    os: `${osType()} ${osRelease()}`,
-    model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
-  });
-
-  if (res.kind === 'ok') {
-    spinner.stop({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
-    host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
-    host.track(FEEDBACK_TELEMETRY_EVENT);
+  // Stage 2: ask whether to attach diagnostics (logs / codebase).
+  const level = await promptFeedbackAttachment(host);
+  if (level === undefined) {
+    host.showStatus(FEEDBACK_STATUS_CANCELLED);
     return;
   }
 
-  spinner.stop({ ok: false, label: res.message });
-  fallback(FEEDBACK_STATUS_FALLBACK);
+  const version = withFeedbackVersionPrefix(host.state.appState.version);
+  const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
+  // Guarantee the spinner's underlying setInterval is always cleared, even when
+  // submitFeedback or submitFeedbackWithAttachments throws — otherwise the
+  // interval (and its per-frame requestRender) leaks for the rest of the session.
+  let stopped = false;
+  const stopSpinner = (opts: { ok: boolean; label: string }): void => {
+    if (stopped) return;
+    stopped = true;
+    spinner.stop(opts);
+  };
+  try {
+    const res = await host.harness.auth.submitFeedback({
+      content: input.value,
+      sessionId: host.state.appState.sessionId,
+      version,
+      os: `${osType()} ${osRelease()}`,
+      model: host.state.appState.model.length > 0 ? host.state.appState.model : null,
+    });
+
+    if (res.kind !== 'ok') {
+      stopSpinner({ ok: false, label: res.message });
+      fallback(FEEDBACK_STATUS_FALLBACK);
+      return;
+    }
+
+    // Stage 3: prepare and upload each requested attachment independently.
+    const attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
+
+    stopSpinner({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
+    host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
+    host.showStatus(feedbackIdLine(res.feedbackId));
+    host.track(FEEDBACK_TELEMETRY_EVENT);
+    if (attachmentFailed) {
+      host.showStatus(FEEDBACK_STATUS_UPLOAD_FAILED);
+    }
+  } catch (error) {
+    stopSpinner({ ok: false, label: FEEDBACK_STATUS_NETWORK_ERROR });
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +147,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     workDir: appState.workDir,
     sessionId: appState.sessionId,
     sessionTitle: appState.sessionTitle,
-    thinking: appState.thinking,
+    thinkingEffort: appState.thinkingEffort,
     permissionMode: appState.permissionMode,
     planMode: appState.planMode,
     contextUsage: appState.contextUsage,

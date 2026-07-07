@@ -72,7 +72,7 @@ describe('FileTokenStorage', () => {
     expect(parsed['accessToken']).toBeUndefined();
   });
 
-  it('writes the credentials file with mode 0600', async () => {
+  it.skipIf(process.platform === 'win32')('writes the credentials file with mode 0600', async () => {
     await storage.save('kimi-code', sampleToken());
     const stat = statSync(join(dir, 'kimi-code.json'));
     // eslint-disable-next-line no-bitwise
@@ -134,7 +134,7 @@ describe('FileTokenStorage', () => {
     expect(names).toEqual(['kimi-code']);
   });
 
-  it('creates the credentials dir with mode 0700 if missing', async () => {
+  it.skipIf(process.platform === 'win32')('creates the credentials dir with mode 0700 if missing', async () => {
     const freshDir = join(dir, 'nested', 'sub');
     const s = new FileTokenStorage(freshDir);
     await s.save('kimi-code', sampleToken());

@@ -9,6 +9,8 @@ import {
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
+  AddAdditionalDirOptions,
+  AddAdditionalDirResult,
   BackgroundTaskInfo,
   CompactOptions,
   CreateGoalInput,
@@ -20,6 +22,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptInput,
+  ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
   ResumedSessionSummary,
@@ -28,6 +31,8 @@ import type {
   SessionSummary,
   SessionUsage,
   SkillSummary,
+  PluginCommandDef,
+  ThinkingEffort,
   Unsubscribe,
 } from '#/types';
 
@@ -66,9 +71,12 @@ export class Session {
     return this.resumeState;
   }
 
-  async reloadSession(): Promise<ResumedSessionSummary> {
+  async reloadSession(options?: ReloadSessionOptions): Promise<ResumedSessionSummary> {
     this.ensureOpen();
-    const summary = await this.rpc.reloadSession({ sessionId: this.id });
+    const summary = await this.rpc.reloadSession({
+      sessionId: this.id,
+      forcePluginSessionStartReminder: options?.forcePluginSessionStartReminder,
+    });
     this.summary = summary;
     this.resumeState = resumeStateFromSummary(summary);
     return summary;
@@ -101,6 +109,27 @@ export class Session {
     });
   }
 
+  /** Execute a user-initiated `!` shell command (silent — does not prompt the
+   *  model). Resolves with the command's stdout/stderr for immediate display.
+   *  Pass `commandId` to receive live `shell.output` events for this command. */
+  async runShellCommand(
+    command: string,
+    options?: { commandId?: string },
+  ): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }> {
+    this.ensureOpen();
+    return this.rpc.runShellCommand({
+      sessionId: this.id,
+      command,
+      commandId: options?.commandId,
+    });
+  }
+
+  /** Cancel a running `!` shell command by its commandId (e.g. on Esc / Ctrl+C). */
+  async cancelShellCommand(commandId: string): Promise<void> {
+    this.ensureOpen();
+    return this.rpc.cancelShellCommand({ sessionId: this.id, commandId });
+  }
+
   async steer(input: string | PromptInput): Promise<void> {
     this.ensureOpen();
     await this.rpc.steer({
@@ -120,6 +149,30 @@ export class Session {
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });
+  }
+
+  async getSessionWarnings() {
+    this.ensureOpen();
+    return this.rpc.getSessionWarnings({ sessionId: this.id });
+  }
+
+  async addAdditionalDir(
+    path: string,
+    options?: AddAdditionalDirOptions,
+  ): Promise<AddAdditionalDirResult> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      path,
+      'Additional directory cannot be empty',
+      ErrorCodes.REQUEST_INVALID,
+    );
+    const result = await this.rpc.addAdditionalDir({
+      id: this.id,
+      path: normalized,
+      persist: options?.persist ?? true,
+    });
+    this.summary = { ...this.requireSummary(), additionalDirs: result.additionalDirs };
+    return result;
   }
 
   async startBtw(): Promise<string> {
@@ -142,14 +195,14 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
-  async setThinking(level: string): Promise<void> {
+  async setThinking(effort: ThinkingEffort): Promise<void> {
     this.ensureOpen();
     const normalized = normalizeRequiredString(
-      level,
-      'Session thinking level cannot be empty',
+      effort,
+      'Session thinking effort cannot be empty',
       ErrorCodes.SESSION_THINKING_EMPTY,
     );
-    await this.rpc.setThinking({ sessionId: this.id, level: normalized });
+    await this.rpc.setThinking({ sessionId: this.id, effort: normalized });
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {
@@ -238,6 +291,11 @@ export class Session {
     return this.rpc.listSkills({ sessionId: this.id });
   }
 
+  async listPluginCommands(): Promise<readonly PluginCommandDef[]> {
+    this.ensureOpen();
+    return this.rpc.listPluginCommands({ sessionId: this.id });
+  }
+
   /**
    * List background tasks for this session's interactive agent.
    *
@@ -300,6 +358,35 @@ export class Session {
       taskId: trimmedTaskId,
       reason: options.reason,
     });
+  }
+
+  /**
+   * Detach a running foreground task so the current tool call can return while
+   * the task continues under background-task management.
+   */
+  async detachBackgroundTask(taskId: string): Promise<BackgroundTaskInfo | undefined> {
+    this.ensureOpen();
+    const trimmedTaskId = normalizeRequiredString(
+      taskId,
+      'Task id cannot be empty',
+      ErrorCodes.BACKGROUND_TASK_ID_EMPTY,
+    );
+    return this.rpc.detachBackgroundTask({
+      sessionId: this.id,
+      taskId: trimmedTaskId,
+    });
+  }
+
+  /**
+   * Block until every still-running background task (across all agents in this
+   * session) reaches a terminal state. Used by `kimi -p` after the main agent's
+   * turn finishes when `background.keep_alive_on_exit` is `true`, so background
+   * subagents get a chance to complete before the process exits. No-op when
+   * `keep_alive_on_exit` is not enabled. Bounded by `background.print_wait_ceiling_s`.
+   */
+  async waitForBackgroundTasksOnPrint(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.waitForBackgroundTasksOnPrint({ sessionId: this.id });
   }
 
   // --- Goal lifecycle ---------------------------------------------------
@@ -402,6 +489,29 @@ export class Session {
     });
   }
 
+  async activatePluginCommand(
+    pluginId: string,
+    commandName: string,
+    args?: string | undefined,
+  ): Promise<void> {
+    this.ensureOpen();
+    const normalizedPluginId = pluginId.trim();
+    const normalizedCommandName = commandName.trim();
+    if (normalizedPluginId.length === 0 || normalizedCommandName.length === 0) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Plugin id and command name cannot be empty',
+      );
+    }
+    const commandArgs = normalizeOptionalString(args);
+    await this.rpc.activatePluginCommand({
+      sessionId: this.id,
+      pluginId: normalizedPluginId,
+      commandName: normalizedCommandName,
+      ...(commandArgs !== undefined ? { args: commandArgs } : {}),
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -432,6 +542,13 @@ export class Session {
     if (this.closed) {
       throw new KimiError(ErrorCodes.SESSION_CLOSED, 'Session is closed');
     }
+  }
+
+  private requireSummary(): SessionSummary {
+    if (this.summary === undefined) {
+      throw new KimiError(ErrorCodes.SESSION_STATE_INVALID, 'Session summary is unavailable');
+    }
+    return this.summary;
   }
 }
 

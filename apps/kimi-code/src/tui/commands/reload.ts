@@ -16,7 +16,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   const session = host.session;
 
   if (session !== undefined) {
-    await session.reloadSession();
+    await session.reloadSession({ forcePluginSessionStartReminder: true });
     await host.reloadCurrentSessionView(session, 'Session reloaded.');
   }
 
@@ -45,9 +45,11 @@ export async function applyReloadedTuiConfig(
   host.refreshTerminalThemeTracking();
   host.setAppState({
     editorCommand: config.editorCommand,
+    disablePasteBurst: config.disablePasteBurst,
     notifications: config.notifications,
     upgrade: config.upgrade,
   });
+  host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
 }
 
 function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {

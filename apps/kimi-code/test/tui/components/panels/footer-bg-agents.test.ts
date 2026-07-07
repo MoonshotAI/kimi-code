@@ -12,10 +12,11 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
   return {
     model: 'k2',
     workDir: '/tmp/proj',
+    additionalDirs: [],
     sessionId: 'sess_1',
     permissionMode: 'manual',
     planMode: false,
-    thinking: false,
+    thinkingEffort: 'off',
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 200_000,

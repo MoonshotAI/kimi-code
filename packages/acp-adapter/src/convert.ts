@@ -1,6 +1,9 @@
 import type { ContentBlock, ToolCallContent } from '@agentclientprotocol/sdk';
 import {
   log,
+  buildImageCompressionCaption,
+  compressBase64ForModel,
+  persistOriginalImage,
   type PromptPart,
   type ToolInputDisplay,
   type ToolResultEvent,
@@ -69,6 +72,71 @@ export function acpBlocksToPromptParts(
     });
   }
   return out;
+}
+
+/**
+ * Shrink oversized inline images in a prompt-part list — the ACP ingestion
+ * point's input-stage compression, mirroring the CLI's paste-time and the
+ * server's upload-time step. Best effort: a part that cannot be compressed is
+ * passed through unchanged.
+ *
+ * Compression is never silent: a re-encoded image gains a caption text part
+ * immediately before it stating what the original was, and the original bytes
+ * are persisted (into `originalsDir` — typically the session's
+ * media-originals dir — or the shared temp-dir fallback) so the model can
+ * read fine detail back via ReadMediaFile + region.
+ */
+export async function compressPromptImageParts(
+  parts: readonly PromptPart[],
+  options: { readonly originalsDir?: string | undefined } = {},
+): Promise<PromptPart[]> {
+  const out: PromptPart[] = [];
+  for (const part of parts) {
+    if (part.type === 'image_url') {
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed !== null) {
+        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType);
+        if (result.changed) {
+          const originalPath = await persistOriginalImage(
+            Buffer.from(parsed.base64, 'base64'),
+            parsed.mimeType,
+            options.originalsDir === undefined ? {} : { dir: options.originalsDir },
+          );
+          out.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: result.originalWidth,
+                height: result.originalHeight,
+                byteLength: result.originalByteLength,
+                mimeType: parsed.mimeType,
+              },
+              final: {
+                width: result.width,
+                height: result.height,
+                byteLength: result.finalByteLength,
+                mimeType: result.mimeType,
+              },
+              originalPath,
+            }),
+          });
+          out.push({
+            type: 'image_url',
+            imageUrl: { ...part.imageUrl, url: `data:${result.mimeType};base64,${result.base64}` },
+          });
+          continue;
+        }
+      }
+    }
+    out.push(part);
+  }
+  return out;
+}
+
+function parseImageDataUrl(url: string): { mimeType: string; base64: string } | null {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
+  if (match === null) return null;
+  return { mimeType: match[1]!, base64: match[2]! };
 }
 
 /**

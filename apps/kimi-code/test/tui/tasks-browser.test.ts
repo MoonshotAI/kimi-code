@@ -1,4 +1,4 @@
-import type { Terminal } from '@earendil-works/pi-tui';
+import type { Terminal } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -216,6 +216,41 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     const out = strip(makeApp({ tasks, filter: 'active' }).render(120).join('\n'));
     expect(out).toContain('bash-aaaaaaaa');
     expect(out).not.toContain('bash-bbbbbbbb');
+  });
+
+  it('filters out foreground tasks (detached === false)', () => {
+    const tasks = [
+      task({ taskId: 'bash-foreground', detached: false, status: 'running' }),
+      task({ taskId: 'bash-background', detached: true, status: 'running' }),
+    ];
+    const out = strip(makeApp({ tasks, filter: 'all' }).render(120).join('\n'));
+    expect(out).not.toContain('bash-foreground');
+    expect(out).toContain('bash-background');
+  });
+
+  it('keeps background tasks with detached === true even when terminal', () => {
+    const tasks = [task({ taskId: 'bash-done', detached: true, status: 'completed' })];
+    const out = strip(makeApp({ tasks, filter: 'all' }).render(120).join('\n'));
+    expect(out).toContain('bash-done');
+  });
+
+  it('keeps ghost tasks whose detached field is undefined', () => {
+    // task() leaves `detached` undefined by default, mimicking reconcile ghosts.
+    const tasks = [task({ taskId: 'bash-ghost', status: 'lost' })];
+    const out = strip(makeApp({ tasks, filter: 'all' }).render(120).join('\n'));
+    expect(out).toContain('bash-ghost');
+  });
+
+  it('applies active filter after excluding foreground tasks', () => {
+    const tasks = [
+      task({ taskId: 'bash-fg-running', detached: false, status: 'running' }),
+      task({ taskId: 'bash-bg-running', detached: true, status: 'running' }),
+      task({ taskId: 'bash-bg-done', detached: true, status: 'completed' }),
+    ];
+    const out = strip(makeApp({ tasks, filter: 'active' }).render(120).join('\n'));
+    expect(out).not.toContain('bash-fg-running');
+    expect(out).toContain('bash-bg-running');
+    expect(out).not.toContain('bash-bg-done');
   });
 
   it('renders without throwing for every BackgroundTaskStatus', () => {

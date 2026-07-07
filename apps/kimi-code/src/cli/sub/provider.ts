@@ -340,7 +340,7 @@ export async function handleCatalogAdd(
   // already-configured provider would lose the user's previously-set default
   // even when `--default-model` is not supplied.
   const previousDefaultModel = config.defaultModel;
-  const previousDefaultThinking = config.defaultThinking;
+  const previousThinking = config.thinking;
 
   if (config.providers[providerId] !== undefined) {
     config = await harness.removeProvider(providerId);
@@ -348,7 +348,7 @@ export async function handleCatalogAdd(
 
   const baseUrl = catalogBaseUrl(entry, wire);
   // `applyCatalogProvider` always overwrites both `defaultModel` and
-  // `defaultThinking`. The values we pass here are temporary; we restore
+  // `[thinking]`. The values we pass here are temporary; we restore
   // a consistent state in the post-apply block below.
   applyCatalogProvider(config, {
     providerId,
@@ -373,18 +373,18 @@ export async function handleCatalogAdd(
     config.defaultModel = stillResolves ? previousDefaultModel : undefined;
   }
 
-  // Always restore `defaultThinking` from what was there before — including
-  // `undefined`. Persisting `false` when the user never set it would make
-  // `resolveThinkingLevel` (agent-core/src/agent/config/thinking.ts) treat
-  // it as an explicit "off" request and silently disable thinking, even
-  // for thinking-capable models.
-  config.defaultThinking = previousDefaultThinking;
+  // Always restore `[thinking]` from what was there before — including
+  // `undefined`. Persisting `enabled: false` when the user never set it would
+  // make `resolveThinkingEffort` (agent-core/src/agent/config/thinking.ts) treat
+  // it as an explicit "off" request and silently disable thinking, even for
+  // thinking-capable models.
+  config.thinking = previousThinking;
 
   await harness.setConfig({
     providers: config.providers,
     models: config.models,
     defaultModel: config.defaultModel,
-    defaultThinking: config.defaultThinking,
+    thinking: config.thinking,
   });
 
   const displayName = entry.name ?? providerId;

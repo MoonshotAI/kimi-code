@@ -12,6 +12,7 @@ import {
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, join, win32 as pathWin32 } from 'node:path';
+import { join as joinPosix } from 'pathe';
 
 import { KIMI_BUILD_INFO } from '#/cli/build-info';
 import { NATIVE_ASSET_MANIFEST_VERSION as MANIFEST_VERSION, buildManifestKey } from '../../scripts/native/manifest.mjs';
@@ -143,7 +144,7 @@ export function getNativeCacheBase(options: NativeAssetOptions = {}): string {
   const cacheDirEnv = optionalEnvValue(env, 'KIMI_CODE_CACHE_DIR');
   if (cacheDirEnv !== null) return cacheDirEnv;
 
-  if (platform === 'darwin') return join(home, 'Library', 'Caches', 'kimi-code');
+  if (platform === 'darwin') return joinPosix(home, 'Library', 'Caches', 'kimi-code');
   if (platform === 'win32') {
     const localAppData = optionalEnvValue(env, 'LOCALAPPDATA');
     return localAppData !== null
@@ -151,7 +152,7 @@ export function getNativeCacheBase(options: NativeAssetOptions = {}): string {
       : pathWin32.join(home, 'AppData', 'Local', 'kimi-code', 'Cache');
   }
 
-  return join(optionalEnvValue(env, 'XDG_CACHE_HOME') ?? join(home, '.cache'), 'kimi-code');
+  return joinPosix(optionalEnvValue(env, 'XDG_CACHE_HOME') ?? joinPosix(home, '.cache'), 'kimi-code');
 }
 
 export function getNativeAssetCacheRoot(

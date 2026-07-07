@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    // This package type-checks agent-core's source (consumed via source
+    // `exports`), whose services use legacy parameter decorators for DI, so the
+    // experimental decorator transform must be enabled here too.
+    "experimentalDecorators": true,
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",

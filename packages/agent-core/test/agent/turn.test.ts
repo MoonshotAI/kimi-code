@@ -2,8 +2,10 @@ import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
+import { Readable, type Writable } from 'node:stream';
 
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import { createControlledPromise } from '@antfu/utils';
 import {
   APIConnectionError,
   APIEmptyResponseError,
@@ -17,7 +19,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
-import type { AgentOptions } from '../../src/agent';
+import type { AgentOptions, AgentRecord, AgentRecordPersistence } from '../../src/agent';
+import { ProcessBackgroundTask } from '../../src/agent/background';
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import { ErrorCodes, KimiError } from '../../src/errors';
 import type { Logger, LogPayload } from '../../src/logging';
 import type {
   QueuedSubagentRunResult,
@@ -28,6 +33,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry'
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
+import { agentTask } from './background/helpers';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
 
@@ -67,7 +73,145 @@ describe('Agent turn flow', () => {
     });
     expect(records).toContainEqual({
       event: 'turn_interrupted',
-      properties: { mode: 'agent', at_step: 0 },
+      properties: { mode: 'agent', at_step: 0, interrupt_reason: 'error' },
+    });
+  });
+
+  it('reports turn_interrupted telemetry as user_cancelled on manual abort', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('should-not-run'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    // User presses stop: the RPC cancel carries no explicit reason, which the
+    // turn treats as a deliberate user cancellation.
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    const interrupted = records.find((candidate) => candidate.event === 'turn_interrupted');
+    expect(interrupted).toEqual({
+      event: 'turn_interrupted',
+      properties: expect.objectContaining({
+        mode: 'agent',
+        interrupt_reason: 'user_cancelled',
+      }),
+    });
+  });
+
+  it('reports turn_interrupted telemetry as aborted on programmatic abort', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('should-not-run'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    // A programmatic abort (e.g. a subagent deadline timeout) carries a plain
+    // AbortError as its reason, not a UserCancellationError, so telemetry must
+    // not report it as a user cancellation.
+    ctx.agent.turn.cancel(0, abortError());
+    await ctx.untilTurnEnd();
+
+    const interrupted = records.find((candidate) => candidate.event === 'turn_interrupted');
+    expect(interrupted).toEqual({
+      event: 'turn_interrupted',
+      properties: expect.objectContaining({ mode: 'agent', interrupt_reason: 'aborted' }),
+    });
+  });
+
+  it('holds the turn until a background subagent finishes, then runs a wrap-up step', async () => {
+    const ctx = testAgent();
+    ctx.agent.printDrainAgentTasksOnStop = true;
+
+    const subDone = createControlledPromise<{ result: string }>();
+    ctx.agent.background.registerTask(agentTask(subDone, 'subagent'));
+
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'first' });
+    ctx.mockNextResponse({ type: 'text', text: 'wrap-up' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+
+    let turnEnded = false;
+    const turnEnd = ctx.untilTurnEnd().then(() => {
+      turnEnded = true;
+    });
+
+    // Let the first model step finish and the drain hold engage.
+    for (let i = 0; i < 100 && ctx.llmCalls.length < 1; i++) await delay(5);
+    await delay(20);
+    expect(turnEnded).toBe(false);
+
+    // Completing the subagent releases the hold; the model takes a wrap-up step.
+    subDone.resolve({ result: 'sub-result' });
+    await turnEnd;
+
+    expect(turnEnded).toBe(true);
+    expect(ctx.llmCalls.length).toBe(2);
+  });
+
+  it('does not hold the turn for a non-agent (process) background task', async () => {
+    const ctx = testAgent();
+    ctx.agent.printDrainAgentTasksOnStop = true;
+
+    const proc: KaosProcess = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout: Readable.from([]),
+      stderr: Readable.from([]),
+      pid: 4242,
+      exitCode: null,
+      wait: vi.fn().mockReturnValue(new Promise<number>(() => {})) as unknown as KaosProcess['wait'],
+      kill: vi.fn().mockResolvedValue(undefined) as unknown as KaosProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as unknown as KaosProcess['dispose'],
+    };
+    ctx.agent.background.registerTask(new ProcessBackgroundTask(proc, 'sleep 60', 'proc'));
+
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'only step' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'go' }] });
+    await ctx.untilTurnEnd();
+
+    // Process tasks do not trigger the subagent-only drain hold, so the turn
+    // ends after the single step.
+    expect(ctx.llmCalls.length).toBe(1);
+  });
+
+  it('tracks turn_ended telemetry with protocol props', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hi' }] });
+    await ctx.untilTurnEnd();
+
+    const started = records.find((candidate) => candidate.event === 'turn_started');
+    expect(started).toEqual({
+      event: 'turn_started',
+      properties: expect.objectContaining({ mode: 'agent', provider_type: 'kimi', protocol: 'kimi' }),
+    });
+
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended).toEqual({
+      event: 'turn_ended',
+      properties: expect.objectContaining({
+        mode: 'agent',
+        reason: 'completed',
+        provider_type: 'kimi',
+        protocol: 'kimi',
+        duration_ms: expect.any(Number),
+      }),
     });
   });
 
@@ -239,6 +383,8 @@ describe('Agent turn flow', () => {
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Trigger generate failure" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
+      [wire] llm.tools_snapshot          { "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "tools": [], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "error", "message": "Unexpected generate call #1" }
       [emit] turn.ended                  { "turnId": 0, "reason": "failed", "error": { "code": "internal", "message": "Unexpected generate call #1", "name": "Error", "retryable": false, "details": { "turnId": 0 } } }
     `);
@@ -424,6 +570,50 @@ describe('Agent turn flow', () => {
     );
   });
 
+  it('ends the turn with reason filtered when the provider filters a non-empty response', async () => {
+    const generate: GenerateFn = async () => ({
+      id: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'some filtered text' }],
+        toolCalls: [],
+      },
+      usage: {
+        inputOther: 10,
+        output: 5,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      },
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger filtered response' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'filtered',
+        }),
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'completed' }),
+      }),
+    );
+  });
+
   it('emits a friendly model.not_configured error when no model is configured', async () => {
     const ctx = testAgent();
 
@@ -452,7 +642,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo 'hook response 2'",
+        command: 'node -e "process.stdout.write(\'hook response 2\')"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -513,12 +703,12 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: "echo '{}'",
+        command: 'node -e "process.stdout.write(\'{}\')"',
       },
       {
         event: 'UserPromptSubmit',
         matcher: 'hooked input',
-        command: 'echo \'{"hookSpecificOutput":{}}\'',
+        command: 'node -e "process.stdout.write(JSON.stringify({hookSpecificOutput:{}}))"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -576,7 +766,7 @@ describe('Agent turn flow', () => {
       {
         event: 'UserPromptSubmit',
         matcher: 'bad words',
-        command: "echo 'no profanity' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'no profanity\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -668,7 +858,7 @@ describe('Agent turn flow', () => {
     const hookEngine = new HookEngine([
       {
         event: 'Stop',
-        command: "echo 'continue from hook' >&2; exit 2",
+        command: 'node -e "process.stderr.write(\'continue from hook\'); process.exit(2)"',
       },
     ]);
     const ctx = testAgent({ hookEngine });
@@ -1064,11 +1254,14 @@ describe('Agent turn flow', () => {
     expect(requestPayload).not.toHaveProperty('estimatedInputTokens');
   });
 
-  it('classifies OAuth resolver failures as auth errors', async () => {
+  it('classifies OAuth resolver connection failures as provider connection errors without retrying', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const oauthOptions = oauthAgentOptions(async (options) => {
       tokenCalls.push(options?.force);
-      throw new Error('refresh token expired');
+      throw new KimiError(
+        ErrorCodes.PROVIDER_CONNECTION_ERROR,
+        'OAuth provider "managed:kimi-code" failed to fetch an access token: fetch failed',
+      );
     });
     const generate = vi.fn<GenerateFn>();
     const ctx = testAgent({ ...oauthOptions, generate });
@@ -1088,7 +1281,41 @@ describe('Agent turn flow', () => {
         args: expect.objectContaining({
           reason: 'failed',
           error: expect.objectContaining({
-            code: 'auth.login_required',
+            code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
+            message: expect.stringContaining('fetch failed'),
+            retryable: true,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('classifies explicit OAuth login-required resolver failures as auth errors', async () => {
+    const tokenCalls: Array<boolean | undefined> = [];
+    const oauthOptions = oauthAgentOptions(async (options) => {
+      tokenCalls.push(options?.force);
+      throw new KimiError(ErrorCodes.AUTH_LOGIN_REQUIRED, 'not logged in');
+    });
+    const generate = vi.fn<GenerateFn>();
+    const ctx = testAgent({ ...oauthOptions, generate });
+    ctx.configure();
+    await ctx.rpc.setModel({ model: 'kimi-code' });
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello after token expiry' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(tokenCalls).toEqual([undefined]);
+    expect(generate).not.toHaveBeenCalled();
+    expect(events).not.toContainEqual(expect.objectContaining({ event: 'assistant.delta' }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: ErrorCodes.AUTH_LOGIN_REQUIRED,
+            retryable: false,
           }),
         }),
       }),
@@ -1126,6 +1353,7 @@ describe('Agent turn flow', () => {
           reason: 'failed',
           error: expect.objectContaining({
             code: 'loop.max_steps_exceeded',
+            message: expect.stringContaining('config.toml'),
             details: expect.objectContaining({
               maxSteps: 1,
             }),
@@ -1343,6 +1571,9 @@ describe('Agent turn flow', () => {
     const expectedProperties: Record<string, unknown> = {
       error_type: errorType,
       model: 'mock-model',
+      alias: 'mock-model',
+      provider_type: 'kimi',
+      protocol: 'kimi',
       retryable: expect.any(Boolean),
       duration_ms: expect.any(Number),
     };
@@ -1437,7 +1668,7 @@ describe('Agent turn flow', () => {
       cwd: process.cwd(),
       modelAlias: 'kimi-code',
       systemPrompt: 'test system prompt',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
     });
     Object.defineProperty(ctx.agent.config, 'provider', {
       configurable: true,
@@ -1479,6 +1710,8 @@ describe('Agent turn flow', () => {
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Run a command" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
+      [wire] llm.tools_snapshot          { "hash": "878fc967171856c1b535c0bc43b4b06aa8141d637871c13f40f965cdaaa45df9", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "command": { "type": "string", "minLength": 1, "description": "The command to execute." }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" } }, "required": [ "command" ], "additionalProperties": false } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "878fc967171856c1b535c0bc43b4b06aa8141d637871c13f40f965cdaaa45df9", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I will run Bash." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "argumentsPart": "{\\"command\\":\\"printf should-not-run\\",\\"timeout\\":60}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will run Bash." } }, "time": "<time>" }
@@ -1540,6 +1773,8 @@ describe('Agent turn flow', () => {
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Run Bash, then listen" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
+      [wire] llm.tools_snapshot          { "hash": "878fc967171856c1b535c0bc43b4b06aa8141d637871c13f40f965cdaaa45df9", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "command": { "type": "string", "minLength": 1, "description": "The command to execute." }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" } }, "required": [ "command" ], "additionalProperties": false } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "878fc967171856c1b535c0bc43b4b06aa8141d637871c13f40f965cdaaa45df9", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I will ask first." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "argumentsPart": "{\\"command\\":\\"printf approved\\",\\"timeout\\":60}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will ask first." } }, "time": "<time>" }
@@ -1570,16 +1805,17 @@ describe('Agent turn flow', () => {
       [emit] tool.progress                       { "turnId": 0, "toolCallId": "call_bash", "update": { "kind": "stdout", "text": "approved" } }
       [wire] context.append_loop_event           { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "approved" } }, "time": "<time>" }
       [emit] tool.result                         { "turnId": 0, "toolCallId": "call_bash", "output": "approved" }
-      [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
+      [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "messageId": "mock-1" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 29, "maxContextTokens": 1000000, "contextUsage": 0.000029, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 7, "output": 22, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_message              { "message": { "role": "user", "content": [ { "type": "text", "text": "Also mention the steer." } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event           { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started                   { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
+      [wire] llm.request                         { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999971, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "878fc967171856c1b535c0bc43b4b06aa8141d637871c13f40f965cdaaa45df9", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
       [emit] assistant.delta                     { "turnId": 0, "delta": "Approved, and I saw the steer." }
       [wire] context.append_loop_event           { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "Approved, and I saw the steer." } }, "time": "<time>" }
-      [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 39, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
+      [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 39, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-2" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 39, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 39, "output": 11, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated                { "model": "mock-model", "contextTokens": 50, "maxContextTokens": 1000000, "contextUsage": 0.00005, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 46, "output": 33, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
@@ -1609,6 +1845,8 @@ describe('Agent turn flow', () => {
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Start the active turn" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
+      [wire] llm.tools_snapshot          { "hash": "878fc967171856c1b535c0bc43b4b06aa8141d637871c13f40f965cdaaa45df9", "tools": [ { "name": "Bash", "description": "Execute a \`bash\` command. Use this for shell semantics — pipes, env, processes, git, package managers, build/test runners, anything genuinely interactive or multi-step.\\n\\n**Translate these to a dedicated tool instead:**\\n- \`cat\` / \`head\` / \`tail\` (known path) → \`Read\`\\n- \`sed\` / \`awk\` (in-place edit) → \`Edit\`\\n- \`echo > file\` / \`cat <<EOF\` → \`Write\`\\n- \`find\` / recursive \`ls\` to locate files by name pattern → \`Glob\` (plain \`ls <known-directory>\` is fine for listing a directory)\\n- \`grep\` / \`rg\` (search file contents) → \`Grep\`\\n- \`echo\` / \`printf\` (talk to the user) → just output text directly\\n\\nThe dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.\\n\\n**Output:**\\nThe stdout and stderr will be combined and returned as a string. The output may be truncated if it is too long. If the command exits non-zero, the output ends with a \`Command failed with exit code: N\` line; a command killed by its timeout or interrupted by the user ends with its own message instead.\\n\\nBackground execution is disabled for this agent. Do not set \`run_in_background=true\`.\\n\\n**Guidelines for safety and security:**\\n- Each shell tool call will be executed in a fresh shell environment. The shell variables, current working directory changes, and the shell history is not preserved between calls. To run a command in a particular directory, pass the \`cwd\` argument (or use absolute paths) rather than relying on a \`cd\` from an earlier call.\\n- The tool call will return after the command is finished. You shall not use this tool to execute an interactive command or a command that may run forever. For possibly long-running commands, set the \`timeout\` argument in seconds. The default is 60s; foreground commands allow up to 300s.\\n- Avoid using \`..\` to access files or directories outside of the working directory.\\n- Avoid modifying files outside of the working directory unless explicitly instructed to do so.\\n- Never run commands that require superuser privileges unless explicitly instructed to do so.\\n\\n**Guidelines for efficiency:**\\n- Use \`&&\` to chain commands that genuinely depend on each other, e.g. \`npm install && npm test\`. Independent read-only commands (separate \`git show\`, \`ls\`, or status checks) should be issued as separate parallel Bash calls in one response, not chained into a single call — chaining serializes their execution and mixes their output. Do not stitch outputs together with \`echo\` separators.\\n- Use \`;\` to run commands sequentially regardless of success/failure\\n- Use \`||\` for conditional execution (run second command only if first fails)\\n- Use pipe operations (\`|\`) and redirections (\`>\`, \`>>\`) to chain input and output between commands\\n- Always quote file paths containing spaces with double quotes (e.g., cd \\"/path with spaces/\\")\\n- Compose multi-step logic in a single call with \`if\` / \`case\` / \`for\` / \`while\` control flows.\\n- Do not set \`run_in_background=true\`; background task management tools are not available.\\n\\n**Commands available:**\\nThe following common command categories are usually available. Availability still depends on the host, so when in doubt run \`which <command>\` first to confirm a command exists before relying on it.\\n- Navigation and inspection: \`ls\`, \`pwd\`, \`cd\`, \`stat\`, \`file\`, \`du\`, \`df\`, \`tree\`\\n- File and directory management: \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`ln\`, \`chmod\`, \`chown\`\\n- Text and data processing: \`wc\`, \`sort\`, \`uniq\`, \`cut\`, \`tr\`, \`diff\`, \`xargs\`\\n- Archives and compression: \`tar\`, \`gzip\`, \`gunzip\`, \`zip\`, \`unzip\`\\n- Networking and transfer: \`curl\`, \`wget\`, \`ping\`, \`ssh\`, \`scp\`\\n- Version control: \`git\`; for GitHub-hosted work (PRs, issues, CI runs, API queries) prefer the \`gh\` CLI when installed — it carries the user's GitHub auth and can return structured JSON\\n- Process and system: \`ps\`, \`kill\`, \`top\`, \`env\`, \`date\`, \`uname\`, \`whoami\`\\n- Language and package toolchains: \`node\`, \`npm\`, \`pnpm\`, \`yarn\`, \`python\`, \`pip\` (use whichever the project actually relies on)\\n", "parameters": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": { "command": { "type": "string", "minLength": 1, "description": "The command to execute." }, "cwd": { "description": "The working directory in which to run the command. When omitted, the command runs in the session's working directory.", "type": "string" }, "timeout": { "default": 60, "description": "Optional timeout in seconds for the command to execute. Foreground default 60s, max 300s. Background default 600s, max 86400s. Ignored for background commands when disable_timeout=true.", "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }, "description": { "description": "A short description for the background task. Required when run_in_background is true.", "type": "string" }, "run_in_background": { "description": "Whether to run the command as a background task.", "type": "boolean" }, "disable_timeout": { "description": "If true, do not apply a timeout to the command. Only applies when run_in_background is true.", "type": "boolean" } }, "required": [ "command" ], "additionalProperties": false } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "878fc967171856c1b535c0bc43b4b06aa8141d637871c13f40f965cdaaa45df9", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I will wait for approval." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "argumentsPart": "{\\"command\\":\\"printf should-not-run\\",\\"timeout\\":60}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will wait for approval." } }, "time": "<time>" }
@@ -1814,3 +2052,68 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     rawFinishReason: 'stop',
   };
 }
+
+describe('abandoned tool exchange teardown', () => {
+  it('closes dangling tool calls when a turn dies mid-batch so follow-up messages are not swallowed', async () => {
+    // A transcript write failure between a recorded tool.call and its paired
+    // tool.result breaks the batch's "every recorded call gets a result"
+    // invariant: the result-dispatch loop dies, the turn fails, and
+    // pendingToolResultIds stays open — stranding every later message in
+    // deferredMessages.
+    const base = new InMemoryAgentRecordPersistence();
+    let failedOnce = false;
+    const persistence: AgentRecordPersistence = {
+      read: () => base.read(),
+      append: (record: AgentRecord) => {
+        if (
+          !failedOnce &&
+          record.type === 'context.append_loop_event' &&
+          record.event.type === 'tool.result'
+        ) {
+          failedOnce = true;
+          throw new Error('transcript write failed');
+        }
+        base.append(record);
+      },
+      rewrite: (records) => {
+        base.rewrite(records);
+      },
+      flush: () => base.flush(),
+      close: () => base.close(),
+    };
+    const ctx = testAgent({ kaos: createCommandKaos('ok'), persistence });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'auto' });
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'I will run both commands.' },
+      bashCallWithId('call_one', 'echo one'),
+      bashCallWithId('call_two', 'echo two'),
+    );
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run both' }] });
+    const events = await ctx.untilTurnEnd();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'failed' }),
+      }),
+    );
+
+    // Every recorded tool.call must still get a result: the turn teardown
+    // synthesizes an error result for each dangling call.
+    const toolMessages = ctx.agent.context.history.filter((message) => message.role === 'tool');
+    expect(toolMessages.map((message) => message.toolCallId)).toEqual(['call_one', 'call_two']);
+    for (const message of toolMessages) {
+      expect(message.isError).toBe(true);
+    }
+
+    // With the exchange closed, a follow-up message reaches the history instead
+    // of being stranded in deferredMessages forever.
+    ctx.agent.context.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'follow-up after failure' }],
+      toolCalls: [],
+    });
+    expect(JSON.stringify(ctx.agent.context.history)).toContain('follow-up after failure');
+  });
+});

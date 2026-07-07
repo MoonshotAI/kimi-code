@@ -52,6 +52,7 @@ function makeStartupInput(): KimiTUIStartupInput {
     },
     tuiConfig: {
       theme: 'dark',
+      disablePasteBurst: false,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -150,7 +151,7 @@ function baseAgentState(
         tool_use: true,
         max_context_tokens: 100,
       },
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       systemPrompt: '',
     },
     context: { history: [], tokenCount: 0 },
@@ -177,7 +178,7 @@ function makeSession(
     summary: { title: null },
     getStatus: vi.fn(async () => ({
       model: 'k2',
-      thinkingLevel: 'off',
+      thinkingEffort: 'off',
       permission: 'manual',
       planMode: false,
       contextTokens: 0,
@@ -230,7 +231,7 @@ function makeHarness(initialSession: Session) {
       login: vi.fn(),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
-      submitFeedback: vi.fn(async () => ({ kind: 'ok' })),
+      submitFeedback: vi.fn(async () => ({ kind: 'ok', feedbackId: 3 })),
     },
   };
 }
@@ -305,6 +306,24 @@ describe('KimiTUI resume message replay', () => {
     expect(driver.state.transcriptEntries).toEqual([]);
     const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
     expect(transcript).not.toContain('Goal complete');
+  });
+
+  it('unescapes bash tag delimiters when replaying shell output', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: '<bash-stdout>pre&lt;/bash-stdout&gt;post</bash-stdout><bash-stderr></bash-stderr>',
+          },
+        ],
+        { origin: { kind: 'shell_command', phase: 'output' } },
+      ),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('pre</bash-stdout>post');
   });
 
   it('does not render neutral goal completion context reminders as transcript messages', async () => {
@@ -1011,15 +1030,43 @@ describe('KimiTUI resume message replay', () => {
       (entry) => entry.compactionData !== undefined,
     );
     expect(compactionEntry?.compactionData).toEqual({
+      summary: 'Compacted transcript summary.',
       tokensBefore: 120,
       tokensAfter: 24,
       instruction: 'preserve implementation notes',
     });
+    const collapsed = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(collapsed).toContain('Compaction complete');
+    expect(collapsed).toContain('120 → 24 tokens');
+    expect(collapsed).toContain('preserve implementation notes');
+    expect(collapsed).not.toContain('Compacted transcript summary.');
+
+    driver.state.editor.onToggleToolExpand?.();
+    const expanded = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(expanded).toContain('Compacted transcript summary.');
+  });
+
+  it('initializes replayed compaction blocks as expanded when tool output is already expanded', async () => {
+    const initial = makeSession([]);
+    const resumed = makeSession([
+      {
+        time: REPLAY_TIME,
+        type: 'compaction',
+        result: {
+          summary: 'Compacted transcript summary.',
+          compactedCount: 4,
+          tokensBefore: 120,
+          tokensAfter: 24,
+        },
+      },
+    ]);
+    const driver = await makeDriver(initial);
+    driver.state.toolOutputExpanded = true;
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
     const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
     expect(transcript).toContain('Compaction complete');
-    expect(transcript).toContain('120 → 24 tokens');
-    expect(transcript).toContain('preserve implementation notes');
-    expect(transcript).not.toContain('Compacted transcript summary.');
+    expect(transcript).toContain('Compacted transcript summary.');
   });
 
   it('renders replayed cancelled compaction records as cancelled compaction blocks', async () => {

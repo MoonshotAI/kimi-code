@@ -285,7 +285,9 @@ export class OAuthManager {
     const initial = await this.loadState();
     switch (initial.kind) {
       case 'missing':
-        throw new OAuthError(`No token for "${this.config.name}". Run /login to authenticate.`);
+        throw new OAuthUnauthorizedError(
+          `No token for "${this.config.name}". Run /login to authenticate.`,
+        );
       case 'revoked':
         // A prior 401 (possibly from another process) tombstoned this token.
         // Surface as unauthorized so callers route into the re-login flow
@@ -353,7 +355,7 @@ export class OAuthManager {
       }
 
       if (activeToken.refreshToken.length === 0) {
-        throw new OAuthError(
+        throw new OAuthUnauthorizedError(
           `Token for "${this.config.name}" has no refresh_token; re-login required.`,
         );
       }

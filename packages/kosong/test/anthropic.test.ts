@@ -50,6 +50,7 @@ type AnthropicGenerationState = {
     | undefined;
   output_config?: { effort: string } | undefined;
   betaFeatures?: string[] | undefined;
+  contextManagement?: { edits: Array<{ type: string; keep?: unknown }> } | undefined;
 };
 
 function getGenerationState(provider: AnthropicChatProvider): AnthropicGenerationState {
@@ -141,6 +142,206 @@ const MUL_TOOL: Tool = {
 const B64_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA' +
   'DUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+/**
+ * Capture the request body sent to the Anthropic beta Messages API by mocking
+ * the client (non-stream mode). Also asserts the standard Messages API was
+ * not called.
+ */
+async function captureBetaRequestBody(
+  provider: AnthropicChatProvider,
+  systemPrompt: string,
+  tools: Tool[],
+  history: Message[],
+): Promise<Record<string, unknown>> {
+  let capturedParams: Record<string, unknown> | undefined;
+  let capturedOptions: Record<string, unknown> | undefined;
+
+  (provider as any)._client.beta.messages.create = vi
+    .fn()
+    .mockImplementation((params: unknown, options?: unknown) => {
+      capturedParams = params as Record<string, unknown>;
+      capturedOptions = options as Record<string, unknown> | undefined;
+      return Promise.resolve(makeAnthropicResponse());
+    });
+  const standardCreate = vi.fn();
+  (provider as any)._client.messages.create = standardCreate;
+
+  const stream = await provider.generate(systemPrompt, tools, history);
+  for await (const part of stream) {
+    void part;
+  }
+
+  if (capturedParams === undefined) {
+    throw new Error('Expected provider.generate() to call beta.messages.create');
+  }
+  expect(standardCreate).not.toHaveBeenCalled();
+
+  const result = { ...capturedParams };
+  if (capturedOptions !== undefined && capturedOptions['headers'] !== undefined) {
+    result['_extra_headers'] = capturedOptions['headers'];
+  }
+  return result;
+}
+
+describe('betaApi', () => {
+  const history: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+  ];
+
+  it('routes to client.beta.messages.create with betas in the body and no beta header', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'kimi-for-coding',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+      betaApi: true,
+    });
+    const body = await captureBetaRequestBody(provider, '', [], history);
+
+    expect(body['betas']).toEqual(['interleaved-thinking-2025-05-14']);
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toBeUndefined();
+  });
+
+  it('keeps beta features in the anthropic-beta header when betaApi is off', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'kimi-for-coding',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+    });
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['betas']).toBeUndefined();
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toContain('interleaved-thinking-2025-05-14');
+  });
+});
+
+describe('withThinkingKeep (context_management)', () => {
+  const history: Message[] = [
+    { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+  ];
+
+  it('forces the beta endpoint and emits context_management clear_thinking keep with the context-management beta', async () => {
+    // betaApi is left at its default (false); withThinkingKeep must force it on.
+    const provider = createProvider().withThinkingKeep('all');
+    const body = await captureBetaRequestBody(provider, '', [], history);
+
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+    expect(body['betas']).toContain('interleaved-thinking-2025-05-14');
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toBeUndefined();
+  });
+
+  it('prepends clear_thinking before existing context-management edits and keeps them', () => {
+    const provider = createProvider()
+      .withGenerationKwargs({
+        contextManagement: {
+          edits: [{ type: 'clear_tool_uses_20250919', keep: { type: 'tool_uses', value: 2 } }],
+        },
+      })
+      .withThinkingKeep('all');
+    const state = getGenerationState(provider);
+    expect(state.contextManagement).toEqual({
+      edits: [
+        { type: 'clear_thinking_20251015', keep: 'all' },
+        { type: 'clear_tool_uses_20250919', keep: { type: 'tool_uses', value: 2 } },
+      ],
+    });
+  });
+
+  it('emits no context_management and stays off the beta endpoint when withThinkingKeep is not applied', async () => {
+    const body = await captureRequestBody(createProvider(), '', [], history);
+    expect(body['context_management']).toBeUndefined();
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).not.toContain('context-management-2025-06-27');
+  });
+
+  it('does not duplicate the context-management beta or the clear_thinking edit across repeated calls', () => {
+    const provider = createProvider().withThinkingKeep('all').withThinkingKeep('all');
+    const state = getGenerationState(provider);
+    const betas = state.betaFeatures ?? [];
+    expect(betas.filter((b) => b === 'context-management-2025-06-27')).toHaveLength(1);
+    expect(state.contextManagement).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+  });
+
+  // Capture a streaming (stream: true) beta-endpoint request by mocking
+  // client.beta.messages.create to return a minimal valid stream.
+  async function captureBetaStreamBody(
+    provider: AnthropicChatProvider,
+    history: Message[],
+  ): Promise<Record<string, unknown>> {
+    let capturedParams: Record<string, unknown> | undefined;
+    let capturedOptions: Record<string, unknown> | undefined;
+    (provider as any)._client.beta.messages.create = vi
+      .fn()
+      .mockImplementation((params: unknown, options?: unknown) => {
+        capturedParams = params as Record<string, unknown>;
+        capturedOptions = options as Record<string, unknown> | undefined;
+        return Promise.resolve(
+          mockStream([
+            {
+              type: 'message_start',
+              message: { id: 'm', usage: { input_tokens: 1, output_tokens: 0 } },
+            },
+            { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+            { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+            { type: 'content_block_stop', index: 0 },
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn' },
+              usage: { output_tokens: 1 },
+            },
+            { type: 'message_stop' },
+          ]),
+        );
+      });
+    const stream = await provider.generate('', [], history);
+    for await (const part of stream) void part;
+    if (capturedParams === undefined) {
+      throw new Error('Expected provider.generate() to call beta.messages.create');
+    }
+    const result = { ...capturedParams };
+    if (capturedOptions !== undefined && capturedOptions['headers'] !== undefined) {
+      result['_extra_headers'] = capturedOptions['headers'];
+    }
+    return result;
+  }
+
+  it('emits context_management on the streaming beta endpoint too', async () => {
+    const provider = createStreamProvider().withThinkingKeep('all');
+    const body = await captureBetaStreamBody(provider, history);
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+    const headers = body['_extra_headers'] as Record<string, string> | undefined;
+    expect(headers?.['anthropic-beta']).toBeUndefined();
+  });
+
+  it('forces the beta endpoint even when constructed with betaApi: false', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'kimi-for-coding',
+      apiKey: 'test-key',
+      defaultMaxTokens: 1024,
+      stream: false,
+      betaApi: false,
+    }).withThinkingKeep('all');
+    const body = await captureBetaRequestBody(provider, '', [], history);
+    expect(body['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(body['betas']).toContain('context-management-2025-06-27');
+  });
+});
+
 describe('AnthropicChatProvider', () => {
   it('does not read ANTHROPIC_API_KEY from process.env inside the adapter', () => {
     const previousApiKey = process.env['ANTHROPIC_API_KEY'];
@@ -273,6 +474,114 @@ describe('AnthropicChatProvider', () => {
             },
           ],
         },
+      ]);
+    });
+
+    it('video url content (base64 data URL)', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: "What's in this video?" },
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: "What's in this video?" },
+            {
+              type: 'video',
+              source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' },
+            },
+          ],
+        },
+      ]);
+    });
+
+    it('video url content passes a non-data URL through as a url source', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe' },
+            { type: 'video_url', videoUrl: { url: 'ms://file-abc' } },
+            { type: 'video_url', videoUrl: { url: 'https://example.com/video.mp4' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      // Non-data video references (moonshot `ms://` file ids carried over from a
+      // kimi turn, or http URLs) are emitted as url-source video blocks — the
+      // kimi anthropic endpoint resolves them server-side, exactly like image
+      // url sources.
+      expect(body['messages']).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe' },
+            { type: 'video', source: { type: 'url', url: 'ms://file-abc' } },
+            { type: 'video', source: { type: 'url', url: 'https://example.com/video.mp4' } },
+          ],
+        },
+      ]);
+    });
+
+    it('video url content rejects unsupported media type', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [
+            { type: 'video_url', videoUrl: { url: 'data:image/png;base64,AAAA' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+        },
+      ];
+      await expect(captureRequestBody(provider, '', [], history)).rejects.toThrow(ChatProviderError);
+    });
+
+    it('tool result with video content', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run tool' }],
+          toolCalls: [],
+        },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_1', name: 'add', arguments: '{"a":1,"b":2}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'see video' },
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [ADD_TOOL], history);
+
+      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+      const lastContent = messages.at(-1)!.content as Array<{ type: string; content: unknown[] }>;
+      const toolResult = lastContent[0]!;
+      expect(toolResult.type).toBe('tool_result');
+      expect(toolResult.content).toEqual([
+        { type: 'text', text: 'see video' },
+        { type: 'video', source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' } },
       ]);
     });
 
@@ -490,10 +799,10 @@ describe('AnthropicChatProvider', () => {
       });
     });
 
-    it('user audio/video parts degrade to placeholder text, consecutive same-kind collapse', async () => {
-      // The Messages API cannot carry audio or video. Dropping the parts
-      // silently would leave the model unaware an attachment ever existed,
-      // so each unsupported part degrades to a placeholder text block.
+    it('user audio parts degrade to placeholder text, video parts convert to video blocks', async () => {
+      // Audio still has no Messages-API representation and degrades to a
+      // placeholder text block (consecutive same-kind placeholders collapse).
+      // Video is now carried as a base64 `video` content block.
       const provider = createProvider();
       const history: Message[] = [
         {
@@ -502,7 +811,7 @@ describe('AnthropicChatProvider', () => {
             { type: 'text', text: 'Listen and watch:' },
             { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
             { type: 'audio_url', audioUrl: { url: 'https://example.com/b.mp3' } },
-            { type: 'video_url', videoUrl: { url: 'https://example.com/c.mp4' } },
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
           ] satisfies ContentPart[],
           toolCalls: [],
         },
@@ -514,9 +823,8 @@ describe('AnthropicChatProvider', () => {
         { type: 'text', text: 'Listen and watch:' },
         { type: 'text', text: '(audio omitted: not supported by this provider)' },
         {
-          type: 'text',
-          text: '(video omitted: not supported by this provider)',
-          cache_control: { type: 'ephemeral' },
+          type: 'video',
+          source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' },
         },
       ]);
     });
@@ -785,11 +1093,12 @@ describe('AnthropicChatProvider', () => {
       expect(trailing.every((b) => b.type === 'tool_result')).toBe(true);
     });
 
-    // Edge case: parallel tool results followed by a plain user text turn —
-    // only the tool_result-only user messages merge; the text message stays
-    // in its own message (proving the predicate is content-shape-aware, not
-    // just role-based).
-    it('text turn after parallel tool_results stays separate', async () => {
+    // Edge case: parallel tool results followed by a plain user text turn.
+    // The tool_result-only user messages merge with each other AND absorb the
+    // following text turn, producing a single `[tool_result, tool_result, text]`
+    // user message. Strict Anthropic-compatible backends reject consecutive
+    // user messages, so the follow-up text must not be left in its own turn.
+    it('merges a follow-up text turn into the preceding tool_results', async () => {
       const provider = createProvider();
       const tcAdd: ToolCall = {
         type: 'function',
@@ -830,14 +1139,74 @@ describe('AnthropicChatProvider', () => {
       };
       const msgs = body['messages'] as MsgParam[];
 
-      // 4 messages: user prompt, assistant tool_use, merged tool_result user, final text user.
-      expect(msgs).toHaveLength(4);
+      // 3 messages: user prompt, assistant tool_use, and a single merged user
+      // turn holding both tool_results followed by the follow-up text.
+      expect(msgs).toHaveLength(3);
+      expect(msgs[2]!.role).toBe('user');
+      expect(msgs[2]!.content).toHaveLength(3);
+      expect(msgs[2]!.content.slice(0, 2).every((b) => b.type === 'tool_result')).toBe(true);
+      expect(msgs[2]!.content[2]!.type).toBe('text');
+      expect(msgs[2]!.content[2]!.text).toBe('Now summarize');
+    });
+
+    // Single tool call answered, then a follow-up text turn (e.g. an injected
+    // reminder/notification after the tool result). The tool_result and the
+    // text must collapse into one user message so no two user turns are adjacent.
+    it('merges a single tool_result with a following injected text turn', async () => {
+      const provider = createProvider();
+      const tcRead: ToolCall = {
+        type: 'function',
+        id: 'call_read',
+        name: 'read',
+        arguments: '{"path": "a.ts"}',
+      };
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Read it' }], toolCalls: [] },
+        { role: 'assistant', content: [], toolCalls: [tcRead] },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'file body' }],
+          toolCallId: 'call_read',
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'system reminder' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const msgs = body['messages'] as Array<{
+        role: string;
+        content: Array<{ type: string; text?: string }>;
+      }>;
+
+      // No two adjacent user messages: tool_result + reminder share one turn.
+      const roles = msgs.map((m) => m.role);
+      expect(roles).toEqual(['user', 'assistant', 'user']);
       expect(msgs[2]!.content).toHaveLength(2);
-      expect(msgs[2]!.content.every((b) => b.type === 'tool_result')).toBe(true);
-      expect(msgs[3]!.role).toBe('user');
-      expect(msgs[3]!.content).toHaveLength(1);
-      expect(msgs[3]!.content[0]!.type).toBe('text');
-      expect(msgs[3]!.content[0]!.text).toBe('Now summarize');
+      expect(msgs[2]!.content[0]!.type).toBe('tool_result');
+      expect(msgs[2]!.content[1]!.type).toBe('text');
+      expect(msgs[2]!.content[1]!.text).toBe('system reminder');
+    });
+
+    it('merges consecutive plain-text user messages into one', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'First' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Second' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Third' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const msgs = body['messages'] as Array<{
+        role: string;
+        content: Array<{ type: string; text?: string }>;
+      }>;
+
+      // Strict Anthropic-compatible backends reject consecutive user messages,
+      // so back-to-back plain-text user turns (e.g. the post-compaction shape
+      // of kept prompts + user-role summary + reminders) must be collapsed.
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]!.role).toBe('user');
+      expect(msgs[0]!.content.map((block) => block.text)).toEqual(['First', 'Second', 'Third']);
     });
 
     it('assistant with thinking (has encrypted -> ThinkingBlockParam)', async () => {
@@ -1643,7 +2012,7 @@ describe('AnthropicChatProvider', () => {
       expect(provider.thinkingEffort).toBe('high');
     });
 
-    it('pre-4.6 budget-based levels', () => {
+    it('pre-4.6 budget-based efforts', () => {
       const low = createProvider().withThinking('low');
       expect(low.thinkingEffort).toBe('low');
 
@@ -2250,6 +2619,7 @@ describe('AnthropicChatProvider', () => {
 describe('resolveDefaultMaxTokens', () => {
   it('returns per-version Messages-API caps for known Claude 4 models', () => {
     expect(resolveDefaultMaxTokens('claude-fable-5')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-5-20251101')).toBe(64000);
@@ -2281,6 +2651,7 @@ describe('resolveDefaultMaxTokens', () => {
   });
 
   it('matches dotted version separators', () => {
+    expect(resolveDefaultMaxTokens('claude-opus-4.8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4.6')).toBe(64000);
@@ -2303,12 +2674,15 @@ describe('resolveDefaultMaxTokens', () => {
     expect(resolveDefaultMaxTokens('anthropic.claude-3-5-sonnet-20240620-v1:0')).toBe(8192);
   });
 
-  it('falls back to family-only ceiling for unknown minor versions', () => {
-    // Future opus-4-X release: minor not in table, falls back to opus-4 = 32000.
-    // Better to under-quote and fail loudly than over-quote a model we can't verify.
-    expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(32000);
+  it('falls back to the nearest lower catalogued minor for unknown minors', () => {
+    // opus-4-9/4-10 are not in the table; they reuse opus-4-8's 128k
+    // ceiling (a newer minor inherits at least its predecessor's cap).
+    expect(resolveDefaultMaxTokens('claude-opus-4-9')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4-9')).toBe(64000);
     expect(resolveDefaultMaxTokens('claude-haiku-4-9')).toBe(64000);
+    // A gap between catalogued minors also resolves to the nearest lower one.
+    expect(resolveDefaultMaxTokens('claude-opus-4-3')).toBe(32000);
   });
 
   it('matches case-insensitively', () => {
@@ -2385,8 +2759,8 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 200 })).toBe(200);
   });
 
-  it('clamps defaultMaxTokens above the documented ceiling for known models', async () => {
-    expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(128000);
+  it('honors explicit defaultMaxTokens above the ceiling for known models', async () => {
+    expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(999999);
   });
 
   it('withMaxCompletionTokens sets max_tokens when no existing cap is present', async () => {
@@ -2405,6 +2779,25 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
 
     expect(provider).not.toBe(original);
     expect(body['max_tokens']).toBe(2048);
+    expect(provider.maxCompletionTokens).toBe(2048);
+  });
+
+  it('exposes the constructor-resolved max_tokens without any budget application', async () => {
+    // max_tokens is required by the Messages API, so even when completion
+    // budgeting is disabled the wire carries the constructor default; the
+    // exposed cap must reflect it for the request trace.
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(provider.maxCompletionTokens).toBeDefined();
+    expect(provider.maxCompletionTokens).toBe(body['max_tokens']);
   });
 
   it('withMaxCompletionTokens lowers the inferred model default cap', async () => {
@@ -2434,6 +2827,9 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     const body = await captureRequestBody(provider, '', [], history);
 
     expect(body['max_tokens']).toBe(1024);
+    // The exposed effective cap tracks the preserved existing value, not the
+    // requested budget — the request trace records this field.
+    expect(provider.maxCompletionTokens).toBe(1024);
   });
 
   it('withMaxCompletionTokens preserves an existing higher max_tokens cap', async () => {
@@ -2449,6 +2845,21 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
     const body = await captureRequestBody(provider, '', [], history);
 
     expect(body['max_tokens']).toBe(128000);
+  });
+
+  it('withMaxCompletionTokens preserves explicit defaultMaxTokens above the ceiling for known models', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 999999,
+    }).withMaxCompletionTokens(1024);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(999999);
   });
 
   it('withMaxCompletionTokens clamps above the documented ceiling for known models', async () => {

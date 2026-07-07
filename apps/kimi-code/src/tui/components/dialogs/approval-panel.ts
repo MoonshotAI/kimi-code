@@ -14,7 +14,7 @@ import {
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
@@ -378,6 +378,18 @@ export class ApprovalPanelComponent extends Container implements Focusable {
         lines.push(indent(`${selectColorBold('▶')} ${selectColorBold(labelWithNum)}`));
       } else {
         lines.push(indent(strong(`  ${labelWithNum}`)));
+      }
+
+      // Optional helper text under the label, aligned past the pointer/number.
+      // Choices without a description render exactly as before.
+      if (
+        option.description !== undefined &&
+        option.description.length > 0 &&
+        !(this.feedbackMode && option.requires_feedback === true && isSelected)
+      ) {
+        for (const descLine of wrapTextWithAnsi(option.description, Math.max(20, width - 7))) {
+          lines.push(indent(`     ${dim(descLine)}`));
+        }
       }
     }
 

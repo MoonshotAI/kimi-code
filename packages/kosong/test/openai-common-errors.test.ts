@@ -330,10 +330,10 @@ describe('thinkingEffortToReasoningEffort', () => {
   it('maps max -> "xhigh"', () => {
     expect(thinkingEffortToReasoningEffort('max')).toBe('xhigh');
   });
-  it('throws on unknown effort', () => {
-    expect(() => thinkingEffortToReasoningEffort('extreme' as never)).toThrow(
-      /Unknown thinking effort/,
-    );
+  it('normalizes unknown effort to undefined', () => {
+    // Unknown / model-declared efforts (including 'on') are tolerated: the
+    // provider omits reasoning_effort and lets the model use its own default.
+    expect(thinkingEffortToReasoningEffort('extreme' as never)).toBeUndefined();
   });
 });
 describe('reasoningEffortToThinkingEffort', () => {

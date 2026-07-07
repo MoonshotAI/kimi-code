@@ -1,10 +1,16 @@
+import { Readable, type Writable } from 'node:stream';
+
+import type { KaosProcess } from '@moonshot-ai/kaos';
 import type { Message } from '@moonshot-ai/kosong';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import type { ContextMessage } from '../../src/agent/context/types';
+import { buildImageCompressionCaption } from '../../src/tools/support/image-compress';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { testAgent } from './harness/agent';
 
 describe('Agent context', () => {
@@ -17,6 +23,19 @@ describe('Agent context', () => {
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: { type: 'step.begin', uuid: 'origin-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'origin-tool',
+        turnId: '',
+        step: 1,
+        stepUuid: 'origin-step',
+        toolCallId: 'call_origin',
+        name: 'Run',
+        args: {},
+      },
     });
     ctx.dispatch({
       type: 'context.append_loop_event',
@@ -41,10 +60,322 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
   });
 
+  it('preserves tool call extras (Gemini thought_signature) through to projection', () => {
+    // Regression: Gemini 3 requires the thought_signature returned on a
+    // functionCall to be echoed back when the call is re-sent in the next turn.
+    // The signature travels as ToolCall.extras.thought_signature_b64; it must
+    // survive the loop tool.call event -> context recording -> projection so
+    // the provider can put it back on the outbound functionCall part.
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 'sig-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'sig-tool',
+        turnId: '',
+        step: 1,
+        stepUuid: 'sig-step',
+        toolCallId: 'call_sig',
+        name: 'Bash',
+        args: { command: 'echo hi' },
+        extras: { thought_signature_b64: 'c2lnbmF0dXJl' },
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.end', uuid: 'sig-step', turnId: '', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'sig-tool',
+        toolCallId: 'call_sig',
+        result: { output: 'hi' },
+      },
+    });
+
+    const expectedExtras = { thought_signature_b64: 'c2lnbmF0dXJl' };
+    const recorded = ctx.agent.context.history.find((m) => m.role === 'assistant');
+    expect(recorded?.toolCalls[0]?.extras).toEqual(expectedExtras);
+    const projected = ctx.agent.context.messages.find((m) => m.role === 'assistant');
+    expect(projected?.toolCalls[0]?.extras).toEqual(expectedExtras);
+  });
+
+  it('reroutes an inline image-compression caption into a hidden system reminder', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    // The TUI merges the caption into the preceding text segment; the server
+    // route emits it as a standalone part. Cover the merged (harder) shape.
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: `能展示但是没有快捷键提示${caption}` },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'injection', variant: 'image_compression' } },
+      { role: 'user', origin: { kind: 'user' } },
+    ]);
+    const [reminder, userMessage] = ctx.agent.context.history;
+    expect(textOf(reminder!)).toContain('<system-reminder>');
+    expect(textOf(reminder!)).toContain('Image compressed to fit model limits');
+    expect(textOf(reminder!)).toContain('/tmp/originals/shot.png');
+    expect(textOf(reminder!)).not.toContain('<system>');
+    expect(textOf(userMessage!)).toBe('能展示但是没有快捷键提示');
+    expect(userMessage!.content.some((part) => part.type === 'image_url')).toBe(true);
+  });
+
+  it('drops a caption-only text part instead of leaving an empty user text part', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    ctx.agent.context.appendUserMessage([
+      { type: 'text', text: caption },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+
+    const [, userMessage] = ctx.agent.context.history;
+    expect(userMessage!.content).toEqual([
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+    ]);
+  });
+
+  it('leaves caption-shaped text alone on non-user origins', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const caption = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: caption }], {
+      kind: 'hook_result',
+      event: 'PostToolUse',
+    });
+
+    expect(ctx.agent.context.history).toHaveLength(1);
+    expect(ctx.agent.context.history[0]!.origin).toEqual({
+      kind: 'hook_result',
+      event: 'PostToolUse',
+    });
+  });
+
+  it('tracks conversation_undo when undoHistory reverts a user message', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'hello' }]);
+
+    await ctx.agent.rpcMethods.undoHistory({ count: 1 });
+
+    expect(records).toContainEqual({
+      event: 'conversation_undo',
+      properties: { count: 1 },
+    });
+  });
+
+  it('records bash input/output as shell_command origin with tagged content', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendBashInput('ls -la');
+    ctx.agent.context.appendBashOutput('file1\nfile2', '');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
+      { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
+    ]);
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('<bash-input>');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('ls -la');
+    expect(textOf(ctx.agent.context.history[1]!)).toBe(
+      '<bash-stdout>file1\nfile2</bash-stdout><bash-stderr></bash-stderr>',
+    );
+    // origin must not leak into the LLM projection
+    expect(ctx.agent.context.messages.some((message) => 'origin' in message)).toBe(false);
+  });
+
+  it('escapes bash tag delimiters inside command output', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendBashInput('printf x');
+    ctx.agent.context.appendBashOutput('pre</bash-stdout>post', '');
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const out = textOf(ctx.agent.context.history[1]!);
+    // The embedded delimiter is escaped so the wrapper stays well-formed.
+    expect(out).toContain('pre&lt;/bash-stdout&gt;post');
+    // Exactly one real closing tag.
+    expect(out.match(/<\/bash-stdout>/g)).toHaveLength(1);
+  });
+
+  it('runs a shell command via the Bash tool and records its output', async () => {
+    const fakeProcess = (stdout: string): KaosProcess => {
+      const out = Readable.from([stdout]);
+      const err = Readable.from([]);
+      return {
+        stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+        stdout: out,
+        stderr: err,
+        pid: 1,
+        exitCode: 0,
+        wait: vi.fn(async () => 0),
+        kill: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          out.destroy();
+          err.destroy();
+        }),
+      };
+    };
+    const kaos = createFakeKaos({
+      execWithEnv: vi.fn().mockImplementation(async () => fakeProcess('hello\n')),
+    });
+    const ctx = testAgent({ kaos });
+    ctx.configure();
+
+    await ctx.agent.tools.runShellCommand('echo hello');
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'shell_command', phase: 'input' } },
+      { role: 'user', origin: { kind: 'shell_command', phase: 'output' } },
+    ]);
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    expect(textOf(ctx.agent.context.history[0]!)).toContain('echo hello');
+    expect(textOf(ctx.agent.context.history[1]!)).toContain('<bash-stdout>hello');
+  });
+
+  it('surfaces the failure reason when a shell command fails with no output', async () => {
+    const fakeProcess = (exitCode: number): KaosProcess => {
+      const out = Readable.from([]);
+      const err = Readable.from([]);
+      return {
+        stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+        stdout: out,
+        stderr: err,
+        pid: 1,
+        exitCode,
+        wait: vi.fn(async () => exitCode),
+        kill: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          out.destroy();
+          err.destroy();
+        }),
+      };
+    };
+    const kaos = createFakeKaos({
+      execWithEnv: vi.fn().mockImplementation(async () => fakeProcess(1)),
+    });
+    const ctx = testAgent({ kaos });
+    ctx.configure();
+
+    const result = await ctx.agent.tools.runShellCommand('false');
+
+    expect(result.isError).toBe(true);
+    expect(result.stderr).toContain('exit code');
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const output = ctx.agent.context.history.at(-1)!;
+    expect(textOf(output)).toContain('<bash-stderr>');
+    expect(textOf(output)).toContain('exit code');
+  });
+
+  it('normalizes a whitespace-only array tool result to the empty-output placeholder', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_ws',
+        turnId: 't',
+        step: 1,
+        stepUuid: 's1',
+        toolCallId: 'call_ws',
+        name: 'Run',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_ws',
+        toolCallId: 'call_ws',
+        // Array (ContentPart[]) output whose only block is whitespace. The tool
+        // contract allows arbitrary content arrays (e.g. MCP tools), so this must
+        // be normalized to the empty placeholder rather than left to be stripped
+        // empty by projection (which would throw on every send).
+        result: { output: [{ type: 'text', text: '   \n' }] },
+      },
+    });
+
+    expect(() => ctx.agent.context.messages).not.toThrow();
+    expect(ctx.agent.context.messages).toMatchObject([
+      { role: 'assistant', toolCalls: [{ id: 'call_ws' }] },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
+        toolCallId: 'call_ws',
+      },
+    ]);
+  });
+
   it('renders tool error and empty-output status as model-visible text', () => {
     const ctx = testAgent();
     ctx.configure();
 
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    for (const toolCallId of ['call_error', 'call_empty']) {
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: 't',
+          step: 1,
+          stepUuid: 's1',
+          toolCallId,
+          name: 'Run',
+          args: {},
+        },
+      });
+    }
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: {
@@ -65,13 +396,209 @@ describe('Agent context', () => {
     });
 
     expect(ctx.agent.context.messages).toMatchObject([
+      { role: 'assistant', toolCalls: [{ id: 'call_error' }, { id: 'call_empty' }] },
       {
         role: 'tool',
         content: [
-          { type: 'text', text: '<system>ERROR: Tool execution failed.</system>\npermission denied' },
+          {
+            type: 'text',
+            text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
+          },
         ],
         toolCallId: 'call_error',
       },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
+        toolCallId: 'call_empty',
+      },
+    ]);
+  });
+
+  it('keeps raw tool result output in history; error status is added only in projection', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_raw',
+        turnId: 't',
+        step: 1,
+        stepUuid: 's1',
+        toolCallId: 'call_raw',
+        name: 'Run',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_raw',
+        toolCallId: 'call_raw',
+        result: { output: 'permission denied', isError: true },
+      },
+    });
+
+    // History stores the fact: the tool's own output plus the structured
+    // isError flag. The ERROR status line is a model-projection concern and
+    // must not be materialized here (UIs read history/replay verbatim).
+    const stored = ctx.agent.context.history.find((m) => m.toolCallId === 'call_raw')!;
+    expect(stored.content).toEqual([{ type: 'text', text: 'permission denied' }]);
+    expect(stored.isError).toBe(true);
+
+    const projected = ctx.agent.context.messages.find((m) => m.toolCallId === 'call_raw')!;
+    expect(projected.content).toEqual([
+      {
+        type: 'text',
+        text: '<system>ERROR: Tool execution failed.</system>\npermission denied',
+      },
+    ]);
+  });
+
+  it('carries a tool result note into history and appends it in the LLM projection', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 's1', turnId: 't', step: 1 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_note',
+        turnId: 't',
+        step: 1,
+        stepUuid: 's1',
+        toolCallId: 'call_note',
+        name: 'Run',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_note',
+        toolCallId: 'call_note',
+        result: { output: 'file body', note: '<system>10 lines read.</system>' },
+      },
+    });
+
+    // The note rides the message as a structured field (like origin/isError):
+    // output stays pure data, so UIs can render it without any stripping.
+    const stored = ctx.agent.context.history.find((m) => m.toolCallId === 'call_note')!;
+    expect(stored.content).toEqual([{ type: 'text', text: 'file body' }]);
+    expect(stored.note).toBe('<system>10 lines read.</system>');
+
+    // The model projection joins the note into the text-only output (single
+    // part keeps providers on the plain-string tool content path) and drops
+    // the structured field from the wire message.
+    const projected = ctx.agent.context.messages.find((m) => m.toolCallId === 'call_note')!;
+    expect(projected.content).toEqual([
+      { type: 'text', text: 'file body\n<system>10 lines read.</system>' },
+    ]);
+    expect('note' in projected).toBe(false);
+  });
+
+  it('drops empty and whitespace-only text parts in LLM projection', () => {
+    const history: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '' },
+          { type: 'text', text: 'Run the tool' },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '' }],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '' }],
+        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'result' }],
+        toolCalls: [],
+        toolCallId: 'call_empty',
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
+        toolCalls: [],
+      },
+      {
+        // Whitespace-only message: strict providers reject the block, so the
+        // whole message is dropped from the projection.
+        role: 'user',
+        content: [{ type: 'text', text: '   ' }],
+        toolCalls: [],
+      },
+    ];
+
+    expect(project(history)).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Run the tool' }],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'result' }],
+        toolCalls: [],
+        toolCallId: 'call_empty',
+      },
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: '', encrypted: 'enc_empty_thinking' }],
+        toolCalls: [],
+      },
+    ]);
+    expect(history[0]?.content).toEqual([
+      { type: 'text', text: '' },
+      { type: 'text', text: 'Run the tool' },
+    ]);
+    expect(history[1]?.content).toEqual([{ type: 'text', text: '' }]);
+  });
+
+  it('heals an empty tool result into the placeholder during LLM projection', () => {
+    const history: ContextMessage[] = [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_empty', name: 'empty', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '' }],
+        toolCallId: 'call_empty',
+        toolCalls: [],
+      },
+    ];
+
+    // History stores the empty output as a fact; the projection renders it
+    // into the model-visible placeholder so strict providers never see an
+    // empty tool message.
+    expect(project(history)).toMatchObject([
+      { role: 'assistant' },
       {
         role: 'tool',
         content: [{ type: 'text', text: '<system>Tool output is empty.</system>' }],
@@ -335,7 +862,95 @@ describe('Agent context', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('preserves deferred reminders when compaction keeps a pending tool exchange', async () => {
+  // Regression: a user message injected after `step.begin` but before the first
+  // `tool.call` (e.g. a background-task notification flushed mid-step) lands
+  // between the assistant `tool_use` and its `tool_result` in history, which
+  // strict providers (Anthropic) reject with HTTP 400. The projector must repair
+  // the adjacency so the `tool_result` immediately follows the `tool_use`. Micro
+  // compaction exposed this latent misordering by busting the prompt cache.
+  it('repairs a tool_use/tool_result adjacency broken by an injected user message', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    const stepUuid = 'mid-step-notify-step';
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'drive the tank' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '0', step: 1 },
+    });
+
+    // Notification arrives in the gap between step.begin and tool.call, when no
+    // tool result is yet pending, so it is pushed directly into history.
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: '<notification>bg done</notification>' }], {
+      kind: 'background_task',
+      taskId: 'task-1',
+      status: 'completed',
+      notificationId: 'task:task-1:completed',
+    });
+
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_drive',
+        turnId: '0',
+        step: 1,
+        stepUuid,
+        toolCallId: 'call_drive',
+        name: 'Drive',
+        args: {},
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '0',
+        step: 1,
+        finishReason: 'tool_use',
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_drive',
+        toolCallId: 'call_drive',
+        result: { output: 'drove forward' },
+      },
+    });
+
+    // History preserves the original (misordered) sequence: the notification sits
+    // between the assistant tool_use and its tool_result.
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'tool',
+    ]);
+
+    // Projection repairs the adjacency: the tool_result immediately follows the
+    // assistant tool_use, and the sandwiched notification is moved after it.
+    const projected = ctx.agent.context.messages;
+    expect(projected.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    const assistantIndex = projected.findIndex(
+      (message) => message.role === 'assistant' && message.toolCalls.length > 0,
+    );
+    expect(projected[assistantIndex]?.toolCalls.map((toolCall) => toolCall.id)).toEqual([
+      'call_drive',
+    ]);
+    expect(projected[assistantIndex + 1]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_drive',
+    });
+    expect(projected[assistantIndex + 2]?.content).toEqual([
+      { type: 'text', text: '<notification>bg done</notification>' },
+    ]);
+    await ctx.expectResumeMatches();
+  });
+
+  it('drops deferred reminders when compaction drops a pending tool exchange', async () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -348,20 +963,24 @@ describe('Agent context', () => {
     });
     ctx.agent.context.applyCompaction({
       summary: 'summary of old prompt',
-      compactedCount: 1,
+      compactedCount: 4,
       tokensBefore: 100,
-      tokensAfter: 40,
     });
     ctx.agent.context.appendSystemReminder('second reminder', {
       kind: 'injection',
       variant: 'host',
     });
 
+    // Compaction keeps only the real user prompt plus the summary; the deferred
+    // first reminder is dropped because initial context is rebuilt every turn.
+    // The second reminder, appended after compaction, is preserved.
     expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
-      'assistant',
       'user',
-      'assistant',
-      'tool',
+      'user',
+      'user',
+    ]);
+    expect(ctx.agent.context.messages[2]?.content).toEqual([
+      { type: 'text', text: '<system-reminder>\nsecond reminder\n</system-reminder>' },
     ]);
 
     ctx.dispatch({
@@ -374,22 +993,45 @@ describe('Agent context', () => {
       },
     });
 
+    // The pending tool exchange was dropped by compaction, so the late tool
+    // result is ignored and the history is unchanged.
     expect(ctx.agent.context.messages.map((message) => message.role)).toEqual([
-      'assistant',
-      'user',
-      'assistant',
-      'tool',
-      'tool',
       'user',
       'user',
-    ]);
-    expect(ctx.agent.context.messages[5]?.content).toEqual([
-      { type: 'text', text: '<system-reminder>\nfirst reminder\n</system-reminder>' },
-    ]);
-    expect(ctx.agent.context.messages[6]?.content).toEqual([
-      { type: 'text', text: '<system-reminder>\nsecond reminder\n</system-reminder>' },
+      'user',
     ]);
     await ctx.expectResumeMatches();
+  });
+
+  it('applyCompaction keeps only real user input from mixed user-role history', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'real prompt' }]);
+    ctx.agent.context.appendBashInput('pwd');
+    ctx.agent.context.appendBashOutput('/tmp/repo', '', false);
+    ctx.agent.context.appendLocalCommandStdout('local command output');
+    ctx.agent.context.appendSystemReminder('stale reminder', {
+      kind: 'injection',
+      variant: 'host',
+    });
+
+    const result = ctx.agent.context.applyCompaction({
+      summary: 'summary of mixed history',
+      compactedCount: 5,
+      tokensBefore: 100,
+    });
+    ctx.agent.context.appendSystemReminder('fresh reminder', {
+      kind: 'injection',
+      variant: 'host',
+    });
+
+    expect(ctx.agent.context.history.map(({ role, origin }) => ({ role, origin }))).toEqual([
+      { role: 'user', origin: { kind: 'user' } },
+      { role: 'user', origin: { kind: 'compaction_summary' } },
+      { role: 'user', origin: { kind: 'injection', variant: 'host' } },
+    ]);
+    expect(result.keptUserMessageCount).toBe(1);
   });
 
   it('clears context before the next LLM request', async () => {
@@ -420,9 +1062,8 @@ describe('Agent context', () => {
       summary: 'summary of old context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
-    expect(ctx.agent.context.history[0]?.origin).toEqual({ kind: 'compaction_summary' });
+    expect(ctx.agent.context.history.at(-1)?.origin).toEqual({ kind: 'compaction_summary' });
 
     ctx.mockNextResponse({ type: 'text', text: 'after compaction' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'new prompt' }] });
@@ -432,8 +1073,9 @@ describe('Agent context', () => {
       system: <system-prompt>
       tools: []
       messages:
-        assistant: text "summary of old context"
-        user: text "recent user message\\n\\nnew prompt"
+        user: text "old user message\\n\\nrecent user message"
+        user: text "summary of old context"
+        user: text "new prompt"
     `);
     await ctx.expectResumeMatches();
   });
@@ -507,6 +1149,41 @@ describe('Agent context', () => {
     );
   });
 
+  it('does not zero tokenCount when a filtered step reports zero usage', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
+    expect(ctx.agent.context.tokenCount).toBe(1_000);
+
+    const stepUuid = 'context-filtered-step';
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'next prompt' }]);
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '0', step: 2 },
+    });
+    ctx.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '0',
+        step: 2,
+        usage: {
+          inputOther: 0,
+          output: 0,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'filtered',
+      },
+    });
+
+    expect(ctx.agent.context.tokenCount).toBeGreaterThan(1_000);
+    expect(ctx.agent.context.tokenCountWithPending).toBeGreaterThanOrEqual(
+      ctx.agent.context.tokenCount,
+    );
+  });
+
   it('undo only counts real user prompts, skipping background notifications', () => {
     const ctx = testAgent();
     ctx.configure();
@@ -549,7 +1226,6 @@ describe('Agent context', () => {
       summary: 'summary of compacted context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
     ctx.agent.context.appendMessage({
@@ -567,7 +1243,11 @@ describe('Agent context', () => {
 
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({
-        role: 'assistant',
+        role: 'user',
+        content: [{ type: 'text', text: 'old user message' }],
+      }),
+      expect.objectContaining({
+        role: 'user',
         origin: { kind: 'compaction_summary' },
         content: [{ type: 'text', text: 'summary of compacted context' }],
       }),
@@ -589,7 +1269,6 @@ describe('Agent context', () => {
       summary: 'summary of compacted context',
       compactedCount: 1,
       tokensBefore: 100,
-      tokensAfter: 20,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
     ctx.agent.context.appendMessage({
@@ -603,7 +1282,11 @@ describe('Agent context', () => {
     }).not.toThrow();
     expect(ctx.agent.context.history).toEqual([
       expect.objectContaining({
-        role: 'assistant',
+        role: 'user',
+        content: [{ type: 'text', text: 'old user message' }],
+      }),
+      expect.objectContaining({
+        role: 'user',
         origin: { kind: 'compaction_summary' },
         content: [{ type: 'text', text: 'summary of compacted context' }],
       }),
@@ -655,9 +1338,7 @@ describe('Agent context', () => {
 });
 
 describe('Agent context notification projection', () => {
-  it('renders task notifications with escaped attributes and a bounded output tail', () => {
-    const tail = Array.from({ length: 25 }, (_, index) => `line ${String(index + 1)}`).join('\n');
-
+  it('renders task notifications with escaped attributes and generic children', () => {
     const text = renderNotificationXml({
       id: 'n_"1&2',
       category: 'task',
@@ -667,17 +1348,24 @@ describe('Agent context notification projection', () => {
       title: 'Task finished',
       severity: 'info',
       body: 'The task completed.',
-      tail_output: tail,
+      children: [
+        [
+          '<output-file path="/tmp/logs/a&amp;b/output.log" bytes="1234">',
+          'Read the output file to retrieve the result: /tmp/logs/a&amp;b/output.log',
+          '</output-file>',
+        ].join('\n'),
+      ],
     });
 
     expect(text).toContain('id="n_&quot;1&amp;2"');
     expect(text).toContain('source_id="bg&amp;1"');
     expect(text).toContain('Title: Task finished');
     expect(text).toContain('Severity: info');
-    expect(text).toContain('<task-notification>');
-    expect(text).not.toContain('line 5');
-    expect(text).toContain('line 6');
-    expect(text).toContain('line 25');
+    expect(text).toContain('<output-file path="/tmp/logs/a&amp;b/output.log" bytes="1234">');
+    expect(text).toContain(
+      'Read the output file to retrieve the result: /tmp/logs/a&amp;b/output.log',
+    );
+    expect(text).not.toContain('<task-notification>');
     expect(text.trimEnd()).toMatch(/<\/notification>$/);
   });
 
@@ -721,13 +1409,14 @@ describe('Agent context notification projection', () => {
     const text = renderNotificationXml({
       id: '',
       source_kind: 'host',
-      tail_output: 'should stay out of the XML',
+      output_path: '/tmp/output.log',
     });
 
     expect(text).toContain('id="unknown"');
     expect(text).toContain('category="unknown"');
     expect(text).not.toContain('<task-notification>');
-    expect(text).not.toContain('should stay out of the XML');
+    expect(text).not.toContain('<output-file');
+    expect(text).not.toContain('/tmp/output.log');
   });
 
   it('does not merge a cron-fire envelope into an adjacent user message', () => {
@@ -793,3 +1482,63 @@ function textOf(message: Message): string {
     .map((part) => part.text)
     .join('');
 }
+
+describe('strictMessages duplicate tool call ids', () => {
+  it('keeps duplicates on the normal projection but dedupes them in the strict one', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run the tool twice' }]);
+    // A provider with per-response counter ids reuses `call_dup` in two steps;
+    // both exchanges record their own result.
+    for (const step of [1, 2]) {
+      const stepUuid = `dup-step-${String(step)}`;
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+      });
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: `dup-call-${String(step)}`,
+          turnId: '',
+          step,
+          stepUuid,
+          toolCallId: 'call_dup',
+          name: 'Run',
+          args: { attempt: step },
+        },
+      });
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: stepUuid, turnId: '', step },
+      });
+      ctx.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: `dup-call-${String(step)}`,
+          toolCallId: 'call_dup',
+          result: { output: `result ${String(step)}` },
+        },
+      });
+    }
+
+    // Normal projection: the lax provider that produced the duplicate ids
+    // accepts them, so nothing is dropped.
+    const normal = ctx.agent.context.messages;
+    expect(
+      normal.filter((message) => message.role === 'assistant').flatMap((m) => m.toolCalls),
+    ).toHaveLength(2);
+    expect(normal.filter((message) => message.role === 'tool')).toHaveLength(2);
+
+    // Strict resend projection: one call, one result.
+    const strict = ctx.agent.context.strictMessages;
+    expect(
+      strict.filter((message) => message.role === 'assistant').flatMap((m) => m.toolCalls),
+    ).toHaveLength(1);
+    const strictResults = strict.filter((message) => message.role === 'tool');
+    expect(strictResults).toHaveLength(1);
+    expect(textOf(strictResults[0]!)).toBe('result 1');
+  });
+});

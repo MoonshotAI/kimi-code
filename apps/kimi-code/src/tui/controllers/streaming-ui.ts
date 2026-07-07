@@ -2,6 +2,7 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
+import { currentWorkingTip } from '../components/chrome/working-tips';
 import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
@@ -34,6 +35,7 @@ export interface StreamingUIHost {
   deferUserMessages: boolean;
   shiftQueuedMessage(): QueuedMessage | undefined;
   pushTranscriptEntry(entry: TranscriptEntry): void;
+  mergeCurrentTurnSteps(): void;
 }
 
 export class StreamingUIController {
@@ -263,6 +265,41 @@ export class StreamingUIController {
     if (target === undefined) return false;
     target.setBackgroundTaskTerminalStatus(args.status, { errorText: args.errorText });
     return true;
+  }
+
+  /**
+   * Mark a foreground subagent card as detached-to-background (`◐ backgrounded`).
+   * Routed from a `background.task.started` event whose `info.kind === 'agent'`,
+   * keyed by `agentId`. Returns true iff a matching component was found.
+   *
+   * Gated to cards that are currently foreground-running: `background.task.started`
+   * also fires for `Agent(run_in_background=true)` launches and for background
+   * resumes, and those must not mutate older completed rows that happen to share
+   * the same `agentId` (a resume's new card has no parsed `agent_id` yet, so the
+   * search can otherwise hit the previous completed card).
+   */
+  markSubagentBackgrounded(agentId: string | undefined): boolean {
+    if (agentId === undefined) return false;
+    const visit = (tc: ToolCallComponent): boolean => {
+      if (tc.getSubagentAgentId() !== agentId) return false;
+      const phase = tc.getSubagentSnapshot().phase;
+      if (phase !== 'running' && phase !== 'queued' && phase !== 'spawning') return false;
+      tc.markBackgrounded();
+      return true;
+    };
+    for (const tc of this._pendingToolComponents.values()) {
+      if (visit(tc)) return true;
+    }
+    for (const child of this.host.state.transcriptContainer.children) {
+      if (child instanceof ToolCallComponent) {
+        if (visit(child)) return true;
+      } else if (child instanceof AgentGroupComponent) {
+        for (const tc of child.getToolComponents()) {
+          if (visit(tc)) return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** Registers a tool call that arrived via tool.call.started.
@@ -499,6 +536,7 @@ export class StreamingUIController {
     this.disposeAndClearPendingToolComponents();
     this._pendingAgentGroup = null;
     this._pendingReadGroup = null;
+    this.resetToolCallState();
   }
 
   resetToolCallState(): void {
@@ -522,9 +560,15 @@ export class StreamingUIController {
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
+      // The message is out of the queue but not yet sent. Mark the dispatch
+      // pending *before* setAppState — that call synchronously retries
+      // queued-goal promotion, which would otherwise see an empty queue and an
+      // idle phase and start a goal ahead of this message.
+      state.queuedMessageDispatchPending = true;
       this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
       setTimeout(() => {
+        state.queuedMessageDispatchPending = false;
         sendQueued(next);
       }, 0);
       return;
@@ -564,12 +608,16 @@ export class StreamingUIController {
     const block = this._streamingBlock;
     if (block !== null) {
       block.entry.content = fullText;
-      block.component.updateContent(fullText);
+      block.component.updateContent(fullText, { transient: true });
       this.host.state.ui.requestRender();
     }
   }
 
   onStreamingTextEnd(): void {
+    const block = this._streamingBlock;
+    if (block !== null) {
+      block.component.updateContent(block.entry.content, { transient: false });
+    }
     this._streamingBlock = null;
   }
 
@@ -598,6 +646,7 @@ export class StreamingUIController {
     this._activeThinkingComponent.finalize();
     this._activeThinkingComponent = undefined;
     this.host.state.ui.requestRender();
+    this.host.mergeCurrentTurnSteps();
   }
 
   onToolCallStart(toolCall: ToolCallBlockData): void {
@@ -644,6 +693,7 @@ export class StreamingUIController {
       tc.setResult(result);
       this._pendingToolComponents.delete(toolCallId);
       state.ui.requestRender();
+      this.host.mergeCurrentTurnSteps();
       return;
     }
 
@@ -658,6 +708,7 @@ export class StreamingUIController {
       state.transcriptContainer.addChild(completed);
       state.ui.requestRender();
     }
+    this.host.mergeCurrentTurnSteps();
   }
 
   setTodoList(todos: readonly TodoItem[]): void {
@@ -676,16 +727,19 @@ export class StreamingUIController {
       this._activeCompactionBlock.markDone();
       this._activeCompactionBlock = undefined;
     }
-    const block = new CompactionComponent(state.ui, instruction);
+    const block = new CompactionComponent(state.ui, instruction, currentWorkingTip()?.text);
     this._activeCompactionBlock = block;
     state.transcriptContainer.addChild(block);
+    if (state.toolOutputExpanded) {
+      block.setExpanded(true);
+    }
     state.ui.requestRender();
   }
 
-  endCompaction(tokensBefore?: number, tokensAfter?: number): void {
+  endCompaction(tokensBefore?: number, tokensAfter?: number, summary?: string): void {
     const block = this._activeCompactionBlock;
     if (block === undefined) return;
-    block.markDone(tokensBefore, tokensAfter);
+    block.markDone(tokensBefore, tokensAfter, summary);
     this._activeCompactionBlock = undefined;
     this.host.state.ui.requestRender();
   }

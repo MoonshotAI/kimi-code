@@ -1,0 +1,61 @@
+{
+  "name": "@moonshot-ai/server",
+  "version": "0.2.4",
+  "private": true,
+  "description": "Local REST + WebSocket server exposing kimi-code SDK over a stable wire protocol.",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "directory": "packages/server"
+  },
+  "bugs": {
+    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+  },
+  "type": "module",
+  "imports": {
+    "#/services/approval": "./src/services/approval/index.ts",
+    "#/services/approval/*": "./src/services/approval/*.ts",
+    "#/services/gateway": "./src/services/gateway/index.ts",
+    "#/services/gateway/*": "./src/services/gateway/*.ts",
+    "#/services/guiStore/*": "./src/services/guiStore/*.ts",
+    "#/services/question": "./src/services/question/index.ts",
+    "#/services/question/*": "./src/services/question/*.ts",
+    "#/services/snapshot": "./src/services/snapshot/index.ts",
+    "#/services/snapshot/*": "./src/services/snapshot/*.ts",
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/swagger": "^9.7.0",
+    "@moonshot-ai/agent-core": "workspace:^",
+    "@moonshot-ai/protocol": "workspace:^",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^5.1.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "smol-toml": "^1.6.1",
+    "ulid": "^3.0.1",
+    "ws": "^8.18.0",
+    "zod": "catalog:",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/ws": "^8.18.0",
+    "jimp": "^1.6.1"
+  }
+}

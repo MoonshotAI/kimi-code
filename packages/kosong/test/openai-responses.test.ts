@@ -908,6 +908,7 @@ describe('OpenAIResponsesChatProvider', () => {
 
       expect(provider).not.toBe(original);
       expect(body['max_output_tokens']).toBe(1024);
+      expect(provider.maxCompletionTokens).toBe(1024);
     });
   });
 
@@ -971,7 +972,7 @@ describe('OpenAIResponsesChatProvider', () => {
 
     it('with_thinking("max") on gpt-5.1-codex-max clamps up to xhigh on the wire', async () => {
       // Regression guard: "max" used to fall back to "high"; for OpenAI it
-      // must clamp up to their highest supported level, xhigh.
+      // must clamp up to their highest supported effort, xhigh.
       const provider = new OpenAIResponsesChatProvider({
         model: 'gpt-5.1-codex-max',
         apiKey: 'test-key',

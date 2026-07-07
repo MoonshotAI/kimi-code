@@ -4,24 +4,28 @@ import { metaResponseSchema, type MetaResponse } from '../rest/meta';
 
 describe('metaResponseSchema', () => {
   const sample = {
-    daemon_version: '0.1.0',
+    server_version: '0.1.0',
     capabilities: {
       websocket: true,
       file_upload: true,
       fs_query: true,
       mcp: true,
       background_tasks: true,
+      terminal: true,
     },
-    daemon_id: '01HXYZABCDEFGHJKMNPQRSTVWX',
+    server_id: '01HXYZABCDEFGHJKMNPQRSTVWX',
     started_at: '2026-06-04T10:30:00.000Z',
+    open_in_apps: ['finder', 'vscode'] as const,
+    dangerous_bypass_auth: false,
   };
 
   it('round-trips a well-formed payload', () => {
     const parsed: MetaResponse = metaResponseSchema.parse(sample);
-    expect(parsed.daemon_version).toBe('0.1.0');
+    expect(parsed.server_version).toBe('0.1.0');
     expect(parsed.capabilities.websocket).toBe(true);
-    expect(parsed.daemon_id).toBe('01HXYZABCDEFGHJKMNPQRSTVWX');
+    expect(parsed.server_id).toBe('01HXYZABCDEFGHJKMNPQRSTVWX');
     expect(parsed.started_at).toBe('2026-06-04T10:30:00.000Z');
+    expect(parsed.dangerous_bypass_auth).toBe(false);
   });
 
   it('normalizes started_at to UTC Z with millisecond precision', () => {
@@ -33,8 +37,8 @@ describe('metaResponseSchema', () => {
     expect(parsed.started_at).toBe('2026-06-04T10:30:00.000Z');
   });
 
-  it('rejects missing daemon_version', () => {
-    const { daemon_version: _omit, ...rest } = sample;
+  it('rejects missing server_version', () => {
+    const { server_version: _omit, ...rest } = sample;
     expect(metaResponseSchema.safeParse(rest).success).toBe(false);
   });
 
@@ -43,14 +47,24 @@ describe('metaResponseSchema', () => {
     expect(metaResponseSchema.safeParse(rest).success).toBe(false);
   });
 
-  it('rejects missing daemon_id', () => {
-    const { daemon_id: _omit, ...rest } = sample;
+  it('rejects missing server_id', () => {
+    const { server_id: _omit, ...rest } = sample;
     expect(metaResponseSchema.safeParse(rest).success).toBe(false);
   });
 
   it('rejects missing started_at', () => {
     const { started_at: _omit, ...rest } = sample;
     expect(metaResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects missing dangerous_bypass_auth', () => {
+    const { dangerous_bypass_auth: _omit, ...rest } = sample;
+    expect(metaResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('accepts dangerous_bypass_auth = true', () => {
+    const parsed = metaResponseSchema.parse({ ...sample, dangerous_bypass_auth: true });
+    expect(parsed.dangerous_bypass_auth).toBe(true);
   });
 
   it('rejects a capability set with the wrong boolean literal', () => {
@@ -61,8 +75,8 @@ describe('metaResponseSchema', () => {
     expect(metaResponseSchema.safeParse(bad).success).toBe(false);
   });
 
-  it('rejects an empty daemon_version string', () => {
-    const bad = { ...sample, daemon_version: '' };
+  it('rejects an empty server_version string', () => {
+    const bad = { ...sample, server_version: '' };
     expect(metaResponseSchema.safeParse(bad).success).toBe(false);
   });
 

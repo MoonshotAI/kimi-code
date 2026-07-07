@@ -3,7 +3,8 @@ import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
-import { darkColors } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
+import { darkColors, lightColors } from '#/tui/theme/colors';
 
 const ESC = String.fromCodePoint(27);
 const SGR = new RegExp(`${ESC}\\[[0-9;]*m`, 'g');
@@ -34,7 +35,7 @@ function make(): {
       gpt: model('GPT-5', 'openai'),
     },
     currentValue: 'k2',
-    currentThinking: false,
+    currentThinkingEffort: 'off',
     onSelect,
     onCancel: vi.fn(),
   });
@@ -44,12 +45,15 @@ function make(): {
 
 describe('TabbedModelSelectorComponent', () => {
   let previousLevel: typeof chalk.level;
+  const previousPalette = currentTheme.palette;
   beforeAll(() => {
     previousLevel = chalk.level;
     chalk.level = 3;
+    currentTheme.setPalette(darkColors);
   });
   afterAll(() => {
     chalk.level = previousLevel;
+    currentTheme.setPalette(previousPalette);
   });
 
   it('renders an "All" + per-provider tab strip', () => {
@@ -64,6 +68,25 @@ describe('TabbedModelSelectorComponent', () => {
     // primary background SGR.
     const raw = make().component.render(120).join('\n');
     expect(raw).toContain(PRIMARY_BG);
+  });
+
+  it('repaints the tab strip from the current theme palette without remounting', () => {
+    const { component } = make();
+    const stripLine = (lines: string[]): string =>
+      lines.find((l) => l.includes('All') && l.includes('openai')) ?? '';
+    const previous = currentTheme.palette;
+    try {
+      currentTheme.setPalette(darkColors);
+      const darkStrip = stripLine(component.render(120));
+      currentTheme.setPalette(lightColors);
+      const lightStrip = stripLine(component.render(120));
+      // The strip is drawn from currentTheme.palette at render time; a
+      // construction-time palette snapshot would render the same strip after
+      // the switch.
+      expect(darkStrip).not.toBe(lightStrip);
+    } finally {
+      currentTheme.setPalette(previous);
+    }
   });
 
   it('opens on the All tab by default (showing every provider\'s models)', () => {
@@ -87,7 +110,7 @@ describe('TabbedModelSelectorComponent', () => {
     const { component, onSelect } = make();
     component.handleInput(RIGHT); // toggle thinking on for k2
     component.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith({ alias: 'k2', thinking: true });
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'k2', thinking: 'on' });
   });
 
   it('frames the tab strip with a blank line above and below it', () => {

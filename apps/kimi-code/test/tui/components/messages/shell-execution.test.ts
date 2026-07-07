@@ -112,7 +112,7 @@ describe('ShellExecutionComponent', () => {
   describe('shellExecutionResultRenderer', () => {
     const longCmd = `echo ${'a'.repeat(200)}\necho done`;
 
-    it('omits the command preview when collapsed', () => {
+    it('renders only the result and leaves the command to the call preview', () => {
       const components = shellExecutionResultRenderer(
         {
           id: 'call_1',
@@ -131,11 +131,14 @@ describe('ShellExecutionComponent', () => {
         .flatMap((c) => c.render(100))
         .map(strip)
         .join('\n');
+      // Command is owned by ToolCallComponent.buildCallPreview, not the
+      // renderer — rendering it here too would duplicate it once the result
+      // lands.
       expect(rendered).not.toContain('$ echo');
       expect(rendered).toContain('ok');
     });
 
-    it('reveals the full multi-line command when expanded', () => {
+    it('still renders only the result when expanded', () => {
       const components = shellExecutionResultRenderer(
         {
           id: 'call_1',
@@ -144,7 +147,7 @@ describe('ShellExecutionComponent', () => {
         },
         {
           tool_call_id: 'call_1',
-          output: 'ok',
+          output: ['line1', 'line2', 'line3', 'line4', 'line5'].join('\n'),
           is_error: false,
         },
         { expanded: true },
@@ -154,9 +157,9 @@ describe('ShellExecutionComponent', () => {
         .flatMap((c) => c.render(300))
         .map(strip)
         .join('\n');
-      expect(rendered).toContain(`$ echo ${'a'.repeat(200)}`);
-      expect(rendered).toContain('echo done');
-      expect(rendered).toContain('ok');
+      expect(rendered).not.toContain('$ echo');
+      expect(rendered).toContain('line4');
+      expect(rendered).toContain('line5');
     });
   });
 });

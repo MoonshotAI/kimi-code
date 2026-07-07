@@ -32,8 +32,8 @@ function makeHarnessWithModels(
 describe('buildModelOption', () => {
   it('emits exactly one option per catalog row (Phase 15: no inlined `,thinking` variant rows)', () => {
     const models: readonly AcpModelEntry[] = [
-      { id: 'alpha', name: 'Alpha', thinkingSupported: true },
-      { id: 'beta', name: 'Beta', thinkingSupported: false },
+      { id: 'alpha', name: 'Alpha', thinkingSupported: true, defaultThinkingEffort: 'on' },
+      { id: 'beta', name: 'Beta', thinkingSupported: false, defaultThinkingEffort: 'on' },
     ];
 
     const option = buildModelOption(models, 'alpha');
@@ -57,7 +57,7 @@ describe('buildModelOption', () => {
 
   it('treats `currentValue` as the bare base model id — Phase 15 keeps the snapshot suffix-free', () => {
     const models: readonly AcpModelEntry[] = [
-      { id: 'kimi-v2', name: 'Kimi v2', thinkingSupported: true },
+      { id: 'kimi-v2', name: 'Kimi v2', thinkingSupported: true, defaultThinkingEffort: 'on' },
     ];
 
     const option = buildModelOption(models, 'kimi-v2');

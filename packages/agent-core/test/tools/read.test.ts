@@ -59,9 +59,11 @@ function readLinesFromContent(content: string): Kaos['readLines'] {
   };
 }
 
-function withReadStatus(output: string, status: string): string {
-  const note = `<system>${status}</system>`;
-  return output.length > 0 ? `${output}\n${note}` : note;
+// The read status line rides the result's `note` side channel (rendered to
+// the model at projection time, never to UIs); the tool keeps its own
+// `<system>` wrapping as a wording choice.
+function readNote(status: string): string {
+  return `<system>${status}</system>`;
 }
 
 function toolWithContent(content: string, workspace: WorkspaceConfig = PERMISSIVE_WORKSPACE) {
@@ -130,8 +132,8 @@ describe('ReadTool', () => {
     const result = await executeTool(tool, context({ path: '/tmp/a.txt' }));
 
     expect(result).toEqual({
-      output: withReadStatus(
-        '1\talpha\n2\tbeta',
+      output: '1\talpha\n2\tbeta',
+      note: readNote(
         '2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.',
       ),
     });
@@ -142,9 +144,9 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '/tmp/a.txt' }));
 
-    expect(result.output).toBe(
-      withReadStatus(
-        ['1\talpha', '2\tbeta'].join('\n'),
+    expect(result.output).toBe(['1\talpha', '2\tbeta'].join('\n'));
+    expect(result.note).toBe(
+      readNote(
         '2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.',
       ),
     );
@@ -155,9 +157,9 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '/tmp/a.txt' }));
 
-    expect(result.output).toBe(
-      withReadStatus(
-        ['1\talpha\\r', '2\tbeta', '3\tgamma\\rdone'].join('\n'),
+    expect(result.output).toBe(['1\talpha\\r', '2\tbeta', '3\tgamma\\rdone'].join('\n'));
+    expect(result.note).toBe(
+      readNote(
         '3 lines read from file starting from line 1. Total lines in file: 3. End of file reached. Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.',
       ),
     );
@@ -169,10 +171,8 @@ describe('ReadTool', () => {
     const result = await executeTool(tool, context({ path: '/tmp/a.txt', line_offset: 2, n_lines: 2 }));
 
     expect(result).toEqual({
-      output: withReadStatus(
-        '2\tb\n3\tc',
-        '2 lines read from file starting from line 2. Total lines in file: 5.',
-      ),
+      output: '2\tb\n3\tc',
+      note: readNote('2 lines read from file starting from line 2. Total lines in file: 5.'),
     });
   });
 
@@ -182,10 +182,8 @@ describe('ReadTool', () => {
     const result = await executeTool(tool, context({ path: '/tmp/a.txt', line_offset: 20 }));
 
     expect(result).toEqual({
-      output: withReadStatus(
-        '',
-        'No lines read from file. Total lines in file: 2. End of file reached.',
-      ),
+      output: '',
+      note: readNote('No lines read from file. Total lines in file: 2. End of file reached.'),
     });
   });
 
@@ -195,8 +193,8 @@ describe('ReadTool', () => {
     const result = await executeTool(tool, context({ path: '/tmp/a.txt', line_offset: -3 }));
 
     expect(result).toEqual({
-      output: withReadStatus(
-        '3\tc\n4\td\n5\te',
+      output: '3\tc\n4\td\n5\te',
+      note: readNote(
         '3 lines read from file starting from line 3. Total lines in file: 5. End of file reached.',
       ),
     });
@@ -207,11 +205,9 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '/tmp/a.txt', line_offset: -5, n_lines: 2 }));
 
-    expect(result.output).toBe(
-      withReadStatus(
-        '1\ta\n2\tb',
-        '2 lines read from file starting from line 1. Total lines in file: 5.',
-      ),
+    expect(result.output).toBe('1\ta\n2\tb');
+    expect(result.note).toBe(
+      readNote('2 lines read from file starting from line 1. Total lines in file: 5.'),
     );
   });
 
@@ -250,9 +246,9 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '/tmp/external.txt' }));
 
-    expect(result.output).toBe(
-      withReadStatus(
-        '1\texternal',
+    expect(result.output).toBe('1\texternal');
+    expect(result.note).toBe(
+      readNote(
         '1 line read from file starting from line 1. Total lines in file: 1. End of file reached.',
       ),
     );
@@ -337,9 +333,9 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '~/notes/today.txt' }));
 
-    expect(result.output).toBe(
-      withReadStatus(
-        '1\thome note',
+    expect(result.output).toBe('1\thome note');
+    expect(result.note).toBe(
+      readNote(
         '1 line read from file starting from line 1. Total lines in file: 1. End of file reached.',
       ),
     );
@@ -381,6 +377,33 @@ describe('ReadTool', () => {
     expect(result.isError).toBe(true);
     expect(output).toMatch(/image file/i);
     expect(output).toMatch(/ReadMediaFile|media/i);
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('rejects an image-extension file whose bytes are not an image as not readable', async () => {
+    // A `.png` file with no recognisable image magic and no NUL byte is not a
+    // real image; it must fall through to the generic "not readable" error
+    // rather than being misidentified as an image and sent to ReadMediaFile.
+    const plainText = Buffer.from('this is plain ascii text, not a png');
+    const readText = vi
+      .fn<Kaos['readText']>()
+      .mockRejectedValue(new Error('readText should not be called for non-image files'));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(plainText),
+        readText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/fake.png' }));
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toBe(
+      '"/tmp/fake.png" is not readable as UTF-8 text. If it is an image or video, use ReadMediaFile. For other binary formats, use Bash or an MCP tool if available.',
+    );
     expect(readText).not.toHaveBeenCalled();
   });
 
@@ -523,7 +546,7 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '/tmp/long.txt' }));
 
-    expect(result.output).toContain('Lines [1, 3] were truncated.');
+    expect(result.note).toContain('Lines [1, 3] were truncated.');
     expect(result.output).toContain('...');
   });
 
@@ -535,12 +558,10 @@ describe('ReadTool', () => {
     const result = await executeTool(tool, context({ path: '/tmp/bytes.txt' }));
     const output = toolContentString(result);
 
-    const marker = '\n<system>';
-    const markerIndex = output.indexOf(marker);
-    expect(markerIndex).toBeGreaterThan(0);
-    const body = output.slice(0, markerIndex);
-    expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(MAX_BYTES);
-    expect(output).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    // The status line lives in the note now, so the whole output is body text
+    // and must fit the byte cap.
+    expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(MAX_BYTES);
+    expect(result.note).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
   });
 
   it('uses text preview for sniffing before falling back to readBytes', async () => {
@@ -602,11 +623,118 @@ describe('ReadTool', () => {
     expect(result.isError).toBeFalsy();
     expect(output).toContain('1\tline 1');
     expect(output).toContain(`${String(MAX_LINES)}\tline ${String(MAX_LINES)}`);
-    expect(output).toContain(`Total lines in file: ${String(MAX_LINES + 5)}.`);
-    expect(output).toContain(`Max ${String(MAX_LINES)} lines reached.`);
+    expect(result.note).toContain(`Total lines in file: ${String(MAX_LINES + 5)}.`);
+    expect(result.note).toContain(`Max ${String(MAX_LINES)} lines reached.`);
     expect(consumed).toBe(MAX_LINES + 5);
     expect(readBytes).toHaveBeenCalledWith('/tmp/large.txt', MEDIA_SNIFF_BYTES);
     expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('uses range reader when available without consuming readLines', async () => {
+    const content = Array.from({ length: 20 }, (_, i) => `line ${String(i + 1)}`).join('\n');
+    const bytes = Buffer.from(content, 'utf8');
+    const readLines = vi.fn<Kaos['readLines']>();
+    const readLineRange = vi.fn(async function* readLineRange(
+      _path: string,
+      options: { startLine: number; maxLines: number },
+    ): AsyncGenerator<string> {
+      for (let i = options.startLine; i < options.startLine + options.maxLines; i += 1) {
+        yield `line ${String(i)}\n`;
+      }
+    });
+    const scanTextFile = vi.fn(async () => ({
+      totalLines: 20,
+      endsWithNewline: false,
+      hasNul: false,
+      lineEndingFlags: { hasCrLf: false, hasLf: true, hasLoneCr: false },
+    }));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockImplementation(async (_path, n) => {
+          return n === undefined ? bytes : bytes.subarray(0, n);
+        }),
+        readLines,
+        scanTextFile,
+        readLineRange,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/range.txt', line_offset: 5, n_lines: 3 }));
+    const output = toolContentString(result);
+
+    expect(output).toContain('5\tline 5');
+    expect(output).toContain('7\tline 7');
+    expect(output).not.toContain('8\tline 8');
+    expect(readLineRange).toHaveBeenCalledWith('/tmp/range.txt', {
+      startLine: 5,
+      maxLines: 3,
+      errors: 'strict',
+    });
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
+  it('uses tail reader when available without consuming readLines', async () => {
+    const content = Array.from({ length: 20 }, (_, i) => `line ${String(i + 1)}`).join('\n');
+    const bytes = Buffer.from(content, 'utf8');
+    const readLines = vi.fn<Kaos['readLines']>();
+    const readTailLines = vi.fn(async function* readTailLines(): AsyncGenerator<string> {
+      yield 'line 18\n';
+      yield 'line 19\n';
+      yield 'line 20';
+    });
+    const scanTextFile = vi.fn(async () => ({
+      totalLines: 20,
+      endsWithNewline: false,
+      hasNul: false,
+      lineEndingFlags: { hasCrLf: false, hasLf: true, hasLoneCr: false },
+    }));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockImplementation(async (_path, n) => {
+          return n === undefined ? bytes : bytes.subarray(0, n);
+        }),
+        readLines,
+        scanTextFile,
+        readTailLines,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/tail.txt', line_offset: -3 }));
+    const output = toolContentString(result);
+
+    expect(output).toContain('18\tline 18');
+    expect(output).toContain('20\tline 20');
+    expect(readTailLines).toHaveBeenCalledWith('/tmp/tail.txt', { tailCount: 3, errors: 'strict' });
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits on scan NUL before range read', async () => {
+    const readLineRange = vi.fn();
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(Buffer.from('text')),
+        scanTextFile: vi.fn(async () => ({
+          totalLines: 1,
+          endsWithNewline: false,
+          hasNul: true,
+          lineEndingFlags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+        })),
+        readLineRange,
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/nul.txt' }));
+    const output = toolContentString(result);
+
+    expect(result.isError).toBe(true);
+    expect(output).toContain('is not readable as UTF-8 text');
+    expect(readLineRange).not.toHaveBeenCalled();
   });
 
   it('caps default reads at MAX_LINES', async () => {
@@ -617,7 +745,7 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '/tmp/big.txt' }));
 
-    expect(result.output).toContain(`Max ${String(MAX_LINES)} lines reached.`);
+    expect(result.note).toContain(`Max ${String(MAX_LINES)} lines reached.`);
     expect(result.output).toContain(`${String(MAX_LINES)}\tline ${String(MAX_LINES)}`);
     expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
   });
@@ -631,11 +759,9 @@ describe('ReadTool', () => {
 
     const result = await executeTool(tool, context({ path: '/tmp/tail-bytes.txt', line_offset: -1000 }));
     const output = toolContentString(result);
-    const outputLines = output
-      .split('\n')
-      .filter((line) => line.includes('\t') && !line.startsWith('<system>'));
+    const outputLines = output.split('\n').filter((line) => line.includes('\t'));
 
-    expect(output).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    expect(result.note).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
     expect(outputLines.at(-1)).toContain(String(numLines).padStart(4, '0'));
     expect(outputLines[0]).not.toContain('0001');
   });
@@ -654,6 +780,7 @@ describe('ReadTool', () => {
 
     expect(output).toMatch(/^301\t0301/);
     expect(output).not.toContain('Max');
+    expect(result.note).not.toContain('Max');
   });
 
   it('description pins line/byte caps, tail mode, and the Grep-over-Read preference', () => {
@@ -712,8 +839,9 @@ describe('ReadTool', () => {
     const result = await executeTool(tool,context({ path: '/tmp/empty.txt' }));
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toBe(
-      withReadStatus('', 'No lines read from file. Total lines in file: 0. End of file reached.'),
+    expect(result.output).toBe('');
+    expect(result.note).toBe(
+      readNote('No lines read from file. Total lines in file: 0. End of file reached.'),
     );
   });
 
@@ -770,7 +898,7 @@ describe('ReadTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('1\ta');
     expect(result.output).toContain('5\te');
-    expect(result.output).toContain('Total lines in file: 5.');
+    expect(result.note).toContain('Total lines in file: 5.');
   });
 
   it('tail mode on an empty file returns empty output without erroring', async () => {
@@ -779,7 +907,7 @@ describe('ReadTool', () => {
     const result = await executeTool(tool,context({ path: '/tmp/empty-tail.txt', line_offset: -10 }));
 
     expect(result.isError).toBeFalsy();
-    expect(result.output).toContain('Total lines in file: 0.');
+    expect(result.note).toContain('Total lines in file: 0.');
   });
 
   it('line_offset=-1 returns only the last line with its absolute line number', async () => {
@@ -789,7 +917,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('5\te');
-    expect(result.output).toContain('1 line read from file starting from line 5.');
+    expect(result.note).toContain('1 line read from file starting from line 5.');
   });
 
   it('tail mode reports absolute line numbers when long lines are truncated', async () => {
@@ -802,8 +930,8 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBeFalsy();
     // Last 3 lines = 3, 4, 5; line 4 is the long one.
-    expect(result.output).toContain('Total lines in file: 5.');
-    expect(result.output).toContain('Lines [4] were truncated.');
+    expect(result.note).toContain('Total lines in file: 5.');
+    expect(result.note).toContain('Lines [4] were truncated.');
   });
 });
 

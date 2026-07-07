@@ -33,6 +33,9 @@ base_url = "https://api.example/v1"
 provider = "managed:kimi-code"
 model = "kimi-for-coding"
 max_context_size = 1000000
+capabilities = ["thinking"]
+support_efforts = ["low", "medium", "high"]
+default_effort = "high"
 `;
 
 describe('HarnessAPI session model aliases', () => {
@@ -383,12 +386,12 @@ max_context_size = 1000000
     const resumeRecords: TelemetryContextRecord[] = [];
     const resumeRpc = await createTestRpc({ telemetry: recordingContextTelemetry(resumeRecords) });
     await resumeRpc.resumeSession({ sessionId: created.id });
-    await resumeRpc.setThinking({ sessionId: created.id, agentId: 'main', level: 'off' });
+    await resumeRpc.setThinking({ sessionId: created.id, agentId: 'main', effort: 'off' });
 
     expect(resumeRecords).toContainEqual({
       event: 'thinking_toggle',
       sessionId: created.id,
-      properties: { enabled: false },
+      properties: { enabled: false, effort: 'off', from: 'high' },
     });
   });
 
@@ -408,10 +411,50 @@ max_context_size = 1000000
     });
   });
 
+  it('adds web client metadata to new-session telemetry', async () => {
+    const records: TelemetryContextRecord[] = [];
+    const rpc = await createTestRpc({ telemetry: recordingContextTelemetry(records) });
+    const created = await rpc.createSession({
+      workDir,
+      client: {
+        id: 'web_test_client',
+        name: 'kimi-code-web',
+        version: '0.1.1',
+        uiMode: 'web',
+      },
+    });
+
+    expect(records).toContainEqual({
+      event: 'session_started',
+      sessionId: created.id,
+      properties: {
+        client_id: 'web_test_client',
+        client_name: 'kimi-code-web',
+        client_version: '0.1.1',
+        ui_mode: 'web',
+        resumed: false,
+      },
+    });
+
+    await rpc.setPermission({ sessionId: created.id, agentId: 'main', mode: 'yolo' });
+
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      sessionId: created.id,
+      properties: {
+        client_id: 'web_test_client',
+        client_name: 'kimi-code-web',
+        client_version: '0.1.1',
+        ui_mode: 'web',
+        enabled: true,
+      },
+    });
+  });
+
   async function findWireFile(root: string): Promise<string> {
     const suffix = join('agents', 'main', 'wire.jsonl');
     const entries = await readdir(root, { recursive: true });
-    const match = entries.find((entry) => entry.endsWith(suffix));
+    const match = entries.find((entry) => entry.replaceAll('\\', '/').endsWith(suffix));
     if (match === undefined) {
       throw new Error('wire.jsonl not found under session home');
     }

@@ -3,6 +3,47 @@ import type { SkillDefinition } from '../../skill';
 import { escapeXmlAttr } from '../../utils/xml-escape';
 import { DynamicInjector } from './injector';
 
+export interface RenderPluginSessionStartReminderInput {
+  readonly sessionStarts: readonly EnabledPluginSessionStart[];
+  readonly registry:
+    | {
+        getPluginSkill(pluginId: string, name: string): SkillDefinition | undefined;
+        renderSkillPrompt(skill: SkillDefinition, args: string): string;
+      }
+    | undefined;
+  readonly log?: { warn(message: string, payload?: unknown): void };
+}
+
+/**
+ * Renders the `<plugin_session_start>` reminder blocks for the currently enabled
+ * plugin session starts. Returns `undefined` when there is nothing to render
+ * (no session starts, no registry, or no resolvable skills).
+ *
+ * Shared by the turn-loop injector (which dedups against history) and the
+ * explicit `/reload` flow (which force-appends a fresh reminder).
+ */
+export function renderPluginSessionStartReminder(
+  input: RenderPluginSessionStartReminderInput,
+): string | undefined {
+  const { sessionStarts, registry, log } = input;
+  if (sessionStarts.length === 0) return undefined;
+  if (registry === undefined) return undefined;
+  const blocks: string[] = [];
+  for (const sessionStart of sessionStarts) {
+    const skill = registry.getPluginSkill(sessionStart.pluginId, sessionStart.skillName);
+    if (skill === undefined) {
+      log?.warn('plugin sessionStart skill not found', {
+        pluginId: sessionStart.pluginId,
+        skillName: sessionStart.skillName,
+      });
+      continue;
+    }
+    blocks.push(renderSessionStartBlock(sessionStart, skill, registry.renderSkillPrompt(skill, '')));
+  }
+  if (blocks.length === 0) return undefined;
+  return blocks.join('\n');
+}
+
 export class PluginSessionStartInjector extends DynamicInjector {
   protected override readonly injectionVariant = 'plugin_session_start';
 
@@ -17,24 +58,11 @@ export class PluginSessionStartInjector extends DynamicInjector {
       this.injectedAt = replayedAt;
       return undefined;
     }
-    const sessionStarts = this.agent.pluginSessionStarts ?? [];
-    if (sessionStarts.length === 0) return undefined;
-    const registry = this.agent.skills?.registry;
-    if (registry === undefined) return undefined;
-    const blocks: string[] = [];
-    for (const sessionStart of sessionStarts) {
-      const skill = registry.getPluginSkill(sessionStart.pluginId, sessionStart.skillName);
-      if (skill === undefined) {
-        this.agent.log.warn('plugin sessionStart skill not found', {
-          pluginId: sessionStart.pluginId,
-          skillName: sessionStart.skillName,
-        });
-        continue;
-      }
-      blocks.push(renderSessionStartBlock(sessionStart, skill, registry.renderSkillPrompt(skill, '')));
-    }
-    if (blocks.length === 0) return undefined;
-    return blocks.join('\n');
+    return renderPluginSessionStartReminder({
+      sessionStarts: this.agent.pluginSessionStarts,
+      registry: this.agent.skills?.registry,
+      log: this.agent.log,
+    });
   }
 }
 

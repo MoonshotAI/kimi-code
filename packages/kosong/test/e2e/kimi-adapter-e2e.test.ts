@@ -149,7 +149,6 @@ describe('e2e: kimi adapter', () => {
         model: 'kimi-k2-turbo-preview',
         stream: true,
         stream_options: { include_usage: true },
-        reasoning_effort: 'high',
         thinking: { type: 'enabled' },
         messages: [
           { role: 'system', content: 'You are helpful.' },
@@ -229,7 +228,6 @@ describe('e2e: kimi adapter', () => {
         model: 'kimi-k2-turbo-preview',
         stream: true,
         stream_options: { include_usage: true },
-        reasoning_effort: 'high',
       });
       expect(harness.requests.length).toBeGreaterThanOrEqual(1);
     });

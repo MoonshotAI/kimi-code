@@ -319,6 +319,41 @@ describe('applyCustomRegistryProvider', () => {
     expect(config.models?.['registry_chat-completions/gpt-5.5']).toBeDefined();
     expect(config.models?.['other/keepme']).toBeDefined();
   });
+
+  it('preserves hand-edited fields that upstream does not declare', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'registry_chat-completions/gpt-5.5': {
+          provider: 'registry_chat-completions',
+          model: 'gpt-5.5',
+          maxContextSize: 131072,
+          supportEfforts: ['low', 'high', 'max'],
+          defaultEffort: 'high',
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        id: 'registry_chat-completions',
+        name: 'Sample Registry (chat completions)',
+        api: 'https://registry.example.test/v1',
+        type: 'openai',
+        models: {
+          'gpt-5.5': { id: 'gpt-5.5', name: 'GPT 5.5' },
+        },
+      },
+      KOKUB_SOURCE,
+    );
+
+    const alias = config.models?.['registry_chat-completions/gpt-5.5'];
+    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias?.['defaultEffort']).toBe('high');
+    // Upstream-owned fields are still refreshed.
+    expect(alias?.['displayName']).toBe('GPT 5.5');
+  });
 });
 
 describe('removeCustomRegistryProvider', () => {

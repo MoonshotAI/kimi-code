@@ -183,7 +183,7 @@ describe('SSHProcess.kill()', () => {
     expect(proc.exitCode).toBe(1);
   });
 
-  test('kill(SIGTERM) preserves cleanup output and the real exit status', async () => {
+  test.skipIf(process.platform === 'win32')('kill(SIGTERM) preserves cleanup output and the real exit status', async () => {
     const { channel } = createChildBackedChannel();
     const proc = new SSHProcess(channel as never);
     const stdoutChunks: Buffer[] = [];

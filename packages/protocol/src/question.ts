@@ -29,7 +29,6 @@ export const questionRequestSchema = z.object({
   tool_call_id: z.string().min(1).optional(),
   questions: z.array(questionItemSchema).min(1).max(4),
   created_at: isoDateTimeSchema,
-  expires_at: isoDateTimeSchema,
 });
 export type QuestionRequest = z.infer<typeof questionRequestSchema>;
 

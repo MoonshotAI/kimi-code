@@ -89,6 +89,15 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'context.append_loop_event':
       agent.context.appendLoopEvent(input.event);
+      // Advance the turn counter past internally-driven turns (goal
+      // continuations, steer-launched turns) that allocate a turnId without a
+      // `turn.prompt` record. Their loop events still carry the real turnId.
+      if ('turnId' in input.event) {
+        const restoredTurnId = Number.parseInt(input.event.turnId, 10);
+        if (!Number.isNaN(restoredTurnId)) {
+          agent.turn.observeRestoredTurnId(restoredTurnId);
+        }
+      }
       return;
     case 'context.clear':
       agent.context.clear();
@@ -120,6 +129,17 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'goal.clear':
       agent.goal.restoreClear(input);
       return;
+    // Observability records: no state to rebuild; only restore the
+    // write-dedup cursors so a resumed session does not re-log snapshots
+    // that are already durable in this wire log.
+    case 'llm.tools_snapshot':
+      agent.llmRequestRecorder.restoreToolsSnapshot(input.hash);
+      return;
+    case 'llm.request':
+      return;
+    case 'mcp.tools_discovered':
+      agent.tools.restoreMcpDiscovery(input.serverName, input.hash);
+      return;
   }
 }
 
@@ -134,6 +154,17 @@ export interface AgentRecordsReplayOptions {
 export class AgentRecords {
   private _restoring: RestoringContext | null = null;
   private metadataInitialized = false;
+  private _replaying = false;
+  /**
+   * One-shot latch: the durable log is "open" once replay has completed (the
+   * write-dedup cursors of observability records are restored) or, for agents
+   * that never resume, once the first record has been logged live. Producers
+   * of observability records (MCP discovery) park their writes until then —
+   * logging earlier would both duplicate records that replay is about to
+   * dedupe and append a stray metadata record ahead of replay.
+   */
+  private _opened = false;
+  private readonly onOpenedCallbacks: Array<() => void> = [];
 
   constructor(
     private readonly agent: Agent,
@@ -142,6 +173,38 @@ export class AgentRecords {
 
   get restoring() {
     return this._restoring;
+  }
+
+  /**
+   * Whether observability records may be written directly. False before the
+   * log is opened (see `_opened`); producers should park and re-attempt from
+   * an `onOpened` callback. Always true without persistence — there is no
+   * durable log to protect.
+   */
+  get observabilityReady(): boolean {
+    return this.persistence === undefined || this._opened;
+  }
+
+  /**
+   * Register a callback fired once, when the log opens. Not fired for a
+   * range-limited (frozen) replay — those agents are transient previews and
+   * must not append new records.
+   */
+  onOpened(callback: () => void): void {
+    if (this._opened) {
+      callback();
+      return;
+    }
+    this.onOpenedCallbacks.push(callback);
+  }
+
+  private markOpened(): void {
+    if (this._opened) return;
+    this._opened = true;
+    const callbacks = this.onOpenedCallbacks.splice(0);
+    for (const callback of callbacks) {
+      callback();
+    }
   }
 
   logRecord(record: AgentRecord): void {
@@ -164,6 +227,13 @@ export class AgentRecords {
       this.metadataInitialized = true;
     }
     this.persistence?.append(stamped);
+    // A live record was durably logged, so this agent is not waiting on a
+    // replay: open the log for observability producers. Guarded against the
+    // (currently hypothetical) mid-replay logRecord — opening there would
+    // let observability writes race the dedup-cursor restore.
+    if (!this._replaying) {
+      this.markOpened();
+    }
   }
 
   restore(record: AgentRecord): boolean {
@@ -185,46 +255,57 @@ export class AgentRecords {
     let warning: string | undefined;
     const replayedRecords: AgentRecord[] | undefined = rewriteMigratedRecords ? [] : undefined;
     let completed = true;
-    for await (const record of this.persistence.read()) {
-      if (!hasMetadata) {
-        if (record.type !== 'metadata') {
-          throw new Error('AgentRecords replay expected metadata as the first record');
+    this._replaying = true;
+    try {
+      for await (const record of this.persistence.read()) {
+        if (!hasMetadata) {
+          if (record.type !== 'metadata') {
+            throw new Error('AgentRecords replay expected metadata as the first record');
+          }
+          hasMetadata = true;
+          this.metadataInitialized = true;
+          const readVersion = record.protocol_version;
+          if (isNewerWireVersion(readVersion)) {
+            warning = `Session wire protocol version ${readVersion} is newer than the current version ${AGENT_WIRE_PROTOCOL_VERSION}. Records will be replayed without migration.`;
+            shouldRewrite = false;
+          } else {
+            migrations = resolveWireMigrations(readVersion);
+            shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
+          }
         }
-        hasMetadata = true;
-        this.metadataInitialized = true;
-        const readVersion = record.protocol_version;
-        if (isNewerWireVersion(readVersion)) {
-          warning = `Session wire protocol version ${readVersion} is newer than the current version ${AGENT_WIRE_PROTOCOL_VERSION}. Records will be replayed without migration.`;
-          shouldRewrite = false;
-        } else {
-          migrations = resolveWireMigrations(readVersion);
-          shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
+        let migratedRecord = migrateWireRecord(
+          record as WireMigrationRecord,
+          migrations,
+        ) as AgentRecord;
+        if (migratedRecord.type === 'metadata') {
+          migratedRecord = {
+            ...migratedRecord,
+            protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+          };
+        }
+        replayedRecords?.push(migratedRecord);
+        if (this.restore(migratedRecord)) {
+          completed = false;
+          break;
         }
       }
-      let migratedRecord = migrateWireRecord(
-        record as WireMigrationRecord,
-        migrations,
-      ) as AgentRecord;
-      if (migratedRecord.type === 'metadata') {
-        migratedRecord = {
-          ...migratedRecord,
-          protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-        };
+      if (completed && shouldRewrite && replayedRecords !== undefined) {
+        this.persistence.rewrite(replayedRecords);
+        await this.persistence.flush();
       }
-      replayedRecords?.push(migratedRecord);
-      if (this.restore(migratedRecord)) {
-        completed = false;
-        break;
+      if (completed && this.agent.blobStore !== undefined) {
+        for (const msg of this.agent.context.history) {
+          await this.agent.blobStore.rehydrateParts(msg.content);
+        }
       }
+    } finally {
+      this._replaying = false;
     }
-    if (completed && shouldRewrite && replayedRecords !== undefined) {
-      this.persistence.rewrite(replayedRecords);
-      await this.persistence.flush();
-    }
-    if (completed && this.agent.blobStore !== undefined) {
-      for (const msg of this.agent.context.history) {
-        await this.agent.blobStore.rehydrateParts(msg.content);
-      }
+    // Open only AFTER the migration rewrite has flushed — records appended by
+    // onOpened callbacks before the rewrite would be wiped by it. A frozen
+    // (range-limited) replay never opens: see onOpened.
+    if (completed) {
+      this.markOpened();
     }
     return { warning };
   }

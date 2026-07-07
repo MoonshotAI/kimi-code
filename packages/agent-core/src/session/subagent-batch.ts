@@ -12,7 +12,7 @@ import { isUserCancellation } from '../utils/abort';
 Subagent batch scheduling contract:
 Normal phase:
 - Return results in input order; empty input returns an empty list.
-- Start up to 5 tasks immediately, then 1 more every 700 ms while queued work remains; active tasks do not cap this ramp.
+- Start up to 5 tasks immediately, then 1 more every 700 ms while queued work remains. By default active tasks do not cap this ramp; when KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY is set to a positive integer, the ramp additionally stops while active tasks reach that cap, and resumes as tasks complete.
 - Launch priority: previous agent id saved after a rate limit, explicit resume, then new spawn.
 - Readiness can be reported while the attempt is active. Ready normal launches seed the first rate-limit capacity.
 - The first provider rate limit stops the ramp and enters rate-limit phase.
@@ -36,6 +36,8 @@ const RATE_LIMIT_RETRY_FACTOR = 2;
 const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2000;
 const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 3 * 60 * 1000;
 const RATE_LIMIT_SUSPENDED_REASON = 'Provider rate limit; subagent requeued for retry.';
+
+const AGENT_SWARM_MAX_CONCURRENCY_ENV = 'KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY';
 
 type BaseQueuedSubagentTask<T> = {
   readonly data: T;
@@ -114,6 +116,15 @@ type ActiveAttempt<T> = {
   timedOut: boolean;
 };
 
+export type SubagentBatchOptions = {
+  /**
+   * Optional cap on how many subagents may run concurrently during the normal
+   * phase. `undefined` means no cap (legacy ramp behavior). The rate-limit
+   * phase is governed by its own capacity logic and is not affected.
+   */
+  readonly maxConcurrency?: number;
+};
+
 export class SubagentBatch<T> {
   private readonly states: Array<TaskState<T>>;
   private readonly pending: Array<TaskState<T>>;
@@ -122,6 +133,7 @@ export class SubagentBatch<T> {
   private readonly controller = new AbortController();
   private readonly batchSignal: AbortSignal | undefined;
   private readonly batchAbortListener: () => void;
+  private readonly maxConcurrency: number | undefined;
   private normalLaunchCount = 0;
   private normalLaunchTimer: ReturnType<typeof setTimeout> | undefined;
   private rateLimitLaunchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -141,7 +153,9 @@ export class SubagentBatch<T> {
   constructor(
     private readonly launcher: SubagentBatchLauncher,
     tasks: readonly QueuedSubagentTask<T>[],
+    options: SubagentBatchOptions = {},
   ) {
+    this.maxConcurrency = options.maxConcurrency;
     this.states = tasks.map((task, index) => ({
       index,
       task,
@@ -203,7 +217,8 @@ export class SubagentBatch<T> {
     while (
       this.normalLaunchCount < INITIAL_LAUNCH_LIMIT &&
       this.pending.length > 0 &&
-      !this.rateLimitMode
+      !this.rateLimitMode &&
+      !this.isAtConcurrencyLimit()
     ) {
       this.startAttempt(this.pending.shift()!);
       this.normalLaunchCount += 1;
@@ -212,7 +227,8 @@ export class SubagentBatch<T> {
     if (
       this.pending.length === 0 ||
       this.rateLimitMode ||
-      this.normalLaunchTimer !== undefined
+      this.normalLaunchTimer !== undefined ||
+      this.isAtConcurrencyLimit()
     ) {
       return;
     }
@@ -220,10 +236,15 @@ export class SubagentBatch<T> {
     this.normalLaunchTimer = setTimeout(() => {
       this.normalLaunchTimer = undefined;
       if (this.finished || this.rateLimitMode || this.pending.length === 0) return;
+      if (this.isAtConcurrencyLimit()) return;
       this.startAttempt(this.pending.shift()!);
       this.normalLaunchCount += 1;
       this.schedule();
     }, INITIAL_LAUNCH_INTERVAL_MS);
+  }
+
+  private isAtConcurrencyLimit(): boolean {
+    return this.maxConcurrency !== undefined && this.active.size >= this.maxConcurrency;
   }
 
   private scheduleRateLimitLaunch(): void {
@@ -635,4 +656,25 @@ export class SubagentBatch<T> {
     if (status === 'aborted') return 'The user manually interrupted this subagent batch.';
     return error instanceof Error ? error.message : String(error);
   }
+}
+
+/**
+ * Resolve the optional AgentSwarm normal-phase concurrency cap from the environment.
+ *
+ * Returns `undefined` when the variable is unset/empty. A present value must be a
+ * positive integer; invalid input fails fast so a misconfigured cap never silently
+ * reverts to the uncapped ramp.
+ */
+export function resolveSwarmMaxConcurrency(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number | undefined {
+  const raw = env[AGENT_SWARM_MAX_CONCURRENCY_ENV];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `${AGENT_SWARM_MAX_CONCURRENCY_ENV} must be a positive integer, got ${JSON.stringify(raw)}.`,
+    );
+  }
+  return value;
 }

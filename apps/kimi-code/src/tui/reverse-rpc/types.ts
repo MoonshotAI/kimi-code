@@ -103,6 +103,9 @@ export interface ApprovalPanelChoice {
   response: 'approved' | 'approved_for_session' | 'rejected' | 'cancelled';
   selected_label?: string | undefined;
   requires_feedback?: boolean | undefined;
+  // Optional helper text shown dim beneath the label. Omitted/empty renders
+  // exactly as a plain label-only choice.
+  description?: string | undefined;
 }
 
 // ── Approval / Question view payloads ────────────────────────────────

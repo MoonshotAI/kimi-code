@@ -54,7 +54,7 @@ Options passed at startup have the highest priority and apply only to the curren
 | Option | Effect |
 | --- | --- |
 | `-S, --session [id]` | Resume a specific session; enters interactive selection when no id is given |
-| `-C, --continue` | Resume the last session for the current working directory |
+| `-c, --continue` | Resume the last session for the current working directory |
 | `-y, --yolo` | Auto-approve all tool calls |
 | `--plan` | Start in Plan mode |
 | `-m, --model <model>` | Use a specific model alias for this session |

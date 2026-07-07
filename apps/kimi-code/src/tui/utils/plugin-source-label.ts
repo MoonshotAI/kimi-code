@@ -50,6 +50,26 @@ export function pluginTrustLabel(plugin: PluginSummary): PluginTrustLabel {
   }
 }
 
+/**
+ * Returns true only for install sources that are unambiguously Kimi-built
+ * official plugins — an https URL under the official Kimi CDN plugin path.
+ * Everything else (local paths, GitHub repos, curated or third-party URLs)
+ * is treated as unofficial and should be confirmed before install.
+ */
+export function isOfficialPluginSource(source: string): boolean {
+  const trimmed = source.trim();
+  if (!trimmed.startsWith('https://')) return false;
+  try {
+    const url = new URL(trimmed);
+    return (
+      url.hostname === 'code.kimi.com' &&
+      url.pathname.startsWith('/kimi-code/plugins/official/')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function hostFromUrl(raw: string): string | undefined {
   try {
     const url = new URL(raw);

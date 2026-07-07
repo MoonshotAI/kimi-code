@@ -68,6 +68,9 @@ describe('EnterPlanModeTool', () => {
     expect(tool.description).toContain('New Feature Implementation');
     expect(tool.description).toContain('When NOT to use');
     expect(tool.description).toContain('subagent_type="explore"');
+    // The explore-agent suggestion must be qualified on Agent availability: EnterPlanMode
+    // registers unconditionally, but Agent only registers when a subagentHost exists.
+    expect(tool.description).toContain('`Agent` tool is available');
     expect(EnterPlanModeInputSchema.safeParse({}).success).toBe(true);
     expect(tool.parameters).toMatchObject({
       type: 'object',

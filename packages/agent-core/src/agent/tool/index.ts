@@ -3,15 +3,19 @@ import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
 import picomatch from 'picomatch';
 
 import type { Agent } from '..';
+import {
+  collectLoadedDynamicToolNames,
+} from '../context/dynamic-tools';
 import { makeErrorPayload } from '../../errors';
-import type { ExecutableTool } from '../../loop';
+import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
-import type { MCPClient } from '../../mcp/types';
+import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { DEFAULT_AGENT_PROFILES } from '../../profile';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
+import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
 import type {
@@ -24,9 +28,19 @@ import type {
 
 export * from './types';
 
+/** Foreground timeout (seconds) for a user-initiated `!` shell command. */
+const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
+
 interface McpToolEntry {
   readonly tool: ExecutableTool;
   readonly serverName: string;
+}
+
+interface PendingMcpDiscovery {
+  readonly serverName: string;
+  readonly rawTools: readonly MCPToolDefinition[];
+  readonly enabledNames: readonly string[];
+  readonly collisions: readonly McpToolCollision[];
 }
 
 export class ToolManager {
@@ -39,8 +53,34 @@ export class ToolManager {
   protected enabledTools: Set<string> = new Set();
   /** Glob patterns (e.g. `mcp__*`, `mcp__github__*`) gating which MCP tools the profile exposes. */
   private mcpAccessPatterns: string[] = [];
+  /**
+   * Defer-window lead for the loaded-tools ledger: names marked loaded whose
+   * schema message may still sit in the context's deferred queue (an open tool
+   * exchange). The history itself is the source of truth —
+   * `loadedDynamicToolNames()` unions this set with a history scan — so
+   * undo/compaction/resume never need to roll this back.
+   */
+  private readonly pendingLoadedDynamicTools = new Set<string>();
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
+  /**
+   * `serverName\nhash` keys of `mcp.tools_discovered` records already durable
+   * in this wire log. Restored on replay; reconnects with an unchanged raw
+   * tool list, allow-list, and collision outcome do not re-log.
+   */
+  private readonly seenMcpDiscoveries = new Set<string>();
+  /**
+   * Discoveries observed before the record log opened (constructor-time
+   * attach can run before `agent.resume()` replays the wire — see
+   * `AgentRecords.observabilityReady`). The dedup decision must be re-made at
+   * drain time, after replay has restored `seenMcpDiscoveries`.
+   */
+  private readonly pendingMcpDiscoveries: PendingMcpDiscovery[] = [];
+  private mcpDiscoveryDrainSubscribed = false;
+
+  /** Abort controllers for in-flight `!` shell commands, keyed by commandId so
+   *  the TUI can cancel (Esc / Ctrl+C) a running command. */
+  private readonly shellCommandControllers = new Map<string, AbortController>();
 
   constructor(protected readonly agent: Agent) {
     this.attachMcpTools();
@@ -81,6 +121,99 @@ export class ToolManager {
       value,
     });
     this.store[key] = value;
+  }
+
+  /**
+   * Execute a user-initiated `!` shell command. Reuses the builtin Bash tool
+   * (same kaos / cwd / BackgroundManager as the agent), recording the command
+   * and its output as `shell_command`-origin messages. It does NOT start a turn
+   * — the model is not prompted (parity with claude-code's `shouldQuery: false`).
+   */
+  async runShellCommand(
+    command: string,
+    commandId?: string,
+  ): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }> {
+    this.agent.context.appendBashInput(command);
+    const bash = this.builtinTools.get('Bash');
+    if (bash === undefined) {
+      const error = 'Bash tool is not available.';
+      this.agent.context.appendBashOutput('', error);
+      return { stdout: '', stderr: error, isError: true };
+    }
+    let stdout = '';
+    let stderr = '';
+    let isError: boolean | undefined;
+    const controller = new AbortController();
+    if (commandId !== undefined) this.shellCommandControllers.set(commandId, controller);
+    try {
+      const execution = await bash.resolveExecution({ command, timeout: SHELL_FOREGROUND_TIMEOUT_S });
+      if (!('execute' in execution)) {
+        const output =
+          typeof execution.output === 'string' ? execution.output : 'Command failed.';
+        this.agent.context.appendBashOutput('', output);
+        return { stdout: '', stderr: output, isError: true };
+      }
+      const result = await execution.execute({
+        turnId: '',
+        toolCallId: 'shell-command',
+        signal: controller.signal,
+        onUpdate: (update: ToolUpdate) => {
+          if (update.kind === 'stdout') stdout += update.text ?? '';
+          else if (update.kind === 'stderr') stderr += update.text ?? '';
+          else return;
+          // Stream the chunk live to the TUI. Transient event — the final
+          // output is still recorded once below for resume.
+          if (commandId !== undefined) {
+            this.agent.emitEvent({ type: 'shell.output', commandId, update });
+          }
+        },
+        onForegroundTaskStart: (taskId: string) => {
+          // Surface the background-task id so the TUI can detach (ctrl+b) it.
+          if (commandId !== undefined) {
+            this.agent.emitEvent({ type: 'shell.started', commandId, taskId });
+          }
+        },
+      });
+      isError = result.isError === true;
+
+      // Detached to background (ctrl+b): the BashTool returns the background
+      // metadata (task_id / status / output path) — the same payload a normal
+      // foreground Bash call returns as its tool result when backgrounded.
+      // Inject it as a user-invisible message and immediately send it to the
+      // model (mirrors the background-task completion notification, but hidden).
+      if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
+        this.agent.context.injectAndNotify(result.output, {
+          kind: 'injection',
+          variant: 'shell_command_backgrounded',
+        });
+        return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
+      }
+
+      // When the command fails with no captured stdout/stderr, the failure
+      // reason lives in result.output (non-zero exit with no output, timeout,
+      // spawn failure). Surface it as stderr so the TUI and replay show what
+      // went wrong instead of "(no output)".
+      if (
+        isError &&
+        stdout.length === 0 &&
+        stderr.length === 0 &&
+        typeof result.output === 'string' &&
+        result.output.length > 0
+      ) {
+        stderr = result.output;
+      }
+    } catch (error) {
+      stderr += error instanceof Error ? error.message : String(error);
+      isError = true;
+    } finally {
+      if (commandId !== undefined) this.shellCommandControllers.delete(commandId);
+    }
+    this.agent.context.appendBashOutput(stdout, stderr, isError);
+    return { stdout, stderr, isError };
+  }
+
+  cancelShellCommand(commandId: string): void {
+    this.shellCommandControllers.get(commandId)?.abort();
   }
 
   registerUserTool(input: UserToolRegistration): void {
@@ -181,7 +314,9 @@ export class ToolManager {
                 (args ?? {}) as Record<string, unknown>,
                 context.signal,
               );
-              return mcpResultToExecutableOutput(result, qualified);
+              return mcpResultToExecutableOutput(result, qualified, {
+                originalsDir: this.agent.mediaOriginalsDir,
+              });
             },
           };
         },
@@ -273,11 +408,82 @@ export class ToolManager {
       resolved.tools,
       resolved.enabledNames,
     );
+    this.recordMcpToolsDiscovered(
+      entry.name,
+      resolved.rawTools,
+      resolved.enabledNames,
+      result.collisions,
+    );
     this.emitMcpToolCollisions(entry.name, result.collisions);
     this.agent.emitEvent({
       type: 'tool.list.updated',
       reason: 'mcp.connected',
       serverName: entry.name,
+    });
+  }
+
+  /** Replay: a discovery with this hash is already durable; never re-log it. */
+  restoreMcpDiscovery(serverName: string, hash: string): void {
+    this.seenMcpDiscoveries.add(`${serverName}\n${hash}`);
+  }
+
+  /**
+   * Observability record: the server's verbatim `tools/list` result plus how
+   * this agent gated it (allow-list, collisions). See `records/types.ts`.
+   * Parked while the record log has not opened yet (pre-replay window).
+   */
+  private recordMcpToolsDiscovered(
+    serverName: string,
+    rawTools: readonly MCPToolDefinition[],
+    enabledNames: ReadonlySet<string>,
+    collisions: readonly McpToolCollision[],
+  ): void {
+    const discovery: PendingMcpDiscovery = {
+      serverName,
+      rawTools,
+      enabledNames: [...enabledNames].toSorted((a, b) => a.localeCompare(b)),
+      collisions,
+    };
+    if (!this.agent.records.observabilityReady) {
+      this.pendingMcpDiscoveries.push(discovery);
+      // Lazy one-shot subscription: only agents that actually parked need
+      // the drain callback, and at park time the log is guaranteed unopened.
+      if (!this.mcpDiscoveryDrainSubscribed) {
+        this.mcpDiscoveryDrainSubscribed = true;
+        this.agent.records.onOpened(() => {
+          this.drainPendingMcpDiscoveries();
+        });
+      }
+      return;
+    }
+    this.writeMcpDiscovery(discovery);
+  }
+
+  private drainPendingMcpDiscoveries(): void {
+    const pending = this.pendingMcpDiscoveries.splice(0);
+    for (const discovery of pending) {
+      this.writeMcpDiscovery(discovery);
+    }
+  }
+
+  private writeMcpDiscovery(discovery: PendingMcpDiscovery): void {
+    const { serverName, rawTools, enabledNames, collisions } = discovery;
+    // The hash covers everything the record captures — the raw list, the
+    // allow-list, AND the collision outcome. Collisions depend on which
+    // other servers hold a qualified name at registration time, so the same
+    // server can re-register with identical tools but a different outcome;
+    // that change must produce a new record.
+    const hash = fingerprint(JSON.stringify({ tools: rawTools, enabledNames, collisions }));
+    const key = `${serverName}\n${hash}`;
+    if (this.seenMcpDiscoveries.has(key)) return;
+    this.seenMcpDiscoveries.add(key);
+    this.agent.records.logRecord({
+      type: 'mcp.tools_discovered',
+      serverName,
+      hash,
+      tools: rawTools,
+      enabledNames,
+      collisions: collisions.length > 0 ? collisions : undefined,
     });
   }
 
@@ -321,12 +527,119 @@ export class ToolManager {
     return this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern));
   }
 
+  /**
+   * Whether MCP tools are disclosed progressively: kept out of the top-level
+   * `tools[]` and loaded on demand via select_tools. Reads the agent's single
+   * three-gate decision point.
+   */
+  private get progressiveDisclosure(): boolean {
+    return this.agent.toolSelectEnabled;
+  }
+
+  /**
+   * Names the model may select right now: registered MCP tools that pass the
+   * profile's `mcp__*` access patterns, sorted for byte-stable announcements.
+   * In disclosure mode the patterns keep their permission-filter role but stop
+   * feeding the top-level `tools[]`.
+   */
+  loadableDynamicToolNames(): string[] {
+    return [...this.mcpTools.keys()]
+      .filter((name) => this.isMcpToolEnabled(name))
+      .toSorted((a, b) => a.localeCompare(b));
+  }
+
+  /**
+   * The loaded-tools ledger: every name whose full definition has been
+   * delivered to the conversation via a `tools`-carrying message, plus the
+   * defer-window pending set. History is the single source of truth, so the
+   * ledger survives resume (records replay rebuilds the history), keeps its
+   * state across undo (schema messages have `injection` origin and are not
+   * undone), and self-heals after compaction (the rebuild message re-carries
+   * the schemas).
+   */
+  loadedDynamicToolNames(): ReadonlySet<string> {
+    const names = collectLoadedDynamicToolNames(this.agent.context.history);
+    for (const name of this.pendingLoadedDynamicTools) names.add(name);
+    return names;
+  }
+
+  /** Mark names loaded ahead of their schema message landing in history. */
+  markDynamicToolsLoaded(names: Iterable<string>): void {
+    for (const name of names) this.pendingLoadedDynamicTools.add(name);
+  }
+
+  /**
+   * Context was cleared (`/clear`): every schema message is gone, so the
+   * defer-window lead must not keep reporting its names as loaded — a stale
+   * entry would make select_tools answer "Already available" for a tool whose
+   * definition the model can no longer see.
+   */
+  onContextCleared(): void {
+    this.pendingLoadedDynamicTools.clear();
+  }
+
+  /**
+   * Compaction rebuilt the history: from here on the keep-all rebuild message
+   * (which may have trimmed or skipped schemas — budget guard, disconnected
+   * servers) is the sole truth about what is still loaded. A pending entry
+   * surviving past this boundary would report a schema the context no longer
+   * carries as loaded, and re-selecting it would wrongly answer
+   * "Already available" instead of injecting.
+   */
+  onContextCompacted(): void {
+    this.pendingLoadedDynamicTools.clear();
+  }
+
+  /**
+   * Plain schema snapshot of a registered MCP tool, read from the live
+   * registry (never from history) at injection time.
+   */
+  getMcpToolSchema(name: string): Tool | undefined {
+    const entry = this.mcpTools.get(name);
+    if (entry === undefined) return undefined;
+    return {
+      name: entry.tool.name,
+      description: entry.tool.description,
+      parameters: entry.tool.parameters,
+    };
+  }
+
+  /**
+   * Disclosure-mode wording for a tool-call preflight miss. A loaded tool
+   * whose server dropped is a different situation from a never-announced name;
+   * telling them apart stops the model from re-selecting a disconnected tool
+   * in a loop or treating a transient disconnect as a permanent removal.
+   */
+  missingToolMessage(name: string): string | undefined {
+    if (!this.progressiveDisclosure) return undefined;
+    if (!isMcpToolName(name)) return undefined;
+    const registered = this.mcpTools.has(name) && this.isMcpToolEnabled(name);
+    const loaded = this.loadedDynamicToolNames().has(name);
+    if (registered && !loaded) {
+      return (
+        `Tool "${name}" is available but not loaded. ` +
+        `Call select_tools with ["${name}"] first, then call the tool.`
+      );
+    }
+    if (!registered && loaded) {
+      return (
+        `Tool "${name}" was loaded but its MCP server is currently disconnected. ` +
+        'It may become available again when the server reconnects; do not retry immediately.'
+      );
+    }
+    return undefined;
+  }
+
   *toolInfos(): Iterable<ToolInfo> {
     for (const tool of this.builtinTools.values()) {
       yield {
         name: tool.name,
         description: tool.description,
-        active: this.enabledTools.has(tool.name),
+        // select_tools is always registered but only offered while the
+        // disclosure gate is open (see loopTools); report that live state.
+        active:
+          this.enabledTools.has(tool.name) ||
+          (tool.name === b.SELECT_TOOLS_TOOL_NAME && this.agent.toolSelectEnabled),
         source: 'builtin',
       };
     }
@@ -367,7 +680,7 @@ export class ToolManager {
     const workspace = extendWorkspaceWithSkillRoots(
       {
         workspaceDir: cwd,
-        additionalDirs: [],
+        additionalDirs: this.agent.getAdditionalDirs(),
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );
@@ -381,8 +694,8 @@ export class ToolManager {
         new b.ReadTool(kaos, workspace),
         new b.WriteTool(kaos, workspace),
         new b.EditTool(kaos, workspace),
-        new b.GrepTool(kaos, workspace),
-        new b.GlobTool(kaos, workspace),
+        new b.GrepTool(kaos, workspace, this.agent.telemetry),
+        new b.GlobTool(kaos, workspace, this.agent.telemetry),
         new b.BashTool(kaos, cwd, background, {
           allowBackground,
         }),
@@ -390,6 +703,13 @@ export class ToolManager {
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
+        // Registered unconditionally: the tool-select flag can flip at runtime
+        // (config reload calls setConfigOverrides) without this method
+        // re-running, so registration must not depend on the gate — exposure
+        // is decided per step in loopTools instead. Deliberately not
+        // main-only: subagents run their own disclosure and need select_tools
+        // just as much.
+        new b.SelectToolsTool(this.agent),
         // Goal tools are main-agent-only.
         goalToolsEnabled && new b.CreateGoalTool(this.agent),
         goalToolsEnabled && new b.GetGoalTool(this.agent),
@@ -408,9 +728,10 @@ export class ToolManager {
         this.agent.subagentHost &&
           new b.AgentTool(
             this.agent.subagentHost,
-            allowBackground ? background : undefined,
+            background,
             DEFAULT_AGENT_PROFILES['agent']?.subagents,
             {
+              allowBackground,
               log: this.agent.log,
             },
           ),
@@ -436,27 +757,95 @@ export class ToolManager {
     const withAuth = this.agent.modelProvider?.resolveAuth?.(modelAlias, {
       log: this.agent.log,
     });
-    if (withAuth === undefined) return (input) => uploadVideo(input);
-    return (input) => withAuth((auth) => uploadVideo(input, { auth }));
+    const baseProps = this.videoUploadTelemetryProps(modelAlias);
+    const upload =
+      withAuth === undefined
+        ? (input: b.VideoUploadInput) => uploadVideo(input)
+        : (input: b.VideoUploadInput) => withAuth((auth) => uploadVideo(input, { auth }));
+
+    return async (input) => {
+      const startedAt = Date.now();
+      const base = {
+        ...baseProps,
+        mime_type: input.mimeType,
+        size_bytes: input.data.length,
+      };
+      const track = (props: Record<string, string | number | boolean | undefined>): void => {
+        try {
+          this.agent.telemetry.track('video_upload', props);
+        } catch {
+          // Telemetry must never affect the upload outcome.
+        }
+      };
+      try {
+        const part = await upload(input);
+        track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
+        return part;
+      } catch (error) {
+        track({
+          ...base,
+          outcome: 'error',
+          duration_ms: Date.now() - startedAt,
+          error_type: error instanceof Error ? error.name : 'Unknown',
+        });
+        throw error;
+      }
+    };
+  }
+
+  private videoUploadTelemetryProps(modelAlias: string): {
+    provider_type?: string;
+    protocol?: string;
+    model: string;
+  } {
+    try {
+      const resolved = this.agent.modelProvider?.resolveProviderConfig(modelAlias);
+      if (resolved === undefined) return { model: modelAlias };
+      return {
+        model: modelAlias,
+        provider_type: resolved.type,
+        protocol: resolved.protocol ?? resolved.type,
+      };
+    } catch {
+      return { model: modelAlias };
+    }
   }
 
   get loopTools(): readonly ExecutableTool[] {
     if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
-    const mcpNames = [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name));
-    // Mutation goal tools are only offered to the model while a goal exists.
-    const hideGoalMutationTools = this.agent.goal.getGoal().goal === null;
-    return uniq([...this.enabledTools, ...mcpNames])
+    const disclosure = this.progressiveDisclosure;
+    const enabledMcpNames = [...this.mcpTools.keys()].filter((name) =>
+      this.isMcpToolEnabled(name),
+    );
+    // Progressive disclosure splits "the model can see this tool" from "the
+    // core can execute it": the top-level request view stays the immutable
+    // core set + select_tools, while loaded MCP tools join the executable
+    // table as deferred extras — dispatchable, but stripped from the outbound
+    // top-level tools[] by kosong generate(). With disclosure off this is the
+    // inline behavior, byte for byte.
+    const loadedSet = disclosure ? this.loadedDynamicToolNames() : undefined;
+    const mcpNames =
+      loadedSet === undefined
+        ? enabledMcpNames
+        : enabledMcpNames.filter((name) => loadedSet.has(name));
+    const selectToolsName = disclosure ? [b.SELECT_TOOLS_TOOL_NAME] : [];
+    return uniq([...this.enabledTools, ...selectToolsName, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
-      .filter(
-        (name) =>
-          !(hideGoalMutationTools && (name === 'SetGoalBudget' || name === 'UpdateGoal')),
-      )
-      .map(
-        (name) =>
+      // select_tools is exposed exclusively through the disclosure gate — a
+      // profile or setActiveTools listing the name explicitly must not
+      // surface it in inline mode (it was silently dropped back when
+      // registration itself was gated; keep that contract).
+      .filter((name) => disclosure || name !== b.SELECT_TOOLS_TOOL_NAME)
+      .map((name) => {
+        const tool =
           this.userTools.get(name) ??
           this.mcpTools.get(name)?.tool ??
-          this.builtinTools.get(name),
-      )
+          this.builtinTools.get(name);
+        if (tool === undefined) return undefined;
+        // MCP entries are plain object literals, so the spread keeps the
+        // execution closure intact while adding the wire-strip marker.
+        return disclosure && this.mcpTools.has(name) ? { ...tool, deferred: true as const } : tool;
+      })
       .filter((tool) => !!tool);
   }
 }

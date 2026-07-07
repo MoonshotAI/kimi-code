@@ -32,6 +32,18 @@ describe('FetchURLTool', () => {
     expect(tool.description.length).toBeGreaterThan(0);
   });
 
+  it('documents both fetch modes (extracted main text vs verbatim passthrough)', () => {
+    const tool = new FetchURLTool(fakeFetcher());
+    const description = tool.description.toLowerCase();
+    expect(description).toContain('extracted');
+    expect(description).toContain('verbatim');
+    // SSRF/size are provider-internal (the Moonshot primary path enforces neither);
+    // the description must state the universal http/https contract, not impl details.
+    expect(description).toContain('http');
+    expect(description).not.toContain('local fetcher');
+    expect(description).not.toContain('10 mib');
+  });
+
   it('parameters are generated from the current input schema', () => {
     const tool = new FetchURLTool(fakeFetcher());
     expect(FetchURLInputSchema.safeParse({ url: 'https://example.com' }).success).toBe(true);
@@ -59,10 +71,11 @@ describe('FetchURLTool', () => {
       signal,
     });
     expect(result.isError).toBe(false);
-    expect(toolContentString(result)).toBe('Hello, world!');
+    // The body is present; the mode note now rides in the model-visible output too.
+    expect(toolContentString(result)).toContain('Hello, world!');
   });
 
-  it('reports an extraction-specific message for extracted content', async () => {
+  it('surfaces the extraction mode in the model-visible output', async () => {
     const tool = new FetchURLTool(fakeFetcher('Article body', 'extracted'));
     const result = await executeTool(tool, {
       turnId: 't1',
@@ -71,12 +84,14 @@ describe('FetchURLTool', () => {
       signal,
     });
     expect(result.isError).toBe(false);
-    expect((result as { message?: string }).message).toBe(
-      'The returned content is the main text extracted from the page.',
-    );
+    // The mode note must live in `output`: `message` is dropped from the transcript,
+    // so `output` is the only place the model can actually read which mode it got.
+    const out = toolContentString(result);
+    expect(out).toContain('The returned content is the main text extracted from the page.');
+    expect(out).toContain('Article body');
   });
 
-  it('reports a passthrough-specific message for verbatim content', async () => {
+  it('surfaces the passthrough mode in the model-visible output', async () => {
     const tool = new FetchURLTool(fakeFetcher('# Raw markdown', 'passthrough'));
     const result = await executeTool(tool, {
       turnId: 't1',
@@ -85,9 +100,9 @@ describe('FetchURLTool', () => {
       signal,
     });
     expect(result.isError).toBe(false);
-    expect((result as { message?: string }).message).toBe(
-      'The returned content is the full response body, returned verbatim.',
-    );
+    const out = toolContentString(result);
+    expect(out).toContain('The returned content is the full response body, returned verbatim.');
+    expect(out).toContain('# Raw markdown');
   });
 
   it('returns empty message when fetcher returns empty string', async () => {
@@ -117,6 +132,22 @@ describe('FetchURLTool', () => {
     expect(content).toContain('Output is truncated');
     expect(content.length).toBeLessThan(60_000);
     expect((result as { message?: string }).message).toContain('Output is truncated');
+  });
+
+  it('keeps the citation reminder at the front so truncation cannot drop it', async () => {
+    const tool = new FetchURLTool(fakeFetcher('x'.repeat(60_000)));
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-cite',
+      args: { url: 'https://example.com/large' },
+      signal,
+    });
+    const out = toolContentString(result);
+    // Body was truncated, yet the reminder — which rides in the front note —
+    // must survive.
+    expect(out).toContain('[...truncated]');
+    expect(out).toContain('cite');
+    expect(out).toContain('[title](url)');
   });
 
   it('returns error when fetcher throws', async () => {
@@ -252,12 +283,12 @@ describe('FetchURLTool', () => {
     });
 
     expect(result.isError).toBe(false);
-    expect(toolContentString(result)).toBe(markdown);
-    // The passthrough message says the LLM is seeing the full response
-    // body (py wording was "full content"; main #238 uses the broader
-    // "full response body" phrasing).
-    const message = (result as { message?: string }).message ?? '';
-    expect(message).toContain('full response body');
+    const out = toolContentString(result);
+    // The body is passed through verbatim (not extracted/mangled)...
+    expect(out).toContain(markdown);
+    // ...and the passthrough mode is signalled in the model-visible output
+    // (py wording was "full content"; main #238 uses "full response body").
+    expect(out).toContain('full response body');
   });
 });
 

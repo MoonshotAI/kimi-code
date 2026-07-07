@@ -372,10 +372,19 @@ async function startGoalWithPermission(
   choice: GoalStartPermissionChoice,
   options: GoalStartOptions,
 ): Promise<void> {
-  if (choice !== host.state.appState.permissionMode && (choice === 'auto' || choice === 'yolo')) {
+  const previousMode = host.state.appState.permissionMode;
+  const switched =
+    choice !== previousMode && (choice === 'auto' || choice === 'yolo');
+  if (switched) {
     if (!(await setPermissionForGoal(host, choice))) return;
   }
-  await startGoal(host, parsed, options);
+  const started = await startGoal(host, parsed, options);
+  // The permission switch only exists to run this goal. If creation fails
+  // (e.g. a goal already exists and `replace` was not given), restore the
+  // previous mode so the session is not left more permissive than before.
+  if (!started && switched) {
+    await setPermissionForGoal(host, previousMode);
+  }
 }
 
 async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode): Promise<boolean> {
@@ -412,7 +421,6 @@ async function startGoal(
   if (options.beforeSend !== undefined && !(await options.beforeSend())) {
     return false;
   }
-  host.track('goal_create', { replace: parsed.replace });
   host.state.transcriptContainer.addChild(new GoalSetMessageComponent());
   host.state.ui.requestRender();
   if (options.sendInput !== undefined) {

@@ -1,6 +1,11 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
+import { budgetToolResultForModel } from '../../src/agent/turn/tool-result-budget';
 import { HookEngine } from '../../src/session/hooks';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
@@ -19,7 +24,7 @@ describe('Agent tools', () => {
         {
           event: 'PreToolUse',
           matcher: 'Bash',
-          command: "echo 'blocked by PreToolUse' >&2; exit 2",
+          command: 'node -e "process.stderr.write(\'blocked by PreToolUse\'); process.exit(2)"',
         },
         {
           event: 'PostToolUseFailure',
@@ -304,6 +309,8 @@ describe('Agent tools', () => {
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "<auto-mode-enter-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "permission_mode" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
+      [wire] llm.tools_snapshot          { "hash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "tools": [ { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false } } ], "time": "<time>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "messageCount": 2, "turnStep": "0.1", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "I will look it up." }
       [emit] tool.call.delta             { "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will look it up." } }, "time": "<time>" }
@@ -323,15 +330,16 @@ describe('Agent tools', () => {
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_lookup", "toolCallId": "call_lookup", "result": { "output": "moon-result" } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_lookup", "output": "moon-result" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
+      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "messageId": "mock-1" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 104, "maxContextTokens": 1000000, "contextUsage": 0.000104, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 88, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
+      [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999896, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "3bfeb22e61431247933e79f6ab94e7ca14a127f899bc87e7bbd22594ba9cdb66", "messageCount": 4, "turnStep": "0.2", "time": "<time>" }
       [emit] assistant.delta             { "turnId": 0, "delta": "The lookup result is moon-result." }
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "stepUuid": "<uuid-3>", "part": { "type": "text", "text": "The lookup result is moon-result." } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
+      [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-2" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 108, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 120, "maxContextTokens": 1000000, "contextUsage": 0.00012, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 196, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 196, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 196, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
@@ -355,9 +363,11 @@ describe('Agent tools', () => {
       [wire] context.append_message       { "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] context.append_loop_event    { "event": { "type": "step.begin", "uuid": "<uuid-5>", "turnId": "1", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started            { "turnId": 1, "step": 1, "stepId": "<uuid-5>" }
+      [wire] llm.tools_snapshot           { "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "tools": [], "time": "<time>" }
+      [wire] llm.request                  { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 999880, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 6, "turnStep": "1.1", "time": "<time>" }
       [emit] assistant.delta              { "turnId": 1, "delta": "No lookup tool is available." }
       [wire] context.append_loop_event    { "event": { "type": "content.part", "uuid": "<uuid-6>", "turnId": "1", "step": 1, "stepUuid": "<uuid-5>", "part": { "type": "text", "text": "No lookup tool is available." } }, "time": "<time>" }
-      [wire] context.append_loop_event    { "event": { "type": "step.end", "uuid": "<uuid-5>", "turnId": "1", "step": 1, "usage": { "inputOther": 128, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
+      [wire] context.append_loop_event    { "event": { "type": "step.end", "uuid": "<uuid-5>", "turnId": "1", "step": 1, "usage": { "inputOther": 128, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "messageId": "mock-3" }, "time": "<time>" }
       [emit] turn.step.completed          { "turnId": 1, "step": 1, "stepId": "<uuid-5>", "usage": { "inputOther": 128, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                 { "model": "mock-model", "usage": { "inputOther": 128, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated         { "model": "mock-model", "contextTokens": 138, "maxContextTokens": 1000000, "contextUsage": 0.000138, "planMode": false, "swarmMode": false, "permission": "auto", "usage": { "byModel": { "mock-model": { "inputOther": 324, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 324, "output": 38, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 128, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
@@ -371,6 +381,111 @@ describe('Agent tools', () => {
         user: text "Can you still use Lookup?"
     `);
     await ctx.expectResumeMatches();
+  });
+
+  it('persists oversized registered tool results before adding them to model context', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const lookupCall: ToolCall = {
+        type: 'function',
+        id: 'call_lookup',
+        name: 'Lookup',
+        arguments: '{"query":"moon"}',
+      };
+      const largeOutput = `${'x'.repeat(60_000)}tail survives`;
+      const ctx = testAgent({ homedir: sessionDir });
+      ctx.configure();
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: { type: 'object', properties: {} },
+      });
+
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      await ctx.untilToolCall({ output: largeOutput });
+
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.untilTurnEnd();
+
+      const toolText = ctx.compactHistory().find((message) => message.role === 'tool')?.text ?? '';
+      const outputPath = /^output_path: (.+)$/m.exec(toolText)?.[1];
+      expect(toolText).toContain('Tool output exceeded 50000 characters');
+      expect(toolText).not.toContain('tail survives');
+      expect(outputPath).toBeTruthy();
+      expect(readFileSync(outputPath!, 'utf8')).toBe(largeOutput);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not overwrite saved oversized tool results with repeated call IDs', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const firstOutput = `${'a'.repeat(60_000)}first tail`;
+      const secondOutput = `${'b'.repeat(60_000)}second tail`;
+
+      const first = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result: { output: firstOutput },
+      });
+      const second = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result: { output: secondOutput },
+      });
+
+      const firstPath = savedOutputPath(first.output);
+      const secondPath = savedOutputPath(second.output);
+      expect(firstPath).not.toBe(secondPath);
+      expect(readFileSync(firstPath, 'utf8')).toBe(firstOutput);
+      expect(readFileSync(secondPath, 'utf8')).toBe(secondOutput);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps oversized tool results intact when no session directory is available', async () => {
+    const largeOutput = `${'x'.repeat(60_000)}tail survives`;
+    const result = { output: largeOutput };
+
+    const budgeted = await budgetToolResultForModel({
+      toolName: 'Lookup',
+      toolCallId: 'call_lookup',
+      result,
+    });
+
+    expect(budgeted).toBe(result);
+    expect(budgeted.output).toBe(largeOutput);
+  });
+
+  it('does not save already-truncated tool result previews as full output', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'tool-result-overflow-'));
+    try {
+      const largeOutput = `${'x'.repeat(60_000)}[...truncated]`;
+      const result = {
+        output: largeOutput,
+        truncated: true,
+      };
+
+      const budgeted = await budgetToolResultForModel({
+        homedir: sessionDir,
+        toolName: 'Lookup',
+        toolCallId: 'call_lookup',
+        result,
+      });
+
+      expect(budgeted).toBe(result);
+      expect(budgeted.output).toBe(largeOutput);
+      expect(budgeted.output).not.toContain('output_path:');
+      expect(existsSync(join(sessionDir, 'tool-results'))).toBe(false);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -394,6 +509,13 @@ function agentCall(): ToolCall {
         subagent_type: 'coder',
       }),
   };
+}
+
+function savedOutputPath(output: unknown): string {
+  expect(typeof output).toBe('string');
+  const outputPath = /^output_path: (.+)$/m.exec(output as string)?.[1];
+  expect(outputPath).toBeTruthy();
+  return outputPath!;
 }
 
 function hookErrorMessageAssertCommand(expected: string): string {

@@ -9,8 +9,10 @@ import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
+import type { ToolInputDisplay } from '../../display';
 import { toInputJsonSchema } from '../../support/input-schema';
 import DESCRIPTION from './create-goal.md?raw';
+import { goalForModel } from './serialize';
 
 export const CreateGoalToolInputSchema = z
   .object({
@@ -22,7 +24,7 @@ export const CreateGoalToolInputSchema = z
     replace: z
       .boolean()
       .optional()
-      .describe('Replace an existing active or paused goal instead of failing.'),
+      .describe('Replace an existing active, paused, or blocked goal instead of failing.'),
   })
   .strict();
 
@@ -40,6 +42,7 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
 
     return {
       description: 'Creating a goal',
+      display: this.resolveGoalStartDisplay(args),
       approvalRule: this.name,
       execute: async () => {
         const snapshot = await goal.createGoal(
@@ -50,8 +53,25 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
           },
           'model',
         );
-        return { output: JSON.stringify({ goal: snapshot }, null, 2) };
+        return { output: JSON.stringify({ goal: goalForModel(snapshot) }, null, 2) };
       },
+    };
+  }
+
+  /**
+   * Starting a goal switches the agent into autonomous, multi-turn work, so its
+   * approval reuses the same choice the `/goal` command offers: pick the
+   * permission mode to run under, or decline. `auto` mode auto-approves the goal
+   * upstream and never reaches this prompt, so the menu only covers manual/yolo.
+   */
+  private resolveGoalStartDisplay(args: CreateGoalToolInput): ToolInputDisplay | undefined {
+    const mode = this.agent.permission.mode;
+    if (mode === 'auto') return undefined;
+    return {
+      kind: 'goal_start',
+      objective: args.objective,
+      completionCriterion: args.completionCriterion,
+      mode,
     };
   }
 }

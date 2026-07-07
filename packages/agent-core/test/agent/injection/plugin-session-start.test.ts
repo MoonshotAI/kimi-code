@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../../src/agent';
 import type { PromptOrigin } from '../../../src/agent/context';
-import { PluginSessionStartInjector } from '../../../src/agent/injection/plugin-session-start';
+import {
+  PluginSessionStartInjector,
+  renderPluginSessionStartReminder,
+} from '../../../src/agent/injection/plugin-session-start';
 import type { EnabledPluginSessionStart } from '../../../src/plugin/types';
 import type { SkillDefinition } from '../../../src/skill/types';
 
@@ -208,5 +211,61 @@ describe('PluginSessionStartInjector', () => {
     const text = lastReminder(agent);
     expect(text).toContain('plugin body');
     expect(text).not.toContain('project body');
+  });
+});
+
+describe('renderPluginSessionStartReminder', () => {
+  function registryFor(skills: readonly SkillDefinition[]) {
+    const byPluginAndName = new Map(
+      skills.flatMap((s) =>
+        s.plugin === undefined ? [] : [[`${s.plugin.id}\0${s.name.toLowerCase()}`, s] as const],
+      ),
+    );
+    return {
+      getPluginSkill: (pluginId: string, name: string) =>
+        byPluginAndName.get(`${pluginId}\0${name.toLowerCase()}`),
+      renderSkillPrompt: (s: SkillDefinition) => s.content,
+    };
+  }
+
+  it('renders a block per resolvable sessionStart', () => {
+    const text = renderPluginSessionStartReminder({
+      sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
+      registry: registryFor([
+        skill('using-superpowers', 'plugin body', { id: 'superpowers' }),
+      ]),
+    });
+    expect(text).toContain(
+      '<plugin_session_start plugin="superpowers" skill="using-superpowers">',
+    );
+    expect(text).toContain('plugin body');
+  });
+
+  it('returns undefined when there are no sessionStarts', () => {
+    expect(
+      renderPluginSessionStartReminder({ sessionStarts: [], registry: registryFor([]) }),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when the registry is unavailable', () => {
+    expect(
+      renderPluginSessionStartReminder({
+        sessionStarts: [{ pluginId: 'demo', skillName: 'x' }],
+        registry: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined and warns when the skill cannot be resolved', () => {
+    const warnings: Array<{ message: string; payload?: unknown }> = [];
+    const text = renderPluginSessionStartReminder({
+      sessionStarts: [{ pluginId: 'demo', skillName: 'missing' }],
+      registry: registryFor([]),
+      log: { warn: (message, payload) => warnings.push({ message, payload }) },
+    });
+    expect(text).toBeUndefined();
+    expect(warnings).toContainEqual(
+      expect.objectContaining({ message: 'plugin sessionStart skill not found' }),
+    );
   });
 });

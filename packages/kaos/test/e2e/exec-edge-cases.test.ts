@@ -68,7 +68,7 @@ describe('e2e: exec edge cases', () => {
   });
 
   describe('kill() terminates a running child', () => {
-    it('long-running child can be killed with SIGTERM', async () => {
+    it.skipIf(process.platform === 'win32')('long-running child can be killed with SIGTERM', async () => {
       // A node script that sleeps forever.
       const proc = await kaos.exec('node', '-e', 'setInterval(() => {}, 1000 * 60);');
 

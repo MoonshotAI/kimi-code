@@ -4,6 +4,7 @@ import type { ToolInputDisplay } from '../tools/display';
 import type { ExecutableToolResult, LoopStepStopReason, ToolUpdate } from './types';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
+export type LoopInterruptCause = LoopInterruptReason | 'user_cancelled';
 
 export interface LoopStepBeginEvent {
   readonly type: 'step.begin';
@@ -22,11 +23,26 @@ export interface LoopStepEndEvent {
   readonly llmFirstTokenLatencyMs?: number | undefined;
   readonly llmStreamDurationMs?: number | undefined;
   /**
+   * Split of `llmFirstTokenLatencyMs`: in-process request-building time on the
+   * client vs. network + API-server time to the first token. Both `undefined`
+   * when the provider does not report the client/server boundary.
+   */
+  readonly llmRequestBuildMs?: number | undefined;
+  readonly llmServerFirstTokenMs?: number | undefined;
+  /**
+   * Split of `llmStreamDurationMs` (the decode window): time awaiting parts
+   * from the provider vs. time processing parts in-process. Both `undefined`
+   * when the provider stream did not report decode accounting.
+   */
+  readonly llmServerDecodeMs?: number | undefined;
+  readonly llmClientConsumeMs?: number | undefined;
+  /**
    * Provider diagnostics are optional and must not drive loop control.
    * Use `finishReason` for normalized behavior.
    */
   readonly providerFinishReason?: FinishReason | undefined;
   readonly rawFinishReason?: string | undefined;
+  readonly messageId?: string | undefined;
 }
 
 export interface LoopStepRetryingEvent {
@@ -63,6 +79,7 @@ export interface LoopToolCallEvent {
   readonly args: unknown;
   readonly description?: string | undefined;
   readonly display?: ToolInputDisplay | undefined;
+  readonly extras?: Record<string, unknown> | undefined;
 }
 
 export interface LoopToolResultEvent {
@@ -78,6 +95,11 @@ export interface LoopTurnInterruptedEvent {
   readonly attemptedSteps: number;
   readonly activeStep?: number | undefined;
   readonly message?: string | undefined;
+  /**
+   * Telemetry-facing interrupt cause. `aborted` is split into a deliberate user
+   * cancel vs. any other abort; `max_steps`/`error` mirror `reason`.
+   */
+  readonly interruptReason?: LoopInterruptCause | undefined;
 }
 
 export interface LoopTextDeltaEvent {

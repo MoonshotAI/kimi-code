@@ -1,0 +1,18 @@
+export default {
+  openInEditor: 'Open in editor',
+  openInEditorShort: 'Open',
+  chooseOpenApp: 'Choose application',
+  copyAll: 'Copy all as Markdown',
+  copyFinalSummary: 'Copy final summary',
+  copied: 'Copied',
+  copyPath: 'Copy path',
+  changed: '{n} changed',
+  gitTooltip: 'Open Files > Changed',
+  detached: 'detached',
+  openPr: 'Open pull request',
+  options: 'Options',
+  copySessionId: 'Copy Session ID',
+  renameSession: 'Rename',
+  forkSession: 'Fork session',
+  archiveSession: 'Archive',
+};

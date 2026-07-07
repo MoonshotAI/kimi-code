@@ -24,3 +24,20 @@ export function withTelemetryContext(
 ): TelemetryClient {
   return telemetry.withContext?.(patch) ?? telemetry;
 }
+
+export function withTelemetryProperties(
+  telemetry: TelemetryClient,
+  defaults: TelemetryProperties,
+): TelemetryClient {
+  return {
+    track(event, properties) {
+      telemetry.track(event, { ...defaults, ...properties });
+    },
+    withContext(patch) {
+      return withTelemetryProperties(withTelemetryContext(telemetry, patch), defaults);
+    },
+    setContext(patch) {
+      telemetry.setContext?.(patch);
+    },
+  };
+}

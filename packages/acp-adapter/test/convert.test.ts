@@ -1,10 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { ContentBlock } from '@agentclientprotocol/sdk';
+import { Jimp } from 'jimp';
 
 import { log, type ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
 
-import { acpBlocksToPromptParts, displayBlockToAcpContent } from '../src/convert';
+import {
+  acpBlocksToPromptParts,
+  compressPromptImageParts,
+  displayBlockToAcpContent,
+} from '../src/convert';
 
 const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 const imageBlock = (data: string, mimeType: string): ContentBlock => ({
@@ -318,5 +327,52 @@ describe('displayBlockToAcpContent — plan_review branch (Phase 13.2)', () => {
   it('still returns null for an unmapped kind (Phase 5 invariant)', () => {
     const cmd: ToolInputDisplay = { kind: 'command', command: 'ls' };
     expect(displayBlockToAcpContent(cmd)).toBeNull();
+  });
+});
+
+describe('compressPromptImageParts', () => {
+  async function pngBase64(width: number, height: number): Promise<string> {
+    const buf = await new Jimp({ width, height, color: 0x3366ccff }).getBuffer('image/png');
+    return Buffer.from(buf).toString('base64');
+  }
+
+  it('downsamples an oversized inline image part and announces the compression', async () => {
+    const originalsDir = await mkdtemp(join(tmpdir(), 'acp-originals-'));
+    const originalBase64 = await pngBase64(2600, 2600);
+    const parts = acpBlocksToPromptParts([imageBlock(originalBase64, 'image/png')]);
+    const compressed = await compressPromptImageParts(parts, { originalsDir });
+
+    // A caption precedes the downsampled image so the model knows it is
+    // looking at a degraded copy and where the original bytes live.
+    expect(compressed).toHaveLength(2);
+    const caption = compressed[0];
+    if (caption?.type !== 'text') throw new Error('expected a caption text part');
+    expect(caption.text).toContain('Image compressed');
+    expect(caption.text).toContain('2600x2600');
+
+    const part = compressed[1];
+    if (part?.type !== 'image_url') throw new Error('expected an image_url part');
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(part.imageUrl.url);
+    expect(match).not.toBeNull();
+    const decoded = await Jimp.fromBuffer(Buffer.from(match![2]!, 'base64'));
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+
+    // The caption points at a persisted copy of the ORIGINAL bytes, placed in
+    // the provided (session-scoped) originals dir.
+    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
+    expect(pathMatch).not.toBeNull();
+    expect(pathMatch![1]!.startsWith(originalsDir)).toBe(true);
+    const persisted = await readFile(pathMatch![1]!);
+    expect(persisted.equals(Buffer.from(originalBase64, 'base64'))).toBe(true);
+    await rm(originalsDir, { recursive: true, force: true });
+  });
+
+  it('passes a within-budget image and text through unchanged', async () => {
+    const parts = acpBlocksToPromptParts([
+      imageBlock(await pngBase64(32, 32), 'image/png'),
+      textBlock('hi'),
+    ]);
+    const compressed = await compressPromptImageParts(parts);
+    expect(compressed).toEqual(parts);
   });
 });

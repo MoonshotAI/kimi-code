@@ -23,6 +23,16 @@ describe('WriteTool', () => {
     // The prompt steers the agent toward Edit for partial changes to an
     // existing file. Pin the prohibition so accidental weakening is caught.
     expect(tool.description).toContain('Write is NOT ALLOWED for incremental changes');
+    // Spontaneous doc/README creation is a known anti-pattern; pin the guard.
+    expect(tool.description).toContain('documentation files');
+    expect(tool.description).toContain('README');
+    // ...but the plan-mode plan file is a `.md` the model is told to Write, so the
+    // ban must carve it out (plan/index.ts writes plans/<id>.md via Write).
+    expect(tool.description.toLowerCase()).toContain('plan-mode plan file');
+    // The guard targets UNSOLICITED docs, not every .md file, so an artifact a task or
+    // project instruction requires (e.g. a repo-mandated changeset) is not caught either.
+    expect(tool.description.toLowerCase()).toContain('unsolicited');
+    expect(tool.description.toLowerCase()).toContain('instruction requires it');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
@@ -190,21 +200,38 @@ describe('WriteTool', () => {
     expect(result.output).toContain('Appended 5 bytes');
   });
 
-  it('reports a friendly error when the parent directory does not exist', async () => {
+  it('creates missing parent directories automatically before writing', async () => {
     const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
       code: 'ENOENT',
     });
     const stat = vi.fn().mockRejectedValue(enoent);
+    const mkdir = vi.fn().mockResolvedValue(undefined);
     const writeText = vi.fn().mockResolvedValue(4);
-    const tool = new WriteTool(createFakeKaos({ stat, writeText }), PERMISSIVE_WORKSPACE);
+    const tool = new WriteTool(createFakeKaos({ stat, mkdir, writeText }), PERMISSIVE_WORKSPACE);
 
     const result = await executeTool(tool,
       context({ path: '/tmp/missing-dir/file.txt', content: 'data' }),
     );
 
-    expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('/tmp/missing-dir');
-    expect(result.output).toMatch(/parent directory/i);
+    expect(result.isError).toBeFalsy();
+    expect(mkdir).toHaveBeenCalledWith('/tmp/missing-dir', { parents: true, existOk: true });
+    expect(writeText).toHaveBeenCalledWith('/tmp/missing-dir/file.txt', 'data');
+  });
+
+  it('surfaces mkdir failures when a missing parent cannot be created', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
+      code: 'ENOENT',
+    });
+    const stat = vi.fn().mockRejectedValue(enoent);
+    const mkdir = vi.fn().mockRejectedValue(new Error('permission denied'));
+    const writeText = vi.fn().mockResolvedValue(4);
+    const tool = new WriteTool(createFakeKaos({ stat, mkdir, writeText }), PERMISSIVE_WORKSPACE);
+
+    const result = await executeTool(tool,
+      context({ path: '/tmp/missing-dir/file.txt', content: 'data' }),
+    );
+
+    expect(result).toMatchObject({ isError: true, output: 'permission denied' });
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -310,9 +337,12 @@ describe('WriteTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/empty.txt', '');
   });
 
-  it('reports a parent-directory-does-not-exist message when the directory is missing', async () => {
-    // py surfaces `parent directory does not exist` so the model can `mkdir`
-    // before retrying. TS currently forwards whatever the host throws.
+  it('still reports parent-directory ENOENT surfaced by writeText itself', async () => {
+    // When the proactive parent check is inconclusive (e.g. the environment
+    // has no `stat`) and the underlying write then fails with ENOENT — for
+    // example a parent directory removed between the check and the write —
+    // the tool still surfaces a clear "parent directory does not exist"
+    // message rather than a raw host error.
     const writeText = vi
       .fn()
       .mockRejectedValue(

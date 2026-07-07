@@ -382,6 +382,7 @@ describe('kimi export', () => {
       exit: ((code: number) => {
         throw new ExitCalled(code);
       }) as ExportDeps['exit'],
+      getShellEnv: () => ({ term: 'xterm-256color', shell: '/bin/zsh' }),
     });
 
     await program.parseAsync(['node', 'kimi', 'export', 'ses_telemetry', '--output', output], {
@@ -411,6 +412,7 @@ describe('kimi export', () => {
       version: expect.any(String),
       uiMode: 'shell',
       model: 'k2',
+      sessionId: undefined,
       getAccessToken: expect.any(Function),
     });
     expect(mocks.initializeTelemetry.mock.invocationCallOrder[0]).toBeLessThan(

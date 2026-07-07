@@ -22,7 +22,7 @@ All sessions are saved under `$KIMI_CODE_HOME/sessions/` (default: `~/.kimi-code
 ```
 
 - `state.json`: session metadata such as title and creation time.
-- `agents/*/wire.jsonl`: the agent event stream, used for session recovery and replay.
+- `agents/*/wire.jsonl`: the agent event stream, used for session recovery and replay. It also carries a request trace — the tool schemas, request parameters, and MCP tool listings sent to the model — for debugging.
 
 ::: warning
 Do not manually edit files inside the `sessions/` directory — doing so may prevent sessions from being restored correctly.

@@ -1,14 +1,15 @@
 /**
  * GET /v1/meta
  *   Reply: MetaResponse {
- *     daemon_version,
+ *     server_version,
  *     capabilities,
- *     daemon_id,
+ *     server_id,
  *     started_at
  *   }
  */
 import { z } from 'zod';
 
+import { fsOpenInAppIdSchema } from '../rest/fs';
 import { isoDateTimeSchema } from '../time';
 
 export const metaCapabilitiesSchema = z.object({
@@ -17,15 +18,24 @@ export const metaCapabilitiesSchema = z.object({
   fs_query: z.literal(true),
   mcp: z.literal(true),
   background_tasks: z.literal(true),
+  terminal: z.literal(true),
 });
 
 export type MetaCapabilities = z.infer<typeof metaCapabilitiesSchema>;
 
 export const metaResponseSchema = z.object({
-  daemon_version: z.string().min(1),
+  server_version: z.string().min(1),
   capabilities: metaCapabilitiesSchema,
-  daemon_id: z.string().min(1),
+  server_id: z.string().min(1),
   started_at: isoDateTimeSchema,
+  open_in_apps: z.array(fsOpenInAppIdSchema),
+  /**
+   * True when the server was started with `--dangerous-bypass-auth`, meaning
+   * the bearer-token gate is disabled on every REST and WebSocket route. The
+   * web UI reads this to skip the token prompt and connect without a
+   * credential. Defaults to false on hardened boots.
+   */
+  dangerous_bypass_auth: z.boolean(),
 });
 
 export type MetaResponse = z.infer<typeof metaResponseSchema>;

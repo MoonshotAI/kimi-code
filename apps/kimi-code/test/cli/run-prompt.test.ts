@@ -2,6 +2,7 @@ import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/ki
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runPrompt } from '#/cli/run-prompt';
+import { PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 
 type CreateKimiDeviceId = typeof createKimiDeviceIdFn;
 
@@ -38,6 +39,7 @@ const mocks = vi.hoisted(() => {
         handler(mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
       }
     }),
+    waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
   };
 
   return {
@@ -135,6 +137,7 @@ function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
     outputFormat: undefined,
     prompt: 'say hello',
     skillsDirs: [],
+    addDirs: [],
     ...overrides,
   };
 }
@@ -205,6 +208,8 @@ describe('runPrompt', () => {
       workDir: process.cwd(),
       model: 'k2',
       permission: 'auto',
+      additionalDirs: undefined,
+      drainAgentTasksOnStop: true,
     });
     expect(mocks.session.setPermission).not.toHaveBeenCalled();
     expect(mocks.session.setApprovalHandler).toHaveBeenCalledWith(expect.any(Function));
@@ -212,8 +217,98 @@ describe('runPrompt', () => {
     expect(mocks.session.prompt).toHaveBeenCalledWith('say hello');
     expect(stdout.text()).toBe('• hello world\n\n');
     expect(stderr.text()).toBe('To resume this session: kimi -r ses_prompt\n');
+    expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'ses_prompt' }),
+    );
     expect(mocks.shutdownTelemetry).toHaveBeenCalled();
     expect(mocks.harnessClose).toHaveBeenCalled();
+  });
+
+  it('completes even if harness.close() never resolves (cleanup is time-bounded)', async () => {
+    vi.useFakeTimers();
+    try {
+      const stdout = writer();
+      const stderr = writer();
+      // Simulate a shutdown step that hangs (e.g. a wedged SessionEnd hook or a
+      // blackholed connection in a firewalled sandbox). A completed headless run
+      // must not stay alive forever waiting on cleanup.
+      mocks.harnessClose.mockReturnValueOnce(new Promise<void>(() => {}));
+
+      let settled = false;
+      const done = runPrompt(opts(), '1.2.3-test', {
+        stdout,
+        stderr,
+        process: fakeProcess(),
+      }).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(PROMPT_CLEANUP_TIMEOUT_MS + 100);
+      await done;
+
+      expect(settled).toBe(true);
+      expect(mocks.harnessClose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('propagates a cleanup failure that settles before the timeout', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    // A cleanup step that fails fast (e.g. a permission restore or harness close
+    // hitting a persistence error) must surface — not be silently swallowed by
+    // the timeout guard — otherwise the run reports success while shutdown
+    // actually failed (e.g. a resumed session left in `auto`).
+    mocks.harnessClose.mockRejectedValueOnce(new Error('close failed'));
+
+    await expect(
+      runPrompt(opts(), '1.2.3-test', { stdout, stderr, process: fakeProcess() }),
+    ).rejects.toThrow('close failed');
+  });
+
+  it('ignores a cleanup rejection that lands after the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const stdout = writer();
+      const stderr = writer();
+      // Cleanup overruns the bound and only rejects later. The run already gave
+      // up waiting and resolved; that late rejection must not flip it to a
+      // failure (nor surface as an unhandled rejection).
+      mocks.harnessClose.mockReturnValueOnce(
+        new Promise<void>((_, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('late close')),
+            PROMPT_CLEANUP_TIMEOUT_MS + 5000,
+          );
+          timer.unref?.();
+        }),
+      );
+
+      let settled: 'resolved' | 'rejected' | undefined;
+      const done = runPrompt(opts(), '1.2.3-test', {
+        stdout,
+        stderr,
+        process: fakeProcess(),
+      }).then(
+        () => {
+          settled = 'resolved';
+        },
+        () => {
+          settled = 'rejected';
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(PROMPT_CLEANUP_TIMEOUT_MS + 100);
+      await done;
+      expect(settled).toBe('resolved');
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await Promise.resolve();
+      expect(settled).toBe('resolved');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('stops prompt startup when session creation fails', async () => {
@@ -242,10 +337,27 @@ describe('runPrompt', () => {
       workDir: process.cwd(),
       model: 'kimi-code/k2.5',
       permission: 'auto',
+      additionalDirs: undefined,
+      drainAgentTasksOnStop: true,
     });
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
     );
+  });
+
+  it('passes the CLI additional directory when creating a fresh prompt session', async () => {
+    await runPrompt(opts({ addDirs: ['../shared', '/tmp/extra'] }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.harnessCreateSession).toHaveBeenCalledWith({
+      workDir: process.cwd(),
+      model: 'k2',
+      permission: 'auto',
+      additionalDirs: ['../shared', '/tmp/extra'],
+      drainAgentTasksOnStop: true,
+    });
   });
 
   it('tracks first launch in prompt mode before harness construction can create the device id', async () => {
@@ -442,6 +554,23 @@ describe('runPrompt', () => {
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
   });
 
+  it('passes the CLI additional directories when resuming a concrete session', async () => {
+    await runPrompt(
+      opts({ session: 'ses_existing', addDirs: ['../shared', '/tmp/extra'] }),
+      '1.2.3-test',
+      {
+        stdout: { write: vi.fn(() => true) },
+        stderr: { write: vi.fn(() => true) },
+      },
+    );
+
+    expect(mocks.harnessResumeSession).toHaveBeenCalledWith({
+      id: 'ses_existing',
+      additionalDirs: ['../shared', '/tmp/extra'],
+    });
+    expect(mocks.harnessCreateSession).not.toHaveBeenCalled();
+  });
+
   it('allows resuming a concrete session when Windows workdir uses backslashes', async () => {
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(String.raw`C:\Users\kimi\project`);
     mocks.harnessListSessions.mockResolvedValueOnce([
@@ -537,6 +666,37 @@ describe('runPrompt', () => {
     );
   });
 
+  it('flushes stream-json assistant output before waiting for background tasks', async () => {
+    let releaseWait: () => void = () => {};
+    const waitGate = new Promise<void>((resolve) => {
+      releaseWait = resolve;
+    });
+    mocks.session.waitForBackgroundTasksOnPrint.mockImplementationOnce(async () => waitGate);
+
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 9, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 9, delta: 'final answer' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 9, reason: 'completed' }));
+      }
+    });
+
+    const stdout = writer();
+    const stderr = writer();
+    const runPromise = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    // The assistant message must be flushed even while the background wait is pending.
+    await waitForAssertion(() => {
+      expect(stdout.text()).toContain('{"role":"assistant","content":"final answer"}');
+    });
+
+    releaseWait();
+    await runPromise;
+  });
+
   it('resumes a concrete session without a configured default model', async () => {
     mocks.harnessGetConfig.mockResolvedValueOnce({ providers: {}, telemetry: true });
     mocks.session.getStatus.mockResolvedValueOnce({ permission: 'manual', model: 'saved-model' });
@@ -565,6 +725,19 @@ describe('runPrompt', () => {
     expect(mocks.harnessResumeSession).toHaveBeenCalledWith({ id: 'ses_previous' });
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(1, 'auto');
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
+  });
+
+  it('passes the CLI additional directories when continuing the previous session', async () => {
+    await runPrompt(opts({ continue: true, addDirs: ['../shared', '/tmp/extra'] }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.harnessResumeSession).toHaveBeenCalledWith({
+      id: 'ses_previous',
+      additionalDirs: ['../shared', '/tmp/extra'],
+    });
+    expect(mocks.harnessCreateSession).not.toHaveBeenCalled();
   });
 
   it('continues a previous session without a configured default model', async () => {
@@ -802,6 +975,31 @@ describe('runPrompt', () => {
         stderr: { write: vi.fn(() => true) },
       }),
     ).rejects.toThrow('provider.error: model failed');
+
+    expect(mocks.shutdownTelemetry).toHaveBeenCalled();
+    expect(mocks.harnessClose).toHaveBeenCalled();
+  });
+
+  it('rejects with a friendly message when the provider filters the response', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+        handler(
+          mocks.mainEvent({
+            type: 'turn.ended',
+            turnId: 2,
+            reason: 'filtered',
+          }),
+        );
+      }
+    });
+
+    await expect(
+      runPrompt(opts(), '1.2.3-test', {
+        stdout: { write: vi.fn(() => true) },
+        stderr: { write: vi.fn(() => true) },
+      }),
+    ).rejects.toThrow('Provider safety policy blocked the response.');
 
     expect(mocks.shutdownTelemetry).toHaveBeenCalled();
     expect(mocks.harnessClose).toHaveBeenCalled();

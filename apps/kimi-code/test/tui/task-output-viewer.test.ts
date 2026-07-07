@@ -1,4 +1,4 @@
-import type { Terminal } from '@earendil-works/pi-tui';
+import type { Terminal } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -142,6 +142,24 @@ describe('TaskOutputViewer — scrolling', () => {
     // PageDown shifts by (body - 1) = 7 lines.
     expect(out).toContain('line-008');
     expect(out).not.toContain('line-001');
+  });
+
+  it('Ctrl+D scrolls a page down', () => {
+    const viewer = makeViewer({ output: bigOutput(50), rows: 12 });
+    viewer.handleInput('\u0004'); // Ctrl+D
+    const out = strip(viewer.render(120).join('\n'));
+    // Same page size as PageDown: body has 8 viewable rows, page = 7 lines.
+    expect(out).toContain('line-008');
+    expect(out).not.toContain('line-001');
+  });
+
+  it('Ctrl+U scrolls a page up', () => {
+    const viewer = makeViewer({ output: bigOutput(50), rows: 12 });
+    viewer.handleInput('G'); // jump to bottom first
+    viewer.handleInput('\u0015'); // Ctrl+U
+    const out = strip(viewer.render(120).join('\n'));
+    expect(out).toContain('line-036');
+    expect(out).not.toContain('line-050');
   });
 
   it('G jumps to the bottom', () => {

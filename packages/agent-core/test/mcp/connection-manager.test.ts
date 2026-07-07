@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'pathe';
@@ -32,6 +33,7 @@ import { createScriptedGenerate } from '../agent/harness';
 
 const here = import.meta.dirname;
 const stdioFixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
+const cwdStdioFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
 const slowStdioFixture = join(here, 'fixtures', 'slow-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
@@ -159,6 +161,14 @@ describe('McpConnectionManager', () => {
       const resolved = cm.resolved('filtered');
       expect(resolved).toBeDefined();
       expect([...(resolved?.enabledNames ?? [])]).toEqual(['echo']);
+      // The raw tools/list result stays verbatim and unfiltered — the
+      // allow-list only gates registration, not the discovery trace.
+      const rawNames = resolved?.rawTools.map((tool) => tool.name) ?? [];
+      expect(rawNames).toContain('echo');
+      expect(rawNames).toContain('boom');
+      for (const rawTool of resolved?.rawTools ?? []) {
+        expect(rawTool.inputSchema).toBeDefined();
+      }
       const entry = cm.get('filtered');
       expect(entry?.toolCount).toBe(1);
     } finally {
@@ -793,6 +803,40 @@ describe('Session MCP startup', () => {
     }
   }, 7000);
 
+  it('starts stdio MCP servers in the session cwd when config.cwd is omitted', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-cwd-'));
+    const session = new Session({
+      id: 'test-mcp-cwd',
+      kaos: testKaos.withCwd(tmp),
+      homedir: join(tmp, 'session'),
+      rpc: sessionRpc(),
+      mcpConfig: {
+        servers: {
+          cwd: {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [cwdStdioFixture],
+            startupTimeoutMs: 2_000,
+          },
+        },
+      },
+    });
+
+    try {
+      await session.mcp.waitForInitialLoad();
+      const resolved = session.mcp.resolved('cwd');
+      if (resolved === undefined) {
+        throw new Error('MCP server cwd did not connect');
+      }
+      const result = await resolved.client.callTool('get_cwd', {});
+      const text = (result.content[0] as { type: 'text'; text: string }).text;
+      expect(realpathSync(text)).toBe(realpathSync(tmp));
+    } finally {
+      await session.close();
+      await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  }, 7000);
+
   it('waits for initial MCP startup before the first prompt reaches the model', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-prompt-'));
     const events: SessionRpcEvent[] = [];
@@ -835,7 +879,7 @@ describe('Session MCP startup', () => {
         cwd: tmp,
         modelAlias: 'mock-model',
         systemPrompt: 'test system prompt',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       });
       // This bare agent gets no profile, so grant MCP access explicitly.
       agent.tools.setActiveTools(['mcp__*']);

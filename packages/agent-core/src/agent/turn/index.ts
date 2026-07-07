@@ -7,7 +7,6 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   APITimeoutError,
-  grandTotal,
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
@@ -33,13 +32,14 @@ import {
   type LoopTurnInterruptedEvent,
   type LoopTurnStopReason,
 } from '../../loop/index';
-import type { AgentEvent, TurnEndedEvent } from '../../rpc';
+import type { AgentEvent, TurnEndedEvent, TurnEndReason } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
+import { budgetToolResultForModel } from './tool-result-budget';
 
 interface ActiveTurn {
   readonly turnId: number;
@@ -68,14 +68,13 @@ const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 
 /** Origin tag for the synthetic "continue" prompt that drives each goal turn. */
 const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
-export const GOAL_COMPLETION_REMINDER_NAME = 'goal_completion';
-export const GOAL_BLOCKED_REMINDER_NAME = 'goal_blocked';
 const GOAL_RATE_LIMIT_PAUSE_REASON = 'Paused after provider rate limit';
 const GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX = 'Paused after provider connection error';
 const GOAL_PROVIDER_AUTH_PAUSE_PREFIX = 'Paused after provider authentication error';
 const GOAL_PROVIDER_API_PAUSE_PREFIX = 'Paused after provider API error';
 const GOAL_MODEL_CONFIG_PAUSE_PREFIX = 'Paused after model configuration error';
 const GOAL_RUNTIME_PAUSE_PREFIX = 'Paused after runtime error';
+const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy block';
 
 /**
  * The prompt the goal driver appends to start each continuation turn — the
@@ -88,13 +87,21 @@ const GOAL_CONTINUATION_PROMPT = [
   'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',
   'do not run another goal turn. Explain briefly if useful, then call UpdateGoal with `complete`',
   'or `blocked` in the same turn. Otherwise, weigh the objective and any completion criteria',
-  'against the work done so far. Goal mode is iterative: do one coherent slice of work, then',
-  'reassess. Call UpdateGoal with `complete` only when all required work is done, any stated',
-  'validation has passed, and there is no useful next action. Do not mark complete after only',
-  'producing a plan, summary, first pass, or partial result. If an external condition or required',
-  'user input prevents progress, or the objective cannot be completed as stated, call UpdateGoal',
-  'with `blocked`. Otherwise keep going — use the existing conversation context and your tools,',
-  'and do not ask the user for input unless a real blocker prevents progress.',
+  'against the work done so far, choose one bounded, useful slice of work, and use the existing',
+  'conversation context and your tools. Do not try to finish a broad goal in one turn unless the',
+  'whole goal is genuinely small. Most goal turns should not call UpdateGoal: after completing a',
+  'useful slice, if material work remains, end the turn normally without calling UpdateGoal so',
+  'the runtime can continue the goal in the next turn. Call UpdateGoal with `complete` only when',
+  'all required work is done, any stated validation has passed, and there is no useful next',
+  'action. Do not mark complete after only producing a plan, summary, first pass, or partial',
+  'result. Before calling `complete`, check that every required part of the objective is done,',
+  'completion criteria are satisfied, requested or expected validation passed or has been',
+  'reported as impossible, and no known material task remains. Call UpdateGoal with `blocked`',
+  'only for a genuine impasse: an external condition, required user input, missing credentials',
+  'or permissions, a persistent technical failure, or an impossible, unsafe, or contradictory',
+  'objective. Do not use `blocked` because the work is large, hard, slow, uncertain, partial,',
+  'still needs validation, or needs more goal turns. Do not ask the user for input unless a real',
+  'blocker prevents progress.',
 ].join(' ');
 
 export class TurnFlow {
@@ -135,7 +142,11 @@ export class TurnFlow {
       input,
       origin,
     });
-    if (this.activeTurn) {
+    // Buffer while a turn is active OR a manual compaction holds the context;
+    // `onCompactionFinished` replays the buffer once compaction's full lifecycle
+    // (summary + reinjection) is done. Returning null means "buffered" — which is
+    // exactly what fire-and-forget callers (background notifications, cron) assume.
+    if (this.activeTurn || this.agent.fullCompaction.isCompacting) {
       this.steerBuffer.push({ input, origin });
       return null;
     }
@@ -156,6 +167,18 @@ export class TurnFlow {
           { details: { turnId: this.turnId } },
         ),
       });
+      return null;
+    }
+
+    // While a manual/SDK compaction holds the context, defer the launch instead
+    // of rejecting it: buffer the input and replay it from `onCompactionFinished`
+    // once compaction's full lifecycle (summary + reinjection) completes. The
+    // deferred turn's eventual `turn.started` lets PromptService associate the
+    // pending prompt, so a prompt submitted mid-compaction completes normally
+    // rather than getting stuck "running". (Auto compaction runs inside an active
+    // turn, so the `activeTurn` check above already covers it.)
+    if (this.agent.fullCompaction.isCompacting) {
+      this.steerBuffer.push({ input, origin });
       return null;
     }
 
@@ -191,6 +214,21 @@ export class TurnFlow {
     }
     this.turnId += 1;
     this.activeTurn = 'resuming';
+  }
+
+  /**
+   * Raise the turn counter to cover a turnId observed in a replayed loop event.
+   * This is the authoritative source of the restored counter: every turn that
+   * ran — a prompted turn, a goal continuation, or a steer-launched turn —
+   * emits loop events carrying its real turnId, even though only prompted turns
+   * write a `turn.prompt` record. Resuming then continues from `max + 1`. Only
+   * ever raises the counter, never lowers it, so the live path (where `turnId`
+   * is already allocated before any loop event) is unaffected.
+   */
+  observeRestoredTurnId(turnId: number): void {
+    if (Number.isInteger(turnId) && turnId > this.turnId) {
+      this.turnId = turnId;
+    }
   }
 
   restoreSteer(input: readonly ContentPart[], origin: PromptOrigin): void {
@@ -272,6 +310,25 @@ export class TurnFlow {
     return true;
   }
 
+  /**
+   * Replay inputs (prompts or steers) that were deferred while a manual compaction
+   * held the context. Called by `FullCompaction` once the compaction lifecycle
+   * (summary + reinjection) is done — and on cancel/failure — so deferred input is
+   * never lost or stuck. If a turn is somehow already active (e.g. one that raced
+   * and cancelled the compaction), let it consume the buffer like any other steer;
+   * otherwise launch a fresh turn from the first buffered item, with the rest
+   * draining into it via `flushSteerBuffer`.
+   */
+  onCompactionFinished(): void {
+    if (this.steerBuffer.length === 0) return;
+    if (this.activeTurn !== null) {
+      this.flushSteerBuffer();
+      return;
+    }
+    const next = this.steerBuffer.shift()!;
+    this.launch(next.input, next.origin);
+  }
+
   finishResume(): void {
     if (this.activeTurn === 'resuming') {
       this.activeTurn = null;
@@ -301,14 +358,17 @@ export class TurnFlow {
         return await this.driveGoal(firstTurnId, input, origin, signal);
       }
       const end = await this.runOneTurn(firstTurnId, input, origin, signal, true);
-      const resumedFromPausedOrBlocked =
-        initialGoalStatus === 'paused' || initialGoalStatus === 'blocked';
-      const currentGoalStatus = this.agent.goal.getGoal().goal?.status;
+      // A goal can become active during an ordinary turn: the model creates one
+      // with CreateGoal, or resumes a paused/blocked goal via UpdateGoal. Either
+      // way, hand the now-active goal to the driver so it is actually pursued,
+      // instead of stopping after the turn that merely started it. (The
+      // already-active case took the early return above.)
+      const goalBecameActive = this.agent.goal.getGoal().goal?.status === 'active';
       if (
-        resumedFromPausedOrBlocked &&
-        currentGoalStatus === 'active' &&
+        goalBecameActive &&
         end.event.reason !== 'cancelled' &&
-        end.event.reason !== 'failed'
+        end.event.reason !== 'failed' &&
+        end.event.reason !== 'filtered'
       ) {
         return await this.driveGoal(
           this.allocateTurnId(),
@@ -367,6 +427,10 @@ export class TurnFlow {
         await this.agent.goal.pauseActiveGoal({ reason: goalFailurePauseReason(end.event.error) });
         return end;
       }
+      if (end.event.reason === 'filtered') {
+        await this.agent.goal.pauseActiveGoal({ reason: GOAL_PROVIDER_FILTERED_PAUSE_REASON });
+        return end;
+      }
       if (end.blockedByUserPromptHook === true) {
         await this.agent.goal.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
         return end;
@@ -398,9 +462,15 @@ export class TurnFlow {
     origin: PromptOrigin,
   ): Promise<TurnEndedEvent> {
     this.agent.usage.beginTurn();
+    const startedAt = Date.now();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
     this.agent.context.appendUserMessage(input, origin);
-    const ended: TurnEndedEvent = { type: 'turn.ended', turnId, reason: 'completed' };
+    const ended: TurnEndedEvent = {
+      type: 'turn.ended',
+      turnId,
+      reason: 'completed',
+      durationMs: Date.now() - startedAt,
+    };
     this.agent.usage.endTurn();
     this.agent.emitEvent(ended);
     return ended;
@@ -425,7 +495,7 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { mode: telemetryMode });
+    this.agent.telemetry.track('turn_started', { mode: telemetryMode, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
@@ -439,35 +509,40 @@ export class TurnFlow {
     // sits just past the turn.ended boundary that consumers watch for.
     let errorEvent: AgentEvent | undefined;
     try {
-      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal);
+      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal, startedAt);
       if (promptHookEnded !== undefined) {
         ended = promptHookEnded.event;
         blockedByUserPromptHook = promptHookEnded.blocked;
       } else {
         const stopReason = await this.runStepLoop(turnId, signal);
         completedStopReason = stopReason;
+        const reason: TurnEndReason =
+          stopReason === 'aborted' ? 'cancelled' : stopReason === 'filtered' ? 'filtered' : 'completed';
         ended = {
           type: 'turn.ended',
           turnId,
-          reason: stopReason === 'aborted' ? 'cancelled' : 'completed',
+          reason,
+          durationMs: Date.now() - startedAt,
         };
       }
     } catch (error) {
       if (isAbortError(error)) {
-        ended = { type: 'turn.ended', turnId, reason: 'cancelled' };
+        ended = { type: 'turn.ended', turnId, reason: 'cancelled', durationMs: Date.now() - startedAt };
       } else {
         const summary = summarizeTurnError(error, turnId);
         void this.agent.hooks?.fireAndForgetTrigger('StopFailure', {
           matcherValue: summary.name,
           inputData: { errorType: summary.name, errorMessage: summary.message },
         });
-        ended = { type: 'turn.ended', turnId, reason: 'failed', error: summary };
+        ended = { type: 'turn.ended', turnId, reason: 'failed', error: summary, durationMs: Date.now() - startedAt };
         errorEvent = { type: 'error', ...summary };
         if (this.shouldTrackApiError(turnId)) {
           const classification = classifyApiError(error, summary);
           const properties: Record<string, TelemetryPropertyValue> = {
             error_type: classification.errorType,
             model: this.agent.config.model,
+            alias: this.agent.config.modelAlias,
+            ...this.requestProtocolProps(),
             retryable: summary.retryable,
             duration_ms: Date.now() - startedAt,
           };
@@ -482,6 +557,11 @@ export class TurnFlow {
         }
       }
     }
+    // A live turn must never end with recorded tool calls still awaiting
+    // results; if one does (a dispatch failure mid-batch broke the "every
+    // recorded call gets a result" invariant), close the exchange now so the
+    // context state machine cannot strand later messages in deferredMessages.
+    this.closeAbandonedToolExchange(ended);
     // Emit the terminal turn.ended and (for a standalone turn) release the active
     // turn in the SAME synchronous frame, so the session is observably idle the
     // instant turn.ended fires. A goal drive keeps the active turn across its
@@ -501,8 +581,25 @@ export class TurnFlow {
         inputData: { turnId, reason: 'cancelled' },
       });
     }
+    this.agent.telemetry.track('turn_ended', {
+      reason: ended.reason,
+      duration_ms: ended.durationMs,
+      mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      ...this.requestProtocolProps(),
+    });
     this.agent.emitEvent(ended);
-    if (standalone && this.currentId === turnId) {
+    // Release the active turn in the same frame as turn.ended for a standalone
+    // turn, so the session is observably idle the instant turn.ended fires.
+    // Exception: if the model turned the goal active during this turn (e.g.
+    // CreateGoal), the session is NOT idle — turnWorker is about to drive the
+    // goal. Keep the active turn alive (as the already-active goal path does) so
+    // those autonomous continuations stay cancelable and exclude concurrent
+    // turns; turnWorker releases it after the drive.
+    if (
+      standalone &&
+      this.currentId === turnId &&
+      this.agent.goal.getGoal().goal?.status !== 'active'
+    ) {
       this.activeTurn = null;
     }
     if (this.agent.swarmMode.shouldAutoExit) {
@@ -512,7 +609,17 @@ export class TurnFlow {
       this.agent.emitEvent(errorEvent);
     }
     if (ended.reason !== 'completed') {
-      this.trackTurnInterrupted(turnId, this.currentStepByTurn.get(turnId) ?? this.currentStep);
+      // Fallback for turns that end abnormally without a `turn.interrupted`
+      // loop event reaching `trackLoopTelemetry` (e.g. a user-prompt hook block
+      // or an abort that bypasses the step loop). `ended.reason` maps onto the
+      // same interrupt-reason taxonomy the loop-event path uses; for a
+      // `cancelled` end the signal's reason decides user_cancelled vs aborted.
+      const interruptReason = telemetryInterruptReason(ended.reason, isUserCancellation(signal.reason));
+      this.trackTurnInterrupted(
+        turnId,
+        this.currentStepByTurn.get(turnId) ?? this.currentStep,
+        interruptReason,
+      );
     }
     this.telemetryModeByTurn.delete(turnId);
     this.currentStepByTurn.delete(turnId);
@@ -526,6 +633,7 @@ export class TurnFlow {
     input: readonly ContentPart[],
     origin: PromptOrigin,
     signal: AbortSignal,
+    startedAt: number,
   ): Promise<PromptHookEndResult | undefined> {
     if (origin.kind !== 'user') return undefined;
     signal.throwIfAborted();
@@ -552,7 +660,10 @@ export class TurnFlow {
       });
       // The terminal turn.ended is emitted by runOneTurn (synchronously with the
       // activeTurn clear), not here, so the session is idle the moment it fires.
-      return { event: { type: 'turn.ended', turnId, reason: 'completed' }, blocked: true };
+      return {
+        event: { type: 'turn.ended', turnId, reason: 'completed', durationMs: Date.now() - startedAt },
+        blocked: true,
+      };
     }
 
     const hookResult = renderUserPromptHookResult(promptHookResults);
@@ -574,12 +685,17 @@ export class TurnFlow {
   private async runStepLoop(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
     let goalOutcomeMessageContinuationUsed = false;
+    let goalOutcomeToolResultPending = false;
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
     // there is no active goal). Each goal continuation is its own turn, so this
     // re-injects the reminder once per turn rather than per step, preserving prompt caching.
     await this.agent.injection.injectGoal();
+    // Announce loadable-tool changes at the same boundary cadence: a diff is
+    // appended only when the loadable set actually changed, so quiet turns
+    // keep the prompt cache fully warm.
+    this.agent.injection.injectToolsDiff();
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
@@ -591,14 +707,18 @@ export class TurnFlow {
           signal,
           llm: this.agent.llm,
           buildMessages: () => this.agent.context.messages,
+          buildMessagesStrict: () => this.agent.context.strictMessages,
           dispatchEvent: this.buildDispatchEvent(turnId),
-          tools: this.agent.tools.loopTools,
+          // Re-read per step (not snapshotted per turn) so a select_tools load
+          // is dispatchable on the very next step of the same turn.
+          buildTools: () => this.agent.tools.loopTools,
+          describeMissingTool: (name) => this.agent.tools.missingToolMessage(name),
           log: this.agent.log,
           maxSteps: loopControl?.maxStepsPerTurn,
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
           recordStepUsage: async (usage) => {
             try {
-              const snapshot = await this.agent.goal.recordTokenUsage(grandTotal(usage));
+              const snapshot = await this.agent.goal.recordTokenUsage(usage.output);
               stopForGoalBudget = snapshot?.budget.overBudget === true;
             } catch (error) {
               this.agent.log.warn('goal token accounting failed', { error });
@@ -606,9 +726,15 @@ export class TurnFlow {
           },
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
-              this.flushSteerBuffer();
               this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
+              // Flush steered messages (background-task / cron notifications,
+              // user interrupts) AFTER compaction so they land in the
+              // post-compaction context instead of being dropped by it. The
+              // keep/drop decision lives in
+              // `compactionUserMessageDisposition()`; these origins are not
+              // re-injected later, so append them only after compaction runs.
+              this.flushSteerBuffer();
               await this.agent.injection.inject();
               deduper.beginStep();
               return;
@@ -622,19 +748,56 @@ export class TurnFlow {
             // oxlint-disable-next-line no-loop-func -- stop hook continuation state is scoped to this turn.
             shouldContinueAfterStop: async (ctx) => {
               const { signal } = ctx;
-              // 1. Flush any steered user messages.
-              if (this.flushSteerBuffer()) return { continue: true };
+              const flushedSteeredMessages = this.flushSteerBuffer();
+              // 0. A reached hard goal budget is a deterministic ceiling. While
+              //    the goal is still active, never extend the turn — neither a
+              //    steered message nor a Stop-hook continuation — past it; end
+              //    the turn so the goal driver blocks the goal at the boundary.
+              //    Buffered steers are still flushed above so real-time user
+              //    input is preserved in context even when the budget stops the
+              //    turn. A goal the model just marked terminal is no longer
+              //    active, so its final outcome message (step 2 below) still runs.
+              if (stopForGoalBudget && this.agent.goal.getActiveGoal() !== null) {
+                return { continue: false };
+              }
+              // 1. If steered user messages were flushed and no active-goal
+              //    budget stopped the turn, let the model react to them.
+              if (flushedSteeredMessages) return { continue: true };
               signal.throwIfAborted();
 
-              // 2. After UpdateGoal marks a goal terminal, ask the model for one
-              //    final user-facing outcome message before the turn ends.
+              // Print-mode drain: when `kimi -p` ends a turn while background
+              // subagents are still running, hold the turn open and idle-wait
+              // until they finish. Their completions steer into the buffer
+              // during the wait and are flushed afterward, so the model gets
+              // one wrap-up step to react (nominate, backfill, ...) before the
+              // turn ends. The wait is bounded by each subagent's own timeout,
+              // not by a separate drain deadline, so late-spawned or long-
+              // running subagents are still observed. Gated on a session flag
+              // so interactive / goal modes are unaffected.
+              if (this.agent.printDrainAgentTasksOnStop) {
+                const hasActiveAgentTask = this.agent.background
+                  .list(true)
+                  .some((task) => task.kind === 'agent');
+                if (hasActiveAgentTask) {
+                  await this.agent.background.waitForActiveTasks(
+                    (task) => task.kind === 'agent',
+                    { signal },
+                  );
+                  this.flushSteerBuffer();
+                  return { continue: true };
+                }
+              }
+
+              // 2. After UpdateGoal marks a goal terminal, its tool result carries
+              //    the final-message reminder. Let the model read that result and
+              //    produce one user-facing outcome message before the turn ends.
               if (
                 !goalOutcomeMessageContinuationUsed &&
-                isGoalOutcomeReminderOrigin(this.agent.context.history.at(-1)?.origin)
+                goalOutcomeToolResultPending
               ) {
                 goalOutcomeMessageContinuationUsed = true;
+                goalOutcomeToolResultPending = false;
                 if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
-                  this.agent.context.popMatchedMessage(isGoalOutcomeReminderOrigin);
                   return { continue: false };
                 }
                 return { continue: true };
@@ -700,17 +863,35 @@ export class TurnFlow {
                   toolOutput: isError === true ? undefined : toolOutputText(output).slice(0, 2000),
                 },
               });
-              return finalResult;
+              const modelResult = await budgetToolResultForModel({
+                homedir: this.agent.homedir,
+                toolName: ctx.toolCall.name,
+                toolCallId: ctx.toolCall.id,
+                result: finalResult,
+              });
+              if (isTerminalUpdateGoalResult(ctx.toolCall.name, ctx.args, finalResult)) {
+                goalOutcomeToolResultPending = true;
+              }
+              return modelResult;
             },
           },
         });
 
         return result.stopReason;
       } catch (error) {
-        if (
+        const isContextOverflow =
           error instanceof APIContextOverflowError ||
-          (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW)
+          (isKimiError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW);
+        const estimatedRequestTokens = isContextOverflow
+          ? this.agent.fullCompaction.estimateCurrentRequestTokens()
+          : undefined;
+        if (
+          isContextOverflow ||
+          this.agent.fullCompaction.shouldRecoverFromContextOverflow(error, estimatedRequestTokens)
         ) {
+          this.agent.fullCompaction.observeContextOverflow(
+            estimatedRequestTokens ?? this.agent.fullCompaction.estimateCurrentRequestTokens(),
+          );
           await this.agent.fullCompaction.handleOverflowError(signal, error);
           continue; // Retry with compacted context
         }
@@ -725,6 +906,29 @@ export class TurnFlow {
         }
         throw error;
       }
+    }
+  }
+
+  // Guarded so this repair can never turn a finished turn into a crash: a
+  // failure to close (e.g. record persistence still broken) is logged and the
+  // projection-level safeguards remain the last line of defense.
+  private closeAbandonedToolExchange(ended: TurnEndedEvent): void {
+    try {
+      const closed = this.agent.context.closeAbandonedToolExchange(
+        abandonedToolResultOutput(ended),
+      );
+      if (closed === 0) return;
+      this.agent.log.warn('closed abandoned tool exchange at turn end', {
+        turnId: ended.turnId,
+        reason: ended.reason,
+        closed,
+      });
+      this.agent.telemetry.track('tool_exchange_abandoned', {
+        reason: ended.reason,
+        closed,
+      });
+    } catch (error) {
+      this.agent.log.warn('failed to close abandoned tool exchange', { error });
     }
   }
 
@@ -769,7 +973,11 @@ export class TurnFlow {
       if (event.reason === 'error' && event.activeStep !== undefined) {
         this.stepFailureByTurn.set(turnId, event);
       }
-      this.trackTurnInterrupted(turnId, interruptedStep(event));
+      this.trackTurnInterrupted(
+        turnId,
+        interruptedStep(event),
+        event.interruptReason ?? telemetryInterruptReason(event.reason, false),
+      );
       return;
     }
     this.trackToolLifecycle(event, turnId);
@@ -855,17 +1063,44 @@ export class TurnFlow {
     return false;
   }
 
-  private trackTurnInterrupted(turnId: number, atStep: number): void {
+  private trackTurnInterrupted(
+    turnId: number,
+    atStep: number,
+    interruptReason: TelemetryInterruptReason,
+  ): void {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
     this.agent.telemetry.track('turn_interrupted', {
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       at_step: atStep,
+      interrupt_reason: interruptReason,
+      ...this.requestProtocolProps(),
     });
   }
 
   private telemetryMode(): 'agent' | 'plan' {
     return this.agent.planMode.isActive ? 'plan' : 'agent';
+  }
+
+  /**
+   * Resolve the current model's provider wire type and any model-level protocol
+   * override for request telemetry. Never throws — telemetry must not break a
+   * turn over an unresolvable provider config (the step loop will surface that
+   * error on its own).
+   */
+  private requestProtocolProps(): { provider_type?: string; protocol?: string } {
+    const model = this.agent.config.modelAlias;
+    if (model === undefined) return {};
+    try {
+      const resolved = this.agent.modelProvider?.resolveProviderConfig(model);
+      if (resolved === undefined) return {};
+      return {
+        provider_type: resolved.type,
+        protocol: resolved.protocol ?? resolved.type,
+      };
+    } catch {
+      return {};
+    }
   }
 
   private shouldTrackApiError(turnId: number): boolean {
@@ -874,16 +1109,21 @@ export class TurnFlow {
   }
 }
 
-function isGoalOutcomeReminderOrigin(origin: PromptOrigin | undefined): boolean {
-  return (
-    origin?.kind === 'system_trigger' &&
-    (origin.name === GOAL_COMPLETION_REMINDER_NAME ||
-      origin.name === GOAL_BLOCKED_REMINDER_NAME)
-  );
-}
-
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
   return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
+}
+
+function isTerminalUpdateGoalResult(
+  toolName: string,
+  args: unknown,
+  result: ExecutableToolResult,
+): boolean {
+  if (toolName !== 'UpdateGoal' || result.isError === true || result.stopTurn !== true) {
+    return false;
+  }
+  if (!isPlainRecord(args)) return false;
+  const status = args['status'];
+  return status === 'complete' || status === 'blocked';
 }
 
 function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined {
@@ -905,6 +1145,10 @@ function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined 
         finishReason: event.finishReason,
         llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
         llmStreamDurationMs: event.llmStreamDurationMs,
+        llmRequestBuildMs: event.llmRequestBuildMs,
+        llmServerFirstTokenMs: event.llmServerFirstTokenMs,
+        llmServerDecodeMs: event.llmServerDecodeMs,
+        llmClientConsumeMs: event.llmClientConsumeMs,
         providerFinishReason: event.providerFinishReason,
         rawFinishReason: event.rawFinishReason,
       };
@@ -1037,6 +1281,34 @@ function interruptedStep(event: LoopTurnInterruptedEvent): number {
   return event.activeStep ?? event.attemptedSteps;
 }
 
+/**
+ * Telemetry-facing interrupt reason. The loop reports `LoopInterruptReason`
+ * (`aborted` | `max_steps` | `error`); we split `aborted` into a deliberate
+ * user cancel vs. any other programmatic abort so telemetry can tell them
+ * apart. `filtered` is folded in for the fallback path (turn ends flagged
+ * `filtered` never emit a `turn.interrupted` loop event).
+ */
+type TelemetryInterruptReason =
+  | 'user_cancelled'
+  | 'aborted'
+  | 'max_steps'
+  | 'error'
+  | 'filtered';
+
+function telemetryInterruptReason(
+  reason: LoopTurnInterruptedEvent['reason'] | Exclude<TurnEndedEvent['reason'], 'completed'>,
+  userCancelled: boolean,
+): TelemetryInterruptReason {
+  if ((reason === 'aborted' || reason === 'cancelled') && userCancelled) {
+    return 'user_cancelled';
+  }
+  if (reason === 'aborted' || reason === 'cancelled') return 'aborted';
+  if (reason === 'failed') return 'error';
+  // Remaining values are `max_steps` | `error` | `filtered`, which match the
+  // telemetry enum.
+  return reason;
+}
+
 interface ApiErrorClassification {
   readonly errorType: string;
   readonly statusCode?: number;
@@ -1126,4 +1398,18 @@ function telemetryToolErrorType(result: ToolTelemetryResult): string {
 
 function toolResultText(result: ToolTelemetryResult): string {
   return toolOutputText(result.output);
+}
+
+// Output for a tool call abandoned by its turn (see closeAbandonedToolExchange):
+// name the cause so the model treats the gap as an interruption to reason about,
+// not a tool outcome. Mirrors the phrasing of the resume-time synthesis in
+// `ContextMemory`.
+function abandonedToolResultOutput(ended: TurnEndedEvent): string {
+  const cause =
+    ended.reason === 'cancelled'
+      ? 'the turn was cancelled'
+      : ended.reason === 'failed'
+        ? `the turn failed${ended.error !== undefined ? ` (${ended.error.message})` : ''}`
+        : 'the turn ended';
+  return `Tool call did not complete: ${cause} before its result was recorded. Do not assume the tool completed successfully.`;
 }

@@ -251,7 +251,6 @@ describe('handleGoalCommand', () => {
     expect(session.createGoal).toHaveBeenCalledWith(
       expect.objectContaining({ objective: 'Ship feature X', replace: false }),
     );
-    expect(host.track).toHaveBeenCalledWith('goal_create', { replace: false });
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
   });
@@ -329,6 +328,25 @@ describe('handleGoalCommand', () => {
     });
     expect(s.setPermission).toHaveBeenCalledWith('yolo');
     expect(manualHost.setAppState).toHaveBeenCalledWith({ permissionMode: 'yolo' });
+  });
+
+  it('restores the previous permission mode when the goal fails to start', async () => {
+    const { host: manualHost, session: s } = makeHost({ permissionMode: 'manual' });
+    s.createGoal = vi.fn(async () => {
+      throw new KimiError(ErrorCodes.GOAL_ALREADY_EXISTS, 'A goal already exists');
+    });
+
+    await handleGoalCommand(manualHost, 'Ship feature X');
+    const picker = mountedPicker(manualHost);
+    picker.handleInput(DOWN);
+    picker.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      // Switched to YOLO to run the goal, then restored to Manual on failure.
+      expect(s.setPermission).toHaveBeenLastCalledWith('manual');
+    });
+    expect(s.setPermission).toHaveBeenCalledWith('yolo');
+    expect(manualHost.setAppState).toHaveBeenLastCalledWith({ permissionMode: 'manual' });
   });
 
   it('returns the command to the input box when a Manual-mode goal start is cancelled', async () => {

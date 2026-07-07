@@ -39,6 +39,17 @@ describe('promptSubmissionSchema', () => {
     expect(parsed.content).toHaveLength(2);
   });
 
+  it('accepts video + text mixed content', () => {
+    const parsed = promptSubmissionSchema.parse({
+      content: [
+        { type: 'text', text: 'describe this video' },
+        { type: 'video', source: { kind: 'url', url: 'https://example.com/a.mp4' } },
+      ],
+    });
+    expect(parsed.content).toHaveLength(2);
+    expect(parsed.content[1]?.type).toBe('video');
+  });
+
   it('accepts a partial per-turn override (model only)', () => {
     const parsed = promptSubmissionSchema.parse({
       content: [{ type: 'text', text: 'hi' }],
@@ -74,11 +85,20 @@ describe('promptSubmissionSchema', () => {
     expect(promptSubmissionSchema.safeParse({} as unknown).success).toBe(false);
   });
 
-  it('rejects unknown thinking level', () => {
+  it('accepts any non-empty thinking effort (provider normalizes)', () => {
     expect(
       promptSubmissionSchema.safeParse({
         content: [{ type: 'text', text: 'hi' }],
         thinking: 'mega' as unknown,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty thinking effort', () => {
+    expect(
+      promptSubmissionSchema.safeParse({
+        content: [{ type: 'text', text: 'hi' }],
+        thinking: '' as unknown,
       }).success,
     ).toBe(false);
   });

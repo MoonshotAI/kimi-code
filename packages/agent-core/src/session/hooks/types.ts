@@ -26,6 +26,8 @@ export interface HookDef {
   readonly matcher?: string;
   readonly command: string;
   readonly timeout?: number;
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 export interface HookResult {

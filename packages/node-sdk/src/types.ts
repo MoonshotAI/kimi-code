@@ -43,6 +43,7 @@ export type {
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  PluginCommandDef,
   PluginGithubMetadata,
   PluginGithubRef,
   PluginInfo,
@@ -65,7 +66,7 @@ export type {
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
-export type { ContentPart, Role, ToolCall } from '@moonshot-ai/kosong';
+export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
 
@@ -88,6 +89,7 @@ export interface KimiHarnessOptions {
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
+  readonly sessionStartedProperties?: TelemetryProperties;
 }
 
 export interface CreateSessionOptions {
@@ -100,6 +102,16 @@ export interface CreateSessionOptions {
   readonly metadata?: JsonObject | undefined;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
+  readonly additionalDirs?: readonly string[];
+  readonly sessionStartedProperties?: TelemetryProperties;
+  /**
+   * Print-mode (`kimi -p`) only: when the main agent ends a turn while
+   * background subagents (`kind === 'agent'`) are still running, hold the turn
+   * open and idle-wait until they all finish, flushing their completions into
+   * the turn so the model can react before the run exits. Ignored by
+   * interactive / SDK sessions.
+   */
+  readonly drainAgentTasksOnStop?: boolean;
 }
 
 export interface RenameSessionInput {
@@ -111,6 +123,22 @@ export interface ResumeSessionInput {
   readonly id: string;
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
+  readonly additionalDirs?: readonly string[];
+  readonly sessionStartedProperties?: TelemetryProperties;
+}
+
+export interface ReloadSessionInput extends ResumeSessionInput {
+  readonly forcePluginSessionStartReminder?: boolean;
+}
+
+export interface AddAdditionalDirInput {
+  readonly id: string;
+  readonly path: string;
+  readonly persist: boolean;
+}
+
+export interface AddAdditionalDirOptions {
+  readonly persist: boolean;
 }
 
 export interface ForkSessionInput {
@@ -151,6 +179,10 @@ export interface CompactOptions {
   readonly instruction?: string | undefined;
 }
 
+export interface ReloadSessionOptions {
+  readonly forcePluginSessionStartReminder?: boolean;
+}
+
 export interface PlanInfo {
   readonly id: string;
   readonly content: string;
@@ -174,7 +206,7 @@ export interface SessionUsage {
 
 export interface SessionStatus {
   readonly model?: string;
-  readonly thinkingLevel: string;
+  readonly thinkingEffort: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;
   readonly swarmMode?: boolean | undefined;
@@ -194,6 +226,14 @@ export interface SessionSummary {
   readonly updatedAt: number;
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
+  readonly additionalDirs?: readonly string[];
+}
+
+export interface AddAdditionalDirResult {
+  readonly additionalDirs: readonly string[];
+  readonly projectRoot: string;
+  readonly configPath: string;
+  readonly persisted: boolean;
 }
 
 export type ResumedSessionState = Pick<ResumeSessionResult, 'sessionMetadata' | 'agents' | 'warning'>;

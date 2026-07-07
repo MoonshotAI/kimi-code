@@ -71,6 +71,12 @@ export interface ColorPalette {
   /** User message: bullet & text, skill-activation name. The one role colour
    *  with its own hue — assistant/thinking/status bullets reuse text/textDim. */
   roleUser: string;
+
+  // ── Shell mode ──
+  /** Shell mode (`!`): the `!` prompt symbol, bash-mode editor border, and the
+   *  echoed `$ command` line. Its own hue (violet), distinct from
+   *  plan-mode (primary) and the user role (roleUser). */
+  shellMode: string;
 }
 
 export const darkColors: ColorPalette = {
@@ -97,6 +103,7 @@ export const darkColors: ColorPalette = {
   diffMeta: '#888888',
 
   roleUser: '#FFCB6B',
+  shellMode: '#BD93F9',
 };
 
 export const lightColors: ColorPalette = {
@@ -123,6 +130,7 @@ export const lightColors: ColorPalette = {
   diffMeta: '#5F5F5F',
 
   roleUser: '#9A4A00',
+  shellMode: '#7C3AED',
 };
 
 export type ResolvedTheme = 'dark' | 'light';

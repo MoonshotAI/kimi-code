@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
 
 import { z } from 'zod';
 
@@ -7,7 +7,26 @@ import type { HookResult } from './types';
 export interface RunHookOptions {
   readonly timeout: number;
   readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
+}
+
+export function buildHookSpawnOptions(options: {
+  cwd?: string;
+  env?: Readonly<Record<string, string>>;
+}): SpawnOptionsWithoutStdio {
+  return {
+    shell: true,
+    cwd: options.cwd,
+    stdio: 'pipe',
+    detached: process.platform !== 'win32',
+    // Hide the console Windows would otherwise allocate for the shell child.
+    // Without `windowsHide:true`, each hook flashes a visible console window —
+    // the same regression the Bash tool path already guards against in KAOS
+    // (see `buildLocalSpawnOptions`). Unconditional: it is a no-op on POSIX.
+    windowsHide: true,
+    env: options.env ? { ...process.env, ...options.env } : undefined,
+  };
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -45,12 +64,7 @@ export async function runHook(
 ): Promise<HookResult> {
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = spawn(command, {
-      shell: true,
-      cwd: options.cwd,
-      stdio: 'pipe',
-      detached: process.platform !== 'win32',
-    });
+    child = spawn(command, buildHookSpawnOptions({ cwd: options.cwd, env: options.env }));
   } catch (error) {
     return allowResult({ stderr: errorMessage(error) });
   }
@@ -206,8 +220,15 @@ function killProcess(child: ChildProcessWithoutNullStreams): void {
 }
 
 function tryKillProcess(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  if (process.platform === 'win32') {
+    // On Windows, `ChildProcess.kill()` only signals the shell spawned by
+    // `shell: true`, leaving grandchildren (the actual hook command) alive
+    // and holding the cwd. `taskkill /T` terminates the whole process tree.
+    killProcessTreeWindows(child, signal === 'SIGKILL');
+    return;
+  }
   try {
-    if (process.platform !== 'win32' && child.pid !== undefined) {
+    if (child.pid !== undefined) {
       process.kill(-child.pid, signal);
     } else {
       child.kill(signal);
@@ -215,6 +236,21 @@ function tryKillProcess(child: ChildProcessWithoutNullStreams, signal: NodeJS.Si
   } catch {
     try {
       child.kill(signal);
+    } catch {}
+  }
+}
+
+function killProcessTreeWindows(child: ChildProcessWithoutNullStreams, force: boolean): void {
+  if (child.pid === undefined) return;
+  const args = force
+    ? ['/T', '/F', '/PID', String(child.pid)]
+    : ['/T', '/PID', String(child.pid)];
+  try {
+    const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+    killer.once('error', () => {});
+  } catch {
+    try {
+      child.kill('SIGTERM');
     } catch {}
   }
 }
