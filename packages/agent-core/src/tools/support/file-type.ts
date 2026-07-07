@@ -237,6 +237,11 @@ export function sniffMediaFromMagic(data: Buffer | Uint8Array): FileType | null 
 export interface ImageDimensions {
   readonly width: number;
   readonly height: number;
+  /**
+   * Present (true) when a JPEG EXIF orientation of 5-8 swapped the reported
+   * width/height into display space.
+   */
+  readonly transposed?: boolean;
 }
 
 /**
@@ -324,7 +329,7 @@ export function sniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions
         const height = buf.readUInt16BE(offset + 5);
         const width = buf.readUInt16BE(offset + 7);
         return orientation !== null && orientation >= 5
-          ? { width: height, height: width }
+          ? { width: height, height: width, transposed: true }
           : { width, height };
       }
       // Standalone markers (RSTn, SOI, EOI) carry no length field.

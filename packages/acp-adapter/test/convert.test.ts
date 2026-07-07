@@ -367,6 +367,24 @@ describe('compressPromptImageParts', () => {
     await rm(originalsDir, { recursive: true, force: true });
   });
 
+  it('emits image_compress telemetry tagged acp_prompt', async () => {
+    const originalsDir = await mkdtemp(join(tmpdir(), 'acp-originals-'));
+    const events: { event: string; props: Record<string, unknown> }[] = [];
+    const parts = acpBlocksToPromptParts([
+      imageBlock(await pngBase64(3600, 1800), 'image/png'),
+    ]);
+    await compressPromptImageParts(parts, {
+      originalsDir,
+      telemetry: { track: (event, props) => events.push({ event, props: { ...props } }) },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event).toBe('image_compress');
+    expect(events[0]!.props['source']).toBe('acp_prompt');
+    expect(events[0]!.props['outcome']).toBe('compressed');
+    await rm(originalsDir, { recursive: true, force: true });
+  });
+
   it('passes a within-budget image and text through unchanged', async () => {
     const parts = acpBlocksToPromptParts([
       imageBlock(await pngBase64(32, 32), 'image/png'),

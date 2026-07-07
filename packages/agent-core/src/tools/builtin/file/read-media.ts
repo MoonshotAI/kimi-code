@@ -36,6 +36,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import type { TelemetryClient } from '../../../telemetry';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
@@ -44,6 +45,7 @@ import {
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
+  type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '../../support/image-compress';
 import { toInputJsonSchema } from '../../support/input-schema';
@@ -215,11 +217,13 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
+  private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader | undefined,
+    telemetry?: TelemetryClient,
   ) {
     if (!capabilities.image_in && !capabilities.video_in) {
       const skip = new Error('ReadMediaFile requires image_in or video_in capability');
@@ -227,6 +231,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       throw skip;
     }
     this.description = buildDescription(capabilities);
+    this.compressTelemetry =
+      telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
@@ -330,6 +336,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           // full fidelity, so a prior downsampled view can be zoomed into.
           const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
             skipResize: args.full_resolution === true,
+            telemetry: this.compressTelemetry,
           });
           if (!outcome.ok) {
             return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
@@ -384,7 +391,9 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           // tokens nor trips the provider's per-image byte ceiling. Best effort:
           // on any failure compressImageForModel returns the original bytes, so
           // the read still succeeds with the uncompressed image.
-          const compressed = await compressImageForModel(data, fileType.mimeType);
+          const compressed = await compressImageForModel(data, fileType.mimeType, {
+            telemetry: this.compressTelemetry,
+          });
           const base64 = Buffer.from(compressed.data).toString('base64');
           mediaPart = {
             type: 'image_url',

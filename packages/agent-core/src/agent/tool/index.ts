@@ -294,6 +294,7 @@ export class ToolManager {
               );
               return mcpResultToExecutableOutput(result, qualified, {
                 originalsDir: this.agent.mediaOriginalsDir,
+                telemetry: this.agent.telemetry,
               });
             },
           };
@@ -607,7 +608,13 @@ export class ToolManager {
           allowBackground,
         }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
-          new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
+          new b.ReadMediaFileTool(
+            kaos,
+            workspace,
+            modelCapabilities,
+            videoUploader,
+            this.agent.telemetry,
+          ),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
         // Registered unconditionally: the tool-select flag can flip at runtime

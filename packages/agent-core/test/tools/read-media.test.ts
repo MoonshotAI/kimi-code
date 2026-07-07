@@ -14,6 +14,7 @@ import {
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
+import type { TelemetryClient } from '../../src/telemetry';
 import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -87,6 +88,7 @@ function makeReadMediaTool(
     readonly stat?: Kaos['stat'] | undefined;
     readonly readBytes?: Kaos['readBytes'] | undefined;
     readonly modelCapabilities?: ModelCapability | undefined;
+    readonly telemetry?: TelemetryClient | undefined;
   } = {},
 ): ReadMediaFileTool {
   const kaos = createFakeKaos({
@@ -97,6 +99,8 @@ function makeReadMediaTool(
     kaos,
     PERMISSIVE_WORKSPACE,
     input.modelCapabilities ?? capabilities(),
+    undefined,
+    input.telemetry,
   );
 }
 
@@ -798,6 +802,43 @@ describe('ReadMediaFileTool', () => {
     const systemText = noteText(result);
     expect(systemText).toContain('Original dimensions: 80x120');
     expect(systemText).not.toMatch(/downsampled/i);
+  });
+
+  it('emits image_compress and image_crop telemetry tagged read_media', async () => {
+    const events: { event: string; props: Record<string, unknown> }[] = [];
+    const telemetry: TelemetryClient = {
+      track: (event, props) => events.push({ event, props: props ?? {} }),
+    };
+    const big = Buffer.from(
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(big),
+      telemetry,
+    });
+
+    await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_tele_read',
+      args: { path: '/workspace/big.png' },
+      signal,
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event).toBe('image_compress');
+    expect(events[0]!.props['source']).toBe('read_media');
+    expect(events[0]!.props['outcome']).toBe('compressed');
+
+    await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_tele_crop',
+      args: { path: '/workspace/big.png', region: { x: 0, y: 0, width: 100, height: 100 } },
+      signal,
+    });
+    expect(events).toHaveLength(2);
+    expect(events[1]!.event).toBe('image_crop');
+    expect(events[1]!.props['source']).toBe('read_media');
+    expect(events[1]!.props['ok']).toBe(true);
   });
 
   describe('region and full_resolution', () => {

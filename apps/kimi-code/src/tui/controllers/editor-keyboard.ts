@@ -407,7 +407,15 @@ export class EditorKeyboardController {
     // session's media-originals dir when known, else the temp-dir fallback)
     // and recorded on the attachment, so submit-time expansion can announce
     // the compression and point the model at the full-fidelity copy.
-    const compressed = await compressImageForModel(media.bytes, meta.mime);
+    const compressed = await compressImageForModel(media.bytes, meta.mime, {
+      telemetry: {
+        client: {
+          track: (event, properties) =>
+            this.host.track(event, properties === undefined ? undefined : { ...properties }),
+        },
+        source: 'tui_paste',
+      },
+    });
     const sessionDir = this.host.session?.summary?.sessionDir;
     // Dimensions come from the compression result, not parseImageMeta: the
     // compressor reports display space (EXIF orientation applied) — the space

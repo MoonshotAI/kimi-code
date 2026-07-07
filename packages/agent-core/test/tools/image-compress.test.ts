@@ -48,6 +48,8 @@ import {
 } from '../../src/tools/support/image-compress';
 // eslint-disable-next-line import/no-unresolved
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
+// eslint-disable-next-line import/no-unresolved
+import type { TelemetryClient, TelemetryProperties } from '../../src/telemetry';
 
 // ── fixtures ─────────────────────────────────────────────────────────
 
@@ -984,5 +986,219 @@ describe('compressImageForModel — downscale quality guards', () => {
     expect(result.width).toBe(3000);
     expect(result.height).toBe(1);
     expect(sniffImageDimensions(result.data)).toEqual({ width: 3000, height: 1 });
+  });
+});
+
+// ── telemetry ────────────────────────────────────────────────────────
+
+interface CapturedEvent {
+  readonly event: string;
+  readonly props: TelemetryProperties;
+}
+
+function captureTelemetry(): { client: TelemetryClient; events: CapturedEvent[] } {
+  const events: CapturedEvent[] = [];
+  return {
+    client: { track: (event, props) => events.push({ event, props: props ?? {} }) },
+    events,
+  };
+}
+
+describe('compressImageForModel — telemetry', () => {
+  it('reports a compressed image with sizes, formats, and duration', async () => {
+    const { client, events } = captureTelemetry();
+    const png = await solidPng(4500, 2250);
+    const result = await compressImageForModel(png, 'image/png', {
+      telemetry: { client, source: 'read_media' },
+    });
+    expect(result.changed).toBe(true);
+
+    expect(events).toHaveLength(1);
+    const { event, props } = events[0]!;
+    expect(event).toBe('image_compress');
+    expect(props['source']).toBe('read_media');
+    expect(props['outcome']).toBe('compressed');
+    expect(props['input_mime']).toBe('image/png');
+    expect(props['output_mime']).toBe(result.mimeType);
+    expect(props['original_bytes']).toBe(png.length);
+    expect(props['final_bytes']).toBe(result.finalByteLength);
+    expect(props['original_width']).toBe(4500);
+    expect(props['original_height']).toBe(2250);
+    expect(props['final_width']).toBe(3000);
+    expect(props['final_height']).toBe(1500);
+    expect(props['exif_transposed']).toBe(false);
+    expect(typeof props['duration_ms']).toBe('number');
+  });
+
+  it('reports the fast path as passthrough_fast', async () => {
+    const { client, events } = captureTelemetry();
+    await compressImageForModel(await solidPng(64, 64), 'image/png', {
+      telemetry: { client, source: 'tui_paste' },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.props['outcome']).toBe('passthrough_fast');
+    expect(events[0]!.props['source']).toBe('tui_paste');
+  });
+
+  it('reports decode guards as passthrough_guard', async () => {
+    // Decompression-bomb header: 30000×30000 with no pixel data.
+    const header = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+    header.writeUInt32BE(13, 8);
+    header.write('IHDR', 12, 'latin1');
+    header.writeUInt32BE(30000, 16);
+    header.writeUInt32BE(30000, 20);
+
+    const bomb = captureTelemetry();
+    await compressImageForModel(new Uint8Array(header), 'image/png', {
+      telemetry: { client: bomb.client, source: 'mcp_tool_result' },
+    });
+    expect(bomb.events[0]!.props['outcome']).toBe('passthrough_guard');
+
+    const byteCap = captureTelemetry();
+    await compressImageForModel(await solidPng(3200, 100), 'image/png', {
+      maxDecodeBytes: 64,
+      telemetry: { client: byteCap.client, source: 'mcp_tool_result' },
+    });
+    expect(byteCap.events[0]!.props['outcome']).toBe('passthrough_guard');
+  });
+
+  it('reports non-recodable formats and empty input as passthrough_unsupported', async () => {
+    const gif = captureTelemetry();
+    await compressImageForModel(
+      new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]),
+      'image/gif',
+      { telemetry: { client: gif.client, source: 'mcp_tool_result' } },
+    );
+    expect(gif.events[0]!.props['outcome']).toBe('passthrough_unsupported');
+
+    const empty = captureTelemetry();
+    await compressImageForModel(new Uint8Array(0), 'image/png', {
+      telemetry: { client: empty.client, source: 'mcp_tool_result' },
+    });
+    expect(empty.events[0]!.props['outcome']).toBe('passthrough_unsupported');
+  });
+
+  it('reports undecodable bytes as passthrough_error', async () => {
+    // A tiny corrupt blob would pass through on the fast path (unknown dims,
+    // small bytes) without ever decoding; to reach the decoder the header
+    // must claim an over-cap size. 4000×4000 forces a decode of garbage.
+    const { client, events } = captureTelemetry();
+    const corrupt = Buffer.alloc(32);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(corrupt, 0);
+    corrupt.writeUInt32BE(13, 8);
+    corrupt.write('IHDR', 12, 'latin1');
+    corrupt.writeUInt32BE(4000, 16);
+    corrupt.writeUInt32BE(4000, 20);
+    await compressImageForModel(new Uint8Array(corrupt), 'image/png', {
+      telemetry: { client, source: 'prompt_inline' },
+    });
+    expect(events[0]!.props['outcome']).toBe('passthrough_error');
+  });
+
+  it('marks EXIF-transposed inputs', async () => {
+    const { client, events } = captureTelemetry();
+    const jpeg = withExifOrientation(await solidJpeg(120, 80), 6);
+    await compressImageForModel(jpeg, 'image/jpeg', {
+      maxEdge: 64,
+      telemetry: { client, source: 'read_media' },
+    });
+    expect(events[0]!.props['outcome']).toBe('compressed');
+    expect(events[0]!.props['exif_transposed']).toBe(true);
+  });
+
+  it('reports the base64 early size-skip as passthrough_guard', async () => {
+    const { client, events } = captureTelemetry();
+    const base64 = Buffer.from(await solidPng(3200, 100)).toString('base64');
+    await compressBase64ForModel(base64, 'image/png', {
+      maxDecodeBytes: 64,
+      telemetry: { client, source: 'prompt_file' },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.props['outcome']).toBe('passthrough_guard');
+    expect(events[0]!.props['source']).toBe('prompt_file');
+  });
+
+  it('threads telemetry through compressImageContentParts', async () => {
+    const { client, events } = captureTelemetry();
+    const big = await solidPng(3600, 1800);
+    const url = `data:image/png;base64,${Buffer.from(big).toString('base64')}`;
+    await compressImageContentParts([{ type: 'image_url', imageUrl: { url } }], {
+      telemetry: { client, source: 'mcp_tool_result' },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event).toBe('image_compress');
+    expect(events[0]!.props['outcome']).toBe('compressed');
+    expect(events[0]!.props['source']).toBe('mcp_tool_result');
+  });
+
+  it('never lets a throwing telemetry client break compression', async () => {
+    const throwing: TelemetryClient = {
+      track: () => {
+        throw new Error('sink down');
+      },
+    };
+    const png = await solidPng(4500, 2250);
+    const result = await compressImageForModel(png, 'image/png', {
+      telemetry: { client: throwing, source: 'read_media' },
+    });
+    expect(result.changed).toBe(true); // compression outcome unaffected
+  });
+});
+
+describe('cropImageForModel — telemetry', () => {
+  it('reports a successful crop with the region share of the original', async () => {
+    const { client, events } = captureTelemetry();
+    const png = await solidPng(1000, 500);
+    const outcome = await cropImageForModel(
+      png,
+      'image/png',
+      { x: 0, y: 0, width: 500, height: 250 },
+      { telemetry: { client, source: 'read_media' } },
+    );
+    expect(outcome.ok).toBe(true);
+
+    expect(events).toHaveLength(1);
+    const { event, props } = events[0]!;
+    expect(event).toBe('image_crop');
+    expect(props['source']).toBe('read_media');
+    expect(props['ok']).toBe(true);
+    expect(props['resized']).toBe(false);
+    expect(props['original_width']).toBe(1000);
+    expect(props['original_height']).toBe(500);
+    // 500×250 of 1000×500 → a quarter of the pixels.
+    expect(props['region_area_ratio']).toBeCloseTo(0.25, 5);
+    expect(typeof props['duration_ms']).toBe('number');
+    expect(typeof props['final_bytes']).toBe('number');
+  });
+
+  it('classifies failures by kind', async () => {
+    const oob = captureTelemetry();
+    await cropImageForModel(
+      await solidPng(100, 100),
+      'image/png',
+      { x: 200, y: 0, width: 10, height: 10 },
+      { telemetry: { client: oob.client, source: 'read_media' } },
+    );
+    expect(oob.events[0]!.props['ok']).toBe(false);
+    expect(oob.events[0]!.props['error_kind']).toBe('out_of_bounds');
+
+    const format = captureTelemetry();
+    await cropImageForModel(
+      new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]),
+      'image/gif',
+      { x: 0, y: 0, width: 1, height: 1 },
+      { telemetry: { client: format.client, source: 'read_media' } },
+    );
+    expect(format.events[0]!.props['error_kind']).toBe('unsupported_format');
+
+    const budget = captureTelemetry();
+    await cropImageForModel(
+      await noisePng(900, 900),
+      'image/png',
+      { x: 0, y: 0, width: 900, height: 900 },
+      { skipResize: true, byteBudget: 8 * 1024, telemetry: { client: budget.client, source: 'read_media' } },
+    );
+    expect(budget.events[0]!.props['error_kind']).toBe('budget');
   });
 });

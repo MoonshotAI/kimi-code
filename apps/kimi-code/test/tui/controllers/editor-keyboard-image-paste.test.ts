@@ -37,6 +37,7 @@ vi.mock('#/utils/clipboard/clipboard-image', async (importActual) => {
 
 interface PasteHarness {
   readonly store: ImageAttachmentStore;
+  readonly track: ReturnType<typeof vi.fn>;
   pasteImage(): Promise<void>;
 }
 
@@ -45,6 +46,7 @@ function createPasteHarness(options: { sessionDir?: string } = {}): PasteHarness
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
   };
   const store = new ImageAttachmentStore();
+  const track = vi.fn();
   const host = {
     state: {
       editor,
@@ -58,7 +60,7 @@ function createPasteHarness(options: { sessionDir?: string } = {}): PasteHarness
         ? undefined
         : { summary: { sessionDir: options.sessionDir } },
     btwPanelController: { closeOrCancel: vi.fn(() => false) },
-    track: vi.fn(),
+    track,
     showError: vi.fn(),
     openUndoSelector: vi.fn(),
     cancelRunningShellCommand: vi.fn(),
@@ -69,6 +71,7 @@ function createPasteHarness(options: { sessionDir?: string } = {}): PasteHarness
 
   return {
     store,
+    track,
     async pasteImage() {
       const handler = editor['onPasteImage'];
       if (handler === undefined) throw new Error('onPasteImage handler not installed');
@@ -248,5 +251,19 @@ describe('clipboard image paste compression', () => {
     expect(att.width).toBe(80);
     expect(att.height).toBe(120);
     expect(att.placeholder).toContain('80×120');
+  });
+
+  it('emits image_compress telemetry tagged tui_paste through host.track', async () => {
+    const big = await solidPng(3600, 1800);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
+
+    const { track, pasteImage } = createPasteHarness();
+    await pasteImage();
+
+    const compressCalls = track.mock.calls.filter(([event]) => event === 'image_compress');
+    expect(compressCalls).toHaveLength(1);
+    const props = compressCalls[0]![1] as Record<string, unknown>;
+    expect(props['source']).toBe('tui_paste');
+    expect(props['outcome']).toBe('compressed');
   });
 });

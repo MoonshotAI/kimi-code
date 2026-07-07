@@ -491,7 +491,7 @@ describe('sniffImageDimensions', () => {
       // frame displays as 80x120. The sniff must report the display space —
       // the space decoded images, crop regions, and captions live in.
       const data = buildJpegWithOrientation(120, 80, orientation);
-      expect(sniffImageDimensions(data)).toEqual({ width: 80, height: 120 });
+      expect(sniffImageDimensions(data)).toEqual({ width: 80, height: 120, transposed: true });
     });
 
     it.each([1, 2, 3, 4])('keeps width/height for non-transposing orientation %i', (orientation) => {
@@ -501,7 +501,7 @@ describe('sniffImageDimensions', () => {
 
     it('honors big-endian (MM) TIFF byte order', () => {
       const data = buildJpegWithOrientation(120, 80, 6, 'MM');
-      expect(sniffImageDimensions(data)).toEqual({ width: 80, height: 120 });
+      expect(sniffImageDimensions(data)).toEqual({ width: 80, height: 120, transposed: true });
     });
 
     it('ignores out-of-range orientation values', () => {
