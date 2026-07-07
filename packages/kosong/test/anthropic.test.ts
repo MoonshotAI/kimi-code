@@ -2619,6 +2619,7 @@ describe('AnthropicChatProvider', () => {
 describe('resolveDefaultMaxTokens', () => {
   it('returns per-version Messages-API caps for known Claude 4 models', () => {
     expect(resolveDefaultMaxTokens('claude-fable-5')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-5-20251101')).toBe(64000);
@@ -2650,6 +2651,7 @@ describe('resolveDefaultMaxTokens', () => {
   });
 
   it('matches dotted version separators', () => {
+    expect(resolveDefaultMaxTokens('claude-opus-4.8')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4.6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4.6')).toBe(64000);
@@ -2673,10 +2675,9 @@ describe('resolveDefaultMaxTokens', () => {
   });
 
   it('falls back to the nearest lower catalogued minor for unknown minors', () => {
-    // opus-4-8 is not in the table; it reuses opus-4-7's 128k ceiling
-    // (a newer minor inherits at least its predecessor's cap).
-    expect(resolveDefaultMaxTokens('claude-opus-4-8')).toBe(128000);
-    expect(resolveDefaultMaxTokens('claude-opus-4.8')).toBe(128000);
+    // opus-4-9/4-10 are not in the table; they reuse opus-4-8's 128k
+    // ceiling (a newer minor inherits at least its predecessor's cap).
+    expect(resolveDefaultMaxTokens('claude-opus-4-9')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-sonnet-4-9')).toBe(64000);
     expect(resolveDefaultMaxTokens('claude-haiku-4-9')).toBe(64000);

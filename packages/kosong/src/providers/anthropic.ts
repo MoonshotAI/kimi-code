@@ -158,8 +158,9 @@ const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   // Claude Fable 5 documents a 128k output ceiling.
   'fable-5': 128000,
-  // Claude Opus per minor version. 4.6 and 4.7 raised the cap to 128k;
+  // Claude Opus per minor version. 4.6 through 4.8 document a 128k cap;
   // 4.5 ships at 64k; 4.1 and the dated 4.0 release stay at 32k.
+  'opus-4-8': 128000,
   'opus-4-7': 128000,
   'opus-4-6': 128000,
   'opus-4-5': 64000,
