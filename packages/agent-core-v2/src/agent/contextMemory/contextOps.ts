@@ -3,8 +3,7 @@
  * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
  * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
  * `context.undo` (`contextUndo`) for the per-agent conversation history, plus the
- * legacy `context.splice` (`contextSplice`) Op and the `contextBlobSelector` that
- * drives blob offload for persisted message parts.
+ * legacy `context.splice` (`contextSplice`) Op.
  *
  * Declares the history as `ContextMessage[]` (initial `[]`); every Op's `apply`
  * is a pure array transform that returns a NEW reference on change and the SAME
@@ -23,18 +22,18 @@
  * still replay (newer-version passthrough, no migration) and for the few internal
  * single-delete mutations that have no 1.4 spelling.
  *
- * Blob handling uses two complementary mechanisms:
- * - `contextBlobSelector` (record-level): offloads oversized content parts to
- *   blob storage on append, replacing data URIs with `blobref:` references.
- * - `ContextModel.rehydrate` (model-level): after replay, traverses the
- *   surviving final state and rehydrates `blobref:` URLs back to inline data
- *   URIs — skipping I/O for data that was compacted away during the session.
- *
- * The selector is seeded into the Agent wire by `agentLifecycle`.
+ * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
+ * - `dehydrate(record, transform)`: at dispatch time, traverses message content
+ *   in `context.splice` and `context.append_message` records, passing each
+ *   `ContentPart[]` through `transform` to offload oversized data URIs.
+ * - `rehydrate(state, transform)`: after replay, traverses the surviving final
+ *   state and loads `blobref:` URLs back to inline data — skipping I/O for
+ *   data that was compacted away during the session.
  */
 
 import type { ContentPart } from '#/app/llmProtocol';
-import { defineModel, defineOp, type WireBlobSelector } from '#/wire';
+import { defineModel, defineOp, type PartsTransformer } from '#/wire';
+import type { PersistedRecord } from '#/wire';
 
 import {
   foldAppendMessage,
@@ -44,20 +43,51 @@ import {
 } from './loopEventFold';
 import type { ContextMessage } from './types';
 
-export const ContextModel = defineModel<ContextMessage[]>('contextMemory', () => [], {
-  rehydrate: async (state, rehydrateParts) => {
-    let changed = false;
-    const result: ContextMessage[] = [];
-    for (const msg of state) {
-      const parts = await rehydrateParts(msg.content);
-      if (parts !== msg.content) {
-        changed = true;
-        result.push({ ...msg, content: [...parts] as ContentPart[] });
-      } else {
-        result.push(msg);
-      }
+async function dehydrateMessages(
+  messages: readonly ContextMessage[],
+  transform: PartsTransformer,
+): Promise<{ changed: boolean; result: ContextMessage[] }> {
+  let changed = false;
+  const result: ContextMessage[] = [];
+  for (const msg of messages) {
+    const parts = await transform(msg.content);
+    if (parts !== msg.content) {
+      changed = true;
+      result.push({ ...msg, content: [...parts] as ContentPart[] });
+    } else {
+      result.push(msg);
     }
-    return changed ? result : state;
+  }
+  return { changed, result };
+}
+
+async function dehydrateRecord(
+  record: PersistedRecord,
+  transform: PartsTransformer,
+): Promise<PersistedRecord> {
+  if (record.type === 'context.splice') {
+    const messages = record['messages'];
+    if (!Array.isArray(messages)) return record;
+    const { changed, result } = await dehydrateMessages(messages as ContextMessage[], transform);
+    return changed ? { ...record, messages: result } : record;
+  }
+  if (record.type === 'context.append_message') {
+    const message = record['message'] as ContextMessage | undefined;
+    if (message === undefined) return record;
+    const parts = await transform(message.content);
+    if (parts === message.content) return record;
+    return { ...record, message: { ...message, content: [...parts] } };
+  }
+  return record;
+}
+
+export const ContextModel = defineModel<ContextMessage[]>('contextMemory', () => [], {
+  blobs: {
+    dehydrate: dehydrateRecord,
+    rehydrate: async (state, transform) => {
+      const { changed, result } = await dehydrateMessages(state, transform);
+      return changed ? result : state;
+    },
   },
 });
 
@@ -174,33 +204,3 @@ function isRealUserPrompt(message: ContextMessage): boolean {
     origin.trigger === 'user-slash'
   );
 }
-
-export const contextBlobSelector: WireBlobSelector = (record) => {
-  if (record.type === 'context.splice') {
-    const messages = record['messages'];
-    if (!Array.isArray(messages)) return [];
-    return (messages as readonly ContextMessage[]).map((message, index) => ({
-      parts: message.content,
-      replace: (current, parts) => ({
-        ...current,
-        messages: (current['messages'] as readonly ContextMessage[]).map((item, itemIndex) =>
-          itemIndex === index ? { ...item, content: [...parts] } : item,
-        ),
-      }),
-    }));
-  }
-  if (record.type === 'context.append_message') {
-    const message = record['message'] as ContextMessage | undefined;
-    if (message === undefined) return [];
-    return [
-      {
-        parts: message.content,
-        replace: (current, parts) => ({
-          ...current,
-          message: { ...(current['message'] as ContextMessage), content: [...parts] },
-        }),
-      },
-    ];
-  }
-  return [];
-};

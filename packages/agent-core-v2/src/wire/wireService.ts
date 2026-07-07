@@ -4,11 +4,11 @@
  *
  * The scope-agnostic state-machine engine: `dispatch` persists + applies +
  * notifies (OpGroup `{ silent: false }`), `replay` (async — rehydrates blob
- * references first) applies only (`{ silent: true }`); `flush` drains the
- * serialized persist queue. Reads go through `getModel` / `subscribe`; the live
- * append-log record stream streams via `onEmission`, restore completion via
- * `onRestored`, and Op-derived facts flow out through `IEventBus` (see `op.ts`
- * `toEvent`). A single implementation serves every
+ * references via `ModelDef.blobs` first) applies only (`{ silent: true }`);
+ * `flush` drains the serialized persist queue. Reads go through `getModel` /
+ * `subscribe`; the live append-log record stream streams via `onEmission`,
+ * restore completion via `onRestored`, and Op-derived facts flow out through
+ * `IEventBus` (see `op.ts` `toEvent`). A single implementation serves every
  * scope — instances are isolated per scope through the distinct DI tokens in
  * `tokens`, each seeded with its own persistence key. `PersistedRecord` is the
  * on-the-wire append-log shape (`wire.jsonl`): intentionally flat

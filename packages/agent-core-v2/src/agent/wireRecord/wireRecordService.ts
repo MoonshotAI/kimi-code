@@ -257,7 +257,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     let current = record;
     for (const selector of [...selectors] as BlobSelector<T>[]) {
       for (const target of selector(current)) {
-        const parts = await blobStore.rehydrateParts(target.parts);
+        const parts = await blobStore.loadParts(target.parts);
         if (parts !== target.parts) {
           current = target.replace(current, parts);
         }

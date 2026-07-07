@@ -2,7 +2,7 @@
  * `blob` domain — `IAgentBlobService` implementation.
  *
  * Offloads large inline media payloads into content-addressed blobs and
- * rehydrates them on read; persists bytes through `IBlobStore` under the
+ * loads them back on read; persists bytes through `IBlobStore` under the
  * agent's `scope('blobs')` root, matching the v1 `<agentDir>/blobs/<sha256>`
  * layout. Bound at Agent scope.
  */
@@ -61,11 +61,11 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
     return changed ? out : parts;
   }
 
-  async rehydrateParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]> {
+  async loadParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]> {
     let changed = false;
     const out: ContentPart[] = [];
     for (const part of parts) {
-      const next = await this.rehydrateContentPart(part);
+      const next = await this.loadContentPart(part);
       if (next !== part) changed = true;
       out.push(next);
     }
@@ -90,7 +90,7 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
     return updated === undefined ? part : (updated as unknown as ContentPart);
   }
 
-  private async rehydrateContentPart(part: ContentPart): Promise<ContentPart> {
+  private async loadContentPart(part: ContentPart): Promise<ContentPart> {
     let updated: Record<string, unknown> | undefined;
     for (const [key, value] of Object.entries(part)) {
       const mediaObj = asMediaContainer(value);
@@ -99,14 +99,14 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
       const url = mediaObj.url;
       if (typeof url !== 'string' || !this.isBlobRef(url)) continue;
 
-      const newUrl = await this.rehydrateBlobRefUrl(url);
+      const newUrl = await this.loadBlobRefUrl(url);
       if (updated === undefined) updated = { ...part };
       updated[key] = { ...(value as object), url: newUrl ?? MISSING_MEDIA_PLACEHOLDER };
     }
     return updated === undefined ? part : (updated as unknown as ContentPart);
   }
 
-  private async rehydrateBlobRefUrl(url: string): Promise<string | undefined> {
+  private async loadBlobRefUrl(url: string): Promise<string | undefined> {
     const rest = url.slice(BLOBREF_PROTOCOL.length);
     const semiIdx = rest.indexOf(';');
     if (semiIdx === -1) return undefined;

@@ -2,7 +2,7 @@
  * `blob` domain — `IAgentBlobService` contract.
  *
  * Offloads large inline media payloads to content-addressed blob storage and
- * rehydrates them on read. Bound at Agent scope.
+ * loads them back on read. Bound at Agent scope.
  */
 
 import type { ContentPart } from '#/app/llmProtocol';
@@ -16,7 +16,7 @@ export interface IAgentBlobService {
   readonly _serviceBrand: undefined;
 
   offloadParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]>;
-  rehydrateParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]>;
+  loadParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]>;
   isBlobRef(url: string): boolean;
 }
 

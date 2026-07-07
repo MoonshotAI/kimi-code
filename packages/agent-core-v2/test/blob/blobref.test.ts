@@ -190,7 +190,7 @@ describe('blobref', () => {
     const dataUri = `data:image/jpeg;base64,${payload}`;
 
     const offloaded = await store.offloadParts([imagePart(dataUri)]);
-    const rehydrated = await store.rehydrateParts(offloaded);
+    const rehydrated = await store.loadParts(offloaded);
 
     expect(firstImageUrl(rehydrated)).toBe(dataUri);
     expect(firstImageUrl(offloaded)).toMatch(/^blobref:image\/jpeg;/);
@@ -198,7 +198,7 @@ describe('blobref', () => {
 
   it('replaces missing blobs with placeholder text', async () => {
     const { store } = await makeStore();
-    const rehydrated = await store.rehydrateParts([imagePart('blobref:image/png;deadbeef')]);
+    const rehydrated = await store.loadParts([imagePart('blobref:image/png;deadbeef')]);
 
     expect(firstImageUrl(rehydrated)).toBe(MISSING_MEDIA_PLACEHOLDER);
   });
@@ -225,7 +225,7 @@ describe('blobref', () => {
     expect(files).toHaveLength(1);
     await rm(join(blobsDir, files[0]!));
 
-    const rehydrated = await store.rehydrateParts(offloaded);
+    const rehydrated = await store.loadParts(offloaded);
     expect(firstImageUrl(rehydrated)).toBe(dataUri);
   });
 
@@ -239,14 +239,14 @@ describe('blobref', () => {
     const offloaded = await writer.offloadParts([imagePart(dataUri)]);
     const blobref = firstImageUrl(offloaded);
 
-    const firstRead = await reader.rehydrateParts([imagePart(blobref)]);
+    const firstRead = await reader.loadParts([imagePart(blobref)]);
     expect(firstImageUrl(firstRead)).toBe(dataUri);
 
     const files = await readdir(blobsDir);
     expect(files).toHaveLength(1);
     await rm(join(blobsDir, files[0]!));
 
-    const secondRead = await reader.rehydrateParts([imagePart(blobref)]);
+    const secondRead = await reader.loadParts([imagePart(blobref)]);
     expect(firstImageUrl(secondRead)).toBe(dataUri);
   });
 
@@ -262,7 +262,7 @@ describe('blobref', () => {
     const blobrefA = firstImageUrl(offloadedA);
     const blobrefB = firstImageUrl(offloadedB);
 
-    await store.rehydrateParts([imagePart(blobrefA)]);
+    await store.loadParts([imagePart(blobrefA)]);
     const offloadedC = await store.offloadParts([imagePart(`data:image/png;base64,${payloadC}`)]);
     const blobrefC = firstImageUrl(offloadedC);
 
@@ -271,13 +271,13 @@ describe('blobref', () => {
       await rm(join(blobsDir, file));
     }
 
-    expect(firstImageUrl(await store.rehydrateParts([imagePart(blobrefA)]))).toBe(
+    expect(firstImageUrl(await store.loadParts([imagePart(blobrefA)]))).toBe(
       `data:image/png;base64,${payloadA}`,
     );
-    expect(firstImageUrl(await store.rehydrateParts([imagePart(blobrefB)]))).toBe(
+    expect(firstImageUrl(await store.loadParts([imagePart(blobrefB)]))).toBe(
       MISSING_MEDIA_PLACEHOLDER,
     );
-    expect(firstImageUrl(await store.rehydrateParts([imagePart(blobrefC)]))).toBe(
+    expect(firstImageUrl(await store.loadParts([imagePart(blobrefC)]))).toBe(
       `data:image/png;base64,${payloadC}`,
     );
   });
@@ -298,10 +298,10 @@ describe('blobref', () => {
       await rm(join(blobsDir, file));
     }
 
-    expect(firstImageUrl(await store.rehydrateParts([imagePart(smallBlobref)]))).toBe(
+    expect(firstImageUrl(await store.loadParts([imagePart(smallBlobref)]))).toBe(
       `data:image/png;base64,${small}`,
     );
-    expect(firstImageUrl(await store.rehydrateParts([imagePart(largeBlobref)]))).toBe(
+    expect(firstImageUrl(await store.loadParts([imagePart(largeBlobref)]))).toBe(
       MISSING_MEDIA_PLACEHOLDER,
     );
   });

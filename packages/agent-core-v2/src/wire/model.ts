@@ -1,23 +1,30 @@
 /**
  * `wire` domain (L2) — Model definition primitive (`ModelDef` / `defineModel`),
  * `DeepReadonly<T>` (the compile-time half of immutability), and the
- * `ModelRehydrateFn` / `PartsRehydrator` types that let a model declare how to
- * rehydrate blob references in its state after replay.
+ * `ModelBlobCodec` / `PartsTransformer` types that let a model declare how to
+ * dehydrate large inline media before persistence and rehydrate blob references
+ * in its state after replay.
  *
  * A `ModelDef` is a stateless descriptor: it names a model and manufactures its
  * initial state via `initial`. It never holds state itself — per-scope state
  * instances are owned by `IWireService`, and domain services read them through
- * `wire.getModel(model)`. The optional `rehydrate` function declares how to
- * traverse the model's state and replace blob references with inline data after
- * replay — only models whose state contains `ContentPart[]` (e.g. ContextModel)
- * need it; all others leave it undefined (no-op). `WireService.replay` applies
- * all records first (blobref URLs enter the model state as-is, zero I/O), then
- * calls `rehydrate` on each model that declares it — so only the *surviving*
- * state is rehydrated, skipping data that was later removed by compaction.
+ * `wire.getModel(model)`. The optional `blobs` codec declares both directions
+ * of the blob offload pipeline:
+ * - `dehydrate(record, transform)`: called per-record at dispatch time; the
+ *   model traverses its record structure, passes each `ContentPart[]` through
+ *   `transform` (which offloads oversized data URIs to blob storage and returns
+ *   parts with `blobref:` URLs), and returns the transformed record.
+ * - `rehydrate(state, transform)`: called once after replay; the model
+ *   traverses the surviving final state, passes each `ContentPart[]` through
+ *   `transform` (which loads blob references back to inline data URIs), and
+ *   returns the transformed state. Only the *surviving* state is rehydrated,
+ *   skipping data that was later removed by compaction.
  *
- * `PartsRehydrator` uses `readonly unknown[]` rather than `ContentPart[]` so
+ * Both directions receive a `PartsTransformer` — the same function shape — so
+ * the model owns the traversal logic and `WireService` owns the storage I/O.
+ * `PartsTransformer` uses `readonly unknown[]` rather than `ContentPart[]` so
  * this file stays free of `app/llmProtocol` imports (L2 → L3 boundary); the
- * cast happens once inside `WireService.rehydrateModels`.
+ * cast happens once inside `WireService`.
  *
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
  * for the references returned by `getModel` / `subscribe`: functions pass
@@ -27,17 +34,19 @@
  * applied by `WireService` after every `apply`. Scope-agnostic.
  */
 
-export type PartsRehydrator = (parts: readonly unknown[]) => Promise<readonly unknown[]>;
+import type { PersistedRecord } from './wireService';
 
-export type ModelRehydrateFn<S> = (
-  state: S,
-  rehydrateParts: PartsRehydrator,
-) => S | Promise<S>;
+export type PartsTransformer = (parts: readonly unknown[]) => Promise<readonly unknown[]>;
+
+export interface ModelBlobCodec<S> {
+  dehydrate(record: PersistedRecord, transform: PartsTransformer): PersistedRecord | Promise<PersistedRecord>;
+  rehydrate(state: S, transform: PartsTransformer): S | Promise<S>;
+}
 
 export interface ModelDef<S> {
   readonly name: string;
   readonly initial: () => S;
-  readonly rehydrate?: ModelRehydrateFn<S>;
+  readonly blobs?: ModelBlobCodec<S>;
 }
 
 export interface DerivedModelDef<S> {
@@ -45,24 +54,24 @@ export interface DerivedModelDef<S> {
   readonly initial: () => S;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly reducers: Readonly<Record<string, (state: S, payload: any) => S>>;
-  readonly rehydrate?: ModelRehydrateFn<S>;
+  readonly blobs?: ModelBlobCodec<S>;
 }
 
 export function defineModel<S>(
   name: string,
   initial: () => S,
-  opts?: { rehydrate?: ModelRehydrateFn<S> },
+  opts?: { blobs?: ModelBlobCodec<S> },
 ): ModelDef<S> {
-  return { name, initial, rehydrate: opts?.rehydrate };
+  return { name, initial, blobs: opts?.blobs };
 }
 
 export function defineDerivedModel<S>(
   name: string,
   initial: () => S,
   reducers: Record<string, (state: S, payload: any) => S>,
-  opts?: { rehydrate?: ModelRehydrateFn<S> },
+  opts?: { blobs?: ModelBlobCodec<S> },
 ): DerivedModelDef<S> {
-  return { name, initial, reducers, rehydrate: opts?.rehydrate };
+  return { name, initial, reducers, blobs: opts?.blobs };
 }
 
 

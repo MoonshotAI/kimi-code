@@ -102,7 +102,7 @@ function stubBlobPassThrough(ix: TestInstantiationService): void {
   ix.stub(IAgentBlobService, {
     _serviceBrand: undefined,
     offloadParts: async (parts) => parts,
-    rehydrateParts: async (parts) => parts,
+    loadParts: async (parts) => parts,
     isBlobRef: () => false,
   } satisfies IAgentBlobService);
 }

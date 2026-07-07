@@ -1,11 +1,11 @@
 /**
  * `AgentContextMemoryService` wire contract, exercised without the full agent
  * harness (mirror of `test/goal/goal-wire.test.ts`): a `TestInstantiationService`
- * + `InMemoryStorageService` + `AppendLogStore` + `WireService` seeded with the
- * `contextBlobSelector` and a stub `IAgentBlobService`. Covers the splice Ops'
- * NEW-reference + flat-record shape, the live-only `onSpliced` hook (silent on
- * replay), and — load-bearing — the blob offload-on-dispatch ↔
- * rehydrate-on-replay round-trip.
+ * + `InMemoryStorageService` + `AppendLogStore` + `WireService` + stub
+ * `IAgentBlobService`. Covers the splice Ops' NEW-reference + flat-record shape,
+ * the live-only `onSpliced` hook (silent on replay), and — load-bearing — the
+ * blob dehydrate-on-dispatch ↔ rehydrate-on-replay round-trip via
+ * `ContextModel.blobs`.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -16,7 +16,6 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentBlobService } from '#/agent/blob';
 import {
   AgentContextMemoryService,
-  contextBlobSelector,
   ContextModel,
   contextAppendMessage,
   contextApplyCompaction,
@@ -54,7 +53,7 @@ class StubBlobService implements IAgentBlobService {
   declare readonly _serviceBrand: undefined;
   readonly store = new Map<string, string>();
   offloadCalls = 0;
-  rehydrateCalls = 0;
+  loadCalls = 0;
   private seq = 0;
 
   isBlobRef(url: string): boolean {
@@ -71,7 +70,7 @@ class StubBlobService implements IAgentBlobService {
     return changed ? out : parts;
   }
 
-  async rehydrateParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]> {
+  async loadParts(parts: readonly ContentPart[]): Promise<readonly ContentPart[]> {
     let changed = false;
     const out = parts.map((part) => {
       const next = this.rehydratePart(part);
@@ -109,7 +108,7 @@ class StubBlobService implements IAgentBlobService {
       const sha = rest.slice(semi + 1);
       const payload = this.store.get(sha);
       if (payload === undefined) continue;
-      this.rehydrateCalls++;
+      this.loadCalls++;
       return { ...obj, [key]: { ...media, url: `data:${mime};base64,${payload}` } } as unknown as ContentPart;
     }
     return part;
@@ -158,7 +157,7 @@ function buildHost(key: string): Host {
   ix.set(
     IAgentWireService,
     new SyncDescriptor(WireService, [
-      { logScope: SCOPE, logKey: key, blobSelector: contextBlobSelector },
+      { logScope: SCOPE, logKey: key },
     ]),
   );
   ix.stub(IAgentBlobService, blob);
@@ -301,7 +300,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
 
     const replay = buildHost(REPLAY_KEY);
     await replay.wire.replay(...records);
-    expect(blob.rehydrateCalls).toBeGreaterThanOrEqual(1);
+    expect(blob.loadCalls).toBeGreaterThanOrEqual(1);
 
     const rebuilt = replay.wire.getModel(ContextModel) as readonly ContextMessage[];
     expect(rebuilt).toEqual(live);

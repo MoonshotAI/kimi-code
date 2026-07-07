@@ -1,18 +1,16 @@
 /**
  * `wire` domain (L2) — `WireService`, the single scope-agnostic implementation
- * of `IWireService`, plus its construction options (`WireServiceOptions`), the
- * optional blob offload/rehydrate seam (`WireBlobSelector` / `WireBlobTarget`),
+ * of `IWireService`, plus its construction options (`WireServiceOptions`)
  * and the coded `CycleError`.
  *
  * One class serves every scope: per-scope isolation comes from the distinct DI
  * tokens in `tokens`, each seeded with its own `WireServiceOptions`
- * (`logScope` / `logKey`, and optionally a `blobSelector`) as the leading
- * (non-service) constructor argument through a `SyncDescriptor`, mirroring
- * `WireRecordServiceOptions`. `dispatch` and `replay` both lower to one
- * primitive, `execute(OpGroup)` — apply-all THEN onChange-all, so a subscriber
- * never observes a partially-applied group — with `dispatch` adding persistence
- * + emission + Op-derived `IEventBus` events (`silent: false`) and `replay`
- * staying silent (apply only, skipping
+ * (`logScope` / `logKey`) as the leading (non-service) constructor argument
+ * through a `SyncDescriptor`, mirroring `WireRecordServiceOptions`. `dispatch`
+ * and `replay` both lower to one primitive, `execute(OpGroup)` — apply-all THEN
+ * onChange-all, so a subscriber never observes a partially-applied group — with
+ * `dispatch` adding persistence + emission + Op-derived `IEventBus` events
+ * (`silent: false`) and `replay` staying silent (apply only, skipping
  * unknown record types, then `onRestored`). A reentrancy guard (`dispatching` +
  * `queue` + `drain`, capped by `MAX_DRAIN = 100`) lets onChange handlers enqueue
  * further ops without reentering `execute`; a cascade past the cap throws
@@ -28,19 +26,21 @@
  * flat `{ type, ...payload }` record — scalar / array payloads nested so a
  * JSONL line stays an object, with `type` / `time` stripped back out on replay.
  *
- * Blob handling has two asymmetric paths:
+ * Blob handling is driven by each `ModelDef`'s optional `blobs` codec
+ * (`ModelBlobCodec`), which declares two symmetric directions:
  *
- * - **Offload (dispatch → persist)**: record-level `WireBlobSelector` rewrites
- *   oversized inline parts to `blobref:` references before the record reaches
- *   the append log. `apply` and the live emission still see the original inline
- *   payload. Records with no offloadable targets short-circuit synchronously.
+ * - **Dehydrate (dispatch → persist)**: `model.blobs.dehydrate(record, transform)`
+ *   lets the model traverse its own record structure, pass each `ContentPart[]`
+ *   through `transform` (which offloads oversized inline data to blob storage),
+ *   and return the transformed record. `apply` and the live emission still see
+ *   the original inline payload. Records whose model has no `blobs` codec
+ *   short-circuit synchronously (no queue, no microtask).
  *
- * - **Rehydrate (replay → model)**: `replay` applies all records first with
- *   blobref URLs entering the model state as-is (zero I/O). After all records
- *   are applied, `rehydrateModels` calls `ModelDef.rehydrate` on each model
- *   that declares it, replacing blobref URLs with inline data *only* in the
- *   surviving final state. This skips I/O for data later removed by compaction
- *   — a 20×+ speedup for long sessions with many images.
+ * - **Rehydrate (replay → model)**: after all records are applied,
+ *   `rehydrateModels` calls `model.blobs.rehydrate(state, transform)` on each
+ *   model that declares a `blobs` codec, replacing blobref URLs with inline data
+ *   *only* in the surviving final state — skipping I/O for data later removed by
+ *   compaction (a 20×+ speedup for long sessions with many images).
  *
  * Scope-agnostic.
  */
@@ -53,7 +53,7 @@ import { type DomainEvent, IEventBus } from '#/app/event';
 import type { ContentPart } from '#/app/llmProtocol';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 
-import type { DeepReadonly, DerivedModelDef, ModelDef, PartsRehydrator } from './model';
+import type { DeepReadonly, DerivedModelDef, ModelDef, PartsTransformer } from './model';
 import type { Op } from './op';
 import { OP_REGISTRY } from './op';
 import type {
@@ -75,17 +75,9 @@ export class CycleError extends Error {
   }
 }
 
-export interface WireBlobTarget {
-  readonly parts: readonly ContentPart[];
-  replace(record: PersistedRecord, parts: readonly ContentPart[]): PersistedRecord;
-}
-
-export type WireBlobSelector = (record: PersistedRecord) => Iterable<WireBlobTarget>;
-
 export interface WireServiceOptions {
   readonly logScope: string;
   readonly logKey: string;
-  readonly blobSelector?: WireBlobSelector;
 }
 
 interface ModelInstance {
@@ -238,7 +230,7 @@ export class WireService extends Disposable implements IWireService {
       inst.state = Object.freeze(op.descriptor.apply(prev, op.payload));
       if (!group.silent) {
         const record = this.toRecord(op);
-        this.appendToWireLog(record);
+        this.appendToWireLog(record, op.descriptor.model);
         this.emissionEmitter.fire({ type: 'record', record });
         const event = op.descriptor.toEvent?.(op.payload, inst.state);
         if (event !== undefined && this.eventBus !== undefined) {
@@ -289,20 +281,27 @@ export class WireService extends Disposable implements IWireService {
     return { type: op.type, payload };
   }
 
-  private appendToWireLog(record: PersistedRecord): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private appendToWireLog(record: PersistedRecord, model: ModelDef<any>): void {
     if (this.log === undefined) return;
-    // When the blob hook is active, every append rides the serialized queue so a
-    // record with no offloadable targets cannot leapfrog a pending offload and
-    // reorder the log; otherwise append directly (no microtask, no queue).
-    if (this.blobService === undefined || this.options.blobSelector === undefined) {
+    // When the model declares a blob codec and the blob service is available,
+    // every append rides the serialized queue so a record with no offloadable
+    // targets cannot leapfrog a pending dehydrate and reorder the log; otherwise
+    // append directly (no microtask, no queue).
+    if (this.blobService === undefined || model.blobs?.dehydrate === undefined) {
       this.log.append(this.options.logScope, this.options.logKey, record, {
         onError: onUnexpectedError,
       });
       return;
     }
+    const dehydrate = model.blobs.dehydrate;
+    const transform: PartsTransformer = (parts) =>
+      this.blobService!.offloadParts(
+        parts as readonly ContentPart[],
+      ) as Promise<readonly unknown[]>;
     this.persistQueue = this.persistQueue
       .then(async () => {
-        const prepared = this.prepareRecord(record);
+        const prepared = dehydrate(record, transform);
         const offloaded = isPromise(prepared) ? await prepared : prepared;
         this.log?.append(this.options.logScope, this.options.logKey, offloaded, {
           onError: onUnexpectedError,
@@ -311,44 +310,20 @@ export class WireService extends Disposable implements IWireService {
       .catch((error: unknown) => onUnexpectedError(error));
   }
 
-  private prepareRecord(record: PersistedRecord): PersistedRecord | Promise<PersistedRecord> {
-    const blobService = this.blobService;
-    const selector = this.options.blobSelector;
-    if (blobService === undefined || selector === undefined) return record;
-    const targets = [...selector(record)];
-    if (targets.length === 0) return record;
-    return this.offloadTargets(record, targets, blobService);
-  }
-
-  private async offloadTargets(
-    record: PersistedRecord,
-    targets: readonly WireBlobTarget[],
-    blobService: IAgentBlobService,
-  ): Promise<PersistedRecord> {
-    let current = record;
-    for (const target of targets) {
-      const parts = await blobService.offloadParts(target.parts);
-      if (parts !== target.parts) {
-        current = target.replace(current, parts);
-      }
-    }
-    return current;
-  }
-
   private async rehydrateModels(): Promise<void> {
     if (this.blobService === undefined) return;
-    const rehydrateParts: PartsRehydrator = (parts) =>
-      this.blobService!.rehydrateParts(
+    const transform: PartsTransformer = (parts) =>
+      this.blobService!.loadParts(
         parts as readonly ContentPart[],
       ) as Promise<readonly unknown[]>;
     for (const [def, inst] of this.models) {
-      if (def.rehydrate === undefined) continue;
-      const result = def.rehydrate(inst.state, rehydrateParts);
+      if (def.blobs?.rehydrate === undefined) continue;
+      const result = def.blobs.rehydrate(inst.state, transform);
       inst.state = Object.freeze(isPromise(result) ? await result : result);
     }
     for (const [def, inst] of this.derivedModels) {
-      if (def.rehydrate === undefined) continue;
-      const result = def.rehydrate(inst.state, rehydrateParts);
+      if (def.blobs?.rehydrate === undefined) continue;
+      const result = def.blobs.rehydrate(inst.state, transform);
       inst.state = Object.freeze(isPromise(result) ? await result : result);
     }
   }

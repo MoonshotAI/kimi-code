@@ -42,7 +42,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext';
 import { IAgentScopeContext } from '#/agent/scopeContext';
 import { IAgentProfileService } from '#/agent/profile';
-import { contextBlobSelector, IAgentContextMemoryService } from '#/agent/contextMemory';
+import { IAgentContextMemoryService } from '#/agent/contextMemory';
 import { IAgentBuiltinToolsRegistrar } from '#/agent/toolRegistry';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
@@ -141,7 +141,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             } satisfies IAgentScopeContext,
           ],
           [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService, [{ homedir: agentHomedir }])],
-          [IAgentWireService, new SyncDescriptor(WireService, [{ logScope: agentScope, logKey: WIRE_RECORD_FILENAME, blobSelector: contextBlobSelector }])],
+          [IAgentWireService, new SyncDescriptor(WireService, [{ logScope: agentScope, logKey: WIRE_RECORD_FILENAME }])],
           [IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl)],
           [
             IAgentMcpService,

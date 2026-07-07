@@ -88,7 +88,7 @@ describe('AgentBlobServiceImpl', () => {
     const parts: ContentPart[] = [{ type: 'image_url', imageUrl: { url: uri } }];
 
     const offloaded = await store.offloadParts(parts);
-    const rehydrated = await store.rehydrateParts(offloaded);
+    const rehydrated = await store.loadParts(offloaded);
 
     expect((rehydrated[0]! as { imageUrl: { url: string } }).imageUrl.url).toBe(uri);
   });
@@ -106,7 +106,7 @@ describe('AgentBlobServiceImpl', () => {
     expect(store.isBlobRef((offloaded[0]! as { imageUrl: { url: string } }).imageUrl.url)).toBe(true);
     expect((offloaded[1]! as { audioUrl: { url: string } }).audioUrl.url).toBe(smallUri);
 
-    const rehydrated = await store.rehydrateParts(offloaded);
+    const rehydrated = await store.loadParts(offloaded);
     expect((rehydrated[0]! as { imageUrl: { url: string } }).imageUrl.url).toBe(largeUri);
     expect((rehydrated[1]! as { audioUrl: { url: string } }).audioUrl.url).toBe(smallUri);
   });
@@ -117,7 +117,7 @@ describe('AgentBlobServiceImpl', () => {
       { type: 'image_url', imageUrl: { url: 'blobref:image/png;deadbeef' } },
     ];
 
-    const result = await store.rehydrateParts(parts);
+    const result = await store.loadParts(parts);
 
     expect((result[0]! as { imageUrl: { url: string } }).imageUrl.url).toBe('[media missing]');
   });
@@ -165,7 +165,7 @@ describe('AgentBlobServiceImpl', () => {
     ).toBe(payload);
     expect(await backend.list('blobs')).toHaveLength(0);
 
-    const rehydrated = await store.rehydrateParts(offloaded);
+    const rehydrated = await store.loadParts(offloaded);
     expect((rehydrated[0]! as { imageUrl: { url: string } }).imageUrl.url).toBe(uri);
   });
 });
