@@ -205,31 +205,36 @@ describe('clipboard image paste compression', () => {
     expect(att.original).toBeUndefined();
   });
 
-  it('records an EXIF-rotated compressed original in display space', async () => {
-    // Orientation 6 (rotate 90° CW): the header says 3600x1800, but the image
-    // decodes to 1800x3600 — the space the compressed bytes and any later
-    // ReadMediaFile region readback live in. The recorded original (which
-    // drives the submit-time compression caption) must match that space, or
-    // the caption contradicts the sent image's aspect and region coordinates
-    // land axis-swapped.
-    const portrait = withExifOrientation(await solidJpeg(3600, 1800), 6);
-    readClipboardMedia.mockResolvedValue({
-      kind: 'image',
-      bytes: portrait,
-      mimeType: 'image/jpeg',
-    });
+  it(
+    'records an EXIF-rotated compressed original in display space',
+    async () => {
+      // Orientation 6 (rotate 90° CW): the header says 3600x400, but the image
+      // decodes to 400x3600 — the space the compressed bytes and any later
+      // ReadMediaFile region readback live in. The recorded original (which
+      // drives the submit-time compression caption) must match that space, or
+      // the caption contradicts the sent image's aspect and region coordinates
+      // land axis-swapped. (Kept narrow: pure-JS decode+rotate+encode of a
+      // larger frame can outlast the test timeout on slow CI runners.)
+      const portrait = withExifOrientation(await solidJpeg(3600, 400), 6);
+      readClipboardMedia.mockResolvedValue({
+        kind: 'image',
+        bytes: portrait,
+        mimeType: 'image/jpeg',
+      });
 
-    const { store, pasteImage } = createPasteHarness();
-    await pasteImage();
+      const { store, pasteImage } = createPasteHarness();
+      await pasteImage();
 
-    const att = store.get(1);
-    if (att?.kind !== 'image') throw new Error('expected image attachment');
-    expect(att.original?.width).toBe(1800);
-    expect(att.original?.height).toBe(3600);
-    // The compressed attachment itself keeps the portrait aspect.
-    expect(att.width).toBeLessThan(att.height);
-    await unlink(att.original!.path!).catch(() => undefined);
-  });
+      const att = store.get(1);
+      if (att?.kind !== 'image') throw new Error('expected image attachment');
+      expect(att.original?.width).toBe(400);
+      expect(att.original?.height).toBe(3600);
+      // The compressed attachment itself keeps the portrait aspect.
+      expect(att.width).toBeLessThan(att.height);
+      await unlink(att.original!.path!).catch(() => undefined);
+    },
+    15_000,
+  );
 
   it('stores display-space dimensions for an EXIF-rotated untouched paste', async () => {
     // Within budgets → sent byte-for-byte, but the placeholder and metadata
