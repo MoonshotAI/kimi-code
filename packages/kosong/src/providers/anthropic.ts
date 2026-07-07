@@ -151,9 +151,9 @@ const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
  * can silently truncate mid-`tool_use`.
  *
  * Keys are `<family>-<major>[-<minor>]`. Lookups try the most specific
- * key first, then fall back to the family/major-only entry, so an
- * unrecognized minor version (e.g. a future `opus-4-10`) gets the
- * family's baseline rather than the generic fallback.
+ * key first, then the nearest lower catalogued minor of the same
+ * family/major (a not-yet-catalogued `opus-4-8` reuses `opus-4-7`'s
+ * ceiling), and finally the family/major-only baseline entry.
  */
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   // Claude Fable 5 documents a 128k output ceiling.
@@ -269,8 +269,16 @@ function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): 
 function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
   const { family, major, minor } = version;
   if (minor !== null) {
-    const exact = CEILING_BY_FAMILY_VERSION[`${family}-${major}-${minor}`];
-    if (exact !== undefined) return exact;
+    // Exact minor first, then walk down to the nearest catalogued minor:
+    // a newer minor release inherits at least its predecessor's ceiling
+    // (Anthropic has never lowered the cap within a major), so a
+    // not-yet-catalogued 4.8 reuses 4.7's value instead of dropping to
+    // the family baseline. The regex caps minors at two digits, so this
+    // walk is bounded.
+    for (let candidate = minor; candidate >= 0; candidate--) {
+      const ceiling = CEILING_BY_FAMILY_VERSION[`${family}-${major}-${candidate}`];
+      if (ceiling !== undefined) return ceiling;
+    }
   }
   return CEILING_BY_FAMILY_VERSION[`${family}-${major}`];
 }
