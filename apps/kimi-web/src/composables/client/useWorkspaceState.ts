@@ -1587,15 +1587,28 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       });
       if (!ok) return;
     }
-    const sid = rawState.activeSessionId;
-    if (!sid) return;
+    // Empty-composer heal: `/goal <objective>` from the new-session screen
+    // would otherwise silently clear and run nothing. Create the session first
+    // (same path as the first prompt / a new-session skill), then target it.
+    let sid = rawState.activeSessionId;
+    if (!sid) {
+      const wsId = rawState.activeWorkspaceId;
+      if (!wsId) return;
+      sid = (await createDraftSession(wsId)) ?? undefined;
+      if (!sid) return;
+    }
     try {
       await getKimiWebApi().updateSession(sid, { goalObjective: trimmed });
     } catch (err) {
       pushOperationFailure('createGoal', err, { sessionId: sid, message: goalErrorMessage(err) });
       return;
     }
-    await sendPrompt(trimmed);
+    // Send by explicit sid (not sendPrompt, which reads activeSessionId): a
+    // concurrent session switch during createDraftSession would otherwise
+    // redirect the goal prompt to the wrong session. Plain prompts carry their
+    // own permissionMode / thinking / plan / swarm on the request, so we don't
+    // need to persist them onto the profile here.
+    await submitPromptInternal(sid, trimmed);
   }
 
   /** Send a one-shot goal control action (pause/resume/cancel). */

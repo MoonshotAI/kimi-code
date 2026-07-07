@@ -14,6 +14,8 @@ const apiMock = vi.hoisted(() => ({
   addWorkspace: vi.fn(),
   updateWorkspace: vi.fn(),
   createSession: vi.fn(),
+  updateSession: vi.fn(),
+  submitPrompt: vi.fn(),
   respondQuestion: vi.fn(),
   respondApproval: vi.fn(),
   dismissQuestion: vi.fn(),
@@ -657,5 +659,84 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(apiMock.createSession).not.toHaveBeenCalled();
     expect(activateSkill).not.toHaveBeenCalled();
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('useWorkspaceState — createGoal from an empty composer', () => {
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
+
+  beforeEach(() => {
+    apiMock.addWorkspace.mockReset();
+    apiMock.createSession.mockReset();
+    apiMock.updateSession.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.addWorkspace.mockResolvedValue(registered);
+    apiMock.createSession.mockResolvedValue(newSession);
+    apiMock.updateSession.mockResolvedValue({});
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_goal' });
+  });
+
+  function emptyComposerState() {
+    const state = createState();
+    state.activeSessionId = null;
+    state.activeWorkspaceId = 'wd_1';
+    state.workspaces = [workspace('wd_1', '/abs/path', 'A')];
+    state.permission = 'auto'; // skip the interactive goal-start confirmation
+    return state;
+  }
+
+  it('creates a session, sets the goal profile, and submits the objective', async () => {
+    const state = emptyComposerState();
+    const deps: UseWorkspaceStateDeps = {
+      ...createDeps(),
+      taskPoller: { loadTasksForSession: vi.fn() } as unknown as UseWorkspaceStateDeps['taskPoller'],
+      modelProvider: {
+        draftModel: ref(null),
+        skillsBySession: ref({}),
+        loadSkillsForSession: vi.fn(),
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
+    };
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.createGoal('improve test coverage');
+
+    expect(apiMock.createSession).toHaveBeenCalledOnce();
+    // Profile is updated on the new session: that's what marks the prompt as a goal.
+    expect(apiMock.updateSession).toHaveBeenCalledWith('sess_new', { goalObjective: 'improve test coverage' });
+    // And the objective is sent as the first user prompt on the new session.
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_new',
+      expect.objectContaining({
+        content: [{ type: 'text', text: 'improve test coverage' }],
+      }),
+    );
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when there is no active session and no active workspace', async () => {
+    const state = emptyComposerState();
+    state.activeWorkspaceId = null;
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.createGoal('improve test coverage');
+
+    expect(apiMock.createSession).not.toHaveBeenCalled();
+    expect(apiMock.updateSession).not.toHaveBeenCalled();
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('ignores empty/whitespace objectives', async () => {
+    const state = emptyComposerState();
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.createGoal('   ');
+
+    expect(apiMock.createSession).not.toHaveBeenCalled();
+    expect(apiMock.updateSession).not.toHaveBeenCalled();
   });
 });
