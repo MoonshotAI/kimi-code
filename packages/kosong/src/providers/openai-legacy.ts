@@ -449,8 +449,16 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 }
 export class OpenAILegacyChatProvider implements ChatProvider {
   readonly name: string = 'openai';
-  /** See {@link ChatProvider.maxCompletionTokens}. */
-  maxCompletionTokens?: number;
+
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. Reuses the request-time
+   * kwargs normalization so the model-dependent `max_tokens` /
+   * `max_completion_tokens` aliasing is mirrored exactly.
+   */
+  get maxCompletionTokens(): number | undefined {
+    const kwargs = normalizeGenerationKwargs(this._model, this._generationKwargs);
+    return kwargs.max_completion_tokens ?? kwargs.max_tokens;
+  }
 
   private _model: string;
   private _stream: boolean;
@@ -615,10 +623,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       cap = Math.min(cap, options.maxContextTokens - options.usedContextTokens);
     }
     cap = Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING);
-    const effectiveCap = Math.max(1, cap);
-    const clone = this.withGenerationKwargs(completionTokenKwargs(this._model, effectiveCap));
-    clone.maxCompletionTokens = effectiveCap;
-    return clone;
+    return this.withGenerationKwargs(completionTokenKwargs(this._model, Math.max(1, cap)));
   }
 
   private _clone(): OpenAILegacyChatProvider {

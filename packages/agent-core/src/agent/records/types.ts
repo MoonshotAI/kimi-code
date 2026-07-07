@@ -148,8 +148,9 @@ export interface AgentRecordEvents {
     topP?: number;
     /**
      * Effective completion-token cap the provider sends on the wire — read
-     * from the provider after budget application, so provider-side clamping
-     * (remaining context window, transport ceilings) is included.
+     * from the effective provider, so provider-side clamping (remaining
+     * context window, transport ceilings) and provider-level defaults (e.g.
+     * Anthropic's required `max_tokens`) are included.
      */
     maxTokens?: number;
     betaApi?: boolean;

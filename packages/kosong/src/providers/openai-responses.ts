@@ -982,8 +982,11 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
 }
 export class OpenAIResponsesChatProvider implements ChatProvider {
   readonly name: string = 'openai-responses';
+
   /** See {@link ChatProvider.maxCompletionTokens}. */
-  maxCompletionTokens?: number;
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_output_tokens;
+  }
 
   private _model: string;
   private _stream: boolean;
@@ -1119,9 +1122,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 
   withMaxCompletionTokens(maxCompletionTokens: number): OpenAIResponsesChatProvider {
-    const clone = this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
-    clone.maxCompletionTokens = maxCompletionTokens;
-    return clone;
+    return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
   }
 
   private _clone(): OpenAIResponsesChatProvider {

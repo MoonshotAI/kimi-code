@@ -693,8 +693,11 @@ export function convertGoogleGenAIError(error: unknown): ChatProviderError {
 }
 export class GoogleGenAIChatProvider implements ChatProvider {
   readonly name: string = 'google_genai';
+
   /** See {@link ChatProvider.maxCompletionTokens}. */
-  maxCompletionTokens?: number;
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.maxOutputTokens;
+  }
 
   private _model: string;
   private _client: GenAIClient | undefined;
@@ -934,9 +937,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   }
 
   withMaxCompletionTokens(maxCompletionTokens: number): GoogleGenAIChatProvider {
-    const clone = this.withGenerationKwargs({ maxOutputTokens: maxCompletionTokens });
-    clone.maxCompletionTokens = maxCompletionTokens;
-    return clone;
+    return this.withGenerationKwargs({ maxOutputTokens: maxCompletionTokens });
   }
 
   private _clone(): GoogleGenAIChatProvider {

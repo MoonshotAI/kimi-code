@@ -643,6 +643,9 @@ describe('KimiChatProvider', () => {
       expect(body['max_completion_tokens']).toBe(1024);
       expect(body['max_tokens']).toBeUndefined();
       expect(provider.maxCompletionTokens).toBe(1024);
+      // Without any budget application no cap goes on the wire, and the
+      // exposed value says so.
+      expect(createProvider().maxCompletionTokens).toBeUndefined();
     });
 
     it('withMaxCompletionTokens sizes the cap to the remaining context window', async () => {

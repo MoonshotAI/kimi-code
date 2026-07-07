@@ -187,10 +187,11 @@ export interface ChatProvider {
   readonly thinkingEffort: ThinkingEffort | null;
   /**
    * The effective completion-token cap this instance will send on the wire,
-   * as computed by the most recent {@link withMaxCompletionTokens} call —
-   * after any implementation-side clamping (remaining context window,
-   * transport ceilings, model-default resolution). `undefined` when no
-   * budget has been applied through that method. Read by hosts that record
+   * derived from its generation kwargs — covering constructor defaults (e.g.
+   * Anthropic's required `max_tokens`), direct kwargs configuration, and
+   * {@link withMaxCompletionTokens} (after any implementation-side clamping:
+   * remaining context window, transport ceilings, model-default resolution).
+   * `undefined` when the instance sends no cap. Read by hosts that record
    * the outbound request, so the recorded value matches what the provider
    * actually sends.
    */

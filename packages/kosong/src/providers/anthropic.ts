@@ -926,8 +926,15 @@ class AnthropicStreamedMessage implements StreamedMessage {
 }
 export class AnthropicChatProvider implements ChatProvider {
   readonly name: string = 'anthropic';
-  /** See {@link ChatProvider.maxCompletionTokens}. */
-  maxCompletionTokens?: number;
+
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. `max_tokens` is required by
+   * the Messages API and is initialized in the constructor, so this reflects
+   * the wire value even when no completion budget was applied.
+   */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_tokens;
+  }
 
   private _model: string;
   private _stream: boolean;
@@ -1298,13 +1305,13 @@ export class AnthropicChatProvider implements ChatProvider {
   withMaxCompletionTokens(maxCompletionTokens: number): AnthropicChatProvider {
     const requestedCap = resolveDefaultMaxTokens(this._model, maxCompletionTokens);
     const existingCap = this._generationKwargs.max_tokens;
-    const effectiveCap =
-      existingCap === undefined || this._explicitMaxTokens
-        ? existingCap ?? requestedCap
-        : Math.min(existingCap, requestedCap);
-    const clone = this._withGenerationKwargs({ max_tokens: effectiveCap });
+    const clone = this._withGenerationKwargs({
+      max_tokens:
+        existingCap === undefined || this._explicitMaxTokens
+          ? existingCap ?? requestedCap
+          : Math.min(existingCap, requestedCap),
+    });
     clone._explicitMaxTokens = this._explicitMaxTokens;
-    clone.maxCompletionTokens = effectiveCap;
     return clone;
   }
 
