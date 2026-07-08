@@ -567,6 +567,41 @@ describe('KimiOAuthToolkit', () => {
     expect((await storage.load(storageName))?.accessToken).toBe('fresh-access');
   });
 
+  it('propagates extraUsage from the managed usage response', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('access-1'));
+    const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          usage: { used: 10, limit: 100, name: 'Weekly limit' },
+          limits: [],
+          boosterWallet: {
+            balance: {
+              type: 'BALANCE_BOOSTER',
+              amount: '50',
+              amountLeft: '30',
+            },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    await expect(toolkit.getManagedUsage()).resolves.toEqual({
+      kind: 'ok',
+      summary: { label: 'Weekly limit', used: 10, limit: 100 },
+      limits: [],
+      extraUsage: { label: 'Extra Usage', used: 20, limit: 50 },
+    });
+  });
+
   it('removes managed config on logout when an adapter supports cleanup', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));
