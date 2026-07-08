@@ -239,6 +239,7 @@ export async function fetchManagedUsage(
       return { kind: 'error', status, message: await readApiErrorMessage(res, hint) };
     }
     const json: unknown = await res.json();
+    console.error('[managed-usage] /usages response:', JSON.stringify(json, null, 2));
     return { kind: 'ok', parsed: parseManagedUsagePayload(json) };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
