@@ -77,7 +77,7 @@ import {
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
 const DEFAULT_MODEL_SECTION = 'defaultModel';
-const DEFAULT_THINKING_SECTION = 'defaultThinking';
+const THINKING_SECTION = 'thinking';
 const SERVICES_SECTION = 'services';
 
 interface FlowState {
@@ -92,10 +92,6 @@ interface FlowState {
   errorMessage: string | undefined;
   resolvedAt: string | undefined;
 }
-
-type ManagedKimiUserConfigShape = ManagedKimiConfigShape & {
-  defaultThinking?: boolean;
-};
 
 export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
@@ -301,7 +297,7 @@ export class OAuthService extends Disposable implements IOAuthService {
         next,
         preserveUserProviderAliases(current, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
       );
-      restoreDefaultSelection(next, current.defaultModel, current.defaultThinking);
+      restoreDefaultSelection(next, current.defaultModel, current.thinking?.enabled);
       clampDanglingDefault(next);
 
       if (providerModelsEqual(current, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
@@ -314,7 +310,7 @@ export class OAuthService extends Disposable implements IOAuthService {
         await this.config.replace(PROVIDERS_SECTION, next.providers);
         await this.config.replace(MODELS_SECTION, next.models ?? {});
         await this.config.set(DEFAULT_MODEL_SECTION, next.defaultModel);
-        await this.config.set(DEFAULT_THINKING_SECTION, next.defaultThinking);
+        await this.config.set(THINKING_SECTION, next.thinking);
         changed.push({
           provider_id: KIMI_CODE_PROVIDER_NAME,
           provider_name: 'Kimi Code',
@@ -336,20 +332,21 @@ export class OAuthService extends Disposable implements IOAuthService {
     return result;
   }
 
-  private readUserConfigShape(): ManagedKimiUserConfigShape {
+  private readUserConfigShape(): ManagedKimiConfigShape {
     const providers =
       this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
     const models = this.config.inspect<Record<string, ModelAlias>>(MODELS_SECTION).userValue ?? {};
     const services =
       this.config.inspect<ManagedKimiConfigShape['services']>(SERVICES_SECTION).userValue;
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
-    const defaultThinking = this.config.inspect<boolean>(DEFAULT_THINKING_SECTION).userValue;
+    const thinking =
+      this.config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue;
     return {
       providers: { ...providers } as ManagedKimiConfigShape['providers'],
       models: { ...models } as ManagedKimiConfigShape['models'],
       services: services === undefined ? undefined : { ...services },
       defaultModel,
-      defaultThinking,
+      thinking: thinking === undefined ? undefined : { ...thinking },
     };
   }
 
@@ -463,7 +460,7 @@ export class OAuthService extends Disposable implements IOAuthService {
       return;
     }
     if (cleanup.defaultModelCleared) {
-      next.defaultThinking = undefined;
+      next.thinking = undefined;
     }
     if (cleanup.removedProvider) {
       await this.config.replace(PROVIDERS_SECTION, next.providers);
@@ -476,7 +473,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     }
     if (cleanup.defaultModelCleared) {
       await this.config.set(DEFAULT_MODEL_SECTION, undefined);
-      await this.config.set(DEFAULT_THINKING_SECTION, undefined);
+      await this.config.set(THINKING_SECTION, undefined);
     }
   }
 
@@ -765,20 +762,25 @@ function restoreProviderAliases(
 }
 
 function restoreDefaultSelection(
-  config: ManagedKimiUserConfigShape,
+  config: ManagedKimiConfigShape,
   defaultModel: string | undefined,
-  defaultThinking: boolean | undefined,
+  defaultEnabled: boolean | undefined,
 ): void {
   if (defaultModel === undefined || config.models?.[defaultModel] === undefined) return;
   config.defaultModel = defaultModel;
+  // A refresh may have just learned that the default model cannot disable
+  // thinking — never restore a stale thinking-off selection onto it.
   const capabilities = managedModel(config, defaultModel)?.capabilities ?? [];
-  config.defaultThinking = capabilities.includes('always_thinking') ? true : defaultThinking;
+  const enabled = capabilities.includes('always_thinking') ? true : defaultEnabled;
+  if (enabled !== undefined) {
+    config.thinking = { ...config.thinking, enabled };
+  }
 }
 
-function clampDanglingDefault(config: ManagedKimiUserConfigShape): void {
+function clampDanglingDefault(config: ManagedKimiConfigShape): void {
   if (config.defaultModel !== undefined && config.models?.[config.defaultModel] === undefined) {
     config.defaultModel = undefined;
-    config.defaultThinking = undefined;
+    config.thinking = undefined;
   }
 }
 

@@ -1,11 +1,13 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
+import { Jimp } from 'jimp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/agent/mcp/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
@@ -24,6 +26,7 @@ import { IAgentTurnService } from '#/agent/turn/turn';
 import { IAgentProfileService } from '#/agent/profile/profile';
 
 import { createTestAgent, mcpServices, type TestAgentContext } from '../harness';
+import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import { stubTurnWithHooks } from '../turn/stubs';
 import { discoverTools, executeTool, fakeMcpClient } from './stubs';
 
@@ -147,18 +150,21 @@ describe('AgentMcpService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let events: DomainEvent[];
+  let telemetryEvents: TelemetryRecord[];
   let wire: WireService;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     events = [];
+    telemetryEvents = [];
     ix.stub(IEventBus, {
       publish: (event) => {
         events.push(event);
       },
       subscribe: () => toDisposable(() => {}),
     });
+    ix.stub(ITelemetryService, recordingTelemetry(telemetryEvents));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
     ix.stub(IAgentTurnService, stubTurnWithHooks());
@@ -415,6 +421,57 @@ describe('AgentMcpService', () => {
       },
       { type: 'text', text: '</mcp_tool_result>' },
     ]);
+  });
+
+  it('reports MCP image compression telemetry through the wrapped tool path', async () => {
+    const manager = new FakeMcpManager();
+    const image = Buffer.from(
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+    const client: MCPClient = {
+      async listTools() {
+        return [
+          {
+            name: 'shot',
+            description: 'Returns a large image',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ];
+      },
+      async callTool() {
+        return {
+          content: [{ type: 'image', data: image, mimeType: 'image/png' }],
+          isError: false,
+        };
+      },
+    };
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+    manager.connect('s');
+
+    const shot = ix.get(IAgentToolRegistryService).resolve('mcp__s__shot');
+    const result = await executeTool(shot!, {
+      turnId: 1,
+      toolCallId: 'tc-large-image',
+      args: {},
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const imageCompressEvents = telemetryEvents.filter((record) => record.event === 'image_compress');
+    expect(imageCompressEvents).toHaveLength(1);
+    const properties = imageCompressEvents[0]!.properties;
+    expect(properties).toEqual(
+      expect.objectContaining({
+        source: 'mcp_tool_result',
+        outcome: 'compressed',
+        input_mime: 'image/png',
+        original_width: 3600,
+        original_height: 1800,
+      }),
+    );
+    expect(properties?.['final_width']).toBeLessThanOrEqual(3000);
+    expect(properties?.['final_height']).toBeLessThanOrEqual(3000);
   });
 
   it('forwards the execution AbortSignal through the wrapped MCP tool', async () => {

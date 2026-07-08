@@ -89,7 +89,7 @@ pass `ConfigTarget.Memory` for a per-run override that is never written to disk.
 - `src/config/config.ts` — `IConfigRegistry` / `IConfigService` tokens, `ConfigSection`, `ConfigEffectiveOverlay`, event types.
 - `src/config/configService.ts` — `ConfigRegistry` + `ConfigService` impl; self-registers at App scope.
 - `src/config/toml.ts` — generic snake_case ↔ camelCase machinery plus the registry-aware `transformTomlData` / `applySectionToToml` entry points. Per-domain normalization lives in the section owner's `configSection.ts` (registered as `fromToml` / `toToml`); this module stays free of any other domain's semantics.
-- `src/profile/thinking.ts` (owner domain, not `config`) — `resolveThinkingEffort` / `resolveThinkingLevel` helpers; uses the authoritative `ThinkingConfig` from `configSection.ts`.
+- `src/profile/thinking.ts` (owner domain, not `config`) — the `resolveThinkingEffort` helper; uses the authoritative `ThinkingConfig` from `configSection.ts`.
 - `src/config/configPure.ts` — `isPlainObject`, `deepMerge`, `omitUndefined`, `describeUnknownError`.
 
 A domain that owns a section keeps the schema in its own `configSection.ts` (e.g. `src/flag/flag.ts` for `experimental`, `src/profile/configSection.ts` for `thinking`, `src/loop/configSection.ts` for `loopControl`). A cross-section env overlay (e.g. the `KIMI_MODEL_*` synthesis) lives in the owning domain too (`src/provider/envOverlay.ts`) and is registered via `IConfigRegistry.registerEffectiveOverlay`.
@@ -126,8 +126,7 @@ type-checked against the schema (no magic strings), and nested schemas recurse:
 ```ts
 registerSection('thinking', ThinkingConfigSchema, {
   env: envBindings(ThinkingConfigSchema, {
-    mode:  'KIMI_MODEL_THINKING_MODE',
-    effort:'KIMI_MODEL_THINKING_EFFORT',
+    effort: 'KIMI_MODEL_THINKING_EFFORT',
   }),
 });
 
@@ -238,7 +237,7 @@ When `KIMI_MODEL_NAME` is set, the `provider` domain's `kimiModelEnvOverlay` (`s
 |---|---|---|---|
 | `providers` | `provider` | L2 | owner-owned (`IProviderService` CRUD) |
 | `experimental` | `flag` | L3 | owner-owned |
-| `thinking` / `defaultThinking` | `profile` | L4 | owner-owned |
+| `thinking` | `profile` | L4 | owner-owned |
 | `loopControl` | `loop` | L4 | owner-owned (read by `loop` + `profile`) |
 | `McpServerConfig` (type) | `mcp` | L5 | owner-owned (type only; not a registered section) |
 | `session` | `config` | L2 | in config |

@@ -12,6 +12,7 @@ import type {
   ToolListUpdatedEvent,
 } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
@@ -56,6 +57,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentWireService private readonly wire: IWireService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this.attachMcpTools();
@@ -236,7 +238,10 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       seenInThisCall.set(qualified, tool.name);
       const disposable = this._register(
         this.registry.register(
-          createMcpTool(qualified, tool, client, { originalsDir: this.options.originalsDir }),
+          createMcpTool(qualified, tool, client, {
+            originalsDir: this.options.originalsDir,
+            telemetry: this.telemetry,
+          }),
           { source: 'mcp' },
         ),
       );

@@ -15,9 +15,9 @@
  * `begin` payload (and is persisted on the record for audit) but is not stored
  * in the Model; the result numbers are consumed live by the
  * `compaction.completed` signal and their durable effect (the summary message)
- * already lives in `contextMemory`. They are still carried on the `complete`
- * payload so the persisted record stays byte-compatible with the legacy wire
- * log, but `apply` ignores them and collapses to `idle`. Each `apply` returns
+ * already lives in `contextMemory`. The live `complete` payload is empty; legacy
+ * logs may still carry result numbers, and `apply` accepts and ignores them while
+ * collapsing to `idle`. Each `apply` returns
  * the same reference on a no-op so the wire's reference-equality gate stays
  * quiet; it carries no non-determinism.
  *
@@ -84,7 +84,7 @@ export const fullCompactionCancel = defineOp(CompactionModel, 'full_compaction.c
   apply: (s): CompactionState => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });
 
-export type FullCompactionCompletePayload = FullCompactionCompleteData;
+export type FullCompactionCompletePayload = Partial<FullCompactionCompleteData>;
 
 export const fullCompactionComplete = defineOp(CompactionModel, 'full_compaction.complete', {
   apply: (s, _p: FullCompactionCompletePayload): CompactionState =>

@@ -55,7 +55,7 @@ describe('OAuthService', () => {
   let models: Record<string, ModelAlias>;
   let services: Record<string, unknown> | undefined;
   let defaultModel: string | undefined;
-  let defaultThinking: boolean | undefined;
+  let thinking: { enabled?: boolean; effort?: string } | undefined;
   let toolkit: FakeToolkit;
   let providerSet: ReturnType<typeof vi.fn>;
   let configSet: ReturnType<typeof vi.fn>;
@@ -80,14 +80,14 @@ describe('OAuthService', () => {
     models = {};
     services = undefined;
     defaultModel = undefined;
-    defaultThinking = undefined;
+    thinking = undefined;
     configSet = vi.fn(async (domain: string, value: unknown) => {
       if (domain === 'defaultModel') {
         defaultModel = value as string | undefined;
         return;
       }
-      if (domain === 'defaultThinking') {
-        defaultThinking = value as boolean | undefined;
+      if (domain === 'thinking') {
+        thinking = value as { enabled?: boolean; effort?: string } | undefined;
         return;
       }
       throw new Error(`unexpected config set: ${domain}`);
@@ -162,7 +162,7 @@ describe('OAuthService', () => {
   }
 
   function configBacking(): Record<string, unknown> {
-    return { providers, models, services, defaultModel, defaultThinking };
+    return { providers, models, services, defaultModel, thinking };
   }
 
   function stubManagedModelsFetch(): ReturnType<typeof vi.fn> {
@@ -432,7 +432,7 @@ describe('OAuthService', () => {
       },
     };
     defaultModel = 'kimi-code/kimi-k2';
-    defaultThinking = true;
+    thinking = { enabled: true };
     const svc = createService();
 
     const result = await svc.logout(OAUTH_PROVIDER);
@@ -449,7 +449,7 @@ describe('OAuthService', () => {
       },
     });
     expect(configSet).toHaveBeenCalledWith('defaultModel', undefined);
-    expect(configSet).toHaveBeenCalledWith('defaultThinking', undefined);
+    expect(configSet).toHaveBeenCalledWith('thinking', undefined);
   });
 
   it('logout removes managed web services while preserving unrelated services', async () => {
@@ -577,6 +577,10 @@ describe('OAuthService', () => {
       }),
     );
     expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    // Regression: the `[thinking] enabled` value computed by the shared oauth
+    // apply logic must be persisted, not dropped (previously only the legacy
+    // `default_thinking` key was written).
+    expect(configSet).toHaveBeenCalledWith('thinking', { enabled: true });
     expect(events).toEqual([
       {
         type: 'event.model_catalog.changed',
@@ -678,7 +682,7 @@ describe('WebSearchProviderService', () => {
 
     const provider = createService().getWebSearchProvider();
     expect(provider).not.toBeUndefined();
-    const results = await provider!.search('hello', { limit: 2 });
+    const results = await provider!.search('hello');
 
     expect(results).toEqual([
       { title: 'Title', url: 'https://example.com', snippet: 'Snippet' },
@@ -689,6 +693,7 @@ describe('WebSearchProviderService', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer access-token');
     expect(headers['X-Custom']).toBe('yes');
+    expect(JSON.parse(init.body as string)).toEqual({ text_query: 'hello' });
   });
 });
 

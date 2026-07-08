@@ -20,6 +20,7 @@ export function createFakeHostFs(overrides: Partial<IHostFileSystem> = {}): IHos
     _serviceBrand: undefined,
     readText: () => notImplemented('FakeHostFs.readText'),
     writeText: () => notImplemented('FakeHostFs.writeText'),
+    appendText: () => notImplemented('FakeHostFs.appendText'),
     readBytes: () => notImplemented('FakeHostFs.readBytes'),
     writeBytes: () => notImplemented('FakeHostFs.writeBytes'),
     readLines: () => notImplemented('FakeHostFs.readLines'),

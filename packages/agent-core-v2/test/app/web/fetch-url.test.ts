@@ -78,6 +78,35 @@ describe('FetchURLTool abort signal', () => {
   });
 });
 
+describe('FetchURLTool output note', () => {
+  async function runKind(kind: UrlFetchResult['kind']): Promise<string> {
+    const fetch = vi
+      .fn<UrlFetcher['fetch']>()
+      .mockResolvedValue({ content: 'BODY', kind } satisfies UrlFetchResult);
+    const tool = new FetchURLTool({ fetch });
+    const result = await execute(tool, 'https://example.com', new AbortController().signal);
+    expect(result.isError).toBe(false);
+    if (typeof result.output !== 'string') throw new Error('expected string output');
+    return result.output;
+  }
+
+  it('puts the passthrough note and citation reminder at the front of output', async () => {
+    const output = await runKind('passthrough');
+    expect(output).toBe(
+      'The returned content is the full response body, returned verbatim. ' +
+        'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).\n\nBODY',
+    );
+  });
+
+  it('puts the extracted note and citation reminder at the front of output', async () => {
+    const output = await runKind('extracted');
+    expect(output).toBe(
+      'The returned content is the main text extracted from the page. ' +
+        'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).\n\nBODY',
+    );
+  });
+});
+
 describe('LocalFetchURLProvider abort signal', () => {
   it('passes the signal through to fetchImpl', async () => {
     const controller = new AbortController();

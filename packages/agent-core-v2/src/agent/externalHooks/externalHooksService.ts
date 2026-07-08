@@ -10,8 +10,9 @@
  * of its own). The requester-side `SubagentStart` / `SubagentStop` hooks are
  * translated by the Session-scope `SessionExternalHooksService`, which observes
  * the `agentLifecycle` run slots hosted on `IAgentLifecycleService`. Appends
- * UserPromptSubmit hook results
- * and Stop hook continuation prompts through `contextMemory`.
+ * UserPromptSubmit hook results and Stop hook continuation prompts through
+ * `contextMemory`, and passes the current session id from `sessionContext`
+ * into hook runner payloads.
  */
 
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -42,6 +43,7 @@ import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTurnService } from '#/agent/turn/turn';
 import { toKimiErrorPayload } from '#/errors';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { IAgentExternalHooksService } from './externalHooks';
 import { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
@@ -66,6 +68,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
     super();
     this.registerListeners();
@@ -82,7 +85,12 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     // output), and throwing here would clobber that with a finalize-abort error.
     // The runner mirrors the legacy fire-and-forget behavior.
     try {
-      void this.runner.fireAndForgetTrigger(event, { matcherValue, signal, inputData });
+      void this.runner.fireAndForgetTrigger(event, {
+        matcherValue,
+        signal,
+        sessionId: this.sessionContext.sessionId,
+        inputData,
+      });
     } catch {}
   }
 
@@ -222,6 +230,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     const block = await this.runner.triggerBlock('PreToolUse', {
       matcherValue: ctx.toolCall.name,
       signal: ctx.signal,
+      sessionId: this.sessionContext.sessionId,
       inputData: {
         toolName: ctx.toolCall.name,
         toolInput,
@@ -260,6 +269,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     const results = await this.runner.trigger('UserPromptSubmit', {
       matcherValue: input,
       signal,
+      sessionId: this.sessionContext.sessionId,
       inputData: { prompt: input, isSteer: ctx.isSteer },
     });
     signal.throwIfAborted();
@@ -331,6 +341,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
     const block = await this.runner.triggerBlock('Stop', {
       signal: ctx.signal,
+      sessionId: this.sessionContext.sessionId,
       inputData: { stopHookActive: false },
     });
     ctx.signal.throwIfAborted();
@@ -343,6 +354,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     await this.runner.trigger('PreCompact', {
       matcherValue: ctx.trigger,
       signal,
+      sessionId: this.sessionContext.sessionId,
       inputData: {
         trigger: ctx.trigger,
         tokenCount: ctx.tokenCount,

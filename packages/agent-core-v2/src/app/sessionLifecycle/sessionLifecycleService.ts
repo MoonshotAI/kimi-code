@@ -41,6 +41,8 @@ import { ISessionExternalHooksService } from '#/session/externalHooks/externalHo
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
 import { createHooks } from '#/hooks';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
@@ -95,6 +97,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IWorkspaceRegistry private readonly workspaceRegistry: IWorkspaceRegistry,
+    @IWorkspaceLocalConfigService
+    private readonly workspaceLocalConfig: IWorkspaceLocalConfigService,
     @IEventService private readonly event: IEventService,
   ) {
     super();
@@ -125,6 +129,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
+    // Merge the project-local `.kimi-code/local.toml` additional dirs with the
+    // caller-supplied ones (relative paths resolve against workDir), mirroring
+    // v1's createSession/resumeSession. A broken local.toml fails the create
+    // loudly with CONFIG_INVALID, same as v1.
+    const localWorkspaceDirs = await this.workspaceLocalConfig.readAdditionalDirs(opts.workDir);
+    const callerAdditionalDirs = await this.workspaceLocalConfig.resolveAdditionalDirs(
+      opts.workDir,
+      opts.additionalDirs ?? [],
+    );
+    const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
     // Wait for the host-environment probe to complete before creating any
     // Session scope — Session/Agent-scope services (bash, permission policies,
     // path-access) read `IHostEnvironment.osKind` / `pathClass` / `homeDir`
@@ -139,6 +153,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         extra: [...sessionContextSeed(ctx)],
       },
     ) as ISessionScopeHandle;
+    if (additionalDirs.length > 0) {
+      // De-duplication happens inside setAdditionalDirs (resolve + Set),
+      // matching v1's normalizeAdditionalDirs.
+      handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
+    }
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;

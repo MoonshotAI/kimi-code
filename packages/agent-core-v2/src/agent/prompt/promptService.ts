@@ -59,10 +59,15 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   async prompt(message: ContextMessage): Promise<Turn | undefined> {
-    const stamped = ensureMessageId(this.rerouteCompressionCaptions(message));
-    if (stamped.content.length > 0) this.append(stamped);
-    if (await this.blockedByHook(stamped, false)) return undefined;
-    return this.launch({ input: stamped.content, origin: stamped.origin });
+    const { message: rerouted, captions } = this.extractCompressionCaptions(message);
+    const stamped = ensureMessageId(rerouted);
+    if (await this.blockedByHook(stamped, false)) {
+      this.appendPrompt(stamped, captions);
+      return undefined;
+    }
+    const turn = this.launch({ input: stamped.content, origin: stamped.origin });
+    this.appendPrompt(stamped, captions);
+    return turn;
   }
 
   steer(message: ContextMessage): PromptSteerHandle {
@@ -179,34 +184,52 @@ export class AgentPromptService implements IAgentPromptService {
 
     for (const entry of pending) {
       entry.emitted = true;
-      const message = this.rerouteCompressionCaptions(entry.message);
+      const { message, captions } = this.extractCompressionCaptions(entry.message);
       this.turnService.recordSteer(message.content, message.origin);
-      if (message.content.length > 0) this.append(message);
+      this.appendPrompt(message, captions);
     }
     return true;
   }
 
   /**
-   * Split inline image-compression captions out of a user message and deliver
-   * them through the built-in system-reminder injection instead.
+   * Split inline image-compression captions out of a user message so they can
+   * be delivered through the built-in system-reminder injection instead.
    *
    * Prompt ingestion (server upload/base64 route, TUI paste, ACP) annotates a
    * compressed image with an inline `<system>` caption next to the image. Left
    * inside the user message, that raw markup is user-visible in every history
    * projection (TUI replay, vis, export). The reminder's `injection` origin is
    * hidden by every UI, while the model still receives the full note.
+   *
+   * Pure: the reminders are appended by {@link appendPrompt} at append time,
+   * so the launch-before-append wire ordering is preserved and the reminders
+   * stay adjacent to their user message in context.
    */
-  private rerouteCompressionCaptions(message: ContextMessage): ContextMessage {
-    if ((message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return message;
+  private extractCompressionCaptions(message: ContextMessage): {
+    message: ContextMessage;
+    captions: readonly string[];
+  } {
+    if ((message.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') {
+      return { message, captions: [] };
+    }
     const { captions, parts } = splitImageCompressionCaptions(message.content);
-    if (captions.length === 0) return message;
+    if (captions.length === 0) return { message, captions };
+    return { message: { ...message, content: parts }, captions };
+  }
+
+  /**
+   * Append a prompt message preceded by its rerouted caption reminders. A
+   * message whose content was caption-only is dropped entirely rather than
+   * appended empty.
+   */
+  private appendPrompt(message: ContextMessage, captions: readonly string[]): void {
     for (const caption of captions) {
       this.reminders.appendSystemReminder(caption, {
         kind: 'injection',
         variant: 'image_compression',
       });
     }
-    return { ...message, content: parts };
+    if (message.content.length > 0) this.append(message);
   }
 
   private async enqueueSteer(activeTurn: Turn, entry: QueuedSteer): Promise<Turn | undefined> {

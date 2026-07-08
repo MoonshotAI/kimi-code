@@ -127,6 +127,23 @@ describe('AgentToolExecutorService', () => {
     expect(protocolResult as unknown as Record<string, unknown>).not.toHaveProperty('note');
   });
 
+  it('drops malformed notes and non-true truncated flags from internal results', async () => {
+    const tool = new TestTool('malformed-meta', {
+      result: {
+        output: 'image sent',
+        note: 123,
+        truncated: false,
+      } as unknown as ExecutableToolResult,
+    });
+    registry.register(tool);
+
+    const results = await execute([toolCall('call_malformed_meta', 'malformed-meta', {})]);
+
+    expect(results[0]).toMatchObject({ output: 'image sent' });
+    expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('note');
+    expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('truncated');
+  });
+
   it('records an error tool.result when the tool name is unknown', async () => {
     const results = await execute([toolCall('call_missing', 'missing', { text: 'hi' })]);
 

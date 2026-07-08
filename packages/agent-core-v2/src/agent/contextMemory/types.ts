@@ -83,6 +83,7 @@ export type ContextMessage = Message & {
   readonly providerMessageId?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  readonly note?: string;
 };
 
 export interface UserMessageRecord {

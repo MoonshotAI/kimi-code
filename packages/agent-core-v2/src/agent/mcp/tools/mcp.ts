@@ -7,16 +7,22 @@
  */
 
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import type { ExecutableTool, ExecutableToolResult } from '#/agent/tool/toolContract';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { MCPClient } from '#/agent/mcp/types';
 
+interface McpToolOptions {
+  readonly originalsDir?: string;
+  readonly telemetry?: ITelemetryService;
+}
+
 export function createMcpTool(
   qualifiedName: string,
   tool: KosongTool,
   client: MCPClient,
-  options: { readonly originalsDir?: string } = {},
+  options: McpToolOptions = {},
 ): ExecutableTool {
   return {
     name: qualifiedName,
@@ -33,6 +39,7 @@ export function createMcpTool(
         return normalizeMcpToolResult(
           await mcpResultToExecutableOutput(result, qualifiedName, {
             originalsDir: options.originalsDir,
+            telemetry: options.telemetry,
           }),
         );
       },

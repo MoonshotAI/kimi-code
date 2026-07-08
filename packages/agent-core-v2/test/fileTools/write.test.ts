@@ -6,10 +6,9 @@
  * minimal fake `IHostFileSystem` inline so the tool can be exercised without
  * the composition root.
  *
- * The v1 append path used `kaos.writeText(path, data, { mode: 'a' })`. v2's
- * `IHostFileSystem.writeText` has no mode flag, so append is implemented as
- * `readText` (treating a missing file as empty) followed by `writeText` of the
- * concatenation. The append-call assertions below reflect that mechanic.
+ * Append is routed through `IHostFileSystem.appendText` (a native append), so
+ * the tool no longer reads the existing file. The append-call assertions below
+ * reflect that single-call mechanic.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -51,6 +50,8 @@ interface WriteFsOptions {
   readText?: (path: string) => Promise<string>;
   /** Override writeText. Default no-op. */
   writeText?: (path: string, data: string) => Promise<void>;
+  /** Override appendText. Default no-op. */
+  appendText?: (path: string, data: string) => Promise<void>;
   /** Override stat. Default reports an existing directory. */
   stat?: (path: string) => Promise<HostFileStat>;
   /** Override mkdir. Default no-op. */
@@ -72,12 +73,13 @@ function createWriteFs(options: WriteFsOptions = {}) {
       }),
   );
   const writeText = vi.fn(options.writeText ?? (async () => {}));
+  const appendText = vi.fn(options.appendText ?? (async () => {}));
   const stat = vi.fn(
     options.stat ?? (async () => ({ isFile: false, isDirectory: true, size: 0 })),
   );
   const mkdir = vi.fn(options.mkdir ?? (async () => {}));
-  const fs = { cwd: '/', readText, writeText, stat, mkdir } as unknown as IHostFileSystem;
-  return { fs, readText, writeText, stat, mkdir };
+  const fs = { cwd: '/', readText, writeText, appendText, stat, mkdir } as unknown as IHostFileSystem;
+  return { fs, readText, writeText, appendText, stat, mkdir };
 }
 
 function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
@@ -218,8 +220,8 @@ describe('WriteTool', () => {
     expect(result.output).toContain('Wrote 5 bytes');
   });
 
-  it('appends content by reading existing bytes then writing the concatenation', async () => {
-    const { tool, readText, writeText } = makeTool({ readText: async () => 'old' });
+  it('appends content through appendText without reading existing bytes', async () => {
+    const { tool, readText, writeText, appendText } = makeTool();
 
     const result = await execute(tool, {
       path: '/tmp/existing.txt',
@@ -227,8 +229,9 @@ describe('WriteTool', () => {
       mode: 'append',
     });
 
-    expect(readText).toHaveBeenCalledWith('/tmp/existing.txt');
-    expect(writeText).toHaveBeenCalledWith('/tmp/existing.txt', 'old\nhello');
+    expect(appendText).toHaveBeenCalledWith('/tmp/existing.txt', '\nhello');
+    expect(readText).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
     expect(result.output).toContain('Appended 6 bytes');
   });
 
@@ -272,11 +275,11 @@ describe('WriteTool', () => {
     const expectedBytes = Buffer.byteLength(content, 'utf8');
     expect(expectedBytes).toBe(5);
 
-    const { tool, writeText } = makeTool({ readText: async () => 'prefix' });
+    const { tool, appendText } = makeTool();
 
     const result = await execute(tool, { path: '/tmp/menu.txt', content, mode: 'append' });
 
-    expect(writeText).toHaveBeenCalledWith('/tmp/menu.txt', 'prefixcafé');
+    expect(appendText).toHaveBeenCalledWith('/tmp/menu.txt', 'café');
     expect(result.output).toContain('Appended 5 bytes');
   });
 
@@ -414,9 +417,9 @@ describe('WriteTool', () => {
   });
 
   it('appending to a nonexistent file creates it with just the appended bytes', async () => {
-    // Append mode on a missing path returns success and creates the file:
-    // readText rejects with ENOENT, so existing content is treated as empty.
-    const { tool, readText, writeText } = makeTool();
+    // Native append (fs.appendFile) creates the file when it is missing, so
+    // append mode on a new path succeeds and writes exactly the appended bytes.
+    const { tool, readText, appendText } = makeTool();
 
     const result = await execute(tool, {
       path: '/tmp/new-append.txt',
@@ -426,8 +429,8 @@ describe('WriteTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(toolContentString(result).toLowerCase()).toContain('appended');
-    expect(readText).toHaveBeenCalledWith('/tmp/new-append.txt');
-    expect(writeText).toHaveBeenCalledWith('/tmp/new-append.txt', 'New content');
+    expect(appendText).toHaveBeenCalledWith('/tmp/new-append.txt', 'New content');
+    expect(readText).not.toHaveBeenCalled();
   });
 
   it('allows absolute writes to a sibling dir that merely shares the work-dir prefix', async () => {

@@ -13,6 +13,7 @@ export interface ContextCompactionInput {
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
+  readonly legacyTail?: boolean;
 }
 
 export interface ContextCompactionResult {

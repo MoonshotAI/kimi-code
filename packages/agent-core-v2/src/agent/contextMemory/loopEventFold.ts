@@ -1,16 +1,18 @@
 /**
- * `contextMemory` loop-event fold — restore-time reduction of v1
- * `context.append_loop_event` records into folded `ContextMessage`s.
+ * `contextMemory` loop-event fold — reduction of `context.append_loop_event`
+ * records into folded `ContextMessage`s.
  *
- * v2's agent loop persists assistant / tool messages already folded
- * (`context.append_message`); it never emits loop events. Sessions written by
- * the v1 loop (`packages/agent-core`), however, stream a turn as
- * `context.append_loop_event` records (`step.begin` / `content.part` /
- * `tool.call` / `tool.result` / `step.end`) and never write a folded assistant
- * message. Without this fold, `WireService.replay` skips those records (no Op
- * is registered for the type) and the restored `ContextModel` — and every
- * consumer built on it (`/messages`, `/snapshot`, live resume) — shows only the
- * user prompts.
+ * Both loops stream a turn as `context.append_loop_event` records
+ * (`step.begin` / `content.part` / `tool.call` / `tool.result` / `step.end`)
+ * and never write a folded assistant message: the v1 loop
+ * (`packages/agent-core`) always has, and since the v1.4 wire-parity alignment
+ * the v2 live loop emits the same records (`LoopService` →
+ * `ContextMemory.appendLoopEvent`), keeping the on-disk shape byte-compatible.
+ * This fold turns them into assistant / tool messages — at live dispatch time
+ * and again when `WireService.replay` restores a session. Without it, replay
+ * would skip those records (no Op is registered for the type) and the restored
+ * `ContextModel` — and every consumer built on it (`/messages`, `/snapshot`,
+ * live resume) — would show only the user prompts.
  *
  * Semantics mirror v1's `ContextMemory.appendLoopEvent`
  * (`packages/agent-core/src/agent/context/index.ts`) and the transcript
@@ -37,13 +39,6 @@ import type { TokenUsage } from '#/app/llmProtocol/usage';
 
 import type { ContextMessage } from './types';
 
-// Status strings must match v1 / `loopService.ts` so folded tool results render
-// byte-identically to a v2-native turn.
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
@@ -175,9 +170,11 @@ export function foldLoopEvent(
     }
     case 'tool.result': {
       if (!ctx.pending.has(event.toolCallId)) return state;
+      const output = event.result.output;
       const toolMessage: ContextMessage = {
-        ...createToolMessage(event.toolCallId, toolResultOutputForModel(event.result)),
+        ...createToolMessage(event.toolCallId, typeof output === 'string' ? output : [...output]),
         isError: event.result.isError,
+        note: event.result.note,
       };
       ctx.pending.delete(event.toolCallId);
       return bind(flushDeferred([...state, toolMessage], ctx), ctx);
@@ -242,45 +239,7 @@ function flushDeferred(state: readonly ContextMessage[], ctx: FoldCtx): readonly
 
 function interruptedToolMessage(toolCallId: string): ContextMessage {
   return {
-    ...createToolMessage(
-      toolCallId,
-      toolResultOutputForModel({ output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT, isError: true }),
-    ),
+    ...createToolMessage(toolCallId, TOOL_INTERRUPTED_ON_RESUME_OUTPUT),
     isError: true,
   };
-}
-
-/** Mirrors v1 / `loopService.ts` `toolResultOutputForModel`. */
-function toolResultOutputForModel(result: {
-  readonly output: string | readonly ContentPart[];
-  readonly isError?: boolean;
-  readonly note?: string;
-}): string | ContentPart[] {
-  const { output, isError, note } = result;
-  let base: string | ContentPart[];
-  if (typeof output === 'string') {
-    if (isError === true) {
-      if (output.length === 0) base = TOOL_EMPTY_ERROR_STATUS;
-      else if (output.trimStart().startsWith('<system>ERROR:')) base = output;
-      else base = `${TOOL_ERROR_STATUS}\n${output}`;
-    } else if (output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT) {
-      base = TOOL_EMPTY_STATUS;
-    } else {
-      base = output;
-    }
-  } else if (output.length === 0) {
-    base = [{ type: 'text', text: isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS }];
-  } else if (isError === true) {
-    base = [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
-  } else {
-    base = [...output];
-  }
-  if (note === undefined || note.length === 0) return base;
-  const notePart: ContentPart = { type: 'text', text: note };
-  if (typeof base === 'string') return `${base}\n${note}`;
-  const only = base[0];
-  if (base.length === 1 && only?.type === 'text') {
-    return [{ type: 'text', text: `${only.text}\n${note}` }];
-  }
-  return [...base, notePart];
 }

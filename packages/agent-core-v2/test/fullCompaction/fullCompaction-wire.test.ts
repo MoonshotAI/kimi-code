@@ -59,8 +59,7 @@ describe('fullCompaction ops (wire-backed)', () => {
     wire.dispatch(fullCompactionBegin({ source: 'manual', instruction: 'keep facts' }));
     expect(wire.getModel(CompactionModel).phase).toBe('running');
 
-    // Result numbers ride the payload (persisted) but collapse back to idle.
-    wire.dispatch(fullCompactionComplete({ compactedCount: 2, tokensBefore: 100, tokensAfter: 20 }));
+    wire.dispatch(fullCompactionComplete({}));
     expect(wire.getModel(CompactionModel).phase).toBe('idle');
 
     wire.dispatch(fullCompactionBegin({ source: 'auto' }));
@@ -84,14 +83,7 @@ describe('fullCompaction ops (wire-backed)', () => {
         instruction: 'keep facts',
       }),
     );
-    expect(records[1]).toEqual(
-      expect.objectContaining({
-        type: 'full_compaction.complete',
-        compactedCount: 2,
-        tokensBefore: 100,
-        tokensAfter: 20,
-      }),
-    );
+    expect(records[1]).toEqual({ type: 'full_compaction.complete' });
   });
 
   it('apply returns the same reference on a no-op (gate stays quiet)', () => {
@@ -131,5 +123,16 @@ describe('fullCompaction ops (wire-backed)', () => {
     const stranded = buildHost('full-compaction-stranded');
     await stranded.wire.replay({ type: 'full_compaction.begin', source: 'auto' });
     expect(stranded.wire.getModel(CompactionModel).phase).toBe('running');
+  });
+
+  it('replays legacy complete payloads that carried accounting numbers', async () => {
+    const host = buildHost('full-compaction-legacy-complete-replay');
+
+    await host.wire.replay(
+      { type: 'full_compaction.begin', source: 'manual' },
+      { type: 'full_compaction.complete', compactedCount: 1, tokensBefore: 50, tokensAfter: 10 },
+    );
+
+    expect(host.wire.getModel(CompactionModel).phase).toBe('idle');
   });
 });

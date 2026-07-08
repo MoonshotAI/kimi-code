@@ -52,7 +52,7 @@ export async function runCommand(
   return { exitCode, stdout, stderr };
 }
 
-function readStream(stream: Readable): Promise<string> {
+export function readStream(stream: Readable): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
     stream.setEncoding('utf-8');

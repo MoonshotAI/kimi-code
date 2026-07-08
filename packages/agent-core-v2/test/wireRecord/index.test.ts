@@ -40,6 +40,101 @@ describe('serializeV1WireRecord', () => {
     ]);
   });
 
+  it('strips v2 message ids from context.append_message records', () => {
+    const message: ContextMessage = {
+      id: 'msg_test',
+      role: 'user',
+      content: [{ type: 'text', text: 'hello' }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    };
+
+    expect(
+      serializeV1WireRecord({
+        type: 'context.append_message',
+        message,
+      }),
+    ).toEqual([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('strips v2 message ids from injected context.splice projections', () => {
+    const message: ContextMessage = {
+      id: 'msg_injection',
+      role: 'user',
+      content: [{ type: 'text', text: 'reminder' }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: 'test' },
+    };
+
+    expect(
+      serializeV1WireRecord({
+        type: 'context.splice',
+        start: 0,
+        deleteCount: 0,
+        messages: [message],
+      }),
+    ).toEqual([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'reminder' }],
+          toolCalls: [],
+          origin: { kind: 'injection', variant: 'test' },
+        },
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('passes source-shaped config.update records through without field projection', () => {
+    expect(
+      serializeV1WireRecord({
+        type: 'config.update',
+        modelAlias: 'mock-model',
+        thinkingEffort: 'low',
+      } satisfies PersistedRecord),
+    ).toEqual([
+      {
+        type: 'config.update',
+        modelAlias: 'mock-model',
+        thinkingEffort: 'low',
+        time: expect.any(Number),
+      },
+    ]);
+
+    expect(serializeV1WireRecord({ type: 'config.update' } satisfies PersistedRecord)).toEqual([
+      { type: 'config.update', time: expect.any(Number) },
+    ]);
+  });
+
+  it('defaults missing turn.prompt origin to the v1 user origin', () => {
+    expect(
+      serializeV1WireRecord({
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'hello' }],
+      } satisfies PersistedRecord),
+    ).toEqual([
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'hello' }],
+        origin: { kind: 'user' },
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
   it('preserves v1 context.apply_compaction accounting fields', () => {
     expect(
       serializeV1WireRecord({

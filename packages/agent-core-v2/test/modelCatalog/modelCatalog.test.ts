@@ -29,7 +29,7 @@ interface Backing {
   providers: Record<string, ProviderConfig>;
   models: Record<string, ModelAlias>;
   defaultModel?: string;
-  defaultThinking?: boolean;
+  thinking?: { enabled?: boolean; effort?: string };
 }
 
 function seedBacking(): Backing {

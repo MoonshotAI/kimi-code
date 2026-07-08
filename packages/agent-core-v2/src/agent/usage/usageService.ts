@@ -28,7 +28,8 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
 
   record(model: string, usage: TokenUsage, source?: LLMRequestSource): void {
     const usageScope: UsageRecordScope = source?.type === 'turn' ? 'turn' : 'session';
-    this.wire.dispatch(recordUsage({ model, usage, usageScope, context: source }));
+    const turnId = source?.type === 'turn' ? source.turnId : undefined;
+    this.wire.dispatch(recordUsage({ model, usage, usageScope, turnId }));
   }
 
   status(): UsageStatus {

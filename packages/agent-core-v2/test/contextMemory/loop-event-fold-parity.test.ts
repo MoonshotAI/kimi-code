@@ -25,6 +25,7 @@ describe('loop-event fold parity', () => {
       toolCalls: m.toolCalls,
       toolCallId: m.toolCallId,
       isError: m.isError,
+      note: m.note,
     }));
   }
 
@@ -79,7 +80,7 @@ describe('loop-event fold parity', () => {
       },
       {
         role: 'tool',
-        content: [{ type: 'text', text: '<system>ERROR: Tool execution failed.</system>\nboom' }],
+        content: [{ type: 'text', text: 'boom' }],
         toolCalls: [],
         toolCallId: 'c2',
         isError: true,
@@ -107,7 +108,7 @@ describe('loop-event fold parity', () => {
     expect(folded).toEqual(baseline);
   });
 
-  it('folds a tool-result note as trailing model text without splitting text-only output', () => {
+  it('folds a tool-result note as structured model-only metadata', () => {
     context.append(
       {
         role: 'assistant',
@@ -116,10 +117,11 @@ describe('loop-event fold parity', () => {
       },
       {
         role: 'tool',
-        content: [{ type: 'text', text: 'result text\n<system>Image compressed.</system>' }],
+        content: [{ type: 'text', text: 'result text' }],
         toolCalls: [],
         toolCallId: 'c3',
         isError: false,
+        note: '<system>Image compressed.</system>',
       },
     );
     const baseline = comparable(context.get());

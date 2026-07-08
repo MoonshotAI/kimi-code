@@ -262,10 +262,10 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('off');
   });
 
-  it('maps thinking on to the model default effort', () => {
+  it('keeps an explicit on request verbatim (normalization is the UI boundary)', () => {
     profile.update({ modelAlias: 'kimi-code/custom', thinkingLevel: 'on' });
 
-    expect(profile.data().thinkingLevel).toBe('max');
+    expect(profile.data().thinkingLevel).toBe('on');
   });
 
   it('re-clamps when switching to an always-on model after thinking was off', () => {

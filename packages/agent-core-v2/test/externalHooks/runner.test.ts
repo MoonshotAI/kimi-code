@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { runHook } from '#/agent/externalHooks/runner';
+import { buildHookSpawnOptions, runHook } from '#/agent/externalHooks/runner';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replace(/\s*\n\s*/g, ' '))}`;
@@ -110,5 +110,29 @@ describe('runHook process runner', () => {
     );
 
     expect(result.stdout?.trim()).toBe('Write');
+  });
+});
+
+// Regression coverage for the "every hook flashes an empty console window on
+// Windows" bug. With `shell:true` and no `windowsHide`, Node allocates a
+// visible console for each hook child process on Windows. The fix is to pass
+// `windowsHide:true` (mirrors the node-local host's `buildSpawnOptions` and
+// the runner's own taskkill spawn). The flag is only observable on Windows,
+// so we assert the spawn options builder directly.
+describe('buildHookSpawnOptions (Windows console-window regression)', () => {
+  it('sets windowsHide:true so hooks do not flash a console on Windows', () => {
+    expect(buildHookSpawnOptions({}).windowsHide).toBe(true);
+  });
+
+  it('runs through the shell with stdio piped', () => {
+    const options = buildHookSpawnOptions({});
+    expect(options.shell).toBe(true);
+    expect(options.stdio).toBe('pipe');
+  });
+
+  it('merges hook env onto process.env and forwards cwd', () => {
+    const options = buildHookSpawnOptions({ cwd: '/repo', env: { FOO: 'bar' } });
+    expect(options.cwd).toBe('/repo');
+    expect(options.env).toMatchObject({ FOO: 'bar' });
   });
 });

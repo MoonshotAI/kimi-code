@@ -21,7 +21,7 @@ export interface ISessionTodoService {
   setTodos(todos: readonly TodoItem[]): void;
   /** Clear the list (equivalent to `setTodos([])`). */
   clear(): void;
-  /** Fires after every `setTodos` with the new list. */
+  /** Fires when the materialized list changes (after a `todo.set` is applied); carries the sanitized list. */
   readonly onDidChange: Event<readonly TodoItem[]>;
 }
 
