@@ -407,8 +407,20 @@ export class EditorKeyboardController {
     // session's media-originals dir when known, else the temp-dir fallback)
     // and recorded on the attachment, so submit-time expansion can announce
     // the compression and point the model at the full-fidelity copy.
-    const compressed = await compressImageForModel(media.bytes, meta.mime);
+    const compressed = await compressImageForModel(media.bytes, meta.mime, {
+      telemetry: {
+        client: {
+          track: (event, properties) =>
+            this.host.track(event, properties === undefined ? undefined : { ...properties }),
+        },
+        source: 'tui_paste',
+      },
+    });
     const sessionDir = this.host.session?.summary?.sessionDir;
+    // Dimensions come from the compression result, not parseImageMeta: the
+    // compressor reports display space (EXIF orientation applied) — the space
+    // the sent image, the caption, and ReadMediaFile region readback share —
+    // while parseImageMeta reads the raw pre-rotation header.
     const attachment = compressed.changed
       ? this.imageStore.addImage(
           compressed.data,
@@ -421,13 +433,18 @@ export class EditorKeyboardController {
               meta.mime,
               sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
             ),
-            width: meta.width,
-            height: meta.height,
+            width: compressed.originalWidth,
+            height: compressed.originalHeight,
             byteLength: media.bytes.length,
             mime: meta.mime,
           },
         )
-      : this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
+      : this.imageStore.addImage(
+          media.bytes,
+          meta.mime,
+          compressed.width || meta.width,
+          compressed.height || meta.height,
+        );
     this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
     this.host.state.ui.requestRender();
     this.host.track('shortcut_paste', { kind: 'image' });

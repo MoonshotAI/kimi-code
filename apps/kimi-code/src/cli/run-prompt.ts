@@ -44,7 +44,11 @@ import { createKimiCodeHostIdentity } from './version';
  *
  * Used to bound shutdown so a wedged cleanup step can't keep a completed
  * headless run alive, without silently swallowing a cleanup that fails fast. The
- * timer is unref'd so it never keeps the loop alive on its own.
+ * timer stays ref'd so a cleanup step that suspends on an unref'd handle (e.g.
+ * telemetry's retry backoff when the network is blocked) can't drain the event
+ * loop and exit 0 before the rejection propagates — the timer keeps the loop
+ * alive until it fires, then gives the rejection a chance to surface. A wedged
+ * cleanup is still bounded by `timeoutMs`, so this can't hang the run forever.
  */
 async function raceWithTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
   let timedOut = false;
@@ -61,7 +65,6 @@ async function raceWithTimeout(promise: Promise<void>, timeoutMs: number): Promi
       timedOut = true;
       resolve();
     }, timeoutMs);
-    timer.unref?.();
   });
   try {
     await Promise.race([guarded, timedOutSignal]);
@@ -101,6 +104,14 @@ export async function runPrompt(
   const stdout = io.stdout ?? process.stdout;
   const stderr = io.stderr ?? process.stderr;
   const promptProcess = io.process ?? process;
+  const outputFormat = opts.outputFormat ?? 'text';
+  // The experimental agent-core-v2 engine (selected by KIMI_CODE_EXPERIMENTAL_FLAG)
+  // announces the running version as the very first output so headless consumers
+  // can identify which build produced the stream, in both `text` and `stream-json`
+  // formats. The default v1 path keeps its established output unchanged.
+  if (isKimiV2Enabled()) {
+    writeExperimentalVersion(version, outputFormat, stdout, stderr);
+  }
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
@@ -183,7 +194,6 @@ export async function runPrompt(
     });
     setCrashPhase('runtime');
 
-    const outputFormat = opts.outputFormat ?? 'text';
     // Headless goal mode: `kimi -p "/goal <objective>"`. The goal driver keeps
     // the turn-run alive across continuation turns, so the normal prompt-turn
     // waiter blocks until the goal is terminal; we then emit a summary and set a
@@ -661,6 +671,30 @@ interface PromptJsonResumeMetaMessage {
   session_id: string;
   command: string;
   content: string;
+}
+
+interface PromptJsonVersionMetaMessage {
+  role: 'meta';
+  type: 'system.version';
+  version: string;
+}
+
+function writeExperimentalVersion(
+  version: string,
+  outputFormat: PromptOutputFormat,
+  stdout: PromptOutput,
+  stderr: PromptOutput,
+): void {
+  if (outputFormat === 'stream-json') {
+    const message: PromptJsonVersionMetaMessage = {
+      role: 'meta',
+      type: 'system.version',
+      version,
+    };
+    stdout.write(`${JSON.stringify(message)}\n`);
+    return;
+  }
+  stderr.write(`kimi version ${version}\n`);
 }
 
 function writeResumeHint(

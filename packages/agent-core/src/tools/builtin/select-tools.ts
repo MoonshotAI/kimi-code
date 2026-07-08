@@ -94,8 +94,8 @@ export class SelectToolsTool implements BuiltinTool<SelectToolsInput> {
           // sorted by name for byte-stable output. History is never used as a
           // schema source; an already-loaded name whose registry schema has
           // since changed is NOT re-injected (no runtime last-wins reliance) —
-          // the next compaction rebuild or an explicit re-select picks up the
-          // new schema.
+          // the stale copy lasts at most until the next compaction discards
+          // the loaded set, after which a re-select injects the new schema.
           toLoad.sort((a, b) => a.localeCompare(b));
           const tools = toLoad
             .map((name) => manager.getMcpToolSchema(name))

@@ -13,7 +13,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, compressImageForModel, compressBase64ForModel, persistOriginalImage, sessionMediaOriginalsDir, type IInstantiationService, type GetResult } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, compressImageForModel, compressBase64ForModel, persistOriginalImage, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -132,6 +132,12 @@ export function registerPromptsRoutes(
           const core = a.get(ICoreProcessService);
           const cacheDir = join(a.get(IEnvironmentService).homeDir, 'cache');
           const resolved = await resolvePromptMediaFiles(body, fileStore, cacheDir, {
+            // Scoped to the session so prompt-ingestion image_compress events
+            // carry the same context as the per-session agent telemetry.
+            telemetry:
+              core.telemetry === undefined
+                ? undefined
+                : withTelemetryContext(core.telemetry, { sessionId: session_id }),
             // Resolved lazily — only when an inline base64 image actually
             // got compressed — so image-free prompts never pay the lookup.
             resolveOriginalsDir: async () => {
@@ -270,6 +276,8 @@ interface ResolvePromptMediaOptions {
    * to the shared temp-dir cache.
    */
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
+  /** Report an `image_compress` event per compressed prompt image. */
+  readonly telemetry?: TelemetryClient;
 }
 
 async function resolvePromptMediaFiles(
@@ -288,13 +296,17 @@ async function resolvePromptMediaFiles(
     }
     return originalsDir;
   };
+  const telemetryFor = (source: string): ImageCompressionTelemetry | undefined =>
+    options.telemetry === undefined ? undefined : { client: options.telemetry, source };
   const content: PromptSubmission['content'] = [];
   for (const part of body.content) {
     // Inline base64 image: compress the payload in place. This is the same
     // input-stage step as the file path below, for REST clients that submit an
     // image as `{ source: { kind: 'base64' } }` instead of uploading a file.
     if (part.type === 'image' && part.source.kind === 'base64') {
-      const compressed = await compressBase64ForModel(part.source.data, part.source.media_type);
+      const compressed = await compressBase64ForModel(part.source.data, part.source.media_type, {
+        telemetry: telemetryFor('prompt_inline'),
+      });
       if (compressed.changed) {
         // There is no stored file to point at, so persist the original into
         // the session's media-originals dir (best effort, temp-dir fallback)
@@ -357,7 +369,9 @@ async function resolvePromptMediaFiles(
     let mediaType = file.meta.media_type;
     let bytes: Uint8Array = data;
     if (part.type === 'image') {
-      const compressed = await compressImageForModel(data, mediaType);
+      const compressed = await compressImageForModel(data, mediaType, {
+        telemetry: telemetryFor('prompt_file'),
+      });
       if (compressed.changed) {
         // The stored file already holds the original bytes — the caption
         // points straight at it, no extra copy needed.

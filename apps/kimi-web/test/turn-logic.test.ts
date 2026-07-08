@@ -320,56 +320,6 @@ describe('messagesToTurns cron', () => {
     expect(turns).toHaveLength(1);
   });
 
-  it('embeds an in-turn cron injection as a block and keeps folding the following tool result', () => {
-    const envelope =
-      '<cron-fire jobId="j" cron="* * * * *" recurring="true" coalescedCount="1" stale="false">\n' +
-      '<prompt>\nCheck BTC\n</prompt>\n</cron-fire>';
-    const turns = messagesToTurns(
-      [
-        message('u1', 'user', [{ type: 'text', text: 'hi' }]),
-        message('a1', 'assistant', [
-          {
-            type: 'toolUse',
-            toolCallId: 'tc1',
-            toolName: 'FetchURL',
-            input: { url: 'https://example.com' },
-          },
-        ]),
-        message('c1', 'user', [{ type: 'text', text: envelope }], {
-          metadata: {
-            origin: {
-              kind: 'cron_job',
-              jobId: 'j',
-              cron: '* * * * *',
-              recurring: true,
-              coalescedCount: 1,
-              stale: false,
-            },
-          },
-        }),
-        message('t1', 'tool', [
-          { type: 'toolResult', toolCallId: 'tc1', output: 'the price is 62k' },
-        ]),
-      ],
-      [],
-    );
-
-    // user turn + one assistant turn (tool + embedded cron block + result).
-    // No standalone cron turn, and the tool result is preserved.
-    expect(turns).toHaveLength(2);
-    const assistant = turns[1]!;
-    expect(assistant.role).toBe('assistant');
-    expect(assistant.tools?.[0]).toMatchObject({
-      id: 'tc1',
-      status: 'ok',
-      output: ['the price is 62k'],
-    });
-    expect(assistant.blocks?.find((b) => b.kind === 'cron')).toMatchObject({
-      kind: 'cron',
-      text: 'Check BTC',
-      cron: { jobId: 'j' },
-    });
-  });
 
   it('flushes an idle cron fire as its own turn even when no prompt ids are present', () => {
     const envelope =

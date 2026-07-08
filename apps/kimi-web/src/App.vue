@@ -338,7 +338,27 @@ function openLogin(): void {
 
 async function handleSelectModel(modelId: string): Promise<void> {
   showModelPicker.value = false;
-  await client.setModel(modelId);
+  // Same semantics as the composer dropdown rows: the overlay is just the
+  // "more models" continuation of the same flow, so it must also bump the
+  // global default (see handleComposerSelectModel).
+  await handleComposerSelectModel(modelId);
+}
+
+async function handleComposerSelectModel(modelId: string): Promise<void> {
+  // Primary action: switch the active session's model via POST /sessions/{id}/profile
+  // (same as the model picker overlay). Awaited so the model pill reflects the
+  // result and failures surface. In the onboarding draft this just stores the
+  // pick for the first session.
+  const switched = await client.setModel(modelId);
+
+  // Side effect: also bump the daemon-wide default model via POST /config so
+  // new sessions inherit the choice. Fire-and-forget — it must not block the UI
+  // or mask the session switch. Only after a confirmed switch (a stale/invalid
+  // alias must not become the global default), and skip when it already
+  // matches the default.
+  if (switched && modelId !== client.defaultModel.value) {
+    void client.updateConfig({ defaultModel: modelId });
+  }
 }
 
 async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
@@ -759,7 +779,7 @@ function openPr(url: string): void {
       @archive-session="(id) => client.archiveSession(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
-      @select-model="client.setModel($event)"
+      @select-model="handleComposerSelectModel($event)"
       @open-file="openFilePreview($event)"
       @open-media="openMediaPreview($event)"
       @open-thinking="openThinkingPanel($event)"

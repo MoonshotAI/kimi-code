@@ -93,6 +93,10 @@ const TOOL_GLYPH: Record<string, IconName> = {
   task: 'sparkles',
   agentswarm: 'git-pull-request',
   askuserquestion: 'help-circle',
+  // Cron scheduling tools share a calendar motif: schedule / list / cancel.
+  croncreate: 'calendar-schedule',
+  cronlist: 'calendar-todo',
+  crondelete: 'calendar-close',
 };
 
 export function toolGlyph(name: string): string {
