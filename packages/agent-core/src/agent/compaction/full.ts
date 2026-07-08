@@ -11,7 +11,6 @@ import {
   type GenerateResult,
   type Message,
   type TokenUsage,
-  type Tool,
   APIContextOverflowError,
   APIStatusError,
   createUserMessage,
@@ -20,11 +19,7 @@ import {
 import type { Agent } from '..';
 import type { GenerateOptionsWithRequestLogFields } from '../llm-request-logger';
 import type { ContextMessage } from '../context/types';
-import {
-  collectLoadedDynamicToolNames,
-  DYNAMIC_TOOL_SCHEMA_VARIANT,
-  stripDynamicToolContext,
-} from '../context/dynamic-tools';
+import { stripDynamicToolContext } from '../context/dynamic-tools';
 import { isAbortError } from '../../loop/errors';
 import {
   retryBackoffDelays,
@@ -374,65 +369,6 @@ export class FullCompaction {
     }).trimEnd();
   }
 
-  /**
-   * Keep-all rebuild (Phase 1): after compaction folded the history — and the
-   * dynamic tool schema messages with it — append ONE merged schema message so
-   * the model keeps calling its loaded tools without re-selecting. Schemas are
-   * read from the live registry, never copied from the old history, so a
-   * schema that changed since load self-heals here. Names whose server is
-   * currently disconnected have no registry schema and are not rebuilt (the
-   * model re-selects after reconnect); names that survived into the
-   * post-compaction history (none under today's users+summary rebuild, but
-   * guarded) are not duplicated. The message goes through the normal
-   * injection-origin append, so estimation and records pick it up as usual.
-   *
-   * Budget guard: the rebuilt floor (users + summary + schemas) is the one
-   * part of the post-compaction context that compaction itself can never
-   * shrink — if it lands inside the auto-compaction trigger band, every
-   * following step re-compacts and rebuilds in a loop. Admit schemas (in name
-   * order) only while the projected context stays within HALF the compaction
-   * trigger, so normal turn content still fits before the next compaction;
-   * anything dropped is simply re-selectable on demand, the same degradation
-   * as a disconnected server.
-   */
-  private rebuildDynamicToolSchemas(activeBefore: ReadonlySet<string>): void {
-    if (!this.agent.toolSelectEnabled) return;
-    if (activeBefore.size === 0) return;
-    const surviving = collectLoadedDynamicToolNames(this.agent.context.history);
-    const names = [...activeBefore]
-      .filter((name) => !surviving.has(name))
-      .toSorted((a, b) => a.localeCompare(b));
-    const candidates = names
-      .map((name) => this.agent.tools.getMcpToolSchema(name))
-      .filter((tool): tool is NonNullable<typeof tool> => tool !== undefined);
-    if (candidates.length === 0) return;
-    const tools: Tool[] = [];
-    let projected = this.tokenCountWithPending;
-    for (const tool of candidates) {
-      const toolTokens = estimateTokensForTools([tool]);
-      // shouldCompact is monotonic in usedSize, so doubling the projected
-      // size checks "within half the trigger" for both trigger branches
-      // (ratio and reserved-context).
-      if (this.strategy.shouldCompact((projected + toolTokens) * 2)) break;
-      tools.push(tool);
-      projected += toolTokens;
-    }
-    if (tools.length < candidates.length) {
-      this.agent.log.info('trimmed dynamic tool schema rebuild to stay clear of the compaction trigger', {
-        kept: tools.length,
-        dropped: candidates.slice(tools.length).map((tool) => tool.name),
-      });
-    }
-    if (tools.length === 0) return;
-    this.agent.context.appendMessage({
-      role: 'system',
-      content: [],
-      toolCalls: [],
-      tools,
-      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
-    });
-  }
-
   private postProcessSummary(summary: string): string {
     const storeData = this.agent.tools.storeData();
     const todos = (storeData[TODO_STORE_KEY] as readonly TodoItem[] | undefined) ?? [];
@@ -450,11 +386,6 @@ export class FullCompaction {
     const startedAt = Date.now();
     const originalHistory = [...this.agent.context.history];
     const tokensBefore = estimateTokensForMessages(originalHistory);
-    // Loaded-tools snapshot BEFORE the rebuild below folds the history away;
-    // read here so the keep-all schema rebuild after applyCompaction knows
-    // what was active. (The ledger scans history, which applyCompaction
-    // replaces.)
-    const activeDynamicToolsBefore = new Set(this.agent.tools.loadedDynamicToolNames());
     let retryCount = 0;
     try {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
@@ -491,11 +422,12 @@ export class FullCompaction {
       // Dynamic-tool protocol context (schema messages, loadable-tools
       // announcements) is excluded from the summarizer input entirely: it is
       // protocol state, not conversation — summarizing it wastes tokens and
-      // risks schema text leaking into the summary. Zero information loss:
-      // the post-compaction boundary re-announces the manifest and the
-      // keep-all rebuild re-carries the schemas. Must happen before project()
-      // (which strips the origin anchor). `originalHistory` itself stays
-      // untouched for the prefix-race check and `compactedCount`.
+      // risks schema text leaking into the summary. The post-compaction
+      // boundary re-announces the manifest; the schemas themselves are
+      // deliberately dropped (discard-on-compaction) and re-selectable on
+      // demand. Must happen before project() (which strips the origin
+      // anchor). `originalHistory` itself stays untouched for the
+      // prefix-race check and `compactedCount`.
       let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
       let droppedCount = 0;
       let overflowShrinkCount = 0;
@@ -618,7 +550,14 @@ export class FullCompaction {
         tokensBefore,
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
       });
-      this.rebuildDynamicToolSchemas(activeDynamicToolsBefore);
+      // Loaded dynamic tool schemas are deliberately NOT rebuilt: compaction
+      // discards the loaded set entirely (the boundary announcement re-lists
+      // every loadable name, and the model re-selects what it still needs).
+      // Everything downstream already treats the empty loaded set as its
+      // consistent base state — the ledger scan finds no schema messages, the
+      // pending set was cleared by applyCompaction, deferred extras drop out
+      // of the executable table, and a from-memory call is rejected by
+      // preflight with select guidance.
 
       // Telemetry keys are snake_case, but the `context.apply_compaction`
       // record written below keeps its persisted camelCase field names
@@ -638,17 +577,11 @@ export class FullCompaction {
           ? {}
           : { input_tokens: inputTotal(usage), output_tokens: usage.output }),
       });
-      // Baseline the "nothing new since compaction" guard on the counter
-      // that includes the schema rebuild appended above. `result.tokensAfter`
-      // predates the rebuild (and deliberately keeps its persisted
-      // users+summary semantics — the rebuild message is accounted through
-      // the pending-estimate tail, so folding it into tokensAfter would
-      // double-count on both the live and the restore path). A baseline
-      // below the actual post-compaction floor would let checkAutoCompaction
-      // re-trigger even though the compacted shape cannot shrink further.
-      // compactionWorker raises it once more after injectAfterCompaction so
-      // the reinjected reminders join the floor too; this earlier capture
-      // stays as the fallback when reinjection throws.
+      // Baseline the "nothing new since compaction" guard on the live counter
+      // (== result.tokensAfter here, since nothing has been appended since
+      // applyCompaction). compactionWorker raises it once more after
+      // injectAfterCompaction so the reinjected reminders join the floor;
+      // this earlier capture stays as the fallback when reinjection throws.
       this.lastCompactedTokenCount = this.tokenCountWithPending;
       return result;
     } catch (error) {

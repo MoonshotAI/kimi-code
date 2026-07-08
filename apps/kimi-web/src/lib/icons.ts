@@ -26,6 +26,9 @@ import RiArrowRightLine from '~icons/ri/arrow-right-line';
 import RiArrowRightSLine from '~icons/ri/arrow-right-s-line';
 import RiArrowUpLine from '~icons/ri/arrow-up-line';
 import RiBracesLine from '~icons/ri/braces-line';
+import RiCalendarCloseLine from '~icons/ri/calendar-close-line';
+import RiCalendarScheduleLine from '~icons/ri/calendar-schedule-line';
+import RiCalendarTodoLine from '~icons/ri/calendar-todo-line';
 import RiChatNewLine from '~icons/ri/chat-new-line';
 import RiCheckLine from '~icons/ri/check-line';
 import RiCloseLine from '~icons/ri/close-line';
@@ -84,6 +87,9 @@ import RawArrowRightLine from '~icons/ri/arrow-right-line?raw';
 import RawArrowRightSLine from '~icons/ri/arrow-right-s-line?raw';
 import RawArrowUpLine from '~icons/ri/arrow-up-line?raw';
 import RawBracesLine from '~icons/ri/braces-line?raw';
+import RawCalendarCloseLine from '~icons/ri/calendar-close-line?raw';
+import RawCalendarScheduleLine from '~icons/ri/calendar-schedule-line?raw';
+import RawCalendarTodoLine from '~icons/ri/calendar-todo-line?raw';
 import RawChatNewLine from '~icons/ri/chat-new-line?raw';
 import RawCheckLine from '~icons/ri/check-line?raw';
 import RawCloseLine from '~icons/ri/close-line?raw';
@@ -136,6 +142,9 @@ import RawUserLine from '~icons/ri/user-line?raw';
 export type IconName =
   | 'plus'
   | 'chat-new'
+  | 'calendar-close'
+  | 'calendar-schedule'
+  | 'calendar-todo'
   | 'close'
   | 'check'
   | 'search'
@@ -212,6 +221,9 @@ function entry(component: Component, svg: string): IconEntry {
 export const ICONS: Record<IconName, IconEntry> = {
   plus: entry(RiAddLine, RawAddLine),
   'chat-new': entry(RiChatNewLine, RawChatNewLine),
+  'calendar-close': entry(RiCalendarCloseLine, RawCalendarCloseLine),
+  'calendar-schedule': entry(RiCalendarScheduleLine, RawCalendarScheduleLine),
+  'calendar-todo': entry(RiCalendarTodoLine, RawCalendarTodoLine),
   close: entry(RiCloseLine, RawCloseLine),
   check: entry(RiCheckLine, RawCheckLine),
   search: entry(RiSearchLine, RawSearchLine),
@@ -353,6 +365,9 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'check-list',
       'bolt',
       'git-pull-request',
+      'calendar-schedule',
+      'calendar-todo',
+      'calendar-close',
     ],
   ],
   ['Communication', ['message', 'mail', 'user']],

@@ -39,6 +39,7 @@ import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { coerceThinkingForModel, commitLevel, segmentsFor } from './lib/modelThinking';
+import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
@@ -338,7 +339,27 @@ function openLogin(): void {
 
 async function handleSelectModel(modelId: string): Promise<void> {
   showModelPicker.value = false;
-  await client.setModel(modelId);
+  // Same semantics as the composer dropdown rows: the overlay is just the
+  // "more models" continuation of the same flow, so it must also bump the
+  // global default (see handleComposerSelectModel).
+  await handleComposerSelectModel(modelId);
+}
+
+async function handleComposerSelectModel(modelId: string): Promise<void> {
+  // Primary action: switch the active session's model via POST /sessions/{id}/profile
+  // (same as the model picker overlay). Awaited so the model pill reflects the
+  // result and failures surface. In the onboarding draft this just stores the
+  // pick for the first session.
+  const switched = await client.setModel(modelId);
+
+  // Side effect: also bump the daemon-wide default model via POST /config so
+  // new sessions inherit the choice. Fire-and-forget — it must not block the UI
+  // or mask the session switch. Only after a confirmed switch (a stale/invalid
+  // alias must not become the global default), and skip when it already
+  // matches the default.
+  if (switched && modelId !== client.defaultModel.value) {
+    void client.updateConfig({ defaultModel: modelId });
+  }
 }
 
 async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
@@ -486,13 +507,15 @@ function handleCommand(cmd: string): void {
       break;
     default: {
       // Not a built-in command → treat it as a session skill activation
-      // (the user picked `/<skill>` from the menu, or typed `/<skill> args`).
-      // The daemon answers an unknown name with skill.not_found, surfaced as a
-      // warning, so a stray slash is harmless. With no active session, create
-      // one first (same path as the first prompt) so the activation isn't
-      // silently dropped on the new-session screen.
+      // (the user picked `/skill:<skill>` from the menu, or typed
+      // `/<skill> args`). Strip the `skill:` display prefix — the REST API
+      // takes the bare skill name. The daemon answers an unknown name with
+      // skill.not_found, surfaced as a warning, so a stray slash is harmless.
+      // With no active session, create one first (same path as the first
+      // prompt) so the activation isn't silently dropped on the new-session
+      // screen.
       const space = cmd.indexOf(' ');
-      const name = (space === -1 ? cmd : cmd.slice(0, space)).slice(1);
+      const name = stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
       const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
       if (!name) break;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
@@ -759,7 +782,7 @@ function openPr(url: string): void {
       @archive-session="(id) => client.archiveSession(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
-      @select-model="client.setModel($event)"
+      @select-model="handleComposerSelectModel($event)"
       @open-file="openFilePreview($event)"
       @open-media="openMediaPreview($event)"
       @open-thinking="openThinkingPanel($event)"

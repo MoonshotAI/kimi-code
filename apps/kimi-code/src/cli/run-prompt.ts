@@ -44,7 +44,11 @@ import { createKimiCodeHostIdentity } from './version';
  *
  * Used to bound shutdown so a wedged cleanup step can't keep a completed
  * headless run alive, without silently swallowing a cleanup that fails fast. The
- * timer is unref'd so it never keeps the loop alive on its own.
+ * timer stays ref'd so a cleanup step that suspends on an unref'd handle (e.g.
+ * telemetry's retry backoff when the network is blocked) can't drain the event
+ * loop and exit 0 before the rejection propagates — the timer keeps the loop
+ * alive until it fires, then gives the rejection a chance to surface. A wedged
+ * cleanup is still bounded by `timeoutMs`, so this can't hang the run forever.
  */
 async function raceWithTimeout(promise: Promise<void>, timeoutMs: number): Promise<void> {
   let timedOut = false;
@@ -61,7 +65,6 @@ async function raceWithTimeout(promise: Promise<void>, timeoutMs: number): Promi
       timedOut = true;
       resolve();
     }, timeoutMs);
-    timer.unref?.();
   });
   try {
     await Promise.race([guarded, timedOutSignal]);
