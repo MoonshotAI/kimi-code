@@ -16,7 +16,8 @@ export interface AgentMeta {
   /** Per-agent directory used as the wire-record `homedir` (persistence key). */
   readonly homedir: string;
   readonly type?: 'main' | 'sub' | 'independent';
-  readonly parentAgentId?: string;
+  /** Legacy v1 documents may carry `null`; read-compat. */
+  readonly parentAgentId?: string | null;
   /** Agent this one was forked / derived from (provenance only; not used by business logic). */
   readonly forkedFrom?: string;
   /**
@@ -24,10 +25,6 @@ export interface AgentMeta {
    * verbatim. Never interpreted by the lifecycle.
    */
   readonly labels?: Readonly<Record<string, string>>;
-  /** @deprecated Legacy v1 field; read-compat only. */
-  readonly type?: 'main' | 'sub';
-  /** @deprecated Legacy v1 field; read-compat only. */
-  readonly parentAgentId?: string | null;
   /** @deprecated Legacy on-disk field predating `labels`; read-compat only. */
   readonly swarmItem?: string;
 }
