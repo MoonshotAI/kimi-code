@@ -2,7 +2,8 @@
  * `contextMemory` domain (L4) — wire Model (`ContextModel`) and the wire-protocol
  * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
  * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
- * `context.undo` (`contextUndo`) for the per-agent conversation history, plus the
+ * `context.undo` (`contextUndo`) / `context.append_loop_event`
+ * (`contextAppendLoopEvent`) for the per-agent conversation history, plus the
  * legacy `context.splice` (`contextSplice`) Op.
  *
  * Declares the history as `ContextMessage[]` (initial `[]`); every Op's `apply`
@@ -11,13 +12,13 @@
  * carries no non-determinism — message ids are stamped at the dispatch call site
  * (`AgentContextMemoryService.append`), never inside `apply`.
  *
- * The live write path emits the 1.4 Ops (`append_message` / `clear` /
- * `apply_compaction` / `undo`); assistant and tool messages are persisted already
- * folded (the loop appends whole messages, not raw loop events), so on-disk
- * records use the 1.4 type names. Sessions written by the v1 loop stream a turn
- * as `context.append_loop_event` records instead; `contextAppendLoopEvent` folds
- * them back into assistant / tool messages at restore time (see
- * `loopEventFold.ts`) so those sessions replay identically. `context.splice` (the
+ * The live write path emits the 1.4 Ops: non-loop appends (user prompts,
+ * injections, hook/task notices) go on the wire as `append_message`, while the
+ * agent loop streams each turn as `context.append_loop_event` records — the
+ * same on-disk shape the v1 loop writes — and `contextAppendLoopEvent` folds
+ * them into assistant / tool messages (see `loopEventFold.ts`) both at live
+ * dispatch time and on replay, so v1- and v2-written sessions reduce
+ * identically. `context.splice` (the
  * pre-1.4 primitive) stays registered so sessions written at wire protocol 1.5
  * still replay (newer-version passthrough, no migration) and for the few internal
  * single-delete mutations that have no 1.4 spelling.
@@ -145,10 +146,12 @@ export interface ContextLoopEventPayload {
 }
 
 /**
- * Restore-only Op: folds a v1 `context.append_loop_event` record into the
- * history (see `loopEventFold.ts`). Never dispatched by the v2 live loop, so it
- * is never persisted by v2 — registering it lets `WireService.replay` reduce
- * v1-loop sessions instead of skipping the record.
+ * Folds a `context.append_loop_event` record into the history (see
+ * `loopEventFold.ts`). Since the v1.4 wire-parity alignment the v2 live loop
+ * dispatches (and persists) these records itself — one per streamed step
+ * fragment, byte-compatible with the v1 loop — so the same fold runs both on
+ * live dispatch and when `WireService.replay` reduces v1- or v2-written
+ * sessions.
  */
 export const contextAppendLoopEvent = defineOp(ContextModel, 'context.append_loop_event', {
   apply: (state, p: ContextLoopEventPayload): ContextMessage[] =>

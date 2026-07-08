@@ -1,16 +1,18 @@
 /**
- * `contextMemory` loop-event fold — restore-time reduction of v1
- * `context.append_loop_event` records into folded `ContextMessage`s.
+ * `contextMemory` loop-event fold — reduction of `context.append_loop_event`
+ * records into folded `ContextMessage`s.
  *
- * v2's agent loop persists assistant / tool messages already folded
- * (`context.append_message`); it never emits loop events. Sessions written by
- * the v1 loop (`packages/agent-core`), however, stream a turn as
- * `context.append_loop_event` records (`step.begin` / `content.part` /
- * `tool.call` / `tool.result` / `step.end`) and never write a folded assistant
- * message. Without this fold, `WireService.replay` skips those records (no Op
- * is registered for the type) and the restored `ContextModel` — and every
- * consumer built on it (`/messages`, `/snapshot`, live resume) — shows only the
- * user prompts.
+ * Both loops stream a turn as `context.append_loop_event` records
+ * (`step.begin` / `content.part` / `tool.call` / `tool.result` / `step.end`)
+ * and never write a folded assistant message: the v1 loop
+ * (`packages/agent-core`) always has, and since the v1.4 wire-parity alignment
+ * the v2 live loop emits the same records (`LoopService` →
+ * `ContextMemory.appendLoopEvent`), keeping the on-disk shape byte-compatible.
+ * This fold turns them into assistant / tool messages — at live dispatch time
+ * and again when `WireService.replay` restores a session. Without it, replay
+ * would skip those records (no Op is registered for the type) and the restored
+ * `ContextModel` — and every consumer built on it (`/messages`, `/snapshot`,
+ * live resume) — would show only the user prompts.
  *
  * Semantics mirror v1's `ContextMemory.appendLoopEvent`
  * (`packages/agent-core/src/agent/context/index.ts`) and the transcript
