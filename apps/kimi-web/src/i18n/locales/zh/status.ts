@@ -28,10 +28,16 @@ export default {
   goalPause: '暂停',
   goalResume: '继续',
   goalCancel: '取消',
+  goalStatusActive: '进行中',
+  goalStatusPaused: '已暂停',
+  goalStatusBlocked: '已阻塞',
+  goalStatusComplete: '已完成',
   modeNotSupported: '暂不支持',
   // 思考强度选择
   thinkingLabel: '思考',
   thinkingTooltip: '切换思考模式',
+  thinkingOn: '开',
+  thinkingOff: '关',
   starredModels: '收藏',
   moreModels: '更多模型…',
   // 状态面板

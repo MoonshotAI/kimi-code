@@ -27,6 +27,15 @@ const tokenPct = computed(() => {
   return Math.max(0, Math.min(100, Math.round((props.goal.tokensUsed / budget) * 100)));
 });
 
+function goalStatusLabel(status: AppGoal['status']): string {
+  switch (status) {
+    case 'active': return t('status.goalStatusActive');
+    case 'paused': return t('status.goalStatusPaused');
+    case 'blocked': return t('status.goalStatusBlocked');
+    case 'complete': return t('status.goalStatusComplete');
+  }
+}
+
 function formatMs(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000));
   const min = Math.floor(sec / 60);
@@ -42,13 +51,13 @@ function formatMs(ms: number): string {
   <Card class="goal-strip" :class="{ expanded }">
     <template #head>
       <button class="goal-row" type="button" @click="expanded = !expanded">
-        <span class="goal-kicker">Goal</span>
+        <span class="goal-kicker">{{ t('status.goalLabel') }}</span>
         <span class="goal-objective" :class="{ 'expanded-hidden': expanded }">{{ goal.objective }}</span>
         <Badge
           :variant="goal.status === 'active' ? 'success' : goal.status === 'blocked' ? 'danger' : goal.status === 'paused' ? 'warning' : 'neutral'"
           size="sm"
           class="goal-status"
-        >{{ goal.status }}</Badge>
+        >{{ goalStatusLabel(goal.status) }}</Badge>
         <span class="goal-progress" aria-hidden="true">
           <span class="goal-progress-fill" :style="{ width: `${tokenPct}%` }"></span>
         </span>
@@ -121,7 +130,8 @@ function formatMs(ms: number): string {
 .goal-kicker {
   flex: none;
   color: var(--color-success);
-  font: var(--weight-bold) var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
 }
 .goal-objective {

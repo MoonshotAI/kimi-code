@@ -28,10 +28,16 @@ export default {
   goalPause: 'Pause',
   goalResume: 'Resume',
   goalCancel: 'Cancel',
+  goalStatusActive: 'Active',
+  goalStatusPaused: 'Paused',
+  goalStatusBlocked: 'Blocked',
+  goalStatusComplete: 'Complete',
   modeNotSupported: 'Not supported',
   // Thinking selector
   thinkingLabel: 'thinking',
   thinkingTooltip: 'Toggle thinking mode',
+  thinkingOn: 'On',
+  thinkingOff: 'Off',
   starredModels: 'Starred',
   moreModels: 'More models…',
   // Status panel
