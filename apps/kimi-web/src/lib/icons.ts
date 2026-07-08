@@ -34,12 +34,10 @@ import RiCheckLine from '~icons/ri/check-line';
 import RiCloseLine from '~icons/ri/close-line';
 import RiCodeLine from '~icons/ri/code-line';
 import RiCollapseDiagonalLine from '~icons/ri/collapse-diagonal-line';
-import RiContractLeftLine from '~icons/ri/contract-left-line';
 import RiDownloadLine from '~icons/ri/download-line';
 import RiDraggable from '~icons/ri/draggable';
 import RiEqualizerLine from '~icons/ri/equalizer-line';
 import RiExpandDiagonalLine from '~icons/ri/expand-diagonal-line';
-import RiExpandRightLine from '~icons/ri/expand-right-line';
 import RiExternalLinkLine from '~icons/ri/external-link-line';
 import RiFileAddLine from '~icons/ri/file-add-line';
 import RiFileCopyLine from '~icons/ri/file-copy-line';
@@ -66,6 +64,8 @@ import RiPlayFill from '~icons/ri/play-fill';
 import RiQuestionLine from '~icons/ri/question-line';
 import RiSearchLine from '~icons/ri/search-line';
 import RiSettings3Line from '~icons/ri/settings-3-line';
+import RiSideBarLine from '~icons/ri/side-bar-line';
+import RiSidebarFoldLine from '~icons/ri/sidebar-fold-line';
 import RiSortDesc from '~icons/ri/sort-desc';
 import RiSparklingLine from '~icons/ri/sparkling-line';
 import RiStarFill from '~icons/ri/star-fill';
@@ -95,12 +95,10 @@ import RawCheckLine from '~icons/ri/check-line?raw';
 import RawCloseLine from '~icons/ri/close-line?raw';
 import RawCodeLine from '~icons/ri/code-line?raw';
 import RawCollapseDiagonalLine from '~icons/ri/collapse-diagonal-line?raw';
-import RawContractLeftLine from '~icons/ri/contract-left-line?raw';
 import RawDownloadLine from '~icons/ri/download-line?raw';
 import RawDraggable from '~icons/ri/draggable?raw';
 import RawEqualizerLine from '~icons/ri/equalizer-line?raw';
 import RawExpandDiagonalLine from '~icons/ri/expand-diagonal-line?raw';
-import RawExpandRightLine from '~icons/ri/expand-right-line?raw';
 import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
 import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFileCopyLine from '~icons/ri/file-copy-line?raw';
@@ -127,6 +125,8 @@ import RawPlayFill from '~icons/ri/play-fill?raw';
 import RawQuestionLine from '~icons/ri/question-line?raw';
 import RawSearchLine from '~icons/ri/search-line?raw';
 import RawSettings3Line from '~icons/ri/settings-3-line?raw';
+import RawSideBarLine from '~icons/ri/side-bar-line?raw';
+import RawSidebarFoldLine from '~icons/ri/sidebar-fold-line?raw';
 import RawSortDesc from '~icons/ri/sort-desc?raw';
 import RawSparklingLine from '~icons/ri/sparkling-line?raw';
 import RawStarFill from '~icons/ri/star-fill?raw';
@@ -243,8 +243,8 @@ export const ICONS: Record<IconName, IconEntry> = {
   'arrow-down': entry(RiArrowDownLine, RawArrowDownLine),
   'arrow-right': entry(RiArrowRightLine, RawArrowRightLine),
   minus: entry(RiSubtractLine, RawSubtractLine),
-  'panel-collapse': entry(RiContractLeftLine, RawContractLeftLine),
-  'panel-expand': entry(RiExpandRightLine, RawExpandRightLine),
+  'panel-collapse': entry(RiSidebarFoldLine, RawSidebarFoldLine),
+  'panel-expand': entry(RiSideBarLine, RawSideBarLine),
   expand: entry(RiExpandDiagonalLine, RawExpandDiagonalLine),
   collapse: entry(RiCollapseDiagonalLine, RawCollapseDiagonalLine),
   list: entry(RiListUnordered, RawListUnordered),
