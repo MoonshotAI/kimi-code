@@ -1,4 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import {
+  spawn,
+  type ChildProcessWithoutNullStreams,
+  type SpawnOptionsWithoutStdio,
+} from 'node:child_process';
 
 import { z } from 'zod';
 
@@ -9,6 +13,25 @@ export interface RunHookOptions {
   readonly cwd?: string;
   readonly env?: Record<string, string>;
   readonly signal?: AbortSignal;
+}
+
+export function buildHookSpawnOptions(options: {
+  cwd?: string;
+  env?: Record<string, string>;
+}): SpawnOptionsWithoutStdio {
+  return {
+    shell: true,
+    cwd: options.cwd,
+    stdio: 'pipe',
+    detached: process.platform !== 'win32',
+    // Hide the console Windows would otherwise allocate for the shell child.
+    // Without `windowsHide:true`, each hook flashes a visible console window —
+    // the same regression the node-local process host already guards against
+    // (see `buildSpawnOptions` in os/backends/node-local/hostProcessService.ts)
+    // and the runner's own taskkill spawn. Unconditional: it is a no-op on POSIX.
+    windowsHide: true,
+    env: options.env === undefined ? undefined : { ...process.env, ...options.env },
+  };
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -46,13 +69,7 @@ export async function runHook(
 ): Promise<HookResult> {
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = spawn(command, {
-      shell: true,
-      cwd: options.cwd,
-      env: options.env === undefined ? undefined : { ...process.env, ...options.env },
-      stdio: 'pipe',
-      detached: process.platform !== 'win32',
-    });
+    child = spawn(command, buildHookSpawnOptions({ cwd: options.cwd, env: options.env }));
   } catch (error) {
     return allowResult({ stderr: errorMessage(error) });
   }
