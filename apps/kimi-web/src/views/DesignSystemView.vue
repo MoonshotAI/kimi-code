@@ -1369,15 +1369,16 @@ onUnmounted(() => {
             </div></div>
 
             <h3 class="sub">Sidebar structure</h3>
-            <p>The sidebar from top to bottom: brand header → search → New chat → grouped list (workspace head + session rows). Controls reuse the §03 primitives as much as possible.</p>
+            <p>The sidebar from top to bottom: brand header → search → New chat → grouped list (workspace head + session rows) → settings footer. Controls reuse the §03 primitives as much as possible.</p>
             <table class="dt">
               <thead><tr><th>Block</th><th>Use</th><th>Note</th></tr></thead>
               <tbody>
-                <tr><td>Brand header</td><td>logo + name + IconButton</td><td>collapse / settings use IconButton sm; the logo is animated (a blinking eye)</td></tr>
+                <tr><td>Brand header</td><td>logo + name + IconButton</td><td>collapse uses IconButton sm; the logo is animated (a blinking eye)</td></tr>
                 <tr><td>Search</td><td>bare search row (custom)</td><td>no border, hover/focus shows a sunken background; icon + input + clear IconButton. <b>Do not</b> use Input (the 38px bordered version is too heavy)</td></tr>
                 <tr><td>New chat</td><td>full-width left-aligned button (custom)</td><td>same rhythm as the session rows in the list (left-aligned, hover sunken). <b>Do not</b> use Button (centered, breaks the rhythm)</td></tr>
                 <tr><td>Section label</td><td><code>.p-section-label</code></td><td>uppercase muted small titles like "Workspaces"</td></tr>
                 <tr><td>Workspace head / session row</td><td>see next two sections</td><td>share <code>--sb-*</code> alignment</td></tr>
+                <tr><td>Settings footer</td><td>full-width left-aligned button (custom)</td><td>pinned row under the session list, separated by a 1px <code>--line</code> top border; icon + label, same list-style family as New chat</td></tr>
               </tbody>
             </table>
             <div class="callout warn"><span class="ico">!</span><div>

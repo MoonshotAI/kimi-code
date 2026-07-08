@@ -562,7 +562,7 @@ onBeforeUnmount(() => {
   <aside class="side" :class="{ 'macos-desktop': isMacosDesktop }">
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
-      <!-- Header: logo + settings (no hard border — flows into workspace list) -->
+      <!-- Header: logo + collapse (no hard border — flows into workspace list) -->
       <div class="ch">
         <div class="ch-brand">
           <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
@@ -586,13 +586,6 @@ onBeforeUnmount(() => {
           @click.stop="emit('collapse')"
         >
           <Icon name="panel-collapse" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          :label="t('settings.title')"
-          @click.stop="emit('openSettings')"
-        >
-          <Icon name="settings" />
         </IconButton>
       </div>
 
@@ -694,6 +687,14 @@ onBeforeUnmount(() => {
             />
           </div>
         </template>
+      </div>
+
+      <!-- Footer: settings entry pinned under the session list -->
+      <div class="side-footer">
+        <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
+          <Icon name="settings" />
+          <span>{{ t('settings.title') }}</span>
+        </button>
       </div>
     </div>
 
@@ -801,7 +802,7 @@ onBeforeUnmount(() => {
   container-name: sidebar-col;
 }
 
-/* Header: logo + settings (no border — flows into the workspace list). */
+/* Header: logo + collapse (no border — flows into the workspace list). */
 .ch {
   display: flex;
   align-items: center;
@@ -976,6 +977,40 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-xs);
 }
 .sessions::-webkit-scrollbar-thumb:hover { background: var(--color-accent-bd); }
+
+/* Footer — settings entry pinned under the session list. Same list-style
+   control family as search / New chat (full-width, left-aligned, hover
+   sunken — not a Button). */
+.side-footer {
+  flex: none;
+  padding: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+.btn-settings {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: var(--space-1) calc(var(--sb-pad-x) - var(--space-2));
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size);
+  cursor: pointer;
+  text-align: left;
+}
+.btn-settings:hover { background: var(--color-surface-sunken); }
+.btn-settings:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.btn-settings svg { flex: none; width: 16px; height: 16px; }
+.btn-settings span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Section label — heads the workspace list below the action buttons. Aligns
    with the rows' leading inset (--sb-pad-x) so it reads as the list's title. */
