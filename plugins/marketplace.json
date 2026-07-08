@@ -11,6 +11,15 @@
       "source": "./official/kimi-datasource"
     },
     {
+      "id": "kimi-openspec",
+      "tier": "official",
+      "displayName": "OpenSpec",
+      "version": "1.0.0",
+      "description": "Official OpenSpec plugin for spec-driven development — manage change proposals, specifications, tasks, and archives.",
+      "keywords": ["openspec", "spec-driven", "sdd", "mcp"],
+      "source": "./official/kimi-openspec"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",

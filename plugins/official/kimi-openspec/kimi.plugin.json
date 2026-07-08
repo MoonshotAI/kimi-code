@@ -1,0 +1,17 @@
+{
+  "id": "kimi-openspec",
+  "name": "OpenSpec",
+  "version": "1.0.0",
+  "description": "Official OpenSpec plugin for spec-driven development. Manages change proposals, specifications, tasks, and archives via the Fission-AI OpenSpec CLI.",
+  "author": "Moonshot AI",
+  "license": "MIT",
+  "type": "official",
+  "entry": {
+    "type": "mcp",
+    "command": "node",
+    "args": [
+      "{{plugin_dir}}/bin/kimi-openspec.mjs"
+    ]
+  },
+  "homepage": "https://github.com/MoonshotAI/kimi-cli/tree/main/plugins/official/kimi-openspec"
+}
