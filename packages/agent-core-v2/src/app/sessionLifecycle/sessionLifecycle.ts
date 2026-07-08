@@ -21,6 +21,8 @@ import type { Hooks } from '#/hooks';
 export interface CreateSessionOptions {
   readonly sessionId: string;
   readonly workDir: string;
+  /** Extra workspace roots for this session; relative paths resolve against workDir. */
+  readonly additionalDirs?: readonly string[];
 }
 
 export interface ForkSessionOptions {
