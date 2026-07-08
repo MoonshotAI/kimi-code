@@ -439,6 +439,33 @@ describe('compaction — probe tests (high-risk scenarios)', () => {
   });
 });
 
+describe('compaction — summarizer request media handling', () => {
+  // GUARD — the first summarizer attempt sends media as-is: a multimodal
+  // summarizer can still read an image nobody narrated. Media is only
+  // replaced with text markers when the provider rejects the request body
+  // as too large (see full.test.ts "request too large" cases).
+  it('keeps media parts in the summarizer request when it is not rejected', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: PROVIDER, modelCapabilities: CAPS });
+    ctx.agent.context.appendUserMessage(
+      [
+        { type: 'text', text: '<image path="/workspace/shot.png">' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        { type: 'text', text: '</image>' },
+      ],
+      { kind: 'user' },
+    );
+
+    ctx.mockNextResponse({ type: 'text', text: 'Summary.' });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    const request = ctx.llmCalls.at(-1)!;
+    const parts = request.history.flatMap((message) => message.content);
+    expect(parts.some((part) => part.type === 'image_url')).toBe(true);
+  });
+});
+
 describe('compaction — head/tail user-message retention', () => {
   const FIRST = `FIRST ${'a'.repeat(4_000)}`; // ~1k tokens
   const MIDDLE = 'b'.repeat(88_000); // ~22k tokens, over the 20k budget on its own
