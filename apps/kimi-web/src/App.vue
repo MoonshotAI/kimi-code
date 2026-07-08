@@ -349,12 +349,14 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
   // (same as the model picker overlay). Awaited so the model pill reflects the
   // result and failures surface. In the onboarding draft this just stores the
   // pick for the first session.
-  await client.setModel(modelId);
+  const switched = await client.setModel(modelId);
 
   // Side effect: also bump the daemon-wide default model via POST /config so
   // new sessions inherit the choice. Fire-and-forget — it must not block the UI
-  // or mask the session switch. Skip when it already matches the default.
-  if (modelId !== client.defaultModel.value) {
+  // or mask the session switch. Only after a confirmed switch (a stale/invalid
+  // alias must not become the global default), and skip when it already
+  // matches the default.
+  if (switched && modelId !== client.defaultModel.value) {
     void client.updateConfig({ defaultModel: modelId });
   }
 }
