@@ -97,6 +97,20 @@ describe('parseManagedUsagePayload', () => {
     });
   });
 
+  it('clamps extra usage used to [0, amount]', () => {
+    const overused = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10 },
+      boosterWallet: { balance: { type: 'BALANCE_BOOSTER', amount: '100', amountLeft: '200' } },
+    });
+    expect(overused.extraUsage).toEqual({ label: 'Extra Usage', used: 0, limit: 100 });
+
+    const negativeLeft = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10 },
+      boosterWallet: { balance: { type: 'BALANCE_BOOSTER', amount: '100', amountLeft: '-50' } },
+    });
+    expect(negativeLeft.extraUsage).toEqual({ label: 'Extra Usage', used: 100, limit: 100 });
+  });
+
   it('returns null extra usage when boosterWallet is missing or invalid', () => {
     expect(parseManagedUsagePayload({ usage: { used: 1, limit: 10 } }).extraUsage).toBeNull();
     expect(

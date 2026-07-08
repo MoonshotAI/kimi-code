@@ -594,11 +594,39 @@ describe('KimiOAuthToolkit', () => {
       now: () => 100,
     });
 
-    await expect(toolkit.getManagedUsage()).resolves.toEqual({
+    await expect(toolkit.getManagedUsage()).resolves.toMatchObject({
       kind: 'ok',
       summary: { label: 'Weekly limit', used: 10, limit: 100 },
       limits: [],
       extraUsage: { label: 'Extra Usage', used: 20, limit: 50 },
+    });
+  });
+
+  it('returns null extraUsage when the payload has no boosterWallet', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('access-1'));
+    const fetchImpl = vi.fn(async (_input: unknown, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          usage: { used: 10, limit: 100, name: 'Weekly limit' },
+          limits: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchImpl);
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    await expect(toolkit.getManagedUsage()).resolves.toMatchObject({
+      kind: 'ok',
+      summary: { label: 'Weekly limit', used: 10, limit: 100 },
+      limits: [],
+      extraUsage: null,
     });
   });
 

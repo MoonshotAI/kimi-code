@@ -22,7 +22,11 @@ import {
   safeUsageRatio,
 } from '#/utils/usage/usage-format';
 
-import { buildExtraUsageSection, buildManagedUsageReportLines, type ManagedUsageReport } from './usage-panel';
+import {
+  buildExtraUsageSection,
+  buildManagedUsageReportLines,
+  type ManagedUsageReport,
+} from './usage-panel';
 
 interface FieldRow {
   readonly label: string;

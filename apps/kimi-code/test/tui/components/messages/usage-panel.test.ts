@@ -24,7 +24,7 @@ describe('UsagePanelComponent', () => {
             output: 250,
           },
         },
-      } as never,
+      },
       contextUsage: 0.25,
       contextTokens: 2500,
       maxContextTokens: 10000,
@@ -81,7 +81,7 @@ describe('UsagePanelComponent', () => {
         managedUsage: {
           summary: null,
           limits: [],
-          extraUsage: extraUsage as never,
+          extraUsage: extraUsage,
         },
       }).map(strip);
 
@@ -122,8 +122,8 @@ describe('UsagePanelComponent', () => {
         limits: [],
         extraUsage: {
           label: 'Extra Usage',
-          used: '500' as never,
-          limit: '1000' as never,
+          used: '500' as unknown as number,
+          limit: '1000' as unknown as number,
           resetHint: 'resets in 23d',
         },
       },
@@ -164,8 +164,8 @@ describe('UsagePanelComponent', () => {
     const cases = [
       { used: Number.NaN, limit: 1000 },
       { used: 100, limit: Number.NaN },
-      { used: 'not-a-number' as never, limit: 1000 },
-      { used: 100, limit: 'not-a-number' as never },
+      { used: 'not-a-number' as unknown as number, limit: 1000 },
+      { used: 100, limit: 'not-a-number' as unknown as number },
     ];
 
     for (const extraUsage of cases) {
