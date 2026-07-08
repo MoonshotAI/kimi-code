@@ -49,6 +49,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentBuiltinToolsRegistrar } from '#/agent/toolRegistry/builtinToolsRegistrar';
+import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   IAgentWireRecordService,
@@ -195,6 +196,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // registrar is separate from the registry itself to avoid a construction
     // cycle where tool ctors transitively depend on the registry.
     handle.accessor.get(IAgentBuiltinToolsRegistrar);
+    // Force-instantiate the media-tools registrar next: media tools cannot use
+    // the contribution table (capabilities are unknown until a model binds), so
+    // this service re-registers ReadMediaFile on every `agent.status.updated`.
+    // It must exist before the `opts.binding` bind below publishes the first one.
+    handle.accessor.get(IAgentMediaToolsRegistrar);
     // Force-instantiate the external hook adapter so it registers listeners on
     // the agent's domain hooks before the first turn. No business service
     // injects it directly; it observes their hooks instead.

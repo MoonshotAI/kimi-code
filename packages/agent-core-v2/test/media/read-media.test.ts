@@ -20,8 +20,13 @@ import {
   type VideoUploader,
 } from '#/agent/media/tools/read-media';
 import { registerMediaTools } from '#/agent/media/registerMediaTools';
+import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { ToolAccesses } from '#/agent/tool/tool-access';
+import { EventBusService } from '#/app/event/eventBusService';
+import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { Model } from '#/app/model/modelInstance';
+import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '../../src/_base/tools/support/workspace';
 import { sniffImageDimensions } from '#/_base/tools/support/file-type';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
@@ -633,5 +638,103 @@ describe('registerMediaTools', () => {
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
     // Disposing the no-op registration is safe.
     expect(() => disposable.dispose()).not.toThrow();
+  });
+});
+
+describe('AgentMediaToolsRegistrar', () => {
+  interface ProfileState {
+    alias: string;
+    capabilities: ModelCapability;
+    model: Model | undefined;
+  }
+
+  function createRegistrarHarness() {
+    const registry = new AgentToolRegistryService();
+    const eventBus = new EventBusService();
+    const state: ProfileState = {
+      alias: '',
+      capabilities: capabilities({ image_in: false, video_in: false }),
+      model: undefined,
+    };
+    const profile = {
+      getModelCapabilities: () => state.capabilities,
+      getModel: () => state.alias,
+      resolveModel: () => state.model,
+    } as unknown as IAgentProfileService;
+    const workspaceCtx = {
+      workDir: '/workspace',
+      additionalDirs: [],
+    } as unknown as ISessionWorkspaceContext;
+    const registrar = new AgentMediaToolsRegistrar(
+      registry,
+      profile,
+      eventBus,
+      createTestFs({}),
+      createTestEnv(),
+      workspaceCtx,
+      recordingTelemetry([]),
+    );
+    const bindModel = (alias: string, caps: ModelCapability): void => {
+      state.alias = alias;
+      state.capabilities = caps;
+      eventBus.publish({
+        type: 'agent.status.updated',
+        model: alias,
+        maxContextTokens: caps.max_context_tokens,
+      });
+    };
+    return { registry, registrar, bindModel };
+  }
+
+  it('registers nothing until a media-capable model binds, then registers ReadMediaFile', () => {
+    const { registry, bindModel } = createRegistrarHarness();
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+
+    bindModel('vision-model', capabilities({ image_in: true, video_in: false }));
+    const tool = registry.resolve('ReadMediaFile');
+    expect(tool).toBeInstanceOf(ReadMediaFileTool);
+    expect((tool as ReadMediaFileTool).description).toContain('Video files are not supported');
+  });
+
+  it('drops the tool when the model loses media input', () => {
+    const { registry, bindModel } = createRegistrarHarness();
+    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    bindModel('text-model', capabilities({ image_in: false, video_in: false }));
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+  });
+
+  it('swaps the tool instance when the model alias changes', () => {
+    const { registry, bindModel } = createRegistrarHarness();
+    bindModel('vision-a', capabilities({ image_in: true, video_in: true }));
+    const first = registry.resolve('ReadMediaFile');
+
+    bindModel('vision-b', capabilities({ image_in: true, video_in: true }));
+    const second = registry.resolve('ReadMediaFile');
+    expect(second).toBeInstanceOf(ReadMediaFileTool);
+    expect(second).not.toBe(first);
+  });
+
+  it('keeps the same instance across unrelated status updates', () => {
+    const { registry, bindModel } = createRegistrarHarness();
+    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
+    const first = registry.resolve('ReadMediaFile');
+
+    // Same alias, same media capabilities — e.g. a thinking-level update.
+    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
+    expect(registry.resolve('ReadMediaFile')).toBe(first);
+  });
+
+  it('unregisters on dispose', () => {
+    const { registry, registrar, bindModel } = createRegistrarHarness();
+    bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
+    expect(registry.resolve('ReadMediaFile')).toBeInstanceOf(ReadMediaFileTool);
+
+    registrar.dispose();
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+    // A status update after dispose must not resurrect the tool.
+    bindModel('vision-model-2', capabilities({ image_in: true, video_in: true }));
+    expect(registry.resolve('ReadMediaFile')).toBeUndefined();
   });
 });

@@ -2,12 +2,15 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
+import { buildImageCompressionCaption } from '#/_base/tools/support/image-compress';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { AgentPromptService } from '#/agent/prompt/promptService';
 import type { PromptSubmitContext } from '#/agent/prompt/prompt';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import type { ToolDidExecuteContext } from '#/agent/tool/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTurnService, type Turn } from '#/agent/turn/turn';
@@ -39,6 +42,7 @@ function createHarness(options: { readonly hasActiveTurn?: boolean } = {}) {
       reg.defineInstance(IAgentTurnService, turn);
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IAgentToolExecutorService, toolExecutor);
+      reg.define(IAgentSystemReminderService, AgentSystemReminderService);
       reg.define(IAgentPromptService, AgentPromptService);
     },
   });
@@ -208,6 +212,113 @@ describe('AgentPromptService', () => {
     expect(context.messages[0]?.origin).toMatchObject({
       kind: 'skill_activation',
       skillName: 'commit',
+    });
+  });
+
+  describe('image-compression caption rerouting', () => {
+    const CAPTION = buildImageCompressionCaption({
+      original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
+      final: { width: 2000, height: 408, byteLength: 282 * 1024, mimeType: 'image/png' },
+      originalPath: '/tmp/originals/shot.png',
+    });
+
+    const textOf = (message: ContextMessage): string =>
+      message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+
+    it('reroutes an inline caption into a hidden system reminder', async () => {
+      const { context, prompt } = createHarness();
+
+      // The TUI merges the caption into the preceding text segment; the server
+      // route emits it as a standalone part. Cover the merged (harder) shape.
+      await prompt.prompt({
+        role: 'user',
+        content: [
+          { type: 'text', text: `能展示但是没有快捷键提示${CAPTION}` },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      });
+
+      expect(context.messages.map(({ role, origin }) => ({ role, origin }))).toEqual([
+        { role: 'user', origin: { kind: 'injection', variant: 'image_compression' } },
+        { role: 'user', origin: { kind: 'user' } },
+      ]);
+      const [reminder, userMsg] = context.messages;
+      expect(textOf(reminder!)).toContain('<system-reminder>');
+      expect(textOf(reminder!)).toContain('Image compressed to fit model limits');
+      expect(textOf(reminder!)).toContain('/tmp/originals/shot.png');
+      expect(textOf(reminder!)).not.toContain('<system>');
+      expect(textOf(userMsg!)).toBe('能展示但是没有快捷键提示');
+      expect(userMsg!.content.some((part) => part.type === 'image_url')).toBe(true);
+    });
+
+    it('drops a caption-only text part instead of leaving an empty user text part', async () => {
+      const { context, prompt } = createHarness();
+
+      await prompt.prompt({
+        role: 'user',
+        content: [
+          { type: 'text', text: CAPTION },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      });
+
+      const [, userMsg] = context.messages;
+      expect(userMsg!.content).toEqual([
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+      ]);
+    });
+
+    it('leaves caption-shaped text alone on non-user origins', async () => {
+      const { context, prompt } = createHarness();
+
+      await prompt.prompt({
+        role: 'user',
+        content: [{ type: 'text', text: CAPTION }],
+        toolCalls: [],
+        origin: { kind: 'hook_result', event: 'PostToolUse' },
+      });
+
+      expect(context.messages).toHaveLength(1);
+      expect(context.messages[0]!.origin).toEqual({
+        kind: 'hook_result',
+        event: 'PostToolUse',
+      });
+      expect(textOf(context.messages[0]!)).toBe(CAPTION);
+    });
+
+    it('reroutes captions in steered user messages at flush time', async () => {
+      const { context, loop, prompt, turn } = createHarness({ hasActiveTurn: true });
+      const activeTurn = turn.launch();
+
+      const steer = prompt.steer({
+        role: 'user',
+        content: [
+          { type: 'text', text: `看这张图${CAPTION}` },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      });
+      await steer.launched;
+      // Nothing lands in context until the steer flushes at the step boundary.
+      expect(context.messages).toEqual([]);
+
+      await flushSteers(loop, activeTurn);
+
+      expect(context.messages.map(({ role, origin }) => ({ role, origin }))).toEqual([
+        { role: 'user', origin: { kind: 'injection', variant: 'image_compression' } },
+        { role: 'user', origin: { kind: 'user' } },
+      ]);
+      expect(textOf(context.messages[1]!)).toBe('看这张图');
+      expect(turn.steered).toHaveLength(1);
+      expect(turn.steered[0]?.input).toMatchObject([
+        { type: 'text', text: '看这张图' },
+        { type: 'image_url' },
+      ]);
     });
   });
 });

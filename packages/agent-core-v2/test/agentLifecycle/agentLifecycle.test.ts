@@ -24,6 +24,7 @@ import { AGENT_WIRE_PROTOCOL_VERSION, type PersistedWireRecord } from '#/agent/w
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { _clearToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 
@@ -191,6 +192,11 @@ describe('AgentLifecycleService', () => {
       resolve: () => undefined,
       list: () => [],
     } as unknown as IAgentToolRegistryService);
+    // Media registration is capability-driven and exercised in its own tests;
+    // stub the registrar so agent creation does not need profile/host services.
+    ix.stub(IAgentMediaToolsRegistrar, {
+      _serviceBrand: undefined,
+    } as IAgentMediaToolsRegistrar);
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
       hooks: {
