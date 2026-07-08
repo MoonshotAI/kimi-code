@@ -443,6 +443,7 @@ export interface SessionAPI extends AgentAPIWithId {
   generateAgentsMd: (payload: EmptyPayload) => void;
   getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
   waitForBackgroundTasksOnPrint: (payload: EmptyPayload) => void;
+  handlePrintMainTurnCompleted: (payload: EmptyPayload) => 'finish' | 'continue';
   addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 

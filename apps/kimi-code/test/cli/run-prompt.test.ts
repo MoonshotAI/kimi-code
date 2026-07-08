@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
     waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
     getCronTasks: vi.fn(async () => ({ tasks: [] })),
+    handlePrintMainTurnCompleted: vi.fn(async (): Promise<'finish' | 'continue'> => 'finish'),
   };
 
   return {
@@ -750,6 +751,56 @@ describe('runPrompt', () => {
 
     releaseWait();
     await runPromise;
+  });
+
+  it('follows a background-steered second main turn before finishing in steer mode', async () => {
+    // First end-of-turn: stay alive (a background task is still pending).
+    // Second end-of-turn: finish.
+    mocks.session.handlePrintMainTurnCompleted
+      .mockResolvedValueOnce('continue')
+      .mockResolvedValueOnce('finish');
+
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 10, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'first' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 10, reason: 'completed' }));
+      }
+    });
+
+    const stdout = writer();
+    const stderr = writer();
+    const runPromise = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    // The first turn's assistant message must be flushed and the end-of-turn
+    // policy consulted, while the run stays alive (action === 'continue').
+    await waitForAssertion(() => {
+      expect(mocks.session.handlePrintMainTurnCompleted).toHaveBeenCalledTimes(1);
+      expect(stdout.text()).toContain('{"role":"assistant","content":"first"}');
+    });
+
+    // Simulate a background-task completion steering the main agent into a new
+    // turn (the runtime does this via turn.steer; here we drive the events
+    // directly to verify the driver follows and finishes only after it).
+    for (const handler of mocks.eventHandlers) {
+      handler(
+        mocks.mainEvent({
+          type: 'turn.started',
+          turnId: 11,
+          origin: { kind: 'background_task' },
+        }),
+      );
+      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 11, delta: 'second' }));
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 11, reason: 'completed' }));
+    }
+
+    await runPromise;
+
+    expect(mocks.session.handlePrintMainTurnCompleted).toHaveBeenCalledTimes(2);
+    expect(stdout.text()).toContain('{"role":"assistant","content":"second"}');
   });
 
   it('resumes a concrete session without a configured default model', async () => {

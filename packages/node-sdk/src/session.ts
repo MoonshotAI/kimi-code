@@ -381,13 +381,27 @@ export class Session {
   /**
    * Block until every still-running background task (across all agents in this
    * session) reaches a terminal state. Used by `kimi -p` after the main agent's
-   * turn finishes when `background.keep_alive_on_exit` is `true`, so background
-   * subagents get a chance to complete before the process exits. No-op when
-   * `keep_alive_on_exit` is not enabled. Bounded by `background.print_wait_ceiling_s`.
+   * turn finishes when the resolved print background mode is `'drain'`
+   * (`print_background_mode = "drain"`, or the legacy `keep_alive_on_exit = true`
+   * fallback), so background subagents get a chance to complete before the process
+   * exits. No-op in other modes. Bounded by `background.print_wait_ceiling_s`.
    */
   async waitForBackgroundTasksOnPrint(): Promise<void> {
     this.ensureOpen();
     await this.rpc.waitForBackgroundTasksOnPrint({ sessionId: this.id });
+  }
+
+  /**
+   * Used by `kimi -p` after the main agent's turn ends with `reason ===
+   * 'completed'`. Returns `'finish'` when the run may exit, or `'continue'` when
+   * the caller must keep the session alive so a background-task completion can
+   * steer the main agent into a new turn. Policy is selected by
+   * `background.print_background_mode` (`'exit' | 'drain' | 'steer'`); when unset
+   * it falls back to the legacy `keep_alive_on_exit` mapping (`true ⇒ 'drain'`).
+   */
+  async handlePrintMainTurnCompleted(): Promise<'finish' | 'continue'> {
+    this.ensureOpen();
+    return this.rpc.handlePrintMainTurnCompleted({ sessionId: this.id });
   }
 
   // --- Goal lifecycle ---------------------------------------------------

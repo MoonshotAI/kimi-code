@@ -169,6 +169,7 @@ outline: 2
 - TUI 新增一项偏好设置：当 bracketed paste 不可用时，避免快速多行粘贴被逐行提交。可在 `tui.toml` 中设置 `disable_paste_burst = true` 关闭该行为。
 - 优化子 Agent 卡片，使其保持固定高度，并在紧凑的双行活动窗口内显示实时状态 spinner。
 - `kimi -p` 运行时，若启用了 `background.keep_alive_on_exit`，退出前会等待后台子 Agent 完成。设置 `keep_alive_on_exit = true` 可让并发的后台子 Agent 执行完毕。
+- `kimi -p` 新增 `background.print_background_mode`（`exit`/`drain`/`steer`）：`steer` 模式下，后台任务（含 `Bash(run_in_background=true)`）完成时会像后台子 Agent 一样，以合成 user 消息 steer 主 Agent 进入新 turn，使其能依据后台结果继续工作；上限由 `print_wait_ceiling_s` 与新增的 `print_max_turns` 控制。
 
 ### 重构
 

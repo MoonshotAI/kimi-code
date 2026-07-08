@@ -111,6 +111,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.waitForBackgroundTasksOnPrint();
   }
 
+  handlePrintMainTurnCompleted(_payload: EmptyPayload): Promise<'finish' | 'continue'> {
+    return this.session.handlePrintMainTurnCompleted();
+  }
+
   addAdditionalDir(payload: AddAdditionalDirPayload): Promise<AddAdditionalDirResult> {
     return this.session.addAdditionalDir(payload.path, payload.persist);
   }

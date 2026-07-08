@@ -169,6 +169,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Add a TUI preference to keep rapid multi-line pastes from submitting line by line when bracketed paste is unavailable. Set `disable_paste_burst = true` in `tui.toml` to turn it off.
 - Keep subagent cards at a stable height and show a live status spinner with a compact two-row activity window.
 - In `kimi -p` runs, wait for background subagents to finish before exiting when `background.keep_alive_on_exit` is enabled. Set `keep_alive_on_exit = true` to let concurrent background subagents complete.
+- Add `background.print_background_mode` (`exit`/`drain`/`steer`) for `kimi -p`: in `steer` mode, a completing background task (including `Bash(run_in_background=true)`) behaves like a background subagent — it injects a synthetic user message that steers the main agent into a new turn so it can act on the result. Bounded by `print_wait_ceiling_s` and the new `print_max_turns`.
 
 ### Refactors
 
