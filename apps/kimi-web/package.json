@@ -13,6 +13,7 @@
     "check:style": "node scripts/check-style.mjs"
   },
   "dependencies": {
+    "@chenglou/pretext": "0.0.8",
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@xterm/addon-fit": "^0.11.0",
