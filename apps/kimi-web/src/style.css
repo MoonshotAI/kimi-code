@@ -618,9 +618,16 @@ body {
    A single mid-gray works on either background, so no per-theme tokens needed.
    Components may still override locally (e.g. the sidebar's even-thinner rule).
    --------------------------------------------------------------------------- */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+/* Firefox-only fallback: the standard scrollbar properties DISABLE the whole
+   ::-webkit-scrollbar customisation in Chromium 121+ (any non-auto value wins
+   over the pseudo-element styles), silently replacing the 6px/4px custom bars
+   with the ~11px native thin gutter. Scope them to engines that don't know
+   the webkit pseudo-element instead. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+  }
 }
 *::-webkit-scrollbar {
   width: 6px;

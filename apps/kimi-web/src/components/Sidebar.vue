@@ -589,7 +589,7 @@ onBeforeUnmount(() => {
       <!-- New chat + new workspace buttons -->
       <div class="btn-wrap">
         <button class="btn-new-chat" type="button" @click.stop="emit('create')">
-          <Icon name="chat-new" />
+          <Icon name="chat-new" size="sm" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
         <IconButton
@@ -606,7 +606,7 @@ onBeforeUnmount(() => {
            row above the list, so it carries the scroll-linked seam. -->
       <div class="search-wrap" :class="{ 'search-wrap--scrolled': sessionsScrolled }">
         <button class="search" type="button" @click="openSearch">
-          <Icon class="search-icon" name="search" />
+          <Icon class="search-icon" name="search" size="sm" />
           <span class="search-input">{{ t('sidebar.searchShortcut', { shortcut: sessionSearchShortcut }) }}</span>
         </button>
       </div>
@@ -691,7 +691,7 @@ onBeforeUnmount(() => {
       <!-- Footer: settings entry pinned under the session list -->
       <div class="side-footer">
         <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
-          <Icon name="settings" />
+          <Icon name="settings" size="sm" />
           <span>{{ t('settings.title') }}</span>
         </button>
       </div>
@@ -935,7 +935,7 @@ onBeforeUnmount(() => {
 }
 .btn-new-chat:hover { background: var(--sb-hover); }
 .btn-new-chat:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.btn-new-chat svg { flex: none; width: 16px; height: 16px; }
+.btn-new-chat svg { flex: none; }
 .btn-new-chat span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -999,14 +999,14 @@ onBeforeUnmount(() => {
 
 /* Sessions — owns the vertical padding around the list (the 12px gap to the
    search row above and the bottom breathing room). Scrolled content passes
-   through the top padding and clips at the .search-wrap seam. */
+   through the top padding and clips at the .search-wrap seam. Scrollbar: the
+   4px ::-webkit-scrollbar below; standard scrollbar-width would kill it on
+   Chromium (see the global scrollbar block in style.css). */
 .sessions {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-3) var(--sb-inset);
   min-height: 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
 }
 .sessions::-webkit-scrollbar { width: 4px; }
 .sessions::-webkit-scrollbar-track { background: transparent; }
@@ -1044,7 +1044,7 @@ onBeforeUnmount(() => {
 }
 .btn-settings:hover { background: var(--sb-hover); }
 .btn-settings:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.btn-settings svg { flex: none; width: 16px; height: 16px; }
+.btn-settings svg { flex: none; }
 .btn-settings span {
   overflow: hidden;
   text-overflow: ellipsis;
