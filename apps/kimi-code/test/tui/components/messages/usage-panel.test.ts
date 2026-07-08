@@ -71,6 +71,120 @@ describe('UsagePanelComponent', () => {
     expect(lines.join('\n')).toContain('resets in 23d');
   });
 
+  it('omits the extra usage section when extraUsage is omitted or null', () => {
+    for (const extraUsage of [undefined, null]) {
+      const lines = buildUsageReportLines({
+        sessionUsage: { byModel: {} },
+        contextUsage: 0,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        managedUsage: {
+          summary: null,
+          limits: [],
+          extraUsage: extraUsage as never,
+        },
+      }).map(strip);
+
+      expect(lines).not.toContain('Extra Usage');
+    }
+  });
+
+  it('omits the extra usage section when extraUsage.limit is not positive', () => {
+    for (const limit of [0, -10]) {
+      const lines = buildUsageReportLines({
+        sessionUsage: { byModel: {} },
+        contextUsage: 0,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        managedUsage: {
+          summary: null,
+          limits: [],
+          extraUsage: {
+            label: 'Extra Usage',
+            used: 0,
+            limit,
+          },
+        },
+      }).map(strip);
+
+      expect(lines).not.toContain('Extra Usage');
+    }
+  });
+
+  it('coerces string used and limit values for the extra usage section', () => {
+    const lines = buildUsageReportLines({
+      sessionUsage: { byModel: {} },
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      managedUsage: {
+        summary: null,
+        limits: [],
+        extraUsage: {
+          label: 'Extra Usage',
+          used: '500' as never,
+          limit: '1000' as never,
+          resetHint: 'resets in 23d',
+        },
+      },
+    }).map(strip);
+
+    expect(lines).toContain('Extra Usage');
+    expect(lines.join('\n')).toContain('50% used');
+    expect(lines.join('\n')).toContain('resets in 23d');
+  });
+
+  it('clamps the extra usage ratio to the [0, 1] range', () => {
+    for (const [used, expectedPct] of [
+      [-100, '0% used'],
+      [2000, '100% used'],
+    ] as const) {
+      const lines = buildUsageReportLines({
+        sessionUsage: { byModel: {} },
+        contextUsage: 0,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        managedUsage: {
+          summary: null,
+          limits: [],
+          extraUsage: {
+            label: 'Extra Usage',
+            used,
+            limit: 1000,
+          },
+        },
+      }).map(strip);
+
+      expect(lines).toContain('Extra Usage');
+      expect(lines.join('\n')).toContain(expectedPct);
+    }
+  });
+
+  it('omits the extra usage section when used or limit cannot be coerced to a finite number', () => {
+    const cases = [
+      { used: Number.NaN, limit: 1000 },
+      { used: 100, limit: Number.NaN },
+      { used: 'not-a-number' as never, limit: 1000 },
+      { used: 100, limit: 'not-a-number' as never },
+    ];
+
+    for (const extraUsage of cases) {
+      const lines = buildUsageReportLines({
+        sessionUsage: { byModel: {} },
+        contextUsage: 0,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        managedUsage: {
+          summary: null,
+          limits: [],
+          extraUsage: { label: 'Extra Usage', ...extraUsage },
+        },
+      }).map(strip);
+
+      expect(lines).not.toContain('Extra Usage');
+    }
+  });
+
   it('wraps preformatted usage lines in a bordered panel', () => {
     const component = new UsagePanelComponent(() => ['Session usage'], 'primary');
     const output = component.render(80).map(strip);

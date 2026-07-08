@@ -122,8 +122,7 @@ function buildManagedUsageSection(
     r.limit > 0 ? Math.max(0, Math.min(r.used / r.limit, 1)) : 0;
   const labelWidth = Math.max(10, ...rows.map((r) => r.label.length));
   const pctWidth = Math.max(...rows.map((r) => `${Math.round(usedRatio(r) * 100)}% used`.length));
-  const severityColor = (sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' =>
-    sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
+
   const out: string[] = [accent('Plan usage')];
   for (const row of rows) {
     const ratioUsed = usedRatio(row);
@@ -148,8 +147,12 @@ export function buildExtraUsageSection(
   muted: Colorize,
 ): string[] {
   if (extraUsage === undefined || extraUsage === null) return [];
-  const usedRatio =
-    extraUsage.limit > 0 ? Math.max(0, Math.min(extraUsage.used / extraUsage.limit, 1)) : 0;
+  const used = Number(extraUsage.used);
+  const limit = Number(extraUsage.limit);
+  if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) {
+    return [];
+  }
+  const usedRatio = Math.max(0, Math.min(used / limit, 1));
   const bar = renderProgressBar(usedRatio, 20);
   const pct = `${Math.round(usedRatio * 100)}% used`;
   const barColoured = currentTheme.fg(severityColor(ratioSeverity(usedRatio)), bar);
@@ -181,8 +184,6 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
   const value = (text: string) => currentTheme.fg('text', text);
   const muted = (text: string) => currentTheme.fg('textDim', text);
   const errorStyle = (text: string) => currentTheme.fg('error', text);
-  const severityColor = (sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' =>
-    sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 
   const lines: string[] = [
     accent('Session usage'),
