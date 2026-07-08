@@ -15,6 +15,7 @@
  */
 
 export type { GenerateCallbacks } from './generate';
+export type { ResponseFormat } from './provider';
 export type {
   MaxCompletionTokensOptions,
   ProviderRequestAuth,

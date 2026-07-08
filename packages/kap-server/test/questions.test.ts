@@ -46,7 +46,6 @@ interface QuestionWire {
   tool_call_id?: string;
   questions: QuestionItemWire[];
   created_at: string;
-  expires_at: string;
 }
 
 interface ListWire {
@@ -163,7 +162,8 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       },
     ]);
     expect(Number.isNaN(Date.parse(item.created_at))).toBe(false);
-    expect(Number.isNaN(Date.parse(item.expires_at))).toBe(false);
+    // v1 parity: the question wire shape carries no synthetic expiry.
+    expect(item).not.toHaveProperty('expires_at');
   });
 
   it('resolves a pending question', async () => {
@@ -193,9 +193,105 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       method: 'click', // protocol-only method; dropped on the in-process side
     });
 
+    // Wire ids are translated back to question text / option labels so the
+    // record the model sees is self-explanatory (v1 parity: multi joins with
+    // ', ' to match the TUI reverse-RPC path).
     await expect(resultPromise).resolves.toEqual({
-      answers: { q_0: 'opt_0_0,opt_0_1' },
+      answers: { 'Pick one': 'Yes, No' },
     });
+  });
+
+  function makeTwoQuestionRequest(id: string): QuestionRequest {
+    return {
+      id,
+      toolCallId: `tc-${id}`,
+      questions: [
+        {
+          question: 'Which animal?',
+          options: [{ label: 'Cat' }, { label: 'Dog' }],
+        },
+        {
+          question: 'Which colors?',
+          options: [{ label: 'Red' }, { label: 'Green' }, { label: 'Blue' }],
+          multiSelect: true,
+        },
+      ],
+    };
+  }
+
+  it('translates ids to text across single / other / multi_with_other kinds', async () => {
+    const sid = await createSession();
+    const single: Promise<QuestionResult> = questionService(sid).request(
+      makeTwoQuestionRequest('q-t1'),
+    );
+    await postJson<ResolveWire>(`/api/v1/sessions/${sid}/questions/q-t1`, {
+      answers: {
+        q_0: { kind: 'single', option_id: 'opt_0_1' },
+        q_1: {
+          kind: 'multi_with_other',
+          option_ids: ['opt_1_0', 'opt_1_1'],
+          other_text: 'Custom',
+        },
+      },
+    });
+    await expect(single).resolves.toEqual({
+      answers: { 'Which animal?': 'Dog', 'Which colors?': 'Red, Green, Custom' },
+    });
+
+    const other: Promise<QuestionResult> = questionService(sid).request(
+      makeTwoQuestionRequest('q-t2'),
+    );
+    await postJson<ResolveWire>(`/api/v1/sessions/${sid}/questions/q-t2`, {
+      answers: {
+        q_0: { kind: 'other', text: 'Hippopotamus' },
+        q_1: { kind: 'skipped' },
+      },
+    });
+    await expect(other).resolves.toEqual({
+      answers: { 'Which animal?': 'Hippopotamus' },
+    });
+  });
+
+  it('keeps unknown and cross-question option ids verbatim (stale client)', async () => {
+    const sid = await createSession();
+    const resultPromise: Promise<QuestionResult> = questionService(sid).request(
+      makeTwoQuestionRequest('q-t3'),
+    );
+
+    await postJson<ResolveWire>(`/api/v1/sessions/${sid}/questions/q-t3`, {
+      answers: {
+        // opt_0_9 does not exist; q_9 is an unknown question id.
+        q_0: { kind: 'single', option_id: 'opt_0_9' },
+        q_9: { kind: 'single', option_id: 'opt_9_0' },
+        // opt_0_0 belongs to question 0 — never offered for question 1, so it
+        // must NOT be resolved to 'Cat'.
+        q_1: { kind: 'multi', option_ids: ['opt_1_0', 'opt_0_0'] },
+      },
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      answers: {
+        'Which animal?': 'opt_0_9',
+        q_9: 'opt_9_0',
+        'Which colors?': 'Red, opt_0_0',
+      },
+    });
+  });
+
+  it('produces an empty answers record when all questions are skipped (not a dismissal)', async () => {
+    const sid = await createSession();
+    const resultPromise: Promise<QuestionResult> = questionService(sid).request(
+      makeTwoQuestionRequest('q-t4'),
+    );
+
+    await postJson<ResolveWire>(`/api/v1/sessions/${sid}/questions/q-t4`, {
+      answers: {
+        q_0: { kind: 'skipped' },
+        q_1: { kind: 'skipped' },
+      },
+    });
+
+    await expect(resultPromise).resolves.toEqual({ answers: {} });
   });
 
   it('dismisses a pending question', async () => {

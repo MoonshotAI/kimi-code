@@ -83,8 +83,8 @@ export interface ISessionLifecycleService {
    * agent from the persisted wire log. Returns the existing handle when the
    * session is already live (a no-op in that case — live agents are never
    * re-restored). Returns `undefined` when the session is unknown to the index
-   * or its workspace is no longer registered (mirrors the cold-source
-   * limitation of `fork`).
+   * or neither the persisted session summary nor the workspace registry can
+   * provide a workdir (mirrors the cold-source limitation of `fork`).
    *
    * Lets the read edges (snapshot / messages) serve cold sessions — created by
    * a previous process or by v1 — without requiring a prior `create` in this

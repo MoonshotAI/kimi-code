@@ -11,6 +11,7 @@ import type {
   FinishReason,
   GenerateOptions,
   ProviderRequestAuth,
+  ResponseFormat,
   StreamedMessage,
   ThinkingEffort,
 } from '../provider';
@@ -361,6 +362,21 @@ interface ResponseToolParam {
   description: string;
   parameters: Record<string, unknown>;
   strict: boolean;
+}
+
+function responseFormatToResponsesText(format: ResponseFormat): Record<string, unknown> {
+  if (format.type === 'json_object') {
+    return { format: { type: 'json_object' } };
+  }
+  return {
+    format: {
+      type: 'json_schema',
+      name: format.jsonSchema.name,
+      schema: format.jsonSchema.schema,
+      strict: format.jsonSchema.strict,
+      description: format.jsonSchema.description,
+    },
+  };
 }
 // The Responses API has no input type for video, and only mp3/wav audio can
 // be inlined as input_file data. Degrade such parts to placeholder text so
@@ -1018,6 +1034,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     return reasoningEffortToThinkingEffort(this._generationKwargs.reasoning_effort);
   }
 
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_output_tokens;
+  }
+
   get modelParameters(): Record<string, unknown> {
     return {
       model: this._model,
@@ -1074,6 +1094,12 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       };
       if (systemPrompt) {
         createParams['instructions'] = systemPrompt;
+      }
+      if (options?.responseFormat !== undefined) {
+        createParams['text'] = {
+          ...asRawObject(createParams['text']),
+          ...responseFormatToResponsesText(options.responseFormat),
+        };
       }
 
       if (

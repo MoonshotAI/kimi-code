@@ -1,4 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
+import type { ContentPart } from '#/app/llmProtocol/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRunResult } from '#/agent/loop/loop';
 
@@ -25,6 +26,8 @@ export interface IAgentTurnService {
   readonly _serviceBrand: undefined;
 
   launch(prompt?: TurnPromptInfo): Turn;
+  recordSteer(input: readonly ContentPart[], origin?: PromptOrigin): void;
+  cancel(turnId?: number, reason?: unknown): boolean;
   getActiveTurn(): Turn | undefined;
 }
 

@@ -212,7 +212,7 @@ function createAgentTaskService(options: {
       launched: Promise.resolve(undefined),
     });
   const context = ctx.get(IAgentContextMemoryService);
-  const spliceHistorySpy = vi.spyOn(context, 'splice');
+  const appendHistorySpy = vi.spyOn(context, 'append');
 
   const agent: FakeTaskAgent = {
     emittedEvents,
@@ -224,7 +224,7 @@ function createAgentTaskService(options: {
         ? undefined
         : { task: { maxRunningTasks: options.maxRunningTasks } },
     telemetry: { track },
-    context: { appendUserMessage: spliceHistorySpy },
+    context: { appendUserMessage: appendHistorySpy },
     turn: { steer: steerSpy },
     hooks: options.hooks,
   };
@@ -254,12 +254,8 @@ async function cleanupSessionDir(
 }
 
 function firstAppendedContextMessage(agent: FakeTaskAgent): TestContextMessage {
-  const call = agent.context.appendUserMessage.mock.calls[0] as unknown as [
-    number,
-    number,
-    readonly TestContextMessage[],
-  ];
-  const message = call[2].at(-1);
+  const call = agent.context.appendUserMessage.mock.calls[0] as unknown as TestContextMessage[];
+  const message = call.at(-1);
   if (message === undefined) throw new Error('Expected an appended context message');
   return message;
 }

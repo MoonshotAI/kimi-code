@@ -45,7 +45,7 @@
  * Scope-agnostic.
  */
 
-import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Emitter } from '#/_base/event';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -103,7 +103,7 @@ export class WireService extends Disposable implements IWireService {
   private readonly derivedModels = new Map<DerivedModelDef<any>, ModelInstance>();
   private readonly reducerIndex = new Map<string, ReducerEntry[]>();
   private readonly emissionEmitter = this._register(new Emitter<WireEmission>());
-  private readonly restoredEmitter = this._register(new Emitter<void>());
+  private readonly restoredHandlers = new Set<() => void | Promise<void>>();
 
   private dispatching = false;
   private queue: Op[] = [];
@@ -147,8 +147,9 @@ export class WireService extends Disposable implements IWireService {
     return this.emissionEmitter.event(handler);
   }
 
-  onRestored(handler: () => void): IDisposable {
-    return this.restoredEmitter.event(handler);
+  onRestored(handler: () => void | Promise<void>): IDisposable {
+    this.restoredHandlers.add(handler);
+    return toDisposable(() => this.restoredHandlers.delete(handler));
   }
 
   attach<S>(model: DerivedModelDef<S>): IDisposable {
@@ -214,7 +215,7 @@ export class WireService extends Disposable implements IWireService {
     }
     this.execute({ ops, silent: true });
     await this.rehydrateModels();
-    this.restoredEmitter.fire(undefined);
+    await this.fireRestored();
   }
 
   async flush(): Promise<void> {
@@ -283,6 +284,16 @@ export class WireService extends Disposable implements IWireService {
       return { type: op.type, ...(payload as Record<string, unknown>) };
     }
     return { type: op.type, payload };
+  }
+
+  private async fireRestored(): Promise<void> {
+    for (const handler of Array.from(this.restoredHandlers)) {
+      try {
+        await handler();
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

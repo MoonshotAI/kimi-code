@@ -24,6 +24,10 @@ export interface AgentMeta {
    * verbatim. Never interpreted by the lifecycle.
    */
   readonly labels?: Readonly<Record<string, string>>;
+  /** @deprecated Legacy v1 field; read-compat only. */
+  readonly type?: 'main' | 'sub';
+  /** @deprecated Legacy v1 field; read-compat only. */
+  readonly parentAgentId?: string | null;
   /** @deprecated Legacy on-disk field predating `labels`; read-compat only. */
   readonly swarmItem?: string;
 }

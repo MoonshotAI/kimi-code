@@ -136,7 +136,11 @@ describe('WireService', () => {
     let changes = 0;
     let restored = 0;
     disposables.add(replayed.subscribe(CounterModel, () => (changes += 1)));
-    disposables.add(replayed.onRestored(() => (restored += 1)));
+    disposables.add(
+      replayed.onRestored(() => {
+        restored += 1;
+      }),
+    );
 
     await replayed.replay(...records);
 

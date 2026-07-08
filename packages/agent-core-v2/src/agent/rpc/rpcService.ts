@@ -204,10 +204,7 @@ export class AgentRPCService implements IAgentRPCService {
     if (this.turnService.getActiveTurn() !== undefined) {
       this.telemetry.track('cancel', { from: 'streaming' });
     }
-    const turn = this.turnService.getActiveTurn();
-    if (turn === undefined) return;
-    if (turnId !== undefined && turn.id !== turnId) return;
-    turn.abortController.abort(userCancellationReason());
+    this.turnService.cancel(turnId);
   }
 
   undoHistory(payload: UndoHistoryPayload): number {

@@ -4,6 +4,24 @@ import type { TokenUsage } from './usage';
 
 export type ThinkingEffort = 'off' | 'on' | (string & {});
 
+export type JsonSchemaObject = Record<string, unknown>;
+
+export interface JsonObjectResponseFormat {
+  readonly type: 'json_object';
+}
+
+export interface JsonSchemaResponseFormat {
+  readonly type: 'json_schema';
+  readonly jsonSchema: {
+    readonly name: string;
+    readonly schema: JsonSchemaObject;
+    readonly strict?: boolean;
+    readonly description?: string;
+  };
+}
+
+export type ResponseFormat = JsonObjectResponseFormat | JsonSchemaResponseFormat;
+
 /**
  * Optional context passed to {@link ChatProvider.withMaxCompletionTokens} so a
  * provider can tighten the caller-supplied cap to its own transport
@@ -105,6 +123,11 @@ export interface GenerateOptions {
    */
   auth?: ProviderRequestAuth;
   /**
+   * Optional model-output format constraint. Providers map this to their native
+   * structured-output field when supported.
+   */
+  responseFormat?: ResponseFormat;
+  /**
    * Host-side instrumentation hook fired immediately before invoking the
    * provider adapter's generate call.
    */
@@ -171,6 +194,7 @@ export interface ChatProvider {
   readonly modelName: string;
   /** Current thinking-effort level, or `null` if thinking is not configured. */
   readonly thinkingEffort: ThinkingEffort | null;
+  readonly maxCompletionTokens?: number;
   /**
    * Send a conversation to the LLM and return a streamed response.
    *

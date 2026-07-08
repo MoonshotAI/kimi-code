@@ -14,7 +14,9 @@
  *     would silently reintroduce the very degradation the caption reports.
  *  4. Compress oversized inline images, announcing each compression with a
  *     caption (original vs. sent size, readback path to the persisted
- *     original) so downsampling is never silent.
+ *     original) so downsampling is never silent. The captions ride the
+ *     result's `note` side channel — projected to the model at fold time, but
+ *     kept out of `output` so UIs never render them.
  *  5. Apply the per-part 10 MB binary cap: oversized binary parts
  *     (image/audio/video URLs) collapse to a notice, so a single
  *     screenshot cannot evict every text part.
@@ -26,6 +28,7 @@
  */
 
 import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { compressImageContentParts } from '#/_base/tools/support/image-compress';
 import { persistOriginalImage } from '#/_base/tools/support/image-originals';
@@ -38,6 +41,7 @@ export interface McpOutputOptions {
    * Falls back to the shared temp-dir cache when absent.
    */
   readonly originalsDir?: string;
+  readonly telemetry?: ITelemetryService;
 }
 
 // MCP servers can produce arbitrarily large outputs; cap what we feed back to
@@ -151,7 +155,12 @@ export async function mcpResultToExecutableOutput(
   result: MCPToolResult,
   qualifiedToolName: string,
   options: McpOutputOptions = {},
-): Promise<{ output: string | ContentPart[]; isError: boolean; truncated?: true }> {
+): Promise<{
+  output: string | ContentPart[];
+  isError: boolean;
+  note?: string;
+  truncated?: true;
+}> {
   const converted: ContentPart[] = [];
   for (const block of result.content) {
     const part = convertMCPContentBlock(block);
@@ -174,6 +183,10 @@ export async function mcpResultToExecutableOutput(
   // known) so the model can read detail back via ReadMediaFile + region.
   // Parts that cannot be compressed pass through.
   const compressed = await compressImageContentParts(budgeted.parts, {
+    telemetry:
+      options.telemetry === undefined
+        ? undefined
+        : { client: options.telemetry, source: 'mcp_tool_result' },
     annotate: {
       persistOriginal: (bytes, mimeType) =>
         persistOriginalImage(
@@ -183,12 +196,16 @@ export async function mcpResultToExecutableOutput(
         ),
     },
   });
-  const capped = applyBinaryPartCap(compressed);
+  const capped = applyBinaryPartCap(compressed.parts);
   const truncated = budgeted.truncated || capped.truncated;
   const output = collapseSingleText(capped.parts);
-  return truncated
-    ? { output, isError: result.isError, truncated: true }
-    : { output, isError: result.isError };
+  const note = compressed.captions.length > 0 ? compressed.captions.join('\n') : undefined;
+  return {
+    output,
+    isError: result.isError,
+    note,
+    truncated: truncated ? true : undefined,
+  };
 }
 
 /**

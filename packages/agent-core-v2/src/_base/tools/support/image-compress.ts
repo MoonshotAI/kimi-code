@@ -76,7 +76,25 @@ export interface CompressImageOptions {
   readonly byteBudget?: number;
   /** Override the raw-byte ceiling above which compression is skipped. */
   readonly maxDecodeBytes?: number;
+  readonly telemetry?: ImageCompressionTelemetry;
 }
+
+export interface ImageCompressionTelemetryClient {
+  track(event: string, properties?: Readonly<Record<string, unknown>>): void;
+}
+
+export interface ImageCompressionTelemetry {
+  readonly client: ImageCompressionTelemetryClient;
+  readonly source: string;
+}
+
+type CompressOutcome =
+  | 'compressed'
+  | 'passthrough_fast'
+  | 'passthrough_guard'
+  | 'passthrough_unsupported'
+  | 'passthrough_unhelpful'
+  | 'passthrough_error';
 
 export interface CompressImageResult {
   /** Bytes to send: the re-encoded image, or the original when unchanged. */
@@ -109,6 +127,7 @@ export async function compressImageForModel(
   mimeType: string,
   options: CompressImageOptions = {},
 ): Promise<CompressImageResult> {
+  const startedAt = Date.now();
   const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
@@ -126,23 +145,36 @@ export async function compressImageForModel(
     originalByteLength: bytes.length,
     finalByteLength: bytes.length,
   });
+  const finish = (outcome: CompressOutcome, result: CompressImageResult): CompressImageResult => {
+    reportCompressEvent(options.telemetry, {
+      outcome,
+      startedAt,
+      inputMime: normalizedMime,
+      result,
+    });
+    return result;
+  };
 
-  if (bytes.length === 0) return passthrough();
+  if (bytes.length === 0) return finish('passthrough_unsupported', passthrough());
   // Only re-encode formats the codec handles; everything else passes through.
-  if (!RECODABLE_MIME.has(normalizedMime)) return passthrough();
+  if (!RECODABLE_MIME.has(normalizedMime)) return finish('passthrough_unsupported', passthrough());
 
   // Fast path: already within both budgets — no codec load, no allocation.
   const longestEdge = dims ? Math.max(dims.width, dims.height) : 0;
   const withinBytes = bytes.length <= byteBudget;
   const withinEdge = longestEdge > 0 && longestEdge <= maxEdge;
-  if (withinBytes && (withinEdge || longestEdge === 0)) return passthrough();
+  if (withinBytes && (withinEdge || longestEdge === 0)) {
+    return finish('passthrough_fast', passthrough());
+  }
 
   // Decompression-bomb guard: refuse to decode absurd pixel counts. The sniff
   // above gave us the dimensions without decoding, so this costs nothing.
-  if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) return passthrough();
+  if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) {
+    return finish('passthrough_guard', passthrough());
+  }
   // Refuse to decode very large byte payloads (e.g. a huge or invalid image
   // from an MCP tool) that would be loaded just to be dropped downstream.
-  if (bytes.length > maxDecodeBytes) return passthrough();
+  if (bytes.length > maxDecodeBytes) return finish('passthrough_guard', passthrough());
 
   try {
     const { Jimp } = await import('jimp');
@@ -166,9 +198,9 @@ export async function compressImageForModel(
     const finalPixels = encoded.width * encoded.height;
     const shrankBytes = encoded.data.length < bytes.length;
     const shrankPixels = originalPixels > 0 && finalPixels < originalPixels;
-    if (!shrankBytes && !shrankPixels) return passthrough();
+    if (!shrankBytes && !shrankPixels) return finish('passthrough_unhelpful', passthrough());
 
-    return {
+    return finish('compressed', {
       data: encoded.data,
       mimeType: encoded.mimeType,
       width: encoded.width,
@@ -178,10 +210,10 @@ export async function compressImageForModel(
       changed: true,
       originalByteLength: bytes.length,
       finalByteLength: encoded.data.length,
-    };
+    });
   } catch {
     // Decode/encode failure — keep the original bytes.
-    return passthrough();
+    return finish('passthrough_error', passthrough());
   }
 }
 
@@ -214,10 +246,11 @@ export async function compressBase64ForModel(
   // Skip very large payloads before allocating: base64 decodes to ~3/4 its
   // length, so a payload whose decoded size would exceed the cap is passed
   // through without the Buffer.from allocation (and without touching Jimp).
+  const startedAt = Date.now();
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const approxBytes = Math.floor((base64.length * 3) / 4);
   if (approxBytes > maxDecodeBytes) {
-    return {
+    const result: CompressBase64Result = {
       base64,
       mimeType,
       width: 0,
@@ -228,12 +261,19 @@ export async function compressBase64ForModel(
       originalByteLength: approxBytes,
       finalByteLength: approxBytes,
     };
+    reportCompressEvent(options.telemetry, {
+      outcome: 'passthrough_guard',
+      startedAt,
+      inputMime: normalizeMime(mimeType),
+      result,
+    });
+    return result;
   }
   let bytes: Buffer;
   try {
     bytes = Buffer.from(base64, 'base64');
   } catch {
-    return {
+    const result: CompressBase64Result = {
       base64,
       mimeType,
       width: 0,
@@ -244,6 +284,13 @@ export async function compressBase64ForModel(
       originalByteLength: 0,
       finalByteLength: 0,
     };
+    reportCompressEvent(options.telemetry, {
+      outcome: 'passthrough_error',
+      startedAt,
+      inputMime: normalizeMime(mimeType),
+      result,
+    });
+    return result;
   }
   const result = await compressImageForModel(bytes, mimeType, options);
   if (!result.changed) {
@@ -279,18 +326,21 @@ export async function compressBase64ForModel(
  * remote http(s) image) are passed through, as are non-image parts. Best
  * effort: a part that fails to compress is left unchanged.
  *
- * With `annotate` set, every image that was actually re-encoded gains a
- * {@link buildImageCompressionCaption} text part immediately before it, so the
- * model knows it is looking at a downsampled copy. `annotate.persistOriginal`
- * additionally saves the pre-compression bytes and puts the returned path in
- * the caption so the model can read the original back; persistence failures
- * degrade to a caption without a path.
+ * With `annotate` set, every image that was actually re-encoded produces a
+ * {@link buildImageCompressionCaption} string in the returned `captions` array
+ * (in encounter order), so the caller can place it next to the image — e.g. as
+ * a leading text part for the model, or on a `note` side channel kept out of
+ * UI-visible output. `annotate.persistOriginal` additionally saves the
+ * pre-compression bytes and puts the returned path in the caption so the model
+ * can read the original back; persistence failures degrade to a caption
+ * without a path.
  */
 export async function compressImageContentParts(
   parts: readonly ContentPart[],
   options: CompressImageOptions & { readonly annotate?: CompressAnnotateOptions } = {},
-): Promise<ContentPart[]> {
+): Promise<{ parts: ContentPart[]; captions: readonly string[] }> {
   const { annotate, ...compressOptions } = options;
+  const captions: string[] = [];
   const out: ContentPart[] = [];
   for (const part of parts) {
     if (part.type === 'image_url') {
@@ -310,9 +360,8 @@ export async function compressImageContentParts(
                 originalPath = null;
               }
             }
-            out.push({
-              type: 'text',
-              text: buildImageCompressionCaption({
+            captions.push(
+              buildImageCompressionCaption({
                 original: {
                   width: result.originalWidth,
                   height: result.originalHeight,
@@ -327,7 +376,7 @@ export async function compressImageContentParts(
                 },
                 originalPath,
               }),
-            });
+            );
           }
           out.push({
             type: 'image_url',
@@ -339,7 +388,7 @@ export async function compressImageContentParts(
     }
     out.push(part);
   }
-  return out;
+  return { parts: out, captions };
 }
 
 export interface CompressAnnotateOptions {
@@ -348,6 +397,46 @@ export interface CompressAnnotateOptions {
    * them back; return the absolute path, or null when persistence failed.
    */
   readonly persistOriginal?: (bytes: Uint8Array, mimeType: string) => Promise<string | null>;
+}
+
+interface CompressEventResult {
+  readonly mimeType: string;
+  readonly width: number;
+  readonly height: number;
+  readonly originalWidth: number;
+  readonly originalHeight: number;
+  readonly originalByteLength: number;
+  readonly finalByteLength: number;
+}
+
+function reportCompressEvent(
+  telemetry: ImageCompressionTelemetry | undefined,
+  input: {
+    readonly outcome: CompressOutcome;
+    readonly startedAt: number;
+    readonly inputMime: string;
+    readonly result: CompressEventResult;
+  },
+): void {
+  if (telemetry === undefined) return;
+  try {
+    telemetry.client.track('image_compress', {
+      source: telemetry.source,
+      outcome: input.outcome,
+      input_mime: input.inputMime,
+      output_mime: normalizeMime(input.result.mimeType),
+      original_bytes: input.result.originalByteLength,
+      final_bytes: input.result.finalByteLength,
+      original_width: input.result.originalWidth,
+      original_height: input.result.originalHeight,
+      final_width: input.result.width,
+      final_height: input.result.height,
+      exif_transposed: false,
+      duration_ms: Date.now() - input.startedAt,
+    });
+  } catch {
+    return;
+  }
 }
 
 // ── crop ─────────────────────────────────────────────────────────────

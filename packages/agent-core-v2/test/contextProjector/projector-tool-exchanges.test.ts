@@ -7,6 +7,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { IAgentMicroCompactionService } from '#/agent/microCompaction/microCompaction';
+import { toProtocolMessage } from '#/agent/contextMemory/messageProjection';
 import type { Message } from '#/app/llmProtocol/message';
 
 // Tests for how the projector normalizes tool exchanges: results are pulled up
@@ -212,6 +213,59 @@ describe('projector tool-exchange normalization', () => {
       toolCalls: [],
     };
     expect(project([message])).toHaveLength(1);
+  });
+
+  it('renders structured tool-result notes only for the model projection', () => {
+    const note = '<system>Image compressed.</system>';
+    const result: ContextMessage = {
+      role: 'tool',
+      content: [{ type: 'text', text: 'image result' }],
+      toolCalls: [],
+      toolCallId: 'call_image',
+      note,
+    };
+    const history = [assistant('', ['call_image']), result];
+
+    expect(project(history)[1]?.content).toEqual([
+      { type: 'text', text: `image result\n${note}` },
+    ]);
+    expect(result.content).toEqual([{ type: 'text', text: 'image result' }]);
+
+    const protocol = toProtocolMessage('session_1', 0, result, 0);
+    expect(protocol.content).toEqual([
+      { type: 'tool_result', tool_call_id: 'call_image', output: 'image result' },
+    ]);
+  });
+
+  it('renders v1 tool-result status at the model projection boundary', () => {
+    const history = [
+      assistant('', ['call_error', 'call_empty']),
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '<system>ERROR: remote failed</system>' }],
+        toolCalls: [],
+        toolCallId: 'call_error',
+        isError: true,
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: '   ' }],
+        toolCalls: [],
+        toolCallId: 'call_empty',
+      },
+    ] satisfies ContextMessage[];
+
+    expect(project(history)[1]?.content).toEqual([
+      {
+        type: 'text',
+        text:
+          '<system>ERROR: Tool execution failed.</system>\n' +
+          '<system>ERROR: remote failed</system>',
+      },
+    ]);
+    expect(project(history)[2]?.content).toEqual([
+      { type: 'text', text: '<system>Tool output is empty.</system>' },
+    ]);
   });
 
   it('strict mode dedupes duplicate assistant tool call ids', () => {

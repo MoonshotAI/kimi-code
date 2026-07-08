@@ -39,18 +39,25 @@ function stubWorkspace(): ISessionWorkspaceContext {
   };
 }
 
-function fakeFs(files: Record<string, string>): IHostFileSystem {
+function fakeFs(files: Record<string, string>, symlinks: readonly string[] = []): IHostFileSystem {
   // Keys are stored as absolute paths; fsService now resolves workspace-relative
   // paths to absolute (`join(WORK_DIR, rel)`) before calling into `IHostFileSystem`.
   const fileMap = new Map<string, string>();
   const dirSet = new Set<string>([WORK_DIR]);
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = join(WORK_DIR, rel);
-    fileMap.set(abs, content);
+  const addAncestors = (rel: string): void => {
     const parts = rel.split('/');
     for (let i = 1; i < parts.length; i++) {
       dirSet.add(join(WORK_DIR, parts.slice(0, i).join('/')));
     }
+  };
+  for (const [rel, content] of Object.entries(files)) {
+    fileMap.set(join(WORK_DIR, rel), content);
+    addAncestors(rel);
+  }
+  const symlinkSet = new Set<string>();
+  for (const rel of symlinks) {
+    symlinkSet.add(join(WORK_DIR, rel));
+    addAncestors(rel);
   }
   const isDir = (p: string): boolean => p === WORK_DIR || dirSet.has(p);
   const enoent = (p: string): NodeJS.ErrnoException => {
@@ -66,6 +73,7 @@ function fakeFs(files: Record<string, string>): IHostFileSystem {
       return c;
     },
     writeText: async () => {},
+    appendText: async () => {},
     readBytes: async (p, n) => {
       const c = fileMap.get(p);
       if (c === undefined) throw enoent(p);
@@ -87,6 +95,9 @@ function fakeFs(files: Record<string, string>): IHostFileSystem {
           ino: 1,
         };
       }
+      if (symlinkSet.has(p)) {
+        return { isFile: false, isDirectory: false, isSymbolicLink: true, size: 0, mtimeMs: 1000, ino: 1 };
+      }
       if (isDir(p)) {
         return { isFile: false, isDirectory: true, size: 0, mtimeMs: 1000, ino: 1 };
       }
@@ -106,17 +117,24 @@ function fakeFs(files: Record<string, string>): IHostFileSystem {
           children.set(name, { name, isFile: true, isDirectory: false });
         }
       };
-      const visit = (key: string, isFile: boolean): void => {
+      const addSymlink = (name: string): void => {
+        if (!children.has(name)) {
+          children.set(name, { name, isFile: false, isDirectory: false, isSymbolicLink: true });
+        }
+      };
+      const visit = (key: string, kind: 'file' | 'dir' | 'symlink'): void => {
         if (key === p || !key.startsWith(prefix)) return;
         const rest = key.slice(prefix.length);
         const first = rest.split('/')[0];
         if (first === undefined || first.length === 0) return;
         if (rest.includes('/')) addDir(first);
-        else if (isFile) addFile(first);
+        else if (kind === 'symlink') addSymlink(first);
+        else if (kind === 'file') addFile(first);
         else addDir(first);
       };
-      for (const d of dirSet) visit(d, false);
-      for (const f of fileMap.keys()) visit(f, true);
+      for (const d of dirSet) visit(d, 'dir');
+      for (const f of fileMap.keys()) visit(f, 'file');
+      for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
     mkdir: async (p, options) => {
@@ -181,6 +199,48 @@ function fakeRunner(handler: RunHandler): ISessionProcessRunner {
   };
 }
 
+/**
+ * A process whose stdout yields the given `--json` lines one chunk at a time,
+ * stopping when `kill()` is called. Used to assert that `fs.grep` terminates
+ * `rg` early once an output cap is reached instead of draining everything.
+ */
+function makeStreamingProcess(lines: readonly string[]): {
+  proc: IProcess;
+  wasKilled: () => boolean;
+  yieldedLines: () => number;
+} {
+  let killed = false;
+  let yielded = 0;
+  let resolveWait: (code: number) => void = () => {};
+  const waitP = new Promise<number>((res) => {
+    resolveWait = res;
+  });
+  async function* gen(): AsyncGenerator<string> {
+    for (const line of lines) {
+      if (killed) break;
+      yielded += 1;
+      yield `${line}\n`;
+      // Hand control back so the consumer can kill between chunks.
+      await new Promise((r) => setImmediate(r));
+    }
+    resolveWait(0);
+  }
+  const proc: IProcess = {
+    stdin: new Writable({ write(_c, _e, cb) { cb(); } }),
+    stdout: Readable.from(gen()),
+    stderr: Readable.from(['']),
+    pid: 1,
+    exitCode: null,
+    wait: () => waitP,
+    kill: async () => {
+      killed = true;
+      resolveWait(0);
+    },
+    dispose: () => undefined,
+  };
+  return { proc, wasKilled: () => killed, yieldedLines: () => yielded };
+}
+
 function telemetryStub(events: Array<{ event: string; properties: Record<string, unknown> }>): ITelemetryService {
   return {
     _serviceBrand: undefined,
@@ -237,12 +297,14 @@ function makeSession(
   handler: RunHandler,
   events: Array<{ event: string; properties: Record<string, unknown> }> = [],
   git: IGitService = defaultGitStub(),
+  symlinks: readonly string[] = [],
+  runner?: ISessionProcessRunner,
 ): ISessionFsService {
   host = createScopedTestHost();
   const session = host.child(LifecycleScope.Session, 's1', [
     stubPair(ISessionWorkspaceContext, stubWorkspace()),
-    stubPair(IHostFileSystem, fakeFs(files)),
-    stubPair(ISessionProcessRunner, fakeRunner(handler)),
+    stubPair(IHostFileSystem, fakeFs(files, symlinks)),
+    stubPair(ISessionProcessRunner, runner ?? fakeRunner(handler)),
     stubPair(ITelemetryService, telemetryStub(events)),
     stubPair(IGitService, git),
   ]);
@@ -341,6 +403,22 @@ describe('SessionFsService.search', () => {
     expect(paths).toContain('src/foo.ts');
     expect(paths).not.toContain('src/bar.ts');
   });
+
+  it('reports symlinks as kind symlink and does not recurse into them', async () => {
+    const fs = makeSession(
+      { 'src/real.ts': '', 'src/target/inside.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      ['src/link'],
+    );
+    const result = await fs.search({ query: 'link', limit: 50, follow_gitignore: false });
+    const paths = result.items.map((i) => i.path);
+    expect(paths).toContain('src/link');
+    expect(result.items.find((i) => i.path === 'src/link')?.kind).toBe('symlink');
+    // The symlink is never descended into, so nothing under `src/link/` appears.
+    expect(paths.some((p) => p.startsWith('src/link/'))).toBe(false);
+  });
 });
 
 describe('SessionFsService.grep', () => {
@@ -406,6 +484,56 @@ describe('SessionFsService.grep', () => {
     });
     expect(result.files).toHaveLength(1);
     expect(result.files[0]?.matches[0]?.text).toBe('hello world');
+  });
+
+  it('stops rg as soon as max_total_matches is reached', async () => {
+    const TOTAL = 200;
+    const CAP = 5;
+    const lines: string[] = [
+      JSON.stringify({ type: 'begin', data: { path: { text: 'big.ts' } } }),
+    ];
+    for (let i = 0; i < TOTAL; i++) {
+      lines.push(
+        JSON.stringify({
+          type: 'match',
+          data: {
+            path: { text: 'big.ts' },
+            lines: { text: `hit ${i}\n` },
+            line_number: i + 1,
+            submatches: [{ start: 0, end: 3 }],
+          },
+        }),
+      );
+    }
+    lines.push(JSON.stringify({ type: 'end', data: { path: { text: 'big.ts' } } }));
+
+    let streaming: ReturnType<typeof makeStreamingProcess> | undefined;
+    const runner: ISessionProcessRunner = {
+      _serviceBrand: undefined,
+      exec: async (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') {
+          return fakeProcess('ripgrep 14.1.0', '', 0);
+        }
+        streaming = makeStreamingProcess(lines);
+        return streaming.proc;
+      },
+    };
+    const fs = makeSession({}, emptyHandler, [], defaultGitStub(), [], runner);
+    const result = await fs.grep({
+      pattern: 'hit',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: CAP,
+      context_lines: 0,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.files[0]?.matches).toHaveLength(CAP);
+    expect(streaming?.wasKilled()).toBe(true);
+    // The consumer stopped reading long before all 200 matches were produced.
+    expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
   });
 });
 

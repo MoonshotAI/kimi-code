@@ -217,6 +217,7 @@ export function createProcessExecutor(
     const forwardOutput = (chunk: string, kind: ProcessTaskOutputKind): void => {
       if (chunk.length === 0) return;
       output(chunk);
+      if (signal.aborted) return;
       onOutput?.(kind, chunk);
     };
 

@@ -358,7 +358,7 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('removes a replayed swarm enter reminder when restoring swarm exit', async () => {
+  it('restores swarm exit without synthesizing reminder cleanup records', async () => {
     const ctx = testAgent();
     const enterReminder: ContextMessage = {
       role: 'user',
@@ -384,7 +384,7 @@ describe('Agent turn flow', () => {
     ]);
 
     expect(ctx.get(IAgentSwarmService).isActive).toBe(false);
-    expect(ctx.contextData().history).toEqual([]);
+    expect(ctx.contextData().history).toEqual([enterReminder]);
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
       [wire] swarm_mode.enter   { "trigger": "manual" }
       [wire] context.splice     { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\nlegacy swarm enter reminder\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "swarm_mode" } } ] }

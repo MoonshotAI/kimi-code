@@ -21,6 +21,7 @@ import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { FinishReason } from '#/app/llmProtocol/finishReason';
 import type { GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
 import type { Message, StreamedMessagePart, VideoURLPart } from '#/app/llmProtocol/message';
+import type { ResponseFormat } from '#/app/llmProtocol/provider';
 import type { MaxCompletionTokensOptions, ProviderRequestAuth, VideoUploadInput } from '#/app/llmProtocol/request';
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { Tool } from '#/app/llmProtocol/tool';
@@ -49,6 +50,7 @@ export interface LLMRequestInput {
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
   readonly messages: readonly Message[];
+  readonly responseFormat?: ResponseFormat;
 }
 
 /**
@@ -96,6 +98,7 @@ export interface Model {
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
   readonly thinkingEffort: ThinkingEffort | null;
+  readonly maxCompletionTokens?: number;
   /**
    * True when this Model's capabilities include `always_thinking` — the
    * runtime should force a thinking pass even if the user's requested

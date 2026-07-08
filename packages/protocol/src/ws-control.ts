@@ -90,10 +90,22 @@ export const serverHelloMessageSchema = z.object({
 
 export type ServerHelloMessage = z.infer<typeof serverHelloMessageSchema>;
 
+/**
+ * Per-session agent allowlist for fine-grained v1 event subscriptions. Keys are
+ * session ids, values are the non-empty set of agent ids the client wants to
+ * receive events for within that session. Sessions absent from the map (or the
+ * whole field omitted) fall back to receiving every agent — the legacy
+ * session-grained behavior.
+ */
+export const agentFilterSchema = z.record(z.string(), z.array(z.string()).min(1));
+
+export type AgentFilter = z.infer<typeof agentFilterSchema>;
+
 export const clientHelloPayloadSchema = z.object({
   client_id: z.string(),
   subscriptions: z.array(z.string()),
   cursors: cursorsBySessionSchema.optional(),
+  agent_filter: agentFilterSchema.optional(),
 });
 
 export const clientHelloMessageSchema = z.object({
@@ -124,6 +136,7 @@ export const subscribePayloadSchema = z.object({
   session_ids: z.array(z.string()),
   cursors: cursorsBySessionSchema.optional(),
   watch_fs: z.record(z.string(), watchFsConfigSchema).optional(),
+  agent_filter: agentFilterSchema.optional(),
 });
 
 export const subscribeMessageSchema = z.object({

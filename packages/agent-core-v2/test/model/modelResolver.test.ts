@@ -299,12 +299,12 @@ describe('ModelResolverService', () => {
 
     it('force-refreshes OAuth credentials and replays a request after 401', async () => {
       configureOAuthModel();
-      const tokenCalls: boolean[] = [];
+      const tokenCalls: Array<boolean | undefined> = [];
       const authKeys: string[] = [];
       resolveTokenProvider.mockReturnValue({
-        getAccessToken: async (options: { readonly force: boolean }) => {
-          tokenCalls.push(options.force);
-          return options.force ? 'forced-refresh-token' : 'fresh-token';
+        getAccessToken: async (options?: { readonly force?: boolean }) => {
+          tokenCalls.push(options?.force);
+          return options?.force === true ? 'forced-refresh-token' : 'fresh-token';
         },
       });
       generateImpl = async (_system, _tools, _history, options) => {
@@ -333,7 +333,7 @@ describe('ModelResolverService', () => {
       }
 
       expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
-      expect(tokenCalls).toEqual([false, true]);
+      expect(tokenCalls).toEqual([undefined, true]);
       expect(events).toContainEqual({ type: 'part', part: { type: 'text', text: 'recovered' } });
     });
 
@@ -341,8 +341,8 @@ describe('ModelResolverService', () => {
       configureOAuthModel();
       const authKeys: string[] = [];
       resolveTokenProvider.mockReturnValue({
-        getAccessToken: async (options: { readonly force: boolean }) =>
-          options.force ? 'forced-refresh-token' : 'fresh-token',
+        getAccessToken: async (options?: { readonly force?: boolean }) =>
+          options?.force === true ? 'forced-refresh-token' : 'fresh-token',
       });
       generateImpl = async (_system, _tools, _history, options) => {
         authKeys.push(options?.auth?.apiKey ?? '<missing>');
@@ -393,12 +393,12 @@ describe('ModelResolverService', () => {
 
     it('force-refreshes OAuth credentials and replays video upload after 401', async () => {
       configureOAuthModel();
-      const tokenCalls: boolean[] = [];
+      const tokenCalls: Array<boolean | undefined> = [];
       const authKeys: string[] = [];
       resolveTokenProvider.mockReturnValue({
-        getAccessToken: async (options: { readonly force: boolean }) => {
-          tokenCalls.push(options.force);
-          return options.force ? 'forced-refresh-token' : 'fresh-token';
+        getAccessToken: async (options?: { readonly force?: boolean }) => {
+          tokenCalls.push(options?.force);
+          return options?.force === true ? 'forced-refresh-token' : 'fresh-token';
         },
       });
       uploadVideoImpl = async (_input, options) => {
@@ -416,7 +416,7 @@ describe('ModelResolverService', () => {
         videoUrl: { url: 'https://example.test/video' },
       });
       expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
-      expect(tokenCalls).toEqual([false, true]);
+      expect(tokenCalls).toEqual([undefined, true]);
     });
   });
 

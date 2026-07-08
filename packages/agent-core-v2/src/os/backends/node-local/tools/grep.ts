@@ -1,52 +1,59 @@
 /**
- * `fileTools` domain — GrepTool, the model's content search tool.
+ * GrepTool — content search via ripgrep.
  *
- * Searches file contents with ripgrep-style regular expressions. The actual
- * scan runs through the os domains: `executeGrepSearch` (`./grepSearch`)
- * spawns `rg --json` via the host `IHostProcessService` and parses its output,
- * falling back to a gitignore-aware pure-node walker (through
- * `IHostFileSystem`) when `rg` is unavailable. The tool maps the model-facing
- * input args onto an `FsGrepRequest`, then renders the `FsGrepResponse` in the
- * v1 Grep output shape (`files_with_matches` / `content` / `count_matches`)
- * with `offset` / `head_limit` pagination and a sensitive-file post-filter.
+ * Shells out to `rg` through the host process service. Supports glob/type
+ * filtering, context lines, output modes, pagination, multiline, and
+ * case-insensitive search.
  *
- * Path safety goes through the shared path access resolver used by
- * Read/Write/Edit/Grep: an explicit absolute path outside the workspace is
- * allowed for the access declaration, while a relative path that escapes the
- * workspace is rejected. The search itself is confined to the workspace
- * directory (`cwd` pinned to the workspace root), mirroring the previous
- * `ISessionFsService.grep` behavior — the `path` argument scopes only the
- * access declaration, not the search root.
+ * Path safety is enforced before any host I/O. Explicit absolute paths outside
+ * the workspace are allowed; relative paths that escape the workspace are
+ * rejected.
  *
- * Ported from v1 (`packages/agent-core/src/tools/builtin/file/grep.ts`). The
- * v1 behavior of searching a path outside the workspace is intentionally not
- * replicated because this tool keeps the scan confined to the workspace root.
+ * Output is bounded and post-processed before it reaches the model:
+ *   - timeout and ambient abort both terminate the rg subprocess;
+ *   - stdout/stderr are capped while streams continue draining;
+ *   - hidden files are searched, but VCS metadata and common sensitive glob
+ *     patterns are prefiltered where possible;
+ *   - parsed path records are filtered again after rg returns, using the active
+ *     backend path class.
  */
 
-import { isAbsolute, join } from 'node:path';
-
-import type { FsGrepMatch, FsGrepRequest, FsGrepResponse } from '@moonshot-ai/protocol';
+import { normalize } from 'pathe';
 import { z } from 'zod';
 
 import { ToolResultBuilder } from '#/agent/tool/result-builder';
 import { ToolAccesses } from '#/agent/tool/tool-access';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { ErrorCodes, isKimiError } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
-import { isSensitiveFile } from '#/_base/tools/policies/sensitive';
+import {
+  resolvePathAccessPath,
+  type PathClass,
+} from '#/_base/tools/policies/path-access';
+import {
+  isSensitiveFile,
+  SENSITIVE_DOT_VARIANT_SUFFIXES,
+} from '#/_base/tools/policies/sensitive';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
 import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
-import { renderPrompt } from '#/_base/utils/render-prompt';
-import { executeGrepSearch } from '#/os/backends/node-local/tools/grepSearch';
-import grepDescriptionTemplate from './grep.md?raw';
-
-// ── Input schema ─────────────────────────────────────────────────────
+import {
+  ensureRgPath,
+  rgUnavailableMessage,
+  type RgProbe,
+} from '#/os/backends/node-local/tools/rgLocator';
+import {
+  DEFAULT_TIMEOUT_MS,
+  MAX_OUTPUT_BYTES,
+  runRgOnce,
+  shouldRetryRipgrepEagain,
+  type RunRgResult,
+} from '#/os/backends/node-local/tools/runRg';
+import GREP_DESCRIPTION from './grep.md?raw';
 
 export const GrepInputSchema = z.object({
   pattern: z.string().describe('Regular expression to search for.'),
@@ -56,7 +63,12 @@ export const GrepInputSchema = z.object({
     .describe(
       'File or directory to search. Accepts an absolute path, or a path relative to the current working directory. Omit to search the current working directory. Use Read instead when you already know a concrete file path and need its contents.',
     ),
-  glob: z.string().optional().describe('Optional glob filter passed to ripgrep.'),
+  glob: z
+    .string()
+    .optional()
+    .describe(
+      "Optional glob filter for which files to search, e.g. `*.ts`. Matched against each file's full absolute path, so a path-anchored pattern like `src/**/*.ts` silently matches nothing — use a basename pattern (`*.ts`), or anchor with `**/` (`**/src/**/*.ts`). To scope the search to a directory, use `path` instead.",
+    ),
   type: z
     .string()
     .optional()
@@ -126,28 +138,54 @@ export const GrepInputSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'Also search files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. Defaults to false.',
+      'Also search files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false.',
     ),
 });
 
+export const GrepOutputSchema = z.object({
+  mode: z.enum(['content', 'files_with_matches', 'count_matches']),
+  numFiles: z.number().int().nonnegative(),
+  filenames: z.array(z.string()),
+  content: z.string().optional(),
+  numLines: z.number().int().nonnegative().optional(),
+  numMatches: z.number().int().nonnegative().optional(),
+  appliedLimit: z.number().int().nonnegative().optional(),
+});
+
 export type GrepInput = z.infer<typeof GrepInputSchema>;
+export type GrepOutput = z.infer<typeof GrepOutputSchema>;
 
-type GrepMode = 'content' | 'files_with_matches' | 'count_matches';
-
-// ── Constants ────────────────────────────────────────────────────────
-
+// Column cap applied to non-content output modes only; `content` mode returns
+// matching lines in full so the cap is intentionally skipped there.
+const RG_MAX_COLUMNS = 500;
 const DEFAULT_HEAD_LIMIT = 250;
-// The fs layer is told not to cap its scan so the tool's own `head_limit`
-// pagination is the only bound on output. These are the protocol maximums.
-const FS_MAX_FILES = 10_000;
-const FS_MAX_MATCHES_PER_FILE = 10_000;
-const FS_MAX_TOTAL_MATCHES = 100_000;
-const FS_MAX_CONTEXT_LINES = 10;
 const MTIME_STAT_CONCURRENCY = 32;
 
-const GREP_DESCRIPTION = renderPrompt(grepDescriptionTemplate, {});
+const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
+const SENSITIVE_KEY_BASENAMES = ['id_rsa', 'id_ed25519', 'id_ecdsa'] as const;
+const SENSITIVE_KEY_GLOBS_TO_EXCLUDE = SENSITIVE_KEY_BASENAMES.flatMap((name) => [
+  `**/${name}`,
+  `**/${name}[-_]*`,
+  ...SENSITIVE_DOT_VARIANT_SUFFIXES.map((suffix) => `**/${name}${suffix}`),
+]);
+const SENSITIVE_GLOBS_TO_EXCLUDE = [
+  '**/.env',
+  ...SENSITIVE_KEY_GLOBS_TO_EXCLUDE,
+  '**/.aws/credentials',
+  '**/.aws/credentials/**',
+  '**/.gcp/credentials',
+  '**/.gcp/credentials/**',
+] as const;
 
-// ── Tool ─────────────────────────────────────────────────────────────
+// Line formats produced by ripgrep:
+//   content match with --null:   "file.py<NUL>10:matched text"
+//   context line with --null:    "file.py<NUL>9-context text"
+//   count_matches with --null:   "file.py<NUL>2"
+//   non-NUL content fallback:    "file.py:10:matched text"
+//   context divider: "--"
+// Runtime rg output uses NUL as the path boundary; the regex handles
+// line-oriented output without NUL delimiters.
+const CONTENT_LINE_RE = /^(.*?)([:-])(\d+)\2/;
 
 export class GrepTool implements BuiltinTool<GrepInput> {
   readonly name = 'Grep' as const;
@@ -158,9 +196,10 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
-  private get workspaceConfig(): WorkspaceConfig {
+  private get workspace(): WorkspaceConfig {
     return {
       workspaceDir: this.workspaceCtx.workDir,
       additionalDirs: this.workspaceCtx.additionalDirs,
@@ -168,209 +207,294 @@ export class GrepTool implements BuiltinTool<GrepInput> {
   }
 
   resolveExecution(args: GrepInput): ToolExecution {
-    let searchPath: string | undefined;
+    let path: string | undefined;
     if (args.path !== undefined) {
-      searchPath = resolvePathAccessPath(args.path, {
+      path = resolvePathAccessPath(args.path, {
         env: this.env,
-        workspace: this.workspaceConfig,
+        workspace: this.workspace,
         operation: 'search',
         policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
       });
     }
-    const accessPath = searchPath ?? this.workspaceConfig.workspaceDir;
-    const displayPath = args.path ?? this.workspaceConfig.workspaceDir;
+    const searchPaths = [path ?? this.workspace.workspaceDir];
+    const searchPath = args.path ?? this.workspace.workspaceDir;
     return {
-      accesses: ToolAccesses.searchTree(accessPath),
-      description: `Searching for '${args.pattern}' in ${displayPath}`,
-      display: { kind: 'file_io', operation: 'grep', path: accessPath },
+      accesses: ToolAccesses.searchTree(searchPaths[0]!),
+      description: `Searching for '${args.pattern}' in ${searchPath}`,
+      display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
-      execute: ({ signal }) => this.execution(args, signal),
+      execute: ({ signal }) => this.execution(args, signal, searchPaths),
     };
   }
 
-  private async execution(args: GrepInput, signal: AbortSignal): Promise<ExecutableToolResult> {
+  private async execution(
+    args: GrepInput,
+    signal: AbortSignal,
+    searchPaths: string[],
+  ): Promise<ExecutableToolResult> {
     if (signal.aborted) {
       return { isError: true, output: 'Aborted before search started' };
     }
 
-    let response: FsGrepResponse;
+    const pathClass = this.env.pathClass;
+    let rgPath: string;
     try {
-      response = await executeGrepSearch(buildGrepRequest(args), {
-        processService: this.processService,
-        fs: this.fs,
-        cwd: this.workspaceConfig.workspaceDir,
+      const resolution = await ensureRgPath(this.createRgProbe(), {
+        signal,
+        allowCachedFallback: true,
       });
+      rgPath = resolution.path;
+      if (resolution.source !== 'system-path') {
+        this.telemetry.track('grep_tool_rg_fallback', {
+          source: resolution.source,
+          outcome: 'resolved',
+        });
+      }
     } catch (error) {
-      return mapGrepError(error);
+      if (signal.aborted) {
+        return { isError: true, output: 'Grep aborted' };
+      }
+      this.telemetry.track('grep_tool_rg_fallback', { outcome: 'failed' });
+      return { isError: true, output: rgUnavailableMessage(error) };
     }
 
+    let runResult: RunRgResult;
+    try {
+      const firstRun = await runRgOnce(
+        this.processService,
+        buildRgArgs(rgPath, args, searchPaths),
+        signal,
+      );
+      if (firstRun.kind === 'aborted') {
+        return { isError: true, output: 'Grep aborted' };
+      }
+      runResult = firstRun;
+
+      if (shouldRetryRipgrepEagain(runResult)) {
+        const retryRun = await runRgOnce(
+          this.processService,
+          buildRgArgs(rgPath, args, searchPaths, true),
+          signal,
+        );
+        if (retryRun.kind === 'aborted') {
+          return { isError: true, output: 'Grep aborted' };
+        }
+        runResult = retryRun;
+      }
+    } catch (error) {
+      return { isError: true, output: formatSpawnError(error) };
+    }
+
+    const { exitCode, stderrText, bufferTruncated, stderrTruncated, timedOut } = runResult;
+    let { stdoutText } = runResult;
+
+    // rg exit codes: 0 = matches, 1 = no matches, 2 = error. Timeout kills
+    // usually surface as a signal exit code; keep any complete partial records.
+    if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
+      return {
+        isError: true,
+        output: formatRipgrepError(exitCode, stderrText, stderrTruncated),
+      };
+    }
+
+    const mode = args.output_mode ?? 'files_with_matches';
+    if (bufferTruncated || timedOut) {
+      stdoutText = omitIncompleteTrailingRecord(stdoutText, mode);
+    }
+    if (timedOut && stdoutText.trim() === '') {
+      return {
+        isError: true,
+        output: `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s. Try a more specific path or pattern.`,
+      };
+    }
     if (signal.aborted) {
       return { isError: true, output: 'Grep aborted' };
     }
 
-    return renderGrepResponse(args, response, {
-      fs: this.fs,
-      workspaceDir: this.workspaceConfig.workspaceDir,
+    const rawLines = parseRipgrepOutput(stdoutText, mode);
+
+    const filteredSensitive = new Set<string>();
+    const keptLines = filterSensitiveLines(rawLines, mode, filteredSensitive, pathClass);
+    let orderedLines: ParsedGrepLine[];
+    try {
+      orderedLines =
+        mode === 'files_with_matches' && !timedOut
+          ? await this.sortFilesWithMatchesByMtime(keptLines, signal)
+          : keptLines;
+    } catch (error) {
+      if (error instanceof GrepAbortedError) {
+        return { isError: true, output: 'Grep aborted' };
+      }
+      throw error;
+    }
+
+    const offset = args.offset ?? 0;
+    const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
+    const afterOffset = offset > 0 ? orderedLines.slice(offset) : orderedLines;
+    const limitActive = headLimit > 0;
+    const limited = limitActive ? afterOffset.slice(0, headLimit) : afterOffset;
+    const paginationTruncated = limitActive && afterOffset.length > headLimit;
+
+    // Notices ride in `output` (not `result.message`, which is dropped before the
+    // result reaches the model). The count-mode aggregate — the total and the
+    // "use offset=N to see more" cue — leads the output as a HEADER, written before
+    // the rows, so ToolResultBuilder's char cap can only ever truncate the rows, not
+    // the total (count rows are unbounded with head_limit: 0). Incidental notices
+    // trail the body.
+    const headerLines: string[] = [];
+    const messages: string[] = [];
+    if (filteredSensitive.size > 0) {
+      const displayedFilteredPaths = [...filteredSensitive].map((path) =>
+        relativizeIfUnder(path, this.workspace.workspaceDir, pathClass),
+      );
+      messages.push(
+        `Filtered ${String(filteredSensitive.size)} sensitive file(s): ${displayedFilteredPaths.join(', ')}`,
+      );
+    }
+    if (mode === 'count_matches' && orderedLines.length > 0) {
+      headerLines.push(formatCountSummary(orderedLines, filteredSensitive.size > 0));
+    }
+    if (paginationTruncated) {
+      const total = afterOffset.length + offset;
+      const nextOffset = offset + headLimit;
+      const paginationNotice = `Results truncated to ${String(headLimit)} lines (total: ${String(total)}). Use offset=${String(nextOffset)} to see more.`;
+      if (mode === 'count_matches') {
+        headerLines.push(paginationNotice);
+      } else {
+        messages.push(paginationNotice);
+      }
+    }
+    if (bufferTruncated) {
+      messages.push(
+        `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; incomplete trailing line omitted]`,
+      );
+    }
+    if (timedOut) {
+      messages.push(
+        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned`,
+      );
+    }
+
+    const contentIncludesLineNumbers = mode === 'content' && args['-n'] !== false;
+    const displayedLines = limited.map((line) =>
+      formatDisplayLine(
+        line,
+        mode,
+        this.workspace.workspaceDir,
+        pathClass,
+        contentIncludesLineNumbers,
+      ),
+    );
+    const contentBody = displayedLines.join('\n');
+    const visibleBody =
+      orderedLines.length === 0 && filteredSensitive.size > 0
+        ? 'No non-sensitive matches found'
+        : contentBody;
+    const emptyResultMessage =
+      SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? 'No non-sensitive matches found' : 'No matches found';
+    const body =
+      visibleBody === '' && headerLines.length === 0 && messages.length === 0
+        ? emptyResultMessage
+        : visibleBody;
+    const combined = [...headerLines, body, ...messages].filter((part) => part !== '').join('\n');
+
+    const builder = new ToolResultBuilder();
+    builder.write(combined);
+    return builder.ok();
+  }
+
+  private createRgProbe(): RgProbe {
+    return {
+      exec: async (args) => {
+        const [command, ...rest] = args;
+        if (command === undefined) return { exitCode: -1 };
+        const proc = await this.processService.spawn(command, rest);
+        try {
+          proc.stdin.end();
+        } catch {
+          /* already gone */
+        }
+        proc.stdout.resume();
+        proc.stderr.resume();
+        const exitCode = await proc.wait();
+        try {
+          proc.dispose();
+        } catch {
+          /* best-effort cleanup */
+        }
+        return { exitCode };
+      },
+    };
+  }
+
+  private async sortFilesWithMatchesByMtime(
+    lines: readonly ParsedGrepLine[],
+    signal: AbortSignal,
+  ): Promise<ParsedGrepLine[]> {
+    const entries = await mapWithConcurrency(
+      lines,
+      MTIME_STAT_CONCURRENCY,
       signal,
-    });
+      async (line, index) => {
+        const path =
+          line.kind === 'record' ? line.filePath : line.kind === 'legacy' ? line.text : undefined;
+        let mtime = 0;
+        if (path !== undefined) {
+          try {
+            const mtimeMs = (await this.fs.stat(path)).mtimeMs ?? 0;
+            mtime = Math.trunc(mtimeMs / 1000);
+          } catch {
+            // Keep stat failures visible; use mtime=0 so they sort after known files.
+          }
+        }
+        return { line, mtime, index };
+      },
+    );
+    entries.sort((a, b) => b.mtime - a.mtime || a.index - b.index);
+    return entries.map((entry) => entry.line);
   }
 }
 
 registerTool(GrepTool);
 
-// ── Request mapping ──────────────────────────────────────────────────
-
-function buildGrepRequest(args: GrepInput): FsGrepRequest {
-  const includeGlobs: string[] = [];
-  if (args.glob !== undefined) includeGlobs.push(args.glob);
-  if (args.type !== undefined) includeGlobs.push(`**/*.${args.type}`);
-  const req: FsGrepRequest = {
-    pattern: args.pattern,
-    // The tool's `pattern` is documented as a regular expression, so always
-    // ask the fs layer for regex matching.
-    regex: true,
-    case_sensitive: args['-i'] !== true,
-    follow_gitignore: args.include_ignored !== true,
-    max_files: FS_MAX_FILES,
-    max_matches_per_file: FS_MAX_MATCHES_PER_FILE,
-    max_total_matches: FS_MAX_TOTAL_MATCHES,
-    context_lines: contextLines(args),
-    include_globs: includeGlobs.length > 0 ? includeGlobs : undefined,
-    exclude_globs: undefined,
-  };
-  return args.multiline === true
-    ? ({ ...req, multiline: true } as FsGrepRequest)
-    : req;
+function formatSpawnError(error: unknown): string {
+  return errorCode(error) === 'ENOENT'
+    ? rgUnavailableMessage(error)
+    : error instanceof Error
+      ? error.message
+      : String(error);
 }
 
-function contextLines(args: GrepInput): number {
-  if (args['-C'] !== undefined) return clamp(args['-C'], 0, FS_MAX_CONTEXT_LINES);
-  const before = args['-B'] ?? 0;
-  const after = args['-A'] ?? 0;
-  return clamp(Math.max(before, after), 0, FS_MAX_CONTEXT_LINES);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-// ── Error mapping ────────────────────────────────────────────────────
-
-function mapGrepError(error: unknown): ExecutableToolResult {
-  if (isKimiError(error) && error.code === ErrorCodes.FS_GREP_TIMEOUT) {
-    return {
-      isError: true,
-      output: 'Grep timed out. Try a more specific path or pattern.',
-    };
+function errorCode(error: unknown): string | undefined {
+  if (error !== null && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' ? code : undefined;
   }
-  return {
-    isError: true,
-    output: `Failed to grep: ${error instanceof Error ? error.message : String(error)}`,
-  };
+  return undefined;
 }
 
-// ── Response rendering ───────────────────────────────────────────────
+type GrepMode = 'content' | 'files_with_matches' | 'count_matches';
 
-interface Page<T> {
-  readonly visible: readonly T[];
-  readonly truncated: boolean;
-  readonly total: number;
-  readonly nextOffset: number;
-}
-
-interface RenderDeps {
-  readonly fs: IHostFileSystem;
-  readonly workspaceDir: string;
-  readonly signal: AbortSignal;
-}
+type ParsedGrepLine =
+  | {
+      readonly kind: 'record';
+      readonly filePath: string;
+      readonly payload: string;
+    }
+  | {
+      readonly kind: 'separator';
+    }
+  | {
+      readonly kind: 'legacy';
+      readonly text: string;
+    };
 
 class GrepAbortedError extends Error {
   constructor() {
     super('Grep aborted');
     this.name = 'GrepAbortedError';
   }
-}
-
-function paginate<T>(items: readonly T[], args: GrepInput): Page<T> {
-  const offset = args.offset ?? 0;
-  const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
-  const afterOffset = offset > 0 ? items.slice(offset) : items;
-  const limitActive = headLimit > 0;
-  const visible = limitActive ? afterOffset.slice(0, headLimit) : afterOffset;
-  const truncated = limitActive && afterOffset.length > headLimit;
-  return { visible, truncated, total: items.length, nextOffset: offset + headLimit };
-}
-
-async function renderGrepResponse(
-  args: GrepInput,
-  response: FsGrepResponse,
-  deps: RenderDeps,
-): Promise<ExecutableToolResult> {
-  const mode: GrepMode = args.output_mode ?? 'files_with_matches';
-
-  // Post-filter sensitive files, mirroring v1's post-rg sensitive filter.
-  // `ISessionFsService.grep` searches the whole workspace and does not exclude
-  // sensitive paths, so the tool drops them before rendering.
-  const filteredSensitive: string[] = [];
-  const keptFiles = response.files.filter((file) => {
-    if (isSensitiveFile(file.path)) {
-      filteredSensitive.push(file.path);
-      return false;
-    }
-    return true;
-  });
-
-  const inlineMessages: string[] = [];
-  if (filteredSensitive.length > 0) {
-    inlineMessages.push(
-      `Filtered ${String(filteredSensitive.length)} sensitive file(s): ${filteredSensitive.join(', ')}`,
-    );
-  }
-  if (response.truncated) {
-    inlineMessages.push(
-      'Search stopped early after reaching the match limit; results may be incomplete. Try a more specific path or pattern.',
-    );
-  }
-
-  if (mode === 'count_matches') {
-    return renderCountMatches(args, keptFiles, filteredSensitive.length > 0, inlineMessages);
-  }
-  if (mode === 'content') {
-    return renderContent(args, keptFiles, inlineMessages, filteredSensitive.length > 0);
-  }
-  try {
-    const sortedFiles = await sortFilesWithMatchesByMtime(keptFiles, deps);
-    return renderFilesWithMatches(args, sortedFiles, inlineMessages, filteredSensitive.length > 0);
-  } catch (error) {
-    if (error instanceof GrepAbortedError) {
-      return { isError: true, output: 'Grep aborted' };
-    }
-    throw error;
-  }
-}
-
-async function sortFilesWithMatchesByMtime<T extends { readonly path: string }>(
-  files: readonly T[],
-  deps: RenderDeps,
-): Promise<T[]> {
-  const entries = await mapWithConcurrency(
-    files,
-    MTIME_STAT_CONCURRENCY,
-    deps.signal,
-    async (file, index) => {
-      let mtime = 0;
-      try {
-        const path = isAbsolute(file.path) ? file.path : join(deps.workspaceDir, file.path);
-        mtime = (await deps.fs.stat(path)).mtimeMs ?? 0;
-      } catch {
-        // Keep stat failures visible; use mtime=0 so they sort after known files.
-      }
-      return { file, mtime, index };
-    },
-  );
-  entries.sort((a, b) => b.mtime - a.mtime || a.index - b.index);
-  return entries.map((entry) => entry.file);
 }
 
 async function mapWithConcurrency<T, U>(
@@ -401,162 +525,349 @@ async function mapWithConcurrency<T, U>(
   return results;
 }
 
-function renderFilesWithMatches(
+function buildRgArgs(
+  rgPath: string,
   args: GrepInput,
-  files: readonly { path: string }[],
-  inlineMessages: string[],
-  redactedSensitive: boolean,
-): ExecutableToolResult {
-  return renderPagedLines(
-    args,
-    files.map((file) => file.path),
-    inlineMessages,
-    redactedSensitive,
-  );
-}
-
-function renderContent(
-  args: GrepInput,
-  files: readonly { path: string; matches: readonly FsGrepMatch[] }[],
-  inlineMessages: string[],
-  redactedSensitive: boolean,
-): ExecutableToolResult {
-  const includeLineNumbers = args['-n'] !== false;
-  const context = displayContext(args);
-  const lines: string[] = [];
-  for (const file of files) {
-    for (const match of file.matches) {
-      lines.push(...renderMatchLines(file.path, match, includeLineNumbers, context));
-    }
-  }
-  return renderPagedLines(args, lines, inlineMessages, redactedSensitive);
-}
-
-interface DisplayContext {
-  readonly before: number;
-  readonly after: number;
-}
-
-function displayContext(args: GrepInput): DisplayContext {
-  if (args['-C'] !== undefined) {
-    const lines = clamp(args['-C'], 0, FS_MAX_CONTEXT_LINES);
-    return { before: lines, after: lines };
-  }
-  return {
-    before: clamp(args['-B'] ?? 0, 0, FS_MAX_CONTEXT_LINES),
-    after: clamp(args['-A'] ?? 0, 0, FS_MAX_CONTEXT_LINES),
-  };
-}
-
-function renderMatchLines(
-  path: string,
-  match: FsGrepMatch,
-  includeLineNumbers: boolean,
-  context: DisplayContext,
+  searchPaths: readonly string[],
+  singleThreaded = false,
 ): string[] {
-  const lines: string[] = [];
-  const before = context.before > 0 ? match.before.slice(-context.before) : [];
-  const after = context.after > 0 ? match.after.slice(0, context.after) : [];
-  const matchLines = splitMatchText(match.text);
-  if (includeLineNumbers) {
-    const beforeStart = match.line - before.length;
-    for (let i = 0; i < before.length; i += 1) {
-      lines.push(`${path}-${String(beforeStart + i)}-${before[i]}`);
-    }
-    for (let i = 0; i < matchLines.length; i += 1) {
-      lines.push(`${path}:${String(match.line + i)}:${matchLines[i]}`);
-    }
-    for (let i = 0; i < after.length; i += 1) {
-      lines.push(`${path}-${String(match.line + matchLines.length + i)}-${after[i]}`);
-    }
-  } else {
-    for (const text of before) lines.push(`${path}:${text}`);
-    for (const text of matchLines) lines.push(`${path}:${text}`);
-    for (const text of after) lines.push(`${path}:${text}`);
+  const cmd: string[] = [rgPath];
+  if (singleThreaded) cmd.push('-j', '1');
+  cmd.push('--hidden');
+  const mode = args.output_mode ?? 'files_with_matches';
+  // `content` mode returns matching lines verbatim. Capping columns here would
+  // make rg replace any line wider than the cap with a placeholder, silently
+  // dropping the actual match text. The cap is only useful outside `content`
+  // mode, where line text is never surfaced.
+  if (mode !== 'content') {
+    cmd.push('--max-columns', String(RG_MAX_COLUMNS));
   }
-  return lines;
-}
-
-function splitMatchText(text: string): readonly string[] {
-  return text.split(/\r?\n/);
-}
-
-function renderCountMatches(
-  args: GrepInput,
-  files: readonly { path: string; matches: readonly unknown[] }[],
-  redactedSensitive: boolean,
-  inlineMessages: string[],
-): ExecutableToolResult {
-  const counts = files.map((file) => ({ path: file.path, count: file.matches.length }));
-  const totalMatches = counts.reduce((sum, entry) => sum + entry.count, 0);
-  const rows = counts.map((entry) => `${entry.path}:${String(entry.count)}`);
-  const page = paginate(rows, args);
-
-  const headerLines: string[] = [];
-  if (counts.length > 0) {
-    headerLines.push(formatCountSummary(totalMatches, counts.length, redactedSensitive));
-  }
-  if (page.truncated) {
-    headerLines.push(formatPaginationNotice(page));
+  cmd.push('--null');
+  for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
+    cmd.push('--glob', `!${dir}`);
   }
 
-  return renderBoundedOutput(headerLines, page.visible.join('\n'), inlineMessages, {
-    empty: emptyMessage(redactedSensitive),
-    forceEmptyBody: redactedSensitive && counts.length === 0,
-  });
+  if (mode === 'files_with_matches') cmd.push('-l');
+  else if (mode === 'count_matches') {
+    // rg omits the filename when only one file is searched, so pin it on. Without
+    // this, the per-file line collapses to a bare count and the summary parser
+    // disagrees with the displayed number.
+    cmd.push('--count-matches', '--with-filename');
+  }
+
+  if (args['-i']) cmd.push('-i');
+  if (mode === 'content') {
+    cmd.push('--with-filename');
+    if (args['-n'] !== false) {
+      cmd.push('-n');
+    } else {
+      cmd.push('--field-context-separator', ':');
+    }
+    if (args['-C'] !== undefined) {
+      cmd.push('-C', String(args['-C']));
+    } else {
+      if (args['-A'] !== undefined) cmd.push('-A', String(args['-A']));
+      if (args['-B'] !== undefined) cmd.push('-B', String(args['-B']));
+    }
+  }
+  if (args.glob !== undefined) cmd.push('--glob', args.glob);
+  if (args.type !== undefined) cmd.push('--type', args.type);
+  if (args.multiline) cmd.push('-U', '--multiline-dotall');
+  if (args.include_ignored) cmd.push('--no-ignore');
+  for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
+    // Appended after user globs so a broad include such as `**/.env` cannot
+    // undo this first-pass exclusion. Explicit file paths are still protected
+    // by the post-processing filter because rg intentionally searches them.
+    cmd.push('--glob', `!${glob}`);
+  }
+  // Do not forward `head_limit` to `rg --max-count`: omitted means "use the
+  // tool default", head_limit=0 means "unlimited", while `rg --max-count 0`
+  // means "zero matches per file". Pagination happens in post-processing.
+
+  cmd.push('--', args.pattern, ...searchPaths);
+  return cmd;
 }
 
-function appendPaginationNotice(messages: string[], page: Page<unknown>): void {
-  if (!page.truncated) return;
-  messages.push(formatPaginationNotice(page));
+function splitRgLines(text: string): string[] {
+  if (text === '') return [];
+  const lines = text.split('\n');
+  // Strip the trailing empty line left by a final newline.
+  while (lines.length > 0 && lines.at(-1) === '') {
+    lines.pop();
+  }
+  return lines.map((line) => stripTrailingCarriageReturn(line));
 }
 
-function emptyMessage(redactedSensitive: boolean): string {
-  return redactedSensitive ? 'No non-sensitive matches found' : 'No matches found';
+function parseRipgrepOutput(text: string, mode: GrepMode): ParsedGrepLine[] {
+  if (text === '') return [];
+  if (!text.includes('\0')) {
+    return splitRgLines(text).map((line) =>
+      mode === 'content' && line === '--' ? { kind: 'separator' } : { kind: 'legacy', text: line },
+    );
+  }
+
+  if (mode === 'files_with_matches') {
+    return text
+      .split('\0')
+      .map((filePath) => stripTrailingCarriageReturn(filePath))
+      .filter((filePath) => filePath !== '')
+      .map((filePath) => ({ kind: 'record', filePath, payload: '' }));
+  }
+
+  const records: ParsedGrepLine[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    if (text[cursor] === '\n') {
+      cursor += 1;
+      continue;
+    }
+    if (text.startsWith('--\r\n', cursor)) {
+      records.push({ kind: 'separator' });
+      cursor += 4;
+      continue;
+    }
+    if (text.startsWith('--\n', cursor)) {
+      records.push({ kind: 'separator' });
+      cursor += 3;
+      continue;
+    }
+
+    const nulIndex = text.indexOf('\0', cursor);
+    if (nulIndex < 0) {
+      const tail = stripTrailingCarriageReturn(text.slice(cursor));
+      if (tail !== '') records.push({ kind: 'legacy', text: tail });
+      break;
+    }
+
+    const lineEnd = text.indexOf('\n', nulIndex + 1);
+    const payloadEnd = lineEnd >= 0 ? lineEnd : text.length;
+    const filePath = text.slice(cursor, nulIndex);
+    const payload = stripTrailingCarriageReturn(text.slice(nulIndex + 1, payloadEnd));
+    records.push({ kind: 'record', filePath, payload });
+    cursor = lineEnd >= 0 ? lineEnd + 1 : text.length;
+  }
+  return records;
 }
 
-function renderPagedLines(
-  args: GrepInput,
-  lines: readonly string[],
-  inlineMessages: string[],
-  redactedSensitive: boolean,
-): ExecutableToolResult {
-  const page = paginate(lines, args);
-  appendPaginationNotice(inlineMessages, page);
-  return renderBoundedOutput([], page.visible.join('\n'), inlineMessages, {
-    empty: emptyMessage(redactedSensitive),
-    forceEmptyBody: redactedSensitive && lines.length === 0,
-  });
-}
-
-function renderBoundedOutput(
-  headerLines: readonly string[],
-  body: string,
-  messages: readonly string[],
-  options: { readonly empty: string; readonly forceEmptyBody?: boolean },
-): ExecutableToolResult {
-  const base =
-    body === '' &&
-    (options.forceEmptyBody === true || (headerLines.length === 0 && messages.length === 0))
-      ? options.empty
-      : body;
-  const output = [...headerLines, base, ...messages].filter((part) => part !== '').join('\n');
-  const builder = new ToolResultBuilder();
-  builder.write(output);
-  return builder.ok();
-}
-
-function formatPaginationNotice(page: Page<unknown>): string {
-  return `Results truncated to ${String(page.visible.length)} lines (total: ${String(page.total)}). Use offset=${String(page.nextOffset)} to see more.`;
-}
-
-function formatCountSummary(
-  totalMatches: number,
-  totalFiles: number,
-  redactedSensitive: boolean,
+function formatDisplayLine(
+  line: ParsedGrepLine,
+  mode: GrepMode,
+  workspaceDir: string,
+  pathClass: PathClass,
+  contentIncludesLineNumbers: boolean,
 ): string {
+  if (line.kind === 'separator') return '--';
+  if (line.kind === 'record') {
+    const displayPath = relativizeIfUnder(line.filePath, workspaceDir, pathClass);
+    if (mode === 'files_with_matches') return displayPath;
+    if (mode === 'count_matches') return `${displayPath}:${line.payload}`;
+    const separator = contentIncludesLineNumbers ? contentPayloadPathSeparator(line.payload) : ':';
+    return `${displayPath}${separator}${line.payload}`;
+  }
+
+  const text = line.text;
+  if (mode === 'files_with_matches') {
+    return relativizeIfUnder(text, workspaceDir, pathClass);
+  }
+  if (mode === 'count_matches') {
+    const idx = text.lastIndexOf(':');
+    if (idx <= 0) return text;
+    return relativizeIfUnder(text.slice(0, idx), workspaceDir, pathClass) + text.slice(idx);
+  }
+
+  const filePath = extractContentFilePath(text, pathClass);
+  if (filePath !== undefined) {
+    return relativizeIfUnder(filePath, workspaceDir, pathClass) + text.slice(filePath.length);
+  }
+  return text;
+}
+
+/**
+ * If `candidate` is under `base`, return the portion after `base/`.
+ * Otherwise return `candidate` unchanged. Both arguments should be
+ * canonical absolute paths in the active backend path class.
+ */
+function relativizeIfUnder(candidate: string, base: string, pathClass: PathClass): string {
+  const normCandidate = normalize(candidate);
+  const normBase = normalize(base);
+  const comparableCandidate = pathClass === 'win32' ? normCandidate.toLowerCase() : normCandidate;
+  const comparableBase = pathClass === 'win32' ? normBase.toLowerCase() : normBase;
+  if (comparableCandidate === comparableBase) return '.';
+  const prefix = comparableBase.endsWith('/') ? comparableBase : comparableBase + '/';
+  if (comparableCandidate.startsWith(prefix)) {
+    return normCandidate.slice(prefix.length);
+  }
+  return normCandidate;
+}
+
+function omitIncompleteTrailingRecord(text: string, mode: GrepMode): string {
+  if (!text.includes('\0')) return omitIncompleteTrailingLine(text);
+  if (mode === 'files_with_matches') {
+    const lastNul = text.lastIndexOf('\0');
+    return lastNul >= 0 ? text.slice(0, lastNul + 1) : '';
+  }
+
+  let cursor = 0;
+  let lastCompleteEnd = 0;
+  while (cursor < text.length) {
+    if (text[cursor] === '\n') {
+      cursor += 1;
+      lastCompleteEnd = cursor;
+      continue;
+    }
+    if (text.startsWith('--\r\n', cursor)) {
+      cursor += 4;
+      lastCompleteEnd = cursor;
+      continue;
+    }
+    if (text.startsWith('--\n', cursor)) {
+      cursor += 3;
+      lastCompleteEnd = cursor;
+      continue;
+    }
+
+    const nulIndex = text.indexOf('\0', cursor);
+    if (nulIndex < 0) break;
+    const lineEnd = text.indexOf('\n', nulIndex + 1);
+    if (lineEnd < 0) break;
+    cursor = lineEnd + 1;
+    lastCompleteEnd = cursor;
+  }
+  return text.slice(0, lastCompleteEnd);
+}
+
+function omitIncompleteTrailingLine(text: string): string {
+  const lastNewline = text.lastIndexOf('\n');
+  return lastNewline >= 0 ? text.slice(0, lastNewline) : '';
+}
+
+function formatRipgrepError(
+  exitCode: number,
+  stderrText: string,
+  stderrTruncated: boolean,
+): string {
+  const stderr = stderrText.trim();
+  if (stderr.length === 0) {
+    return `Failed to grep: ripgrep exited with code ${String(exitCode)}`;
+  }
+
+  const summary = summarizeRipgrepStderr(stderr);
+  const lines = [`Failed to grep: ${summary}`, '', 'ripgrep stderr:', stderr];
+  if (stderrTruncated) {
+    lines.push(`[stderr truncated at ${String(MAX_OUTPUT_BYTES)} bytes]`);
+  }
+  return lines.join('\n');
+}
+
+function summarizeRipgrepStderr(stderr: string): string {
+  const lines = splitRgLines(stderr)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const errorLine = lines.findLast((line) => line.toLowerCase().startsWith('error:'));
+  return errorLine ?? lines.at(-1) ?? 'ripgrep error';
+}
+
+function filterSensitiveLines(
+  lines: readonly ParsedGrepLine[],
+  mode: GrepMode,
+  filteredPaths: Set<string>,
+  pathClass: PathClass,
+): ParsedGrepLine[] {
+  const kept: ParsedGrepLine[] = [];
+  for (const line of lines) {
+    if (line.kind === 'separator') {
+      kept.push(line);
+      continue;
+    }
+    const filePath = parsedFilePath(line, mode, pathClass);
+    if (filePath !== undefined && isSensitiveFile(filePath)) {
+      filteredPaths.add(filePath);
+      continue;
+    }
+    kept.push(line);
+  }
+  return mode === 'content' ? normalizeContextSeparators(kept) : kept;
+}
+
+function normalizeContextSeparators(lines: readonly ParsedGrepLine[]): ParsedGrepLine[] {
+  const normalized: ParsedGrepLine[] = [];
+  for (const line of lines) {
+    if (
+      line.kind === 'separator' &&
+      (normalized.length === 0 || normalized.at(-1)?.kind === 'separator')
+    ) {
+      continue;
+    }
+    normalized.push(line);
+  }
+  while (normalized.length > 0 && normalized.at(-1)?.kind === 'separator') {
+    normalized.pop();
+  }
+  return normalized;
+}
+
+function parsedFilePath(
+  line: ParsedGrepLine,
+  mode: GrepMode,
+  pathClass: PathClass,
+): string | undefined {
+  if (line.kind === 'record') return normalize(line.filePath);
+  if (line.kind === 'separator') return undefined;
+  const text = line.text;
+  if (mode === 'files_with_matches') return normalize(text);
+  if (mode === 'count_matches') {
+    const idx = text.lastIndexOf(':');
+    return idx > 0 ? normalize(text.slice(0, idx)) : normalize(text);
+  }
+  return extractContentFilePath(text, pathClass);
+}
+
+function extractContentFilePath(line: string, pathClass: PathClass): string | undefined {
+  const m = CONTENT_LINE_RE.exec(line);
+  if (m?.[1] !== undefined) return normalize(m[1]);
+
+  const separatorIndex = noLineNumberContentSeparatorIndex(line, pathClass);
+  return separatorIndex > 0 ? normalize(line.slice(0, separatorIndex)) : undefined;
+}
+
+function noLineNumberContentSeparatorIndex(line: string, pathClass: PathClass): number {
+  const searchFrom = pathClass === 'win32' && /^[A-Za-z]:/.test(line) ? 2 : 0;
+  return line.indexOf(':', searchFrom);
+}
+
+function contentPayloadPathSeparator(payload: string): ':' | '-' {
+  const m = /^(\d+)([:-])/.exec(payload);
+  return m?.[2] === '-' ? '-' : ':';
+}
+
+function stripTrailingCarriageReturn(value: string): string {
+  return value.endsWith('\r') ? value.slice(0, -1) : value;
+}
+
+function formatCountSummary(lines: readonly ParsedGrepLine[], redactedSensitive: boolean): string {
+  let totalMatches = 0;
+  let totalFiles = 0;
+  for (const line of lines) {
+    const rawCount =
+      line.kind === 'record'
+        ? line.payload
+        : line.kind === 'legacy'
+          ? countPayloadFromLegacyLine(line.text)
+          : undefined;
+    if (rawCount === undefined) continue;
+    const count = Number(rawCount);
+    if (!Number.isSafeInteger(count) || count < 0) continue;
+    totalMatches += count;
+    totalFiles++;
+  }
+
   const occurrenceWord = totalMatches === 1 ? 'occurrence' : 'occurrences';
   const fileWord = totalFiles === 1 ? 'file' : 'files';
   const scope = redactedSensitive ? 'total non-sensitive' : 'total';
   return `Found ${String(totalMatches)} ${scope} ${occurrenceWord} across ${String(totalFiles)} ${fileWord}.`;
+}
+
+function countPayloadFromLegacyLine(line: string): string | undefined {
+  const idx = line.lastIndexOf(':');
+  return idx > 0 ? line.slice(idx + 1) : undefined;
 }

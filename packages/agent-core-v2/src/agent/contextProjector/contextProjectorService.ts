@@ -1,6 +1,7 @@
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ErrorCodes, KimiError } from '#/errors';
 import { IAgentMicroCompactionService } from '#/agent/microCompaction/microCompaction';
@@ -139,7 +140,7 @@ function project(history: readonly ContextMessage[]): Message[] {
   };
 
   const emit = (source: ContextMessage): void => {
-    const content = cleanContent(source);
+    const content = projectedContent(source);
     if (content.length === 0 && source.toolCalls.length === 0) return;
 
     if (canMergeUserMessage(source)) {
@@ -170,7 +171,7 @@ function project(history: readonly ContextMessage[]): Message[] {
       const slot = openSlots.get(message.toolCallId);
       if (slot === undefined) continue;
       openSlots.delete(message.toolCallId);
-      out[slot] = toWireMessage(message, cleanContent(message));
+      out[slot] = toWireMessage(message, projectedContent(message));
       continue;
     }
     emit(message);
@@ -204,10 +205,22 @@ function appendMergeContent(group: MergeGroup, content: readonly ContentPart[]):
   if (text.length > 0) group.texts.push(text);
 }
 
-function cleanContent(source: ContextMessage): ContentPart[] {
-  const content = source.content.some(isBlankText)
-    ? source.content.filter((part) => !isBlankText(part))
-    : source.content;
+function projectedContent(source: ContextMessage): ContentPart[] {
+  const content =
+    source.role === 'tool'
+      ? renderToolResultForModel({
+          output: outputFromToolContent(source.content),
+          isError: source.isError,
+          note: source.note,
+        })
+      : source.content;
+  return cleanContent(source, content);
+}
+
+function cleanContent(source: ContextMessage, rawContent: readonly ContentPart[]): ContentPart[] {
+  const content = rawContent.some(isBlankText)
+    ? rawContent.filter((part) => !isBlankText(part))
+    : rawContent;
   if (source.role === 'tool' && content.length === 0) {
     throw new KimiError(
       ErrorCodes.REQUEST_INVALID,
@@ -215,7 +228,12 @@ function cleanContent(source: ContextMessage): ContentPart[] {
       { details: { toolCallId: source.toolCallId } },
     );
   }
-  return content;
+  return [...content];
+}
+
+function outputFromToolContent(content: readonly ContentPart[]): string | readonly ContentPart[] {
+  const only = content[0];
+  return content.length === 1 && only?.type === 'text' ? only.text : content;
 }
 
 const TOOL_INTERRUPTED_TEXT =

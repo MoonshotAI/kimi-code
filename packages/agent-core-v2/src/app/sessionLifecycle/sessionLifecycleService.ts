@@ -8,7 +8,8 @@
  * its `agentLifecycle` agents, and
  * broadcasts through `event`. Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
- * sessions are the `sessionIndex` read model.
+ * sessions are discovered through the `sessionIndex` read model, and workspace
+ * roots are remembered through `workspaceRegistry`.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -23,7 +24,6 @@ import {
 } from '#/_base/di/scope';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent, MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -32,6 +32,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { ErrorCodes, KimiError } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
+import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -61,6 +62,10 @@ import {
   type SessionWillCloseEvent,
   ISessionLifecycleService,
 } from './sessionLifecycle';
+
+type MaterializeSessionOptions = CreateSessionOptions & {
+  readonly workspaceId?: string;
+};
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -101,8 +106,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async materializeSession(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
-    const workspaceId = encodeWorkDirKey(opts.workDir);
+  private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
+    const workspace = await this.workspaceRegistry.createOrTouch(opts.workDir);
+    const workspaceId = opts.workspaceId ?? workspace.id;
     const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
     const sessionDir = this.bootstrap.sessionDir(workspaceId, opts.sessionId);
     // Metadata lives at `<sessionDir>/state.json` (shared with v1's layout; the
@@ -168,10 +174,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
-    const workspace = await this.workspaceRegistry.get(summary.workspaceId);
-    if (workspace === undefined) return undefined;
+    const workspace =
+      summary.cwd === undefined
+        ? await this.workspaceRegistry.get(summary.workspaceId)
+        : undefined;
+    const workDir = summary.cwd ?? workspace?.root;
+    if (workDir === undefined) return undefined;
 
-    const handle = await this.materializeSession({ sessionId, workDir: workspace.root });
+    const handle = await this.materializeSession({
+      sessionId,
+      workDir,
+      workspaceId: summary.workspaceId,
+    });
     const agents = handle.accessor.get(IAgentLifecycleService);
     if (agents.getHandle(MAIN_AGENT_ID) === undefined) {
       const main = await ensureMainAgent(handle);
@@ -307,13 +321,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     // log. Creating them registers fresh agent entries with TARGET homedirs.
     for (const agentId of agentIds) {
       const sourceAgent = sourceAgents[agentId]!;
-      const legacy = sourceAgent as { parentAgentId?: string };
       const agentHandle = await target.accessor.get(IAgentLifecycleService).create({
         agentId,
-        forkedFrom: sourceAgent.forkedFrom ?? legacy.parentAgentId,
-        labels:
-          sourceAgent.labels ??
-          (sourceAgent.swarmItem !== undefined ? { swarmItem: sourceAgent.swarmItem } : undefined),
+        forkedFrom: sourceAgent.forkedFrom,
+        labels: labelsFromAgentMeta(sourceAgent),
       });
       const forkWireRecord = agentHandle.accessor.get(IAgentWireRecordService);
       await forkWireRecord.restore();

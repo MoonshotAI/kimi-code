@@ -6,6 +6,7 @@ import type {
   GenerateOptions,
   MaxCompletionTokensOptions,
   ProviderRequestAuth,
+  ResponseFormat,
   StreamedMessage,
   ThinkingEffort,
 } from '#/provider';
@@ -59,6 +60,21 @@ const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
 };
+
+function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
+  if (format.type === 'json_object') {
+    return { type: 'json_object' };
+  }
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: format.jsonSchema.name,
+      schema: format.jsonSchema.schema,
+      strict: format.jsonSchema.strict,
+      description: format.jsonSchema.description,
+    },
+  };
+}
 
 function extractReasoningContent(
   source: unknown,
@@ -571,6 +587,9 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       stream: this._stream,
       ...kwargs,
     };
+    if (options?.responseFormat !== undefined) {
+      createParams['response_format'] = responseFormatToOpenAI(options.responseFormat);
+    }
 
     if (tools.length > 0) {
       createParams['tools'] = tools.map((t) => toolToOpenAI(t));

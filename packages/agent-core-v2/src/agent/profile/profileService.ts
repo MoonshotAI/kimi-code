@@ -35,7 +35,7 @@ import picomatch from 'picomatch';
 import { ErrorCodes, KimiError } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { resolveThinkingEffort } from './thinking';
+import { resolveThinkingEffort, resolveThinkingKeep } from './thinking';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -518,35 +518,9 @@ export class AgentProfileService implements IAgentProfileService {
   }
 }
 
-const KEEP_OFF_VALUES = new Set(['0', 'false', 'no', 'off', 'none', 'null']);
-
-type KeepResolution =
-  | { readonly specified: false }
-  | { readonly specified: true; readonly value: string | undefined };
-
-function parseKeepValue(raw: string | undefined): KeepResolution {
-  const trimmed = raw?.trim();
-  if (trimmed === undefined || trimmed.length === 0) return { specified: false };
-  if (KEEP_OFF_VALUES.has(trimmed.toLowerCase())) return { specified: true, value: undefined };
-  return { specified: true, value: trimmed };
-}
-
 function normalizeKimiThinkingEffort(raw: string | undefined): ThinkingEffort | undefined {
   const trimmed = raw?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
-function resolveThinkingKeep(
-  envKeep: string | undefined,
-  configKeep: string | undefined,
-  thinkingEffort: ThinkingEffort,
-): string | undefined {
-  if (thinkingEffort === 'off') return undefined;
-  const fromEnv = parseKeepValue(envKeep);
-  if (fromEnv.specified) return fromEnv.value;
-  const fromConfig = parseKeepValue(configKeep);
-  if (fromConfig.specified) return fromConfig.value;
-  return 'all';
 }
 
 registerScopedService(

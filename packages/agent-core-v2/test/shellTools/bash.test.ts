@@ -1646,6 +1646,8 @@ describe('BashTool background mode', () => {
     expect(output).toContain('task_id:');
     expect(output).toContain('status: running');
     expect(output).toContain('automatic_notification: true');
+    expect(output).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(output).not.toContain('block=false');
     expect(output).toContain('human_shell_hint:');
     expect(output).toContain('/tasks');
   });

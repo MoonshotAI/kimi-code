@@ -14,8 +14,6 @@ import { renderNotificationXml } from '#/agent/task/notificationXml';
 import { AgentTaskService } from '#/agent/task/taskService';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import type { IProcess } from '#/session/process/processRunner';
-import { IEventBus } from '#/app/event/eventBus';
-import { EventBusService } from '#/app/event/eventBusService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -27,6 +25,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
+import { IEventBus } from '#/app/event/eventBus';
+import { ITaskService } from '#/app/task/task';
 
 import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
 
@@ -64,6 +64,18 @@ describe('AgentTaskService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAgentWireRecordService, stubWireRecord());
     ix.stub(IAgentWireService, stubWireService());
+    ix.stub(IEventBus, {
+      publish: () => {},
+      subscribe: () => toDisposable(() => {}),
+    });
+    ix.stub(ITaskService, {
+      run: () => {
+        throw new Error('ITaskService.run is not used by this test');
+      },
+      defer: () => {
+        throw new Error('ITaskService.defer is not used by this test');
+      },
+    });
     ix.stub(IAgentContextMemoryService, stubContextMemory());
     ix.stub(ITelemetryService, { track: () => {} });
     ix.stub(IAgentToolRegistryService, {
@@ -101,7 +113,6 @@ describe('AgentTaskService', () => {
       flush: async () => {},
       close: async () => {},
     });
-    ix.set(IEventBus, new SyncDescriptor(EventBusService));
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
   });
   afterEach(() => disposables.dispose());

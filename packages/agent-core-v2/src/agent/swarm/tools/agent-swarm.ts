@@ -2,10 +2,10 @@
  * `swarm` domain (L4) — `AgentSwarm` collaboration tool.
  *
  * Launches a batch of child agents (an ordinary Agent scope each) through the
- * session swarm coordinator and renders the per-subagent XML result. Keeps a
- * module-level map of spawned agent id → swarm item so a later
- * `resume_agent_ids` call can relabel resumed subagents. Pure tool — owns no
- * scoped state.
+ * session swarm coordinator and renders the per-subagent XML result. Reads
+ * persisted swarm item labels through the Session-scoped coordinator so later
+ * `resume_agent_ids` calls relabel resumed subagents like v1. Pure tool —
+ * owns no scoped state.
  */
 
 import { z } from 'zod';
@@ -24,8 +24,6 @@ const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 const PROMPT_TEMPLATE_PLACEHOLDER = '{{item}}';
 const MAX_AGENT_SWARM_SUBAGENTS = 128;
 
-const swarmItems = new Map<string, string>();
-
 export const AgentSwarmToolInputSchema = z
   .object({
     description: z
@@ -39,7 +37,7 @@ export const AgentSwarmToolInputSchema = z
       .min(1)
       .optional()
       .describe(
-        'Subagent type used for every spawned subagent. Defaults to coder when omitted.',
+        'Subagent type used for every new subagent spawned from items; defaults to coder when omitted. Resumed subagents always keep their original type, so passing subagent_type together with resume_agent_ids is allowed — it only affects the item-based spawns.',
       ),
     prompt_template: z
       .string()
@@ -147,7 +145,9 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
-    const specs = createAgentSwarmSpecs(args, (id) => swarmItems.get(id));
+    const specs = await createAgentSwarmSpecs(args, (agentId) =>
+      this.swarmService.getSwarmItem({ callerAgentId: this.callerAgentId, agentId }),
+    );
     const tasks: SessionSwarmTask<AgentSwarmSpec>[] = specs.map((spec) => {
       const descriptionName = spec.kind === 'resume' ? 'resume' : profileName;
       const common = {
@@ -178,11 +178,6 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       callerAgentId: this.callerAgentId,
       tasks,
     });
-    for (const result of results) {
-      if (result.agentId !== undefined && result.task.swarmItem !== undefined) {
-        swarmItems.set(result.agentId, result.task.swarmItem);
-      }
-    }
     return renderSwarmResults(
       results.map(({ task, ...result }) => ({ spec: task.data as AgentSwarmSpec, ...result })),
     );
@@ -191,10 +186,10 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
 
 registerTool(AgentSwarmTool);
 
-function createAgentSwarmSpecs(
+async function createAgentSwarmSpecs(
   args: AgentSwarmToolInput,
-  getResumeItem: (agentId: string) => string | undefined,
-): AgentSwarmSpec[] {
+  getResumeItem: (agentId: string) => Promise<string | undefined>,
+): Promise<AgentSwarmSpec[]> {
   const resumeEntries = Object.entries(args.resume_agent_ids ?? {}).map(([agentId, prompt]) => ({
     agentId: agentId.trim(),
     prompt: prompt.trim(),
@@ -226,7 +221,7 @@ function createAgentSwarmSpecs(
       kind: 'resume',
       index: specs.length + 1,
       agentId: entry.agentId,
-      item: getResumeItem(entry.agentId),
+      item: await getResumeItem(entry.agentId),
       prompt: entry.prompt,
     });
   }

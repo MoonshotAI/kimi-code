@@ -547,6 +547,9 @@ importers:
       socks:
         specifier: ^2.8.9
         version: 2.8.9
+      tar:
+        specifier: ^7.5.13
+        version: 7.5.13
       ulid:
         specifier: ^3.0.1
         version: 3.0.2
@@ -587,6 +590,9 @@ importers:
       '@types/sinon':
         specifier: ^21.0.1
         version: 21.0.1
+      '@types/tar':
+        specifier: ^7.0.87
+        version: 7.0.87
       '@types/yauzl':
         specifier: ^2.10.3
         version: 2.10.3

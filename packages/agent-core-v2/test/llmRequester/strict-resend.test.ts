@@ -18,6 +18,8 @@ import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { LLMEvent, Model } from '#/app/model/modelInstance';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
+import { IAgentWireService } from '#/wire/tokens';
+import { WireService } from '#/wire/wireServiceImpl';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const capabilities: ModelCapability = {
@@ -125,6 +127,10 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
+  ix.set(
+    IAgentWireService,
+    new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'strict-resend' }]),
+  );
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
   return ix.get(IAgentLLMRequesterService);

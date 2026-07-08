@@ -26,6 +26,8 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IEventBus } from '#/app/event/eventBus';
+import { ErrorCodes, makeErrorPayload } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -245,6 +247,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const manager = this.getMcpManager();
     const initialLoad = this.connectMcpServers(manager).catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
+      const message = error instanceof Error ? error.message : String(error);
+      this.handles.get('main')?.accessor.get(IEventBus)?.publish({
+        type: 'error',
+        ...makeErrorPayload(ErrorCodes.MCP_STARTUP_FAILED, message),
+      });
     });
     this.mcpInitialLoad = initialLoad;
     return initialLoad;

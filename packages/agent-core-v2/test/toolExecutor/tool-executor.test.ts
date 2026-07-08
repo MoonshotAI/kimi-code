@@ -100,6 +100,50 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('preserves internal result notes without exposing them on protocol tool.result events', async () => {
+    const tool = new TestTool('captioned', {
+      result: {
+        output: 'image sent',
+        note: '<system>Image compressed.</system>',
+      },
+    });
+    registry.register(tool);
+
+    const results = await execute([toolCall('call_captioned', 'captioned', {})]);
+
+    expect(results[0]).toMatchObject({
+      output: 'image sent',
+      note: '<system>Image compressed.</system>',
+    });
+    const protocolResult = protocolEvents.find(
+      (event): event is Extract<AgentEvent, { type: 'tool.result' }> =>
+        event.type === 'tool.result',
+    );
+    expect(protocolResult).toMatchObject({
+      type: 'tool.result',
+      toolCallId: 'call_captioned',
+      output: 'image sent',
+    });
+    expect(protocolResult as unknown as Record<string, unknown>).not.toHaveProperty('note');
+  });
+
+  it('drops malformed notes and non-true truncated flags from internal results', async () => {
+    const tool = new TestTool('malformed-meta', {
+      result: {
+        output: 'image sent',
+        note: 123,
+        truncated: false,
+      } as unknown as ExecutableToolResult,
+    });
+    registry.register(tool);
+
+    const results = await execute([toolCall('call_malformed_meta', 'malformed-meta', {})]);
+
+    expect(results[0]).toMatchObject({ output: 'image sent' });
+    expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('note');
+    expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('truncated');
+  });
+
   it('records an error tool.result when the tool name is unknown', async () => {
     const results = await execute([toolCall('call_missing', 'missing', { text: 'hi' })]);
 

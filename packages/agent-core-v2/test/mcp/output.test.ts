@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/agent/mcp/types';
@@ -26,6 +27,29 @@ function assertValidMcpBlock<T extends MCPContentBlock>(block: T): T {
     throw new Error(`fixture is not a valid MCP ContentBlock: ${parsed.error.message}`);
   }
   return block;
+}
+
+interface TelemetryRecord {
+  readonly event: string;
+  readonly properties: Readonly<Record<string, unknown>> | undefined;
+}
+
+function recordingTelemetry(records: TelemetryRecord[]): ITelemetryService {
+  const telemetry: ITelemetryService = {
+    _serviceBrand: undefined,
+    track(event, properties) {
+      records.push({ event, properties });
+    },
+    withContext: () => telemetry,
+    setContext: () => {},
+    addAppender: () => ({ dispose: () => {} }),
+    removeAppender: () => {},
+    setAppender: () => {},
+    setEnabled: () => {},
+    flush: async () => {},
+    shutdown: async () => {},
+  };
+  return telemetry;
 }
 
 describe('convertMCPContentBlock', () => {
@@ -321,7 +345,7 @@ describe('mcpResultToExecutableOutput', () => {
       { type: 'text', text: 'A'.repeat(100_000) },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,' + 'B'.repeat(500_000) } },
     ]);
-    expect(out).not.toHaveProperty('truncated');
+    expect(out.truncated).toBeUndefined();
   });
 
   test('downsamples an oversized real image instead of leaving it full-size', async () => {
@@ -358,15 +382,12 @@ describe('mcpResultToExecutableOutput', () => {
     );
 
     const parts = out.output as ContentPart[];
-    const captionIndex = parts.findIndex(
-      (p) => p.type === 'text' && p.text.includes('Image compressed'),
-    );
-    expect(captionIndex).toBeGreaterThanOrEqual(0);
-    const caption = (parts[captionIndex] as { text: string }).text;
+    const caption = out.note;
+    expect(caption).toContain('Image compressed');
     expect(caption).toContain('2600x2600');
-    expect(parts[captionIndex + 1]?.type).toBe('image_url');
+    expect(parts.some((p) => p.type === 'image_url')).toBe(true);
 
-    const pathMatch = /saved at "([^"]+)"/.exec(caption);
+    const pathMatch = /saved at "([^"]+)"/.exec(caption!);
     expect(pathMatch).not.toBeNull();
     const persisted = await readFile(pathMatch![1]!);
     expect(persisted.equals(bigBytes)).toBe(true);
@@ -383,9 +404,38 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__shot',
     );
 
-    const parts = out.output as ContentPart[];
-    const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
-    expect(joined).not.toContain('Image compressed');
+    expect(out.note).toBeUndefined();
+  });
+
+  test('reports MCP image compression telemetry with the MCP tool-result source', async () => {
+    const records: TelemetryRecord[] = [];
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: big, mimeType: 'image/png' }]),
+      'mcp__s__shot',
+      { telemetry: recordingTelemetry(records) },
+    );
+
+    const events = records.filter((record) => record.event === 'image_compress');
+    expect(events).toHaveLength(1);
+    const properties = events[0]!.properties;
+    expect(properties).toEqual(
+      expect.objectContaining({
+        source: 'mcp_tool_result',
+        outcome: 'compressed',
+        input_mime: 'image/png',
+        output_mime: 'image/png',
+        original_width: 2600,
+        original_height: 2600,
+        exif_transposed: false,
+      }),
+    );
+    expect(properties?.['final_width']).toBeLessThanOrEqual(2000);
+    expect(properties?.['final_height']).toBeLessThanOrEqual(2000);
+    expect(properties?.['duration_ms']).toEqual(expect.any(Number));
   });
 
   test('persists originals into the provided session originals dir', async () => {
@@ -400,10 +450,9 @@ describe('mcpResultToExecutableOutput', () => {
       { originalsDir: dir },
     );
 
-    const parts = out.output as ContentPart[];
-    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
-    if (caption?.type !== 'text') throw new Error('expected a compression caption');
-    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
+    const caption = out.note;
+    expect(caption).toContain('Image compressed');
+    const pathMatch = /saved at "([^"]+)"/.exec(caption!);
     expect(pathMatch).not.toBeNull();
     expect(pathMatch![1]!.startsWith(dir)).toBe(true);
     const persisted = await readFile(pathMatch![1]!);
@@ -432,10 +481,8 @@ describe('mcpResultToExecutableOutput', () => {
     const toolText = parts[0];
     if (toolText?.type !== 'text') throw new Error('expected the tool text part first');
     expect(toolText.text).toContain('Output truncated');
-    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
-    if (caption?.type !== 'text') throw new Error('expected a compression caption');
-    expect(caption.text).toMatch(/<\/system>$/);
-    expect(caption.text).toContain('saved at');
+    expect(out.note).toMatch(/<\/system>$/);
+    expect(out.note).toContain('saved at');
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -454,13 +501,11 @@ describe('mcpResultToExecutableOutput', () => {
       { originalsDir: dir },
     );
 
-    const parts = out.output as ContentPart[];
     expect(out.truncated).toBeUndefined();
-    const caption = parts.find((p) => p.type === 'text' && p.text.includes('Image compressed'));
-    if (caption?.type !== 'text') throw new Error('expected a compression caption');
-    expect(caption.text).toMatch(/^<system>Image compressed/);
-    expect(caption.text).toMatch(/<\/system>$/);
-    expect(caption.text).toContain('saved at');
+    expect(out.note).toMatch(/^<system>Image compressed/);
+    expect(out.note).toMatch(/<\/system>$/);
+    expect(out.note).toContain('saved at');
+    const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('Output truncated');
     await rm(dir, { recursive: true, force: true });

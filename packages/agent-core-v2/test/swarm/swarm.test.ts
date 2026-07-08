@@ -45,12 +45,15 @@ function context<Input>(
 
 function mockSwarmHost({
   run = vi.fn().mockResolvedValue([]),
+  getSwarmItem = vi.fn().mockResolvedValue(undefined),
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly run?: (...args: any[]) => any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly getSwarmItem?: (...args: any[]) => any;
 } = {}) {
   return {
-    swarmService: { _serviceBrand: undefined, run, cancel: vi.fn() },
+    swarmService: { _serviceBrand: undefined, getSwarmItem, run, cancel: vi.fn() },
     callerAgentId: 'main',
   };
 }
@@ -78,7 +81,11 @@ describe('AgentSwarmService', () => {
     ix.stub(IAgentTurnService, stubTurnWithHooks());
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.stub(IAgentLifecycleService, {});
-    ix.stub(ISessionSwarmService, { run: async () => [], cancel: () => {} });
+    ix.stub(ISessionSwarmService, {
+      getSwarmItem: async () => undefined,
+      run: async () => [],
+      cancel: () => {},
+    });
     ix.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
     ix.set(IAgentSystemReminderService, new SyncDescriptor(AgentSystemReminderService));
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
@@ -200,6 +207,16 @@ describe('AgentSwarmTool', () => {
         subagent_type: { type: 'string' },
       },
     });
+    expect(
+      (
+        tool.parameters['properties'] as Record<
+          string,
+          { readonly description?: string }
+        >
+      )['subagent_type']?.description,
+    ).toBe(
+      'Subagent type used for every new subagent spawned from items; defaults to coder when omitted. Resumed subagents always keep their original type, so passing subagent_type together with resume_agent_ids is allowed — it only affects the item-based spawns.',
+    );
     expect(Object.keys(tool.parameters['properties'] as Record<string, unknown>).at(-1)).toBe(
       'resume_agent_ids',
     );
@@ -340,38 +357,29 @@ describe('AgentSwarmTool', () => {
   });
 
   it('resumes mapped agents before spawning item subagents', async () => {
-    let runCallCount = 0;
     const run = vi.fn(
       async <T>({
         tasks,
       }: {
         tasks: readonly SessionSwarmTask<T>[];
       }): Promise<Array<SessionSwarmRunResult<T>>> => {
-        runCallCount++;
         return tasks.map((task, index) => ({
           task,
-          agentId:
-            task.kind === 'resume'
-              ? task.resumeAgentId
-              : runCallCount === 1
-                ? `agent-old-${String(index + 1)}`
-                : `agent-new-${String(index + 1)}`,
+          agentId: task.kind === 'resume' ? task.resumeAgentId : `agent-new-${String(index + 1)}`,
           status: 'completed' as const,
           result: `result ${String(index + 1)}`,
         }));
       },
     );
-    const host = mockSwarmHost({ run });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
-    // Seed the module-level swarm item map so resume_agent_ids can recover the original items.
-    await executeTool(
-      tool,
-      context({
-        description: 'Seed swarm items',
-        prompt_template: 'Review {{item}}',
-        items: ['src/old-a.ts', 'src/old-b.ts'],
-      }),
+    const persistedItems: Record<string, string> = {
+      'agent-old-1': 'src/old-a.ts',
+      'agent-old-2': 'src/old-b.ts',
+    };
+    const getSwarmItem = vi.fn(
+      async ({ agentId }: { readonly agentId: string }) => persistedItems[agentId],
     );
+    const host = mockSwarmHost({ run, getSwarmItem });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
     const input = {
       description: 'Finish review',
       subagent_type: 'explore',
@@ -393,6 +401,14 @@ describe('AgentSwarmTool', () => {
 
     const result = await executeTool(tool, context(input));
 
+    expect(getSwarmItem).toHaveBeenCalledWith({
+      callerAgentId: 'main',
+      agentId: 'agent-old-1',
+    });
+    expect(getSwarmItem).toHaveBeenCalledWith({
+      callerAgentId: 'main',
+      agentId: 'agent-old-2',
+    });
     expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
       {
         kind: 'resume',
@@ -467,38 +483,23 @@ describe('AgentSwarmTool', () => {
   });
 
   it('allows a single resumed subagent without item subagents', async () => {
-    let runCallCount = 0;
     const run = vi.fn(
       async <T>({
         tasks,
       }: {
         tasks: readonly SessionSwarmTask<T>[];
       }): Promise<Array<SessionSwarmRunResult<T>>> => {
-        runCallCount++;
         return tasks.map((task, index) => ({
           task,
-          agentId:
-            task.kind === 'resume'
-              ? task.resumeAgentId
-              : runCallCount === 1
-                ? `agent-old-${String(index + 1)}`
-                : 'agent-new',
+          agentId: task.kind === 'resume' ? task.resumeAgentId : `agent-new-${String(index + 1)}`,
           status: 'completed' as const,
           result: 'resumed result',
         }));
       },
     );
-    const host = mockSwarmHost({ run });
+    const getSwarmItem = vi.fn(async () => 'src/old-a.ts');
+    const host = mockSwarmHost({ run, getSwarmItem });
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
-    // Seed the module-level swarm item map so resume_agent_ids can recover the original item.
-    await executeTool(
-      tool,
-      context({
-        description: 'Seed swarm items',
-        prompt_template: 'Review {{item}}',
-        items: ['src/old-a.ts', 'src/old-b.ts'],
-      }),
-    );
     const input = {
       description: 'Resume review',
       resume_agent_ids: {
@@ -508,6 +509,10 @@ describe('AgentSwarmTool', () => {
 
     const result = await executeTool(tool, context(input));
 
+    expect(getSwarmItem).toHaveBeenCalledWith({
+      callerAgentId: 'main',
+      agentId: 'agent-old-1',
+    });
     expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
       {
         kind: 'resume',

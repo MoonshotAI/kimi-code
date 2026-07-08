@@ -226,6 +226,22 @@ describe('ws-control — §3.2 client_hello', () => {
     expect(result.success).toBe(true);
   });
 
+  it('client_hello accepts an agent_filter map', () => {
+    const result = clientHelloMessageSchema.safeParse({
+      type: 'client_hello',
+      id: 'c1',
+      payload: {
+        client_id: 'web_abc',
+        subscriptions: ['sess_1', 'sess_2'],
+        agent_filter: {
+          sess_1: ['main'],
+          sess_2: ['main', 'agent-0'],
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('client_hello rejects the v1 bare-seq cursor map', () => {
     const result = clientHelloMessageSchema.safeParse({
       type: 'client_hello',
@@ -262,6 +278,42 @@ describe('ws-control — §3.3 subscribe / unsubscribe', () => {
       },
     });
     expect(result.success).toBe(true);
+  });
+
+  it('subscribe accepts an agent_filter map', () => {
+    const result = subscribeMessageSchema.safeParse({
+      type: 'subscribe',
+      id: 'c2',
+      payload: {
+        session_ids: ['sess_1', 'sess_2'],
+        agent_filter: {
+          sess_1: ['main'],
+          sess_2: ['main', 'agent-0'],
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('subscribe accepts a missing agent_filter (legacy session-grained behavior)', () => {
+    const result = subscribeMessageSchema.safeParse({
+      type: 'subscribe',
+      id: 'c2',
+      payload: { session_ids: ['sess_1'] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('subscribe rejects an empty agent_filter allowlist', () => {
+    const result = subscribeMessageSchema.safeParse({
+      type: 'subscribe',
+      id: 'c2',
+      payload: {
+        session_ids: ['sess_1'],
+        agent_filter: { sess_1: [] },
+      },
+    });
+    expect(result.success).toBe(false);
   });
 
   it('subscribe rejects missing session_ids', () => {

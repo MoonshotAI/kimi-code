@@ -237,4 +237,46 @@ describe('server-v2 /api/v1/ws resync', () => {
     c.ws.close();
     await c.closed;
   });
+
+  it('delivers only the allowlisted agent events via agent_filter', async () => {
+    const sid = await createSession();
+    await ensureMainAgent(sid);
+
+    // Add a second agent to the same session so we can distinguish sources.
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    expect(session).toBeDefined();
+    const agents = session!.accessor.get(IAgentLifecycleService);
+    const sub = await agents.create({ agentId: 'agent-0' });
+
+    const c = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c.next((f) => f.type === 'server_hello');
+    c.send({
+      type: 'client_hello',
+      id: 'h1',
+      payload: withToken({
+        client_id: 'cli',
+        subscriptions: [sid],
+        agent_filter: { [sid]: ['main'] },
+      }),
+    });
+    await c.next((f) => f.type === 'ack' && f.id === 'h1');
+
+    // Emit one durable event per agent — only `main` is allowlisted.
+    agents
+      .getHandle('main')!
+      .accessor.get(IEventBus)
+      .publish({ type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
+    sub.accessor
+      .get(IEventBus)
+      .publish({ type: 'turn.ended', turnId: 2 } as unknown as DomainEvent);
+
+    const ev = await c.next((f) => f.type === 'turn.ended');
+    expect(ev.payload).toMatchObject({ agentId: 'main' });
+
+    // The agent-0 event is filtered out — no second turn.ended arrives.
+    await expect(c.next((f) => f.type === 'turn.ended', 300)).rejects.toThrow();
+
+    c.ws.close();
+    await c.closed;
+  });
 });

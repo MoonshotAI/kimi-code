@@ -53,6 +53,16 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
     this._register(this.wire.onRestored(() => this.restoreRegisteredTools()));
   }
 
+  list(): readonly UserToolRegistration[] {
+    return [...this.wire.getModel(UserToolModel).values()];
+  }
+
+  inheritUserTools(parent: IAgentUserToolService): void {
+    for (const registration of parent.list()) {
+      this.register(registration);
+    }
+  }
+
   register(input: UserToolRegistration): void {
     this.wire.dispatch(registerUserTool(input));
     this.applyRegister(input);

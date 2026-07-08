@@ -49,12 +49,12 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, KimiError } from '#/errors';
 import { IGitService } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
+import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { type FsDownloadResolved, type FsPathResolved, ISessionFsService } from './fs';
-import { runCommand } from './fsProcess';
+import { readStream, runCommand } from './fsProcess';
 import { ensureRgPath, type RgProbe, type RgResolution } from './rgLocator';
 import {
   compileGrepPattern,
@@ -491,12 +491,60 @@ export class SessionFsService implements ISessionFsService {
     args.push(req.pattern);
     args.push('.');
 
-    const res = await runCommand(this.runner, [rgPath, ...args], {
-      cwd: this.workspace.workDir,
-      signal,
-    });
+    const proc = await this.runner.exec([rgPath, ...args], { cwd: this.workspace.workDir });
 
-    return parseRgJsonOutput(res.stdout, req, signal.aborted, Date.now() - startedAt);
+    // Stream `--json` records as they arrive so we can stop `rg` the moment a
+    // cap (`max_total_matches` / `max_files`) is hit, instead of buffering the
+    // whole output and letting rg scan the entire tree. The accumulator drops
+    // any records that were already buffered before the kill landed.
+    const acc = new RgJsonAccumulator(req);
+    let killed = false;
+    const kill = (): void => {
+      if (killed) return;
+      killed = true;
+      void proc.kill('SIGKILL');
+    };
+    const onAbort = (): void => kill();
+    if (signal.aborted) kill();
+    else signal.addEventListener('abort', onAbort, { once: true });
+
+    let stdoutBuf = '';
+    const drainStdout = async (): Promise<void> => {
+      proc.stdout.setEncoding('utf-8');
+      try {
+        for await (const chunk of proc.stdout) {
+          stdoutBuf += chunk as string;
+          let nl = stdoutBuf.indexOf('\n');
+          while (nl >= 0) {
+            const line = stdoutBuf.slice(0, nl);
+            stdoutBuf = stdoutBuf.slice(nl + 1);
+            if (line.length > 0) {
+              acc.feed(line);
+              if (acc.capped) kill();
+            }
+            nl = stdoutBuf.indexOf('\n');
+          }
+        }
+        if (stdoutBuf.length > 0) acc.feed(stdoutBuf);
+      } catch (error) {
+        // Once we kill rg (cap reached / abort / timeout) the pipe can close
+        // mid-read; that is the intended early stop, not a search failure.
+        if (!(killed && isPrematureCloseError(error))) throw error;
+      }
+    };
+
+    try {
+      await Promise.all([drainStdout(), readStream(proc.stderr), proc.wait().catch(() => -1)]);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      try {
+        proc.dispose();
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+
+    return acc.finish(signal.aborted, Date.now() - startedAt);
   }
 
   private async grepWithNode(
@@ -582,23 +630,29 @@ export class SessionFsService implements ISessionFsService {
     depth = 0,
   ): Promise<void> {
     if (depth > WALK_MAX_DEPTH) return;
-    let names: readonly string[];
+    let entries: readonly HostDirEntry[];
     try {
-      names = (await this.hostFs.readdir(this.absOf(rootRel))).map((e) => e.name);
+      entries = await this.hostFs.readdir(this.absOf(rootRel));
     } catch {
       return;
     }
-    for (const name of names) {
+    for (const entry of entries) {
+      const { name } = entry;
       if (name === '.git') continue;
       const childRel = rootRel === '' ? name : `${rootRel}/${name}`;
-      const st = await this.hostFs.stat(this.absOf(childRel)).catch(() => undefined);
-      if (st === undefined) continue;
-      const isDir = st.isDirectory;
+      // Symlinks are reported as themselves and never descended into — a
+      // symlinked directory must not be treated as a traversable directory,
+      // otherwise search could escape the workspace through the link target.
+      const isDir = entry.isDirectory && entry.isSymbolicLink !== true;
       if (matcher) {
         const probe = isDir ? `${childRel}/` : childRel;
         if (matcher.ignores(probe)) continue;
       }
-      const kind: 'file' | 'directory' | 'symlink' = isDir ? 'directory' : 'file';
+      const kind: 'file' | 'directory' | 'symlink' = entry.isSymbolicLink
+        ? 'symlink'
+        : isDir
+          ? 'directory'
+          : 'file';
       await visit(childRel, name, kind);
       if (isDir) {
         await this.walk(childRel, matcher, visit, depth + 1);
@@ -678,99 +732,115 @@ export class SessionFsService implements ISessionFsService {
   }
 }
 
-function parseRgJsonOutput(
-  stdout: string,
-  req: FsGrepRequest,
-  aborted: boolean,
-  elapsedMs: number,
-): FsGrepResponse {
-  const fileBuf = new Map<
+/**
+ * Incremental accumulator for ripgrep `--json` output. Fed one record per line
+ * by `grepWithRg` so the caller can kill `rg` as soon as `max_total_matches`
+ * or `max_files` is reached (see {@link RgJsonAccumulator.capped}). Records
+ * buffered in the pipe after the cap are dropped by the same `>=` guards that
+ * bound the live counts.
+ */
+class RgJsonAccumulator {
+  private readonly fileBuf = new Map<
     string,
     { matches: FsGrepMatch[]; pending: string[]; lastMatchLine: number }
   >();
-  const files: FsGrepFileHit[] = [];
-  let totalMatches = 0;
-  let truncated = false;
-  let filesScanned = 0;
+  private readonly files: FsGrepFileHit[] = [];
+  private totalMatches = 0;
+  private filesScanned = 0;
+  private truncated = false;
 
-  const finalize = (p: string): void => {
-    const buf = fileBuf.get(p);
-    if (buf === undefined) return;
-    if (buf.matches.length > 0 && buf.pending.length > 0) {
-      const last = buf.matches[buf.matches.length - 1]!;
-      last.after = buf.pending.slice(0, req.context_lines);
-    }
-    if (buf.matches.length > 0) {
-      files.push({ path: p, matches: buf.matches });
-    }
-    fileBuf.delete(p);
-  };
+  constructor(private readonly req: FsGrepRequest) {}
 
-  for (const line of stdout.split('\n')) {
-    if (line.length === 0) continue;
+  /** `true` once either output cap has been reached and `rg` should be stopped. */
+  get capped(): boolean {
+    return (
+      this.totalMatches >= this.req.max_total_matches || this.filesScanned >= this.req.max_files
+    );
+  }
+
+  feed(line: string): void {
     let rec: RgJsonRecord;
     try {
       rec = JSON.parse(line) as RgJsonRecord;
     } catch {
-      continue;
+      return;
     }
     const t = rec.type;
     if (t === 'begin') {
       const p = rgPath(rec.data?.path);
-      if (p === undefined) continue;
-      if (filesScanned >= req.max_files) {
-        truncated = true;
-        continue;
+      if (p === undefined) return;
+      if (this.filesScanned >= this.req.max_files) {
+        this.truncated = true;
+        return;
       }
-      fileBuf.set(p, { matches: [], pending: [], lastMatchLine: -1 });
-      filesScanned += 1;
+      this.fileBuf.set(p, { matches: [], pending: [], lastMatchLine: -1 });
+      this.filesScanned += 1;
     } else if (t === 'context') {
       const p = rgPath(rec.data?.path);
-      if (p === undefined) continue;
-      const buf = fileBuf.get(p);
-      if (buf === undefined) continue;
+      if (p === undefined) return;
+      const buf = this.fileBuf.get(p);
+      if (buf === undefined) return;
       buf.pending.push(stripTrailingNewline(rgText(rec.data?.lines)));
-      if (buf.pending.length > req.context_lines * 2) {
+      if (buf.pending.length > this.req.context_lines * 2) {
         buf.pending.shift();
       }
     } else if (t === 'match') {
       const p = rgPath(rec.data?.path);
-      if (p === undefined) continue;
-      const buf = fileBuf.get(p);
-      if (buf === undefined) continue;
-      if (totalMatches >= req.max_total_matches) {
-        truncated = true;
-        continue;
+      if (p === undefined) return;
+      const buf = this.fileBuf.get(p);
+      if (buf === undefined) return;
+      if (this.totalMatches >= this.req.max_total_matches) {
+        this.truncated = true;
+        return;
       }
-      if (buf.matches.length >= req.max_matches_per_file) continue;
+      if (buf.matches.length >= this.req.max_matches_per_file) return;
       const text = stripTrailingNewline(rgText(rec.data?.lines));
       const lineNo = rec.data?.line_number ?? 0;
       const col = (rec.data?.submatches?.[0]?.start ?? 0) + 1;
-      const before = buf.pending.slice(-req.context_lines);
+      const before = buf.pending.slice(-this.req.context_lines);
       buf.pending.length = 0;
       buf.matches.push({ line: lineNo, col, text, before, after: [] });
       buf.lastMatchLine = lineNo;
-      totalMatches += 1;
-      if (totalMatches >= req.max_total_matches) truncated = true;
+      this.totalMatches += 1;
+      if (this.totalMatches >= this.req.max_total_matches) this.truncated = true;
     } else if (t === 'end') {
       const p = rgPath(rec.data?.path);
-      if (p === undefined) continue;
-      finalize(p);
+      if (p === undefined) return;
+      this.finalize(p);
     }
   }
 
-  for (const p of fileBuf.keys()) {
-    finalize(p);
-  }
-
-  if (aborted) {
-    if (totalMatches === 0 && filesScanned === 0) {
-      throw new KimiError(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${elapsedMs}ms`);
+  finish(aborted: boolean, elapsedMs: number): FsGrepResponse {
+    for (const p of this.fileBuf.keys()) {
+      this.finalize(p);
     }
-    truncated = true;
+    let truncated = this.truncated;
+    if (aborted) {
+      if (this.totalMatches === 0 && this.filesScanned === 0) {
+        throw new KimiError(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${elapsedMs}ms`);
+      }
+      truncated = true;
+    }
+    return {
+      files: this.files,
+      files_scanned: this.filesScanned,
+      truncated,
+      elapsed_ms: elapsedMs,
+    };
   }
 
-  return { files, files_scanned: filesScanned, truncated, elapsed_ms: elapsedMs };
+  private finalize(p: string): void {
+    const buf = this.fileBuf.get(p);
+    if (buf === undefined) return;
+    if (buf.matches.length > 0 && buf.pending.length > 0) {
+      const last = buf.matches[buf.matches.length - 1]!;
+      last.after = buf.pending.slice(0, this.req.context_lines);
+    }
+    if (buf.matches.length > 0) {
+      this.files.push({ path: p, matches: buf.matches });
+    }
+    this.fileBuf.delete(p);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -780,6 +850,13 @@ function parseRgJsonOutput(
 
 function isHidden(name: string): boolean {
   return HIDDEN_NAME_RE.test(name) || MACOS_NOISE.has(name);
+}
+
+function isPrematureCloseError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE'
+  );
 }
 
 function sortChildren(
@@ -814,7 +891,11 @@ function buildFsEntry(
   st: HostFileStat,
   withMime: boolean,
 ): FsEntry {
-  const kind: FsEntry['kind'] = st.isDirectory ? 'directory' : 'file';
+  const kind: FsEntry['kind'] = st.isSymbolicLink
+    ? 'symlink'
+    : st.isDirectory
+      ? 'directory'
+      : 'file';
   const entry: FsEntry = {
     path: relPath,
     name,

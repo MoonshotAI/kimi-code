@@ -1,5 +1,5 @@
 /**
- * TaskListTool — list managed tasks.
+ * TaskListTool — list background tasks.
  */
 
 import { z } from 'zod';
@@ -21,7 +21,7 @@ export const TaskListInputSchema = z.object({
     .boolean()
     .optional()
     .default(true)
-    .describe('Whether to list only non-terminal tasks.'),
+    .describe('Whether to list only non-terminal background tasks.'),
   limit: z
     .number()
     .int()
@@ -39,9 +39,9 @@ export type TaskListInput = z.infer<typeof TaskListInputSchema>;
 function formatTaskList(tasks: readonly AgentTaskInfo[], activeOnly: boolean): string {
   // `active_only=false` mixes in terminal/lost tasks, so the count is no
   // longer purely "active" — use a neutral label to avoid mislabeling them.
-  const label = activeOnly ? 'active_tasks' : 'tasks';
+  const label = activeOnly ? 'active_background_tasks' : 'background_tasks';
   const header = `${label}: ${String(tasks.length)}`;
-  if (tasks.length === 0) return `${header}\nNo tasks found.`;
+  if (tasks.length === 0) return `${header}\nNo background tasks found.`;
   return `${header}\n${tasks.map((task) => formatPlainObject(task)).join('\n---\n')}`;
 }
 
@@ -55,7 +55,7 @@ export class TaskListTool implements BuiltinTool<TaskListInput> {
   resolveExecution(args: TaskListInput): ToolExecution {
     const listScope = (args.active_only ?? true) ? 'active' : 'all';
     return {
-      description: 'Listing tasks',
+      description: 'Listing background tasks',
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, listScope),
       execute: async () => {

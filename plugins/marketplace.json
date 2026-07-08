@@ -18,6 +18,15 @@
       "homepage": "https://github.com/obra/superpowers",
       "keywords": ["skills", "planning", "tdd", "debugging", "code-review"],
       "source": "https://github.com/obra/superpowers"
+    },
+    {
+      "id": "vercel-plugin",
+      "tier": "curated",
+      "displayName": "Vercel Plugin",
+      "description": "Comprehensive Vercel ecosystem plugin — skills, agents, and conventions for the Vercel platform.",
+      "homepage": "https://vercel.com/docs/agent-resources/vercel-plugin",
+      "keywords": ["vercel", "deployment", "nextjs", "skills", "agents"],
+      "source": "https://github.com/vercel/vercel-plugin"
     }
   ]
 }

@@ -8,15 +8,14 @@
  * assert on the spawned args / `cwd` value.
  */
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
+import { ensureRgPath, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
 import { PathSecurityError, type PathClass } from '../../src/_base/tools/policies/path-access';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -29,7 +28,7 @@ import {
   splitCompletePaths,
 } from '#/os/backends/node-local/tools/glob';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
@@ -37,10 +36,10 @@ import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
 
-// The ripgrep binary locator is mocked out for the unit tests so they assert
-// on argument building and output parsing without probing a real `rg`. The
-// real locator is exercised end-to-end by the integration suite below (rg is
-// on PATH in that environment, so the resolved `rg` just runs).
+// The ripgrep binary locator is mocked out for unit tests so they assert on
+// argument building and output parsing without probing a real `rg`. The
+// integration suite below imports the real locator and feeds its resolution
+// back into this mock, matching the v1 test flow.
 vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
   ensureRgPath: vi.fn(async (): Promise<{ path: string; source: string }> => ({
     path: 'rg',
@@ -50,18 +49,23 @@ vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
     `rg unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
 }));
 
-// Synchronous probe so the integration suite can be gated with `skipIf` at
-// definition time. `rg` is on PATH in the standard dev environment.
-const RG_AVAILABLE = spawnSync('rg', ['--version'], { stdio: 'ignore' }).status === 0;
-
 const signal = new AbortController().signal;
 const workspace = stubWorkspaceContext('/workspace', ['/extra']);
 
-/** Fake fs with a spied `readdir` for the directory pre-check. */
-function createTestFs(opts: { readdir?: ReturnType<typeof vi.fn> } = {}) {
+function dirStat(): HostFileStat {
+  return { isFile: false, isDirectory: true, size: 0 };
+}
+
+function fileStat(): HostFileStat {
+  return { isFile: true, isDirectory: false, size: 0 };
+}
+
+/** Fake fs with a spied `stat` for the directory pre-check. */
+function createTestFs(opts: { stat?: ReturnType<typeof vi.fn>; readdir?: ReturnType<typeof vi.fn> } = {}) {
+  const stat = opts.stat ?? vi.fn(async (): Promise<HostFileStat> => dirStat());
   const readdir = opts.readdir ?? vi.fn(async (): Promise<readonly string[]> => []);
-  const fs = { readdir } as unknown as IHostFileSystem;
-  return { fs, readdir };
+  const fs = { stat, readdir } as unknown as IHostFileSystem;
+  return { fs, stat, readdir };
 }
 
 /** Build a fake `IHostProcess` that emits `stdout` / `stderr` then exits with `exitCode`. */
@@ -104,6 +108,30 @@ function createTestEnv(opts: { home?: string; pathClass?: PathClass } = {}): IHo
 
 function createTestProcessService(spawn: ReturnType<typeof vi.fn>): IHostProcessService {
   return { _serviceBrand: undefined, spawn } as unknown as IHostProcessService;
+}
+
+function createRealRgProbe(processService: IHostProcessService): RgProbe {
+  return {
+    exec: async (args) => {
+      const [command, ...rest] = args;
+      if (command === undefined) return { exitCode: -1 };
+      const proc = await processService.spawn(command, rest);
+      try {
+        proc.stdin.end();
+      } catch {
+        /* already gone */
+      }
+      proc.stdout.resume();
+      proc.stderr.resume();
+      const exitCode = await proc.wait();
+      try {
+        proc.dispose();
+      } catch {
+        /* best-effort cleanup */
+      }
+      return { exitCode };
+    },
+  };
 }
 
 /**
@@ -192,10 +220,17 @@ function toolContentString(result: ExecutableToolResult): string {
 /** Build a `GlobTool` with the given spawn spy, using a fake env + process service. */
 function makeTool(
   workspaceConfig: ISessionWorkspaceContext,
-  opts: { home?: string; pathClass?: PathClass; exec?: ReturnType<typeof vi.fn>; readdir?: ReturnType<typeof vi.fn>; telemetry?: ITelemetryService } = {},
+  opts: {
+    home?: string;
+    pathClass?: PathClass;
+    exec?: ReturnType<typeof vi.fn>;
+    stat?: ReturnType<typeof vi.fn>;
+    readdir?: ReturnType<typeof vi.fn>;
+    telemetry?: ITelemetryService;
+  } = {},
 ): { tool: GlobTool; exec: ReturnType<typeof vi.fn>; withCwd: ReturnType<typeof withCwdOf> } {
   const exec = opts.exec ?? execReturning('');
-  const { fs } = createTestFs({ readdir: opts.readdir });
+  const { fs } = createTestFs({ stat: opts.stat, readdir: opts.readdir });
   const processService = createTestProcessService(exec);
   const env = createTestEnv({ home: opts.home, pathClass: opts.pathClass });
   const tool = new GlobTool(
@@ -410,14 +445,15 @@ describe('GlobTool', () => {
     expect(result.output).toContain('Filtered 1 sensitive file');
   });
 
-  it('surfaces a "Glob failed" error when rg cannot be spawned', async () => {
+  it('surfaces the raw spawn error when rg cannot be spawned', async () => {
     const exec = vi.fn().mockRejectedValue(new Error('spawn rg ENOENT'));
     const { tool } = makeTool(workspace, { exec });
 
     const result = await execute(tool, { pattern: '*.ts' });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Glob failed: spawn rg ENOENT');
+    expect(result.output).toContain('spawn rg ENOENT');
+    expect(result.output).not.toContain('Glob failed');
   });
 
   it('retries once single-threaded when rg fails with EAGAIN (os error 11)', async () => {
@@ -458,10 +494,10 @@ describe('GlobTool', () => {
     });
   });
 
-  it('tracks telemetry when rg resolves from a non-PATH fallback source', async () => {
+  it('tracks when glob uses a non-system ripgrep fallback', async () => {
     vi.mocked(ensureRgPath).mockResolvedValueOnce({
-      path: '/mock/cached/rg',
-      source: 'share-bin-cached',
+      path: '/mock/rg',
+      source: 'share-bin-downloaded',
     });
     const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
     const exec = execReturning('/workspace/a.ts\n');
@@ -471,10 +507,10 @@ describe('GlobTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('a.ts');
-    expect((exec.mock.calls[0] as ReadonlyArray<unknown>)[0]).toBe('/mock/cached/rg');
+    expect((exec.mock.calls[0] as ReadonlyArray<unknown>)[0]).toBe('/mock/rg');
     expect(events).toContainEqual({
       event: 'glob_tool_rg_fallback',
-      properties: { source: 'share-bin-cached', outcome: 'resolved' },
+      properties: { source: 'share-bin-downloaded', outcome: 'resolved' },
     });
   });
 
@@ -609,11 +645,11 @@ describe('GlobTool', () => {
   });
 
   it('reports "does not exist" when the search directory is missing', async () => {
-    const readdir = vi.fn(async (): Promise<readonly string[]> => {
+    const stat = vi.fn(async (): Promise<HostFileStat> => {
       throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
     });
     const exec = vi.fn();
-    const { tool, withCwd } = makeTool(workspace, { exec, readdir });
+    const { tool, withCwd } = makeTool(workspace, { exec, stat });
 
     const result = await execute(tool, { pattern: '*.py', path: '/workspace/nonexistent' });
 
@@ -624,16 +660,29 @@ describe('GlobTool', () => {
   });
 
   it('reports "is not a directory" when the search target is a file', async () => {
-    const readdir = vi.fn(async (): Promise<readonly string[]> => {
-      throw Object.assign(new Error('ENOTDIR: not a directory'), { code: 'ENOTDIR' });
-    });
+    const stat = vi.fn(async (): Promise<HostFileStat> => fileStat());
     const exec = vi.fn();
-    const { tool, withCwd } = makeTool(workspace, { exec, readdir });
+    const { tool, withCwd } = makeTool(workspace, { exec, stat });
 
     const result = await execute(tool, { pattern: '*.py', path: '/workspace/file.txt' });
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('is not a directory');
+    expect(exec).not.toHaveBeenCalled();
+    withCwd.not.toHaveBeenCalled();
+  });
+
+  it('surfaces non-ENOENT stat failures before spawning rg', async () => {
+    const stat = vi.fn(async (): Promise<HostFileStat> => {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    });
+    const exec = vi.fn();
+    const { tool, withCwd } = makeTool(workspace, { exec, stat });
+
+    const result = await execute(tool, { pattern: '*.py', path: '/workspace/locked' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('EACCES: permission denied');
     expect(exec).not.toHaveBeenCalled();
     withCwd.not.toHaveBeenCalled();
   });
@@ -786,21 +835,36 @@ describe('splitCompletePaths', () => {
   });
 });
 
-describe.skipIf(!RG_AVAILABLE)('GlobTool integration (real ripgrep)', () => {
+describe('GlobTool integration (real ripgrep)', () => {
   // Spawns the actual `rg` binary through a real `HostProcessService` so the
   // ripgrep semantics the tool relies on (sort direction, recursion, brace
   // handling, cwd-relative matching) are exercised end-to-end — not just the
-  // argument plumbing. Gated with `skipIf` so environments without `rg` skip
-  // cleanly. The locator stays mocked (returning `rg`, found on PATH);
-  // everything below it — process spawn, ripgrep itself, output parsing — is
-  // real.
+  // argument plumbing.
 
   let tmpDir: string | undefined;
   let realEnv: IHostEnvironment;
   let realProcessService: IHostProcessService;
   let realFs: IHostFileSystem;
+  let runRealRg = false;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    try {
+      const actual = await vi.importActual<typeof import('#/os/backends/node-local/tools/rgLocator')>(
+        '#/os/backends/node-local/tools/rgLocator',
+      );
+      const probeProcessService = new HostProcessService();
+      const resolution = await actual.ensureRgPath(createRealRgProbe(probeProcessService), {
+        allowCachedFallback: true,
+      });
+      vi.mocked(ensureRgPath).mockResolvedValue(resolution);
+      runRealRg = true;
+    } catch {
+      // rg unavailable in this environment; beforeEach skips the suite.
+    }
+  });
+
+  beforeEach(async (testCtx) => {
+    if (!runRealRg) testCtx.skip();
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'glob-rg-'));
     const info = await probeHostEnvironmentFromNode();
     realEnv = {

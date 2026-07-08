@@ -285,7 +285,9 @@ export class ModelResolverService extends Disposable implements IModelResolver {
         async getAuth(options): Promise<ProviderRequestAuth | undefined> {
           const tokenProvider = oauthService.resolveTokenProvider(providerKey, oauthRef);
           if (tokenProvider === undefined) throw loginRequired();
-          const apiKey = await tokenProvider.getAccessToken({ force: options?.force ?? false });
+          const apiKey = await tokenProvider.getAccessToken(
+            options?.force === true ? { force: true } : undefined,
+          );
           if (apiKey.trim().length === 0) throw loginRequired();
           return { apiKey };
         },

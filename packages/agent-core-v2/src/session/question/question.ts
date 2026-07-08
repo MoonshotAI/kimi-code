@@ -8,7 +8,7 @@
  *
  * The model is the **in-process** representation (camelCase, options carry no
  * ids). The protocol wire shape (snake_case, synthesized item/option ids,
- * `expires_at`, 5-kind answer union) is produced at the edge — see the
+ * 5-kind answer union) is produced at the edge — see the
  * `server-v2` questions route, which is the single protocol↔in-process
  * adapter for this domain. Session-scoped — one instance per session.
  */
@@ -32,7 +32,11 @@ export interface QuestionItem {
 
 export type QuestionAnswerMethod = 'enter' | 'space' | 'number_key';
 
-/** Flattened answers keyed by item id — `true` marks a selected flag-style option. */
+/**
+ * Flattened answers keyed by question text; values are the chosen option
+ * label(s) (comma-joined for multi-select) or free-form "Other" text.
+ * `true` marks a question as answered without echoing a concrete value.
+ */
 export type QuestionAnswers = Record<string, string | true>;
 
 export interface QuestionResponse {
@@ -54,7 +58,13 @@ export interface QuestionRequest {
 export interface ISessionQuestionService {
   readonly _serviceBrand: undefined;
 
-  request(req: QuestionRequest): Promise<QuestionResult>;
+  /**
+   * Post a question and block on the answer. When `options.signal` aborts
+   * while the question is parked (or was already aborted), the pending entry
+   * is dismissed and the promise resolves with `null` — the same dismissed
+   * result as an explicit dismiss (v1 broker semantics).
+   */
+  request(req: QuestionRequest, options?: { signal?: AbortSignal }): Promise<QuestionResult>;
   /**
    * Post a question without blocking on the answer. Returns the request with
    * its resolved `id`; the answer is delivered through the interaction

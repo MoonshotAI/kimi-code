@@ -21,13 +21,21 @@ import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import type { SubagentSuspendedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/agentLifecycle/mirrorAgentRun';
+import {
+  isSubagentMeta,
+  subagentLabels,
+  subagentParentAgentId,
+  subagentSwarmItem,
+} from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ILogService } from '#/_base/log/log';
 
@@ -67,9 +75,20 @@ export class SessionSwarmService implements ISessionSwarmService {
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
   ) {}
+
+  async getSwarmItem(args: {
+    readonly callerAgentId: string;
+    readonly agentId: string;
+  }): Promise<string | undefined> {
+    const meta = await this.agentMeta(args.agentId);
+    if (!isSubagentMeta(meta)) return undefined;
+    if (subagentParentAgentId(meta) !== args.callerAgentId) return undefined;
+    return subagentSwarmItem(meta);
+  }
 
   run<T>(args: SessionSwarmRunArgs<T>): Promise<readonly SessionSwarmRunResult<T>[]> {
     const { callerAgentId, tasks } = args;
@@ -131,8 +150,11 @@ export class SessionSwarmService implements ISessionSwarmService {
         cwd: callerData.cwd,
       },
       permissionMode: caller.accessor.get(IAgentPermissionModeService).mode,
-      labels: options.swarmItem === undefined ? undefined : { swarmItem: options.swarmItem },
+      labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
     });
+    child.accessor
+      .get(IAgentUserToolService)
+      .inheritUserTools(caller.accessor.get(IAgentUserToolService));
     emitAgentRunSpawned(caller, child.id, {
       profileName: options.profileName,
       parentToolCallId: options.parentToolCallId,
@@ -159,6 +181,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     retryTurn: boolean,
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
+    await this.requireOwnedSubagent(callerAgentId, agentId);
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
     const child = this.requireHandle(agentId, 'Agent instance');
     const profileName =
@@ -205,6 +228,21 @@ export class SessionSwarmService implements ISessionSwarmService {
     const handle = this.lifecycle.getHandle(agentId);
     if (handle === undefined) throw new Error(`${label} "${agentId}" does not exist`);
     return handle;
+  }
+
+  private async requireOwnedSubagent(callerAgentId: string, agentId: string): Promise<void> {
+    const meta = await this.agentMeta(agentId);
+    if (!isSubagentMeta(meta)) {
+      throw new Error(`Agent instance "${agentId}" is not a subagent`);
+    }
+    if (subagentParentAgentId(meta) !== callerAgentId) {
+      throw new Error(`Agent instance "${agentId}" does not belong to this parent agent`);
+    }
+  }
+
+  private async agentMeta(agentId: string): Promise<AgentMeta | undefined> {
+    const meta = await this.metadata.read();
+    return meta.agents?.[agentId];
   }
 }
 

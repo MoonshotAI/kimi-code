@@ -76,6 +76,7 @@ export type {
   CropImageOptions,
   CropImageOutcome,
   ImageCompressionCaptionInput,
+  ImageCompressionTelemetry,
   ImageCropRegion,
   ImageVariantDescription,
 } from './tools/support/image-compress';

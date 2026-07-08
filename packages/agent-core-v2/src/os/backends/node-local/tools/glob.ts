@@ -19,7 +19,7 @@
  *   - Subprocess plumbing: `runRgOnce` / `shouldRetryRipgrepEagain`
  *     (`./runRg`) own spawn, capped draining, abort/timeout, two-phase kill,
  *     and the single-threaded EAGAIN retry shared with v1's run-rg.
- *   - Directory pre-check: `fs.readdir(searchRoot)` surfaces a missing or
+ *   - Directory pre-check: `fs.stat(searchRoot)` surfaces a missing or
  *     non-directory root as "does not exist" / "is not a directory" instead of
  *     a misleading "No matches found" (or, for a file root, rg listing the
  *     file itself as its own match).
@@ -82,13 +82,13 @@ export const GlobInputSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Absolute path to the directory to search in. Defaults to the current working directory.',
+      'Directory to search. Accepts an absolute path, or a path relative to the current working directory. Defaults to the current working directory.',
     ),
   include_ignored: z
     .boolean()
     .optional()
     .describe(
-      'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. Defaults to false.',
+      'Also match files excluded by ignore files such as `.gitignore`, `.ignore`, and `.rgignore` (for example `node_modules` or build outputs). Sensitive files (such as `.env`) remain filtered out for safety. VCS metadata directories (`.git` and similar) are always skipped, even when this is true. Defaults to false.',
     ),
   include_dirs: z
     .boolean()
@@ -208,19 +208,16 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // `rg --files <file>` exits 0 and lists the file itself, so without this
     // check a file root would be returned as its own match instead of
     // rejected, and a missing root would surface as "No matches found".
-    // readdir triggers the same directory read the walk would do, so ENOENT /
-    // ENOTDIR surface here as actionable messages. Any other failure falls
-    // through and lets the rg run surface its own error.
     try {
-      await this.fs.readdir(searchRoot);
-    } catch (error) {
-      const code = errorCode(error);
-      if (code === 'ENOENT') {
-        return { isError: true, output: `${searchRoot} does not exist` };
-      }
-      if (code === 'ENOTDIR') {
+      const st = await this.fs.stat(searchRoot);
+      if (!st.isDirectory) {
         return { isError: true, output: `${searchRoot} is not a directory` };
       }
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') {
+        return { isError: true, output: `${searchRoot} does not exist` };
+      }
+      return { isError: true, output: error instanceof Error ? error.message : String(error) };
     }
 
     if (signal.aborted) {
@@ -261,10 +258,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     try {
       run = await runRgOnce(this.processService, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
     } catch (error) {
-      return {
-        isError: true,
-        output: `Glob failed: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      return { isError: true, output: formatSpawnError(error) };
     }
     if (run.kind === 'aborted') {
       return { isError: true, output: 'Glob aborted' };
@@ -277,10 +271,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       try {
         run = await runRgOnce(this.processService, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
       } catch (error) {
-        return {
-          isError: true,
-          output: `Glob failed: ${error instanceof Error ? error.message : String(error)}`,
-        };
+        return { isError: true, output: formatSpawnError(error) };
       }
       if (run.kind === 'aborted') {
         return { isError: true, output: 'Glob aborted' };
@@ -446,6 +437,14 @@ function formatGlobWarning(stderr: string): string {
   return trimmed.length > 0
     ? `Glob completed with warnings; some directories could not be read: ${trimmed}`
     : 'Glob completed with warnings; some directories could not be read.';
+}
+
+function formatSpawnError(error: unknown): string {
+  return errorCode(error) === 'ENOENT'
+    ? rgUnavailableMessage(error)
+    : error instanceof Error
+      ? error.message
+      : String(error);
 }
 
 function errorCode(error: unknown): string | undefined {

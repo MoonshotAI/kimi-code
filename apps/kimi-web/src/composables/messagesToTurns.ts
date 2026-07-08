@@ -415,10 +415,6 @@ function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_mis
   return { id: msg.id, role: 'cron', no, text, createdAt: msg.createdAt, cron };
 }
 
-function buildCronBlock(msg: AppMessage, kind: 'cron_job' | 'cron_missed'): TurnBlock {
-  const { text, cron } = buildCronData(msg, kind);
-  return { kind: 'cron', text, cron };
-}
 
 /**
  * Whether a USER-role message should be shown. Mirrors the TUI's
@@ -457,12 +453,6 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
   );
 }
 
-/** True while a tool in this group has been called but not yet resolved — i.e.
- *  the group is mid-tool-call. A cron injection that arrives now is sandwiched
- *  between the tool use and its result and must not flush the group. */
-function hasRunningTool(group: Group): boolean {
-  return group.tools.some((t) => t.status === 'running');
-}
 
 /** Extract the plan file path from an ExitPlanMode tool result. The approved
  *  output contains `Plan saved to: <path>`; this survives a page reload (unlike
@@ -653,19 +643,10 @@ export function messagesToTurns(
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
       const cronKind = cronOriginKind(msg);
-      // A cron injection steered into an in-flight turn can land between a
-      // tool use and its result in the live event stream. It must NOT flush the
-      // pending assistant group then — flushing would orphan the next
-      // tool.result, which only folds into a pending group, leaving the tool
-      // rendered without output. So embed it as a block only while the group
-      // has an in-flight tool. Otherwise — a cron at a turn boundary, including
-      // an idle fire on a REST snapshot that carries no prompt ids (where the
-      // whole transcript shares one group) — flush and render it as its own
-      // turn so it doesn't merge into the previous answer.
-      if (cronKind !== undefined && pendingGroup !== null && hasRunningTool(pendingGroup)) {
-        pendingGroup.blocks.push(buildCronBlock(msg, cronKind));
-        continue;
-      }
+      // A cron injection always renders as its own standalone turn: agent-core
+      // buffers steer input while a turn is in flight and only injects it at the
+      // turn boundary, so the cron message does not land between a tool use and
+      // its result in practice.
       flushGroup();
       if (cronKind !== undefined) {
         turns.push(buildCronTurn(msg, no++, cronKind));

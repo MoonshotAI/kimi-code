@@ -1,5 +1,5 @@
 import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runPrompt } from '#/cli/run-prompt';
 import { PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
@@ -64,6 +64,19 @@ const mocks = vi.hoisted(() => {
     harnessClose: vi.fn(),
     harnessTrack: vi.fn(),
     harnessGetCachedAccessToken: vi.fn(),
+    createV2Harness: vi.fn(async () => ({
+      homeDir: '/tmp/kimi-code-test-home',
+      auth: { getCachedAccessToken: mocks.harnessGetCachedAccessToken },
+      ensureConfigFile: mocks.harnessEnsureConfigFile,
+      getConfig: mocks.harnessGetConfig,
+      getConfigDiagnostics: mocks.harnessGetConfigDiagnostics,
+      getExperimentalFeatures: mocks.harnessGetExperimentalFeatures,
+      createSession: mocks.harnessCreateSession,
+      resumeSession: mocks.harnessResumeSession,
+      listSessions: mocks.harnessListSessions,
+      close: mocks.harnessClose,
+      track: mocks.harnessTrack,
+    })),
     initializeTelemetry: vi.fn(),
     setCrashPhase: vi.fn(),
     shutdownTelemetry: vi.fn(),
@@ -126,6 +139,14 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   withTelemetryContext: mocks.withTelemetryContext,
 }));
 
+// The experimental v2 engine is loaded via a dynamic import from run-prompt.ts
+// when KIMI_CODE_EXPERIMENTAL_FLAG is set. Mock it so tests that flip that flag
+// can exercise the experimental path without pulling in the real agent-core-v2
+// graph. The returned harness mirrors the v1 mock shape above.
+vi.mock('../../src/cli/v2/create-v2-harness', () => ({
+  createV2Harness: mocks.createV2Harness,
+}));
+
 function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
   return {
     session: undefined,
@@ -185,8 +206,16 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
 }
 
 describe('runPrompt', () => {
+  beforeEach(() => {
+    // Pin the experimental engine flag off so the default v1 path is
+    // deterministic regardless of the host environment. Tests that exercise the
+    // experimental path opt back in explicitly with `vi.stubEnv(..., '1')`.
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     mocks.eventHandlers.clear();
     mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
     mocks.resolveKimiHome.mockImplementation(
@@ -1029,5 +1058,52 @@ describe('runPrompt', () => {
 
     const handler = mocks.session.setQuestionHandler.mock.calls[0]![0] as () => unknown;
     expect(handler()).toBeNull();
+  });
+
+  it('emits the version first in text mode when the experimental flag is enabled', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), '1.2.3-test', { stdout, stderr });
+
+    // The experimental engine is selected and the version banner is the very
+    // first write, ahead of any assistant output or the resume hint.
+    expect(mocks.createV2Harness).toHaveBeenCalled();
+    expect(mocks.kimiHarnessConstructor).not.toHaveBeenCalled();
+    expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
+    expect(stderr.text().startsWith('kimi version 1.2.3-test\n')).toBe(true);
+    expect(stdout.text()).toBe('• hello world\n\n');
+  });
+
+  it('emits the version first in stream-json mode when the experimental flag is enabled', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    expect(mocks.createV2Harness).toHaveBeenCalled();
+    expect(mocks.kimiHarnessConstructor).not.toHaveBeenCalled();
+    const lines = stdout.text().split('\n');
+    expect(lines[0]).toBe(
+      '{"role":"meta","type":"system.version","version":"1.2.3-test"}',
+    );
+    expect(stderr.text()).toBe('');
+  });
+
+  it('does not emit the version when the experimental flag is disabled', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), '1.2.3-test', { stdout, stderr });
+
+    expect(mocks.createV2Harness).not.toHaveBeenCalled();
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalled();
+    expect(stderr.text()).not.toContain('kimi version');
   });
 });

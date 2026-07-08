@@ -33,6 +33,9 @@ import {
   type TaskServiceTestManager,
 } from './stubs';
 
+const MiB = 1024 * 1024;
+const LIMIT_BYTES = 16 * MiB;
+
 interface TaskServiceFixture {
   ctx: TestAgentContext;
   manager: TaskServiceTestManager;
@@ -237,6 +240,78 @@ function pendingProcess(exitOnKill = 143): {
     stdout: Readable.from([]),
     stderr: Readable.from([]),
     pid: 54321,
+    get exitCode(): number | null {
+      return currentExitCode;
+    },
+    wait: () => waitPromise,
+    kill: killSpy as unknown as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+  };
+  return { proc, killSpy };
+}
+
+function streamingProcess(chunks: string[]): {
+  proc: IProcess;
+  killSpy: ReturnType<typeof vi.fn>;
+} {
+  const stdout = Readable.from(chunks);
+  const stderr = Readable.from([]);
+  let currentExitCode: number | null = null;
+  let resolveWait: (code: number) => void = () => {};
+  const waitPromise = new Promise<number>((resolve) => {
+    resolveWait = resolve;
+  });
+  stdout.on('end', () => {
+    currentExitCode = 0;
+    resolveWait(0);
+  });
+  const killSpy = vi.fn(async (signal: NodeJS.Signals) => {
+    if (currentExitCode !== null) return;
+    currentExitCode = signal === 'SIGKILL' ? 137 : 143;
+    stdout.destroy();
+    resolveWait(currentExitCode);
+  });
+  const proc: IProcess = {
+    stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+    stdout,
+    stderr,
+    pid: 54325,
+    get exitCode(): number | null {
+      return currentExitCode;
+    },
+    wait: () => waitPromise,
+    kill: killSpy as unknown as IProcess['kill'],
+    dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+  };
+  return { proc, killSpy };
+}
+
+function sigtermIgnoringProcess(chunks: string[]): {
+  proc: IProcess;
+  killSpy: ReturnType<typeof vi.fn>;
+} {
+  const stdout = Readable.from(chunks);
+  const stderr = Readable.from([]);
+  let currentExitCode: number | null = null;
+  let resolveWait: (code: number) => void = () => {};
+  const waitPromise = new Promise<number>((resolve) => {
+    resolveWait = resolve;
+  });
+  stdout.on('end', () => {
+    currentExitCode = 0;
+    resolveWait(0);
+  });
+  const killSpy = vi.fn(async (signal: NodeJS.Signals) => {
+    if (signal !== 'SIGKILL' || currentExitCode !== null) return;
+    currentExitCode = 137;
+    stdout.destroy();
+    resolveWait(137);
+  });
+  const proc: IProcess = {
+    stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+    stdout,
+    stderr,
+    pid: 54326,
     get exitCode(): number | null {
       return currentExitCode;
     },
@@ -548,6 +623,125 @@ describe('AgentTaskService', () => {
     expect(await manager.readOutput(taskId)).toContain('captured output');
   });
 
+  it('terminates a foreground process task that exceeds the output limit', async () => {
+    const { manager } = createAgentTaskService();
+    const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+    const { proc, killSpy } = streamingProcess(chunks);
+    let forwardedChars = 0;
+    const onOutput = vi.fn((_kind: 'stdout' | 'stderr', text: string) => {
+      forwardedChars += text.length;
+    });
+
+    const taskId = manager.registerTask(
+      new ProcessTask(
+        proc,
+        'b3sum --length 18446744073709551615',
+        'hash',
+        onOutput,
+      ),
+      {
+        detached: false,
+        signal: new AbortController().signal,
+        timeoutMs: 60_000,
+      },
+    );
+
+    const info = await waitForTerminal(manager, taskId);
+
+    expect(info).toMatchObject({ status: 'killed' });
+    expect(info?.stopReason ?? '').toMatch(/output limit/i);
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(forwardedChars).toBeLessThanOrEqual(LIMIT_BYTES);
+  });
+
+  it('terminates a detached process task that exceeds the output limit', async () => {
+    const { manager } = createAgentTaskService();
+    const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+    const { proc, killSpy } = streamingProcess(chunks);
+
+    const taskId = manager.registerTask(new ProcessTask(proc, 'producer', 'bg'), {
+      detached: true,
+      timeoutMs: 60_000,
+    });
+
+    const info = await waitForTerminal(manager, taskId);
+
+    expect(info).toMatchObject({ status: 'killed' });
+    expect(info?.stopReason ?? '').toMatch(/output limit/i);
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('stops appending persisted foreground output once the output limit trips', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-limit-fg-'));
+    try {
+      const { manager } = createAgentTaskService({ sessionDir });
+      const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+      const { proc } = sigtermIgnoringProcess(chunks);
+
+      const taskId = manager.registerTask(
+        new ProcessTask(proc, 'runaway', 'hash', () => {}),
+        {
+          detached: false,
+          signal: new AbortController().signal,
+          timeoutMs: 60_000,
+        },
+      );
+
+      const info = await waitForTerminal(manager, taskId);
+      const output = await manager.getOutputSnapshot(taskId, 1);
+
+      expect(info).toMatchObject({ status: 'killed' });
+      expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops appending persisted background output once the output limit trips', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-limit-bg-'));
+    try {
+      const { manager } = createAgentTaskService({ sessionDir });
+      const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+      const { proc } = sigtermIgnoringProcess(chunks);
+
+      const taskId = manager.registerTask(
+        new ProcessTask(proc, 'runaway', 'background runaway', () => {}),
+        {
+          detached: true,
+          timeoutMs: 60_000,
+        },
+      );
+
+      const info = await waitForTerminal(manager, taskId);
+      const output = await manager.getOutputSnapshot(taskId, 1);
+
+      expect(info).toMatchObject({ status: 'killed' });
+      expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not cap a detached subagent result larger than the process output limit', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-limit-agent-'));
+    try {
+      const { manager } = createAgentTaskService({ sessionDir });
+      const result = 'y'.repeat(20 * MiB);
+      const taskId = manager.registerTask(
+        agentTask(Promise.resolve({ result }), 'big subagent result'),
+        { detached: true, timeoutMs: 60_000 },
+      );
+
+      const info = await waitForTerminal(manager, taskId);
+      const output = await manager.getOutputSnapshot(taskId, 1);
+
+      expect(info).toMatchObject({ status: 'completed' });
+      expect(output.outputSizeBytes).toBe(Buffer.byteLength(result));
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  });
+
   it('fails process tasks when output capture errors after successful exit', async () => {
     const { manager } = createAgentTaskService();
     const taskId = registerProcess(
@@ -741,6 +935,101 @@ describe('AgentTaskService', () => {
     });
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
+  });
+
+  /**
+   * Build a process that only reaps on SIGKILL and whose stdout never ends on
+   * its own, so the task lifecycle cannot settle before the manager's deadline
+   * and grace window drive teardown. Exercises the v1-aligned timeout path:
+   * deadline -> SIGTERM -> SIGTERM_GRACE_MS -> forceStop (SIGKILL).
+   */
+  function sigtermOnlyKillProcess(pid: number): {
+    proc: IProcess;
+    killSpy: ReturnType<typeof vi.fn>;
+  } {
+    const stdout = new PassThrough();
+    let currentExitCode: number | null = null;
+    let resolveWait: (code: number) => void = () => {};
+    const waitPromise = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    const killSpy = vi.fn(async (signal: NodeJS.Signals) => {
+      if (currentExitCode !== null) return;
+      if (signal !== 'SIGKILL') return;
+      currentExitCode = 137;
+      stdout.destroy();
+      resolveWait(137);
+    });
+    const proc: IProcess = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr: Readable.from([]),
+      pid,
+      get exitCode(): number | null {
+        return currentExitCode;
+      },
+      wait: () => waitPromise,
+      kill: killSpy as unknown as IProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    };
+    return { proc, killSpy };
+  }
+
+  it('escalates a wall-clock timeout to SIGKILL when the process ignores SIGTERM', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = sigtermOnlyKillProcess(54327);
+    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'timeout sigkill'), {
+      timeoutMs: 1,
+    });
+
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(1); // deadline -> abort -> SIGTERM (ignored)
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
+
+    await vi.advanceTimersByTimeAsync(5_000); // grace elapses -> forceStop SIGKILL
+    const info = await terminal;
+
+    expect(info?.status).toBe('timed_out');
+    expect(killSpy).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('reports timed_out when a timed-out process exits to SIGTERM within the grace window', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = pendingProcess(); // SIGTERM reaps with 143
+    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'timeout graceful'), {
+      timeoutMs: 1,
+    });
+
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(1); // deadline -> SIGTERM reaps within grace
+    const info = await terminal;
+
+    expect(info?.status).toBe('timed_out');
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('applies the SIGTERM grace + SIGKILL escalation to a detachTimeout deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = sigtermOnlyKillProcess(54328);
+    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'detach timeout'), {
+      detached: false,
+      detachTimeoutMs: 1,
+    });
+    manager.detach(taskId);
+
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(1); // detach deadline -> SIGTERM (ignored)
+    await vi.advanceTimersByTimeAsync(5_000); // grace -> SIGKILL
+    const info = await terminal;
+
+    expect(info?.status).toBe('timed_out');
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(killSpy).toHaveBeenCalledWith('SIGKILL');
   });
 
   it('persists graceful process shutdown as killed when stop was requested', async () => {

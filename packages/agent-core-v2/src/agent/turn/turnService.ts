@@ -19,8 +19,11 @@ import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/protocol';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { userCancellationReason } from '#/_base/utils/abort';
 import { ErrorCodes, KimiError, toKimiErrorPayload } from '#/errors';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import type { ContentPart } from '#/app/llmProtocol/message';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
@@ -29,7 +32,7 @@ import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
 import type { Turn, TurnPromptInfo, TurnResult } from './turn';
 import { IAgentTurnService } from './turn';
-import { promptTurn, TurnModel } from './turnOps';
+import { cancelTurn, promptTurn, steerTurn, TurnModel } from './turnOps';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -87,6 +90,19 @@ export class AgentTurnService implements IAgentTurnService {
 
   getActiveTurn(): Turn | undefined {
     return this.activeTurn;
+  }
+
+  recordSteer(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): void {
+    this.wire.dispatch(steerTurn({ input, origin }));
+  }
+
+  cancel(turnId?: number, reason?: unknown): boolean {
+    this.wire.dispatch(cancelTurn({ turnId }));
+    const turn = this.activeTurn;
+    if (turn === undefined) return false;
+    if (turnId !== undefined && turn.id !== turnId) return false;
+    turn.abortController.abort(reason ?? userCancellationReason());
+    return true;
   }
 
   private async runTurn(
