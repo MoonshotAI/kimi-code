@@ -237,8 +237,7 @@ function outputFromToolContent(content: readonly ContentPart[]): string | readon
 }
 
 const TOOL_INTERRUPTED_TEXT =
-  '<system>ERROR: Tool execution failed.</system>\n' +
-  'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+  'Tool result is not available in the current context. Do not assume the tool completed successfully.';
 
 // Shared inert filler for a call's slot while it awaits its recorded result;
 // every slot still open at the end is overwritten with a synthetic result, so

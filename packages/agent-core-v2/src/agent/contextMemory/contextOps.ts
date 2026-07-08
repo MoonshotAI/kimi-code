@@ -165,6 +165,7 @@ interface ContextCompactionBasePayload {
   readonly keptUserMessageCount?: number;
   readonly keptHeadUserMessageCount?: number;
   readonly droppedCount?: number;
+  readonly legacyTail?: boolean;
 }
 
 export interface TextSummaryCompactionPayload extends ContextCompactionBasePayload {
@@ -226,7 +227,7 @@ export function readContextCompactionShapeInput(
     keptUserMessageCount,
     keptHeadUserMessageCount: readOptionalNumber(fields, 'keptHeadUserMessageCount'),
     droppedCount: readOptionalNumber(fields, 'droppedCount'),
-    legacyTail: keptUserMessageCount === undefined,
+    legacyTail: readOptionalBoolean(fields, 'legacyTail') ?? keptUserMessageCount === undefined,
   };
 }
 
@@ -273,6 +274,11 @@ function readOptionalNumber(record: UnknownRecord, key: string): number | undefi
 function readOptionalString(record: UnknownRecord, key: string): string | undefined {
   const value = record[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+function readOptionalBoolean(record: UnknownRecord, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function textOf(message: ContextMessage): string {

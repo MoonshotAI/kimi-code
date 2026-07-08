@@ -15,11 +15,10 @@
 import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
 import type { LLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import type { AgentPhase } from '#/agent/runtime/runtime';
-import { ErrorCodes, KimiError } from '#/errors';
 import { defineModel } from '#/wire/model';
 import { defineOp } from '#/wire/op';
 
-import type { UsageStatus } from './usage';
+import { UsageError, UsageErrors, type UsageStatus } from './usage';
 
 export type UsageRecordScope = 'session' | 'turn';
 
@@ -88,15 +87,13 @@ function turnIdFromUsagePayload(p: UsageRecordPayload): number | undefined {
   const legacyContext = p.context;
   const legacyTurnId = legacyContext?.type === 'turn' ? legacyContext.turnId : undefined;
   if (p.turnId !== undefined && legacyTurnId !== undefined && p.turnId !== legacyTurnId) {
-    throw new KimiError(
-      ErrorCodes.REQUEST_INVALID,
+    throw new UsageError(
+      UsageErrors.codes.TURN_ID_CONFLICT,
       `usage.record has conflicting turnId (${p.turnId}) and legacy context turnId (${legacyTurnId})`,
       {
-        details: {
-          type: 'usage.record',
-          turnId: p.turnId,
-          legacyTurnId,
-        },
+        type: 'usage.record',
+        turnId: p.turnId,
+        legacyTurnId,
       },
     );
   }

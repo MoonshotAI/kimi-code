@@ -205,6 +205,9 @@ describe('AgentUsageService (wire-backed)', () => {
         turnId: 1,
         context: { type: 'turn', turnId: 2 },
       }),
-    ).rejects.toThrow('conflicting turnId');
+    ).rejects.toMatchObject({
+      code: 'usage.turn_id_conflict',
+      name: 'UsageError',
+    });
   });
 });

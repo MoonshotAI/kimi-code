@@ -29,9 +29,10 @@
  */
 
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { ErrorCodes, KimiError } from '#/errors';
 import { defineModel } from '#/wire/model';
 import { defineOp } from '#/wire/op';
+
+import { ProfileError, ProfileErrors } from './profile';
 
 export interface ProfileModelState {
   readonly cwd?: string;
@@ -81,15 +82,13 @@ export const configUpdate = defineOp(ProfileModel, 'config.update', {
 function configUpdateThinkingLevel(p: ConfigUpdatePayload): ThinkingEffort | undefined {
   if (p.thinkingEffort !== undefined && p.thinkingLevel !== undefined) {
     if (p.thinkingEffort !== p.thinkingLevel) {
-      throw new KimiError(
-        ErrorCodes.REQUEST_INVALID,
+      throw new ProfileError(
+        ProfileErrors.codes.THINKING_ALIAS_CONFLICT,
         `config.update has conflicting thinkingEffort (${p.thinkingEffort}) and legacy thinkingLevel (${p.thinkingLevel})`,
         {
-          details: {
-            type: 'config.update',
-            thinkingEffort: p.thinkingEffort,
-            thinkingLevel: p.thinkingLevel,
-          },
+          type: 'config.update',
+          thinkingEffort: p.thinkingEffort,
+          thinkingLevel: p.thinkingLevel,
         },
       );
     }

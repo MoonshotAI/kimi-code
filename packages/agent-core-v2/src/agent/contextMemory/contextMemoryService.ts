@@ -136,6 +136,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
         keptUserMessageCount: result.keptUserMessageCount,
         keptHeadUserMessageCount: result.keptHeadUserMessageCount,
         droppedCount: result.droppedCount,
+        legacyTail: input.legacyTail,
       }),
       contextSizeMeasured({ length: result.messages.length, tokens: result.tokensAfter }),
     );

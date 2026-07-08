@@ -678,7 +678,7 @@ describe('WebSearchProviderService', () => {
 
     const provider = createService().getWebSearchProvider();
     expect(provider).not.toBeUndefined();
-    const results = await provider!.search('hello', { limit: 2 });
+    const results = await provider!.search('hello');
 
     expect(results).toEqual([
       { title: 'Title', url: 'https://example.com', snippet: 'Snippet' },
@@ -689,6 +689,7 @@ describe('WebSearchProviderService', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer access-token');
     expect(headers['X-Custom']).toBe('yes');
+    expect(JSON.parse(init.body as string)).toEqual({ text_query: 'hello' });
   });
 });
 

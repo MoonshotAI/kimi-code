@@ -287,7 +287,10 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     await expect(
       host.wire.replay({ type: 'config.update', thinkingEffort: 'low', thinkingLevel: 'high' }),
-    ).rejects.toThrow('conflicting thinkingEffort');
+    ).rejects.toMatchObject({
+      code: 'profile.thinking_alias_conflict',
+      name: 'ProfileError',
+    });
   });
 
   it('applies thinking.keep model override when thinking is enabled', () => {

@@ -16,7 +16,7 @@ import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
 // ── Input schema ─────────────────────────────────────────────────────
 
 export const TaskStopInputSchema = z.object({
-  task_id: z.string().describe('The task ID to stop.'),
+  task_id: z.string().describe('The background task ID to stop.'),
   reason: z
     .string()
     .default('Stopped by TaskStop')

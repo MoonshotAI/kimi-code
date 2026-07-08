@@ -69,6 +69,9 @@ function agentSwarmSchemaProperties<T = unknown>(): Record<string, T> {
   ).properties;
 }
 
+const BACKGROUND_AGENT_NEXT_STEP =
+  'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)';
+
 function deferred<T>(): {
   readonly promise: Promise<T>;
   resolve(value: T): void;
@@ -721,6 +724,56 @@ describe('Agent tool execution contract', () => {
     completions[0]?.resolve({ summary: 'finished later' });
   });
 
+  it('rejects one of two concurrent background subagents when the task limit is reached', async () => {
+    const completions = [
+      deferred<{ readonly summary: string }>(),
+      deferred<{ readonly summary: string }>(),
+    ];
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-first', 'agent-second'],
+      runCompletion: (_agentId, _request, options) => {
+        const next = completions.shift();
+        if (next === undefined) throw new Error('unexpected run');
+        options.signal.addEventListener('abort', () => next.reject(options.signal.reason), {
+          once: true,
+        });
+        return next.promise;
+      },
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      configServices(() => ({
+        providers: {},
+        task: { maxRunningTasks: 1 },
+      })),
+    );
+
+    const first = executeAgentTool(context, {
+      prompt: 'Investigate first',
+      description: 'Find first',
+      run_in_background: true,
+    });
+    const second = executeAgentTool(context, {
+      prompt: 'Investigate second',
+      description: 'Find second',
+      run_in_background: true,
+    });
+
+    const results = await Promise.all([first, second]);
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(2);
+    expect(results).toContainEqual(
+      expect.objectContaining({ output: expect.stringContaining('status: running') }),
+    );
+    expect(results).toContainEqual(
+      expect.objectContaining({
+        isError: true,
+        output: 'Too many background tasks are already running.',
+      }),
+    );
+    completions[0]?.resolve({ summary: 'finished later' });
+  });
+
   it('logs background registration failures', async () => {
     const { entries, logger } = captureLogs();
     const completions = [
@@ -889,7 +942,7 @@ describe('Agent tool execution contract', () => {
     const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
     expect(taskId).toBeDefined();
     expect(result.output).toContain('next_step:');
-    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(result.output).toContain(BACKGROUND_AGENT_NEXT_STEP);
     expect(result.output).not.toContain('block=false');
     expect(result.output).toContain('resume_hint:');
     expect(result.output).toContain('Agent(resume="agent-child"');

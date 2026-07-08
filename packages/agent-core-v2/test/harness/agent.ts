@@ -580,7 +580,11 @@ function resolveExternalHooksRunner(
 function isRunnerLike(
   value: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>,
 ): value is IExternalHooksRunnerService {
-  return '_serviceBrand' in value;
+  return (
+    typeof value.trigger === 'function' &&
+    typeof value.triggerBlock === 'function' &&
+    typeof value.fireAndForgetTrigger === 'function'
+  );
 }
 
 const noopHookRunner: IExternalHooksRunnerService = {

@@ -317,6 +317,7 @@ externalHooks --> config #34495E
 externalHooks --> bootstrap #34495E
 externalHooks --> plugin #34495E
 externalHooks --> contextMemory #34495E
+externalHooks --> session_context #34495E
 sessionExternalHooks --> session_lifecycle #34495E
 sessionExternalHooks --> agent_lifecycle #34495E
 sessionExternalHooks --> config #34495E

@@ -41,7 +41,7 @@ const PAGING_HINT_LINES = 300;
 // ── Input schema ─────────────────────────────────────────────────────
 
 export const TaskOutputInputSchema = z.object({
-  task_id: z.string().describe('The task ID to inspect.'),
+  task_id: z.string().describe('The background task ID to inspect.'),
   block: z
     .boolean()
     .default(false)

@@ -70,15 +70,20 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       }
 
       const builder = new ToolResultBuilder({ maxLineLength: null });
-      builder.write(content);
-      // Tell the LLM whether it received the whole body or only the
-      // extracted article text, so it can judge how complete the
-      // content is.
-      const message =
+      // Tell the LLM whether it received the whole body or only the extracted
+      // article text, so it can judge how complete the content is, and remind it
+      // to cite this page when it uses the content. Both notes must ride in
+      // `output`: the result's `message` field is dropped from the transcript, so
+      // `output` is the only place the model can read them. Put them at the front
+      // so they survive any downstream truncation of the body.
+      const note =
         kind === 'passthrough'
           ? 'The returned content is the full response body, returned verbatim.'
           : 'The returned content is the main text extracted from the page.';
-      return builder.ok(message);
+      const citeReminder =
+        'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).';
+      builder.write(`${note} ${citeReminder}\n\n${content}`);
+      return builder.ok();
     } catch (error) {
       // An in-flight abort rejects the signal-aware fetch promptly. Re-throw
       // so the executor can classify it (including user cancellation) and

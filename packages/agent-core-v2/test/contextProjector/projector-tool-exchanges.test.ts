@@ -16,7 +16,7 @@ import type { Message } from '#/app/llmProtocol/message';
 // synthetic error result, stale duplicate results are dropped, and orphan
 // results are dropped in a real projection (but kept in a bare slice).
 
-const INTERRUPTED = 'Tool execution was interrupted before its result was recorded';
+const INTERRUPTED = 'Tool result is not available in the current context';
 
 function user(text: string): ContextMessage {
   return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };

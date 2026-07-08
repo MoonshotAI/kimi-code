@@ -523,7 +523,7 @@ describe('AgentTaskService', () => {
 
     expect(() => {
       manager.registerTask(agentTask(new Promise(() => {}), 'second background'));
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
   });
 
   it('does not count foreground tasks detached later against the detached task limit', () => {
@@ -539,7 +539,7 @@ describe('AgentTaskService', () => {
 
     expect(() => {
       manager.registerTask(agentTask(new Promise(() => {}), 'second background'));
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
   });
 
   it('lists active tasks by default', () => {
@@ -603,10 +603,10 @@ describe('AgentTaskService', () => {
 
     expect(() => {
       registerProcess(manager, pendingProcess().proc, 'sleep 60', 'second task');
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
     expect(() => {
       manager.registerTask(agentTask(new Promise(() => {}), 'agent task'));
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
   });
 
   it('captures process output', async () => {
@@ -1157,6 +1157,31 @@ describe('AgentTaskService', () => {
 
     const runningId = registerProcess(manager, pendingProcess().proc, 'sleep 60', 'timeout');
     expect(await manager.wait(runningId, 0)).toMatchObject({ status: 'running' });
+  });
+
+  it('wait with a zero timeout returns the immediate snapshot before next-tick completion', async () => {
+    const { manager } = createAgentTaskService();
+    const proc = manuallyResolvedProcess();
+    const taskId = registerProcess(
+      manager,
+      proc.proc,
+      'sleep 0',
+      'next-tick completion',
+    );
+
+    await Promise.resolve();
+    setTimeout(() => {
+      proc.resolve(0);
+    }, 0);
+
+    expect(await manager.wait(taskId, 0)).toMatchObject({
+      status: 'running',
+      exitCode: null,
+    });
+    await expect(manager.wait(taskId)).resolves.toMatchObject({
+      status: 'completed',
+      exitCode: 0,
+    });
   });
 
   it('clears task deadline timers when completion wins the race', async () => {
