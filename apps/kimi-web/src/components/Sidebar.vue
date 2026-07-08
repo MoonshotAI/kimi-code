@@ -49,6 +49,12 @@ const props = withDefaults(
     unreadBySession?: Record<string, boolean>;
     /** Width (px) of the session column, driven by the App resize handle. */
     colWidth?: number;
+    /** True when the sidebar is collapsed: the container animates to width 0
+     *  (content keeps `colWidth` and is clipped), then hides itself. */
+    collapsed?: boolean;
+    /** True while the resize handle is dragged — disables the width transition
+     *  so the sidebar follows the pointer 1:1. */
+    dragging?: boolean;
   }>(),
   {
     activeWorkspace: null,
@@ -57,6 +63,8 @@ const props = withDefaults(
     pendingBySession: () => ({}),
     unreadBySession: () => ({}),
     colWidth: 220,
+    collapsed: false,
+    dragging: false,
   },
 );
 
@@ -559,7 +567,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside class="side" :class="{ 'macos-desktop': isMacosDesktop }">
+  <aside
+    class="side"
+    :class="{ 'macos-desktop': isMacosDesktop, collapsed, 'no-anim': dragging }"
+    :style="{ width: collapsed ? '0px' : colWidth + 'px' }"
+  >
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
       <!-- Header: logo + collapse (no hard border — flows into workspace list) -->
@@ -773,12 +785,19 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .side {
-  border-right: 1px solid var(--line);
   background: var(--panel);
   display: flex;
   flex-direction: row;
+  /* Anchor content to the right edge: while the container width animates to 0
+     the fixed-width column slides out to the left and is clipped, instead of
+     reflowing. Mirrors the right-side preview panel (App.vue .global-preview). */
+  justify-content: flex-end;
+  overflow: hidden;
   min-width: 0;
   height: 100%;
+  transition:
+    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0.28s;
   /* Alignment contract, inherited by SessionRow and the de-terminalization
      rules in style.css: text in the workspace header, the path line and session
      rows all starts at --sb-pad-x + --sb-gutter + --sb-gap from the sidebar edge. */
@@ -789,8 +808,21 @@ onBeforeUnmount(() => {
      user-controlled font-size preference. */
   --ui-font-size: var(--sidebar-ui-font-size);
 }
+/* While dragging the resize handle, follow the pointer 1:1 (same pattern as
+   .global-preview.no-anim in App.vue). */
+.side.no-anim {
+  transition: none;
+}
+/* Fully collapsed: width 0 (animated), then drop out of hit-testing / tab
+   order once the transition ends (visibility interpolates to hidden at the
+   end when collapsing, and back to visible immediately when expanding). */
+.side.collapsed {
+  visibility: hidden;
+}
 
-/* Session column. Width is set inline from the App resize handle. */
+/* Session column. Width is set inline from the App resize handle; it stays
+   fixed while the collapsing container clips it. Carries the sidebar's right
+   hairline so the border is clipped away together with the content. */
 .col {
   flex: none;
   min-width: 0;
@@ -798,6 +830,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   min-height: 0;
   width: 100%;
+  box-sizing: border-box;
+  border-right: 1px solid var(--line);
   container-type: inline-size;
   container-name: sidebar-col;
 }

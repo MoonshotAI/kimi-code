@@ -11,7 +11,6 @@ const SIDEBAR_WIDTH_KEY = STORAGE_KEYS.sidebarWidth;
 const SIDEBAR_COLLAPSED_KEY = STORAGE_KEYS.sidebarCollapsed;
 const SIDEBAR_DEFAULT = 270;
 const SIDEBAR_MIN = 170;
-const SIDEBAR_COLLAPSED_WIDTH = 36;
 // Minimum width kept for the conversation pane. The sidebar is capped so the
 // conversation keeps at least this much room, which also guarantees the sidebar
 // resize handle and collapse button stay inside the viewport even when a width
@@ -28,6 +27,10 @@ export function useSidebarLayout(options: UseSidebarLayoutOptions = {}) {
   const { viewportWidth } = useViewportWidth();
   const sessionColWidth = ref(SIDEBAR_DEFAULT);
   const sidebarCollapsed = ref(false);
+  // True while the sidebar ResizeHandle is being dragged — the sidebar disables
+  // its width transition so it follows the pointer 1:1 (mirrors panelDragging
+  // in useDetailPanel).
+  const sidebarDragging = ref(false);
 
   // Largest sidebar width that still leaves the conversation pane usable. When
   // the right-side panel is open, also reserves its minimum width so the
@@ -37,10 +40,11 @@ export function useSidebarLayout(options: UseSidebarLayoutOptions = {}) {
     return panelMaxWidth(viewportWidth.value, SIDEBAR_MIN, reserve);
   });
 
+  // Expanded width of the sidebar. Collapsing does NOT change this value: the
+  // sidebar keeps its content at this fixed width and animates its container
+  // width to 0 (clip, not reflow), mirroring the right-side preview panel.
   const sideWidth = computed(() =>
-    sidebarCollapsed.value
-      ? SIDEBAR_COLLAPSED_WIDTH
-      : clampPanelWidth(sessionColWidth.value, SIDEBAR_MIN, sidebarMax.value),
+    clampPanelWidth(sessionColWidth.value, SIDEBAR_MIN, sidebarMax.value),
   );
 
   function loadSidebarCollapsed(): void {
@@ -71,6 +75,7 @@ export function useSidebarLayout(options: UseSidebarLayoutOptions = {}) {
     sidebarMax,
     sessionColWidth,
     sidebarCollapsed,
+    sidebarDragging,
     sideWidth,
     loadSidebarCollapsed,
     toggleSidebarCollapse,

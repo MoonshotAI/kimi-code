@@ -1336,13 +1336,13 @@ onUnmounted(() => {
             </p>
 
             <h3 class="sub">Layout grid</h3>
-            <p>On desktop it is a single-row 5-track grid: the sidebar and the right panel each occupy a permanent track, with the conversation column in the middle; two 0-width tracks are for the ResizeHandles.</p>
-            <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">App.vue · .app</span></div><pre>grid-template-columns: var(--side-w) 0 minmax(0, 1fr) 0 auto;
-    /*           sidebar ↑      ↑handle  ↑conversation  ↑handle ↑right panel (auto) */</pre></div>
+            <p>On desktop it is a single-row 5-track grid: the sidebar and the right panel each occupy a permanent <code>auto</code> track, with the conversation column in the middle; two 0-width tracks are for the ResizeHandles.</p>
+            <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">App.vue · .app</span></div><pre>grid-template-columns: auto 0 minmax(0, 1fr) 0 auto;
+    /*         sidebar ↑    ↑handle  ↑conversation  ↑handle ↑right panel (auto) */</pre></div>
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
-                <tr><td class="tk">--side-w</td><td class="val">248px (adjustable)</td><td>left conversation column width, changed by dragging the ResizeHandle; should approach §02's <code>--p-sidebar-w</code> (264px)</td></tr>
+                <tr><td class="tk">sidebar width</td><td class="val">270px default (adjustable)</td><td>expanded sidebar width, changed by dragging the ResizeHandle; should approach §02's <code>--p-sidebar-w</code> (264px)</td></tr>
                 <tr><td class="tk">--preview-w</td><td class="val">460px</td><td>width of the right preview panel when open</td></tr>
                 <tr><td class="tk">--panel-head-h</td><td class="val">48px</td><td>unified height for all right panel heads + the conversation column head, so the hairline runs as one line</td></tr>
                 <tr><td class="tk">--p-bp-sm</td><td class="val">640px</td><td>≤640 switches to a mobile single column (top bar + conversation), no sidebar / handle / right panel</td></tr>
@@ -1350,7 +1350,7 @@ onUnmounted(() => {
             </table>
             <ul class="clean">
               <li>The right panel track exists permanently, with its width transitioning between <code>0 ↔ var(--preview-w)</code> (when open it squeezes the conversation column, rather than switching templates).</li>
-              <li>When the sidebar is collapsed, track 1 becomes a thin "rail" holding only an expand IconButton, avoiding crushing the conversation column head.</li>
+              <li>The sidebar collapses SYMMETRICALLY to the right panel: its container width animates to 0 while the content keeps its fixed width anchored to the right edge (clipped, sliding out left — no reflow, hairline stays on the clipped content). No rail remains; the expand IconButton floats over the conversation header, which pads left in step with the transition.</li>
               <li>All grid children must have <code>min-height:0; min-width:0</code>, so only the inner scroll containers scroll and the page itself does not scroll.</li>
             </ul>
 
