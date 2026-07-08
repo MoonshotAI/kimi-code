@@ -27,7 +27,7 @@ import {
   IAgentFullCompactionService,
   type FullCompactionTask,
 } from '#/agent/fullCompaction/fullCompaction';
-import type { CompactionResult, CompactionSource } from '#/agent/fullCompaction/types';
+import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import {
   IAgentPermissionGate,
@@ -62,7 +62,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   declare readonly _serviceBrand: undefined;
 
   private stopHookContinuationUsed = false;
-  private activeCompactTrigger: CompactionSource | undefined;
 
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
@@ -208,15 +207,10 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     this._register(
       fullCompaction.hooks.onWillCompact.register('externalHooks', async (ctx, next) => {
         await this.runPreCompact(ctx);
+        void ctx.promise
+          .then((result) => this.notifyPostCompact(ctx, result))
+          .catch(() => undefined);
         await next();
-      }),
-    );
-    this._register(
-      this.eventBus.subscribe('compaction.completed', (e) => this.notifyPostCompact(e)),
-    );
-    this._register(
-      this.eventBus.subscribe('compaction.cancelled', () => {
-        this.activeCompactTrigger = undefined;
       }),
     );
   }
@@ -357,7 +351,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   private async runPreCompact(ctx: FullCompactionTask): Promise<void> {
     const signal = ctx.abortController.signal;
     signal.throwIfAborted();
-    this.activeCompactTrigger = ctx.trigger;
     await this.runner.trigger('PreCompact', {
       matcherValue: ctx.trigger,
       signal,
@@ -370,17 +363,14 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     signal.throwIfAborted();
   }
 
-  private notifyPostCompact(event: { result: CompactionResult }): void {
-    const trigger = this.activeCompactTrigger;
-    this.activeCompactTrigger = undefined;
-    if (trigger === undefined) return;
+  private notifyPostCompact(ctx: FullCompactionTask, result: CompactionResult): void {
     this.fireAndForget(
       'PostCompact',
       {
-        trigger,
-        estimatedTokenCount: event.result.tokensAfter,
+        trigger: ctx.trigger,
+        estimatedTokenCount: result.tokensAfter,
       },
-      trigger,
+      ctx.trigger,
     );
   }
 
