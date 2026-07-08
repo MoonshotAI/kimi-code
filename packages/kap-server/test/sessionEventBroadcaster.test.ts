@@ -580,4 +580,88 @@ describe('SessionEventBroadcaster', () => {
     await bc.getCursor('s1');
     expect(envelopes.map((e) => e.type)).toEqual(['event.question.answered']);
   });
+
+  // -------------------------------------------------------------------------
+  // Per-agent subscription filter
+  // -------------------------------------------------------------------------
+
+  it('delivers only the allowlisted agent events on live fan-out', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const sub = lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target, new Set(['main']));
+
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
+    sub.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(1);
+    expect((envelopes[0]!.payload as { agentId: string }).agentId).toBe('main');
+  });
+
+  it('delivers every agent event when no filter is set', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const sub = lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target); // no filter — legacy behavior
+
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
+    sub.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    const agentIds = envelopes.map((e) => (e.payload as { agentId: string }).agentId);
+    expect(agentIds).toEqual(['main', 'agent-0']);
+  });
+
+  it('bypasses the agent filter for global events', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+
+    const { target, envelopes } = collectingTarget();
+    // Filter does not include 'main', yet global events must still be delivered.
+    await bc.subscribe('s1', target, new Set(['agent-0']));
+
+    eventBus.emit({
+      type: 'session.meta.updated',
+      payload: {
+        agentId: 'main',
+        sessionId: 's1',
+        title: '测试',
+        patch: { title: '测试' },
+      },
+    });
+
+    await vi.waitFor(() => expect(envelopes).toHaveLength(1));
+    expect(envelopes[0]!.type).toBe('session.meta.updated');
+  });
+
+  it('replays only the allowlisted agent events while keeping the global sequence', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const sub = lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+
+    // Activate the session and journal a mixed sequence before replaying.
+    const warm = collectingTarget();
+    await bc.subscribe('s1', warm.target);
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1 })); // seq 1
+    sub.bus.emit(agentEvent('turn.ended', { turnId: 1 })); // seq 2
+    main.bus.emit(agentEvent('turn.ended', { turnId: 2 })); // seq 3
+    await bc.getCursor('s1');
+
+    const result = await bc.getBufferedSince('s1', { seq: 0 }, new Set(['main']));
+    expect(result.resyncRequired).toBe(false);
+    // Filtered view keeps the session's original seq offsets (with gaps).
+    expect(result.events.map((e) => e.seq)).toEqual([1, 3]);
+    expect(
+      result.events.every((e) => (e.envelope.payload as { agentId: string }).agentId === 'main'),
+    ).toBe(true);
+  });
 });

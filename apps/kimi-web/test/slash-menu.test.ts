@@ -74,11 +74,25 @@ describe('useSlashMenu — update', () => {
     expect(slash.open.value).toBe(false);
   });
 
-  it('includes session skills as /<skill-name>', () => {
-    const { slash } = setup('/', [{ name: 'deploy', description: 'deploy stuff' } as AppSkill]);
+  it('includes session skills as /skill:<skill-name>', () => {
+    const { slash } = setup('/', [{ name: 'deploy', description: 'deploy stuff', source: 'project' } as AppSkill]);
     slash.update();
     const names = slash.items.value.map((i) => i.name);
-    expect(names).toContain('/deploy');
+    expect(names).toContain('/skill:deploy');
+  });
+
+  it('keeps builtin-sourced skills unprefixed', () => {
+    const { slash } = setup('/', [{ name: 'update-config', description: 'edit config', source: 'builtin' } as AppSkill]);
+    slash.update();
+    const names = slash.items.value.map((i) => i.name);
+    expect(names).toContain('/update-config');
+    expect(names).not.toContain('/skill:update-config');
+  });
+
+  it('matches a prefixed skill when filtering by its bare name', () => {
+    const { slash } = setup('/depl', [{ name: 'deploy', description: 'deploy stuff', source: 'project' } as AppSkill]);
+    slash.update();
+    expect(slash.items.value.map((i) => i.name)).toContain('/skill:deploy');
   });
 });
 

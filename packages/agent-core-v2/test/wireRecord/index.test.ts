@@ -14,6 +14,61 @@ import {
   testAgent,
   type TestAgentContext,
 } from '../harness';
+import { serializeV1WireRecord } from '#/agent/wireRecord/v1WireSerializer';
+import type { PersistedRecord } from '#/wire/wireService';
+
+describe('serializeV1WireRecord', () => {
+  it('keeps non-user context.append_message records in the v1-compatible wire log', () => {
+    const assistantMessage: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'answer' }],
+      toolCalls: [],
+      providerMessageId: 'msg_123',
+    };
+
+    expect(
+      serializeV1WireRecord({
+        type: 'context.append_message',
+        message: assistantMessage,
+      }),
+    ).toEqual([
+      {
+        type: 'context.append_message',
+        message: assistantMessage,
+        time: expect.any(Number),
+      },
+    ]);
+  });
+
+  it('preserves v1 context.apply_compaction accounting fields', () => {
+    expect(
+      serializeV1WireRecord({
+        type: 'context.apply_compaction',
+        summary: 'summary text',
+        contextSummary: 'summary shown to the model',
+        compactedCount: 4,
+        tokensBefore: 100,
+        tokensAfter: 25,
+        keptUserMessageCount: 2,
+        keptHeadUserMessageCount: 1,
+        droppedCount: 3,
+      } satisfies PersistedRecord),
+    ).toEqual([
+      {
+        type: 'context.apply_compaction',
+        summary: 'summary text',
+        contextSummary: 'summary shown to the model',
+        compactedCount: 4,
+        tokensBefore: 100,
+        tokensAfter: 25,
+        keptUserMessageCount: 2,
+        keptHeadUserMessageCount: 1,
+        droppedCount: 3,
+        time: expect.any(Number),
+      },
+    ]);
+  });
+});
 
 describe('AgentRecords persistence metadata', () => {
   let context: IAgentContextMemoryService;

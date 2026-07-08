@@ -148,6 +148,10 @@ export class ModelImpl implements Model {
     return this.clone((p) => p.withThinking(effort), { thinkingEffort: effort });
   }
 
+  get maxCompletionTokens(): number | undefined {
+    return this.resolveChatProvider().maxCompletionTokens;
+  }
+
   withMaxCompletionTokens(n: number, options?: MaxCompletionTokensOptions): Model {
     return this.clone((p) =>
       p.withMaxCompletionTokens !== undefined ? p.withMaxCompletionTokens(n, options) : p,
@@ -197,7 +201,7 @@ export class ModelImpl implements Model {
     const queue = new AsyncEventQueue<LLMEvent>();
     void this.runRequest(input, signal, queue).then(
       () => queue.end(),
-      (err) => queue.fail(err),
+      (error) => queue.fail(error),
     );
     return queue;
   }
@@ -262,6 +266,7 @@ export class ModelImpl implements Model {
             streamEndedAt = Date.now();
             decodeStats = stats;
           },
+          responseFormat: input.responseFormat,
         },
       );
     });

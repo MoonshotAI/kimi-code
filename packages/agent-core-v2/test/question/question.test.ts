@@ -97,6 +97,52 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     });
   });
 
+  it('request with a pre-aborted signal resolves null and parks nothing', async () => {
+    const questions = session.accessor.get(ISessionQuestionService);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      questions.request(makeRequest('q1'), { signal: controller.signal }),
+    ).resolves.toBeNull();
+    expect(questions.listPending()).toEqual([]);
+  });
+
+  it('aborting a parked request dismisses it and resolves the caller with null', async () => {
+    const interaction = session.accessor.get(ISessionInteractionService);
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const resolved: { id: string; response: unknown }[] = [];
+    disposables.add(interaction.onDidResolve((r) => resolved.push(r)));
+
+    const controller = new AbortController();
+    const pending = questions.request(makeRequest('q1'), { signal: controller.signal });
+    expect(questions.listPending().map((r) => r.id)).toEqual(['q1']);
+
+    controller.abort();
+
+    // v1 broker semantics: the abort settles the entry as a dismissal, so the
+    // caller sees the same `null` result (→ `event.question.dismissed`) as an
+    // explicit dismiss instead of a rejection.
+    await expect(pending).resolves.toBeNull();
+    expect(questions.listPending()).toEqual([]);
+    expect(resolved).toEqual([{ id: 'q1', response: null }]);
+    expect(interaction.isRecentlyResolved('q1')).toBe(true);
+  });
+
+  it('an answer that arrives before the abort still wins', async () => {
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const controller = new AbortController();
+    const pending = questions.request(makeRequest('q1'), { signal: controller.signal });
+    questions.answer('q1', { answers: { q_0: 'Yes' } });
+
+    await expect(pending).resolves.toEqual({ answers: { q_0: 'Yes' } });
+    // A late abort is a no-op: the entry is already settled.
+    controller.abort();
+    expect(questions.listPending()).toEqual([]);
+  });
+
   it('Session scope isolates brokers: a question parked in A is invisible to B', () => {
     const sessionB = host.child(LifecycleScope.Session, 'session-b');
     const questionsA = session.accessor.get(ISessionQuestionService);

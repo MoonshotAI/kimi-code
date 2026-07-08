@@ -1,16 +1,16 @@
 /**
  * `fileTools` domain — shared ripgrep (`rg`) binary locator.
  *
- * Resolves the `rg` command used by Glob and Grep through a caller-supplied
- * process probe, preferring the execution-environment PATH, then the vendor
- * hook, then the app cache, and finally bootstrapping a pinned ripgrep
- * archive into `<KIMI_CODE_HOME|~/.kimi-code>/bin` when the caller permits it.
- * Keeps callers that own a no-download fallback path opt-in-compatible.
+ * Resolves the `rg` command used by Glob and Grep, preferring a file found on
+ * PATH, then the vendor hook, then the app cache, and finally bootstrapping a
+ * pinned ripgrep archive into `<KIMI_CODE_HOME|~/.kimi-code>/bin` when the
+ * caller permits it. File lookup intentionally avoids spawning `rg --version`
+ * so tool resolution has the same observable shape as v1.
  */
 
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -105,22 +105,20 @@ async function resolveRgPath(
 }
 
 export async function findExistingRg(
-  probe: RgProbe,
+  _probe: RgProbe,
   shareDir: string = getShareDir(),
   allowCachedFallback = true,
 ): Promise<RgResolution | undefined> {
-  const system = await probe.exec(['rg', '--version']).catch(() => ({ exitCode: -1 }));
-  if (system.exitCode === 0) {
-    return { path: 'rg', source: 'system-path' };
-  }
+  const system = await findRgOnPath();
+  if (system !== undefined) return { path: system, source: 'system-path' };
 
   if (allowCachedFallback) {
     const vendorPath = getVendorRgPath(rgBinaryName());
-    if (vendorPath !== undefined && (await isUsableRg(probe, vendorPath))) {
+    if (vendorPath !== undefined && (await isExecutableFile(vendorPath))) {
       return { path: vendorPath, source: 'vendor' };
     }
     const cachePath = join(shareDir, 'bin', rgBinaryName());
-    if (await isUsableRg(probe, cachePath)) {
+    if (await isExecutableFile(cachePath)) {
       return { path: cachePath, source: 'share-bin-cached' };
     }
   }
@@ -148,9 +146,24 @@ function getVendorRgPath(_binName: string): string | undefined {
   return undefined;
 }
 
-async function isUsableRg(probe: RgProbe, path: string): Promise<boolean> {
-  const run = await probe.exec([path, '--version']).catch(() => ({ exitCode: -1 }));
-  return run.exitCode === 0;
+async function findRgOnPath(): Promise<string | undefined> {
+  const pathEnv = process.env['PATH'] ?? '';
+  const sep = process.platform === 'win32' ? ';' : ':';
+  const binName = rgBinaryName();
+  for (const dir of pathEnv.split(sep)) {
+    if (dir === '') continue;
+    const candidate = join(dir, binName);
+    if (await isExecutableFile(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+async function isExecutableFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export function detectTarget(): string | undefined {

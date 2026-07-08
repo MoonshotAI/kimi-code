@@ -9,6 +9,7 @@ import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } f
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { MiniDb } from '@moonshot-ai/minidb';
 import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../bootstrap/stubs';
@@ -129,6 +130,28 @@ describe('MiniDbQueryStore', () => {
     expect(await store.getCheckpoint('wire:abc')).toBeUndefined();
     await store.setCheckpoint('wire:abc', { seq: 42 });
     expect(await store.getCheckpoint('wire:abc')).toEqual({ seq: 42 });
+  });
+
+  it('degrades gracefully when the database lock is held by another process', async () => {
+    // Simulate another kimi process holding the single-writer lock on the
+    // shared query-store directory.
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const lockHolder = await MiniDb.open({ dir: storeDir, valueCodec: 'json' });
+    try {
+      const store = build();
+      // Writes must not throw: the read model is a rebuildable cache, so lock
+      // contention degrades to a no-op rather than crashing the host.
+      await expect(store.put(COLLECTION, 'a', { id: 'a' })).resolves.toBeUndefined();
+      await expect(store.batch([{ kind: 'put', collection: COLLECTION, key: 'b', value: { id: 'b' } }])).resolves.toBeUndefined();
+      await expect(store.ensureIndex(COLLECTION, { kind: 'value', name: 'byId', field: 'id' })).resolves.toBeUndefined();
+      // Reads fall back to empty so consumers (e.g. session index) take their
+      // legacy path.
+      expect(await store.get(COLLECTION, 'a')).toBeUndefined();
+      expect(await store.getCheckpoint('wire:abc')).toBeUndefined();
+      expect(await store.query(COLLECTION).execute()).toEqual({ items: [] });
+    } finally {
+      await lockHolder.close();
+    }
   });
 
   it('rebuilds a clean store after on-disk corruption', async () => {

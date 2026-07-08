@@ -7,11 +7,12 @@ import type {
   McpServerEntry,
 } from './connection-manager';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
-import type { MCPClient } from './types';
+import type { MCPClient, MCPToolDefinition } from './types';
 
 export interface McpResolvedServer {
   readonly client: MCPClient;
   readonly tools: readonly KosongTool[];
+  readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
 }
 

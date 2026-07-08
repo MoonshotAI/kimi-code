@@ -89,6 +89,7 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
         snippet: r.snippet ?? '',
       };
       if (typeof r.date === 'string' && r.date.length > 0) out.date = r.date;
+      if (typeof r.site_name === 'string' && r.site_name.length > 0) out.siteName = r.site_name;
       if (typeof r.content === 'string' && r.content.length > 0) out.content = r.content;
       return out;
     });

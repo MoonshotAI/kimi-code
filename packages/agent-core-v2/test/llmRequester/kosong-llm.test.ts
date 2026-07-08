@@ -1,5 +1,6 @@
-import { APIConnectionError } from '#/app/llmProtocol/errors';
+import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
 import { type StreamedMessagePart } from '#/app/llmProtocol/message';
+import type { Tool } from '#/app/llmProtocol/tool';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,6 +42,185 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 }
 
 describe('LLMRequester service migration coverage', () => {
+  describe('wire observability records', () => {
+    let ctx: TestAgentContext;
+    let llmRequester: IAgentLLMRequesterService;
+
+    const requestTools: readonly Tool[] = [
+      {
+        name: 'Lookup',
+        description: 'Look up a short test value.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: 'DeferredLookup',
+        description: 'Loaded on demand, not sent in top-level tools.',
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+        deferred: true,
+      },
+    ];
+
+    beforeEach(() => {
+      ctx = createTestAgent();
+      llmRequester = ctx.get(IAgentLLMRequesterService);
+    });
+
+    afterEach(async () => {
+      try {
+        await ctx.expectResumeMatches();
+      } finally {
+        await ctx.dispose();
+      }
+    });
+
+    it('records one tools snapshot per unique provider-visible tool table and one request per outbound call', async () => {
+      ctx.mockNextResponse({ type: 'text', text: 'first response' });
+      await llmRequester.request({
+        messages: [userMessage('first direct request')],
+        systemPrompt: 'request-specific system',
+        tools: requestTools,
+        source: {
+          type: 'operation',
+          requestKind: 'direct_test',
+          logFields: { turnStep: '7.2', droppedCount: 3 },
+        },
+        retry: { maxAttempts: 1 },
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'second response' });
+      await llmRequester.request({
+        messages: [userMessage('second direct request')],
+        systemPrompt: 'request-specific system',
+        tools: requestTools,
+        source: {
+          type: 'operation',
+          requestKind: 'direct_test',
+          logFields: { turnStep: '7.3' },
+        },
+        retry: { maxAttempts: 1 },
+      });
+
+      const snapshots = wireEvents(ctx, 'llm.tools_snapshot');
+      expect(snapshots).toHaveLength(1);
+      const snapshotArgs = snapshots[0]?.args as Record<string, unknown> | undefined;
+      expect(snapshots[0]?.args).toMatchObject({
+        hash: expect.any(String),
+        tools: [
+          {
+            name: 'Lookup',
+            description: 'Look up a short test value.',
+            parameters: requestTools[0]!.parameters,
+          },
+        ],
+      });
+      expect(JSON.stringify(snapshots[0]?.args)).not.toContain('DeferredLookup');
+
+      const requests = wireEvents(ctx, 'llm.request');
+      expect(requests).toHaveLength(2);
+      expect(requests[0]?.args).toMatchObject({
+        kind: 'loop',
+        provider: 'kimi',
+        model: 'mock-model',
+        modelAlias: 'mock-model',
+        thinkingEffort: 'off',
+        toolSelect: true,
+        toolsHash: snapshotArgs?.['hash'],
+        messageCount: 1,
+        systemPromptHash: expect.any(String),
+        systemPrompt: 'request-specific system',
+        turnStep: '7.2',
+        droppedCount: 3,
+      });
+      expect(requests[1]?.args).toMatchObject({
+        toolsHash: snapshotArgs?.['hash'],
+        messageCount: 1,
+        turnStep: '7.3',
+      });
+    });
+
+    it('records the resolved Kimi thinking keep default when thinking is enabled', async () => {
+      ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
+      ctx.mockNextResponse({ type: 'text', text: 'thinking response' });
+
+      await llmRequester.request({ retry: { maxAttempts: 1 } });
+
+      expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
+      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
+        thinkingEffort: 'high',
+        thinkingKeep: 'all',
+      });
+    });
+
+    it('records retry attempts after the first request attempt', async () => {
+      await ctx.dispose();
+      let calls = 0;
+      ctx = createTestAgent(
+        llmGenerateServices(async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new APIConnectionError('terminated');
+          }
+          return {
+            id: 'retry-response',
+            message: { role: 'assistant', content: [], toolCalls: [] },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        }),
+      );
+      llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      await llmRequester.request();
+
+      const requests = wireEvents(ctx, 'llm.request');
+      expect(requests).toHaveLength(2);
+      expect((requests[0]?.args as Record<string, unknown> | undefined)?.['attempt']).toBeUndefined();
+      expect(requests[1]?.args).toMatchObject({ attempt: '2/3' });
+    });
+
+    it('records strict projection resends as separate outbound requests', async () => {
+      await ctx.dispose();
+      let calls = 0;
+      ctx = createTestAgent(
+        llmGenerateServices(async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new APIStatusError(400, 'tool_use ids must be unique');
+          }
+          return {
+            id: 'strict-response',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'strict ok' }],
+              toolCalls: [],
+            },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        }),
+      );
+      llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      await llmRequester.request({ retry: { maxAttempts: 1 } });
+
+      const requests = wireEvents(ctx, 'llm.request');
+      expect(requests).toHaveLength(2);
+      expect((requests[0]?.args as Record<string, unknown> | undefined)?.['projection']).toBeUndefined();
+      expect(requests[1]?.args).toMatchObject({ projection: 'strict' });
+    });
+  });
+
   describe('tool-call deltas', () => {
     let ctx: TestAgentContext;
     let profile: IAgentProfileService;
@@ -156,7 +336,11 @@ describe('LLMRequester service migration coverage', () => {
       await vi.runAllTimersAsync();
 
       await expect(responsePromise).resolves.toMatchObject({
-        message: { role: 'assistant', content: [], toolCalls: [] },
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '' }],
+          toolCalls: [],
+        },
         usage: emptyUsage(),
       });
       expect(calls).toBe(2);
@@ -309,6 +493,9 @@ describe('LLMRequester service migration coverage', () => {
       );
 
       expect(requestMaxTokens).toBe(384_000);
+      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
+        maxTokens: 384_000,
+      });
       expect(parts).toContainEqual({ type: 'text', text: 'timed' });
       expect(finish).toMatchObject({
         usage: emptyUsage(),
@@ -386,6 +573,11 @@ type ProtocolEvent = Extract<
   { readonly type: '[rpc]' }
 >;
 
+type WireEvent = Extract<
+  TestAgentContext['allEvents'][number],
+  { readonly type: '[wire]' }
+>;
+
 function protocolEvents(
   ctx: TestAgentContext,
   eventName: string,
@@ -393,6 +585,19 @@ function protocolEvents(
   return ctx.allEvents.filter(
     (event): event is ProtocolEvent => event.type === '[rpc]' && event.event === eventName,
   );
+}
+
+function wireEvents(
+  ctx: TestAgentContext,
+  eventName: string,
+): readonly WireEvent[] {
+  return ctx.allEvents.filter(
+    (event): event is WireEvent => event.type === '[wire]' && event.event === eventName,
+  );
+}
+
+function userMessage(text: string) {
+  return { role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [] };
 }
 
 async function collectLLMRequest(

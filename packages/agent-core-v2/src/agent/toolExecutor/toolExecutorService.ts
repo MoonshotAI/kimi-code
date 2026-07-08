@@ -730,10 +730,21 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
+  const base: {
+    output: ToolResult['output'];
+    stopTurn?: boolean;
+    truncated?: true;
+    note?: string;
+  } = { output, stopTurn: result.stopTurn };
+  if (result.truncated === true) base.truncated = true;
+  if (typeof result.note === 'string' && result.note.length > 0) base.note = result.note;
   if (result.isError === true) {
-    return { output, isError: true, stopTurn: result.stopTurn };
+    return {
+      ...base,
+      isError: true,
+    };
   }
-  return { output, stopTurn: result.stopTurn };
+  return base;
 }
 
 function toolTelemetryOutcome(result: ToolResult): 'success' | 'error' | 'cancelled' {

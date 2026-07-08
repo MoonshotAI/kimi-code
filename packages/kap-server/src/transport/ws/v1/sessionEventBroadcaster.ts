@@ -92,14 +92,22 @@ export interface BroadcastTarget {
   send(envelope: EventEnvelope): void;
 }
 
+/**
+ * Per-subscription agent allowlist for fine-grained v1 event delivery.
+ * `undefined` (or omitted) means "receive every agent" — the legacy
+ * session-grained behavior. A `ReadonlySet` restricts delivery to the listed
+ * agent ids; global events ({@link isGlobalEvent}) bypass the filter entirely.
+ */
+export type AgentFilter = ReadonlySet<string> | undefined;
+
 interface SessionState {
   readonly sessionId: string;
   readonly journal: SessionEventJournal;
   readonly tracker: InFlightTurnTracker;
   /** Recent durable envelopes for in-memory replay. */
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
-  /** Connections subscribed to this session. */
-  readonly targets: Set<BroadcastTarget>;
+  /** Connections subscribed to this session, each with its optional agent allowlist. */
+  readonly targets: Map<BroadcastTarget, AgentFilter>;
   /** Per-session dispatch queue — serializes stamp / journal / fan-out. */
   queue: Promise<void>;
   /** agentId → sink subscription. */
@@ -132,10 +140,14 @@ export class SessionEventBroadcaster {
   }
 
   /** Subscribe a connection to a session's stream (activates the session). */
-  async subscribe(sessionId: string, target: BroadcastTarget): Promise<boolean> {
+  async subscribe(
+    sessionId: string,
+    target: BroadcastTarget,
+    filter?: AgentFilter,
+  ): Promise<boolean> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) return false;
-    state.targets.add(target);
+    state.targets.set(target, filter);
     return true;
   }
 
@@ -143,7 +155,11 @@ export class SessionEventBroadcaster {
     this.sessions.get(sessionId)?.targets.delete(target);
   }
 
-  async getBufferedSince(sessionId: string, cursor: SessionCursor): Promise<BufferedSinceResult> {
+  async getBufferedSince(
+    sessionId: string,
+    cursor: SessionCursor,
+    filter?: AgentFilter,
+  ): Promise<BufferedSinceResult> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) {
       return { events: [], resyncRequired: 'session_recreated', currentSeq: 0, epoch: '' };
@@ -168,14 +184,24 @@ export class SessionEventBroadcaster {
       return { events: [], resyncRequired: 'buffer_overflow', currentSeq, epoch };
     }
 
+    // Filter is a view crop over the session's single durable sequence: the
+    // watermark and overflow checks above stay global, only the returned
+    // envelopes are narrowed to the subscriber's agent allowlist.
+    const applyFilter = (
+      entries: Array<{ seq: number; envelope: EventEnvelope }>,
+    ): Array<{ seq: number; envelope: EventEnvelope }> =>
+      filter === undefined
+        ? entries
+        : entries.filter(({ envelope }) => matchesAgentFilter(envelope, filter));
+
     // Serve from the memory tail when it fully covers the gap; else the journal.
     const tailStart = tail[0]?.seq;
     if (tailStart !== undefined && tailStart <= cursor.seq + 1) {
-      const events = tail.filter((e) => e.seq > cursor.seq);
+      const events = applyFilter(tail.filter((e) => e.seq > cursor.seq));
       return { events, resyncRequired: false, currentSeq, epoch };
     }
     const fromDisk = await journal.readSince(cursor.seq, this.maxBufferSize);
-    return { events: fromDisk, resyncRequired: false, currentSeq, epoch };
+    return { events: applyFilter(fromDisk), resyncRequired: false, currentSeq, epoch };
   }
 
   async getCursor(sessionId: string): Promise<{ seq: number; epoch: string }> {
@@ -252,7 +278,7 @@ export class SessionEventBroadcaster {
       journal,
       tracker: new InFlightTurnTracker(),
       tail: [],
-      targets: new Set(),
+      targets: new Map(),
       queue: Promise.resolve(),
       agentDisposables: new Map(),
       lifecycleDisposables: [],
@@ -277,7 +303,7 @@ export class SessionEventBroadcaster {
       journal,
       tracker: new InFlightTurnTracker(),
       tail: [],
-      targets: new Set(),
+      targets: new Map(),
       queue: Promise.resolve(),
       agentDisposables: new Map(),
       lifecycleDisposables: [],
@@ -526,12 +552,24 @@ export class SessionEventBroadcaster {
       while (tail.length > this.maxBufferSize) tail.shift();
     }
 
-    const fanOut = isGlobalEvent(event.type) ? this.allTargets() : targets;
-    for (const target of fanOut) {
-      try {
-        target.send(envelope);
-      } catch {
-        // best-effort fan-out; a broken target is dropped, not fatal
+    if (isGlobalEvent(event.type)) {
+      // Global events (session/workspace/config/model-catalog) are not agent
+      // events — fan out to every subscriber regardless of any agent filter.
+      for (const target of this.allTargets()) {
+        try {
+          target.send(envelope);
+        } catch {
+          // best-effort fan-out; a broken target is dropped, not fatal
+        }
+      }
+    } else {
+      for (const [target, filter] of targets) {
+        if (!matchesAgentFilter(envelope, filter)) continue;
+        try {
+          target.send(envelope);
+        } catch {
+          // best-effort fan-out; a broken target is dropped, not fatal
+        }
       }
     }
   }
@@ -554,7 +592,7 @@ export class SessionEventBroadcaster {
 
   private *allTargets(): Iterable<BroadcastTarget> {
     for (const state of this.sessions.values()) {
-      for (const target of state.targets) yield target;
+      for (const target of state.targets.keys()) yield target;
     }
   }
 }
@@ -592,6 +630,31 @@ function isGlobalEvent(type: string): boolean {
     type.startsWith('event.config.') ||
     type.startsWith('event.model_catalog.')
   );
+}
+
+/**
+ * Per-subscription agent allowlist check — shared by live fan-out and replay.
+ * Returns `true` when the envelope should be delivered to a subscriber carrying
+ * `filter`:
+ *   - `filter === undefined` → receive every agent (legacy session-grained
+ *     behavior);
+ *   - global events (session/workspace/config/model-catalog) are not agent
+ *     events and always pass;
+ *   - events without a string `agentId` (should not happen on the v1 wire,
+ *     where the broadcaster stamps every event) pass defensively rather than
+ *     being dropped;
+ *   - otherwise the envelope's `payload.agentId` must be in the allowlist.
+ */
+function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boolean {
+  if (filter === undefined) return true;
+  if (isGlobalEvent(envelope.type)) return true;
+  const payload = envelope.payload;
+  const agentId =
+    typeof payload === 'object' && payload !== null
+      ? (payload as { agentId?: unknown }).agentId
+      : undefined;
+  if (typeof agentId !== 'string') return true;
+  return filter.has(agentId);
 }
 
 // ---------------------------------------------------------------------------

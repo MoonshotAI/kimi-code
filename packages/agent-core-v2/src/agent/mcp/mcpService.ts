@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
@@ -10,6 +12,7 @@ import type {
   ToolListUpdatedEvent,
 } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
@@ -17,7 +20,14 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { McpServerEntry } from './connection-manager';
 import { IAgentMcpService, type McpServiceOptions } from './mcp';
 import { qualifyMcpToolName } from './tool-naming';
-import type { MCPClient } from './types';
+import type { MCPClient, MCPToolDefinition } from './types';
+import { IAgentWireService } from '#/wire/tokens';
+import type { IWireService } from '#/wire/wireService';
+import {
+  McpDiscoveryModel,
+  mcpToolsDiscovered,
+  type McpToolCollision,
+} from './mcpDiscoveryOps';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -34,24 +44,20 @@ interface McpToolRegistration {
   readonly serverName: string;
 }
 
-interface McpToolCollision {
-  readonly qualified: string;
-  readonly toolName: string;
-  readonly collidesWith:
-    | { readonly kind: 'same_server'; readonly toolName: string }
-    | { readonly kind: 'other_server'; readonly serverName: string };
-}
-
 export class AgentMcpService extends Disposable implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly mcpToolsByServer = new Map<string, string[]>();
+  private readonly pendingDiscoveries: Array<() => void> = [];
+  private discoveryWritesReady = false;
 
   constructor(
     private readonly options: McpServiceOptions = {},
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentWireService private readonly wire: IWireService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this.attachMcpTools();
@@ -64,6 +70,8 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
         },
       ),
     );
+    this._register(this.wire.onRestored(() => this.flushPendingDiscoveries()));
+    this._register(this.wire.onEmission(() => this.flushPendingDiscoveries()));
   }
 
   get oauthService() {
@@ -164,6 +172,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       resolved.enabledNames,
     );
     this.emitMcpToolCollisions(entry.name, result.collisions);
+    this.recordDiscovery(entry.name, resolved.rawTools, resolved.enabledNames, result.collisions);
     this.eventBus.publish({
       type: 'tool.list.updated',
       reason: 'mcp.connected',
@@ -229,7 +238,10 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       seenInThisCall.set(qualified, tool.name);
       const disposable = this._register(
         this.registry.register(
-          createMcpTool(qualified, tool, client, { originalsDir: this.options.originalsDir }),
+          createMcpTool(qualified, tool, client, {
+            originalsDir: this.options.originalsDir,
+            telemetry: this.telemetry,
+          }),
           { source: 'mcp' },
         ),
       );
@@ -250,6 +262,44 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     }
     this.mcpToolsByServer.delete(serverName);
     return true;
+  }
+
+  private recordDiscovery(
+    serverName: string,
+    rawTools: readonly MCPToolDefinition[],
+    enabledNames: ReadonlySet<string>,
+    collisions: readonly McpToolCollision[],
+  ): void {
+    const enabledNamesSnapshot = [...enabledNames].toSorted((a, b) => a.localeCompare(b));
+    const work = (): void => {
+      const hash = createHash('sha256')
+        .update(JSON.stringify({ tools: rawTools, enabledNames: enabledNamesSnapshot, collisions }))
+        .digest('hex');
+      const key = `${serverName}\n${hash}`;
+      if (this.wire.getModel(McpDiscoveryModel).seen.includes(key)) return;
+      this.wire.dispatch(
+        mcpToolsDiscovered({
+          serverName,
+          hash,
+          tools: rawTools,
+          enabledNames: enabledNamesSnapshot,
+          collisions: collisions.length > 0 ? collisions : undefined,
+        }),
+      );
+    };
+    if (!this.discoveryWritesReady) {
+      this.pendingDiscoveries.push(work);
+      return;
+    }
+    work();
+  }
+
+  private flushPendingDiscoveries(): void {
+    this.discoveryWritesReady = true;
+    const pending = this.pendingDiscoveries.splice(0);
+    for (const work of pending) {
+      work();
+    }
   }
 
   private emitMcpToolCollisions(

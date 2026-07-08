@@ -8,7 +8,8 @@
  * its `agentLifecycle` agents, and
  * broadcasts through `event`. Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
- * sessions are the `sessionIndex` read model.
+ * sessions are discovered through the `sessionIndex` read model, and workspace
+ * roots are remembered through `workspaceRegistry`.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -23,7 +24,6 @@ import {
 } from '#/_base/di/scope';
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent, MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -64,6 +64,10 @@ import {
   type SessionWillCloseEvent,
   ISessionLifecycleService,
 } from './sessionLifecycle';
+
+type MaterializeSessionOptions = CreateSessionOptions & {
+  readonly workspaceId?: string;
+};
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -106,8 +110,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async materializeSession(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
-    const workspaceId = encodeWorkDirKey(opts.workDir);
+  private async materializeSession(opts: MaterializeSessionOptions): Promise<ISessionScopeHandle> {
+    const workspace = await this.workspaceRegistry.createOrTouch(opts.workDir);
+    const workspaceId = opts.workspaceId ?? workspace.id;
     const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
     const sessionDir = this.bootstrap.sessionDir(workspaceId, opts.sessionId);
     // Metadata lives at `<sessionDir>/state.json` (shared with v1's layout; the
@@ -188,10 +193,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
-    const workspace = await this.workspaceRegistry.get(summary.workspaceId);
-    if (workspace === undefined) return undefined;
+    const workspace =
+      summary.cwd === undefined
+        ? await this.workspaceRegistry.get(summary.workspaceId)
+        : undefined;
+    const workDir = summary.cwd ?? workspace?.root;
+    if (workDir === undefined) return undefined;
 
-    const handle = await this.materializeSession({ sessionId, workDir: workspace.root });
+    const handle = await this.materializeSession({
+      sessionId,
+      workDir,
+      workspaceId: summary.workspaceId,
+    });
     const agents = handle.accessor.get(IAgentLifecycleService);
     if (agents.getHandle(MAIN_AGENT_ID) === undefined) {
       const main = await ensureMainAgent(handle);

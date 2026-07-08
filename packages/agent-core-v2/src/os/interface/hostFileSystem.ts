@@ -13,6 +13,12 @@ import type { TextDecodeErrors } from '#/_base/execEnv/decodeText';
 export interface HostFileStat {
   readonly isFile: boolean;
   readonly isDirectory: boolean;
+  /**
+   * `true` when the path itself is a symbolic link (reported via a
+   * non-following `lstat`). Lets callers surface `kind: 'symlink'` instead of
+   * silently following the link and reporting the target's type.
+   */
+  readonly isSymbolicLink?: boolean;
   readonly size: number;
   /** Last-modified time in epoch milliseconds, when the backend exposes it. */
   readonly mtimeMs?: number;
@@ -24,6 +30,12 @@ export interface HostDirEntry {
   readonly name: string;
   readonly isFile: boolean;
   readonly isDirectory: boolean;
+  /**
+   * `true` when the directory entry is a symbolic link (from `readdir`
+   * `withFileTypes`). Does not follow the link — a symlink to a directory is
+   * reported with `isSymbolicLink: true` and `isDirectory: false`.
+   */
+  readonly isSymbolicLink?: boolean;
 }
 
 export interface IHostFileSystem {
@@ -34,6 +46,15 @@ export interface IHostFileSystem {
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string>;
   writeText(path: string, data: string): Promise<void>;
+  /**
+   * Append UTF-8 `data` to the end of `path`, creating the file if it does not
+   * exist. Maps to a native append (POSIX `O_APPEND` / `fs.appendFile`): it
+   * never reads or truncates existing content, so concurrent readers never see
+   * a partially-rewritten file and a crash mid-write can lose only the new
+   * bytes, never the prior contents. Prefer this over a read-then-rewrite for
+   * log-style appends.
+   */
+  appendText(path: string, data: string): Promise<void>;
   /**
    * Read bytes from `path`. When `n` is given, reads at most the first `n`
    * bytes (a ranged/prefix read); otherwise reads the whole file. The ranged

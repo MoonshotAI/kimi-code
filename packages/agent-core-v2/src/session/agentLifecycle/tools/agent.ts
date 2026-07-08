@@ -25,6 +25,7 @@ import {
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { isAbortError } from '#/agent/loop/errors';
 import { ToolAccesses } from '#/agent/tool/tool-access';
 import type {
@@ -89,7 +90,9 @@ export const AgentToolInputSchema = z.preprocess(
     resume: z
       .string()
       .optional()
-      .describe('Optional agent ID to resume instead of creating a new instance'),
+      .describe(
+        'Optional agent ID to resume instead of creating a new instance. When set, do not also pass subagent_type; the resumed agent keeps its original type.',
+      ),
     run_in_background: z
       .boolean()
       .optional()
@@ -256,6 +259,9 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         permissionMode: this.permissionMode.mode,
         labels: subagentLabels(this.callerAgentId),
       });
+      created.accessor
+        .get(IAgentUserToolService)
+        .inheritUserTools(requester.accessor.get(IAgentUserToolService));
       agentId = created.id;
       profileName = profile.name;
       promptText = await applyProfilePromptPrefix(profile, args.prompt, {
@@ -326,6 +332,14 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         handle = await this.launch(args, toolCallId, controller);
       } catch (error) {
         signal.removeEventListener('abort', abortBeforeRegister);
+        this.log.warn('subagent launch failed', {
+          toolCallId,
+          runInBackground,
+          operation: isResume ? 'resume' : 'spawn',
+          subagentType: requestedProfileName ?? DEFAULT_PROFILE_NAME,
+          resumeAgentId: isResume ? resumeAgentId : undefined,
+          error,
+        });
         throw error;
       }
 
@@ -353,8 +367,12 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           subagentType: handle.profileName,
           error,
         });
+        const message = error instanceof Error ? error.message : String(error);
         return {
-          output: error instanceof Error ? error.message : String(error),
+          output:
+            message === 'Too many detached tasks are already running.'
+              ? 'Too many background tasks are already running.'
+              : message,
           isError: true,
         };
       }
@@ -439,7 +457,7 @@ function formatBackgroundAgentResult(
     `description: ${description}`,
     '',
     allowBackground
-      ? `next_step: The completion arrives automatically in a later turn — no polling needed. To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).`
+      ? 'next_step: The completion arrives automatically in a later turn; do NOT wait, poll, or call TaskOutput on it. Continue with other work or respond to the user.'
       : 'next_step: The completion arrives automatically in a later turn.',
     `resume_hint: To continue or recover this same subagent later, call Agent(resume="${handle.agentId}", prompt="..."). The parameter is agent_id ("${handle.agentId}"), NOT task_id ("${taskId}") or source_id from a later <notification>. Recovery cases: a later <notification type="task.lost" | "task.failed" | "task.killed"> for this subagent — its conversation history is preserved across session restarts and resume will pick it up.`,
   ].join('\n');

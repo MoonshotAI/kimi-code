@@ -39,6 +39,7 @@ import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { coerceThinkingForModel, commitLevel, segmentsFor } from './lib/modelThinking';
+import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
@@ -506,13 +507,15 @@ function handleCommand(cmd: string): void {
       break;
     default: {
       // Not a built-in command → treat it as a session skill activation
-      // (the user picked `/<skill>` from the menu, or typed `/<skill> args`).
-      // The daemon answers an unknown name with skill.not_found, surfaced as a
-      // warning, so a stray slash is harmless. With no active session, create
-      // one first (same path as the first prompt) so the activation isn't
-      // silently dropped on the new-session screen.
+      // (the user picked `/skill:<skill>` from the menu, or typed
+      // `/<skill> args`). Strip the `skill:` display prefix — the REST API
+      // takes the bare skill name. The daemon answers an unknown name with
+      // skill.not_found, surfaced as a warning, so a stray slash is harmless.
+      // With no active session, create one first (same path as the first
+      // prompt) so the activation isn't silently dropped on the new-session
+      // screen.
       const space = cmd.indexOf(' ');
-      const name = (space === -1 ? cmd : cmd.slice(0, space)).slice(1);
+      const name = stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
       const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
       if (!name) break;
       if (!client.activeSessionId.value && client.activeWorkspaceId.value) {

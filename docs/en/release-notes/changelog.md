@@ -6,6 +6,34 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.2 (2026-07-08)
+
+### Features
+
+- Add the Vercel plugin to the bundled plugin marketplace. Run `/plugins` and select Vercel Plugin to install it.
+
+### Bug Fixes
+
+- Fix `kimi -p` runs exiting with code 0 when a turn fails.
+- Prevent autonomous goals from being paused by model-reported status updates.
+- Count the turn that starts an autonomous goal toward its turn budget.
+- Raise the image downscale cap from 2000px to 3000px, and fix swapped width/height for EXIF-rotated (portrait) photos in compression captions and media read notes so region readback coordinates map correctly.
+- web: Fix the connection error toast lingering after the WebSocket reconnects when returning from the background.
+- Fix console windows flashing on Windows each time a hook runs.
+
+### Polish
+
+- web: Redesign the scheduled reminder UI.
+- web: Show session skills in the slash menu as `/skill:<name>` so they are distinguishable from built-in commands; typing the bare skill name still works.
+- web: The composer model switcher switches the active session's model as before and additionally bumps the global default model, so new sessions inherit the choice.
+- web: Press Enter to confirm in archive and other confirmation dialogs.
+- Tighten goal-mode guidance for blocked and complete status updates.
+- Progressive tool disclosure (`select_tools`, experimental): compaction now discards the loaded tool schemas instead of re-injecting them, and the model re-selects the tools it still needs afterward. A from-memory call to a no-longer-loaded tool is rejected with guidance to select it first. No effect unless the `tool-select` experimental flag and a `select_tools`-capable model are active.
+
+### Refactors
+
+- web: Compile icons at build time so the bundled web UI only carries the icons it renders.
+
 ## 0.23.1 (2026-07-07)
 
 ### Bug Fixes

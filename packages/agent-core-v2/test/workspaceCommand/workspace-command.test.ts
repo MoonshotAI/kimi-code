@@ -76,6 +76,10 @@ class MemoryHostFs implements IHostFileSystem {
     this.files.set(path, data);
   }
 
+  async appendText(path: string, data: string): Promise<void> {
+    this.files.set(path, (this.files.get(path) ?? '') + data);
+  }
+
   pauseNextWrite(): { readonly started: Promise<void>; readonly release: () => void } {
     let started!: () => void;
     let release!: () => void;

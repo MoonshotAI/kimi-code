@@ -232,7 +232,7 @@ function formatText(text: string): string {
   if (isPlanModeReminder(text)) {
     return '<plan-mode-reminder>';
   }
-  if (text.includes('<!-- Compression Priorities (in order) -->')) {
+  if (text.includes('first-person handoff note')) {
     return '<compaction-instruction>';
   }
   return JSON.stringify(text);

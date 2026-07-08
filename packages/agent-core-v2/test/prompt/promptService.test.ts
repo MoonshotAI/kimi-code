@@ -107,6 +107,7 @@ describe('AgentPromptService', () => {
     removed.removeFromQueue();
     await flushSteers(loop, activeTurn);
     expect(context.messages).toEqual([]);
+    expect(turn.steered).toEqual([]);
 
     const emitted = prompt.steer(
       userMessage('emitted', { kind: 'system_trigger', name: 'test_emitted' }),
@@ -121,6 +122,12 @@ describe('AgentPromptService', () => {
     expect(context.messages.map((message) => message.content[0])).toMatchObject([
       { type: 'text', text: 'emitted' },
     ]);
+    expect(turn.steered).toHaveLength(1);
+    expect(turn.steered[0]?.input).toMatchObject([{ type: 'text', text: 'emitted' }]);
+    expect(turn.steered[0]?.origin).toMatchObject({
+      kind: 'system_trigger',
+      name: 'test_emitted',
+    });
     expect(() => emitted.removeFromQueue()).toThrow(expect.objectContaining({
       code: 'request.invalid',
     }));

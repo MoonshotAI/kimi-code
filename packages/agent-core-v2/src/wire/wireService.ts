@@ -66,5 +66,5 @@ export interface IWireService {
     handler: (state: DeepReadonly<S>, prev: DeepReadonly<S>) => void,
   ): IDisposable;
   onEmission(handler: (emission: WireEmission) => void): IDisposable;
-  onRestored(handler: () => void): IDisposable;
+  onRestored(handler: () => void | Promise<void>): IDisposable;
 }

@@ -160,6 +160,46 @@ describe('AgentTurnService ready', () => {
     });
     await expect(turn.result).resolves.toMatchObject({ reason: 'completed', steps: 1 });
   });
+
+  it('records turn.cancel when cancelling the active turn', async () => {
+    const records: PersistedRecord[] = [];
+    disposables.add(
+      ix.get(IAgentWireService).onEmission((emission) => {
+        records.push(emission.record);
+      }),
+    );
+    loop.run = async ({ signal }) => {
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return { reason: 'cancelled', steps: 0 };
+    };
+
+    const turnService = ix.get(IAgentTurnService);
+    const turn = turnService.launch({
+      input: [{ type: 'text', text: 'cancel me' }],
+      origin: { kind: 'user' },
+    });
+
+    expect(turnService.cancel(turn.id)).toBe(true);
+    await expect(turn.result).resolves.toMatchObject({ reason: 'cancelled', steps: 0 });
+    expect(records.map((record) => record.type)).toEqual(['turn.prompt', 'turn.cancel']);
+    expect(records[1]).toEqual({ type: 'turn.cancel', turnId: turn.id });
+  });
+
+  it('records turn.cancel for an idle no-op cancellation', () => {
+    const records: PersistedRecord[] = [];
+    disposables.add(
+      ix.get(IAgentWireService).onEmission((emission) => {
+        records.push(emission.record);
+      }),
+    );
+
+    const turnService = ix.get(IAgentTurnService);
+
+    expect(turnService.cancel(99)).toBe(false);
+    expect(records).toEqual([{ type: 'turn.cancel', turnId: 99 }]);
+  });
 });
 
 describe('AgentLoopService onStarted', () => {

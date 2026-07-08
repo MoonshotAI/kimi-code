@@ -518,22 +518,19 @@ describe('Agent resume', () => {
             message.origin.taskId === 'agent-new00000',
         ),
       ).toBe(true);
-      // The newly delivered notification is persisted as a v1.5
-      // `context.splice` (append) record, not the legacy
-      // `context.append_message`.
+      // The newly delivered notification is persisted through the current
+      // context append primitive.
       expect(persistence.appended).toContainEqual(
         expect.objectContaining({
-          type: 'context.splice',
-          messages: expect.arrayContaining([
-            expect.objectContaining({
-              origin: {
-                kind: 'task',
-                taskId: 'agent-new00000',
-                status: 'completed',
-                notificationId: 'task:agent-new00000:completed',
-              },
-            }),
-          ]),
+          type: 'context.append_message',
+          message: expect.objectContaining({
+            origin: {
+              kind: 'task',
+              taskId: 'agent-new00000',
+              status: 'completed',
+              notificationId: 'task:agent-new00000:completed',
+            },
+          }),
         }),
       );
     } finally {

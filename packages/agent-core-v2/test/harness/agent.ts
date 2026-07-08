@@ -432,6 +432,7 @@ function isFullHostFs(input: unknown): boolean {
   const keys: readonly (keyof IHostFileSystem)[] = [
     'readText',
     'writeText',
+    'appendText',
     'readBytes',
     'writeBytes',
     'readLines',
@@ -539,7 +540,10 @@ export function wireRecordPersistenceServices(
 }
 
 export function logServices(logger: Logger): TestAgentServiceOverride {
-  return appService(ILogService, createLogService(logger));
+  return [
+    appService(ILogService, createLogService(logger)),
+    sessionService(ILogService, createLogService(logger)),
+  ];
 }
 
 export function llmGenerateServices(generate: GenerateFn): TestAgentServiceOverride {
@@ -557,22 +561,30 @@ export function questionServices(service: ISessionQuestionService): TestAgentSer
 export function externalHookServices(
   hookRunner: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined,
 ): TestAgentServiceOverride {
-  const runner: IExternalHooksRunnerService =
-    hookRunner === undefined
-      ? noopHookRunner
-      : isRunnerLike(hookRunner)
-        ? hookRunner
-        : { ...noopHookRunner, ...hookRunner };
   return [
-    appService(IExternalHooksRunnerService, runner),
+    appService(IExternalHooksRunnerService, resolveExternalHooksRunner(hookRunner)),
     agentService(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService)),
   ];
+}
+
+function resolveExternalHooksRunner(
+  hookRunner: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined,
+): IExternalHooksRunnerService {
+  return hookRunner === undefined
+    ? noopHookRunner
+    : isRunnerLike(hookRunner)
+      ? hookRunner
+      : { ...noopHookRunner, ...hookRunner };
 }
 
 function isRunnerLike(
   value: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'>,
 ): value is IExternalHooksRunnerService {
-  return '_serviceBrand' in value;
+  return (
+    typeof value.trigger === 'function' &&
+    typeof value.triggerBlock === 'function' &&
+    typeof value.fireAndForgetTrigger === 'function'
+  );
 }
 
 const noopHookRunner: IExternalHooksRunnerService = {
@@ -979,6 +991,12 @@ export class AgentTestContext {
           if (options.telemetry !== undefined) {
             reg.defineInstance(ITelemetryService, options.telemetry);
           }
+          if (options.hookEngine !== undefined) {
+            reg.defineInstance(
+              IExternalHooksRunnerService,
+              resolveExternalHooksRunner(options.hookEngine),
+            );
+          }
           reg.defineInstance(IHostTerminalService, createHostTerminalService());
           // The real `HostEnvironmentService` probes the host asynchronously (`ready`);
           // builtin tools (e.g. `BashTool`) read `osKind`/`shellName` synchronously at
@@ -1065,9 +1083,7 @@ export class AgentTestContext {
             );
             reg.defineDescriptor(
               IAgentExternalHooksService,
-              new SyncDescriptor(AgentExternalHooksService, [
-                options.hookEngine === undefined ? {} : { hookEngine: options.hookEngine },
-              ]),
+              new SyncDescriptor(AgentExternalHooksService),
             );
             reg.defineDescriptor(
               IAgentMicroCompactionService,
@@ -1181,7 +1197,6 @@ export class AgentTestContext {
 
   private async replayRestoredRecordsSince(restoredStart: number): Promise<void> {
     const restored = this.wireRecord.getRecords().slice(restoredStart);
-    if (restored.length === 0) return;
     await this.get(IAgentWireService).replay(...(restored as readonly PersistedRecord[]));
   }
 
@@ -1545,6 +1560,7 @@ export class AgentTestContext {
     await this.drainWirePersistence();
     const profile = this.get(IAgentProfileService);
     const configSnapshot = structuredClone(this.get(IConfigService).getAll() as KimiConfig);
+    let resumedThroughRecord = this.recordHistory.length;
     const resumed = createTestAgent(
       { autoConfigure: false, cwd: profile.data().cwd },
       ...this.serviceOverrides,
@@ -1558,6 +1574,13 @@ export class AgentTestContext {
     try {
       await resumed.restorePersisted();
       await resumed.waitForSessionMetadata();
+      for (let i = 0; i < 5; i += 1) {
+        await this.drainWirePersistence();
+        if (this.recordHistory.length === resumedThroughRecord) break;
+        const nextRecords = this.recordHistory.slice(resumedThroughRecord).map(cloneRecord);
+        resumedThroughRecord = this.recordHistory.length;
+        await resumed.restore(nextRecords);
+      }
 
       // oxlint-disable-next-line jest/no-standalone-expect
       expect(resumeStateSnapshot(resumed)).toEqual(resumeStateSnapshot(this));
@@ -1572,11 +1595,22 @@ export class AgentTestContext {
   }
 
   private async drainWirePersistence(): Promise<void> {
-    for (let i = 0; i < 5; i += 1) {
-      await Promise.resolve();
-    }
     const wireRecord = this.get(IAgentWireRecordService);
-    await wireRecord.flush();
+    let lastRecordCount = -1;
+    for (let i = 0; i < 25; i += 1) {
+      for (let j = 0; j < 5; j += 1) {
+        await Promise.resolve();
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await wireRecord.flush();
+      if (
+        this.recordHistory.length === lastRecordCount &&
+        pendingTaskNotificationKeys(this.recordHistory).length === 0
+      ) {
+        return;
+      }
+      lastRecordCount = this.recordHistory.length;
+    }
   }
 
   async close(_reason = 'Agent runtime test closed'): Promise<void> {
@@ -1989,6 +2023,73 @@ function isSystemReminderMessage(message: ContextMessage): boolean {
   return text.startsWith('<system-reminder>');
 }
 
+function pendingTaskNotificationKeys(records: readonly PersistedWireRecord[]): readonly string[] {
+  const terminal = new Set<string>();
+  const delivered = new Set<string>();
+  for (const record of records) {
+    if (record.type === 'task.terminated') {
+      const info = record['info'];
+      if (isTaskInfoLike(info) && info.detached !== false && info.terminalNotificationSuppressed !== true) {
+        terminal.add(taskNotificationKey(info.taskId, info.status));
+      }
+      continue;
+    }
+    for (const message of contextMessagesFromRecord(record)) {
+      const origin = message.origin;
+      if (isTaskOriginLike(origin)) {
+        delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
+      }
+    }
+  }
+  return [...terminal].filter((key) => !delivered.has(key));
+}
+
+function contextMessagesFromRecord(record: PersistedWireRecord): readonly ContextMessage[] {
+  if (record.type === 'context.append_message') {
+    const message = record['message'];
+    return isContextMessageLike(message) ? [message] : [];
+  }
+  if (record.type === 'context.splice') {
+    const messages = record['messages'];
+    return Array.isArray(messages)
+      ? messages.filter(isContextMessageLike)
+      : [];
+  }
+  return [];
+}
+
+function isContextMessageLike(value: unknown): value is ContextMessage {
+  return typeof value === 'object' && value !== null && 'role' in value;
+}
+
+function isTaskInfoLike(value: unknown): value is {
+  readonly taskId: string;
+  readonly status: string;
+  readonly detached?: boolean;
+  readonly terminalNotificationSuppressed?: boolean;
+} {
+  if (typeof value !== 'object' || value === null) return false;
+  const info = value as Record<string, unknown>;
+  return typeof info['taskId'] === 'string' && typeof info['status'] === 'string';
+}
+
+function isTaskOriginLike(value: unknown): value is {
+  readonly taskId: string;
+  readonly status: string;
+  readonly notificationId: string;
+} {
+  if (typeof value !== 'object' || value === null) return false;
+  const origin = value as Record<string, unknown>;
+  return origin['kind'] === 'task' &&
+    typeof origin['taskId'] === 'string' &&
+    typeof origin['status'] === 'string' &&
+    typeof origin['notificationId'] === 'string';
+}
+
+function taskNotificationKey(taskId: string, status: string): string {
+  return `${taskId}\0${status}\0task:${taskId}:${status}`;
+}
+
 function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config'] {
   const profile = ctx.get(IAgentProfileService);
   const data = profile.data();
@@ -2294,6 +2395,11 @@ class GenerateBackedChatProvider implements ChatProvider {
   ) {
     this.name = config.type;
     this.modelName = modelNameFromConfig(config);
+  }
+
+  get maxCompletionTokens(): number | undefined {
+    const value = this.modelParameters[completionBudgetParamName(this.config.type)];
+    return typeof value === 'number' ? value : undefined;
   }
 
   async generate(

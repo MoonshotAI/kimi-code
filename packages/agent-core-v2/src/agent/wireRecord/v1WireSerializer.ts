@@ -36,8 +36,6 @@ function reshape(record: PersistedRecord): readonly PersistedRecord[] {
       return [out as PersistedRecord];
     }
     case 'context.append_message': {
-      const message = record['message'] as { role?: unknown } | undefined;
-      if (message?.role !== 'user') return [];
       return [record];
     }
     case 'context.splice': {
@@ -71,15 +69,20 @@ function reshape(record: PersistedRecord): readonly PersistedRecord[] {
         },
       ];
     case 'context.apply_compaction': {
-      return [
-        {
-          type: 'context.apply_compaction',
-          summary: record['summary'],
-          compactedCount: record['compactedCount'],
-          tokensBefore: record['tokensBefore'],
-          tokensAfter: record['tokensAfter'],
-        } as PersistedRecord,
-      ];
+      const out: Record<string, unknown> = { type: 'context.apply_compaction' };
+      for (const key of [
+        'summary',
+        'contextSummary',
+        'compactedCount',
+        'tokensBefore',
+        'tokensAfter',
+        'keptUserMessageCount',
+        'keptHeadUserMessageCount',
+        'droppedCount',
+      ]) {
+        if (record[key] !== undefined) out[key] = record[key];
+      }
+      return [out as PersistedRecord];
     }
     case 'full_compaction.begin':
       return [record];

@@ -234,7 +234,7 @@ export class AgentLoopService implements IAgentLoopService {
           type: 'tool.result',
           parentUuid: toolCallUuids.get(toolResult.toolCallId) ?? randomUUID(),
           toolCallId: toolResult.toolCallId,
-          result: { output: result.output, isError: result.isError },
+          result: { output: result.output, isError: result.isError, note: result.note },
         });
         if (result.stopTurn === true) stopTurn = true;
       }

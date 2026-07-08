@@ -6,9 +6,9 @@
  * (mirroring `mkdir(parents=True, exist_ok=True)`). Path access policy is
  * resolved before any filesystem I/O.
  *
- * `IHostFileSystem.writeText` has no mode flag: overwrite maps to a direct
- * write, while append reads the existing content first (treating a missing
- * file as empty) and writes the concatenation back.
+ * Append uses `IHostFileSystem.appendText` (a native `O_APPEND`-style append),
+ * so existing content is never read or rewritten — keeping appends atomic with
+ * respect to concurrent writers and safe against mid-write crashes.
  *
  * Write access flows through the os `hostFs` domain (`IHostFileSystem`); path
  * semantics (home expansion, path class) come from the `hostEnvironment`
@@ -107,14 +107,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
     try {
       const mode = args.mode ?? 'overwrite';
       if (mode === 'append') {
-        let existing = '';
-        try {
-          existing = await this.fs.readText(safePath);
-        } catch (error) {
-          const code = (error as { code?: unknown } | null)?.code;
-          if (code !== 'ENOENT') throw error;
-        }
-        await this.fs.writeText(safePath, existing + args.content);
+        await this.fs.appendText(safePath, args.content);
       } else {
         await this.fs.writeText(safePath, args.content);
       }

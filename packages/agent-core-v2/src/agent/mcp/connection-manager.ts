@@ -21,7 +21,7 @@ import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
-import { assertMcpInputSchema, type MCPClient } from './types';
+import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
 
@@ -39,6 +39,7 @@ interface InternalEntry {
   attemptId: number;
   status: McpServerStatus;
   tools?: readonly Tool[];
+  rawTools?: readonly MCPToolDefinition[];
   enabledNames?: ReadonlySet<string>;
   error?: string;
   client?: RuntimeMcpClient;
@@ -158,12 +159,18 @@ export class McpConnectionManager {
   resolved(
     name: string,
   ):
-    | { client: MCPClient; tools: readonly Tool[]; enabledNames: ReadonlySet<string> }
+    | {
+        client: MCPClient;
+        tools: readonly Tool[];
+        rawTools: readonly MCPToolDefinition[];
+        enabledNames: ReadonlySet<string>;
+      }
     | undefined {
     const entry = this.entries.get(name);
     if (
       entry?.status !== 'connected' ||
       entry.tools === undefined ||
+      entry.rawTools === undefined ||
       entry.client === undefined
     ) {
       return undefined;
@@ -171,6 +178,7 @@ export class McpConnectionManager {
     return {
       client: entry.client,
       tools: entry.tools,
+      rawTools: entry.rawTools,
       enabledNames: entry.enabledNames ?? new Set(entry.tools.map((t) => t.name)),
     };
   }
@@ -214,6 +222,7 @@ export class McpConnectionManager {
     entry.status = 'disabled';
     entry.tools = undefined;
     entry.enabledNames = undefined;
+    entry.rawTools = undefined;
     entry.error = undefined;
     this.emit(entry);
     this.entries.delete(name);
@@ -265,6 +274,7 @@ export class McpConnectionManager {
     entry.status = 'pending';
     entry.tools = undefined;
     entry.enabledNames = undefined;
+    entry.rawTools = undefined;
     entry.error = undefined;
     this.emit(entry);
     await this.connectOne(entry, attemptId);
@@ -285,7 +295,7 @@ export class McpConnectionManager {
       const startupClient = await this.createClient(entry.config, entry.name);
       client = startupClient;
       entry.client = startupClient;
-      const tools = await withTimeout(
+      const discovered = await withTimeout(
         this.connectAndDiscoverTools(startupClient),
         timeoutMs,
         () => {
@@ -297,8 +307,9 @@ export class McpConnectionManager {
         await this.closeRuntimeClient(startupClient);
         return;
       }
-      entry.tools = tools;
-      entry.enabledNames = computeEnabledNames(entry.config, tools);
+      entry.tools = discovered.tools;
+      entry.rawTools = discovered.rawTools;
+      entry.enabledNames = computeEnabledNames(entry.config, discovered.tools);
       entry.status = 'connected';
       this.watchForUnexpectedClose(entry, startupClient, attemptId);
     } catch (error) {
@@ -317,6 +328,7 @@ export class McpConnectionManager {
       }
       entry.tools = undefined;
       entry.enabledNames = undefined;
+      entry.rawTools = undefined;
       // Drop the client reference so a later reconnect builds a fresh one.
       await this.closeClient(entry);
     }
@@ -338,6 +350,7 @@ export class McpConnectionManager {
       entry.error = formatUnexpectedCloseError(entry.name, reason);
       entry.tools = undefined;
       entry.enabledNames = undefined;
+      entry.rawTools = undefined;
       entry.client = undefined;
       // Best-effort close; the transport is already gone, but this lets the
       // SDK release timers and pending request handlers.
@@ -398,14 +411,19 @@ export class McpConnectionManager {
     return isUnauthorizedLikeError(error);
   }
 
-  private async connectAndDiscoverTools(client: RuntimeMcpClient): Promise<Tool[]> {
+  private async connectAndDiscoverTools(
+    client: RuntimeMcpClient,
+  ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[] }> {
     await client.connect();
     const mcpTools = await client.listTools();
-    return mcpTools.map((mcpTool) => ({
-      name: mcpTool.name,
-      description: mcpTool.description,
-      parameters: assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema),
-    }));
+    return {
+      rawTools: mcpTools,
+      tools: mcpTools.map((mcpTool) => ({
+        name: mcpTool.name,
+        description: mcpTool.description,
+        parameters: assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema),
+      })),
+    };
   }
 
   private async closeClient(entry: InternalEntry): Promise<void> {

@@ -39,13 +39,6 @@ import type { TokenUsage } from '#/app/llmProtocol/usage';
 
 import type { ContextMessage } from './types';
 
-// Status strings must match v1 / `loopService.ts` so folded tool results render
-// byte-identically to a v2-native turn.
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
@@ -95,7 +88,11 @@ export type LoopRecordedEvent =
   | {
       readonly type: 'tool.result';
       readonly toolCallId: string;
-      readonly result: { readonly output: string | readonly ContentPart[]; readonly isError?: boolean };
+      readonly result: {
+        readonly output: string | readonly ContentPart[];
+        readonly isError?: boolean;
+        readonly note?: string;
+      };
       readonly parentUuid?: string;
     };
 
@@ -173,9 +170,11 @@ export function foldLoopEvent(
     }
     case 'tool.result': {
       if (!ctx.pending.has(event.toolCallId)) return state;
+      const output = event.result.output;
       const toolMessage: ContextMessage = {
-        ...createToolMessage(event.toolCallId, toolResultOutputForModel(event.result)),
+        ...createToolMessage(event.toolCallId, typeof output === 'string' ? output : [...output]),
         isError: event.result.isError,
+        note: event.result.note,
       };
       ctx.pending.delete(event.toolCallId);
       return bind(flushDeferred([...state, toolMessage], ctx), ctx);
@@ -240,36 +239,7 @@ function flushDeferred(state: readonly ContextMessage[], ctx: FoldCtx): readonly
 
 function interruptedToolMessage(toolCallId: string): ContextMessage {
   return {
-    ...createToolMessage(
-      toolCallId,
-      toolResultOutputForModel({ output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT, isError: true }),
-    ),
+    ...createToolMessage(toolCallId, TOOL_INTERRUPTED_ON_RESUME_OUTPUT),
     isError: true,
   };
-}
-
-/** Mirrors v1 / `loopService.ts` `toolResultOutputForModel`. */
-function toolResultOutputForModel(result: {
-  readonly output: string | readonly ContentPart[];
-  readonly isError?: boolean;
-}): string | ContentPart[] {
-  const { output, isError } = result;
-  if (typeof output === 'string') {
-    if (isError === true) {
-      if (output.length === 0) return TOOL_EMPTY_ERROR_STATUS;
-      if (output.trimStart().startsWith('<system>ERROR:')) return output;
-      return `${TOOL_ERROR_STATUS}\n${output}`;
-    }
-    if (output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT) {
-      return TOOL_EMPTY_STATUS;
-    }
-    return output;
-  }
-  if (output.length === 0) {
-    return [{ type: 'text', text: isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS }];
-  }
-  if (isError === true) {
-    return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
-  }
-  return [...output];
 }

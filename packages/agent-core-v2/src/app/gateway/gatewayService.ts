@@ -66,8 +66,7 @@ export class RestGateway implements IRestGateway {
     return turn === undefined ? undefined : { turn_id: turn.id };
   }
   cancel(sessionId: string, agentId: string, reason?: string): Promise<void> {
-    const activeTurn = this.agent(sessionId, agentId).accessor.get(IAgentTurnService).getActiveTurn();
-    activeTurn?.abortController.abort(reason);
+    this.agent(sessionId, agentId).accessor.get(IAgentTurnService).cancel(undefined, reason);
     return Promise.resolve();
   }
   getStatus(sessionId: string): Promise<unknown> {

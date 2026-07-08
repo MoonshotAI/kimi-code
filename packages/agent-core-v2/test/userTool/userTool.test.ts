@@ -129,6 +129,45 @@ describe('AgentUserToolService (wire-backed)', () => {
     ]);
   });
 
+  it('inherits currently registered parent user tools into another agent service', async () => {
+    svc.register(toolA);
+    svc.register(toolB);
+    svc.unregister(toolB.name);
+
+    const ixChild = disposables.add(new TestInstantiationService());
+    ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ixChild.set(
+      IAgentWireService,
+      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'user-tool-child' }]),
+    );
+    ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
+    const childProfile = createProfileStub();
+    ixChild.stub(IAgentProfileService, childProfile);
+    ixChild.stub(ISessionInteractionService, createInteractionStub());
+    ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
+
+    const child = ixChild.get(IAgentUserToolService);
+    const childWire = ixChild.get(IAgentWireService);
+    const childRegistry = ixChild.get(IAgentToolRegistryService);
+    child.inheritUserTools(svc);
+
+    expect(child.list()).toEqual([toolA]);
+    expect(modelOf(childWire).get(toolA.name)).toEqual(toolA);
+    expect(modelOf(childWire).has(toolB.name)).toBe(false);
+    expect(childRegistry.resolve(toolA.name)).toBeDefined();
+    expect(childProfile.active.has(toolA.name)).toBe(true);
+    expect(childProfile.active.has(toolB.name)).toBe(false);
+
+    const childRecords: PersistedRecord[] = [];
+    for await (const record of ixChild
+      .get(IAppendLogStore)
+      .read<PersistedRecord>(SCOPE, 'user-tool-child')) {
+      childRecords.push(record);
+    }
+    expect(childRecords).toEqual([{ type: 'tools.register_user_tool', ...toolA }]);
+  });
+
   it('re-registering an equal tool is a no-op on the model (same reference)', () => {
     svc.register(toolA);
     const before = modelOf(wire);

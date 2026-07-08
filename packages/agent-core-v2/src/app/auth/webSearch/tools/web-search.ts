@@ -35,6 +35,7 @@ export interface WebSearchResult {
   url: string;
   snippet: string;
   date?: string;
+  siteName?: string;
   content?: string;
 }
 
@@ -126,11 +127,19 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
         first = false;
 
         builder.write(`Title: ${result.title}\n`);
+        if (result.siteName) builder.write(`Site: ${result.siteName}\n`);
         if (result.date) builder.write(`Date: ${result.date}\n`);
         builder.write(`URL: ${result.url}\n`);
         builder.write(`Snippet: ${result.snippet}\n\n`);
         if (result.content) builder.write(`${result.content}\n\n`);
       }
+
+      // Keep the citation reminder next to the data (not just in the static tool
+      // description), so it is present on every search. Cite the page actually
+      // relied on — after a FetchURL follow-up, that is the fetched page.
+      builder.write(
+        'When you rely on a result in your answer, cite it inline as a markdown link, e.g. [title](url).',
+      );
 
       return builder.ok();
     } catch (error) {

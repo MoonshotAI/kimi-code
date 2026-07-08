@@ -61,7 +61,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   declare readonly _serviceBrand: undefined;
 
   private readonly dir: string;
-  private dbPromise: Promise<MiniDb> | undefined;
+  private dbPromise: Promise<MiniDb | undefined> | undefined;
   private readonly ensuredIndexes = new Set<string>();
 
   constructor(
@@ -75,7 +75,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     }));
   }
 
-  private openDb(): Promise<MiniDb> {
+  private openDb(): Promise<MiniDb | undefined> {
     if (this.dbPromise !== undefined) return this.dbPromise;
     this.dbPromise = MiniDb.openOrRebuild(
       {
@@ -92,18 +92,33 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
           });
         },
       },
-    );
+    ).catch((err) => {
+      // The query store is a rebuildable derived read model; authoritative data
+      // lives in the append-log / atomic-document stores. If it cannot be opened
+      // — typically because another kimi process holds the single-writer lock on
+      // `<cacheDir>/query-store` — degrade to a no-op store instead of crashing
+      // the host. Consumers then fall back to their non-read-model paths. The
+      // degraded state is memoized for the process lifetime so the warning is
+      // emitted once and we do not hammer a contended lock.
+      this.log.warn('minidb query-store unavailable; disabling read model', {
+        dir: this.dir,
+        error: String(err),
+      });
+      return undefined;
+    });
     return this.dbPromise;
   }
 
   async put<T>(collection: string, key: string, value: T): Promise<void> {
     const db = await this.openDb();
+    if (db === undefined) return;
     await db.set(physicalKey(collection, key), value);
   }
 
   async batch(ops: readonly WriteOp[]): Promise<void> {
     if (ops.length === 0) return;
     const db = await this.openDb();
+    if (db === undefined) return;
     await db.batch(
       ops.map((op) =>
         op.kind === 'put'
@@ -115,11 +130,13 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   async delete(collection: string, key: string): Promise<void> {
     const db = await this.openDb();
+    if (db === undefined) return;
     await db.del(physicalKey(collection, key));
   }
 
   async get<T>(collection: string, key: string): Promise<T | undefined> {
     const db = await this.openDb();
+    if (db === undefined) return undefined;
     return db.get(physicalKey(collection, key)) as T | undefined;
   }
 
@@ -131,6 +148,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     const guard = `${collection}:${def.kind}:${def.name}`;
     if (this.ensuredIndexes.has(guard)) return;
     const db = await this.openDb();
+    if (db === undefined) return;
     const name = indexName(collection, def.name);
     if (def.kind === 'value') {
       if (!db.listIndexes().some((i) => i.name === name)) {
@@ -163,7 +181,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   async close(): Promise<void> {
     if (this.dbPromise === undefined) return;
     const db = await this.dbPromise;
-    await db.close();
+    await db?.close();
   }
 }
 
@@ -175,7 +193,7 @@ class MiniDbQuery<T> implements IQuery<T> {
   private skip = 0;
 
   constructor(
-    private readonly openDb: () => Promise<MiniDb>,
+    private readonly openDb: () => Promise<MiniDb | undefined>,
     private readonly collection: string,
   ) {}
 
@@ -202,6 +220,7 @@ class MiniDbQuery<T> implements IQuery<T> {
 
   async execute(): Promise<Page<T>> {
     const db = await this.openDb();
+    if (db === undefined) return { items: [] };
     const prefix = `${this.collection}${SEP}`;
     const q: QueryOptions = { key: { prefix } };
     if (Object.keys(this.filter).length > 0) q.filter = this.filter as Record<string, unknown>;

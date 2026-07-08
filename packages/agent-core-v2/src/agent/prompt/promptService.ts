@@ -175,6 +175,7 @@ export class AgentPromptService implements IAgentPromptService {
 
     for (const entry of pending) {
       entry.emitted = true;
+      this.turnService.recordSteer(entry.message.content, entry.message.origin);
     }
     this.append(...pending.map((entry) => entry.message));
     return true;

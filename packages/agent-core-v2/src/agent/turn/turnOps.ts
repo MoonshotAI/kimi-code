@@ -20,6 +20,8 @@
 
 import { defineModel } from '#/wire/model';
 import { defineOp } from '#/wire/op';
+import type { ContentPart } from '#/app/llmProtocol/message';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 
 export interface TurnModelState {
   readonly nextTurnId: number;
@@ -57,3 +59,29 @@ export const promptTurn = defineOp(TurnModel, 'turn.prompt', {
 export const launchTurn = defineOp(TurnModel, 'turn.launch', {
   apply: (s, p: { turnId: number }): TurnModelState => advanceTurnId(s, p.turnId),
 });
+
+export interface SteerTurnPayload {
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+}
+
+export const steerTurn = defineOp(TurnModel, 'turn.steer', {
+  apply: (s, _p: SteerTurnPayload): TurnModelState => s,
+});
+
+export interface CancelTurnPayload {
+  readonly turnId?: number;
+}
+
+export const cancelTurn = defineOp(TurnModel, 'turn.cancel', {
+  apply: (s, _p: CancelTurnPayload): TurnModelState => s,
+});
+
+declare module '#/agent/wireRecord/wireRecord' {
+  interface WireRecordMap {
+    'turn.prompt': PromptTurnPayload;
+    'turn.launch': { readonly turnId: number };
+    'turn.steer': SteerTurnPayload;
+    'turn.cancel': CancelTurnPayload;
+  }
+}

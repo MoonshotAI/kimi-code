@@ -9,6 +9,8 @@ export interface UserToolRegistration {
 export interface IAgentUserToolService {
   readonly _serviceBrand: undefined;
 
+  list(): readonly UserToolRegistration[];
+  inheritUserTools(parent: IAgentUserToolService): void;
   register(input: UserToolRegistration): void;
   unregister(name: string): void;
 }

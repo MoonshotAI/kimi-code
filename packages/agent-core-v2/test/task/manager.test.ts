@@ -523,7 +523,7 @@ describe('AgentTaskService', () => {
 
     expect(() => {
       manager.registerTask(agentTask(new Promise(() => {}), 'second background'));
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
   });
 
   it('does not count foreground tasks detached later against the detached task limit', () => {
@@ -539,7 +539,7 @@ describe('AgentTaskService', () => {
 
     expect(() => {
       manager.registerTask(agentTask(new Promise(() => {}), 'second background'));
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
   });
 
   it('lists active tasks by default', () => {
@@ -603,10 +603,10 @@ describe('AgentTaskService', () => {
 
     expect(() => {
       registerProcess(manager, pendingProcess().proc, 'sleep 60', 'second task');
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
     expect(() => {
       manager.registerTask(agentTask(new Promise(() => {}), 'agent task'));
-    }).toThrow('Too many detached tasks are already running.');
+    }).toThrow('Too many background tasks are already running.');
   });
 
   it('captures process output', async () => {
@@ -937,6 +937,101 @@ describe('AgentTaskService', () => {
     expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
   });
 
+  /**
+   * Build a process that only reaps on SIGKILL and whose stdout never ends on
+   * its own, so the task lifecycle cannot settle before the manager's deadline
+   * and grace window drive teardown. Exercises the v1-aligned timeout path:
+   * deadline -> SIGTERM -> SIGTERM_GRACE_MS -> forceStop (SIGKILL).
+   */
+  function sigtermOnlyKillProcess(pid: number): {
+    proc: IProcess;
+    killSpy: ReturnType<typeof vi.fn>;
+  } {
+    const stdout = new PassThrough();
+    let currentExitCode: number | null = null;
+    let resolveWait: (code: number) => void = () => {};
+    const waitPromise = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    const killSpy = vi.fn(async (signal: NodeJS.Signals) => {
+      if (currentExitCode !== null) return;
+      if (signal !== 'SIGKILL') return;
+      currentExitCode = 137;
+      stdout.destroy();
+      resolveWait(137);
+    });
+    const proc: IProcess = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr: Readable.from([]),
+      pid,
+      get exitCode(): number | null {
+        return currentExitCode;
+      },
+      wait: () => waitPromise,
+      kill: killSpy as unknown as IProcess['kill'],
+      dispose: vi.fn().mockResolvedValue(undefined) as IProcess['dispose'],
+    };
+    return { proc, killSpy };
+  }
+
+  it('escalates a wall-clock timeout to SIGKILL when the process ignores SIGTERM', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = sigtermOnlyKillProcess(54327);
+    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'timeout sigkill'), {
+      timeoutMs: 1,
+    });
+
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(1); // deadline -> abort -> SIGTERM (ignored)
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
+
+    await vi.advanceTimersByTimeAsync(5_000); // grace elapses -> forceStop SIGKILL
+    const info = await terminal;
+
+    expect(info?.status).toBe('timed_out');
+    expect(killSpy).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('reports timed_out when a timed-out process exits to SIGTERM within the grace window', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = pendingProcess(); // SIGTERM reaps with 143
+    const taskId = manager.registerTask(new ProcessTask(proc, 'sleep 60', 'timeout graceful'), {
+      timeoutMs: 1,
+    });
+
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(1); // deadline -> SIGTERM reaps within grace
+    const info = await terminal;
+
+    expect(info?.status).toBe('timed_out');
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('applies the SIGTERM grace + SIGKILL escalation to a detachTimeout deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { manager } = createAgentTaskService();
+    const { proc, killSpy } = sigtermOnlyKillProcess(54328);
+    const taskId = manager.registerTask(new ProcessTask(proc, 'runaway', 'detach timeout'), {
+      detached: false,
+      detachTimeoutMs: 1,
+    });
+    manager.detach(taskId);
+
+    const terminal = manager.wait(taskId);
+    await vi.advanceTimersByTimeAsync(1); // detach deadline -> SIGTERM (ignored)
+    await vi.advanceTimersByTimeAsync(5_000); // grace -> SIGKILL
+    const info = await terminal;
+
+    expect(info?.status).toBe('timed_out');
+    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(killSpy).toHaveBeenCalledWith('SIGKILL');
+  });
+
   it('persists graceful process shutdown as killed when stop was requested', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-stop-race-'));
     try {
@@ -1062,6 +1157,31 @@ describe('AgentTaskService', () => {
 
     const runningId = registerProcess(manager, pendingProcess().proc, 'sleep 60', 'timeout');
     expect(await manager.wait(runningId, 0)).toMatchObject({ status: 'running' });
+  });
+
+  it('wait with a zero timeout returns the immediate snapshot before next-tick completion', async () => {
+    const { manager } = createAgentTaskService();
+    const proc = manuallyResolvedProcess();
+    const taskId = registerProcess(
+      manager,
+      proc.proc,
+      'sleep 0',
+      'next-tick completion',
+    );
+
+    await Promise.resolve();
+    setTimeout(() => {
+      proc.resolve(0);
+    }, 0);
+
+    expect(await manager.wait(taskId, 0)).toMatchObject({
+      status: 'running',
+      exitCode: null,
+    });
+    await expect(manager.wait(taskId)).resolves.toMatchObject({
+      status: 'completed',
+      exitCode: 0,
+    });
   });
 
   it('clears task deadline timers when completion wins the race', async () => {

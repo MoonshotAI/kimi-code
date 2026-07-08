@@ -1,3 +1,4 @@
+import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
@@ -6,10 +7,13 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { APIProviderRateLimitError } from '#/app/llmProtocol/errors';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
@@ -29,7 +33,11 @@ import { ILogService } from '#/_base/log/log';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
+  type AgentRunAttemptHandle,
+  type AgentRunAttemptOptions,
   type AgentRunBatchLauncher,
+  type AgentRunResult,
+  type AgentRunSuspendedEvent,
   type AgentSpawnAttemptOptions,
   type QueuedAgentRunTask,
 } from '#/session/swarm/agentRunBatch';
@@ -63,6 +71,702 @@ describe('resolveSwarmMaxConcurrency', () => {
   it('returns the integer for a positive integer value', () => {
     expect(resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: '3' })).toBe(3);
     expect(resolveSwarmMaxConcurrency({ KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY: ' 8 ' })).toBe(8);
+  });
+});
+
+describe('AgentRunBatch scheduling contract', () => {
+  it('normal phase starts five tasks immediately, then one task every 700ms', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 9 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(699);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(6);
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(7);
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(8);
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(9);
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(9);
+
+      attempts.forEach((attempt, index) => {
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(index + 1)}`,
+          status: 'completed',
+          result: `result ${String(index + 1)}`,
+        });
+      });
+      const results = await running;
+
+      expect(results).toHaveLength(9);
+      expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('user cancellation returns completed, started, and not-started task results', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 6 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      const results = await running;
+
+      expect(
+        results.map((result) => ({
+          data: result.task.data,
+          agentId: result.agentId,
+          status: result.status,
+          state: result.state,
+          result: result.result,
+          error: result.error,
+        })),
+      ).toEqual([
+        {
+          data: 1,
+          agentId: 'agent-1',
+          status: 'completed',
+          state: undefined,
+          result: 'completed 1',
+          error: undefined,
+        },
+        {
+          data: 2,
+          agentId: 'agent-2',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 3,
+          agentId: 'agent-3',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 4,
+          agentId: 'agent-4',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 5,
+          agentId: 'agent-5',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 6,
+          agentId: undefined,
+          status: 'aborted',
+          state: 'not_started',
+          result: undefined,
+          error:
+            'The user manually interrupted this subagent batch before this subagent was started.',
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('normal phase keeps processing completions while waiting for the next launch', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 6 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+
+      await vi.advanceTimersByTimeAsync(699);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(6);
+
+      attempts.slice(1).forEach((attempt, index) => {
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(index + 2)}`,
+          status: 'completed',
+          result: `completed ${String(index + 2)}`,
+        });
+      });
+      await expect(running).resolves.toHaveLength(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limit phase starts when the first provider rate limit stops the normal ramp', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 9 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(5);
+
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(attempts).toHaveLength(6);
+      expect(attempts[5]!.task.data).toBe(1);
+      expect(attempts[5]!.retryAgentId).toBe('agent-1');
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limit phase requeues 429 tasks, emits suspended, and throttles launches', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const onSuspended = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onSuspended });
+      const running = runBatch(
+        Array.from({ length: 8 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      attempts[1]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-2' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onSuspended).toHaveBeenCalledTimes(2);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(attempts).toHaveLength(6);
+      expect(attempts[5]!.task.data).toBe(2);
+      expect(attempts[5]!.retryAgentId).toBe('agent-2');
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails the only unfinished task on provider rate limit instead of suspending forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const onSuspended = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onSuspended });
+      const running = runBatch(
+        Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      attempts[1]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-2' });
+      await expect(running).resolves.toMatchObject([
+        {
+          task: { data: 1 },
+          agentId: 'agent-1',
+          status: 'completed',
+          result: 'completed 1',
+        },
+        {
+          task: { data: 2 },
+          agentId: 'agent-2',
+          status: 'failed',
+          state: 'started',
+          error: 'Rate limited',
+        },
+      ]);
+      expect(onSuspended).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limit capacity blocks launches while active attempts fill all slots', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 12 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts.slice(0, 5).forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      for (let count = 6; count <= 12; count += 1) {
+        await vi.advanceTimersByTimeAsync(700);
+        expect(attempts).toHaveLength(count);
+        attempts[count - 1]!.markReady();
+      }
+
+      attempts.slice(0, 12).forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      attempts[0]!.outcome.resolve({
+        type: 'rate_limited',
+        agentId: 'agent-1',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(attempts).toHaveLength(12);
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limit recovery adds one capacity slot after three quiet minutes with queued work', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 6 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      attempts[1]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-2' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      attempts[2]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-3' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      attempts[3]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-4' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(179_999);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(6);
+      expect(attempts[5]!.task.data).toBe(4);
+      expect(attempts[5]!.retryAgentId).toBe('agent-4');
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limit phase keeps launches bounded after repeated 429s', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 8 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      for (let index = 0; index < 3; index += 1) {
+        attempts[index]!.outcome.resolve({
+          type: 'rate_limited',
+          agentId: `agent-${String(index + 1)}`,
+        });
+        await vi.advanceTimersByTimeAsync(0);
+      }
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(attempts).toHaveLength(6);
+      expect(attempts[5]!.task.data).toBe(3);
+      expect(attempts[5]!.retryAgentId).toBe('agent-3');
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(attempts).toHaveLength(7);
+      expect(attempts[6]!.task.data).toBe(2);
+      expect(attempts[6]!.retryAgentId).toBe('agent-2');
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limit phase schedules another launch after starting while capacity remains', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        Array.from({ length: 8 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      attempts[2]!.outcome.resolve({
+        task: attempts[2]!.task,
+        agentId: 'agent-3',
+        status: 'completed',
+        result: 'completed 3',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(6);
+      expect(attempts[5]!.task.data).toBe(1);
+      expect(attempts[5]!.retryAgentId).toBe('agent-1');
+
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(attempts).toHaveLength(6);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(7);
+      expect(attempts[6]!.task.data).toBe(6);
+      expect(attempts[6]!.retryAgentId).toBeUndefined();
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('task timeout fails only that task', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch([{ ...queuedAgentRunTask(1), timeout: 10_000 }], {
+        signal: new AbortController().signal,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts[0]!.markReady();
+
+      await vi.advanceTimersByTimeAsync(9999);
+      expect(attempts).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(running).resolves.toMatchObject([
+        {
+          task: { data: 1 },
+          agentId: 'agent-1',
+          status: 'failed',
+          state: 'started',
+          error: 'Subagent timed out.',
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not spend task timeout while the task is queued', async () => {
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const { runBatch, attempts } = createMockAgentRunBatchRunner();
+      const running = runBatch(
+        [
+          ...Array.from({ length: 5 }, (_, index) => queuedAgentRunTask(index + 1)),
+          { ...queuedAgentRunTask(6), timeout: 1000 },
+        ],
+        { signal: new AbortController().signal },
+      );
+      void running.finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(699);
+      expect(attempts).toHaveLength(5);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toHaveLength(6);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(settled).toBe(false);
+
+      attempts.slice(0, 5).forEach((attempt, index) => {
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(index + 1)}`,
+          status: 'completed',
+          result: `completed ${String(index + 1)}`,
+        });
+      });
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(running).resolves.toMatchObject([
+        { task: { data: 1 }, status: 'completed' },
+        { task: { data: 2 }, status: 'completed' },
+        { task: { data: 3 }, status: 'completed' },
+        { task: { data: 4 }, status: 'completed' },
+        { task: { data: 5 }, status: 'completed' },
+        {
+          task: { data: 6 },
+          agentId: 'agent-6',
+          status: 'failed',
+          state: 'started',
+          error: 'Subagent timed out.',
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rate-limit phase continues launching after rate-limited attempts settle', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({
+        readyDelay: (attemptIndex) => (attemptIndex >= 7 ? 100 : undefined),
+      });
+
+      const running = runBatch(
+        Array.from({ length: 9 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts.slice(0, 5).forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(6);
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(7);
+
+      attempts[5]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-6' });
+      attempts[6]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-7' });
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(attempts).toHaveLength(8);
+      expect(attempts[7]!.task.data).toBe(7);
+      expect(attempts[7]!.retryAgentId).toBe('agent-7');
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('AgentRunBatch max concurrency cap', () => {
+  it('caps in-flight tasks at maxConcurrency during the normal phase', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ maxConcurrency: 3 });
+      const running = runBatch(
+        Array.from({ length: 9 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+      const resolved = new Set<number>();
+      const resolveOne = (index: number) => {
+        const attempt = attempts[index]!;
+        resolved.add(index);
+        attempt.outcome.resolve({
+          task: attempt.task,
+          agentId: `agent-${String(index + 1)}`,
+          status: 'completed',
+          result: `result ${String(index + 1)}`,
+        });
+      };
+      const inFlight = () => attempts.length - resolved.size;
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(3);
+      expect(inFlight()).toBe(3);
+
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(3);
+
+      resolveOne(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(4);
+      expect(inFlight()).toBeLessThanOrEqual(3);
+
+      resolveOne(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      expect(inFlight()).toBeLessThanOrEqual(3);
+
+      resolveOne(2);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      await vi.advanceTimersByTimeAsync(700);
+      expect(attempts).toHaveLength(6);
+      expect(inFlight()).toBeLessThanOrEqual(3);
+
+      for (let index = 3; index < 9; index += 1) {
+        resolveOne(index);
+        await vi.advanceTimersByTimeAsync(700);
+        expect(inFlight()).toBeLessThanOrEqual(3);
+      }
+
+      const results = await running;
+      expect(results).toHaveLength(9);
+      expect(results.every((result) => result.status === 'completed')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -133,13 +837,14 @@ describe('SessionSwarmService metadata compatibility', () => {
   let lifecycle: IAgentLifecycleService;
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
+  let eventBus: IEventBus;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     agents = {};
     handles = new Map();
-    const eventBus = eventBusStub();
+    eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
     createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
     runAgent = lifecycle.run as ReturnType<typeof vi.fn>;
@@ -298,6 +1003,42 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
+  it('inherits parent user tools on spawned children', async () => {
+    const parentUserTools = userToolServiceStub();
+    const childUserTools = userToolServiceStub();
+    handles.set(
+      'main',
+      agentHandle('main', lifecycle, eventBus, {}, new Map([
+        [IAgentUserToolService, parentUserTools],
+      ])),
+    );
+    createAgent.mockImplementationOnce(async (opts: CreateAgentOptions = {}) => {
+      const id = opts.agentId ?? 'agent-new';
+      const handle = agentHandle(
+        id,
+        lifecycle,
+        eventBus,
+        {
+          profileName: opts.binding?.profile ?? 'coder',
+          modelAlias: opts.binding?.model ?? 'kimi-test',
+          thinkingLevel: opts.binding?.thinking ?? 'medium',
+          cwd: opts.binding?.cwd ?? '/repo',
+        },
+        new Map([[IAgentUserToolService, childUserTools]]),
+      );
+      handles.set(id, handle);
+      return handle;
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
+
+    expect(childUserTools.inheritUserTools).toHaveBeenCalledWith(parentUserTools);
+  });
+
   it('keeps v1 resume ownership errors inside the per-subagent result', async () => {
     agents['other-child'] = {
       homedir: '/tmp/kimi/s1/agents/other-child',
@@ -397,6 +1138,7 @@ function agentHandle(
   lifecycle: IAgentLifecycleService,
   eventBus: IEventBus,
   data: Partial<ProfileData> = {},
+  services: ReadonlyMap<unknown, unknown> = new Map(),
 ): IAgentScopeHandle {
   const profile = profileService({
     cwd: '/repo',
@@ -418,8 +1160,11 @@ function agentHandle(
     kind: LifecycleScope.Agent,
     accessor: {
       get: ((serviceId: unknown) => {
+        const service = services.get(serviceId);
+        if (service !== undefined) return service;
         if (serviceId === IAgentProfileService) return profile;
         if (serviceId === IAgentPermissionModeService) return permissionMode;
+        if (serviceId === IAgentUserToolService) return userToolServiceStub();
         if (serviceId === IEventBus) return eventBus;
         if (serviceId === ITelemetryService) return noopTelemetryService;
         if (serviceId === IAgentLifecycleService) return lifecycle;
@@ -437,10 +1182,182 @@ function profileService(data: ProfileData): IAgentProfileService {
   } as IAgentProfileService;
 }
 
+function userToolServiceStub(): IAgentUserToolService {
+  return {
+    _serviceBrand: undefined,
+    list: () => [],
+    inheritUserTools: vi.fn<(parent: IAgentUserToolService) => void>(),
+    register: () => {},
+    unregister: () => {},
+  };
+}
+
 function eventBusStub(): IEventBus {
   return {
     _serviceBrand: undefined,
     publish: vi.fn((_: DomainEvent) => {}),
     subscribe: vi.fn(() => ({ dispose: () => {} })) as IEventBus['subscribe'],
+  };
+}
+
+type MockAgentRunAttemptOutcome<T> =
+  | AgentRunResult<T>
+  | {
+      readonly type: 'rate_limited';
+      readonly agentId: string;
+    };
+
+type MockAgentRunAttemptRecord = {
+  readonly task: QueuedAgentRunTask<number>;
+  readonly retryAgentId?: string;
+  readonly markReady: () => void;
+  readonly outcome: ReturnType<typeof createControlledPromise<MockAgentRunAttemptOutcome<number>>>;
+};
+
+type MockAgentRunBatchRunnerOptions = {
+  readonly onSuspended?: (event: AgentRunSuspendedEvent) => void;
+  readonly readyDelay?: (attemptIndex: number) => number | undefined;
+  readonly maxConcurrency?: number;
+};
+
+function createMockAgentRunBatchRunner(
+  options: MockAgentRunBatchRunnerOptions = {},
+): {
+  readonly runBatch: <T>(
+    tasks: readonly QueuedAgentRunTask<T>[],
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<Array<AgentRunResult<T>>>;
+  readonly attempts: MockAgentRunAttemptRecord[];
+} {
+  const attempts: MockAgentRunAttemptRecord[] = [];
+  let activeTasks: readonly QueuedAgentRunTask<unknown>[] = [];
+
+  const createHandle = <T,>(
+    runOptions: AgentRunAttemptOptions,
+    agentId: string,
+    profileName: string,
+    retryAgentId?: string,
+  ): AgentRunAttemptHandle => {
+    const task = findMockAgentRunTask<T>(activeTasks, runOptions);
+    const outcome = createControlledPromise<MockAgentRunAttemptOutcome<T>>();
+    const markReady = () => {
+      runOptions.onReady?.();
+    };
+    const attemptIndex = attempts.length;
+    attempts.push({
+      task: task as unknown as QueuedAgentRunTask<number>,
+      retryAgentId,
+      markReady,
+      outcome: outcome as unknown as MockAgentRunAttemptRecord['outcome'],
+    });
+
+    const delay = options.readyDelay?.(attemptIndex);
+    if (delay !== undefined) setTimeout(markReady, delay);
+
+    return {
+      agentId,
+      profileName,
+      completion: completionFromMockAgentRunOutcome(outcome, runOptions.signal),
+    };
+  };
+
+  const launcher: AgentRunBatchLauncher = {
+    spawn: async (spawnOptions) => {
+      const task = findMockAgentRunTask(activeTasks, spawnOptions);
+      return createHandle(
+        spawnOptions,
+        mockAgentRunId(task, attempts.length),
+        spawnOptions.profileName,
+      );
+    },
+    resume: async (agentId, runOptions) => createHandle(runOptions, agentId, 'subagent'),
+    retry: async (agentId, runOptions) => createHandle(runOptions, agentId, 'subagent', agentId),
+    suspended: (event) => {
+      options.onSuspended?.(event);
+    },
+  };
+
+  return {
+    runBatch: <T,>(
+      tasks: readonly QueuedAgentRunTask<T>[],
+      runOptions?: { readonly signal?: AbortSignal },
+    ) => {
+      activeTasks = tasks.map((task) => ({
+        ...task,
+        signal: task.signal ?? runOptions?.signal,
+      }));
+      return new AgentRunBatch(launcher, activeTasks as readonly QueuedAgentRunTask<T>[], {
+        maxConcurrency: options.maxConcurrency,
+      }).run();
+    },
+    attempts,
+  };
+}
+
+function findMockAgentRunTask<T>(
+  tasks: readonly QueuedAgentRunTask<unknown>[],
+  options: AgentRunAttemptOptions,
+): QueuedAgentRunTask<T> {
+  const task = tasks.find(
+    (candidate) =>
+      candidate.prompt === options.prompt &&
+      candidate.parentToolCallId === options.parentToolCallId,
+  );
+  if (task === undefined) {
+    throw new Error(`No mock queued task for prompt "${options.prompt}"`);
+  }
+  return task as QueuedAgentRunTask<T>;
+}
+
+function mockAgentRunId(task: QueuedAgentRunTask<unknown>, attemptIndex: number): string {
+  if (typeof task.data === 'number') return `agent-${String(task.data)}`;
+  return `agent-${String(attemptIndex + 1)}`;
+}
+
+function completionFromMockAgentRunOutcome<T>(
+  outcome: ReturnType<typeof createControlledPromise<MockAgentRunAttemptOutcome<T>>>,
+  signal: AbortSignal,
+): AgentRunAttemptHandle['completion'] {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      reject(signal.reason ?? new Error('Aborted'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    outcome.then(
+      (result) => {
+        signal.removeEventListener('abort', abort);
+        if (isMockAgentRunRateLimitOutcome(result)) {
+          reject(new APIProviderRateLimitError('Rate limited', result.agentId));
+          return;
+        }
+        if (result.status === 'completed') {
+          resolve({ result: result.result ?? '', usage: result.usage });
+          return;
+        }
+        reject(new Error(result.error ?? result.status));
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function isMockAgentRunRateLimitOutcome<T>(
+  outcome: MockAgentRunAttemptOutcome<T>,
+): outcome is Extract<MockAgentRunAttemptOutcome<T>, { readonly type: 'rate_limited' }> {
+  return 'type' in outcome && outcome.type === 'rate_limited';
+}
+
+function queuedAgentRunTask(index: number): QueuedAgentRunTask<number> {
+  return {
+    kind: 'spawn',
+    data: index,
+    profileName: 'coder',
+    parentToolCallId: 'call_swarm',
+    prompt: `Review item-${String(index)}`,
+    description: `Review #${String(index)}`,
+    runInBackground: false,
   };
 }

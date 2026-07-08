@@ -1,11 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Readable, type Writable } from 'node:stream';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
+import {
+  IAgentTaskService,
+  type AgentTask,
+  type AgentTaskInfo,
+} from '#/agent/task/task';
 import { renderNotificationXml } from '#/agent/task/notificationXml';
 import { AgentTaskService } from '#/agent/task/taskService';
+import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
+import type { IProcess } from '#/session/process/processRunner';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -17,6 +25,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
+import { IEventBus } from '#/app/event/eventBus';
+import { ITaskService } from '#/app/task/task';
 
 import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
 
@@ -54,6 +64,18 @@ describe('AgentTaskService', () => {
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAgentWireRecordService, stubWireRecord());
     ix.stub(IAgentWireService, stubWireService());
+    ix.stub(IEventBus, {
+      publish: () => {},
+      subscribe: () => toDisposable(() => {}),
+    });
+    ix.stub(ITaskService, {
+      run: () => {
+        throw new Error('ITaskService.run is not used by this test');
+      },
+      defer: () => {
+        throw new Error('ITaskService.defer is not used by this test');
+      },
+    });
     ix.stub(IAgentContextMemoryService, stubContextMemory());
     ix.stub(ITelemetryService, { track: () => {} });
     ix.stub(IAgentToolRegistryService, {
@@ -105,6 +127,254 @@ describe('AgentTaskService', () => {
     expect(await svc.readOutput(id)).toBe('');
     await svc.stop(id);
   });
+
+  // ── Output ceiling for shell (process) tasks ─────────────────────────
+  //
+  // A single shell command that streams more output than the per-command limit
+  // must be force-terminated instead of growing the (unbounded) live-forward
+  // buffer or the on-disk write chain until the process runs out of memory or
+  // fills the disk. The ceiling applies to process tasks, foreground and
+  // background alike. Subagent and user-question tasks append their bounded
+  // result in one shot and must always be persisted, so they are not capped.
+
+  const MiB = 1024 * 1024;
+  const LIMIT_BYTES = 16 * MiB;
+
+  /**
+   * A process that streams `chunks` of stdout, then exits 0 on its own — unless
+   * it is killed first, in which case `wait()` resolves with the signal's exit
+   * code and the stream is destroyed (simulating the child dying on SIGTERM).
+   */
+  function streamingProcess(chunks: string[]): {
+    proc: IProcess;
+    kill: ReturnType<typeof vi.fn>;
+  } {
+    const stdout = Readable.from(chunks);
+    const stderr = Readable.from([]);
+    let resolveWait!: (code: number) => void;
+    const waitP = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    stdout.on('end', () => {
+      resolveWait(0);
+    });
+    const kill = vi.fn(async (signal: string) => {
+      stdout.destroy();
+      resolveWait(signal === 'SIGKILL' ? 137 : 143);
+    });
+    const proc = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr,
+      pid: 4242,
+      exitCode: null,
+      wait: () => waitP,
+      kill,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IProcess;
+    return { proc, kill };
+  }
+
+  /**
+   * A process that keeps streaming all of `chunks` regardless of SIGTERM (only
+   * SIGKILL stops it) — simulating a producer that ignores the graceful stop
+   * and keeps writing through the SIGTERM grace window.
+   */
+  function sigtermIgnoringProcess(chunks: string[]): {
+    proc: IProcess;
+    kill: ReturnType<typeof vi.fn>;
+  } {
+    const stdout = Readable.from(chunks);
+    const stderr = Readable.from([]);
+    let resolveWait!: (code: number) => void;
+    const waitP = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    stdout.on('end', () => {
+      resolveWait(0);
+    });
+    const kill = vi.fn(async (signal: string) => {
+      if (signal === 'SIGKILL') {
+        stdout.destroy();
+        resolveWait(137);
+      }
+      // SIGTERM is intentionally ignored.
+    });
+    const proc = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr,
+      pid: 4243,
+      exitCode: null,
+      wait: () => waitP,
+      kill,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IProcess;
+    return { proc, kill };
+  }
+
+  /** One-shot non-process task appending its full result at once, like a subagent. */
+  function agentLikeTask(result: string, description: string): AgentTask {
+    return {
+      idPrefix: 'agent',
+      kind: 'agent',
+      description,
+      start: async (sink) => {
+        sink.appendOutput(result);
+        await sink.settle({ status: 'completed' });
+      },
+      toInfo: (base) => ({ ...base, kind: 'agent' }),
+    };
+  }
+
+  async function waitForTerminal(
+    svc: IAgentTaskService,
+    taskId: string,
+    timeoutMs = 30_000,
+  ): Promise<AgentTaskInfo | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() <= deadline) {
+      const info = await svc.wait(taskId, 5);
+      if (
+        info?.status === 'completed' ||
+        info?.status === 'failed' ||
+        info?.status === 'timed_out' ||
+        info?.status === 'killed' ||
+        info?.status === 'lost'
+      ) {
+        return info;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    return svc.getTask(taskId);
+  }
+
+  /** Re-stub the byte store so `output.log` appends are counted, then build the service. */
+  function serviceWithAppendCounter(): {
+    svc: IAgentTaskService;
+    persistedChars: () => number;
+  } {
+    let persistedChars = 0;
+    ix.stub(IFileSystemStorageService, {
+      read: async () => undefined,
+      readStream: async function* () {},
+      write: async () => {},
+      append: async (_scope: string, _key: string, chunk: Uint8Array) => {
+        persistedChars += chunk.byteLength;
+      },
+      list: async () => [],
+      delete: async () => {},
+      flush: async () => {},
+      close: async () => {},
+    });
+    return { svc: ix.get(IAgentTaskService), persistedChars: () => persistedChars };
+  }
+
+  it('terminates a foreground command that exceeds the output limit and stops forwarding', async () => {
+    const svc = ix.get(IAgentTaskService);
+    // 20 MiB total, well past the 16 MiB ceiling.
+    const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+    const { proc, kill } = streamingProcess(chunks);
+
+    let forwardedChars = 0;
+    const onOutput = vi.fn((_kind: 'stdout' | 'stderr', text: string) => {
+      forwardedChars += text.length;
+    });
+
+    const taskId = svc.registerTask(
+      new ProcessTask(proc, 'b3sum --length 18446744073709551615', 'hash', onOutput),
+      { detached: false, signal: new AbortController().signal, timeoutMs: 60_000 },
+    );
+
+    const info = await waitForTerminal(svc, taskId);
+
+    expect(info?.status).toBe('killed');
+    expect(info?.stopReason ?? '').toMatch(/output limit/i);
+    expect(kill).toHaveBeenCalledWith('SIGTERM');
+    // The live-forward path is capped at the ceiling rather than draining the
+    // full 20 MiB into the (unbounded) transcript/stderr buffer.
+    expect(forwardedChars).toBeLessThanOrEqual(LIMIT_BYTES);
+  });
+
+  it('also terminates a detached (background) task that exceeds the output limit', async () => {
+    const svc = ix.get(IAgentTaskService);
+    const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+    const { proc, kill } = streamingProcess(chunks);
+
+    const taskId = svc.registerTask(new ProcessTask(proc, 'producer', 'bg'), {
+      detached: true,
+      timeoutMs: 60_000,
+    });
+
+    const info = await waitForTerminal(svc, taskId);
+
+    expect(info?.status).toBe('killed');
+    expect(info?.stopReason ?? '').toMatch(/output limit/i);
+    expect(kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('stops enqueuing output to disk once the foreground cap trips', async () => {
+    const { svc, persistedChars } = serviceWithAppendCounter();
+
+    // 20 MiB, and the producer ignores SIGTERM so it keeps writing through
+    // the whole grace window.
+    const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+    const { proc } = sigtermIgnoringProcess(chunks);
+
+    const taskId = svc.registerTask(new ProcessTask(proc, 'runaway', 'hash', () => {}), {
+      detached: false,
+      signal: new AbortController().signal,
+      timeoutMs: 60_000,
+    });
+
+    const info = await waitForTerminal(svc, taskId);
+
+    expect(info?.status).toBe('killed');
+    // Before the fix every chunk of the 20 MiB is enqueued into the disk
+    // write chain (retaining each string until its write drains); afterwards
+    // enqueuing stops at the ceiling so the chain cannot grow unbounded.
+    expect(persistedChars()).toBeLessThanOrEqual(17 * MiB);
+  });
+
+  it('stops enqueuing output to disk once the cap trips for a background task', async () => {
+    const { svc, persistedChars } = serviceWithAppendCounter();
+
+    // 20 MiB, and the producer ignores SIGTERM so it keeps writing through
+    // the whole grace window. Background tasks share the same ceiling.
+    const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+    const { proc } = sigtermIgnoringProcess(chunks);
+
+    const taskId = svc.registerTask(new ProcessTask(proc, 'runaway', 'bg', () => {}), {
+      detached: true,
+      timeoutMs: 60_000,
+    });
+
+    const info = await waitForTerminal(svc, taskId);
+
+    expect(info?.status).toBe('killed');
+    // Same guarantee as the foreground case: once the cap trips, subsequent
+    // chunks are dropped before they reach the disk write chain.
+    expect(persistedChars()).toBeLessThanOrEqual(17 * MiB);
+  });
+
+  it('does not cap or drop a detached subagent result larger than the limit', async () => {
+    const { svc, persistedChars } = serviceWithAppendCounter();
+
+    // 20 MiB result — well past the 16 MiB ceiling — delivered in one shot,
+    // exactly how a subagent appends its completed result.
+    const bigResult = 'y'.repeat(20 * MiB);
+    const taskId = svc.registerTask(agentLikeTask(bigResult, 'big subagent result'), {
+      detached: true,
+      timeoutMs: 60_000,
+    });
+
+    const info = await waitForTerminal(svc, taskId);
+
+    // Non-process tasks must complete normally and have their full result
+    // persisted; the shell-output ceiling must not drop it.
+    expect(info?.status).toBe('completed');
+    expect(persistedChars()).toBeGreaterThanOrEqual(bigResult.length);
+  });
 });
 
 describe('Agent task notification XML', () => {
@@ -113,7 +383,7 @@ describe('Agent task notification XML', () => {
       id: 'n_"1&2',
       category: 'task',
       type: 'task.done',
-      source_kind: 'task',
+      source_kind: 'background_task',
       source_id: 'bg&1',
       title: 'Task finished',
       severity: 'info',
@@ -144,12 +414,12 @@ describe('Agent task notification XML', () => {
       id: 'n_lost1',
       category: 'task',
       type: 'task.lost',
-      source_kind: 'task',
+      source_kind: 'background_task',
       source_id: 'agent-w7gq3wwj',
       agent_id: 'agent-0',
-      title: 'Task agent lost',
+      title: 'Background agent lost',
       severity: 'warning',
-      body: 'Task agent 1 lost.',
+      body: 'Background agent 1 lost.',
     });
 
     expect(text).toContain('source_id="agent-w7gq3wwj"');
@@ -161,9 +431,9 @@ describe('Agent task notification XML', () => {
       id: 'n_bash',
       category: 'task',
       type: 'task.completed',
-      source_kind: 'task',
+      source_kind: 'background_task',
       source_id: 'bash-abcdef00',
-      title: 'Task completed',
+      title: 'Background task completed',
       severity: 'info',
       body: 'echo done completed.',
     });

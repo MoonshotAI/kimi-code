@@ -25,6 +25,7 @@ describe('loop-event fold parity', () => {
       toolCalls: m.toolCalls,
       toolCallId: m.toolCallId,
       isError: m.isError,
+      note: m.note,
     }));
   }
 
@@ -79,7 +80,7 @@ describe('loop-event fold parity', () => {
       },
       {
         role: 'tool',
-        content: [{ type: 'text', text: '<system>ERROR: Tool execution failed.</system>\nboom' }],
+        content: [{ type: 'text', text: 'boom' }],
         toolCalls: [],
         toolCallId: 'c2',
         isError: true,
@@ -102,6 +103,48 @@ describe('loop-event fold parity', () => {
       result: { output: 'boom', isError: true },
     });
     context.appendLoopEvent({ type: 'step.end', uuid: 's2' });
+    const folded = comparable(context.get());
+
+    expect(folded).toEqual(baseline);
+  });
+
+  it('folds a tool-result note as structured model-only metadata', () => {
+    context.append(
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'c3', name: 'Screenshot', arguments: '{}' }],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'result text' }],
+        toolCalls: [],
+        toolCallId: 'c3',
+        isError: false,
+        note: '<system>Image compressed.</system>',
+      },
+    );
+    const baseline = comparable(context.get());
+    context.clear();
+
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's3' });
+    context.appendLoopEvent({
+      type: 'tool.call',
+      stepUuid: 's3',
+      toolCallId: 'c3',
+      name: 'Screenshot',
+      args: {},
+    });
+    context.appendLoopEvent({
+      type: 'tool.result',
+      toolCallId: 'c3',
+      result: {
+        output: 'result text',
+        isError: false,
+        note: '<system>Image compressed.</system>',
+      },
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's3' });
     const folded = comparable(context.get());
 
     expect(folded).toEqual(baseline);

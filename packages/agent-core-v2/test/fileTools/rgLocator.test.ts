@@ -57,12 +57,20 @@ function deferred<T>(): {
 
 describe('findExistingRg', () => {
   let fakeShare: string;
+  let savedPath: string | undefined;
   beforeEach(() => {
     fakeShare = join(tmpdir(), `kimi-rg-${String(Date.now())}-${String(Math.random()).slice(2)}`);
     mkdirSync(join(fakeShare, 'bin'), { recursive: true });
+    savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
   });
   afterEach(() => {
     rmSync(fakeShare, { recursive: true, force: true });
+    if (savedPath === undefined) {
+      delete process.env['PATH'];
+    } else {
+      process.env['PATH'] = savedPath;
+    }
   });
 
   it('returns undefined when no rg anywhere', async () => {
@@ -72,18 +80,27 @@ describe('findExistingRg', () => {
 
   it('resolves from share-dir when cached', async () => {
     const cached = join(fakeShare, 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg');
-    const probe = probeWith((args) => (args[0] === cached ? 0 : -1));
+    writeFileSync(cached, 'fake rg');
+    const probe = noRgProbe();
     const result = await findExistingRg(probe, fakeShare);
 
     expect(result).toEqual({ path: cached, source: 'share-bin-cached' });
+    expect(probe.exec).not.toHaveBeenCalled();
   });
 
   it('prefers system PATH over share-dir when both are available', async () => {
-    const probe = probeWith((args) => (args[0] === 'rg' ? 0 : -1));
+    const binDir = join(fakeShare, 'path-bin');
+    mkdirSync(binDir, { recursive: true });
+    const systemRg = join(binDir, process.platform === 'win32' ? 'rg.exe' : 'rg');
+    const cached = join(fakeShare, 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg');
+    writeFileSync(systemRg, 'fake system rg');
+    writeFileSync(cached, 'fake cached rg');
+    process.env['PATH'] = binDir;
+    const probe = noRgProbe();
     const result = await findExistingRg(probe, fakeShare);
 
-    expect(result).toEqual({ path: 'rg', source: 'system-path' });
-    expect(probe.exec).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ path: systemRg, source: 'system-path' });
+    expect(probe.exec).not.toHaveBeenCalled();
   });
 });
 
@@ -181,6 +198,7 @@ describe('verifyArchiveChecksum', () => {
 describe('ensureRgPath download branch', () => {
   let fakeShare: string;
   let savedFetch: typeof globalThis.fetch | undefined;
+  let savedPath: string | undefined;
   beforeEach(() => {
     fakeShare = join(
       tmpdir(),
@@ -188,6 +206,8 @@ describe('ensureRgPath download branch', () => {
     );
     mkdirSync(join(fakeShare, 'bin'), { recursive: true });
     savedFetch = globalThis.fetch;
+    savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
   });
   afterEach(() => {
     rmSync(fakeShare, { recursive: true, force: true });
@@ -195,6 +215,11 @@ describe('ensureRgPath download branch', () => {
       delete (globalThis as unknown as { fetch?: typeof fetch }).fetch;
     } else {
       globalThis.fetch = savedFetch;
+    }
+    if (savedPath === undefined) {
+      delete process.env['PATH'];
+    } else {
+      process.env['PATH'] = savedPath;
     }
     vi.restoreAllMocks();
   });
@@ -231,36 +256,15 @@ describe('ensureRgPath download branch', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('does not start bootstrap work when aborted after lookup misses', async () => {
-    const controller = new AbortController();
-    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-    const cacheProbe = deferred<{ readonly exitCode: number }>();
-    const probe: RgProbe & { exec: ReturnType<typeof vi.fn> } = {
-      exec: vi
-        .fn()
-        .mockResolvedValueOnce({ exitCode: -1 })
-        .mockReturnValueOnce(cacheProbe.promise),
-    };
+  it('does not run probe subprocesses while lookup misses', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network unreachable')) as typeof fetch;
+    const probe = noRgProbe();
 
-    const resultPromise = ensureRgPath(probe, {
-      shareDir: fakeShare,
-      signal: controller.signal,
-      allowCachedFallback: true,
-    });
+    await expect(
+      ensureRgPath(probe, { shareDir: fakeShare, allowCachedFallback: true }),
+    ).rejects.toThrow(/network unreachable/);
 
-    await vi.waitFor(() => {
-      expect(probe.exec).toHaveBeenCalledTimes(2);
-    });
-    controller.abort();
-    await expect(resultPromise).rejects.toHaveProperty('name', 'AbortError');
-
-    cacheProbe.resolve({ exitCode: -1 });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20);
-    });
-
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(probe.exec).not.toHaveBeenCalled();
   });
 
   it('aborts the current caller wait while shared bootstrap work continues', async () => {
@@ -376,6 +380,7 @@ describe('ensureRgPath Windows download branch', () => {
   let savedFetch: typeof globalThis.fetch | undefined;
   let savedArch: string;
   let savedPlatform: string;
+  let savedPath: string | undefined;
   beforeEach(() => {
     fakeShare = join(
       tmpdir(),
@@ -383,6 +388,8 @@ describe('ensureRgPath Windows download branch', () => {
     );
     mkdirSync(join(fakeShare, 'bin'), { recursive: true });
     savedFetch = globalThis.fetch;
+    savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
     savedArch = process.arch;
     savedPlatform = process.platform;
     Object.defineProperty(process, 'arch', { value: 'x64' });
@@ -394,6 +401,11 @@ describe('ensureRgPath Windows download branch', () => {
       delete (globalThis as unknown as { fetch?: typeof fetch }).fetch;
     } else {
       globalThis.fetch = savedFetch;
+    }
+    if (savedPath === undefined) {
+      delete process.env['PATH'];
+    } else {
+      process.env['PATH'] = savedPath;
     }
     Object.defineProperty(process, 'arch', { value: savedArch });
     Object.defineProperty(process, 'platform', { value: savedPlatform });

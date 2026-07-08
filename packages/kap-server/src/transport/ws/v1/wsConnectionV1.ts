@@ -29,6 +29,7 @@ import {
   buildServerHello,
 } from './protocol';
 import {
+  type AgentFilter,
   type BroadcastTarget,
   type ResyncReason,
   type SessionEventBroadcaster,
@@ -98,8 +99,8 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private closed = false;
   private gotClientHello = false;
-  /** Session ids this connection is currently subscribed to. */
-  readonly subscriptions = new Set<string>();
+  /** Per-session subscription state, with each session's optional agent allowlist. */
+  readonly subscriptions = new Map<string, AgentFilter>();
 
   private pingTimer?: ReturnType<typeof setInterval>;
   private pongTimer?: ReturnType<typeof setTimeout>;
@@ -149,7 +150,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions).sort();
+    return Array.from(this.subscriptions.keys()).sort();
   }
 
   /** BroadcastTarget — forward a sequenced envelope to the socket. */
@@ -194,13 +195,21 @@ export class WsConnectionV1 implements BroadcastTarget {
     const payload = frame.payload ?? {};
     const subscriptions = asStringArray(payload['subscriptions']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
+    const agentFilter = parseAgentFilter(payload['agent_filter']);
 
     const accepted: string[] = [];
     const resyncRequired: string[] = [];
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of subscriptions) {
-      await this.attachSession(sid, cursors?.[sid], accepted, resyncRequired, serverCursors);
+      await this.attachSession(
+        sid,
+        cursors?.[sid],
+        agentFilter?.[sid],
+        accepted,
+        resyncRequired,
+        serverCursors,
+      );
     }
 
     this.sendFrame(
@@ -216,6 +225,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const payload = frame.payload ?? {};
     const sessionIds = asStringArray(payload['session_ids']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
+    const agentFilter = parseAgentFilter(payload['agent_filter']);
 
     const accepted: string[] = [];
     const notFound: string[] = [];
@@ -223,16 +233,17 @@ export class WsConnectionV1 implements BroadcastTarget {
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of sessionIds) {
-      const ok = await this.broadcaster.subscribe(sid, this);
+      const filter = agentFilter?.[sid];
+      const ok = await this.broadcaster.subscribe(sid, this, filter);
       if (!ok) {
         notFound.push(sid);
         continue;
       }
-      this.subscriptions.add(sid);
+      this.subscriptions.set(sid, filter);
       accepted.push(sid);
       const cursor = cursors?.[sid];
       if (cursor !== undefined) {
-        await this.replay(sid, cursor, resyncRequired, serverCursors);
+        await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
       } else {
         const cur = await this.broadcaster.getCursor(sid);
         serverCursors[sid] = cur;
@@ -268,19 +279,20 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async attachSession(
     sid: string,
     cursor: SessionCursor | undefined,
+    filter: AgentFilter | undefined,
     accepted: string[],
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const ok = await this.broadcaster.subscribe(sid, this);
+    const ok = await this.broadcaster.subscribe(sid, this, filter);
     if (!ok) {
       resyncRequired.push(sid);
       return;
     }
-    this.subscriptions.add(sid);
+    this.subscriptions.set(sid, filter);
     accepted.push(sid);
     if (cursor !== undefined) {
-      await this.replay(sid, cursor, resyncRequired, serverCursors);
+      await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
     } else {
       const cur = await this.broadcaster.getCursor(sid);
       serverCursors[sid] = cur;
@@ -290,10 +302,11 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async replay(
     sid: string,
     cursor: SessionCursor,
+    filter: AgentFilter | undefined,
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const result = await this.broadcaster.getBufferedSince(sid, cursor);
+    const result = await this.broadcaster.getBufferedSince(sid, cursor, filter);
     if (result.resyncRequired !== false) {
       this.sendFrame(
         buildResyncRequired(sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
@@ -447,7 +460,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     this.outbound = [];
-    for (const sid of this.subscriptions) this.broadcaster.unsubscribe(sid, this);
+    for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     // registry removal is handled by registerWsV1 on the socket 'close' event.
   }
 }
@@ -455,6 +468,26 @@ export class WsConnectionV1 implements BroadcastTarget {
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((v): v is string => typeof v === 'string');
+}
+
+/**
+ * Parse the wire `agent_filter` payload (`Record<session_id, agent_id[]>`) into
+ * a per-session allowlist map. Sessions missing from the returned map — or the
+ * whole field absent — fall back to "every agent" (`undefined`), the legacy
+ * session-grained behavior. Malformed entries (non-object, empty arrays,
+ * non-string ids) are dropped per-session rather than failing the whole
+ * handshake, so a bad entry cannot widen another session's filter.
+ */
+function parseAgentFilter(value: unknown): Record<string, AgentFilter> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const out: Record<string, AgentFilter> = {};
+  for (const [sid, ids] of Object.entries(value)) {
+    if (!Array.isArray(ids)) continue;
+    const set = new Set(ids.filter((v): v is string => typeof v === 'string'));
+    if (set.size === 0) continue;
+    out[sid] = set;
+  }
+  return out;
 }
 
 function rawDataToString(data: RawData): string {

@@ -21,6 +21,7 @@ import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import type { SubagentSuspendedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -151,6 +152,9 @@ export class SessionSwarmService implements ISessionSwarmService {
       permissionMode: caller.accessor.get(IAgentPermissionModeService).mode,
       labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
     });
+    child.accessor
+      .get(IAgentUserToolService)
+      .inheritUserTools(caller.accessor.get(IAgentUserToolService));
     emitAgentRunSpawned(caller, child.id, {
       profileName: options.profileName,
       parentToolCallId: options.parentToolCallId,
