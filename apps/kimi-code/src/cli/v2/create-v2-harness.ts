@@ -146,6 +146,7 @@ class V2PromptHarness implements PromptHarness {
     const session = await this.core.accessor.get(ISessionLifecycleService).create({
       sessionId: randomUUID(),
       workDir: options.workDir,
+      additionalDirs: options.additionalDirs,
     });
     const agent = await ensureMainAgent(session);
     if (options.model !== undefined) {
