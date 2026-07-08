@@ -324,7 +324,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       let compactedCount = initialCompactedCount;
 
       for (let round = 1; ; round++) {
-        const result = await this.compactionRound(active, round, data);
+        const result = await this.compactionRound(active, round, data, compactedCount);
         if (this._compacting !== active) throw compactionCancelledReason(active);
 
         finalResult.summary = result.summary;
@@ -375,6 +375,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     active: ActiveCompaction,
     round: number,
     data: Readonly<CompactionBeginData>,
+    initialCompactedCount: number,
   ): Promise<CompactionResult> {
     const startedAt = Date.now();
     const originalHistory = [...this.context.get()];
@@ -382,7 +383,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     let retryCount = 0;
 
     try {
-      let compactedCount = originalHistory.length;
+      let compactedCount = Math.min(initialCompactedCount, originalHistory.length);
       const signal = active.abortController.signal;
       signal.throwIfAborted();
 
