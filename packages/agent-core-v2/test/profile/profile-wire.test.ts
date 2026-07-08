@@ -194,8 +194,8 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     const model = modelOf(wire);
     expect(model.profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
     expect(model.systemPrompt).toBe('You are helpful.');
-    // Explicit 'on' persists as the boolean-thinking signal when no model
-    // declares named efforts.
+    // Explicit 'on' persists verbatim — normalizing it to a concrete effort
+    // is the UI boundary's job, not the resolver's.
     expect(model.thinkingLevel).toBe('on');
     expect(svc.getSystemPrompt()).toBe('You are helpful.');
 

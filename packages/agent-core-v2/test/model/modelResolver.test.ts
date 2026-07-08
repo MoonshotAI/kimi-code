@@ -7,8 +7,8 @@
  *     (`requireProviderApiKey`). The resolver's `AuthProvider` must return the
  *     token as `apiKey` (not wrapped in `headers`), so a resolved Model can
  *     authenticate against its endpoint.
- *  2. Default thinking — the resolver reads the `thinking` / `defaultThinking`
- *     config sections and applies the same default effort the production agent
+ *  2. Default thinking — the resolver reads the `thinking` config section and
+ *     applies the same default effort the production agent
  *     path (via `profile`) does, so a plain `model.request()` behaves
  *     identically (some endpoints reject a request that omits thinking).
  */
@@ -679,13 +679,8 @@ describe('ModelResolverService', () => {
       expect(ix.get(IModelResolver).resolve('m').thinkingEffort).toBe('medium');
     });
 
-    it('is off (null) when defaultThinking is false', () => {
-      configValues['defaultThinking'] = false;
-      expect(resolveEffort()).toBeNull();
-    });
-
-    it('is off (null) when thinking.mode is "off"', () => {
-      configValues['thinking'] = { mode: 'off' };
+    it('is off (null) when thinking.enabled is false', () => {
+      configValues['thinking'] = { enabled: false };
       expect(resolveEffort()).toBeNull();
     });
 
@@ -695,7 +690,7 @@ describe('ModelResolverService', () => {
     });
 
     it('clamps an explicit off back to on for always_thinking models', () => {
-      configValues['defaultThinking'] = false;
+      configValues['thinking'] = { enabled: false };
       expect(resolveEffort(['always_thinking'])).toBe('on');
     });
   });

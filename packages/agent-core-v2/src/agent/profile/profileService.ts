@@ -456,8 +456,10 @@ export class AgentProfileService implements IAgentProfileService {
   private get thinkingLevel(): ThinkingEffort {
     const stored = this.profileState.thinkingLevel;
     if (stored === 'off' && this.alwaysThinkingModel) {
+      // Re-run the resolver so the always_thinking clamp restores the
+      // configured effort (or the model default) instead of a stale 'off'.
       return resolveThinkingEffort(
-        'on',
+        stored,
         this.config.get<ThinkingConfig>(THINKING_SECTION),
         this.tryResolveRawModel(),
       );
