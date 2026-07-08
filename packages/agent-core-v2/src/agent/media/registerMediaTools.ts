@@ -15,6 +15,7 @@
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { Model } from '#/app/model/modelInstance';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
@@ -29,6 +30,8 @@ export interface RegisterMediaToolsDeps {
   readonly workspace: WorkspaceConfig;
   readonly capabilities: ModelCapability;
   readonly videoUploader?: VideoUploader;
+  /** Sink for the `image_compress` / `image_crop` events (source 'read_media'). */
+  readonly telemetry?: ITelemetryService;
 }
 
 /**
@@ -53,6 +56,7 @@ export function registerMediaTools(
       deps.workspace,
       deps.capabilities,
       deps.videoUploader,
+      deps.telemetry,
     ),
   );
 }

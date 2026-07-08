@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
@@ -50,6 +51,57 @@ function mp4Buffer(): Buffer {
     Buffer.from([0x00, 0x00, 0x00, 0x00]),
     Buffer.from('mp42isom'),
   ]);
+}
+
+/**
+ * Wrap a baseline JPEG in an EXIF APP1 segment carrying the given Orientation
+ * tag, so decoders (and the header sniff) see a rotated image.
+ */
+function withExifOrientation(jpeg: Uint8Array, orientation: number): Buffer {
+  // TIFF body, little-endian: 8-byte header + IFD0 with a single entry.
+  const tiff = Buffer.alloc(26);
+  tiff.write('II', 0, 'latin1');
+  tiff.writeUInt16LE(42, 2);
+  tiff.writeUInt32LE(8, 4); // offset of IFD0
+  tiff.writeUInt16LE(1, 8); // one directory entry
+  tiff.writeUInt16LE(0x0112, 10); // tag: Orientation
+  tiff.writeUInt16LE(3, 12); // type: SHORT
+  tiff.writeUInt32LE(1, 14); // count
+  tiff.writeUInt16LE(orientation, 18); // value, left-aligned in the 4-byte field
+  tiff.writeUInt32LE(0, 22); // no next IFD
+  const exifBody = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+  const app1Header = Buffer.alloc(4);
+  app1Header.writeUInt16BE(0xff_e1, 0);
+  app1Header.writeUInt16BE(exifBody.length + 2, 2);
+  return Buffer.concat([
+    Buffer.from(jpeg.subarray(0, 2)), // SOI
+    app1Header,
+    exifBody,
+    Buffer.from(jpeg.subarray(2)),
+  ]);
+}
+
+interface TelemetryRecord {
+  readonly event: string;
+  readonly properties: Readonly<Record<string, unknown>> | undefined;
+}
+
+function recordingTelemetry(records: TelemetryRecord[]): ITelemetryService {
+  const telemetry: ITelemetryService = {
+    _serviceBrand: undefined,
+    track(event, properties) {
+      records.push({ event, properties });
+    },
+    withContext: () => telemetry,
+    setContext: () => {},
+    addAppender: () => ({ dispose: () => {} }),
+    removeAppender: () => {},
+    setAppender: () => {},
+    setEnabled: () => {},
+    flush: async () => {},
+    shutdown: async () => {},
+  };
+  return telemetry;
 }
 
 function capabilities(overrides: Partial<ModelCapability> = {}): ModelCapability {
@@ -102,8 +154,16 @@ function makeTool(
   files: Record<string, FakeFile>,
   caps: ModelCapability = capabilities(),
   videoUploader?: VideoUploader,
+  telemetry?: ITelemetryService,
 ): ReadMediaFileTool {
-  return new ReadMediaFileTool(createTestFs(files), createTestEnv(), WORKSPACE, caps, videoUploader);
+  return new ReadMediaFileTool(
+    createTestFs(files),
+    createTestEnv(),
+    WORKSPACE,
+    caps,
+    videoUploader,
+    telemetry,
+  );
 }
 
 async function execute(
@@ -130,6 +190,14 @@ function outputParts(result: ExecutableToolResult): ContentPart[] {
   return result.output as ContentPart[];
 }
 
+// The media summary rides the result's `note` side channel (rendered to the
+// model at projection time, never to UIs); the tool keeps its own `<system>`
+// wrapping as a wording choice.
+function noteText(result: ExecutableToolResult): string {
+  expect(typeof result.note).toBe('string');
+  return result.note as string;
+}
+
 describe('ReadMediaFileTool', () => {
   it('has name, parameters, and a path-scoped read access', () => {
     const tool = makeTool({ '/workspace/sample.png': { data: pngBuffer() } });
@@ -146,6 +214,12 @@ describe('ReadMediaFileTool', () => {
       ReadMediaFileInputSchema.safeParse({
         path: '/workspace/sample.png',
         region: { x: -1, y: 0, width: 10, height: 10 },
+      }).success,
+    ).toBe(false);
+    expect(
+      ReadMediaFileInputSchema.safeParse({
+        path: '/workspace/sample.png',
+        region: { x: 0, y: 0, width: 0, height: 10 },
       }).success,
     ).toBe(false);
     expect(
@@ -206,42 +280,73 @@ describe('ReadMediaFileTool', () => {
     expect(result.output).toContain('not a supported image or video file');
   });
 
-  it('wraps an image as a data URL with a system summary and dimensions', async () => {
+  it('returns a text/image/text wrap plus a <system> note for PNG files', async () => {
     const result = await execute(makeTool({ '/workspace/sample.png': { data: pngBuffer() } }), {
       path: '/workspace/sample.png',
     });
-    const parts = outputParts(result);
 
-    expect(parts).toHaveLength(4);
-    expect(parts[0]).toMatchObject({ type: 'text' });
-    const systemText = (parts[0] as { type: 'text'; text: string }).text;
+    const systemText = noteText(result);
+    expect(systemText).toMatch(/^<system>.*<\/system>$/s);
     expect(systemText).toContain('Mime type: image/png');
     expect(systemText).toContain(`Original dimensions: ${PNG_WIDTH}x${PNG_HEIGHT}`);
-    expect(parts[1]).toEqual({ type: 'text', text: '<image path="/workspace/sample.png">' });
-    expect(parts[2]).toMatchObject({
+    // With the original size known, the coordinate guidance is included.
+    expect(systemText).toMatch(/relative coordinates first/i);
+    // The re-read reminder is included regardless of dimensions.
+    expect(systemText).toMatch(/read the result back/i);
+
+    const parts = outputParts(result);
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '<image path="/workspace/sample.png">' });
+    expect(parts[1]).toMatchObject({
       type: 'image_url',
       imageUrl: { url: expect.stringContaining('data:image/png;base64,') },
     });
-    expect(parts[3]).toEqual({ type: 'text', text: '</image>' });
+    expect(parts[2]).toEqual({ type: 'text', text: '</image>' });
   });
 
   it('downsamples large images and points the model to region readback', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
     );
+    expect(sniffImageDimensions(big)).toEqual({ width: 3600, height: 3600 });
+
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
       path: '/workspace/big.png',
     });
-    const parts = outputParts(result);
-    const systemText = (parts[0] as { type: 'text'; text: string }).text;
-    expect(systemText).toContain('2600x2600');
-    expect(systemText).toMatch(/downsampled to 2000x2000/);
+
+    // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
+    const systemText = noteText(result);
+    expect(systemText).toContain('3600x3600');
+    expect(systemText).toContain(`${String(big.length)} bytes`);
+    // Wording must not depend on serialization order: some providers keep
+    // the note inline after the media, others flatten tool text and
+    // re-attach the image after it — so no "above"/"below".
+    expect(systemText).toMatch(/The attached image was downsampled to 3000x3000/);
+    expect(systemText).toMatch(/fine detail/i);
     expect(systemText).toContain('region');
-    const url = (parts[2] as { imageUrl: { url: string } }).imageUrl.url;
+
+    // The image actually sent to the model is downsampled to the edge cap.
+    const parts = outputParts(result);
+    const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
     expect(match).not.toBeNull();
     const dims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
-    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(3000);
+  });
+
+  it('does not claim downsampling for an image sent untouched', async () => {
+    // A real 3x4 PNG passes through unchanged — the <system> note must not
+    // carry a downsample note (that would be its own kind of misreporting).
+    const png = Buffer.from(
+      '89504e470d0a1a0a0000000d49484452000000030000000408020000003a' +
+        '63dc1c0000001949444154789c63606060f8cf80019aa0a8a020' +
+        '00000000ffff03000c1d03014b0000000049454e44ae426082',
+      'hex',
+    );
+    const result = await execute(makeTool({ '/workspace/small.png': { data: png } }), {
+      path: '/workspace/small.png',
+    });
+    expect(noteText(result)).not.toMatch(/downsampled/i);
   });
 
   it('reads image regions at native resolution', async () => {
@@ -253,17 +358,154 @@ describe('ReadMediaFileTool', () => {
       region: { x: 100, y: 50, width: 400, height: 300 },
     });
     const parts = outputParts(result);
-    const url = (parts[2] as { imageUrl: { url: string } }).imageUrl.url;
+    const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
     expect(match).not.toBeNull();
     expect(sniffImageDimensions(Buffer.from(match![2]!, 'base64'))).toEqual({
       width: 400,
       height: 300,
     });
-    const systemText = (parts[0] as { type: 'text'; text: string }).text;
+    const systemText = noteText(result);
     expect(systemText).toContain('2600x2600');
     expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
+    expect(systemText).toMatch(/native resolution/);
     expect(systemText).toContain('offset');
+  });
+
+  it('rejects a region outside the image with the original size in the error', async () => {
+    const big = Buffer.from(
+      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
+      path: '/workspace/big.png',
+      region: { x: 5000, y: 0, width: 100, height: 100 },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('2600x2600');
+  });
+
+  it('serves full_resolution when the bytes fit the per-image budget', async () => {
+    const big = Buffer.from(
+      // Over the edge cap, tiny in bytes.
+      await new Jimp({ width: 3900, height: 1950, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
+      path: '/workspace/big.png',
+      full_resolution: true,
+    });
+
+    const parts = outputParts(result);
+    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+      `data:image/png;base64,${big.toString('base64')}`,
+    );
+    expect(noteText(result)).toMatch(/native resolution/);
+  });
+
+  it('fails full_resolution explicitly when the file exceeds the per-image budget', async () => {
+    // PNG magic followed by 4MB of filler: recognizably an image, over the
+    // 3.75MB byte budget — full_resolution must refuse, not silently shrink.
+    const data = Buffer.concat([pngBuffer(), Buffer.alloc(4 * 1024 * 1024, 1)]);
+    const result = await execute(makeTool({ '/workspace/huge.png': { data } }), {
+      path: '/workspace/huge.png',
+      full_resolution: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toMatch(/full_resolution/);
+    expect(result.output).toMatch(/region/);
+    // Exact byte counts accompany the rounded sizes: a file a hair over
+    // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
+    expect(result.output).toContain(`${String(data.length)} bytes`);
+    expect(result.output).toContain('3932160-byte');
+  });
+
+  it('reports an EXIF-rotated original in the decoded coordinate space', async () => {
+    // Orientation 6 (rotate 90° CW): the header says 3600x1800, but jimp
+    // decodes to 1800x3600 — the space the sent image and any region
+    // readback live in. The note's original size must match that space,
+    // not the pre-rotation header sniff.
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const result = await execute(makeTool({ '/workspace/portrait.jpg': { data: portrait } }), {
+      path: '/workspace/portrait.jpg',
+    });
+
+    const systemText = noteText(result);
+    expect(systemText).toContain('Original dimensions: 1800x3600');
+    expect(systemText).toMatch(/downsampled to 1500x3000/);
+  });
+
+  it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
+    // Region coordinates live in the decoded (rotated) space; the note's
+    // original size must agree with it even when the header sniff succeeds.
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const result = await execute(makeTool({ '/workspace/portrait.jpg': { data: portrait } }), {
+      path: '/workspace/portrait.jpg',
+      region: { x: 0, y: 0, width: 40, height: 40 },
+    });
+
+    expect(noteText(result)).toContain('Original dimensions: 80x120');
+  });
+
+  it('reports display-space dimensions for an EXIF-rotated image sent untouched', async () => {
+    // Within both budgets the original bytes are sent without decoding; the
+    // note must still report the display-space size so coordinates derived
+    // from it agree with a later region readback (which decodes).
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const result = await execute(makeTool({ '/workspace/portrait.jpg': { data: portrait } }), {
+      path: '/workspace/portrait.jpg',
+    });
+
+    const systemText = noteText(result);
+    expect(systemText).toContain('Original dimensions: 80x120');
+    expect(systemText).not.toMatch(/downsampled/i);
+  });
+
+  it('emits image_compress and image_crop telemetry tagged read_media', async () => {
+    const records: TelemetryRecord[] = [];
+    const big = Buffer.from(
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const tool = makeTool(
+      { '/workspace/big.png': { data: big } },
+      capabilities(),
+      undefined,
+      recordingTelemetry(records),
+    );
+
+    await execute(tool, { path: '/workspace/big.png' });
+    expect(records).toHaveLength(1);
+    expect(records[0]!.event).toBe('image_compress');
+    expect(records[0]!.properties?.['source']).toBe('read_media');
+    expect(records[0]!.properties?.['outcome']).toBe('compressed');
+
+    await execute(tool, {
+      path: '/workspace/big.png',
+      region: { x: 0, y: 0, width: 100, height: 100 },
+    });
+    expect(records).toHaveLength(2);
+    expect(records[1]!.event).toBe('image_crop');
+    expect(records[1]!.properties?.['source']).toBe('read_media');
+    expect(records[1]!.properties?.['ok']).toBe(true);
   });
 
   it('errors when reading an image without image input capability', async () => {
@@ -282,12 +524,19 @@ describe('ReadMediaFileTool', () => {
     const result = await execute(makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }), {
       path: '/workspace/clip.mp4',
     });
+
+    const systemText = noteText(result);
+    expect(systemText).toMatch(/^<system>.*<\/system>$/s);
+    expect(systemText).toContain('video/mp4');
+
     const parts = outputParts(result);
-    expect(parts[1]).toEqual({ type: 'text', text: '<video path="/workspace/clip.mp4">' });
-    expect(parts[2]).toMatchObject({
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '<video path="/workspace/clip.mp4">' });
+    expect(parts[1]).toMatchObject({
       type: 'video_url',
       videoUrl: { url: expect.stringContaining('data:video/mp4;base64,') },
     });
+    expect(parts[2]).toEqual({ type: 'text', text: '</video>' });
   });
 
   it('rejects region and full_resolution for videos', async () => {
@@ -322,7 +571,7 @@ describe('ReadMediaFileTool', () => {
     expect(videoUploader).toHaveBeenCalledWith(
       expect.objectContaining({ mimeType: 'video/mp4', filename: 'clip.mp4' }),
     );
-    expect(parts[2]).toEqual(uploadResult);
+    expect(parts[1]).toEqual(uploadResult);
   });
 
   it('rejects empty files', async () => {

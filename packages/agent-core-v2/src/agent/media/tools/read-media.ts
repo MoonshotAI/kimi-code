@@ -1,18 +1,19 @@
 /**
  * ReadMediaFileTool — read image/video files as multi-modal content.
  *
- * Returns a 4-part wrap:
- * `[TextPart('<system>…</system>'), TextPart('<image|video path="…">'),
- *   ImageContent|VideoContent, TextPart('</image|video>')]`
- * and adapts its description and per-call behavior to the model's
+ * Returns a 3-part wrap as `output`:
+ * `[TextPart('<image|video path="…">'), ImageContent|VideoContent,
+ *   TextPart('</image|video>')]`
+ * plus a `note` side channel (rendered to the model, never to UIs), and
+ * adapts its description and per-call behavior to the model's
  * `image_in` / `video_in` capability.
  *
- * The leading `<system>` block summarizes mime type, byte size and (for
- * images) original pixel dimensions, states exactly how the image was
- * delivered (untouched, downsampled, cropped, or native resolution) so
- * compression is never silent, guides the model to derive absolute
- * coordinates from the original size, and reminds it to re-read any media
- * it generates or edits.
+ * The note — this tool wraps it in a `<system>` block as its own wording
+ * choice — summarizes mime type, byte size and (for images) original pixel
+ * dimensions, states exactly how the image was delivered (untouched,
+ * downsampled, cropped, or native resolution) so compression is never
+ * silent, guides the model to derive absolute coordinates from the original
+ * size, and reminds it to re-read any media it generates or edits.
  *
  * Images support two opt-in delivery controls: `region` cuts a rectangle
  * (original-image pixel coordinates) out of the file so fine detail survives
@@ -30,6 +31,7 @@
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ContentPart, VideoURLPart } from '#/app/llmProtocol/message';
 import type { VideoUploadInput as ProviderVideoUploadInput } from '#/app/llmProtocol/request';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { z } from 'zod';
 
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -47,6 +49,7 @@ import {
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
+  type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '#/_base/tools/support/image-compress';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
@@ -126,17 +129,37 @@ function buildDescription(capabilities: ModelCapability): string {
 
 // ── System summary ───────────────────────────────────────────────────
 
+/**
+ * How the image payload placed after the summary relates to the file on disk.
+ * Reported verbatim so the model always knows when it is looking at a
+ * degraded copy (and how to get the detail back) — silent downsampling reads
+ * as "the image is just blurry" and quietly degrades the model's work.
+ */
 interface ImageDelivery {
   readonly kind: 'untouched' | 'downsampled' | 'crop' | 'full';
+  /** Pixel size of the payload actually sent; 0 when unknown. */
   readonly width: number;
   readonly height: number;
   readonly byteLength: number;
   readonly mimeType: string;
+  /** The crop actually applied (clamped), for kind 'crop'. */
   readonly region?: ImageCropRegion;
+  /** For kind 'crop': the crop was additionally downscaled to fit budgets. */
   readonly resized?: boolean;
 }
 
-function buildSystemSummary(input: {
+/**
+ * Build the media summary returned as the tool result's `note` (model-only
+ * side channel). The `<system>` wrapping is this tool's wording choice; the
+ * note channel itself adds nothing.
+ *
+ * Carries mime type, byte size and (for images) the original pixel
+ * dimensions, plus the delivery note above. When the dimensions are known it
+ * also guides the model to derive absolute coordinates from that original
+ * size (crops get offset-mapping guidance instead); it always reminds the
+ * model to re-read any media it generates or edits.
+ */
+function buildMediaNote(input: {
   readonly kind: 'image' | 'video';
   readonly mimeType: string;
   readonly byteSize: number;
@@ -159,7 +182,7 @@ function buildSystemSummary(input: {
   const delivery = input.delivery;
   if (delivery?.kind === 'downsampled') {
     parts.push(
-      `The image below was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
+      `The attached image was downsampled to ${String(delivery.width)}x${String(delivery.height)} pixels ` +
         `(${delivery.mimeType}, ${formatByteSize(delivery.byteLength)}) to fit model limits; ` +
         'fine detail may be lost.',
       'To inspect fine detail, call ReadMediaFile again with the region parameter ' +
@@ -199,14 +222,18 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
+  private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
   constructor(
     private readonly fs: IHostFileSystem,
     private readonly env: IHostEnvironment,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader,
+    telemetry?: ITelemetryService,
   ) {
     this.description = buildDescription(capabilities);
+    this.compressTelemetry =
+      telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
@@ -308,8 +335,11 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       let delivery: ImageDelivery | undefined;
       if (fileType.kind === 'image') {
         if (args.region !== undefined) {
+          // Explicit crop: read a rectangle of the original back, typically at
+          // full fidelity, so a prior downsampled view can be zoomed into.
           const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
             skipResize: args.full_resolution === true,
+            telemetry: this.compressTelemetry,
           });
           if (!outcome.ok) {
             return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
@@ -328,7 +358,10 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             region: outcome.region,
             resized: outcome.resized,
           };
-          dimensions ??= { width: outcome.originalWidth, height: outcome.originalHeight };
+          // The decode is authoritative: it covers formats and nonconforming
+          // EXIF the header sniff cannot read, and region coordinates live
+          // in the decoded space, so the note must report it.
+          dimensions = { width: outcome.originalWidth, height: outcome.originalHeight };
         } else if (args.full_resolution === true) {
           if (data.length > IMAGE_BYTE_BUDGET) {
             return {
@@ -353,7 +386,13 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             mimeType: fileType.mimeType,
           };
         } else {
-          const compressed = await compressImageForModel(data, fileType.mimeType);
+          // Shrink oversized images so a large screenshot neither wastes context
+          // tokens nor trips the provider's per-image byte ceiling. Best effort:
+          // on any failure compressImageForModel returns the original bytes, so
+          // the read still succeeds with the uncompressed image.
+          const compressed = await compressImageForModel(data, fileType.mimeType, {
+            telemetry: this.compressTelemetry,
+          });
           const base64 = Buffer.from(compressed.data).toString('base64');
           mediaPart = {
             type: 'image_url',
@@ -366,6 +405,11 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             byteLength: compressed.finalByteLength,
             mimeType: compressed.mimeType,
           };
+          if (compressed.changed) {
+            // Same as the crop path: once a decode happened, its dimensions
+            // are authoritative over the header sniff.
+            dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
+          }
         }
       } else if (this.videoUploader !== undefined) {
         mediaPart = await this.videoUploader({
@@ -385,7 +429,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       const openText = `<${tag} path="${safePath}">`;
       const closeText = `</${tag}>`;
 
-      const systemText = buildSystemSummary({
+      const note = buildMediaNote({
         kind: fileType.kind,
         mimeType: fileType.mimeType,
         byteSize: stat.size,
@@ -394,13 +438,12 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       });
 
       const output: ContentPart[] = [
-        { type: 'text', text: systemText },
         { type: 'text', text: openText },
         mediaPart,
         { type: 'text', text: closeText },
       ];
 
-      return { output, isError: false };
+      return { output, note, isError: false };
     } catch (error) {
       return {
         isError: true,
