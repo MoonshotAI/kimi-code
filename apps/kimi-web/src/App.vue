@@ -338,7 +338,10 @@ function openLogin(): void {
 
 async function handleSelectModel(modelId: string): Promise<void> {
   showModelPicker.value = false;
-  await client.setModel(modelId);
+  // Same semantics as the composer dropdown rows: the overlay is just the
+  // "more models" continuation of the same flow, so it must also bump the
+  // global default (see handleComposerSelectModel).
+  await handleComposerSelectModel(modelId);
 }
 
 async function handleComposerSelectModel(modelId: string): Promise<void> {
