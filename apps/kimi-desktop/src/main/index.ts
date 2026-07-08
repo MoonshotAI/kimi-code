@@ -152,8 +152,13 @@ function createWindow(): void {
     title: 'Kimi Code Desktop',
     // macOS: hide the native title bar and float the traffic lights over the
     // content; the web UI reserves a draggable strip at the top to clear them.
+    // 'hidden' (not 'hiddenInset') so trafficLightPosition can pin the lights
+    // to the vertical center of the web UI's 48px header row (y 18 + 12px
+    // button height / 2 = 24 = the header's midline — same line as the
+    // sidebar-expand button and the conversation title).
     // 'default' on other platforms (they keep their native title bar).
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
+    trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -165,6 +170,20 @@ function createWindow(): void {
   win.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
   });
+  // Electron quirk (electron#33697): with titleBarStyle 'hidden' + a custom
+  // trafficLightPosition, the traffic lights can vanish (or lose their custom
+  // position) after a full-screen round-trip or focus change. Re-assert both
+  // on every transition so the buttons stay permanently visible.
+  if (process.platform === 'darwin') {
+    const showTrafficLights = (): void => {
+      if (win.isDestroyed()) return;
+      win.setWindowButtonPosition({ x: 16, y: 18 });
+      win.setWindowButtonVisibility(true);
+    };
+    win.on('enter-full-screen', showTrafficLights);
+    win.on('leave-full-screen', showTrafficLights);
+    win.on('focus', showTrafficLights);
+  }
   win.on('close', () => {
     saveBounds(win);
   });
