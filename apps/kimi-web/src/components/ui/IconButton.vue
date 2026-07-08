@@ -49,7 +49,11 @@ defineExpose({ el });
   transition: background var(--duration-base) var(--ease-out),
     color var(--duration-base) var(--ease-out);
 }
-.ui-icon-button:hover:not(:disabled) { background: var(--color-surface-sunken); color: var(--color-text); }
+/* Translucent text-mix instead of the sunken surface: stays visible on ANY
+   backdrop — the sunken token equals the page bg in dark mode, which made
+   hover feedback vanish for icon buttons sitting directly on --color-bg
+   (chat header, flat sidebar). */
+.ui-icon-button:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 8%, transparent); color: var(--color-text); }
 .ui-icon-button:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ui-icon-button:disabled { opacity: 0.5; cursor: not-allowed; }
 

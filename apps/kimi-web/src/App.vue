@@ -42,6 +42,7 @@ import { coerceThinkingForModel, commitLevel, segmentsFor } from './lib/modelThi
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
+import InternalBuildBanner from './components/InternalBuildBanner.vue';
 import { isMacosDesktop } from './lib/desktopFlag';
 
 // Hydrate the server-transport credential (fragment token or sessionStorage)
@@ -673,17 +674,6 @@ function openPr(url: string): void {
         @update:width="sessionColWidth = $event"
         @update:dragging="sidebarDragging = $event"
       />
-      <!-- Collapsed: the sidebar is fully gone (no rail), so the expand button
-           floats over the conversation header, which pads left to make room. -->
-      <IconButton
-        v-if="sidebarCollapsed"
-        class="sidebar-expand-btn"
-        size="sm"
-        :label="t('sidebar.expandSidebar')"
-        @click="toggleSidebarCollapse"
-      >
-        <Icon name="panel-expand" size="sm" />
-      </IconButton>
     </template>
 
     <!-- Mobile navigation: slim top bar (switcher + settings sheets). -->
@@ -780,6 +770,22 @@ function openPr(url: string): void {
       @edit-message="handleEditMessage"
     />
 
+    <!-- Collapsed sidebar: no rail is kept, so the expand button floats over
+         the conversation header (which pads left to make room). It must come
+         AFTER ConversationPane in the DOM: Electron computes the window-drag
+         region in tree order (drag rects union, no-drag rects subtract), so a
+         no-drag element placed before the ChatHeader drag region would have its
+         hole painted back over — making the button an inert drag area. -->
+    <IconButton
+      v-if="sidebarCollapsed && !isMobile"
+      class="sidebar-expand-btn"
+      size="sm"
+      :label="t('sidebar.expandSidebar')"
+      @click="toggleSidebarCollapse"
+    >
+      <Icon name="panel-expand" size="sm" />
+    </IconButton>
+
     <ResizeHandle
       v-if="sidePanelVisible && !isMobile"
       class="preview-handle"
@@ -863,6 +869,11 @@ function openPr(url: string): void {
         @reveal="revealPreviewFile"
       />
     </aside>
+
+    <!-- Internal-build tag — pinned to the app's bottom-right corner, above
+         whatever pane happens to be there. Purely informational: pointer
+         events pass through so it never blocks clicks. -->
+    <InternalBuildBanner class="internal-build-fab" />
 
     <!-- Model Picker overlay -->
     <ModelPicker
@@ -1140,6 +1151,17 @@ function openPr(url: string): void {
 .app.macos-desktop .sidebar-expand-btn { left: 80px; }
 @keyframes sidebar-expand-btn-in {
   from { opacity: 0; }
+}
+
+/* Internal-build tag pinned to the app's bottom-right corner (desktop app
+   only — the component renders nothing elsewhere). Informational: never
+   intercepts pointer input. */
+.internal-build-fab {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: var(--z-sticky);
+  pointer-events: none;
 }
 
 /* Mobile single-column shell: slim top bar (auto) over the full-width

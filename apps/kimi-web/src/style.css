@@ -204,7 +204,6 @@ summary {
   --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
   --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
   --content-font-size: calc(var(--base-ui-font-size) + 1px);
-  --sidebar-ui-font-size: calc(var(--base-ui-font-size) + 1px);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Body/UI font follows the design-system canonical token (system UI font
      first; Inter intentionally NOT in the body chain — it stays reserved for
@@ -388,6 +387,9 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-text-on-accent: #ffffff;
   --color-line: #e7eaee;
   --color-line-strong: #d4d9e0;
+  /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
+     accent-tinted, so selection reads as "where I am", not as an action. */
+  --color-selected: #eceff3;
   --color-accent: var(--accent-primary);
   --color-accent-hover: #0f6fe0;
   --color-accent-soft: #e8f3ff;
@@ -511,6 +513,7 @@ html[data-color-scheme="dark"] {
   --color-text-faint: #6b7280;
   --color-line: #2d333b;
   --color-line-strong: #3d444d;
+  --color-selected: #2d333b;
   --color-accent: #58a6ff;
   --color-accent-hover: #79b8ff;
   --color-accent-soft: rgba(88, 166, 255, 0.14);
@@ -550,6 +553,7 @@ html[data-color-scheme="dark"] {
     --color-text-faint: #6b7280;
     --color-line: #2d333b;
     --color-line-strong: #3d444d;
+    --color-selected: #2d333b;
     --color-accent: #58a6ff;
     --color-accent-hover: #79b8ff;
     --color-accent-soft: rgba(88, 166, 255, 0.14);

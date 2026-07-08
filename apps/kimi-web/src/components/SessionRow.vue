@@ -287,8 +287,9 @@ defineExpose({ closeMenu });
 .se {
   /* --sb-* vars come from .side in Sidebar.vue: the title starts at
      --sb-pad-x + --sb-gutter + --sb-gap, exactly under the workspace name.
-     The row is an inset pill: a 6px horizontal margin + 10px padding lands the
-     leading icon at --sb-pad-x (16px), aligned with the workspace header. */
+     The row is an inset pill: the .sessions container's --sb-inset padding +
+     the row's own padding land the leading slot at --sb-pad-x, aligned with
+     the workspace header. */
   display: block;
   margin: 0;
   padding: var(--space-1) var(--space-2);
@@ -298,11 +299,12 @@ defineExpose({ closeMenu });
   cursor: pointer;
   position: relative;
 }
-.se:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+.se:hover { background: var(--sb-hover, var(--color-surface-sunken)); color: var(--color-text); }
+/* Selected: neutral fill (NOT accent-tinted — selection reads as "where I
+   am", the accent stays reserved for actions and status). */
 .se.on {
-  background: var(--color-accent-soft);
-  color: var(--color-accent-hover);
-  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
+  background: var(--color-selected);
+  color: var(--color-text);
 }
 
 .row {
@@ -311,7 +313,8 @@ defineExpose({ closeMenu });
   gap: var(--sb-gap, 6px);
   min-width: 0;
   /* Floor the row at the hover-kebab height (IconButton sm = 26px) so swapping
-     the timestamp for the kebab on hover doesn't grow the row. */
+     the timestamp for the kebab on hover doesn't grow the row. Total row height
+     = 26 + 2x4px .se padding = 34px, the sidebar-wide row height. */
   min-height: 26px;
 }
 
@@ -375,7 +378,7 @@ defineExpose({ closeMenu });
 .act:has(.kebab.open) .kebab { visibility: visible; }
 .se:hover .act .ts,
 .act:has(.kebab.open) .ts { visibility: hidden; }
-.kebab.open { color: var(--color-text); background: var(--color-surface-sunken); }
+.kebab.open { color: var(--color-text); background: var(--sb-hover, var(--color-surface-sunken)); }
 
 /* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu
    is teleported to <body> so the collapsing list's `overflow: hidden` can't clip it. */
@@ -410,14 +413,9 @@ defineExpose({ closeMenu });
 .sessions .se {
   margin: 0;
   border-radius: var(--radius-md);
-  /* Trim the row padding by the inset margin so the title still starts at the
-     same x as the workspace name (whose header has no inset). */
-  padding: var(--space-1) calc(var(--sb-pad-x, 12px) - var(--space-2));
-}
-.sessions .se:hover { background: var(--panel2); }
-.sessions .se.on {
-  background: var(--color-accent-soft);
-  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
+  /* Trim the row padding by the container inset so the title still starts at
+     the same x as the workspace name (whose header has no inset). */
+  padding: var(--space-1) calc(var(--sb-pad-x, 20px) - var(--sb-inset, 12px));
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
 .sessions .se .kebab { border-radius: var(--radius-sm); }

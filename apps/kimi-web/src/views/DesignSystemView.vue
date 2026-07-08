@@ -176,6 +176,7 @@ onUnmounted(() => {
               <div class="color-card"><div class="color-chip" style="background:#ffffff"></div><div class="color-meta"><div class="cn">bg</div><div class="cv">#ffffff / #0d1117</div></div></div>
               <div class="color-card"><div class="color-chip" style="background:#fafbfc"></div><div class="color-meta"><div class="cn">surface</div><div class="cv">#fafbfc / #161b22</div></div></div>
               <div class="color-card"><div class="color-chip" style="background:#f3f5f8"></div><div class="color-meta"><div class="cn">surface-sunken</div><div class="cv">#f3f5f8 / #0d1117</div></div></div>
+              <div class="color-card"><div class="color-chip" style="background:#eceff3"></div><div class="color-meta"><div class="cn">selected</div><div class="cv">#eceff3 / #2d333b</div></div></div>
               <div class="color-card"><div class="color-chip" style="background:#14171c"></div><div class="color-meta"><div class="cn">fg</div><div class="cv">#14171c / #e8eaed</div></div></div>
               <div class="color-card"><div class="color-chip" style="background:#6b7280"></div><div class="color-meta"><div class="cn">fg-muted</div><div class="cv">#6b7280 / #9aa0a8</div></div></div>
               <div class="color-card"><div class="color-chip" style="background:#e7eaee"></div><div class="color-meta"><div class="cn">line</div><div class="cv">#e7eaee / #2d333b</div></div></div>
@@ -191,6 +192,7 @@ onUnmounted(() => {
                 <tr><td class="tk">--color-text</td><td class="val"><span class="swatch" style="background:#14171c"></span>#14171c</td><td class="val"><span class="swatch" style="background:#e8eaed"></span>#e8eaed</td><td>Body text / headings</td></tr>
                 <tr><td class="tk">--color-text-muted</td><td class="val"><span class="swatch" style="background:#6b7280"></span>#6b7280</td><td class="val"><span class="swatch" style="background:#9aa0a8"></span>#9aa0a8</td><td>Secondary text / placeholder</td></tr>
                 <tr><td class="tk">--color-line</td><td class="val"><span class="swatch" style="background:#e7eaee"></span>#e7eaee</td><td class="val"><span class="swatch" style="background:#2d333b"></span>#2d333b</td><td>Divider / card border</td></tr>
+                <tr><td class="tk">--color-selected</td><td class="val"><span class="swatch" style="background:#eceff3"></span>#eceff3</td><td class="val"><span class="swatch" style="background:#2d333b"></span>#2d333b</td><td>Neutral selected fill (sidebar rows, list pickers) — never accent-tinted</td></tr>
                 <tr><td class="tk">--color-accent</td><td class="val"><span class="swatch" style="background:#1783ff"></span>#1783ff</td><td class="val"><span class="swatch" style="background:#58a6ff"></span>#58a6ff</td><td>Primary action / link / focus</td></tr>
                 <tr><td class="tk">--color-success</td><td class="val"><span class="swatch" style="background:#0e7a38"></span>#0e7a38</td><td class="val"><span class="swatch" style="background:#3fb950"></span>#3fb950</td><td>Success / pass</td></tr>
                 <tr><td class="tk">--color-warning</td><td class="val"><span class="swatch" style="background:#a9610a"></span>#a9610a</td><td class="val"><span class="swatch" style="background:#d29922"></span>#d29922</td><td>Warning / pending</td></tr>
@@ -267,7 +269,7 @@ onUnmounted(() => {
             </ul>
 
             <h3 class="sub">Type scale &amp; weight</h3>
-            <p>The user font-size preference writes <code>--base-ui-font-size</code>. Compact UI chrome follows it through <code>--ui-font-size</code>, while chat reading surfaces and the sidebar derive one readable step above it through <code>--content-font-size</code> and <code>--sidebar-ui-font-size</code>.</p>
+            <p>The user font-size preference writes <code>--base-ui-font-size</code>. Compact UI chrome and the sidebar follow it through <code>--ui-font-size</code>, while chat reading surfaces derive one readable step above it through <code>--content-font-size</code>.</p>
             <p>The fixed product type tokens still define component defaults: <b>UI controls / buttons / forms</b> use <code>--text-base</code> (14px); <b>reading body — including chat Markdown, message bubbles, etc.</b> stays one step larger than compact chrome for readability; the <b>sidebar session list</b> follows that same readable step while keeping list density.
             Drop stray <code>font-weight: 650 / 750</code>; converge on two weights, 400 / 500 (regular / emphasis).</p>
             <div class="panel panel-pad" style="margin:16px 0">
@@ -285,7 +287,6 @@ onUnmounted(() => {
                 <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>code, tool names, line numbers, diffs</td></tr>
                 <tr><td class="tk">--base-ui-font-size</td><td class="val">14px user preference</td><td>root setting that drives UI, reading body, and sidebar font sizes</td></tr>
                 <tr><td class="tk">--content-font-size</td><td class="val">calc(base + 1px)</td><td>chat Markdown, message bubbles, composer</td></tr>
-                <tr><td class="tk">--sidebar-ui-font-size</td><td class="val">calc(base + 1px)</td><td>sidebar brand, search, workspace and session rows</td></tr>
                 <tr><td class="tk">--leading-tight/normal/relaxed</td><td class="val">1.25 / 1.5 / 1.7</td><td>headings / UI / long text</td></tr>
                 <tr><td class="tk">--weight-regular/medium</td><td class="val">400 / 500</td><td>body / emphasis</td></tr>
               </tbody>
@@ -1355,11 +1356,12 @@ onUnmounted(() => {
             </ul>
 
             <h3 class="sub">Sidebar alignment system (<code>--sb-*</code>)</h3>
-            <p>All sidebar rows (group head, session row, New chat button) share 3 custom properties, so the "session title" aligns precisely under the "workspace name".</p>
+            <p>All sidebar rows (group head, session row, New chat button) share 4 custom properties, so the "session title" aligns precisely under the "workspace name".</p>
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
-                <tr><td class="tk">--sb-pad-x</td><td class="val">16px</td><td>row horizontal padding</td></tr>
+                <tr><td class="tk">--sb-inset</td><td class="val">12px</td><td>row box (hover/selected pill) inset from the sidebar edges — matches the brand header's 12px padding</td></tr>
+                <tr><td class="tk">--sb-pad-x</td><td class="val">20px</td><td>content start x (= --sb-inset + 8px row padding)</td></tr>
                 <tr><td class="tk">--sb-gutter</td><td class="val">20px</td><td>leading icon slot width (14px icon + 6px whitespace)</td></tr>
                 <tr><td class="tk">--sb-gap</td><td class="val">6px</td><td>gap between the icon slot and the text</td></tr>
               </tbody>
@@ -1369,13 +1371,13 @@ onUnmounted(() => {
             </div></div>
 
             <h3 class="sub">Sidebar structure</h3>
-            <p>The sidebar from top to bottom: brand header → search → New chat → grouped list (workspace head + session rows) → settings footer. Controls reuse the §03 primitives as much as possible.</p>
+            <p>The sidebar from top to bottom: brand header → New chat → search → grouped list (workspace head + session rows) → settings footer. Controls reuse the §03 primitives as much as possible. The sidebar sits on <code>--color-bg</code> (same surface as the conversation pane — the hairline is the only separator). Vertical rhythm: the brand header keeps 12px padding on all four sides; rows inside the actions group (New chat + search) stack flush (0 gap, same rhythm as the list rows); adjacent groups are separated by 12px. Row hover uses the shared half-strength wash (<code>--sb-hover</code>); the selected row uses <code>--color-selected</code> — neutral, never the accent.</p>
             <table class="dt">
               <thead><tr><th>Block</th><th>Use</th><th>Note</th></tr></thead>
               <tbody>
                 <tr><td>Brand header</td><td>logo + name + IconButton</td><td>collapse uses IconButton sm; the logo is animated (a blinking eye)</td></tr>
-                <tr><td>Search</td><td>bare search row (custom)</td><td>no border, hover/focus shows a sunken background; icon + input + clear IconButton. <b>Do not</b> use Input (the 38px bordered version is too heavy)</td></tr>
-                <tr><td>New chat</td><td>full-width left-aligned button (custom)</td><td>same rhythm as the session rows in the list (left-aligned, hover sunken). <b>Do not</b> use Button (centered, breaks the rhythm)</td></tr>
+                <tr><td>New chat</td><td>full-width left-aligned button (custom)</td><td>same rhythm as the session rows in the list (left-aligned, hover = <code>--sb-hover</code>). <b>Do not</b> use Button (centered, breaks the rhythm)</td></tr>
+                <tr><td>Search</td><td>bare search row (custom)</td><td>no border, hover/focus shows a sunken background; icon + input + clear IconButton. <b>Do not</b> use Input (the 38px bordered version is too heavy). Last fixed row above the list — its wrapper carries the scroll-linked seam</td></tr>
                 <tr><td>Section label</td><td><code>.p-section-label</code></td><td>uppercase muted small titles like "Workspaces"</td></tr>
                 <tr><td>Workspace head / session row</td><td>see next two sections</td><td>share <code>--sb-*</code> alignment</td></tr>
                 <tr><td>Settings footer</td><td>full-width left-aligned button (custom)</td><td>pinned row under the session list, separated by a 1px <code>--line</code> top border; icon + label, same list-style family as New chat</td></tr>
@@ -1390,7 +1392,7 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Part</th><th>Rule</th></tr></thead>
               <tbody>
-                <tr><td>Container</td><td><code>margin: 1px 6px; padding: 7px 10px; radius-md</code>; hover = <code>surface-sunken</code>; active = <code>accent-soft</code> + <code>inset 0 0 0 1px accent-bd</code></td></tr>
+                <tr><td>Container</td><td><code>padding: 4px 8px</code> inside the list's <code>--sb-inset</code> gutter, <code>radius-md</code>; inner row <code>min-height: 26px</code> (the hover-kebab height) → 34px total, the sidebar-wide row height; hover = <code>--sb-hover</code> (half-strength selected wash); active = <code>--color-selected</code> — neutral, no accent tint, no border, no weight change</td></tr>
                 <tr><td>Status slot (lead)</td><td>fixed <code>--sb-gutter</code> width; running = <code>Spinner</code> sm, otherwise unread = 7px accent dot</td></tr>
                 <tr><td>Title</td><td>flex:1 with truncation; double-click enters inline rename (compact input, not Input)</td></tr>
                 <tr><td>Time</td><td>mono xs, <code>fg-faint</code>; yields to the kebab on hover</td></tr>
@@ -1401,10 +1403,10 @@ onUnmounted(() => {
             </table>
 
             <h3 class="sub">Workspace group</h3>
-            <p>The group head and session rows share <code>--sb-*</code>: folder icon (open/closed) → name → path subtitle, with the kebab and "+" revealed on hover.</p>
+            <p>The group head and session rows share <code>--sb-*</code>: folder icon (open/closed) → name, with the kebab and "+" revealed on hover.</p>
             <ul class="clean">
-              <li>The folder icon sits in the <code>--sb-gutter</code> slot, switching icons between open and closed states.</li>
-              <li>A small <code>fg-muted</code> path line sits below the name.</li>
+              <li>The folder icon leads the row (switching icons between open and closed states) with the plain <code>--sb-gap</code> before the name — it does not pad out the <code>--sb-gutter</code> slot.</li>
+              <li>The name is quiet by design — regular weight, <code>fg-muted</code> — so group heads read as labels, not competitors to the session titles. No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
               <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm, shown on hover or keyboard focus (when not hovered they stay in the tab order via <code>opacity:0</code>, keeping them keyboard-reachable).</li>
               <li>The group is collapsible; when collapsed its session list is hidden.</li>
             </ul>
@@ -1414,7 +1416,7 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Part</th><th>Rule</th></tr></thead>
               <tbody>
-                <tr><td class="tk">Container</td><td>session-row pill: <code>display:flex; gap:--sb-gap; min-height:26px</code>, same padding as a session row, <code>radius-md</code>; hover = <code>surface-sunken</code> (no text recolor); <code>:focus-visible</code> uses <code>--p-focus-ring</code></td></tr>
+                <tr><td class="tk">Container</td><td>session-row pill: <code>display:flex; gap:--sb-gap; min-height:34px</code> (padding included — the sidebar-wide row height), same padding as a session row, <code>radius-md</code>; hover = <code>--sb-hover</code> (no text recolor); <code>:focus-visible</code> uses <code>--p-focus-ring</code></td></tr>
                 <tr><td class="tk">Lead slot</td><td>empty, <code>--sb-gutter</code> wide, so the label's start x aligns with the session titles (<code>--sb-pad-x + --sb-gutter + --sb-gap</code>)</td></tr>
                 <tr><td class="tk">Label</td><td><code>font-ui</code>, <code>text-xs</code>, <code>--color-text</code>; flex:1, truncated</td></tr>
                 <tr><td class="tk">Behavior</td><td>"Load more" fetches the next page and auto-expands; once more than the first page is loaded, "Show less" appears and collapses back to the first page (view-layer trim — data is kept, no refetch); "Show all" re-expands</td></tr>
@@ -1601,7 +1603,7 @@ onUnmounted(() => {
   .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
   .brand-sub { font-size: 12px; color: var(--d-fg-faint); margin-bottom: 26px; padding-left: 36px; }
   .nav-group { margin: 22px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--d-fg-faint); }
-  .p-section-label { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--d-fg-faint); }
+  .p-section-label { font-size: 12px; font-weight: 400; text-transform: uppercase; color: var(--d-fg-faint); }
   .nav a {
     display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 7px;
     font-size: 13.5px; font-weight: 500; color: var(--d-fg-soft); margin: 1px 0;

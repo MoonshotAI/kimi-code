@@ -7,7 +7,6 @@ export default {
   sortRecent: 'Last edited',
   collapseAll: 'Collapse all workspaces',
   expandAll: 'Expand all workspaces',
-  showWorkspacePaths: 'Show workspace paths',
   newSession: 'New Session',
   newChat: 'New Chat',
   newWorkspace: 'New Workspace',
@@ -38,7 +37,7 @@ export default {
   collapseSidebar: 'Collapse sidebar',
   expandSidebar: 'Expand sidebar',
   searchPlaceholder: 'Search sessions',
-  searchShortcut: 'Search sessions ({shortcut})',
+  searchShortcut: 'Search ({shortcut})',
   searchHint: '↑↓ navigate · ↵ open · Esc close',
   searchNoResults: 'No matching sessions',
 } as const;
