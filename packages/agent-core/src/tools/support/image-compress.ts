@@ -32,8 +32,51 @@ import type { TelemetryClient } from '#/telemetry';
 
 import { sniffImageDimensions } from './file-type';
 
-/** Longest-edge ceiling (px). Larger images are scaled down to fit. */
-export const MAX_IMAGE_EDGE_PX = 3000;
+/**
+ * Built-in longest-edge ceiling (px). Larger images are scaled down to fit.
+ * This is the default only: the effective ceiling is resolved per call by
+ * {@link resolveMaxImageEdgePx} (explicit option > env > config > this).
+ */
+export const MAX_IMAGE_EDGE_PX = 2000;
+
+/**
+ * Env var overriding the longest-edge ceiling (px). Read live on every
+ * resolution so it applies in any process without wiring; a value that is
+ * not a positive integer is ignored.
+ */
+export const MAX_IMAGE_EDGE_ENV = 'KIMI_IMAGE_MAX_EDGE_PX';
+
+/**
+ * The `[image] max_edge_px` value from config.toml, pushed by the config
+ * owner (KimiCore) on load and reload. Processes that never load config
+ * (TUI paste, ACP adapter) leave this unset and get env/built-in behavior.
+ */
+let configuredMaxImageEdgePx: number | undefined;
+
+/** Push (or clear, with `undefined`) the config.toml longest-edge ceiling. */
+export function setConfiguredMaxImageEdgePx(value: number | undefined): void {
+  configuredMaxImageEdgePx = value !== undefined && isPositiveInt(value) ? value : undefined;
+}
+
+/**
+ * Effective default longest-edge ceiling (px), for calls that pass no
+ * explicit `maxEdge`. Precedence mirrors the experimental-flag resolver:
+ * env var > config.toml > built-in {@link MAX_IMAGE_EDGE_PX}.
+ */
+export function resolveMaxImageEdgePx(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const raw = env[MAX_IMAGE_EDGE_ENV]?.trim();
+  if (raw !== undefined && raw.length > 0 && /^\d+$/.test(raw)) {
+    const parsed = Number(raw);
+    if (isPositiveInt(parsed)) return parsed;
+  }
+  return configuredMaxImageEdgePx ?? MAX_IMAGE_EDGE_PX;
+}
+
+function isPositiveInt(value: number): boolean {
+  return Number.isInteger(value) && value > 0;
+}
 
 /**
  * Raw-byte budget for a single image. base64 inflates bytes by ~4/3, so a
@@ -47,9 +90,10 @@ const JPEG_QUALITY_STEPS = [80, 60, 40, 20] as const;
 
 /**
  * Longest-edge step-downs tried when the budget cannot be met at the fitted
- * size. The 2000px step preserves the behavior of the previous 2000px cap:
- * an image whose 2000px encode fits the budget keeps that resolution
- * instead of dropping straight to the 1000px last resort.
+ * size. With the built-in 2000px ceiling the first step is a no-op; it
+ * matters when a larger ceiling is configured (config/env/option), keeping
+ * a 2000px encode that fits the budget instead of dropping straight to the
+ * 1000px last resort.
  */
 const FALLBACK_EDGES_PX = [2000, 1000] as const;
 
@@ -80,7 +124,7 @@ const MAX_DECODE_BYTES = 64 * 1024 * 1024;
 const RECODABLE_MIME = new Set(['image/png', 'image/jpeg']);
 
 export interface CompressImageOptions {
-  /** Override the longest-edge ceiling (px). */
+  /** Override the longest-edge ceiling (px); defaults to {@link resolveMaxImageEdgePx}. */
   readonly maxEdge?: number;
   /** Override the raw-byte budget. */
   readonly byteBudget?: number;
@@ -152,7 +196,7 @@ export async function compressImageForModel(
   options: CompressImageOptions = {},
 ): Promise<CompressImageResult> {
   const startedAt = Date.now();
-  const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+  const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const normalizedMime = normalizeMime(mimeType);
@@ -518,7 +562,7 @@ export async function cropImageForModel(
   options: CropImageOptions = {},
 ): Promise<CropImageOutcome> {
   const startedAt = Date.now();
-  const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+  const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const normalizedMime = normalizeMime(mimeType);

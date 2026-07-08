@@ -134,6 +134,17 @@ export const BackgroundConfigSchema = z.object({
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
+export const ImageConfigSchema = z.object({
+  /**
+   * Longest-edge ceiling (px) applied when compressing images for the model.
+   * Overrides the built-in default; the KIMI_IMAGE_MAX_EDGE_PX env var wins
+   * over this value.
+   */
+  maxEdgePx: z.number().int().min(1).optional(),
+});
+
+export type ImageConfig = z.infer<typeof ImageConfigSchema>;
+
 export const ModelCatalogConfigSchema = z.object({
   /** Interval (ms) between automatic provider-model refreshes. `0` disables. */
   refreshIntervalMs: z.number().int().min(0).optional(),
@@ -256,6 +267,7 @@ export const KimiConfigSchema = z.object({
   extraSkillDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
+  image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
@@ -270,6 +282,7 @@ const ThinkingConfigPatchSchema = ThinkingConfigSchema.partial();
 const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
+const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
@@ -296,6 +309,7 @@ export const KimiConfigPatchSchema = z
     extraSkillDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
+    image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
     telemetry: z.boolean().optional(),

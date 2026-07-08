@@ -711,7 +711,7 @@ describe('ReadMediaFileTool', () => {
     // The image actually sent to the model is downsampled to the edge cap.
     const sentBytes = Buffer.from(match![2]!, 'base64');
     const sentDims = sniffImageDimensions(sentBytes);
-    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(3000);
+    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
 
     // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
@@ -746,7 +746,7 @@ describe('ReadMediaFileTool', () => {
 
     const systemText = noteText(result);
     expect(systemText).toContain('Original dimensions: 1800x3600');
-    expect(systemText).toMatch(/downsampled to 1500x3000/);
+    expect(systemText).toMatch(/downsampled to 1000x2000/);
   });
 
   it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
@@ -893,7 +893,7 @@ describe('ReadMediaFileTool', () => {
       // Wording must not depend on serialization order: some providers keep
       // the note inline after the media, others flatten tool text and
       // re-attach the image after it — so no "above"/"below".
-      expect(systemText).toMatch(/The attached image was downsampled to 3000x3000/);
+      expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
       expect(systemText).toMatch(/fine detail/i);
       expect(systemText).toContain('region');
     });

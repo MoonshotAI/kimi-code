@@ -33,7 +33,7 @@
  */
 
 import { Jimp, ResizeStrategy } from 'jimp';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // eslint-disable-next-line import/no-unresolved
 import {
@@ -44,7 +44,10 @@ import {
   cropImageForModel,
   extractImageCompressionCaptions,
   IMAGE_BYTE_BUDGET,
+  MAX_IMAGE_EDGE_ENV,
   MAX_IMAGE_EDGE_PX,
+  resolveMaxImageEdgePx,
+  setConfiguredMaxImageEdgePx,
 } from '../../src/tools/support/image-compress';
 // eslint-disable-next-line import/no-unresolved
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
@@ -184,11 +187,11 @@ describe('compressImageForModel — dimension cap', () => {
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
     expect(Math.max(result.width, result.height)).toBe(MAX_IMAGE_EDGE_PX);
-    // 4500x2250 → 3000x1500 (aspect 2:1 preserved).
-    expect(result.width).toBe(3000);
-    expect(result.height).toBe(1500);
+    // 4500x2250 → 2000x1000 (aspect 2:1 preserved).
+    expect(result.width).toBe(2000);
+    expect(result.height).toBe(1000);
     const dims = sniffImageDimensions(result.data);
-    expect(dims).toEqual({ width: 3000, height: 1500 });
+    expect(dims).toEqual({ width: 2000, height: 1000 });
   });
 
   it('respects a custom maxEdge', async () => {
@@ -239,9 +242,10 @@ describe('compressImageForModel — byte budget', () => {
   });
 
   it('steps down through the 2000px edge before the 1000px fallback', async () => {
-    // Regression guard for the 3000px cap raise: a PNG whose fitted encode
-    // is over budget but whose 2000px encode fits must come back at 2000px
-    // (as it did under the old cap), not skip straight to 1000px.
+    // Fallback-ladder guard, pinned with an explicit 3000px ceiling (the
+    // built-in default is 2000px, where the first fallback edge is a no-op):
+    // a PNG whose fitted encode is over budget but whose 2000px encode fits
+    // must come back at 2000px, not skip straight to 1000px.
     // The budget is anchored to the actual 2000px encode size (probed with
     // an unlimited budget) so the test does not depend on exact deflate
     // output sizes.
@@ -258,6 +262,7 @@ describe('compressImageForModel — byte budget', () => {
     expect(probe.finalByteLength + 1024).toBeLessThan(png.length);
 
     const result = await compressImageForModel(png, 'image/png', {
+      maxEdge: 3000,
       byteBudget: probe.finalByteLength + 1024,
     });
     expect(result.changed).toBe(true);
@@ -444,7 +449,71 @@ describe('compressImageForModel — performance', () => {
 
   it('exposes a sane default budget', () => {
     expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
-    expect(MAX_IMAGE_EDGE_PX).toBe(3000);
+    expect(MAX_IMAGE_EDGE_PX).toBe(2000);
+  });
+});
+
+// ── default edge resolution (env + config) ──────────────────────────
+
+describe('resolveMaxImageEdgePx', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    setConfiguredMaxImageEdgePx(undefined);
+  });
+
+  it('defaults to the built-in ceiling', () => {
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('uses the configured value when set, and clears with undefined', () => {
+    setConfiguredMaxImageEdgePx(1200);
+    expect(resolveMaxImageEdgePx()).toBe(1200);
+    setConfiguredMaxImageEdgePx(undefined);
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('lets the env var override the configured value', () => {
+    setConfiguredMaxImageEdgePx(1200);
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '900');
+    expect(resolveMaxImageEdgePx()).toBe(900);
+  });
+
+  it.each(['abc', '-100', '0', '1.5', ' '])('ignores the invalid env value "%s"', (raw) => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, raw);
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('drives compressImageForModel when no explicit maxEdge is passed', async () => {
+    setConfiguredMaxImageEdgePx(1200);
+    const png = await solidPng(1600, 800);
+    const result = await compressImageForModel(png, 'image/png');
+    expect(result.changed).toBe(true);
+    expect(result.width).toBe(1200);
+    expect(result.height).toBe(600);
+  });
+
+  it('an explicit maxEdge option still wins over env and config', async () => {
+    setConfiguredMaxImageEdgePx(1200);
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '900');
+    const png = await solidPng(1600, 800);
+    const result = await compressImageForModel(png, 'image/png', { maxEdge: 800 });
+    expect(result.changed).toBe(true);
+    expect(result.width).toBe(800);
+    expect(result.height).toBe(400);
+  });
+
+  it('drives cropImageForModel region fitting', async () => {
+    setConfiguredMaxImageEdgePx(400);
+    const png = await solidPng(1600, 800);
+    const result = await cropImageForModel(png, 'image/png', {
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 800,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Math.max(result.width, result.height)).toBe(400);
   });
 });
 
@@ -546,7 +615,7 @@ describe('compressImageForModel — original dimensions metadata', () => {
     expect(shrunk.changed).toBe(true);
     expect(shrunk.originalWidth).toBe(4500);
     expect(shrunk.originalHeight).toBe(2250);
-    expect(shrunk.width).toBe(3000);
+    expect(shrunk.width).toBe(2000);
   });
 
   it('reports original dimensions through the base64 wrapper', async () => {
@@ -556,8 +625,8 @@ describe('compressImageForModel — original dimensions metadata', () => {
     expect(result.changed).toBe(true);
     expect(result.originalWidth).toBe(3900);
     expect(result.originalHeight).toBe(1950);
-    expect(result.width).toBe(3000);
-    expect(result.height).toBe(1500);
+    expect(result.width).toBe(2000);
+    expect(result.height).toBe(1000);
   });
 });
 
@@ -1021,14 +1090,14 @@ describe('compressImageForModel — downscale quality guards', () => {
   });
 
   it('keeps a degenerate aspect ratio at least 1px tall (no zero-size collapse)', async () => {
-    // 9000×2 scaled to a 3000px edge would round the short side to 0.67px;
-    // the resizer must clamp to 1, not produce an undecodable 3000×0 image.
+    // 9000×2 scaled to a 2000px edge would round the short side to 0.44px;
+    // the resizer must clamp to 1, not produce an undecodable 2000×0 image.
     const png = await solidPng(9000, 2);
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
-    expect(result.width).toBe(3000);
+    expect(result.width).toBe(2000);
     expect(result.height).toBe(1);
-    expect(sniffImageDimensions(result.data)).toEqual({ width: 3000, height: 1 });
+    expect(sniffImageDimensions(result.data)).toEqual({ width: 2000, height: 1 });
   });
 });
 
@@ -1067,8 +1136,8 @@ describe('compressImageForModel — telemetry', () => {
     expect(props['final_bytes']).toBe(result.finalByteLength);
     expect(props['original_width']).toBe(4500);
     expect(props['original_height']).toBe(2250);
-    expect(props['final_width']).toBe(3000);
-    expect(props['final_height']).toBe(1500);
+    expect(props['final_width']).toBe(2000);
+    expect(props['final_height']).toBe(1000);
     expect(props['exif_transposed']).toBe(false);
     expect(typeof props['duration_ms']).toBe('number');
   });
