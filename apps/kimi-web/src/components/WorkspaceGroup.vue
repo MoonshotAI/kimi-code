@@ -338,7 +338,7 @@ function onHeaderDragStart(event: DragEvent): void {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-text);
+  color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   text-align: left;

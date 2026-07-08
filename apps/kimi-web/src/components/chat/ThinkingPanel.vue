@@ -64,7 +64,7 @@ watch(
   overflow-y: auto;
   margin: 0;
   padding: 12px 14px;
-  font: var(--text-base)/var(--leading-relaxed) var(--font-mono);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
   color: var(--color-text-muted);
   white-space: pre-wrap;
   word-break: break-word;

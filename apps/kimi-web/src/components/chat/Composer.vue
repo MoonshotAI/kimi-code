@@ -1447,7 +1447,8 @@ function selectModel(modelId: string): void {
   cursor: pointer;
   user-select: none;
   transition: background 0.1s, color 0.15s;
-  font-family: var(--sans);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 .perm-pill:hover {
   background: var(--color-surface-sunken);
@@ -1548,6 +1549,7 @@ function selectModel(modelId: string): void {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  font-family: var(--font-ui);
 }
 
 .md-section {
@@ -1567,7 +1569,7 @@ function selectModel(modelId: string): void {
   background: none;
   border: none;
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   font-size: var(--ui-font-size);
   color: var(--color-text);
   padding: 5px 7px;
@@ -1634,7 +1636,7 @@ function selectModel(modelId: string): void {
   border-radius: var(--radius-sm);
 }
 .md-thinking .md-name {
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   font-size: var(--ui-font-size);
   color: var(--color-text);
   flex: none;
@@ -1657,7 +1659,7 @@ function selectModel(modelId: string): void {
   border: none;
   background: none;
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   font-size: var(--ui-font-size-xs);
   line-height: 1;
   color: var(--color-text-muted);
@@ -1770,7 +1772,8 @@ function selectModel(modelId: string): void {
   background: none;
   border-radius: 6px;
   font-size: var(--ui-font-size);
-  font-family: var(--sans);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-medium);
   color: var(--color-text);
   cursor: pointer;
   user-select: none;

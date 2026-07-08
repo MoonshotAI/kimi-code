@@ -118,14 +118,14 @@ watch(
 
 .prev {
   color: var(--color-text-faint);
-  font: var(--text-base)/var(--leading-relaxed) var(--font-mono);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
   white-space: pre-wrap;
   word-break: break-word;
   display: block;
 }
 
 .tc {
-  font: var(--text-base)/var(--leading-relaxed) var(--font-mono);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
   color: var(--color-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
