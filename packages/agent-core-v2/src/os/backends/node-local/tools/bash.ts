@@ -38,7 +38,10 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/agent/tool/toolContract';
-import { ToolResultBuilder } from '#/agent/tool/result-builder';
+import {
+  type ExecutableToolResultBuilderResult,
+  ToolResultBuilder,
+} from '#/agent/tool/result-builder';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
@@ -146,7 +149,7 @@ function renderBashDescription(shellName: string): string {
 function withoutBackgroundDescription(description: string): string {
   return description
     .replace(
-      /\n\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
+      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the `\/tasks` command, which opens an interactive panel; it has no subcommands\./,
       '\n\nBackground execution is disabled for this agent. Do not set `run_in_background=true`.',
     )
     .replace(
@@ -154,7 +157,7 @@ function withoutBackgroundDescription(description: string): string {
       ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s.`,
     )
     .replace(
-      /\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
+      /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
       '\n- Do not set `run_in_background=true`; background task management tools are not available.',
     );
 }
@@ -179,7 +182,11 @@ export class BashTool implements BuiltinTool<BashInput> {
   }
 
   private allowBackground(): boolean {
-    return this.profile.isToolActive('TaskOutput') && this.profile.isToolActive('TaskStop');
+    return (
+      this.profile.isToolActive('TaskList') &&
+      this.profile.isToolActive('TaskOutput') &&
+      this.profile.isToolActive('TaskStop')
+    );
   }
 
   get description(): string {
@@ -286,6 +293,9 @@ export class BashTool implements BuiltinTool<BashInput> {
         {
           detached: startsInBackground,
           timeoutMs,
+          // Detaching (ctrl+b) moves a foreground command to the background;
+          // give it the background timeout so it is not still bounded by the
+          // shorter foreground deadline.
           detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
           signal: startsInBackground ? undefined : signal,
         },
@@ -300,11 +310,14 @@ export class BashTool implements BuiltinTool<BashInput> {
       };
     }
 
+    // Foreground `!` shell commands surface their task id so the TUI can detach
+    // (ctrl+b) this exact task. Background runs are already detached.
     if (!startsInBackground) onForegroundTaskStart?.(taskId);
 
     if (startsInBackground) {
-      return this.detachedTaskResult(taskId, proc, description, {
-        title: 'Task started in background',
+      return this.backgroundStartedResult(taskId, proc, description, {
+        title: 'Background task started',
+        brief: `Started ${taskId}`,
       });
     }
 
@@ -312,19 +325,20 @@ export class BashTool implements BuiltinTool<BashInput> {
       const release = await this.tasks.waitForForegroundRelease(taskId);
       if (release === 'detached') {
         collectForegroundOutput = false;
-        return this.detachedTaskResult(
+        return this.backgroundStartedResult(
           taskId,
           proc,
           description,
           {
             title: 'Task moved to background',
+            brief: `Backgrounded ${taskId}`,
           },
           builder,
           'foreground_detached',
         );
       }
 
-      return this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
+      return await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
     } finally {
       collectForegroundOutput = false;
     }
@@ -353,46 +367,65 @@ export class BashTool implements BuiltinTool<BashInput> {
     return undefined;
   }
 
-  private foregroundCompletionResult(
+  private async foregroundCompletionResult(
     taskId: string,
     proc: IProcess,
     builder: ToolResultBuilder,
     foregroundTimeoutMs: number,
-  ): ExecutableToolResult {
+  ): Promise<ExecutableToolResult> {
     const current = this.tasks.getTask(taskId);
     const exitCode = current?.kind === 'process' ? current.exitCode : proc.exitCode;
+    let result: ExecutableToolResultBuilderResult;
     if (current?.status === 'timed_out') {
       const timeoutLabel = formatTimeoutLabel(foregroundTimeoutMs);
-      return builder.error(`Command killed by timeout (${timeoutLabel})`);
-    }
-    if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
-      return builder.error(USER_INTERRUPT_REASON);
-    }
-    if (
+      result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
+        brief: `Killed by timeout (${timeoutLabel})`,
+      });
+    } else if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
+      result = builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
+    } else if (
       (current?.status === 'failed' || current?.status === 'killed') &&
       current.stopReason !== undefined
     ) {
-      return builder.error(current.stopReason);
+      result = builder.error(current.stopReason, { brief: current.stopReason });
+    } else if (exitCode === 0) {
+      result = builder.ok('Command executed successfully.');
+    } else {
+      if (builder.nChars === 0) builder.write(`Process exited with code ${String(exitCode)}`);
+      result = builder.error(`Command failed with exit code: ${String(exitCode)}.`, {
+        brief: `Failed with exit code: ${String(exitCode)}`,
+      });
     }
-
-    const isError = exitCode !== 0;
-    if (isError && builder.nChars === 0) {
-      builder.write(`Process exited with code ${String(exitCode)}`);
-    }
-
-    if (!isError) {
-      return builder.ok('Command executed successfully.');
-    }
-    return builder.error(`Command failed with exit code: ${String(exitCode)}.`);
+    return this.addForegroundOutputReference(taskId, result);
   }
 
-  private detachedTaskResult(
+  private async addForegroundOutputReference(
+    taskId: string,
+    result: ExecutableToolResultBuilderResult,
+  ): Promise<ExecutableToolResult> {
+    if (!result.truncated) return result;
+    const output = await this.tasks.getOutputSnapshot(taskId, 0);
+    if (!output.fullOutputAvailable || output.outputPath === undefined) return result;
+
+    const taskOutputHint = this.allowBackground()
+      ? `, or TaskOutput(task_id="${taskId}", block=false)`
+      : '';
+    const reference =
+      `\n\n[Full output saved]\n` +
+      `task_id: ${taskId}\n` +
+      `output_path: ${output.outputPath}\n` +
+      `output_size_bytes: ${String(output.outputSizeBytes)}\n` +
+      `next_step: Use Read with output_path to page through the full log${taskOutputHint}.`;
+    return { ...result, output: `${result.output}${reference}` };
+  }
+
+  private backgroundStartedResult(
     taskId: string,
     proc: IProcess,
     description: string,
-    labels: { title: string },
+    labels: { title: string; brief: string },
     builder = new ToolResultBuilder(),
-    scenario: 'detached_started' | 'foreground_detached' = 'detached_started',
+    scenario: 'background_started' | 'foreground_detached' = 'background_started',
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
     const metadata =
@@ -401,26 +434,31 @@ export class BashTool implements BuiltinTool<BashInput> {
       `description: ${description}\n` +
       `status: ${status}\n` +
       `automatic_notification: true\n` +
-      this.nextStepLines(taskId, scenario) +
-      'human_shell_hint: Tell the human to run /tasks to open the interactive task panel.';
+      this.nextStepLines(scenario) +
+      'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
-    const message = taskResultMessage(labels.title, foregroundResult.message);
-    return {
+    const message = backgroundResultMessage(labels.title, foregroundResult.message);
+    const result: ExecutableToolResult & {
+      readonly message: string;
+      readonly brief: string;
+      readonly truncated: boolean;
+    } = {
       isError: false,
       output:
         foregroundOutput.length === 0
           ? metadata
           : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
       message,
+      brief: labels.brief,
       truncated: foregroundResult.truncated,
     };
+    return result;
   }
 
   private nextStepLines(
-    taskId: string,
-    scenario: 'detached_started' | 'foreground_detached',
+    scenario: 'background_started' | 'foreground_detached',
   ): string {
     if (scenario === 'foreground_detached') {
       // The user explicitly moved a foreground call to the background to avoid
@@ -434,13 +472,15 @@ export class BashTool implements BuiltinTool<BashInput> {
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }
-    // detached_started: the model chose to launch in the background.
+    // background_started: the model chose to launch in the background. Same anti-wait
+    // stance — immediately waiting on a background task is just a blocked turn, so do
+    // not invite a TaskOutput peek here.
     if (!this.allowBackground()) {
       return 'next_step: You will be automatically notified when it completes.\n';
     }
     return (
-      'next_step: The completion arrives automatically in a later turn — no polling needed. ' +
-      `To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).\n` +
+      'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, ' +
+      'or call TaskOutput on it; continue with your current work.\n' +
       'next_step: Use TaskStop only if the task must be cancelled.\n'
     );
   }
@@ -448,7 +488,7 @@ export class BashTool implements BuiltinTool<BashInput> {
 
 registerTool(BashTool);
 
-function taskResultMessage(title: string, suffix: string): string {
+function backgroundResultMessage(title: string, suffix: string): string {
   const normalized = title.endsWith('.') ? title : `${title}.`;
   if (suffix.length === 0) return normalized;
   return suffix.endsWith('.') ? `${normalized} ${suffix}` : `${normalized} ${suffix}.`;

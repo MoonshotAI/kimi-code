@@ -10,9 +10,6 @@
  * semantics match production.
  *
  * Deviations from v1:
- *   - The `brief` result field does not exist on v2's `ExecutableToolResult`,
- *     so v1 assertions on `result.brief` are dropped; the `output` / `message`
- *     assertions are kept.
  *   - v1's `execWithEnv(args, env)` is now `runner.exec(args, { env })`, so
  *     spawn-call assertions read `options.env` from the second argument.
  */
@@ -364,8 +361,10 @@ function errorMessage(error: unknown): string {
 function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
   readonly service: IAgentTaskService;
   readonly tasks: Map<string, ManagedEntry>;
+  readonly persisted: Set<string>;
 } {
   const tasks = new Map<string, ManagedEntry>();
+  const persisted = new Set<string>();
   let counter = 0;
 
   const nextId = (prefix: string): string => {
@@ -541,18 +540,20 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       return result;
     },
 
-    persistOutput(): void {
-      /* no-op in the fake */
+    persistOutput(taskId: string): void {
+      persisted.add(taskId);
     },
 
     async getOutputSnapshot(taskId: string): Promise<AgentTaskOutputSnapshot> {
       const entry = tasks.get(taskId);
       const preview = entry === undefined ? '' : entry.outputChunks.join('');
+      const fullOutputAvailable = persisted.has(taskId);
       return {
+        outputPath: fullOutputAvailable ? `/fake/tasks/${taskId}/output.log` : undefined,
         outputSizeBytes: preview.length,
         previewBytes: preview.length,
         truncated: false,
-        fullOutputAvailable: false,
+        fullOutputAvailable,
         preview,
       };
     },
@@ -655,7 +656,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
     },
   };
 
-  return { service, tasks };
+  return { service, tasks, persisted };
 }
 
 // ── Test execution helper ────────────────────────────────────────────
@@ -860,6 +861,7 @@ describe('BashTool', () => {
     expect(result).toMatchObject({
       isError: true,
       message: 'Command failed with exit code: 2.',
+      brief: 'Failed with exit code: 2',
     });
     expect(result.output).toContain('boom\n');
     expect(result.output).toContain('Command failed with exit code: 2.');
@@ -889,6 +891,7 @@ describe('BashTool', () => {
     expect(result).toMatchObject({
       isError: true,
       message: 'Command failed with exit code: 2.',
+      brief: 'Failed with exit code: 2',
     });
     expect(result.output).toContain('partial\nboom\n');
     expect(result.output).toContain('Command failed with exit code: 2.');
@@ -911,6 +914,7 @@ describe('BashTool', () => {
     expect(result).toMatchObject({
       isError: true,
       message: 'wait failed',
+      brief: 'wait failed',
     });
     expect(result.output).toContain('partial output\nwait failed');
     expect(result.output).not.toContain('exit code: null');
@@ -992,7 +996,7 @@ describe('BashTool', () => {
       await vi.advanceTimersByTimeAsync(250);
       const result = await running;
 
-      expect(result).toMatchObject({ isError: true });
+      expect(result).toMatchObject({ isError: true, brief: 'Killed by timeout (1s)' });
       expect(result.output).toContain('Command killed by timeout (1s)');
     } finally {
       vi.useRealTimers();
@@ -1012,7 +1016,7 @@ describe('BashTool', () => {
       const result = await running;
 
       expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
-      expect(result).toMatchObject({ isError: true });
+      expect(result).toMatchObject({ isError: true, brief: 'Killed by timeout (1s)' });
       expect(result.output).toContain('Command killed by timeout (1s)');
       expect(result.output).not.toContain('Premature close');
     } finally {
@@ -1111,6 +1115,40 @@ describe('BashTool', () => {
     expect(output).toContain('Output is truncated');
   });
 
+  it('saves full foreground output when the inline result is truncated', async () => {
+    const fullOutput = `${'short line\n'.repeat(6_000)}tail survives\n`;
+    const { runner } = createTestRunner(processWithOutput({ stdout: fullOutput }));
+    const { service, persisted } = createFakeTaskService();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service);
+
+    const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
+    const output = result.output as string;
+    const taskId = /^task_id: (bash-[0-9a-z]{8})$/m.exec(output)?.[1];
+
+    expect(output).toContain('[...truncated]');
+    expect(output).toContain('[Full output saved]');
+    expect(taskId).toBeTruthy();
+    // The inline truncation must have started early persistence of the full log.
+    expect(persisted.has(taskId!)).toBe(true);
+    expect(output).toContain(`output_path: /fake/tasks/${taskId}/output.log`);
+    expect(output).toContain('Use Read with output_path');
+    expect(output).toContain(`TaskOutput(task_id="${taskId}", block=false)`);
+  });
+
+  it('omits the TaskOutput hint from the saved-output reference when background tools are disabled', async () => {
+    const fullOutput = 'short line\n'.repeat(6_000);
+    const { runner } = createTestRunner(processWithOutput({ stdout: fullOutput }));
+    const { service } = createFakeTaskService();
+    const tool = bashTool(runner, createTestEnv(), createTestCtx(), service, stubProfile(() => false));
+
+    const result = await executeTool(tool, context({ command: 'flood', timeout: 60 }));
+    const output = result.output as string;
+
+    expect(output).toContain('[Full output saved]');
+    expect(output).toContain('Use Read with output_path');
+    expect(output).not.toContain('TaskOutput');
+  });
+
   it('rejects empty-string commands at the schema layer', () => {
     expect(BashInputSchema.safeParse({ command: '' }).success).toBe(false);
   });
@@ -1163,6 +1201,33 @@ describe('BashTool', () => {
     expect(description).toContain('**Guidelines for efficiency:**');
     expect(description).toContain('run_in_background=true');
     expect(description).toContain('automatically notified');
+    // Moved here from system.md: the "don't block on a background task" nudge belongs in
+    // the background-enabled Bash description, the only place that documents it.
+    expect(description).toContain('returning control to the user');
+  });
+
+  it('disables background execution when TaskList is inactive even if TaskOutput/TaskStop are active', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const tool = bashTool(
+      runner,
+      createTestEnv(),
+      createTestCtx(),
+      createFakeTaskService().service,
+      stubProfile((name) => name !== 'TaskList'),
+    );
+
+    // Background management needs TaskList, TaskOutput, and TaskStop; without
+    // TaskList the description must fall back to the disabled variant.
+    expect(tool.description).toContain('Background execution is disabled for this agent');
+
+    const result = await executeTool(
+      tool,
+      context({ command: 'sleep 10', run_in_background: true, description: 'watch' }),
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Background execution is not available');
+    expect(exec).not.toHaveBeenCalled();
   });
 });
 
@@ -1199,6 +1264,8 @@ describe('BashTool background mode', () => {
     expect(result.output).toContain(`task_id: ${task.taskId}`);
     expect(result.output).toContain('automatic_notification: true');
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput');
+    expect(result).toMatchObject({ message: 'Task moved to background.' });
+    expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId}`);
     expect(service.getTask(task.taskId)).toMatchObject({ detached: true });
     await vi.waitFor(async () => {
       await expect(service.readOutput(task.taskId)).resolves.toContain('after detach\n');
@@ -1367,6 +1434,11 @@ describe('BashTool background mode', () => {
 
     expect(result.output).toMatch(/task_id: bash-[0-9a-z]{8}/);
     expect(result.output).toContain('automatic_notification: true');
+    expect(result).toMatchObject({ message: 'Background task started.' });
+    expect((result as { brief?: string }).brief).toMatch(/^Started bash-[0-9a-z]{8}$/);
+    // The launch message must steer away from waiting, not invite a TaskOutput peek.
+    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(result.output).not.toContain('block=false');
     expect(service.list(false)).toHaveLength(1);
   });
 

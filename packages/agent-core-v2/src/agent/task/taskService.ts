@@ -92,6 +92,11 @@ interface ManagedTask {
   readonly outputChunks: string[];
   outputSizeBytes: number;
   retainedOutputBytes: number;
+  /**
+   * True once a command has crossed `MAX_TASK_OUTPUT_BYTES` and termination has
+   * been requested. One-shot guard so the ceiling fires exactly once.
+   */
+  outputLimitTripped: boolean;
   status: AgentTaskStatus;
   options: RegisterAgentTaskOptions & { description?: string };
   readonly startedAt: number;
@@ -114,7 +119,30 @@ interface ManagedTask {
   handleSubscription?: { dispose(): void };
 }
 
-const MAX_OUTPUT_BYTES = 1024 * 1024;
+const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
+
+/**
+ * Hard ceiling on the combined output a single shell command may stream before
+ * it is force-terminated (SIGTERM → grace → SIGKILL). It guards both the
+ * live-forward path and the on-disk `output.log` write chain from a runaway
+ * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow
+ * without bound — filling the disk, or retaining each pending-write chunk until
+ * Node aborts with an out-of-memory crash. Scoped to process tasks (foreground
+ * and background); subagent and user-question results are appended once and must
+ * always be persisted, so they are intentionally not capped here.
+ */
+const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+
+/** Terminal `stopReason` recorded when a command trips the output ceiling. */
+function outputLimitReason(): string {
+  const mib = Math.floor(MAX_TASK_OUTPUT_BYTES / (1024 * 1024));
+  return (
+    `Output limit exceeded: the command produced more than ${mib} MiB and was ` +
+    'terminated. Redirect large output to a file (e.g. `command > out.txt`) and ' +
+    'inspect it in slices instead.'
+  );
+}
+
 const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const USER_INTERRUPT_REASON = 'Interrupted by user';
@@ -208,6 +236,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       outputChunks: [],
       outputSizeBytes: 0,
       retainedOutputBytes: 0,
+      outputLimitTripped: false,
       status: 'running',
       options: entryOptions,
       startedAt: Date.now(),
@@ -278,6 +307,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       outputChunks: [],
       outputSizeBytes: 0,
       retainedOutputBytes: 0,
+      outputLimitTripped: false,
       status: 'running',
       options: { detached, timeoutMs, detachTimeoutMs: options.detachTimeoutMs, signal: detached ? undefined : options.signal, description: options.description },
       startedAt: Date.now(),
@@ -694,6 +724,29 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const chunkBytes = Buffer.byteLength(chunk, 'utf-8');
     entry.outputSizeBytes += chunkBytes;
     this.appendRetainedOutput(entry, chunk, chunkBytes);
+
+    // Output ceiling: a single shell command must not grow the (unbounded)
+    // live-forward buffer or the on-disk write chain until the process runs out
+    // of memory or fills the disk. Trip once, then request graceful termination
+    // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
+    // process tasks (foreground and background): subagent and user-question tasks
+    // append their bounded result in one shot and must always persist it, so they
+    // are intentionally not capped here.
+    if (
+      !entry.outputLimitTripped &&
+      entry.task?.kind === 'process' &&
+      entry.outputSizeBytes > MAX_TASK_OUTPUT_BYTES
+    ) {
+      entry.outputLimitTripped = true;
+      void this.stop(entry.taskId, outputLimitReason());
+    }
+
+    // Once the cap has tripped the task is being terminated: keep only the
+    // bounded in-memory ring buffer above and stop feeding the (unbounded) disk
+    // write chain. A producer that ignores SIGTERM could otherwise keep the
+    // chain — and the chunk strings each pending write retains — growing through
+    // the grace window until SIGKILL, re-introducing the OOM this cap prevents.
+    if (entry.outputLimitTripped) return;
 
     if (!entry.outputPersistStarted) {
       entry.pendingOutput.push(chunk);
