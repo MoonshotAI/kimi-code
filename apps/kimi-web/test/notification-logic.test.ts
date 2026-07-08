@@ -185,3 +185,65 @@ describe('shouldNotifyCompletion', () => {
     expect(shouldNotifyCompletion('idle', false, true)).toBe(false);
   });
 });
+
+// Same-tag notifications replace silently (renotify is unreliable), so the tag
+// must be unique per turn/request for follow-up alerts in a session to pop.
+describe('notification tags', () => {
+  class FakeNotification {
+    static permission = 'granted';
+    static fired: Array<{ title: string; tag?: string }> = [];
+    onclick: (() => void) | null = null;
+    constructor(title: string, options?: { body?: string; tag?: string; icon?: string }) {
+      FakeNotification.fired.push({ title, tag: options?.tag });
+    }
+    close(): void {}
+  }
+
+  const { maybeNotifyCompletion, maybeNotifyQuestion, maybeNotifyApproval } = useNotification();
+  const base = { isUserWatching: false, sessionTitle: 'T', onClick: () => {} };
+
+  beforeEach(() => {
+    FakeNotification.fired = [];
+    (globalThis as Record<string, unknown>).Notification = FakeNotification;
+    notifyOnComplete.value = true;
+    notifyOnQuestion.value = true;
+    notifyOnApproval.value = true;
+  });
+
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).Notification;
+    notifyOnComplete.value = true;
+    notifyOnQuestion.value = false;
+    notifyOnApproval.value = false;
+  });
+
+  it('completion tags carry the prompt id so each turn in a session alerts', () => {
+    maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
+    maybeNotifyCompletion('s1', { ...base, promptId: 'p2' });
+    expect(FakeNotification.fired.map((f) => f.tag)).toEqual([
+      'kimi-complete-s1-p1',
+      'kimi-complete-s1-p2',
+    ]);
+  });
+
+  it('a replayed idle event for the same turn keeps the same tag', () => {
+    maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
+    maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
+    expect(FakeNotification.fired).toHaveLength(2);
+    expect(FakeNotification.fired[0]?.tag).toBe(FakeNotification.fired[1]?.tag);
+  });
+
+  it('question and approval tags are per-request', () => {
+    maybeNotifyQuestion({ ...base, questionPreview: 'q', questionId: 'q1' });
+    maybeNotifyApproval({ ...base, toolName: 'bash', approvalId: 'a1' });
+    expect(FakeNotification.fired.map((f) => f.tag)).toEqual([
+      'kimi-question-q1',
+      'kimi-approval-a1',
+    ]);
+  });
+
+  it('suppresses the notification while the user is watching the session', () => {
+    maybeNotifyCompletion('s1', { ...base, isUserWatching: true, promptId: 'p1' });
+    expect(FakeNotification.fired).toHaveLength(0);
+  });
+});

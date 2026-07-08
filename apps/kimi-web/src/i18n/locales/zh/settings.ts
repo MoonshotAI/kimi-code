@@ -13,7 +13,7 @@ export default {
   notifyOnComplete: '会话完成时通知',
   notifyOnQuestion: '待回答时通知',
   notifyOnApproval: '待审批时通知',
-  soundOnComplete: '会话完成或待回答时播放提示音',
+  soundOnComplete: '会话完成、待回答或待审批时播放提示音',
   notifyDenied: '已在浏览器设置中被阻止',
   notifyTitle: 'Kimi Code · 回合完成',
   notifyQuestionTitle: 'Kimi Code · 待回答',

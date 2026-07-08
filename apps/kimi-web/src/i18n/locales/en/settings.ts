@@ -13,7 +13,7 @@ export default {
   notifyOnComplete: 'Notify when a turn completes',
   notifyOnQuestion: 'Notify when a question needs an answer',
   notifyOnApproval: 'Notify when a tool needs approval',
-  soundOnComplete: 'Play a sound when a turn completes or needs an answer',
+  soundOnComplete: 'Play a sound when a turn completes, needs an answer, or needs approval',
   notifyDenied: 'Blocked in browser settings',
   notifyTitle: 'Kimi Code · Turn finished',
   notifyQuestionTitle: 'Kimi Code · Needs answer',

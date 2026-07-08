@@ -2320,10 +2320,27 @@ const workspaceState = useWorkspaceState(rawState, {
   fileDiffLoading,
 });
 
+/** True when the user is actually watching this session: it is the active
+    session, the page is visible, and the window has focus. Focus matters on
+    top of visibility: a window that lost focus to another app often stays
+    (partially) visible on screen, but the user is working elsewhere and would
+    miss the moment without a notification. */
+function isUserWatching(sid: string): boolean {
+  return (
+    sid === rawState.activeSessionId &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'visible' &&
+    document.hasFocus()
+  );
+}
+
 function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
   // The turn finished — this session no longer has a prompt in flight.
   inFlightPromptSessions.delete(sid);
   rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+  // Capture before the cleanup below drops it — it keys the completion
+  // notification's dedup tag so each finished turn alerts once.
+  const finishedPromptId = rawState.promptIdBySession[sid];
   // Drop any cached prompt_id so a later skill activation (which has no
   // prompt_id) doesn't accidentally reuse this stale id for :abort.
   if (rawState.promptIdBySession[sid] !== undefined) {
@@ -2354,11 +2371,9 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
   const hasPendingQuestion = (rawState.questionsBySession[sid] ?? []).length > 0;
   if (shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion)) {
     notification.maybeNotifyCompletion(sid, {
-      isActiveAndVisible:
-        sid === rawState.activeSessionId &&
-        typeof document !== 'undefined' &&
-        document.visibilityState === 'visible',
+      isUserWatching: isUserWatching(sid),
       sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+      promptId: finishedPromptId,
       onClick: () => {
         void workspaceState.selectSession(sid);
       },
@@ -2402,13 +2417,11 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
     header && questionText ? `${header}: ${questionText}` : questionText || header;
 
   // Browser notification when the user isn't watching this session.
-  notification.maybeNotifyQuestion(sid, {
-    isActiveAndVisible:
-      sid === rawState.activeSessionId &&
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'visible',
+  notification.maybeNotifyQuestion({
+    isUserWatching: isUserWatching(sid),
     sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
     questionPreview: preview,
+    questionId: question.questionId,
     onClick: () => {
       void workspaceState.selectSession(sid);
     },
@@ -2421,11 +2434,8 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
 
 function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
   // Browser notification when the user isn't watching this session.
-  notification.maybeNotifyApproval(sid, {
-    isActiveAndVisible:
-      sid === rawState.activeSessionId &&
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'visible',
+  notification.maybeNotifyApproval({
+    isUserWatching: isUserWatching(sid),
     sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
     toolName: approval.toolName,
     approvalId: approval.approvalId,
@@ -2433,6 +2443,10 @@ function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
       void workspaceState.selectSession(sid);
     },
   });
+
+  // Attention sound — plays regardless of visibility so it also reaches a
+  // backgrounded tab (same as the completion sound).
+  sound.maybePlayApprovalSound();
 }
 
 // ---------------------------------------------------------------------------

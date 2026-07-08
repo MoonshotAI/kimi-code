@@ -1,7 +1,9 @@
 // apps/kimi-web/src/composables/client/useSoundNotification.ts
-// Browser "turn completed" sound: a persisted on/off preference plus a short
-// chime synthesized with the WebAudio API (no audio asset, no permission
-// prompt). Pure UI action module — it never reads rawState or calls the API.
+// Browser attention sound: a persisted on/off preference plus a short chime
+// synthesized with the WebAudio API (no audio asset, no permission prompt).
+// One chime covers every "the agent needs you" moment — a finished turn, a
+// question waiting for an answer, a tool needing approval. Pure UI action
+// module — it never reads rawState or calls the API.
 //
 // Why the eager "unlock": the sound is most useful when the tab is in the
 // background (so you hear it while doing something else). But an AudioContext
@@ -161,11 +163,19 @@ function maybePlayQuestionSound(): void {
   playChime();
 }
 
+/** Play the attention sound when a tool needs approval, whenever the
+    preference is on. Same chime as completion: it means "the agent needs you". */
+function maybePlayApprovalSound(): void {
+  if (!soundOnComplete.value) return;
+  playChime();
+}
+
 export function useSoundNotification() {
   return {
     soundOnComplete,
     setSoundOnComplete,
     maybePlayCompletionSound,
     maybePlayQuestionSound,
+    maybePlayApprovalSound,
   };
 }

@@ -3,7 +3,7 @@
 // question waiting for an answer, or a tool needing approval. Each kind has its
 // own on/off preference (persisted) plus the shared OS permission + Notification
 // API. Pure UI action module — it never reads rawState or calls the API. The
-// rawState-dependent bits (is the session active & visible, its title, the
+// rawState-dependent bits (is the user watching the session, its title, the
 // click-to-select action) are passed in by the caller via the ctx objects.
 //
 // Why three preferences: completion notifications default on (existing
@@ -76,23 +76,33 @@ function setNotifyOnApproval(on: boolean): Promise<void> {
   return setNotifyPref(notifyOnApproval, STORAGE_KEYS.notifyOnApproval, on);
 }
 
-export interface NotifyCompletionCtx {
-  /** True when the target session is the active one and the page is visible —
-      in which case we suppress the notification. */
-  isActiveAndVisible: boolean;
+export interface NotifyBaseCtx {
+  /** True when the user is actually watching the target session: it is the
+      active session, the page is visible, and the window has focus — in which
+      case we suppress the notification. */
+  isUserWatching: boolean;
   /** Session title used as the completion notification body and a question-body fallback. */
   sessionTitle: string;
   /** Called when the user clicks the notification (e.g. select the session). */
   onClick: () => void;
 }
 
-export interface NotifyQuestionCtx extends NotifyCompletionCtx {
+export interface NotifyCompletionCtx extends NotifyBaseCtx {
+  /** Prompt id of the finished turn; keys the dedup tag so every turn fires its
+      own notification while a replayed idle event for the same turn stays
+      collapsed. Falls back to a per-call unique tag when absent. */
+  promptId?: string;
+}
+
+export interface NotifyQuestionCtx extends NotifyBaseCtx {
   /** Short preview of the question, used as the notification body. Falls back
       to the session title, then to a generic line when empty. */
   questionPreview: string;
+  /** Unique question request id; used to deduplicate notifications per request. */
+  questionId: string;
 }
 
-export interface NotifyApprovalCtx extends NotifyCompletionCtx {
+export interface NotifyApprovalCtx extends NotifyBaseCtx {
   /** Tool call name needing approval, used as the notification body. */
   toolName: string;
   /** Unique approval request id; used to deduplicate notifications per request. */
@@ -148,11 +158,14 @@ export function approvalNotificationCopy(
 }
 
 /** Shared permission gate + fire. `enabled` is the caller's per-kind preference;
-    `copy` and `tag` let each kind carry its own text and a per-kind dedup tag
-    so a completion and a question don't collapse into one notification. */
+    `copy` and `tag` let each kind carry its own text and a per-turn/per-request
+    dedup tag: repeats of the same turn or request collapse into one
+    notification, while distinct ones each fire (same-tag notifications replace
+    silently — renotify is unreliable across platforms — so the tag must change
+    whenever a new alert should pop). */
 function maybeNotify(
   enabled: boolean,
-  ctx: NotifyCompletionCtx,
+  ctx: NotifyBaseCtx,
   copy: NotificationCopy,
   tag: string,
 ): void {
@@ -171,8 +184,8 @@ function maybeNotify(
   fire(ctx, copy, tag);
 }
 
-function fire(ctx: NotifyCompletionCtx, copy: NotificationCopy, tag: string): void {
-  if (ctx.isActiveAndVisible) return;
+function fire(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
+  if (ctx.isUserWatching) return;
   try {
     const n = new Notification(copy.title, { body: copy.body, tag, icon: NOTIFICATION_ICON });
     n.onclick = () => {
@@ -190,31 +203,33 @@ function fire(ctx: NotifyCompletionCtx, copy: NotificationCopy, tag: string): vo
 }
 
 /** Fire a completion notification for a finished session, but only when the
-    caller says the user isn't already looking at it. */
+    caller says the user isn't already looking at it. The tag carries the turn's
+    prompt id: same-tag notifications replace silently, so without it a stale
+    notification left in the notification center would swallow every later
+    turn's alert for that session. */
 function maybeNotifyCompletion(sid: string, ctx: NotifyCompletionCtx): void {
   maybeNotify(
     notifyOnComplete.value,
     ctx,
     completionNotificationCopy(ctx.sessionTitle),
-    `kimi-complete-${sid}`,
+    `kimi-complete-${sid}-${ctx.promptId ?? Date.now()}`,
   );
 }
 
 /** Fire a notification when a session asks a question, but only when the user
     explicitly opted into question notifications and isn't already looking. */
-function maybeNotifyQuestion(sid: string, ctx: NotifyQuestionCtx): void {
+function maybeNotifyQuestion(ctx: NotifyQuestionCtx): void {
   maybeNotify(
     notifyOnQuestion.value,
     ctx,
     questionNotificationCopy(ctx.sessionTitle, ctx.questionPreview),
-    `kimi-question-${sid}`,
+    `kimi-question-${ctx.questionId}`,
   );
 }
 
 /** Fire a notification when a tool needs approval, but only when the user
     explicitly opted into approval notifications and isn't already looking. */
-function maybeNotifyApproval(_sid: string, ctx: NotifyApprovalCtx): void {
-  void _sid;
+function maybeNotifyApproval(ctx: NotifyApprovalCtx): void {
   maybeNotify(
     notifyOnApproval.value,
     ctx,
