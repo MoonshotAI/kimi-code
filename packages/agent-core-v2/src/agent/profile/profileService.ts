@@ -168,6 +168,7 @@ export class AgentProfileService implements IAgentProfileService {
       systemPrompt,
       activeToolNames: profile.tools,
     });
+    this.wire.dispatch(configUpdate({}));
 
     if (agentsMdWarning !== undefined) {
       this.eventBus.publish({

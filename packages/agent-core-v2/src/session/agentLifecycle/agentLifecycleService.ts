@@ -56,6 +56,7 @@ import {
   AgentWireRecordService,
   WIRE_RECORD_FILENAME,
 } from '#/agent/wireRecord/wireRecordService';
+import { serializeV1WireRecord } from '#/agent/wireRecord/v1WireSerializer';
 import { type WireMetadataPayload, wireMetadata } from '#/agent/wireRecord/metadataOps';
 import { IAgentWireService } from '#/wire/tokens';
 import { WireService } from '#/wire/wireServiceImpl';
@@ -150,7 +151,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             } satisfies IAgentScopeContext,
           ],
           [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService, [{ homedir: agentHomedir }])],
-          [IAgentWireService, new SyncDescriptor(WireService, [{ logScope: agentScope, logKey: WIRE_RECORD_FILENAME }])],
+          [
+            IAgentWireService,
+            new SyncDescriptor(WireService, [
+              {
+                logScope: agentScope,
+                logKey: WIRE_RECORD_FILENAME,
+                serializeRecord: serializeV1WireRecord,
+              },
+            ]),
+          ],
           [IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl)],
           [
             IAgentMcpService,
@@ -169,6 +179,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // enumerate every agent and relocate its wire log.
     await this.sessionMetadata.registerAgent(agentId, {
       homedir: agentHomedir,
+      type: agentId === 'main' ? 'main' : 'sub',
+      parentAgentId: agentId === 'main' ? undefined : 'main',
       forkedFrom: opts.forkedFrom,
       labels: opts.labels,
     });

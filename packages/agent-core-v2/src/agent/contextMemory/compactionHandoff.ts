@@ -70,14 +70,7 @@ export function buildContextCompactionShape(
   }
 
   const compactableUserMessages = collectCompactableUserMessages(history);
-  const selection = input.keptHeadUserMessageCount === undefined
-    ? {
-        head: [],
-        tail: selectRecentUserMessages(compactableUserMessages),
-        elided: false,
-        omittedTokens: 0,
-      }
-    : selectCompactionUserMessages(compactableUserMessages);
+  const selection = selectCompactionUserMessages(compactableUserMessages);
   const elisionMessage = selection.elided
     ? createCompactionElisionMessage(selection.omittedTokens)
     : undefined;

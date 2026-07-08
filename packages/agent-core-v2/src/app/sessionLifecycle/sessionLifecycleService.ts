@@ -299,6 +299,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       isCustomTitle: opts.title !== undefined ? true : sourceMeta?.isCustomTitle === true,
       forkedFrom: sourceId,
       archived: false,
+      lastPrompt: sourceMeta?.lastPrompt,
       custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
     });
 

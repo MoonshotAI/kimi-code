@@ -17,6 +17,7 @@ import {
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
 import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
+import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { ensureMessageId } from '#/agent/contextMemory/messageId';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
@@ -79,6 +80,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       messages.push(...stamped);
       publishSplice(eventBus, { start, deleteCount: 0, messages: [...stamped] });
     },
+    appendLoopEvent: () => {},
     clear: () => {
       const deleteCount = messages.length;
       if (deleteCount === 0) return;
@@ -144,6 +146,9 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
   clear(): void {
     this.impl.clear();
+  }
+  appendLoopEvent(event: LoopRecordedEvent): void {
+    this.impl.appendLoopEvent(event);
   }
   undo(count: number): UndoCut {
     return this.impl.undo(count);

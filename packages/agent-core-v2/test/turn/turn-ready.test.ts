@@ -12,6 +12,7 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentTurnService } from '#/agent/turn/turn';
 import { AgentTurnService } from '#/agent/turn/turnService';
 import { TurnModel } from '#/agent/turn/turnOps';
+import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { emptyUsage } from '#/app/llmProtocol/usage';
@@ -171,6 +172,11 @@ describe('AgentLoopService onStarted', () => {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
         reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+        reg.defineInstance(IAgentUsageService, {
+          _serviceBrand: undefined,
+          record: () => {},
+          status: () => ({}),
+        });
         reg.definePartialInstance(IConfigService, {
           get: <T>() => undefined as T,
         });

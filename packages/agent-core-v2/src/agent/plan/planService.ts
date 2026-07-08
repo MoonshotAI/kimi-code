@@ -1,22 +1,25 @@
+/**
+ * `plan` domain (L3) — `IAgentPlanService` implementation.
+ *
+ * Manages plan-mode state through `wire`, injects plan-mode context through
+ * `contextInjector`, writes optional plan files through `hostFileSystem`,
+ * and tags mode telemetry through `telemetry`. Bound at Agent scope.
+ */
+
+import { randomUUID } from 'node:crypto';
+import { dirname, join } from 'pathe';
+
+import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import {
-  randomUUID
-} from 'node:crypto';
-import {
-  dirname,
-  resolve
-} from 'pathe';
-
-import { Disposable } from "#/_base/di/lifecycle";
-import { generateHeroSlug } from "#/_base/utils/hero-slug";
+import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { PlanModeInjection } from '#/agent/plan/injection/planModeInjection';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAgentProfileService } from '#/agent/profile/profile';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
 import {
@@ -37,11 +40,11 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IAgentWireService private readonly wire: IWireService,
+    @ISessionContext private readonly sessionCtx: ISessionContext,
+    @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
   ) {
     super();
 
@@ -61,10 +64,6 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private restoreTelemetryMode(): void {
-    // `wire.replay` rebuilds `PlanModel` silently, so the live telemetry
-    // context (set on the enter/exit path) is not re-applied by replay. Re-derive
-    // it here from the restored model so a resumed plan-mode session keeps
-    // tagging telemetry with `mode: 'plan'` (mirroring the legacy restoreEnter).
     if (this.isActive) {
       this.telemetryContext.set({ mode: 'plan' });
     }
@@ -80,16 +79,19 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     }
 
     const planFilePath = this.planFilePathFor(id);
-    this.wire.dispatch(planModeEnter({ id, planFilePath }));
-    this.telemetryContext.set({ mode: 'plan' });
-
+    let enterRecorded = false;
     try {
       await this.ensurePlanDirectory(planFilePath);
+      this.wire.dispatch(planModeEnter({ id, planFilePath }));
+      this.telemetryContext.set({ mode: 'plan' });
+      enterRecorded = true;
       if (createFile) {
         await this.writeEmptyPlanFile(planFilePath);
       }
     } catch (error) {
-      this.cancel(id);
+      if (enterRecorded) {
+        this.cancel(id);
+      }
       throw error;
     }
   }
@@ -128,19 +130,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   private planFilePathFor(id: string): string {
-    // Anchor the plan file to the same root the file tools resolve relative
-    // paths against. When the profile carries a cwd (normal CLI / TUI case) it
-    // is used; otherwise fall back to the session workDir so the plan path is
-    // always absolute and matches the tool-resolved path. A relative plan path
-    // would both land in `process.cwd()` (via `IHostFileSystem`) and fail the
-    // plan-mode guard's absolute-path comparison (server-v2 binds the agent
-    // without a cwd, leaving the profile cwd empty).
-    return resolve(this.planRoot(), 'plan', `${id}.md`);
-  }
-
-  private planRoot(): string {
-    const cwd = this.profile.data().cwd;
-    return cwd.length > 0 ? cwd : this.workspace.workDir;
+    return join(this.sessionCtx.sessionDir, 'agents', this.agentCtx.agentId, 'plans', `${id}.md`);
   }
 
   private async writeEmptyPlanFile(path: string): Promise<void> {

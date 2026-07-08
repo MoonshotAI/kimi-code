@@ -162,6 +162,16 @@ export const kimiModelEnvOverlay: ConfigEffectiveOverlay = {
     effective['models'] = validate('models', nextModels);
     changed.push('models');
 
+    const providers = asRecord(effective['providers']);
+    const envProvider = asRecord(providers[ENV_MODEL_PROVIDER_KEY]);
+    if (envProvider['type'] === undefined) {
+      effective['providers'] = validate('providers', {
+        ...providers,
+        [ENV_MODEL_PROVIDER_KEY]: { ...envProvider, type: 'kimi' },
+      });
+      changed.push('providers');
+    }
+
     effective['defaultModel'] = ENV_MODEL_ALIAS_KEY;
     changed.push('defaultModel');
 

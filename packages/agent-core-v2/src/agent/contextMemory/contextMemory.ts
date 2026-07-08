@@ -1,6 +1,7 @@
 import { createDecorator } from "#/_base/di/instantiation";
 
 import type { UndoCut } from './contextOps';
+import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
 export interface ContextCompactionInput {
@@ -32,6 +33,8 @@ export interface IAgentContextMemoryService {
 
   /** Append one or more already-folded messages (`context.append_message`). */
   append(...messages: readonly ContextMessage[]): void;
+
+  appendLoopEvent(event: LoopRecordedEvent): void;
 
   /** Drop the entire history (`context.clear`). No-op when already empty. */
   clear(): void;

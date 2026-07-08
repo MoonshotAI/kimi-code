@@ -39,6 +39,7 @@ import { buildContextCompactionShape } from './compactionHandoff';
 import {
   computeUndoCut,
   ContextModel,
+  contextAppendLoopEvent,
   contextAppendMessage,
   contextApplyCompaction,
   contextClear,
@@ -46,6 +47,7 @@ import {
   contextUndo,
   type UndoCut,
 } from './contextOps';
+import type { LoopRecordedEvent } from './loopEventFold';
 import { ensureMessageId } from './messageId';
 import type { ContextMessage } from './types';
 
@@ -97,6 +99,9 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     });
   }
 
+  appendLoopEvent(event: LoopRecordedEvent): void {
+    this.wire.dispatch(contextAppendLoopEvent({ event }));
+  }
   clear(): void {
     const deleteCount = this.get().length;
     if (deleteCount === 0) return;

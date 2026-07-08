@@ -99,6 +99,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
     append: (...inserted) => {
       messages.push(...inserted.map(ensureMessageId));
     },
+    appendLoopEvent: () => {},
     clear: () => {
       messages.splice(0);
     },

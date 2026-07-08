@@ -15,10 +15,16 @@ export interface Turn {
   readonly result: Promise<LoopRunResult>;
 }
 
+export interface TurnPromptInfo {
+  readonly input?: unknown;
+  readonly origin?: PromptOrigin;
+  readonly steer?: unknown;
+}
+
 export interface IAgentTurnService {
   readonly _serviceBrand: undefined;
 
-  launch(origin?: PromptOrigin): Turn;
+  launch(prompt?: TurnPromptInfo): Turn;
   getActiveTurn(): Turn | undefined;
 }
 

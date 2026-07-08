@@ -84,6 +84,23 @@ async function dehydrateRecord(
     if (parts === message.content) return record;
     return { ...record, message: { ...message, content: [...parts] } };
   }
+  if (record.type === 'context.append_loop_event') {
+    const event = record['event'] as LoopRecordedEvent | undefined;
+    if (event === undefined) return record;
+    if (event.type === 'content.part') {
+      const parts = await transform([event.part]);
+      if (parts[0] === event.part) return record;
+      return { ...record, event: { ...event, part: parts[0] } };
+    }
+    if (event.type === 'tool.result') {
+      const output = event.result.output;
+      if (!Array.isArray(output)) return record;
+      const parts = await transform(output);
+      if (parts === output) return record;
+      return { ...record, event: { ...event, result: { ...event.result, output: [...parts] } } };
+    }
+    return record;
+  }
   return record;
 }
 

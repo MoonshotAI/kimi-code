@@ -4,9 +4,16 @@ import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { OrderedHookSlot } from '#/hooks';
 
+export interface ToolCallStartedPayload {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly args: unknown;
+}
+
 export interface ToolExecutorExecuteOptions {
   readonly signal: AbortSignal;
   readonly turnId: number;
+  readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
 }
 
 export interface ToolExecutionResult {

@@ -78,6 +78,7 @@ export class CycleError extends Error {
 export interface WireServiceOptions {
   readonly logScope: string;
   readonly logKey: string;
+  readonly serializeRecord?: (record: PersistedRecord) => readonly PersistedRecord[];
 }
 
 interface ModelInstance {
@@ -230,8 +231,11 @@ export class WireService extends Disposable implements IWireService {
       inst.state = Object.freeze(op.descriptor.apply(prev, op.payload));
       if (!group.silent) {
         const record = this.toRecord(op);
-        this.appendToWireLog(record, op.descriptor.model);
         this.emissionEmitter.fire({ type: 'record', record });
+        const serialized = this.options.serializeRecord?.(record) ?? [record];
+        for (const out of serialized) {
+          this.appendToWireLog(out, op.descriptor.model);
+        }
         const event = op.descriptor.toEvent?.(op.payload, inst.state);
         if (event !== undefined && this.eventBus !== undefined) {
           this.eventBus.publish(event as DomainEvent);
@@ -284,26 +288,25 @@ export class WireService extends Disposable implements IWireService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private appendToWireLog(record: PersistedRecord, model: ModelDef<any>): void {
     if (this.log === undefined) return;
-    // When the model declares a blob codec and the blob service is available,
-    // every append rides the serialized queue so a record with no offloadable
-    // targets cannot leapfrog a pending dehydrate and reorder the log; otherwise
-    // append directly (no microtask, no queue).
-    if (this.blobService === undefined || model.blobs?.dehydrate === undefined) {
+    if (this.blobService === undefined) {
       this.log.append(this.options.logScope, this.options.logKey, record, {
         onError: onUnexpectedError,
       });
       return;
     }
-    const dehydrate = model.blobs.dehydrate.bind(model.blobs);
+    const dehydrate = model.blobs?.dehydrate?.bind(model.blobs);
     const transform: PartsTransformer = (parts) =>
       this.blobService!.offloadParts(
         parts as readonly ContentPart[],
       ) as Promise<readonly unknown[]>;
     this.persistQueue = this.persistQueue
       .then(async () => {
-        const prepared = dehydrate(record, transform);
-        const offloaded = isPromise(prepared) ? await prepared : prepared;
-        this.log?.append(this.options.logScope, this.options.logKey, offloaded, {
+        let out = record;
+        if (dehydrate !== undefined) {
+          const prepared = dehydrate(record, transform);
+          out = isPromise(prepared) ? await prepared : prepared;
+        }
+        this.log?.append(this.options.logScope, this.options.logKey, out, {
           onError: onUnexpectedError,
         });
       })

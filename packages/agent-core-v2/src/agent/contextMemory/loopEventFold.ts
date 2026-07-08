@@ -33,6 +33,7 @@
  */
 
 import { createToolMessage, type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
+import type { TokenUsage } from '#/app/llmProtocol/usage';
 
 import type { ContextMessage } from './types';
 
@@ -46,11 +47,38 @@ const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
-/** Subset of v1 `LoopRecordedEvent` read by the fold (wire shape, structural). */
 export type LoopRecordedEvent =
-  | { readonly type: 'step.begin'; readonly uuid: string }
-  | { readonly type: 'step.end'; readonly uuid: string }
-  | { readonly type: 'content.part'; readonly stepUuid: string; readonly part: ContentPart }
+  | {
+      readonly type: 'step.begin';
+      readonly uuid: string;
+      readonly turnId?: string;
+      readonly step?: number;
+    }
+  | {
+      readonly type: 'step.end';
+      readonly uuid: string;
+      readonly turnId?: string;
+      readonly step?: number;
+      readonly finishReason?: string;
+      readonly usage?: TokenUsage;
+      readonly llmFirstTokenLatencyMs?: number;
+      readonly llmStreamDurationMs?: number;
+      readonly llmRequestBuildMs?: number;
+      readonly llmServerFirstTokenMs?: number;
+      readonly llmServerDecodeMs?: number;
+      readonly llmClientConsumeMs?: number;
+      readonly messageId?: string;
+      readonly providerFinishReason?: string;
+      readonly rawFinishReason?: string;
+    }
+  | {
+      readonly type: 'content.part';
+      readonly stepUuid: string;
+      readonly part: ContentPart;
+      readonly uuid?: string;
+      readonly turnId?: string;
+      readonly step?: number;
+    }
   | {
       readonly type: 'tool.call';
       readonly stepUuid: string;
@@ -58,11 +86,15 @@ export type LoopRecordedEvent =
       readonly name: string;
       readonly args?: unknown;
       readonly extras?: Record<string, unknown>;
+      readonly uuid?: string;
+      readonly turnId?: string;
+      readonly step?: number;
     }
   | {
       readonly type: 'tool.result';
       readonly toolCallId: string;
       readonly result: { readonly output: string | readonly ContentPart[]; readonly isError?: boolean };
+      readonly parentUuid?: string;
     };
 
 interface FoldCtx {

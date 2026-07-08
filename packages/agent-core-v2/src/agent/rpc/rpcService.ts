@@ -118,6 +118,7 @@ export class AgentRPCService implements IAgentRPCService {
       role: 'user',
       content: [...payload.input],
       toolCalls: [],
+      origin: { kind: 'user' },
     });
     return turn === undefined ? undefined : { turn_id: turn.id };
   }

@@ -20,14 +20,14 @@ import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/protocol';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, KimiError, toKimiErrorPayload } from '#/errors';
-import { USER_PROMPT_ORIGIN, type PromptOrigin } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
-import type { Turn, TurnResult } from './turn';
+import type { Turn, TurnPromptInfo, TurnResult } from './turn';
 import { IAgentTurnService } from './turn';
 import { promptTurn, TurnModel } from './turnOps';
 
@@ -52,7 +52,7 @@ export class AgentTurnService implements IAgentTurnService {
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
   ) {}
 
-  launch(origin: PromptOrigin = USER_PROMPT_ORIGIN): Turn {
+  launch(prompt?: TurnPromptInfo): Turn {
     if (this.activeTurn !== undefined) {
       throw new KimiError(
         ErrorCodes.TURN_AGENT_BUSY,
@@ -62,7 +62,14 @@ export class AgentTurnService implements IAgentTurnService {
     }
 
     const turnId = this.wire.getModel(TurnModel).nextTurnId;
-    this.wire.dispatch(promptTurn({ turnId }));
+    this.wire.dispatch(
+      promptTurn({
+        turnId,
+        input: prompt?.input,
+        origin: prompt?.origin,
+        steer: prompt?.steer,
+      }),
+    );
     const abortController = new AbortController();
     const ready = createControlledPromise<void>();
     const turn: MutableTurn = {
@@ -73,7 +80,7 @@ export class AgentTurnService implements IAgentTurnService {
     };
     void ready.catch(() => undefined);
     this.activeTurn = turn;
-    this.eventBus.publish({ type: 'turn.started', turnId: turn.id, origin });
+    this.eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: prompt?.origin ?? USER_PROMPT_ORIGIN });
     turn.result = this.runTurn(turn, ready);
     return turn;
   }

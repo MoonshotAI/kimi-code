@@ -262,7 +262,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
 
       const usageModel = request.modelAlias;
-      this.usage.record(usageModel, usage, request.source);
+      if (request.source?.type !== 'turn') {
+        this.usage.record(usageModel, usage, request.source);
+      }
       this.contextSize.measured(request.messages, [message], usage);
       this.logResponse(request.logFields, usage, timing);
 

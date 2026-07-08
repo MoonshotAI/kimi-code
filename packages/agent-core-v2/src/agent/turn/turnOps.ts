@@ -34,8 +34,23 @@ function advanceTurnId(s: TurnModelState, turnId: number): TurnModelState {
   return s;
 }
 
+export interface PromptTurnPayload {
+  readonly turnId: number;
+  readonly input?: unknown;
+  readonly origin?: unknown;
+  readonly steer?: unknown;
+}
+
 export const promptTurn = defineOp(TurnModel, 'turn.prompt', {
-  apply: (s, p: { turnId: number }): TurnModelState => advanceTurnId(s, p.turnId),
+  apply: (s, p: PromptTurnPayload): TurnModelState => {
+    if (Number.isInteger(p.turnId) && p.turnId >= s.nextTurnId) {
+      return { nextTurnId: p.turnId + 1 };
+    }
+    if (!Number.isInteger(p.turnId)) {
+      return { nextTurnId: s.nextTurnId + 1 };
+    }
+    return s;
+  },
 });
 
 /** @deprecated Legacy 1.5 record type; kept registered for replay of old sessions. */

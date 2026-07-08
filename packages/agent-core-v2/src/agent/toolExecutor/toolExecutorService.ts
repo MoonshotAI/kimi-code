@@ -451,6 +451,11 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       description: displayFields?.description,
       display: displayFields?.display,
     });
+    options.onToolCall?.({
+      toolCallId: call.toolCall.id,
+      name: call.toolName,
+      args,
+    });
   }
 
   private dispatchToolResult(

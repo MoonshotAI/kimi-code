@@ -12,19 +12,17 @@ import type {
   TurnStepStartedEvent,
 } from '@moonshot-ai/protocol';
 import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
-import type { ToolResult } from '#/agent/tool/toolContract';
+import { IAgentUsageService } from '#/agent/usage/usage';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { type FinishReason } from '#/app/llmProtocol/finishReason';
-import { createToolMessage, type ContentPart, type StreamedMessagePart } from '#/app/llmProtocol/message';
+import { type StreamedMessagePart } from '#/app/llmProtocol/message';
 import { type TokenUsage } from '#/app/llmProtocol/usage';
 import { ErrorCodes, KimiError } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { newMessageId } from '#/agent/contextMemory/messageId';
-import { type ContextMessage } from '#/agent/contextMemory/types';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
@@ -51,12 +49,6 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
-
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
 export class AgentLoopService implements IAgentLoopService {
@@ -71,6 +63,7 @@ export class AgentLoopService implements IAgentLoopService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
+    @IAgentUsageService private readonly usage: IAgentUsageService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
@@ -158,6 +151,12 @@ export class AgentLoopService implements IAgentLoopService {
     const stepUuid = randomUUID();
 
     this.eventBus.publish({ type: 'turn.step.started', turnId, step: currentStep, stepId: stepUuid });
+    this.context.appendLoopEvent({
+      type: 'step.begin',
+      uuid: stepUuid,
+      turnId: String(turnId),
+      step: currentStep,
+    });
 
     let stepStarted = false;
     const markStepStarted = (): void => {
@@ -196,13 +195,18 @@ export class AgentLoopService implements IAgentLoopService {
     const { providerFinishReason, message } = response;
     let finishReason = providerFinishReason ?? 'completed';
 
-    this.append({
-      id: newMessageId(),
-      role: 'assistant',
-      content: response.message.content,
-      toolCalls: response.message.toolCalls,
-      providerMessageId: response.providerMessageId,
-    });
+    const turnIdStr = String(turnId);
+    const toolCallUuids = new Map<string, string>();
+    for (const part of message.content) {
+      this.context.appendLoopEvent({
+        type: 'content.part',
+        uuid: randomUUID(),
+        turnId: turnIdStr,
+        step: currentStep,
+        stepUuid,
+        part,
+      });
+    }
 
     const hasToolCalls = message.toolCalls.length > 0;
     if (hasToolCalls) {
@@ -210,12 +214,27 @@ export class AgentLoopService implements IAgentLoopService {
       for await (const toolResult of this.toolExecutor.execute(response.message.toolCalls, {
         signal,
         turnId,
+        onToolCall: ({ toolCallId, name, args }) => {
+          const callUuid = randomUUID();
+          toolCallUuids.set(toolCallId, callUuid);
+          this.context.appendLoopEvent({
+            type: 'tool.call',
+            uuid: callUuid,
+            turnId: turnIdStr,
+            step: currentStep,
+            stepUuid,
+            toolCallId,
+            name,
+            args,
+          });
+        },
       })) {
         const { result } = toolResult;
-        this.append({
-          ...createToolMessage(toolResult.toolCallId, toolResultOutputForModel(result)),
-          role: 'tool',
-          isError: result.isError,
+        this.context.appendLoopEvent({
+          type: 'tool.result',
+          parentUuid: toolCallUuids.get(toolResult.toolCallId) ?? randomUUID(),
+          toolCallId: toolResult.toolCallId,
+          result: { output: result.output, isError: result.isError },
         });
         if (result.stopTurn === true) stopTurn = true;
       }
@@ -229,6 +248,33 @@ export class AgentLoopService implements IAgentLoopService {
     signal.throwIfAborted();
 
     markStepStarted();
+    const timing = response.timing;
+    const stepProviderFinishReason =
+      response.providerFinishReason !== undefined &&
+      response.providerFinishReason !== finishReason
+        ? response.providerFinishReason
+        : undefined;
+    this.context.appendLoopEvent({
+      type: 'step.end',
+      uuid: stepUuid,
+      turnId: turnIdStr,
+      step: currentStep,
+      finishReason: normalizeFinishReason(finishReason),
+      usage,
+      llmFirstTokenLatencyMs: timing?.firstTokenLatencyMs,
+      llmStreamDurationMs: timing?.streamDurationMs,
+      llmRequestBuildMs: timing?.requestBuildMs,
+      llmServerFirstTokenMs: timing?.serverFirstTokenMs,
+      llmServerDecodeMs: timing?.serverDecodeMs,
+      llmClientConsumeMs: timing?.clientConsumeMs,
+      messageId: response.providerMessageId,
+      providerFinishReason: stepProviderFinishReason,
+      rawFinishReason:
+        stepProviderFinishReason !== undefined ? response.rawFinishReason : undefined,
+    });
+    if (response.model !== undefined) {
+      this.usage.record(response.model, usage, { type: 'turn', turnId, step: currentStep });
+    }
     this.emitStepCompleted(turnId, currentStep, stepUuid, usage, finishReason, response);
 
     const afterStepContext: AfterStepContext = {
@@ -250,10 +296,6 @@ export class AgentLoopService implements IAgentLoopService {
       stopReason: finishReason,
       continue: afterStepContext.continue,
     };
-  }
-
-  private append(message: ContextMessage): void {
-    this.context.append(message);
   }
 
   private emitStepCompleted(
@@ -366,32 +408,10 @@ export class AgentLoopService implements IAgentLoopService {
   }
 }
 
-function toolResultOutputForModel(result: ToolResult): string | ContentPart[] {
-  const output = result.output;
-  if (typeof output === 'string') {
-    if (result.isError === true) {
-      if (output.length === 0) return TOOL_EMPTY_ERROR_STATUS;
-      if (output.trimStart().startsWith('<system>ERROR:')) return output;
-      return `${TOOL_ERROR_STATUS}\n${output}`;
-    }
-    if (output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT) {
-      return TOOL_EMPTY_STATUS;
-    }
-    return output;
-  }
-
-  if (output.length === 0) {
-    return [
-      {
-        type: 'text',
-        text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS,
-      },
-    ];
-  }
-  if (result.isError === true) {
-    return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
-  }
-  return output;
+function normalizeFinishReason(reason: string): string {
+  if (reason === 'tool_calls') return 'tool_use';
+  if (reason === 'completed') return 'end_turn';
+  return reason;
 }
 
 registerScopedService(
