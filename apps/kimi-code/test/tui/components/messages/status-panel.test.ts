@@ -68,6 +68,38 @@ describe('status panel report lines', () => {
     expect(output).not.toContain('Runtime');
   });
 
+  it('formats extra usage section in status report', () => {
+    const lines = buildStatusReportLines({
+      version: '1.2.3',
+      model: 'k2',
+      workDir: '/tmp/project',
+      sessionId: 'ses-1',
+      sessionTitle: null,
+      thinkingEffort: 'off',
+      permissionMode: 'manual',
+      planMode: false,
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      availableModels: {},
+      managedUsage: {
+        summary: null,
+        limits: [],
+        extraUsage: {
+          label: 'Extra Usage',
+          used: 250,
+          limit: 1000,
+          resetHint: 'resets in 10d',
+        },
+      },
+    }).map(strip);
+
+    const output = lines.join('\n');
+    expect(output).toContain('Extra Usage');
+    expect(output).toContain('25% used');
+    expect(output).toContain('resets in 10d');
+  });
+
   it('falls back to app state and shows status load errors as warnings', () => {
     const lines = buildStatusReportLines({
       version: '1.2.3',
