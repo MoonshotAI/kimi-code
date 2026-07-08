@@ -26,6 +26,7 @@ export interface RunRgResult {
   readonly stdoutText: string;
   readonly stderrText: string;
   readonly bufferTruncated: boolean;
+  readonly stderrTruncated: boolean;
   readonly timedOut: boolean;
 }
 
@@ -121,6 +122,7 @@ export async function runRgOnce(
   let stdoutText = '';
   let stderrText = '';
   let bufferTruncated = false;
+  let stderrTruncated = false;
 
   try {
     const isTerminating = (): boolean => timedOut || aborted || killed;
@@ -132,6 +134,7 @@ export async function runRgOnce(
     stdoutText = stdoutResult.text;
     stderrText = stderrResult.text;
     bufferTruncated = stdoutResult.truncated;
+    stderrTruncated = stderrResult.truncated;
     exitCode = code;
   } catch (error) {
     if (!(isPrematureCloseError(error) && (timedOut || aborted || killed))) {
@@ -148,7 +151,15 @@ export async function runRgOnce(
     return { kind: 'aborted' };
   }
 
-  return { kind: 'result', exitCode, stdoutText, stderrText, bufferTruncated, timedOut };
+  return {
+    kind: 'result',
+    exitCode,
+    stdoutText,
+    stderrText,
+    bufferTruncated,
+    stderrTruncated,
+    timedOut,
+  };
 }
 
 /**
