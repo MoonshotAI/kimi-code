@@ -490,12 +490,13 @@ describe('disclosure mode — executable table freshness', () => {
 });
 
 describe('disclosure mode — compaction', () => {
-  it('filters protocol context from the summarizer input and rebuilds schemas after compaction', async () => {
+  it('filters protocol context from the summarizer input and discards loaded schemas after compaction', async () => {
     const ctx = await disclosureAgent();
 
     ctx.mockNextResponse({ type: 'text', text: 'load' }, selectCall('call-1', [GRAFANA_TOOL]));
     ctx.mockNextResponse({ type: 'text', text: 'ok' });
     await runTurn(ctx, 'load it');
+    expect(schemaMessages(ctx)).toHaveLength(1);
 
     const compacted = new Promise<{ tokensAfter: number }>((resolve) => {
       ctx.emitter.once('context.apply_compaction', (entry: { args: { tokensAfter: number } }) => {
@@ -513,36 +514,42 @@ describe('disclosure mode — compaction', () => {
     expect(summarizerCall.history.some((m) => m.tools !== undefined)).toBe(false);
     expect(JSON.stringify(summarizerCall.history)).not.toContain('<tools_added>');
 
-    // Post-compaction context: one rebuild message with the registry schema,
-    // plus a fresh full announcement — no re-select needed.
-    const rebuilt = schemaMessages(ctx);
-    expect(rebuilt).toHaveLength(1);
-    expect(rebuilt[0]!.tools!.map((t) => t.name)).toEqual([GRAFANA_TOOL]);
-    expect(rebuilt[0]!.origin).toEqual({ kind: 'injection', variant: 'dynamic_tool_schema' });
+    // Post-compaction context: the loaded set is DISCARDED — no schema
+    // message is rebuilt, the ledger is empty, deferred extras drop out of
+    // the executable table. The boundary announcement re-lists every
+    // loadable name so the model re-selects what it still needs.
+    expect(schemaMessages(ctx)).toHaveLength(0);
+    expect(ctx.agent.tools.loadedDynamicToolNames().has(GRAFANA_TOOL)).toBe(false);
+    expect(ctx.agent.tools.loopTools.map((t) => t.name)).not.toContain(GRAFANA_TOOL);
     expect(ctx.agent.context.history.filter(isLoadableToolsAnnouncement)).toHaveLength(1);
-    expect(ctx.agent.tools.loadedDynamicToolNames().has(GRAFANA_TOOL)).toBe(true);
-    expect(ctx.agent.tools.loopTools.map((t) => t.name)).toContain(GRAFANA_TOOL);
+    expect(historyText(ctx)).toContain(`<tools_added>\n${GRAFANA_TOOL}\n</tools_added>`);
 
-    // The "nothing new since compaction" guard must be baselined on the
-    // true post-compaction floor: summary + rebuild message + the reinjected
-    // announcement. result.tokensAfter predates all of it, and a baseline
-    // that misses any re-appended piece would let auto-compaction re-trigger
-    // against a floor that cannot shrink (each round strips and re-appends
-    // the same reminders).
+    // The "nothing new since compaction" guard is baselined on the true
+    // post-compaction floor: summary + the reinjected announcement (no
+    // rebuild message anymore). A baseline missing any re-appended piece
+    // would let auto-compaction re-trigger against a floor that cannot
+    // shrink (each round strips and re-appends the same reminders).
     const internals = ctx.agent.fullCompaction as unknown as {
       lastCompactedTokenCount: number | null;
     };
     const reAnnouncement = ctx.agent.context.history.filter(isLoadableToolsAnnouncement).at(-1)!;
     expect(internals.lastCompactedTokenCount).toBe(
-      tokensAfter + estimateTokensForMessage(rebuilt[0]!) + estimateTokensForMessage(reAnnouncement),
+      tokensAfter + estimateTokensForMessage(reAnnouncement),
     );
+
+    // Re-selecting after compaction takes the injection branch again (not
+    // "Already available") — the discard is total, not just cosmetic.
+    ctx.mockNextResponse({ type: 'text', text: 'reload' }, selectCall('call-2', [GRAFANA_TOOL]));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await runTurn(ctx, 'load it again');
+    expect(toolResultTexts(ctx)).toContainEqual(`Loaded: ${GRAFANA_TOOL}`);
+    expect(schemaMessages(ctx)).toHaveLength(1);
+    expect(ctx.agent.tools.loadedDynamicToolNames().has(GRAFANA_TOOL)).toBe(true);
 
     // The baseline lives strictly within one turn: runOneTurn re-arms it at
     // every turn boundary, which is what makes cross-turn staleness (undo,
     // model switches, /clear while idle) structurally impossible. If this
     // reset ever moves, the guard's staleness analysis must be redone.
-    ctx.mockNextResponse({ type: 'text', text: 'next turn' });
-    await runTurn(ctx, 'anything new');
     expect(internals.lastCompactedTokenCount).toBeNull();
   });
 
@@ -590,11 +597,13 @@ describe('disclosure mode — compaction', () => {
     expect(backCall.tools.map((t) => t.name)).not.toContain('select_tools');
   });
 
-  it('trims the schema rebuild instead of re-entering the compaction trigger band', async () => {
-    // A trigger far below one fat schema: without the rebuild budget guard the
-    // post-compaction floor (users + summary + schema) would sit permanently
-    // above the trigger, and every later step would re-compact and rebuild in
-    // a loop (with the default Infinity per-turn cap, forever).
+  it('discards heavy loaded schemas at compaction instead of re-entering the trigger band', async () => {
+    // A trigger far below one fat schema: if compaction carried loaded
+    // schemas back into the context, the post-compaction floor (users +
+    // summary + schema) would sit permanently above the trigger and every
+    // later step would re-compact in a loop (with the default Infinity
+    // per-turn cap, forever). Discard-on-compaction keeps the floor at
+    // users + summary, structurally outside the band.
     const trigger = 2_000;
     const ctx = testAgent({
       experimentalFlags: toolSelectFlagOn(),
@@ -638,10 +647,11 @@ describe('disclosure mode — compaction', () => {
     await ctx.rpc.setPermission({ mode: 'yolo' });
 
     // Step 1 loads the fat schema; step 2's boundary trips the trigger and
-    // blocks on auto-compaction (consuming the summary mock), which trims the
-    // rebuild. Step 2 then calls the MCP tool directly — the executable table
-    // is resolved AFTER the compaction (same state as the messages), so the
-    // now-unloaded tool must be rejected by preflight, not dispatched.
+    // blocks on auto-compaction (consuming the summary mock), which discards
+    // the loaded schema. Step 2 then calls the MCP tool directly — the
+    // executable table is resolved AFTER the compaction (same state as the
+    // messages), so the now-unloaded tool must be rejected by preflight, not
+    // dispatched.
     const fatCallLog: unknown[] = [];
     (fatClient as { callTool: unknown }).callTool = async (...args: unknown[]) => {
       fatCallLog.push(args);
@@ -653,12 +663,12 @@ describe('disclosure mode — compaction', () => {
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await runTurn(ctx, 'load the fat tool');
 
-    // The rebuild was trimmed away: no schema message survives, the ledger is
+    // The loaded set was discarded: no schema message survives, the ledger is
     // empty again, and the tool is simply re-selectable on demand.
     expect(schemaMessages(ctx)).toHaveLength(0);
     expect(ctx.agent.tools.loadedDynamicToolNames().has(GRAFANA_TOOL)).toBe(false);
 
-    // The direct call after the trim was rejected with select guidance and
+    // The direct call after the discard was rejected with select guidance and
     // never reached the MCP client.
     expect(fatCallLog).toHaveLength(0);
     expect(toolResultTexts(ctx).join('\n')).toContain(

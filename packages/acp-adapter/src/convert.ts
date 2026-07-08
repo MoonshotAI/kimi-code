@@ -5,6 +5,7 @@ import {
   compressBase64ForModel,
   persistOriginalImage,
   type PromptPart,
+  type TelemetryClient,
   type ToolInputDisplay,
   type ToolResultEvent,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -88,14 +89,23 @@ export function acpBlocksToPromptParts(
  */
 export async function compressPromptImageParts(
   parts: readonly PromptPart[],
-  options: { readonly originalsDir?: string | undefined } = {},
+  options: {
+    readonly originalsDir?: string | undefined;
+    /** Report an `image_compress` event per prompt image (source `acp_prompt`). */
+    readonly telemetry?: TelemetryClient | undefined;
+  } = {},
 ): Promise<PromptPart[]> {
   const out: PromptPart[] = [];
   for (const part of parts) {
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {
-        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType);
+        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType, {
+          telemetry:
+            options.telemetry === undefined
+              ? undefined
+              : { client: options.telemetry, source: 'acp_prompt' },
+        });
         if (result.changed) {
           const originalPath = await persistOriginalImage(
             Buffer.from(parsed.base64, 'base64'),

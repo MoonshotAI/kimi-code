@@ -14,6 +14,7 @@ import {
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
+import type { TelemetryClient } from '../../src/telemetry';
 import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -41,6 +42,35 @@ const MP4_HEADER = Buffer.concat([
   Buffer.from('mp42isom'),
 ]);
 
+/**
+ * Insert a minimal EXIF APP1 segment carrying only an Orientation tag right
+ * after the JPEG SOI marker (jimp itself never writes EXIF). Mirrors the
+ * fixture in image-compress.test.ts.
+ */
+function withExifOrientation(jpeg: Uint8Array, orientation: number): Buffer {
+  // TIFF body, little-endian: 8-byte header + IFD0 with a single entry.
+  const tiff = Buffer.alloc(26);
+  tiff.write('II', 0, 'latin1');
+  tiff.writeUInt16LE(42, 2);
+  tiff.writeUInt32LE(8, 4); // offset of IFD0
+  tiff.writeUInt16LE(1, 8); // one directory entry
+  tiff.writeUInt16LE(0x0112, 10); // tag: Orientation
+  tiff.writeUInt16LE(3, 12); // type: SHORT
+  tiff.writeUInt32LE(1, 14); // count
+  tiff.writeUInt16LE(orientation, 18); // value, left-aligned in the 4-byte field
+  tiff.writeUInt32LE(0, 22); // no next IFD
+  const exifBody = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+  const app1Header = Buffer.alloc(4);
+  app1Header.writeUInt16BE(0xff_e1, 0);
+  app1Header.writeUInt16BE(exifBody.length + 2, 2);
+  return Buffer.concat([
+    Buffer.from(jpeg.subarray(0, 2)), // SOI
+    app1Header,
+    exifBody,
+    Buffer.from(jpeg.subarray(2)),
+  ]);
+}
+
 function capabilities(overrides: Partial<ModelCapability> = {}): ModelCapability {
   return {
     image_in: true,
@@ -58,6 +88,7 @@ function makeReadMediaTool(
     readonly stat?: Kaos['stat'] | undefined;
     readonly readBytes?: Kaos['readBytes'] | undefined;
     readonly modelCapabilities?: ModelCapability | undefined;
+    readonly telemetry?: TelemetryClient | undefined;
   } = {},
 ): ReadMediaFileTool {
   const kaos = createFakeKaos({
@@ -68,6 +99,8 @@ function makeReadMediaTool(
     kaos,
     PERMISSIVE_WORKSPACE,
     input.modelCapabilities ?? capabilities(),
+    undefined,
+    input.telemetry,
   );
 }
 
@@ -655,9 +688,9 @@ describe('ReadMediaFileTool', () => {
 
   it('downsamples an oversized image but reports original dimensions', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
     );
-    expect(sniffImageDimensions(big)).toEqual({ width: 2600, height: 2600 });
+    expect(sniffImageDimensions(big)).toEqual({ width: 3600, height: 3600 });
 
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
@@ -678,12 +711,134 @@ describe('ReadMediaFileTool', () => {
     // The image actually sent to the model is downsampled to the edge cap.
     const sentBytes = Buffer.from(match![2]!, 'base64');
     const sentDims = sniffImageDimensions(sentBytes);
-    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(3000);
 
     // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
-    expect(systemText).toContain('2600x2600');
+    expect(systemText).toContain('3600x3600');
     expect(systemText).toContain(`${String(big.length)} bytes`);
+  });
+
+  it('reports an EXIF-rotated original in the decoded coordinate space', async () => {
+    // Orientation 6 (rotate 90° CW): the header says 3600x1800, but jimp
+    // decodes to 1800x3600 — the space the sent image and any region
+    // readback live in. The note's original size must match that space,
+    // not the pre-rotation header sniff.
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: portrait.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(portrait),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_exif',
+      args: { path: '/workspace/portrait.jpg' },
+      signal,
+    });
+
+    const systemText = noteText(result);
+    expect(systemText).toContain('Original dimensions: 1800x3600');
+    expect(systemText).toMatch(/downsampled to 1500x3000/);
+  });
+
+  it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
+    // Region coordinates live in the decoded (rotated) space; the note's
+    // original size must agree with it even when the header sniff succeeds.
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: portrait.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(portrait),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_exif_region',
+      args: { path: '/workspace/portrait.jpg', region: { x: 0, y: 0, width: 40, height: 40 } },
+      signal,
+    });
+
+    expect(noteText(result)).toContain('Original dimensions: 80x120');
+  });
+
+  it('reports display-space dimensions for an EXIF-rotated image sent untouched', async () => {
+    // Within both budgets the original bytes are sent without decoding; the
+    // note must still report the display-space size so coordinates derived
+    // from it agree with a later region readback (which decodes).
+    const portrait = withExifOrientation(
+      new Uint8Array(
+        await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
+          quality: 90,
+        }),
+      ),
+      6,
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: portrait.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(portrait),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_exif_untouched',
+      args: { path: '/workspace/portrait.jpg' },
+      signal,
+    });
+
+    const systemText = noteText(result);
+    expect(systemText).toContain('Original dimensions: 80x120');
+    expect(systemText).not.toMatch(/downsampled/i);
+  });
+
+  it('emits image_compress and image_crop telemetry tagged read_media', async () => {
+    const events: { event: string; props: Record<string, unknown> }[] = [];
+    const telemetry: TelemetryClient = {
+      track: (event, props) => events.push({ event, props: props ?? {} }),
+    };
+    const big = Buffer.from(
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+    );
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(big),
+      telemetry,
+    });
+
+    await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_tele_read',
+      args: { path: '/workspace/big.png' },
+      signal,
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event).toBe('image_compress');
+    expect(events[0]!.props['source']).toBe('read_media');
+    expect(events[0]!.props['outcome']).toBe('compressed');
+
+    await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_tele_crop',
+      args: { path: '/workspace/big.png', region: { x: 0, y: 0, width: 100, height: 100 } },
+      signal,
+    });
+    expect(events).toHaveLength(2);
+    expect(events[1]!.event).toBe('image_crop');
+    expect(events[1]!.props['source']).toBe('read_media');
+    expect(events[1]!.props['ok']).toBe(true);
   });
 
   describe('region and full_resolution', () => {
@@ -725,7 +880,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     it('announces a downsampled delivery and the region readback in the <system> block', async () => {
-      const big = await bigPng(2600, 2600);
+      const big = await bigPng(3600, 3600);
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_note',
@@ -734,11 +889,11 @@ describe('ReadMediaFileTool', () => {
       });
 
       const systemText = noteText(result);
-      expect(systemText).toContain('2600x2600');
+      expect(systemText).toContain('3600x3600');
       // Wording must not depend on serialization order: some providers keep
       // the note inline after the media, others flatten tool text and
       // re-attach the image after it — so no "above"/"below".
-      expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
+      expect(systemText).toMatch(/The attached image was downsampled to 3000x3000/);
       expect(systemText).toMatch(/fine detail/i);
       expect(systemText).toContain('region');
     });
@@ -797,7 +952,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     it('serves full_resolution when the bytes fit the per-image budget', async () => {
-      const big = await bigPng(2600, 1300); // over the edge cap, tiny in bytes
+      const big = await bigPng(3900, 1950); // over the edge cap, tiny in bytes
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_fullres',

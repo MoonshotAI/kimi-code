@@ -12,6 +12,7 @@ import type {
   FinishReason,
   GenerateOptions,
   ProviderRequestAuth,
+  ResponseFormat,
   StreamedMessage,
   ThinkingEffort,
 } from '#/provider';
@@ -141,6 +142,27 @@ const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
 };
+
+function applyResponseFormat(
+  kwargs: Record<string, unknown>,
+  format: ResponseFormat | undefined,
+): void {
+  if (format === undefined) return;
+  if (format.type === 'json_object') {
+    throw new ChatProviderError(
+      'Anthropic provider requires a JSON schema for structured response output.',
+    );
+  }
+  const outputConfig =
+    kwargs['output_config'] !== undefined && kwargs['output_config'] !== null
+      ? { ...(kwargs['output_config'] as Record<string, unknown>) }
+      : {};
+  outputConfig['format'] = {
+    type: 'json_schema',
+    schema: format.jsonSchema.schema,
+  };
+  kwargs['output_config'] = outputConfig;
+}
 
 /**
  * Per-version default output ceilings sourced from Anthropic's Messages
@@ -1114,6 +1136,7 @@ export class AnthropicChatProvider implements ChatProvider {
     if (this._generationKwargs.output_config !== undefined) {
       kwargs['output_config'] = this._generationKwargs.output_config;
     }
+    applyResponseFormat(kwargs, options?.responseFormat);
     if (this._generationKwargs.contextManagement !== undefined) {
       kwargs['context_management'] = this._generationKwargs.contextManagement;
     }

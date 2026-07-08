@@ -237,6 +237,11 @@ export function sniffMediaFromMagic(data: Buffer | Uint8Array): FileType | null 
 export interface ImageDimensions {
   readonly width: number;
   readonly height: number;
+  /**
+   * Present (true) when a JPEG EXIF orientation of 5-8 swapped the reported
+   * width/height into display space.
+   */
+  readonly transposed?: boolean;
 }
 
 /**
@@ -247,6 +252,11 @@ export interface ImageDimensions {
  * after the `WEBP` tag, or the first JPEG SOFn segment). Returns `null`
  * for formats whose dimensions are not locatable from that region, or
  * when the supplied buffer is too short to cover it.
+ *
+ * JPEG dimensions are reported in DISPLAY space: an EXIF Orientation of
+ * 5-8 transposes the image at decode time, so the SOF width/height are
+ * swapped to match what decoders (and this codebase's crop regions and
+ * compression captions) actually operate in.
  */
 export function sniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions | null {
   const buf = toBuffer(data);
@@ -297,8 +307,10 @@ export function sniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions
   }
 
   // JPEG — scan segment markers for a Start-Of-Frame (SOFn) marker,
-  // whose payload carries height/width as big-endian uint16.
+  // whose payload carries height/width as big-endian uint16. An EXIF
+  // APP1 segment encountered on the way supplies the orientation.
   if (startsWith(buf, [0xff, 0xd8])) {
+    let orientation: number | null = null;
     let offset = 2;
     while (offset + 9 < buf.length) {
       if (buf[offset] !== 0xff) {
@@ -314,10 +326,11 @@ export function sniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions
         marker !== 0xc8 &&
         marker !== 0xcc
       ) {
-        return {
-          height: buf.readUInt16BE(offset + 5),
-          width: buf.readUInt16BE(offset + 7),
-        };
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        return orientation !== null && orientation >= 5
+          ? { width: height, height: width, transposed: true }
+          : { width, height };
       }
       // Standalone markers (RSTn, SOI, EOI) carry no length field.
       if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
@@ -326,10 +339,49 @@ export function sniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions
       }
       const segmentLength = buf.readUInt16BE(offset + 2);
       if (segmentLength < 2) break;
+      if (marker === 0xe1 && orientation === null) {
+        orientation = readExifOrientation(buf, offset + 4, offset + 2 + segmentLength);
+      }
       offset += 2 + segmentLength;
     }
   }
 
+  return null;
+}
+
+/**
+ * Read the Orientation tag (0x0112) out of a JPEG APP1 payload spanning
+ * [`start`, `end`). Returns 1-8, or `null` when the payload is not EXIF,
+ * is truncated, or carries no valid orientation. Only IFD0 is examined —
+ * that is where the tag lives; nothing here follows nested IFDs.
+ */
+function readExifOrientation(buf: Buffer, start: number, end: number): number | null {
+  const boundedEnd = Math.min(end, buf.length);
+  // 'Exif\0\0' preamble, then the TIFF header.
+  if (start + 6 > boundedEnd || buf.toString('latin1', start, start + 6) !== 'Exif\0\0') {
+    return null;
+  }
+  const tiff = start + 6;
+  if (tiff + 8 > boundedEnd) return null;
+  const byteOrder = buf.toString('latin1', tiff, tiff + 2);
+  const le = byteOrder === 'II';
+  if (!le && byteOrder !== 'MM') return null;
+  const u16 = (offset: number): number => (le ? buf.readUInt16LE(offset) : buf.readUInt16BE(offset));
+  const u32 = (offset: number): number => (le ? buf.readUInt32LE(offset) : buf.readUInt32BE(offset));
+  if (u16(tiff + 2) !== 42) return null;
+  const ifd = tiff + u32(tiff + 4);
+  if (ifd + 2 > boundedEnd) return null;
+  const entryCount = u16(ifd);
+  for (let i = 0; i < entryCount; i += 1) {
+    const entry = ifd + 2 + i * 12;
+    if (entry + 12 > boundedEnd) return null;
+    if (u16(entry) === 0x0112) {
+      // Type SHORT: the value sits in the first two bytes of the 4-byte
+      // value field, in the TIFF byte order.
+      const value = u16(entry + 8);
+      return value >= 1 && value <= 8 ? value : null;
+    }
+  }
   return null;
 }
 

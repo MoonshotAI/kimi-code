@@ -929,6 +929,12 @@ function connectEventsIfNeeded(): void {
     onConnectionChange(connected: boolean) {
       rawState.connected = connected;
       rawState.connection = connected ? 'connected' : 'disconnected';
+      // The data channel is healthy again (server_hello received). Clear any
+      // stale "Realtime connection error" toast instead of relying on its
+      // auto-dismiss timer: iOS Safari freezes timers while a tab is
+      // backgrounded, so the toast would otherwise linger until a manual
+      // refresh even though the reconnect already succeeded.
+      if (connected) dismissWsError();
     },
   });
 }
@@ -1093,6 +1099,19 @@ function operationFailureNotice(
 
 function pushWarning(warning: AppWarning): void {
   rawState.warnings = [...rawState.warnings, warning];
+}
+
+// Drop every "Realtime connection error" notice pushed by the WS onError
+// handler. Matched by severity + the localized wsTitle (the same i18n instance
+// used to push it), so other errors are left untouched.
+function dismissWsError(): void {
+  const title = i18n.global.t('warnings.wsTitle');
+  const next = rawState.warnings.filter(
+    (w) => !(typeof w === 'object' && w !== null && w.severity === 'error' && w.title === title),
+  );
+  if (next.length !== rawState.warnings.length) {
+    rawState.warnings = next;
+  }
 }
 
 function pushOperationFailure(
