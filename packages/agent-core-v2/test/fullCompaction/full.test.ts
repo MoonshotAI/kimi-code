@@ -16,6 +16,7 @@ import { makeHookRunner } from '../externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
 import { microCompactionFlag } from '#/agent/microCompaction/flag';
+import { COMPACTION_SUMMARY_PREFIX } from '#/agent/contextMemory/compactionHandoff';
 import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../harness';
@@ -636,23 +637,26 @@ describe('FullCompaction', () => {
     await completed;
 
     expect(attempts).toBe(3);
-    // Each empty summary shrinks the compacted prefix before retrying, so the
-    // recovered summary compacts only the older exchange and leaves the recent
-    // one in history.
+    // Empty summaries are retried without shrinking the history; the recovered
+    // summary replaces the whole history with the real user messages plus the
+    // prefixed summary.
     expect(ctx.compactHistory()).toEqual([
-      { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'old user one' },
       { role: 'user', text: 'recent user two' },
-      { role: 'assistant', text: 'recent assistant two' },
+      { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nRecovered compacted summary.` },
     ]);
     expect(
       ctx.allEvents.filter((event) => event.event === 'compaction.completed'),
     ).toEqual([
       expect.objectContaining({
         args: expect.objectContaining({
-          result: expect.objectContaining({ summary: 'Recovered compacted summary.' }),
+          result: expect.objectContaining({
+            summary: expect.stringContaining('Recovered compacted summary.'),
+          }),
         }),
       }),
     ]);
+    vi.useRealTimers();
     await ctx.expectResumeMatches();
   });
 
@@ -692,13 +696,14 @@ describe('FullCompaction', () => {
     await completed;
 
     expect(inputs).toHaveLength(2);
-    // The retry compacts a strictly smaller prefix than the first attempt.
+    // The retry sends a strictly smaller input than the first attempt.
     expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
     expect(ctx.compactHistory()).toEqual([
-      { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'old user one' },
       { role: 'user', text: 'recent user two' },
-      { role: 'assistant', text: 'recent assistant two' },
+      { role: 'user', text: `${COMPACTION_SUMMARY_PREFIX}\nRecovered compacted summary.` },
     ]);
+    vi.useRealTimers();
     await ctx.expectResumeMatches();
   });
 
@@ -771,8 +776,10 @@ describe('FullCompaction', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
-    // MAX_COMPACTION_RETRY_ATTEMPTS attempts, with prefix reduction between them.
-    expect(inputs).toHaveLength(5);
+    // Each empty/think-only response drops the oldest item and resets the retry
+    // counter; once only one item remains, MAX_COMPACTION_RETRY_ATTEMPTS more
+    // retries run before failing. 3 drops + 5 retries = 8 generate calls.
+    expect(inputs).toHaveLength(8);
     expect(inputs[1]!.length).toBeLessThan(inputs[0]!.length);
     expect(records).toContainEqual({
       event: 'compaction_failed',
