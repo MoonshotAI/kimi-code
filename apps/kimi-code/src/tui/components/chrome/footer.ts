@@ -17,6 +17,10 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 import {
+  runStatusLineCommand,
+  type StatusLineCommandPayload,
+} from '#/tui/utils/status-line-command';
+import {
   createGitStatusCache,
   formatGitBadgeBase,
   formatPullRequestBadge,
@@ -27,6 +31,7 @@ import { safeUsageRatio } from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
+const STATUS_LINE_REFRESH_INTERVAL_MS = 1_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
 // joined by " | ") when space allows; tips flagged `solo` are long or
@@ -188,6 +193,12 @@ export class FooterComponent implements Component {
   private gitCache: GitStatusCache;
   private gitCacheWorkDir: string;
   private transientHint: string | null = null;
+  private statusLineText: string | null = null;
+  private statusLineInFlight = false;
+  private statusLineTimer: ReturnType<typeof setInterval> | null = null;
+  private statusLineCommand: string | null = null;
+  private statusLineGeneration = 0;
+  private disposed = false;
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
   private goalTimer: ReturnType<typeof setInterval> | null = null;
@@ -208,6 +219,7 @@ export class FooterComponent implements Component {
     this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
+    this.syncStatusLineTimer(state.statusLine.command);
   }
 
   setState(state: AppState): void {
@@ -218,6 +230,7 @@ export class FooterComponent implements Component {
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.state = state;
+    this.syncStatusLineTimer(state.statusLine.command);
   }
 
   /**
@@ -332,29 +345,30 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
-    const contextText = formatContextStatus(
-      state.contextUsage,
-      state.contextTokens,
-      state.maxContextTokens,
-    );
-    const contextWidth = visibleWidth(contextText);
+    // ── Line 2: transient hint (bottom-left) + status line (right) ──
+    const statusLineText =
+      this.statusLineText ??
+      formatContextStatus(state.contextUsage, state.contextTokens, state.maxContextTokens);
+    const renderedStatusLine =
+      this.statusLineText === null ? chalk.hex(colors.text)(statusLineText) : statusLineText;
     let line2: string;
     if (this.transientHint) {
-      const maxHintWidth = Math.max(0, width - contextWidth - 1);
+      const statusLineWidth = visibleWidth(statusLineText);
+      const maxHintWidth = Math.max(0, width - statusLineWidth - 1);
       const shownHint =
         visibleWidth(this.transientHint) <= maxHintWidth
           ? this.transientHint
           : truncateToWidth(this.transientHint, maxHintWidth, '…');
       const hintWidth = visibleWidth(shownHint);
-      const pad = Math.max(0, width - hintWidth - contextWidth);
+      const pad = Math.max(0, width - hintWidth - statusLineWidth);
       line2 =
         chalk.hex(colors.warning).bold(shownHint) +
         ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
+        renderedStatusLine;
     } else {
-      const leftPad = Math.max(0, width - contextWidth);
-      line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);
+      const statusLineWidth = visibleWidth(statusLineText);
+      const leftPad = Math.max(0, width - statusLineWidth);
+      line2 = ' '.repeat(leftPad) + renderedStatusLine;
     }
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
@@ -383,10 +397,92 @@ export class FooterComponent implements Component {
     }
   }
 
+  private syncStatusLineTimer(command: string | null): void {
+    if (command !== this.statusLineCommand) {
+      this.statusLineCommand = command;
+      this.statusLineGeneration += 1;
+      this.statusLineText = null;
+    }
+
+    if (command !== null) {
+      if (this.statusLineTimer === null) {
+        this.statusLineTimer = setInterval(() => {
+          void this.refreshStatusLine();
+        }, STATUS_LINE_REFRESH_INTERVAL_MS);
+        this.statusLineTimer.unref?.();
+      }
+      void this.refreshStatusLine();
+      return;
+    }
+
+    if (this.statusLineTimer !== null) {
+      clearInterval(this.statusLineTimer);
+      this.statusLineTimer = null;
+    }
+  }
+
+  private async refreshStatusLine(): Promise<void> {
+    const { command, timeoutMs } = this.state.statusLine;
+    if (command === null || this.statusLineInFlight) return;
+    const generation = this.statusLineGeneration;
+    this.statusLineInFlight = true;
+    let text: string | null = null;
+    try {
+      text = await runStatusLineCommand({
+        command,
+        timeoutMs,
+        payload: this.createStatusLinePayload(),
+      });
+    } catch {
+      text = null;
+    } finally {
+      this.statusLineInFlight = false;
+    }
+
+    if (
+      this.disposed ||
+      generation !== this.statusLineGeneration ||
+      this.state.statusLine.command !== command
+    ) {
+      if (!this.disposed && this.state.statusLine.command !== null) {
+        void this.refreshStatusLine();
+      }
+      return;
+    }
+
+    this.statusLineText = text;
+    this.onRefresh();
+  }
+
+  private createStatusLinePayload(): StatusLineCommandPayload {
+    const state = this.state;
+    return {
+      session_id: state.sessionId,
+      model: state.model,
+      display_model: modelDisplayName(state),
+      cwd: state.workDir,
+      permission_mode: state.permissionMode,
+      plan_mode: state.planMode,
+      input_mode: state.inputMode,
+      swarm_mode: state.swarmMode,
+      thinking_effort: state.thinkingEffort,
+      context: {
+        usage: safeUsage(state.contextUsage),
+        tokens: state.contextTokens,
+        max_tokens: state.maxContextTokens,
+      },
+    };
+  }
+
   dispose(): void {
+    this.disposed = true;
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;
+    }
+    if (this.statusLineTimer !== null) {
+      clearInterval(this.statusLineTimer);
+      this.statusLineTimer = null;
     }
   }
 

@@ -292,6 +292,8 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+| `[status_line].command` | `string` | `""` | 用来渲染第二行 footer 的外部命令；留空则使用内置上下文用量指示 |
+| `[status_line].timeout_ms` | `integer` | `200` | 等待 status line 命令的最长时间 |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -307,6 +309,33 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[status_line]
+command = "" # 外部命令；留空则使用内置上下文用量指示
+timeout_ms = 200
+```
+
+设置 `[status_line].command` 后，Kimi Code 会约每秒运行一次该命令，通过 stdin 传入 JSON，并把 stdout 的第一行作为第二行 footer 显示。命令非零退出、超时或没有输出时，会回退到内置上下文用量指示。
+
+示例 payload：
+
+```json
+{
+  "session_id": "ses_123",
+  "model": "kimi-k2",
+  "display_model": "Kimi K2",
+  "cwd": "/path/to/project",
+  "permission_mode": "manual",
+  "plan_mode": false,
+  "input_mode": "prompt",
+  "swarm_mode": false,
+  "thinking_effort": "off",
+  "context": {
+    "usage": 0.12,
+    "tokens": 31457,
+    "max_tokens": 262144
+  }
+}
 ```
 
 修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。

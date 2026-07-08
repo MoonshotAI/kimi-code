@@ -27,6 +27,7 @@ function fakeInitialAppState(): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    statusLine: { command: null, timeoutMs: 200 },
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,

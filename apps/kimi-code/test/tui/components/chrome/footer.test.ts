@@ -1,11 +1,17 @@
 import chalk from 'chalk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
+
+const statusLineMocks = vi.hoisted(() => ({
+  runStatusLineCommand: vi.fn(),
+}));
+
+vi.mock('#/tui/utils/status-line-command', () => statusLineMocks);
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
@@ -15,6 +21,14 @@ function truecolorCodes(text: string): Set<string> {
     codes.add(`${match[1]},${match[2]},${match[3]}`);
   }
   return codes;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
 }
 
 // Dark dance colors the footer never uses outside of /dance.
@@ -55,6 +69,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  statusLine: { command: null, timeoutMs: 200 },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -65,6 +80,7 @@ describe('FooterComponent', () => {
 
   beforeEach(() => {
     chalk.level = 3;
+    statusLineMocks.runStatusLineCommand.mockReset();
   });
 
   afterEach(() => {
@@ -185,5 +201,113 @@ describe('FooterComponent displayName override', () => {
 
     expect(footer.render(120).join('\n')).toContain('Custom Name');
     expect(footer.render(120).join('\n')).not.toContain('Remote Name');
+  });
+});
+
+describe('FooterComponent status line command', () => {
+  it('uses the command output on the second line when configured', async () => {
+    statusLineMocks.runStatusLineCommand.mockResolvedValue('model: kimi-k2 | dir: project');
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        statusLine: { command: 'kimi-hud', timeoutMs: 250 },
+      },
+      onRefresh,
+    );
+
+    await vi.waitFor(() => {
+      expect(onRefresh).toHaveBeenCalled();
+    });
+
+    const rendered = footer.render(120).join('\n');
+    expect(rendered).toContain('model: kimi-k2 | dir: project');
+    expect(rendered).not.toContain('context: 0.0%');
+    expect(statusLineMocks.runStatusLineCommand).toHaveBeenCalledWith({
+      command: 'kimi-hud',
+      timeoutMs: 250,
+      payload: expect.objectContaining({
+        session_id: 'ses-1',
+        model: 'kimi-k2',
+        display_model: 'kimi-k2',
+        cwd: '/tmp/project',
+        permission_mode: 'manual',
+      }),
+    });
+
+    footer.dispose();
+  });
+
+  it('falls back to the built-in context line when the command returns no output', async () => {
+    statusLineMocks.runStatusLineCommand.mockResolvedValue(null);
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        statusLine: { command: 'kimi-hud', timeoutMs: 250 },
+      },
+      onRefresh,
+    );
+
+    await vi.waitFor(() => {
+      expect(onRefresh).toHaveBeenCalled();
+    });
+
+    expect(footer.render(120).join('\n')).toContain('context: 0.0%');
+
+    footer.dispose();
+  });
+
+  it('ignores stale command output after the status line is disabled', async () => {
+    const first = deferred<string | null>();
+    statusLineMocks.runStatusLineCommand.mockReturnValue(first.promise);
+    const footer = new FooterComponent({
+      ...appState,
+      statusLine: { command: 'kimi-hud', timeoutMs: 250 },
+    });
+
+    footer.setState({ ...appState, statusLine: { command: null, timeoutMs: 250 } });
+    first.resolve('stale hud');
+    await first.promise;
+    await Promise.resolve();
+
+    const rendered = footer.render(120).join('\n');
+    expect(rendered).toContain('context: 0.0%');
+    expect(rendered).not.toContain('stale hud');
+
+    footer.dispose();
+  });
+
+  it('ignores stale output after switching to another status line command', async () => {
+    const first = deferred<string | null>();
+    const second = deferred<string | null>();
+    statusLineMocks.runStatusLineCommand.mockImplementation(
+      ({ command }: { command: string }) =>
+        command === 'kimi-hud-a' ? first.promise : second.promise,
+    );
+    const onRefresh = vi.fn();
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        statusLine: { command: 'kimi-hud-a', timeoutMs: 250 },
+      },
+      onRefresh,
+    );
+
+    footer.setState({ ...appState, statusLine: { command: 'kimi-hud-b', timeoutMs: 250 } });
+    first.resolve('old hud');
+    await first.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    second.resolve('new hud');
+    await second.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const rendered = footer.render(120).join('\n');
+    expect(rendered).toContain('new hud');
+    expect(rendered).not.toContain('old hud');
+
+    footer.dispose();
   });
 });
