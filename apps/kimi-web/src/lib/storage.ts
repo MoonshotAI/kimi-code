@@ -9,6 +9,7 @@
 export const STORAGE_KEYS = {
   // useKimiWebClient
   permission: 'kimi-web.permission',
+  permissionMode: 'kimi-web.permission-mode',
   activeWorkspace: 'kimi-active-workspace',
   thinking: 'kimi-web.thinking',
   planMode: 'kimi-web.plan-mode',

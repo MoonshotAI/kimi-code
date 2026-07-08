@@ -9,6 +9,8 @@ import type { ExtendedState } from '../src/composables/useKimiWebClient';
 const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
   abortSession: vi.fn(),
+  submitPrompt: vi.fn(),
+  updateSession: vi.fn(),
 }));
 
 vi.mock('../src/api', () => ({
@@ -51,10 +53,11 @@ function createState(): ExtendedState {
     workspaceName: 'kimi-web',
     connection: 'connected',
     permission: 'manual',
+    permissionModeBySession: {},
     thinking: 'high',
-    planMode: false,
-    swarmMode: false,
-    goalMode: false,
+    planModeBySession: {},
+    swarmModeBySession: {},
+    goalModeBySession: {},
     loading: false,
     sessionLoading: false,
     queuedBySession: {},
@@ -78,6 +81,10 @@ function createState(): ExtendedState {
     messagesLoadingMoreBySession: {},
     messagesHasMoreBySession: {},
     messagesLoadMoreErrorBySession: {},
+    sessionsHasMoreByWorkspace: {},
+    sessionsLoadingMoreByWorkspace: {},
+    sessionsCursorByWorkspace: {},
+    sessionsFullyLoaded: false,
   };
 }
 
@@ -109,9 +116,11 @@ function createDeps(): UseWorkspaceStateDeps {
     status: computed(() => ({})),
     workspaceIdForSession: vi.fn(),
     savePermissionToStorage: vi.fn(),
+    savePermissionModeToStorage: vi.fn(),
     savePlanModeToStorage: vi.fn(),
     saveSwarmModeToStorage: vi.fn(),
     saveGoalModeToStorage: vi.fn(),
+    draftModes: { planMode: false, swarmMode: false, goalMode: false },
     saveUnread: vi.fn(),
     saveActiveWorkspaceToStorage: vi.fn(),
     saveHiddenWorkspacesToStorage: vi.fn(),
@@ -212,5 +221,42 @@ describe('mergeWorkspaces', () => {
     });
 
     expect(result.map((w) => w.root)).not.toContain('/agent/A');
+  });
+});
+
+describe('useWorkspaceState — permission mode', () => {
+  beforeEach(() => {
+    apiMock.submitPrompt.mockReset();
+    apiMock.updateSession.mockReset();
+  });
+
+  it('stores permission changes on the active session', () => {
+    const state = createState();
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    ws.setPermission('auto');
+
+    expect(state.permission).toBe('manual');
+    expect(state.permissionModeBySession).toEqual({ sess_1: 'auto' });
+    expect(deps.savePermissionToStorage).not.toHaveBeenCalled();
+    expect(deps.savePermissionModeToStorage).toHaveBeenCalledOnce();
+    expect(deps.persistSessionProfile).toHaveBeenCalledWith({ permissionMode: 'auto' });
+  });
+
+  it('uses the target session permission when submitting a prompt', async () => {
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_1', status: 'running' });
+    const state = createState();
+    state.permission = 'manual';
+    state.permissionModeBySession = { sess_1: 'yolo' };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.submitPromptInternal('sess_1', 'hello');
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ permissionMode: 'yolo' }),
+    );
   });
 });

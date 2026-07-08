@@ -911,6 +911,7 @@ export function createAgentProjector(): AgentProjector {
           // for a "make a plan" prompt). Carry it so the composer's plan toggle
           // reflects the agent's real state, not just the user's manual choice.
           planMode: p?.planMode === true ? true : p?.planMode === false ? false : undefined,
+          permissionMode: typeof p?.permission === 'string' ? p.permission : undefined,
         });
         break;
       }

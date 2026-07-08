@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { subagentProgressText } from '../src/api/daemon/agentEventProjector';
+import { createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
 describe('subagentProgressText', () => {
   it('drops turn.step.started as noise', () => {
@@ -37,5 +37,20 @@ describe('subagentProgressText', () => {
 
   it('returns null for unknown event types', () => {
     expect(subagentProgressText('turn.delta', {})).toBeNull();
+  });
+});
+
+describe('agent status projection', () => {
+  it('carries permission mode on session usage updates', () => {
+    const projector = createAgentProjector();
+    const events = projector.project('agent.status.updated', { permission: 'auto' }, 's1');
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'sessionUsageUpdated',
+        sessionId: 's1',
+        permissionMode: 'auto',
+      }),
+    );
   });
 });

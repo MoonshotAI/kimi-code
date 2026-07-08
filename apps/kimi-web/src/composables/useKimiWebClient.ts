@@ -85,6 +85,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const PERMISSION_STORAGE_KEY = STORAGE_KEYS.permission;
+const PERMISSION_MODE_STORAGE_KEY = STORAGE_KEYS.permissionMode;
 const ACTIVE_WORKSPACE_KEY = STORAGE_KEYS.activeWorkspace;
 const THINKING_STORAGE_KEY = STORAGE_KEYS.thinking;
 const PLAN_MODE_STORAGE_KEY = STORAGE_KEYS.planMode;
@@ -121,6 +122,10 @@ function savePermissionToStorage(mode: PermissionMode): void {
   }
 }
 
+function isPermissionMode(value: unknown): value is PermissionMode {
+  return value === 'auto' || value === 'yolo' || value === 'manual';
+}
+
 function loadThinkingFromStorage(): ThinkingLevel {
   try {
     const v = safeGetString(THINKING_STORAGE_KEY);
@@ -139,52 +144,64 @@ function saveThinkingToStorage(v: ThinkingLevel): void {
   }
 }
 
-function loadPlanModeFromStorage(): boolean {
+function loadPermissionModeMapFromStorage(): Record<string, PermissionMode> {
+  const raw = safeGetString(PERMISSION_MODE_STORAGE_KEY);
+  if (!raw) return {};
   try {
-    return safeGetString(PLAN_MODE_STORAGE_KEY) === 'true';
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, PermissionMode> = {};
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (isPermissionMode(value)) out[id] = value;
+    }
+    return out;
   } catch {
-    return false;
+    return {};
   }
 }
 
-function savePlanModeToStorage(v: boolean): void {
+function savePermissionModeToStorage(): void {
   try {
-    safeSetString(PLAN_MODE_STORAGE_KEY, v ? 'true' : 'false');
+    safeSetString(PERMISSION_MODE_STORAGE_KEY, JSON.stringify(rawState.permissionModeBySession));
   } catch {
-    // ignore
+    // storage unavailable (private mode, quota, etc.) — ignore
   }
 }
 
-function loadSwarmModeFromStorage(): boolean {
+function loadModeMapFromStorage(key: string): Record<string, boolean> {
+  const raw = safeGetString(key);
+  if (!raw) return {};
   try {
-    return safeGetString(SWARM_MODE_STORAGE_KEY) === 'true';
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, boolean> = {};
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value === true) out[id] = true;
+    }
+    return out;
   } catch {
-    return false;
+    return {};
   }
 }
 
-function saveSwarmModeToStorage(v: boolean): void {
+function saveModeMapToStorage(key: string, map: Record<string, boolean>): void {
   try {
-    safeSetString(SWARM_MODE_STORAGE_KEY, v ? 'true' : 'false');
+    safeSetString(key, JSON.stringify(map));
   } catch {
-    // ignore
+    // storage unavailable (private mode, quota, etc.) — ignore
   }
 }
 
-function loadGoalModeFromStorage(): boolean {
-  try {
-    return safeGetString(GOAL_MODE_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
+function savePlanModeToStorage(): void {
+  saveModeMapToStorage(PLAN_MODE_STORAGE_KEY, rawState.planModeBySession);
 }
 
-function saveGoalModeToStorage(v: boolean): void {
-  try {
-    safeSetString(GOAL_MODE_STORAGE_KEY, v ? 'true' : 'false');
-  } catch {
-    // ignore
-  }
+function saveSwarmModeToStorage(): void {
+  saveModeMapToStorage(SWARM_MODE_STORAGE_KEY, rawState.swarmModeBySession);
+}
+
+function saveGoalModeToStorage(): void {
+  saveModeMapToStorage(GOAL_MODE_STORAGE_KEY, rawState.goalModeBySession);
 }
 
 function loadActiveWorkspaceFromStorage(): string | null {
@@ -268,10 +285,15 @@ export interface ExtendedState extends KimiClientState {
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
+  /** Permission mode per session. With no active session, `permission` is the draft default. */
+  permissionModeBySession: Record<string, PermissionMode>;
   thinking: ThinkingLevel;
-  planMode: boolean;
-  swarmMode: boolean;
-  goalMode: boolean;
+  /** Plan-mode toggle per session. With no active session, the draft value is staged separately. */
+  planModeBySession: Record<string, boolean>;
+  /** Swarm-mode toggle per session. */
+  swarmModeBySession: Record<string, boolean>;
+  /** One-shot goal-mode flag per session. */
+  goalModeBySession: Record<string, boolean>;
   loading: boolean;
   sessionLoading: boolean;
   queuedBySession: Record<string, QueuedPrompt[]>;
@@ -332,10 +354,11 @@ const rawState: ExtendedState = reactive({
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
+  permissionModeBySession: loadPermissionModeMapFromStorage(),
   thinking: loadThinkingFromStorage(),
-  planMode: loadPlanModeFromStorage(),
-  swarmMode: loadSwarmModeFromStorage(),
-  goalMode: loadGoalModeFromStorage(),
+  planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
+  swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
+  goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
   loading: false,
   sessionLoading: false,
   queuedBySession: {},
@@ -363,6 +386,12 @@ const rawState: ExtendedState = reactive({
   sessionsLoadingMoreByWorkspace: {},
   sessionsCursorByWorkspace: {},
   sessionsFullyLoaded: false,
+});
+
+const draftModes = reactive({
+  planMode: false,
+  swarmMode: false,
+  goalMode: false,
 });
 
 // ---------------------------------------------------------------------------
@@ -505,6 +534,16 @@ function forgetSession(sessionId: string): void {
   delete rawState.queuedBySession[sessionId];
   delete rawState.promptIdBySession[sessionId];
   delete rawState.sendingBySession[sessionId];
+  // Drop per-session mode toggles and re-persist so a deleted session's entry
+  // doesn't linger in localStorage.
+  delete rawState.permissionModeBySession[sessionId];
+  delete rawState.planModeBySession[sessionId];
+  delete rawState.swarmModeBySession[sessionId];
+  delete rawState.goalModeBySession[sessionId];
+  savePermissionModeToStorage();
+  savePlanModeToStorage();
+  saveSwarmModeToStorage();
+  saveGoalModeToStorage();
 }
 
 // Models + Providers reactive state and helpers live in
@@ -543,8 +582,18 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
       contextLimit: st.maxContextTokens,
     },
   }));
-  rawState.swarmMode = st.swarmMode;
-  rawState.planMode = st.planMode;
+
+  if (isPermissionMode(st.permission)) {
+    rawState.permissionModeBySession = {
+      ...rawState.permissionModeBySession,
+      [sessionId]: st.permission,
+    };
+    savePermissionModeToStorage();
+  }
+  rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sessionId]: st.swarmMode };
+  rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
+  saveSwarmModeToStorage();
+  savePlanModeToStorage();
 }
 
 /** Persist runtime controls to the active session via POST /profile, then
@@ -676,13 +725,24 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     void modelProvider.loadProviders();
   }
 
-  if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.swarmMode !== undefined) {
-    rawState.swarmMode = event.swarmMode;
-  }
-  // Reflect the agent's live plan-mode state (e.g. it auto-entered plan mode)
-  // in the composer toggle.
-  if (event.type === 'sessionUsageUpdated' && event.sessionId === rawState.activeSessionId && event.planMode !== undefined) {
-    rawState.planMode = event.planMode;
+  // Reflect the agent's live mode state per session. Applied to the event's own
+  // session, so a background session keeps its independent toggles.
+  if (event.type === 'sessionUsageUpdated') {
+    if (isPermissionMode(event.permissionMode)) {
+      rawState.permissionModeBySession = {
+        ...rawState.permissionModeBySession,
+        [event.sessionId]: event.permissionMode,
+      };
+      savePermissionModeToStorage();
+    }
+    if (event.swarmMode !== undefined) {
+      rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [event.sessionId]: event.swarmMode };
+      saveSwarmModeToStorage();
+    }
+    if (event.planMode !== undefined) {
+      rawState.planModeBySession = { ...rawState.planModeBySession, [event.sessionId]: event.planMode };
+      savePlanModeToStorage();
+    }
   }
 }
 
@@ -1547,16 +1607,28 @@ const loadMoreMessagesError = computed<boolean>(() => {
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
 
-const permission = computed<PermissionMode>(() => rawState.permission);
+const permission = computed<PermissionMode>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.permissionModeBySession[sid] ?? rawState.permission) : rawState.permission;
+});
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
-const planMode = computed<boolean>(() => rawState.planMode);
-const swarmMode = computed<boolean>(() => rawState.swarmMode);
-const goalMode = computed<boolean>(() => rawState.goalMode);
+const planMode = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.planModeBySession[sid] ?? false) : draftModes.planMode;
+});
+const swarmMode = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.swarmModeBySession[sid] ?? false) : draftModes.swarmMode;
+});
+const goalMode = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  return sid ? (rawState.goalModeBySession[sid] ?? false) : draftModes.goalMode;
+});
 
 const activationBadges = computed<ActivationBadges>(() => {
   const swarmCounts = countSwarmMembers(swarms.value);
   return {
-    plan: rawState.planMode,
+    plan: planMode.value,
     goal: goal.value && goal.value.status !== 'complete'
       ? {
           status: goal.value.status,
@@ -1707,7 +1779,7 @@ const status = computed<ConversationStatus>(() => {
     modelId: matched?.id ?? rawModel,
     ctxUsed: activeSession?.usage.contextTokens ?? 0,
     ctxMax: activeSession?.usage.contextLimit ?? 0,
-    permission: rawState.permission,
+    permission: permission.value,
     branch,
     cwd: activeSession?.cwd ?? '',
     isGitRepo: gitInfo.value !== null,
@@ -1993,9 +2065,11 @@ const workspaceState = useWorkspaceState(rawState, {
   status,
   workspaceIdForSession,
   savePermissionToStorage,
+  savePermissionModeToStorage,
   savePlanModeToStorage,
   saveSwarmModeToStorage,
   saveGoalModeToStorage,
+  draftModes,
   saveUnread,
   saveActiveWorkspaceToStorage,
   saveHiddenWorkspacesToStorage,
