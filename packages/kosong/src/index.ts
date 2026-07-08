@@ -34,7 +34,7 @@ export { KimiChatProvider } from './providers/kimi';
 export type { ExtraBody, GenerationKwargs, KimiOptions, ThinkingConfig } from './providers/kimi';
 
 // Model capability matrix
-export { UNKNOWN_CAPABILITY, isUnknownCapability } from './capability';
+export { isUnknownCapability, UNKNOWN_CAPABILITY } from './capability';
 export type { ModelCapability } from './capability';
 
 // Model catalog (models.dev-style) metadata

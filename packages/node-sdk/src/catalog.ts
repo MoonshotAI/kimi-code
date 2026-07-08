@@ -47,7 +47,7 @@ function capabilityToStrings(capability: ModelCapability): string[] | undefined 
   if (capability.audio_in) caps.push('audio_in');
   if (capability.thinking) caps.push('thinking');
   if (capability.tool_use) caps.push('tool_use');
-  if (capability.select_tools === true) caps.push('select_tools');
+  if (capability.dynamically_loaded_tools === true) caps.push('dynamically_loaded_tools');
   return caps.length > 0 ? caps : undefined;
 }
 
