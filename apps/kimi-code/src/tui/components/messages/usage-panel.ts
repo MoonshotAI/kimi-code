@@ -33,6 +33,7 @@ export interface ManagedUsageRow {
 export interface ManagedUsageReport {
   readonly summary: ManagedUsageRow | null;
   readonly limits: readonly ManagedUsageRow[];
+  readonly extraUsage?: ManagedUsageRow | null;
 }
 
 export interface UsageReportOptions {
@@ -136,6 +137,29 @@ function buildManagedUsageSection(
   return out;
 }
 
+function severityColor(sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' {
+  return sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
+}
+
+export function buildExtraUsageSection(
+  extraUsage: ManagedUsageRow | undefined | null,
+  accent: Colorize,
+  value: Colorize,
+  muted: Colorize,
+): string[] {
+  if (extraUsage === undefined || extraUsage === null) return [];
+  const usedRatio =
+    extraUsage.limit > 0 ? Math.max(0, Math.min(extraUsage.used / extraUsage.limit, 1)) : 0;
+  const bar = renderProgressBar(usedRatio, 20);
+  const pct = `${Math.round(usedRatio * 100)}% used`;
+  const barColoured = currentTheme.fg(severityColor(ratioSeverity(usedRatio)), bar);
+  const resetStr = extraUsage.resetHint ? `  ${muted(extraUsage.resetHint)}` : '';
+  return [
+    accent('Extra Usage'),
+    `  ${barColoured}  ${value(pct.padEnd(6, ' '))}${resetStr}`,
+  ];
+}
+
 export function buildManagedUsageReportLines(options: ManagedUsageReportLineOptions): string[] {
   const accent = (text: string) => currentTheme.boldFg('primary', text);
   const value = (text: string) => currentTheme.fg('text', text);
@@ -195,6 +219,17 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
   if (managedSection.length > 0) {
     lines.push('');
     lines.push(...managedSection);
+  }
+
+  const extraSection = buildExtraUsageSection(
+    options.managedUsage?.extraUsage,
+    accent,
+    value,
+    muted,
+  );
+  if (extraSection.length > 0) {
+    lines.push('');
+    lines.push(...extraSection);
   }
 
   return lines;

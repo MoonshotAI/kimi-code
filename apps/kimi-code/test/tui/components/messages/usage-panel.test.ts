@@ -48,6 +48,29 @@ describe('UsagePanelComponent', () => {
     expect(lines.join('\n')).toContain('resets tomorrow');
   });
 
+  it('formats an extra usage section from booster wallet data', () => {
+    const lines = buildUsageReportLines({
+      sessionUsage: { byModel: {} },
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      managedUsage: {
+        summary: null,
+        limits: [],
+        extraUsage: {
+          label: 'Extra Usage',
+          used: 500,
+          limit: 1000,
+          resetHint: 'resets in 23d',
+        },
+      },
+    }).map(strip);
+
+    expect(lines).toContain('Extra Usage');
+    expect(lines.join('\n')).toContain('50% used');
+    expect(lines.join('\n')).toContain('resets in 23d');
+  });
+
   it('wraps preformatted usage lines in a bordered panel', () => {
     const component = new UsagePanelComponent(() => ['Session usage'], 'primary');
     const output = component.render(80).map(strip);
