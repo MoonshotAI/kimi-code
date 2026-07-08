@@ -170,7 +170,7 @@ importers:
         specifier: 0.0.8
         version: 0.0.8
       '@fontsource-variable/inter':
-        specifier: ^5.2.8
+        specifier: 5.2.8
         version: 5.2.8
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.2.8
