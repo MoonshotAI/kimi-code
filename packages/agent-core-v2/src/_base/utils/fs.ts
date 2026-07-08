@@ -80,12 +80,13 @@ export async function atomicWrite(
   filePath: string,
   content: string | Uint8Array,
   _syncOverride?: (fd: number) => Promise<void>,
+  mode?: number,
 ): Promise<void> {
   const hex = randomBytes(4).toString('hex');
   const tmpPath = `${filePath}.tmp.${process.pid}.${hex}`;
   let renamed = false;
   try {
-    const fh = await open(tmpPath, 'w');
+    const fh = await open(tmpPath, 'w', mode);
     try {
       await fh.writeFile(content);
       await (_syncOverride ?? syncFd)(fh.fd);

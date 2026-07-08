@@ -31,7 +31,6 @@ import { literalRulePattern } from '#/_base/tools/support/rule-match';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
-import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/app/cron/jitter';
 import CRON_CREATE_DESCRIPTION from './cron-create.md?raw';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -110,16 +109,16 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     CronCreateInputSchema,
   );
 
-  constructor(
-    private readonly disabled: boolean = false,
-    @ISessionCronService private readonly cron: ISessionCronService,
-  ) {}
+  constructor(@ISessionCronService private readonly cron: ISessionCronService) {}
 
   resolveExecution(args: CronCreateInput): ToolExecution {
     // 1. Global killswitch — checked first so a flipped env stops all
     //    further work, including the cron parse which can throw on
-    //    legitimately-malformed input.
-    if (this.disabled) {
+    //    legitimately-malformed input. Read live from the service (which
+    //    reads through `ConfigService.get()`'s env overlay) rather than a
+    //    value frozen at registration time, so `KIMI_DISABLE_CRON=1` takes
+    //    effect even after the tool is registered.
+    if (this.cron.isDisabled()) {
       return {
         isError: true,
         output: 'Cron scheduling is disabled (KIMI_DISABLE_CRON=1).',
@@ -273,14 +272,13 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
         // Post-jitter next-fire for the response. `computeNextCronRun`
         // returns `null` if there's no fire in the 5-year window (we
         // already rejected that above, but be defensive — the jitter
-        // helper would then have nothing to shift).
+        // helper would then have nothing to shift). Delegate to the
+        // service so the reported `nextFireAt` uses the same jitter the
+        // scheduler will — including the `KIMI_CRON_NO_JITTER` bypass —
+        // and matches what `CronList` shows for the same task.
         const ideal = computeNextCronRun(parsed, nowMs);
         const nextFireAt =
-          ideal === null
-            ? null
-            : recurring
-              ? jitteredNextCronRunMs(task, parsed, ideal)
-              : oneShotJitteredNextCronRunMs(task, ideal);
+          ideal === null ? null : this.cron.computeDisplayNextFire(task, parsed, ideal);
 
         const humanSchedule = cronToHuman(parsed);
 

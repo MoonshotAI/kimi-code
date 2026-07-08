@@ -264,7 +264,7 @@ describe('SessionCronService — persistence and resume', () => {
       await resumedCron!.loadFromStore();
 
       const steerCalls = captureSteer(resumedPrompt!);
-      resumedCron!.tick();
+      await resumedCron!.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -310,7 +310,7 @@ describe('SessionCronService — persistence and resume', () => {
       await resumedCron!.loadFromStore();
 
       const steerCalls = captureSteer(resumedPrompt!);
-      resumedCron!.tick();
+      await resumedCron!.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -354,7 +354,7 @@ describe('SessionCronService — persistence and resume', () => {
 
       const steerCallsA = captureSteer(prompt);
       clockA.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
       expect(steerCallsA.length).toBe(1);
 
       await cron.flushPersist();
@@ -367,7 +367,7 @@ describe('SessionCronService — persistence and resume', () => {
       await resumedCron!.loadFromStore();
 
       const steerCallsB = captureSteer(resumedPrompt!);
-      resumedCron!.tick();
+      await resumedCron!.tick();
 
       expect(steerCallsB.length).toBe(1);
       const resumeOrigin = steerCallsB[0]!.origin;
@@ -415,7 +415,7 @@ describe('SessionCronService — persistence and resume', () => {
       await resumedCron!.loadFromStore();
 
       const steerCalls = captureSteer(resumedPrompt!);
-      resumedCron!.tick();
+      await resumedCron!.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;

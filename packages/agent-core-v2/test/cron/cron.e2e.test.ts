@@ -47,7 +47,7 @@ describe('Cron — session E2E (P1.9)', () => {
   let prompt: IAgentPromptService;
   let harness: ReturnType<typeof createClocks>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Pin jitter off so the recurring fire lands at the ideal 12:05:00
     // mark (not 12:05:00 + up-to-30s) and the 15-minute advance is more
     // than enough to clear it. Note: `coalescedCount` is computed from
@@ -60,7 +60,7 @@ describe('Cron — session E2E (P1.9)', () => {
     ctx = createTestAgent(cronServices());
     cron = ctx.get(ISessionCronService);
     prompt = ctx.get(IAgentPromptService);
-    cron.start();
+    await cron.start();
   });
 
   afterEach(async () => {
@@ -99,7 +99,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // bypass `emitScheduled` telemetry and skip the byte-length /
     // expression checks; that would not be the production code path
     // this commit is meant to smoke.
-    const createTool = new CronCreateTool(false, cron);
+    const createTool = new CronCreateTool(cron);
     const execution = createTool.resolveExecution({
       cron: '*/5 * * * *',
       prompt: 'cron-fired prompt',
@@ -122,7 +122,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // (12:05, 12:10, 12:15). See the file header for the calibration
     // derivation.
     harness.advance(15 * 60_000);
-    cron.tick();
+    await cron.tick();
 
     // ── Steer was called exactly once ─────────────────────────────────
     expect(steerCalls.length).toBe(1);
@@ -142,17 +142,17 @@ describe('Cron — session E2E (P1.9)', () => {
       coalescedCount: 3,
       stale: false,
     });
-    // jobId comes back as the same 8-hex shape the store guarantees.
+    // jobId comes back as a ULID (the id shape the store now guarantees).
     const origin = fire.origin as { readonly jobId: string };
     expect(typeof origin.jobId).toBe('string');
-    expect(origin.jobId).toMatch(/^[0-9a-f]{8}$/);
+    expect(origin.jobId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/i);
   });
 
   it('CronCreate → CronList → CronDelete cycle returns sensible output', async () => {
     // Optional second case from the P1.9 plan: prove the three-tool
     // surface composes correctly end-to-end on the real manager. No
     // clock manipulation needed — list/delete are time-invariant.
-    const createTool = new CronCreateTool(false, cron);
+    const createTool = new CronCreateTool(cron);
     const listTool = new CronListTool(cron);
     const deleteTool = new CronDeleteTool(cron);
     const ctxArgs = {
@@ -172,7 +172,7 @@ describe('Cron — session E2E (P1.9)', () => {
     }
     const createOut = await createExec.execute(ctxArgs);
     expect(createOut.isError ?? false).toBe(false);
-    const idMatch = /id:\s*([0-9a-f]{8})/.exec(outputText(createOut.output));
+    const idMatch = /id:\s*(\S+)/.exec(outputText(createOut.output));
     expect(idMatch).not.toBeNull();
     const id = idMatch![1]!;
 

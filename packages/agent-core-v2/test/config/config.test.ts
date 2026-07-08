@@ -8,6 +8,24 @@ import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
 import { createTestAgent, type TestAgentContext } from '../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../harness/snapshots';
 
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { ConfigRegistry, ConfigService } from '#/app/config/configService';
+// Side-effect: registers the `cron` section (with its env bindings) so the
+// live-overlay test below can read `config.get('cron')`.
+import '#/app/cron/configSection';
+import type { CronConfig } from '#/app/cron/configSection';
+import { ILogService } from '#/_base/log/log';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { stubBootstrap } from '../bootstrap/stubs';
+import { stubLog } from '../log/stubs';
+
 // Historical `osEnv` shape carried by `useProfile` context — the test only
 // exercises the profile-service pass-through; the exact fields don't matter to
 // the assertions, so we keep a minimal literal instead of importing an
@@ -281,6 +299,30 @@ describe('Agent config', () => {
         assistant: text "Still using the original turn config."
         user: text "Start a fresh turn"
     `);
+  });
+});
+
+describe('ConfigService env overlay (live)', () => {
+  it('re-applies env bindings on every get()', async () => {
+    const env: Record<string, string> = { KIMI_DISABLE_CRON: '0' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get<CronConfig>('cron').disabled).toBe(false);
+    env['KIMI_DISABLE_CRON'] = '1';
+    expect(config.get<CronConfig>('cron').disabled).toBe(true);
+    env['KIMI_DISABLE_CRON'] = '0';
+    expect(config.get<CronConfig>('cron').disabled).toBe(false);
+
+    disposables.dispose();
   });
 });
 

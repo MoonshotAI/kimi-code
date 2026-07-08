@@ -50,11 +50,13 @@ const MS_PER_DAY = 24 * 60 * 60_000;
 const MS_PER_MINUTE = 60_000;
 
 /**
- * Map a task id to a deterministic fraction in `[0, 1)`. Cron task
- * ids are 8 hex chars (`/^[0-9a-f]{8}$/`), so `parseInt(id, 16)` /
- * `2^32` lands neatly in range. For non-hex inputs we fall back to a
- * djb2-style reduction so callers passing test fixtures with
- * arbitrary string ids still get a stable spread.
+ * Map a task id to a deterministic fraction in `[0, 1)`. Legacy cron
+ * task ids are 8 hex chars (`/^[0-9a-f]{8}$/`); for those,
+ * `parseInt(id, 16)` / `2^32` lands neatly in range. Current ids are
+ * ULIDs (26 Crockford-base32 chars), which fall through to the
+ * djb2-style reduction below — still deterministic per id, so a given
+ * task always lands at the same jittered point regardless of which id
+ * format it carries.
  */
 function fractionFromId(id: string): number {
   if (/^[0-9a-f]{8}$/i.test(id)) {

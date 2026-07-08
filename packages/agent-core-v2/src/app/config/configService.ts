@@ -259,6 +259,22 @@ export class ConfigService extends Disposable implements IConfigService {
     if (Object.prototype.hasOwnProperty.call(this.memory, domain)) {
       return this.memory[domain] as T;
     }
+    // Re-apply the env overlay on every read for env-bound sections so
+    // operational toggles driven purely by the environment (e.g.
+    // `KIMI_DISABLE_CRON`) take effect without a `config.toml` change to
+    // trigger a rebuild. `applySectionEnv` is a pure function and only
+    // runs for sections that actually declare env bindings.
+    const section = this.registry.getSection(domain);
+    if (section?.env !== undefined) {
+      const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
+      try {
+        const next = applySectionEnv(this.effective[domain], section.env, getEnv);
+        this.effective[domain] = this.registry.validate(domain, next);
+      } catch {
+        // Re-evaluation failed (e.g. a malformed env value); keep the last
+        // good effective value rather than throwing from a getter.
+      }
+    }
     return this.effective[domain] as T;
   }
 
@@ -273,7 +289,23 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   getAll(): ResolvedConfig {
-    return { ...this.effective, ...this.memory };
+    // Keep `getAll()` consistent with `get()`: re-apply env overlays so a
+    // caller reading the whole effective config observes the same live
+    // env values as a per-domain `get()`.
+    const effective: ResolvedConfig = { ...this.effective };
+    const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
+    for (const section of this.registry.listSections()) {
+      if (section.env === undefined || effective[section.domain] === undefined) continue;
+      try {
+        effective[section.domain] = this.registry.validate(
+          section.domain,
+          applySectionEnv(effective[section.domain], section.env, getEnv),
+        );
+      } catch {
+        // Keep the last good effective value for this domain.
+      }
+    }
+    return { ...effective, ...this.memory };
   }
 
   diagnostics(): readonly ConfigDiagnostic[] {

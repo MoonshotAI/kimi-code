@@ -75,7 +75,7 @@ describe('SessionCronService — P1.8 manual tick + SIGUSR1', () => {
     it('does not install setInterval; tick() must be called manually', async () => {
       const steerSpy = spySteer(prompt);
 
-      cron.start();
+      await cron.start();
       cron.addTask({ cron: '*/5 * * * *', prompt: 'manual-only' });
       harness.advance(6 * 60_000);
 
@@ -86,7 +86,7 @@ describe('SessionCronService — P1.8 manual tick + SIGUSR1', () => {
       expect(steerSpy).toHaveBeenCalledTimes(0);
 
       // Manual drive → fires.
-      cron.tick();
+      await cron.tick();
       expect(steerSpy).toHaveBeenCalledTimes(1);
     });
   });
@@ -112,10 +112,10 @@ describe('SessionCronService — P1.8 manual tick + SIGUSR1', () => {
       await ctx.dispose();
     });
 
-    it('auto-tick fires when fake timers advance past pollIntervalMs', () => {
+    it('auto-tick fires when fake timers advance past pollIntervalMs', async () => {
       const steerSpy = spySteer(prompt);
 
-      cron.start();
+      await cron.start();
       cron.addTask({ cron: '*/5 * * * *', prompt: 'auto-tick' });
       // Move the injected wall clock past one ideal fire, then let the
       // setInterval drain by advancing fake timers past one poll.
@@ -194,12 +194,12 @@ describe('SessionCronService — P1.8 manual tick + SIGUSR1', () => {
         expect(process.listenerCount('SIGUSR1')).toBe(listenerCountBeforeCreate);
       });
 
-      it('start() is idempotent — second call does not double-bind', () => {
+      it('start() is idempotent — second call does not double-bind', async () => {
         if (process.platform === 'win32') return;
 
         // Constructor already calls start() once; an explicit second
         // call must not stack a handler.
-        cron.start();
+        await cron.start();
         expect(process.listenerCount('SIGUSR1')).toBe(listenerCountBeforeCreate + 1);
       });
     });
@@ -255,11 +255,11 @@ describe('SessionCronService — P1.8 manual tick + SIGUSR1', () => {
         await ctx.dispose();
       });
 
-      it('does not bind when KIMI_CRON_MANUAL_TICK is unset', () => {
+      it('does not bind when KIMI_CRON_MANUAL_TICK is unset', async () => {
         if (process.platform === 'win32') return;
 
         const before = process.listenerCount('SIGUSR1');
-        cron.start();
+        await cron.start();
         expect(process.listenerCount('SIGUSR1')).toBe(before);
       });
     });

@@ -80,7 +80,7 @@ to the resumed session id, not to the working directory.
 
 ## Returned fields
 
-`id` (8-hex), `humanSchedule` (English summary), `recurring`,
+`id` (ULID), `humanSchedule` (English summary), `recurring`,
 `nextFireAt` (local ISO timestamp with numeric offset, or null). `id` is needed by `CronDelete`.
 
 ## Tell the user how to cancel or modify

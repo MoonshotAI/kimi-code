@@ -4,11 +4,13 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { ConfigTarget, IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { SessionCronServiceImpl } from '#/session/cron/sessionCronServiceImpl';
+import { parseCronExpression } from '#/app/cron/cron-expr';
+import { isValidCronTask } from '#/app/cron/cronTaskPersistenceService';
 import { ILogService } from '#/_base/log/log';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -58,6 +60,8 @@ describe('SessionCronService', () => {
   let now: number;
   let activeTurn: Turn | undefined;
   let steered: ContextMessage[];
+  let steerLaunchError: Error | null;
+  let storeRecords: Map<string, unknown>;
 
   beforeEach(() => {
     vi.stubEnv('KIMI_CRON_POLL_INTERVAL_MS', '0');
@@ -66,6 +70,8 @@ describe('SessionCronService', () => {
     now = 0;
     activeTurn = undefined;
     steered = [];
+    steerLaunchError = null;
+    storeRecords = new Map();
     vi.spyOn(Date, 'now').mockImplementation(() => now);
 
     const turnService: IAgentTurnService = {
@@ -79,7 +85,7 @@ describe('SessionCronService', () => {
         steered.push(message);
         return {
           removeFromQueue: () => {},
-          launched: Promise.resolve(fakeTurn()),
+          launched: steerLaunchError ? Promise.reject(steerLaunchError) : Promise.resolve(fakeTurn()),
         };
       },
       retry: () => undefined,
@@ -101,10 +107,18 @@ describe('SessionCronService', () => {
     ix.stub(ILogService, stubLog());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.stub(IAtomicDocumentStore, {
-      get: async () => undefined,
-      set: async () => {},
-      delete: async () => {},
-      list: async () => [],
+      async get<T>(_scope: string, key: string): Promise<T | undefined> {
+        return storeRecords.get(key) as T | undefined;
+      },
+      async set(_scope: string, key: string, value: unknown): Promise<void> {
+        storeRecords.set(key, value);
+      },
+      async delete(_scope: string, key: string): Promise<void> {
+        storeRecords.delete(key);
+      },
+      async list(): Promise<readonly string[]> {
+        return Array.from(storeRecords.keys());
+      },
     });
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
@@ -129,36 +143,108 @@ describe('SessionCronService', () => {
     expect(svc.list()).toEqual([]);
   });
 
-  it('does not fire while a turn is active', () => {
+  it('does not fire while a turn is active', async () => {
     const svc = ix.get(ISessionCronService);
     svc.addTask({ cron: '* * * * *', prompt: 'fire-me', recurring: false });
 
     activeTurn = fakeTurn();
     now = FAR_FUTURE_MS;
-    svc.tick();
+    await svc.tick();
 
     expect(steered).toEqual([]);
   });
 
-  it('fires a due task when idle', () => {
+  it('fires a due task when idle', async () => {
     const svc = ix.get(ISessionCronService);
     svc.addTask({ cron: '* * * * *', prompt: 'fire-me', recurring: false });
 
     now = FAR_FUTURE_MS;
-    svc.tick();
+    await svc.tick();
 
     expect(steered).toHaveLength(1);
     expect(textOf(steered[0]!)).toContain('fire-me');
     expect(steered[0]!.origin).toMatchObject({ kind: 'cron_job' });
   });
 
-  it('removes one-shot tasks after firing', () => {
+  it('removes one-shot tasks after firing', async () => {
     const svc = ix.get(ISessionCronService);
     svc.addTask({ cron: '* * * * *', prompt: 'x', recurring: false });
 
     now = FAR_FUTURE_MS;
-    svc.tick();
+    await svc.tick();
 
     expect(svc.list()).toEqual([]);
+  });
+
+  it('isDisabled reflects live config (not frozen at registration)', async () => {
+    const svc = ix.get(ISessionCronService);
+    const config = ix.get(IConfigService);
+
+    expect(svc.isDisabled()).toBe(false);
+    await config.set('cron', { disabled: true }, ConfigTarget.Memory);
+    expect(svc.isDisabled()).toBe(true);
+    await config.set('cron', { disabled: false }, ConfigTarget.Memory);
+    expect(svc.isDisabled()).toBe(false);
+  });
+
+  it('retains a one-shot and retries when steer launch rejects', async () => {
+    const svc = ix.get(ISessionCronService);
+    svc.addTask({ cron: '* * * * *', prompt: 'retry-me', recurring: false });
+
+    steerLaunchError = new Error('turn not ready');
+    now = FAR_FUTURE_MS;
+    await svc.tick();
+
+    // Launch was attempted but rejected: steer saw the prompt once, yet the
+    // task survives for the next tick instead of being silently dropped.
+    expect(steered).toHaveLength(1);
+    expect(svc.list()).toHaveLength(1);
+
+    steerLaunchError = null;
+    await svc.tick();
+    expect(steered).toHaveLength(2);
+    expect(svc.list()).toEqual([]);
+  });
+
+  it('generates ULID ids and still accepts legacy 8-hex ids', () => {
+    const svc = ix.get(ISessionCronService);
+    const task = svc.addTask({ cron: '* * * * *', prompt: 'id', recurring: false });
+
+    expect(task.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/i);
+    // Legacy 8-hex records (pre-ULID) remain valid for store reads.
+    expect(
+      isValidCronTask({ id: '3f1a9c2e', cron: '* * * * *', prompt: 'x', createdAt: 0 }),
+    ).toBe(true);
+    expect(
+      isValidCronTask({ id: task.id, cron: '* * * * *', prompt: 'x', createdAt: 0 }),
+    ).toBe(true);
+  });
+
+  it('computeDisplayNextFire honors live noJitter', async () => {
+    const svc = ix.get(ISessionCronService);
+    const config = ix.get(IConfigService);
+    const task = svc.addTask({ cron: '0 9 * * *', prompt: 'p', recurring: true });
+    const parsed = parseCronExpression(task.cron);
+    const ideal = new Date(2024, 0, 2, 9, 0, 0, 0).getTime();
+
+    await config.set('cron', { noJitter: true }, ConfigTarget.Memory);
+    expect(svc.computeDisplayNextFire(task, parsed, ideal)).toBe(ideal);
+  });
+
+  it('adopts a valid but untagged legacy task and backfills the session tag', async () => {
+    const svc = ix.get(ISessionCronService);
+    storeRecords.set('3f1a9c2e.json', {
+      id: '3f1a9c2e',
+      cron: '* * * * *',
+      prompt: 'legacy',
+      createdAt: 0,
+    });
+
+    await svc.loadFromStore();
+
+    const adopted = svc.getTask('3f1a9c2e');
+    expect(adopted).toBeDefined();
+    expect(adopted?.prompt).toBe('legacy');
+    expect(adopted?.tags?.['sessionId']).toBe('test-session');
   });
 });

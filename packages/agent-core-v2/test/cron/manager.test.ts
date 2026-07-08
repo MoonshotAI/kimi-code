@@ -118,8 +118,8 @@ describe('SessionCronService', () => {
       // Disable the auto-tick timer so the test doesn't have to wait
       // for setInterval / clean it up; we just want start() and stop()
       // to be wired and idempotent.
-      expect(() => cron.start()).not.toThrow();
-      expect(() => cron.start()).not.toThrow(); // idempotent
+      await cron.start();
+      await cron.start(); // idempotent
       await expect(cron.stop()).resolves.toBeUndefined();
       await expect(cron.stop()).resolves.toBeUndefined();
     });
@@ -156,12 +156,12 @@ describe('SessionCronService', () => {
       });
     });
 
-    it('steers with cron_job origin and emits cron_fired telemetry', () => {
+    it('steers with cron_job origin and emits cron_fired telemetry', async () => {
       cron.addTask({ cron: '*/5 * * * *', prompt: 'check the deploy' });
       // `*/5 * * * *` lands every 5 minutes; bump 6 minutes so we are
       // safely past exactly one ideal fire.
       harness.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const call = steerCalls[0]!;
@@ -223,7 +223,7 @@ describe('SessionCronService', () => {
       steerCalls = createSteerSpy(prompt);
     });
 
-    it('uses recurring=false in origin and telemetry', () => {
+    it('uses recurring=false in origin and telemetry', async () => {
       // Add a one-shot task that fires at the very next */5 mark, then
       // advance the wall clock past it.
       const task = cron.addTask({
@@ -232,7 +232,7 @@ describe('SessionCronService', () => {
         recurring: false,
       });
       harness.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -367,7 +367,7 @@ describe('SessionCronService', () => {
       steerCalls = createSteerSpy(prompt);
     });
 
-    it('origin.stale === true for a recurring task older than 7 days', () => {
+    it('origin.stale === true for a recurring task older than 7 days', async () => {
       // Add a recurring task whose createdAt is 8 days ago. Note: the
       // scheduler uses createdAt as the starting baseline for next-fire
       // computation, so a task that's been "alive" for 8 days will be
@@ -377,7 +377,7 @@ describe('SessionCronService', () => {
       harness.setNow(harness.now() - 8 * ONE_DAY_MS);
       cron.addTask({ cron: '0 9 * * *', prompt: 'morning report', recurring: true });
       harness.setNow(WALL_ANCHOR);
-      cron.tick();
+      await cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -393,7 +393,7 @@ describe('SessionCronService', () => {
       expect(text).toContain('stale="true"');
     });
 
-    it('stale recurring tasks get one final fire and are then removed', () => {
+    it('stale recurring tasks get one final fire and are then removed', async () => {
       // Mirrors the documented contract on `CronCreate.description`:
       // recurring tasks auto-expire after 7 days — they fire one final
       // time, then are deleted. Without this branch a session that
@@ -404,7 +404,7 @@ describe('SessionCronService', () => {
       harness.setNow(WALL_ANCHOR);
       expect(cron.list()).toHaveLength(1);
 
-      cron.tick();
+      await cron.tick();
       expect(steerCalls.length).toBe(1);
       expect(cron.list()).toHaveLength(0);
 
@@ -416,7 +416,7 @@ describe('SessionCronService', () => {
 
       // No further fires after the task is gone.
       harness.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
       expect(steerCalls.length).toBe(1);
     });
   });
@@ -435,10 +435,10 @@ describe('SessionCronService', () => {
       createSteerSpy(prompt, undefined);
     });
 
-    it('reports buffered=true on the telemetry event when steer returns null', () => {
+    it('reports buffered=true on the telemetry event when steer returns null', async () => {
       cron.addTask({ cron: '*/5 * * * *', prompt: 'while-active' });
       harness.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
 
       const cronFiredTelemetry = telemetryRecords.filter((r) => r.event === CRON_FIRED);
       expect(cronFiredTelemetry).toHaveLength(1);
@@ -474,17 +474,17 @@ describe('SessionCronService', () => {
       });
     });
 
-    it('does not fire while a turn is active', () => {
+    it('does not fire while a turn is active', async () => {
       cron.addTask({ cron: '*/5 * * * *', prompt: 'ping' });
       harness.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
       expect(steerCalls.length).toBe(0);
       const firedBefore = telemetryRecords.filter((r) => r.event === CRON_FIRED);
       expect(firedBefore.length).toBe(0);
 
       // Flip back to idle and the next tick fires.
       hasActiveTurn = false;
-      cron.tick();
+      await cron.tick();
       expect(steerCalls.length).toBe(1);
       const firedAfter = telemetryRecords.filter((r) => r.event === CRON_FIRED);
       expect(firedAfter.length).toBe(1);
@@ -503,11 +503,11 @@ describe('SessionCronService', () => {
       steerCalls = createSteerSpy(prompt);
     });
 
-    it('fires once with coalescedCount=1 after a 6-minute gap on */5', () => {
+    it('fires once with coalescedCount=1 after a 6-minute gap on */5', async () => {
       cron.addTask({ cron: '*/5 * * * *', prompt: 'every five' });
       // Six minutes past the anchor — exactly one ideal fire in the gap.
       harness.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
 
       expect(steerCalls.length).toBe(1);
       const origin = steerCalls[0]!.origin;
@@ -590,24 +590,24 @@ describe('SessionCronService', () => {
       cron.addTask({ cron: 'not a cron', prompt: 'broken' });
       cron.addTask({ cron: '*/5 * * * *', prompt: 'healthy' });
       harness.advance(6 * 60_000);
-      expect(() => cron.tick()).not.toThrow();
+      expect(() => { void cron.tick(); }).not.toThrow();
       expect(steerCalls.length).toBe(1);
       const text = (steerCalls[0]!.content[0] as { type: 'text'; text: string }).text;
       expect(text).toContain('healthy');
     });
 
-    it('fires only the due task when two tasks are scheduled', () => {
+    it('fires only the due task when two tasks are scheduled', async () => {
       steerCalls = createSteerSpy(prompt);
       cron.addTask({ cron: '*/5 * * * *', prompt: 'due' });
       cron.addTask({ cron: '0 23 * * *', prompt: 'later' });
       harness.advance(6 * 60_000);
-      cron.tick();
+      await cron.tick();
       expect(steerCalls.length).toBe(1);
       const text = (steerCalls[0]!.content[0] as { type: 'text'; text: string }).text;
       expect(text).toContain('due');
     });
 
-    it('retries a recurring task on the next tick when steer throws', () => {
+    it('retries a recurring task on the next tick when steer throws', async () => {
       let shouldThrow = true;
       const delivered: ContextMessage[] = [];
       vi.spyOn(prompt, 'steer').mockImplementation((message: ContextMessage) => {
@@ -621,12 +621,15 @@ describe('SessionCronService', () => {
       cron.addTask({ cron: '*/5 * * * *', prompt: 'retry me' });
       harness.advance(6 * 60_000);
 
-      expect(() => cron.tick()).not.toThrow();
+      // Await the first tick so its (failed) delivery fully settles before
+      // the retry tick — `tick()` is async now, and an un-awaited first tick
+      // would overlap the second and race the in-flight/cursor state.
+      await cron.tick();
       // Not delivered → task retained and cursor not advanced.
       expect(cron.list()).toHaveLength(1);
 
       shouldThrow = false;
-      cron.tick();
+      await cron.tick();
       expect(delivered.length).toBe(1);
     });
   });

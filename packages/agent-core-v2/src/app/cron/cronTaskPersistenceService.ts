@@ -15,7 +15,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ICronTaskPersistence, type CronTaskQuery } from './cronTaskPersistence';
 import type { CronTask } from './cronTask';
 
-export const CRON_ID_REGEX: RegExp = /^[0-9a-f]{8}$/;
+export const CRON_ID_REGEX: RegExp = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 const JSON_SUFFIX = '.json';
 
 export function isValidCronTask(obj: unknown): obj is CronTask {

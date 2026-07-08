@@ -14,7 +14,7 @@
  * `onDidCreateMain`. Bound at Session scope.
  */
 
-import { randomBytes } from 'node:crypto';
+import { ulid } from 'ulid';
 
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { CronJobOrigin, CronMissedOrigin } from '@moonshot-ai/protocol';
@@ -28,7 +28,7 @@ import { IntervalTimer } from '#/_base/utils/timer';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
-import { type CronConfig, CRON_SECTION, DEFAULT_CRON_CONFIG } from '#/app/cron/configSection';
+import { type CronConfig, CRON_SECTION } from '#/app/cron/configSection';
 import { computeNextCronRun, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -74,7 +74,7 @@ declare module '#/agent/wireRecord/wireRecord' {
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const MAX_COALESCE_ITERATIONS = 10_000;
-const CRON_ID_REGEX: RegExp = /^[0-9a-f]{8}$/;
+const CRON_ID_REGEX: RegExp = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 const MAX_ID_ATTEMPTS = 8;
 const SESSION_TAG = 'sessionId';
 
@@ -89,10 +89,9 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   private readonly timer = this._register(new IntervalTimer({ unref: true }));
   private readonly persistQueues = new Map<string, Promise<void>>();
 
-  readonly clocks: ClockSources;
+  private clocks: ClockSources = SYSTEM_CLOCKS;
   readonly isEnabled: boolean = true;
 
-  private cronConfig: CronConfig;
   private started = false;
   private sigusr1Handler: NodeJS.SignalsListener | null = null;
 
@@ -104,26 +103,19 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     @IConfigService private readonly config: IConfigService,
   ) {
     super();
-    this.cronConfig = this.config.get<CronConfig>(CRON_SECTION) ?? DEFAULT_CRON_CONFIG;
-    this._register(
-      this.config.onDidChangeConfiguration((e) => {
-        if (e.domain === CRON_SECTION) {
-          this.cronConfig = this.config.get<CronConfig>(CRON_SECTION) ?? DEFAULT_CRON_CONFIG;
-        }
-      }),
-    );
-    this.clocks =
-      resolveClockSources(this.cronConfig.clock, this.cronConfig.debug) ?? SYSTEM_CLOCKS;
+    // `clocks` starts as `SYSTEM_CLOCKS` and is re-resolved from the real cron
+    // config in `bindMainAgent` after `config.ready` (see `resolveClocks`), so
+    // construction never reads config before it is ready.
 
     this._register(
       this.agentLifecycle.onDidCreateMain((handle) => {
-        this.bindMainAgent(handle);
+        void this.bindMainAgent(handle);
       }),
     );
 
     const existingMain = this.agentLifecycle.getHandle('main');
     if (existingMain) {
-      this.bindMainAgent(existingMain);
+      void this.bindMainAgent(existingMain);
     }
 
     this._register(
@@ -133,7 +125,14 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     );
   }
 
-  private bindMainAgent(handle: IAgentScopeHandle): void {
+  private async bindMainAgent(handle: IAgentScopeHandle): Promise<void> {
+    // Wait for the config document to load before reading any cron config, so
+    // `getCronConfig()` observes the real value (config.toml + env overlay)
+    // rather than the pre-ready default.
+    await this.config.ready;
+    // Re-resolve clocks from the real cron config now that it is loaded (they
+    // defaulted to `SYSTEM_CLOCKS` at construction).
+    this.resolveClocks();
     const wire = handle.accessor.get(IAgentWireService);
     this._register(
       wire.onRestored(() => {
@@ -147,14 +146,15 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
     this.registerCronTools(handle);
 
-    void this.loadFromStore().then(() => this.start());
+    await this.loadFromStore();
+    await this.start();
   }
 
   private registerCronTools(handle: IAgentScopeHandle): void {
     const instantiation = handle.accessor.get(IInstantiationService);
     const registry = handle.accessor.get(IAgentToolRegistryService);
     const tools = [
-      instantiation.createInstance(CronCreateTool, this.cronConfig.disabled),
+      instantiation.createInstance(CronCreateTool),
       instantiation.createInstance(CronListTool),
       instantiation.createInstance(CronDeleteTool),
     ];
@@ -165,6 +165,25 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
   now(): number {
     return this.clocks.wallNow();
+  }
+
+  private resolveClocks(): void {
+    const cfg = this.getCronConfig();
+    this.clocks = resolveClockSources(cfg.clock, cfg.debug) ?? SYSTEM_CLOCKS;
+  }
+
+  private getCronConfig(): CronConfig {
+    // Read through `IConfigService.get()` so the env overlay is re-applied
+    // on every call — this is what keeps `KIMI_DISABLE_CRON` (and the other
+    // `KIMI_CRON_*` toggles) live after process start. Callers ensure
+    // `this.config.ready` (see `bindMainAgent` / `start` / `tick`); after
+    // ready the `cron` section is registered and `effective` is populated,
+    // so this is always defined.
+    return this.config.get<CronConfig>(CRON_SECTION);
+  }
+
+  isDisabled(): boolean {
+    return this.getCronConfig().disabled;
   }
 
   // —— task CRUD ——
@@ -236,19 +255,40 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     }
     const allTasks = await this.store.list({ workspaceId: this.ctx.workspaceId });
     for (const task of allTasks) {
-      if (task.tags?.[SESSION_TAG] !== this.ctx.sessionId) continue;
+      const owner = task.tags?.[SESSION_TAG];
+      if (owner !== undefined && owner !== this.ctx.sessionId) continue;
+      if (owner === undefined) {
+        // Legacy / hand-edited task whose shape is valid but which carries no
+        // `sessionId` tag. Adopt it into this session and stamp the tag back
+        // to disk so a concurrent resume by another session can't also claim
+        // it (atomic write — last stamper wins, and the record is now owned,
+        // so future resumes filter by tag as usual).
+        const claimed: CronTask = {
+          ...task,
+          tags: { ...task.tags, [SESSION_TAG]: this.ctx.sessionId },
+        };
+        this.adopt(claimed);
+        this.persistEnqueue(claimed.id, () =>
+          this.store.save(this.ctx.workspaceId, claimed),
+        );
+        continue;
+      }
       this.adopt(task);
     }
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
 
-    const poll = this.cronConfig.manualTick ? null : this.cronConfig.pollIntervalMs;
+    // Defensive: a direct `start()` call outside `bindMainAgent` still waits
+    // for ready so `getCronConfig()` is readable.
+    await this.config.ready;
+    const cfg = this.getCronConfig();
+    const poll = cfg.manualTick ? null : cfg.pollIntervalMs;
     const interval = poll === undefined ? DEFAULT_POLL_INTERVAL_MS : poll;
     if (interval !== null && interval !== 0) {
-      this.timer.cancelAndSet(() => this.tick(), interval);
+      this.timer.cancelAndSet(() => { void this.tick(); }, interval);
     }
     this.bindSigusr1();
   }
@@ -264,8 +304,9 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     this.started = false;
   }
 
-  tick(): void {
-    if (this.cronConfig.disabled) return;
+  async tick(): Promise<void> {
+    await this.config.ready;
+    if (this.getCronConfig().disabled) return;
     if (this.tasks.size === 0) return;
 
     const mainHandle = this.agentLifecycle.getHandle('main');
@@ -276,74 +317,85 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
     const now = this.clocks.wallNow();
 
+    // Fan out one async delivery per due task and wait for all to settle.
+    // Each task owns its own `inFlight` entry (cleared in `processDue`'s
+    // finally), so a slow `.launched` on one task neither blocks the others
+    // from starting this tick nor lets the same task be re-picked next tick.
+    const work: Promise<void>[] = [];
+    for (const task of this.list()) {
+      work.push(this.processDue(task, now));
+    }
+    await Promise.all(work);
+  }
+
+  private async processDue(task: CronTask, now: number): Promise<void> {
+    if (this.inFlight.has(task.id)) return;
+
+    let parsed: ParsedCronExpression;
     try {
-      for (const task of this.list()) {
-        try {
-          if (this.inFlight.has(task.id)) continue;
+      parsed = this.getParsed(task.cron);
+    } catch (error) {
+      this.debugLog(
+        `tick failed to parse cron for task ${task.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
 
-          const parsed = this.getParsed(task.cron);
+    if (
+      !this.seededFromStore.has(task.id) &&
+      task.lastFiredAt !== undefined &&
+      Number.isFinite(task.lastFiredAt) &&
+      task.lastFiredAt <= now &&
+      !this.lastSeenAt.has(task.id)
+    ) {
+      this.lastSeenAt.set(task.id, task.lastFiredAt);
+    }
+    this.seededFromStore.add(task.id);
 
-          if (
-            !this.seededFromStore.has(task.id) &&
-            task.lastFiredAt !== undefined &&
-            Number.isFinite(task.lastFiredAt) &&
-            task.lastFiredAt <= now &&
-            !this.lastSeenAt.has(task.id)
-          ) {
-            this.lastSeenAt.set(task.id, task.lastFiredAt);
-          }
-          this.seededFromStore.add(task.id);
+    const seen = this.lastSeenAt.get(task.id);
+    const baseFromMs =
+      seen !== undefined && seen > task.createdAt ? seen : task.createdAt;
 
-          const seen = this.lastSeenAt.get(task.id);
-          const baseFromMs =
-            seen !== undefined && seen > task.createdAt ? seen : task.createdAt;
+    const nextFireAt = this.computeJitteredNext(task, parsed, baseFromMs);
+    if (nextFireAt === null) return;
+    if (now < nextFireAt) return;
 
-          const nextFireAt = this.computeJitteredNext(task, parsed, baseFromMs);
-          if (nextFireAt === null) continue;
-          if (now < nextFireAt) continue;
+    const ideal = computeNextCronRun(parsed, baseFromMs);
+    let coalescedCount = 1;
+    let lastDueMs: number | null = null;
+    if (task.recurring !== false && ideal !== null) {
+      const result = this.countCoalesced(task, parsed, ideal, now);
+      coalescedCount = Math.max(1, result.count);
+      lastDueMs = result.lastDueMs;
+    }
 
-          const ideal = computeNextCronRun(parsed, baseFromMs);
-          let coalescedCount = 1;
-          let lastDueMs: number | null = null;
-          if (task.recurring !== false && ideal !== null) {
-            const result = this.countCoalesced(task, parsed, ideal, now);
-            coalescedCount = Math.max(1, result.count);
-            lastDueMs = result.lastDueMs;
-          }
-
-          this.inFlight.add(task.id);
-          let delivered = false;
-          try {
-            this.deliverDue(task, coalescedCount);
-            delivered = true;
-          } catch (error) {
-            this.debugLog(
-              `deliverDue threw for task ${task.id}: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            );
-          }
-          if (!delivered) continue;
-
-          if (task.recurring === false) {
-            this.removeTasks([task.id]);
-            this.lastSeenAt.delete(task.id);
-            this.seededFromStore.delete(task.id);
-          } else {
-            const advancedTo = lastDueMs ?? now;
-            this.lastSeenAt.set(task.id, advancedTo);
-            this.advanceCursor(task.id, advancedTo);
-          }
-        } catch (error) {
-          this.debugLog(
-            `tick failed for task ${task.id}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-      }
+    this.inFlight.add(task.id);
+    let delivered = false;
+    try {
+      delivered = await this.deliverDue(task, coalescedCount);
+    } catch (error) {
+      this.debugLog(
+        `deliverDue threw for task ${task.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     } finally {
-      this.inFlight.clear();
+      this.inFlight.delete(task.id);
+    }
+    // Not delivered → leave `lastSeenAt` / store untouched so the next tick
+    // re-detects this task as due and retries (loud retry, not silent loss).
+    if (!delivered) return;
+
+    if (task.recurring === false) {
+      this.removeTasks([task.id]);
+      this.lastSeenAt.delete(task.id);
+      this.seededFromStore.delete(task.id);
+    } else {
+      const advancedTo = lastDueMs ?? now;
+      this.lastSeenAt.set(task.id, advancedTo);
+      this.advanceCursor(task.id, advancedTo);
     }
   }
 
@@ -390,22 +442,23 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
   // —— fire delivery ——
 
-  private deliverDue(task: CronTask, coalescedCount: number): void {
+  private async deliverDue(task: CronTask, coalescedCount: number): Promise<boolean> {
     const firedAt = this.clocks.wallNow();
     const stale = this.isStaleAt(task, firedAt);
-    this.deliverFire(task, { coalescedCount, firedAt });
-    if (stale && task.recurring !== false) {
+    const delivered = await this.deliverFire(task, { coalescedCount, firedAt });
+    if (delivered && stale && task.recurring !== false) {
       const removed = this.removeTasks([task.id]);
       if (removed.length > 0) this.emitDeleted(task.id);
     }
+    return delivered;
   }
 
   private deliverFire(
     task: CronTask,
     ctx: { readonly coalescedCount: number; readonly firedAt: number },
-  ): Turn | undefined {
+  ): Promise<boolean> {
     const mainHandle = this.agentLifecycle.getHandle('main');
-    if (!mainHandle) return undefined;
+    if (!mainHandle) return Promise.resolve(false);
 
     const promptService = mainHandle.accessor.get(IAgentPromptService);
 
@@ -428,16 +481,44 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       toolCalls: [],
       origin,
     };
-    this.signalCron({ type: 'cron.fired', origin, prompt: task.prompt });
     const buffered = mainHandle.accessor.get(IAgentTurnService).getActiveTurn() !== undefined;
-    void promptService.steer(message).launched.catch(() => {});
-    this.telemetry.track(CRON_FIRED, {
-      recurring: task.recurring !== false,
-      coalesced_count: ctx.coalescedCount,
-      stale: origin.stale,
-      buffered,
-    });
-    return undefined;
+
+    let launched: Promise<unknown>;
+    try {
+      launched = promptService.steer(message).launched;
+    } catch (error) {
+      this.debugLog(
+        `steer threw for task ${task.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return Promise.resolve(false);
+    }
+
+    // Resolve to `true` only once the agent has actually accepted the prompt
+    // (`.launched` settled). A synchronous throw or an async rejection both
+    // resolve to `false`, so the caller keeps the task and retries next tick
+    // instead of deleting a one-shot whose prompt never reached the context.
+    return launched.then(
+      () => {
+        this.signalCron({ type: 'cron.fired', origin, prompt: task.prompt });
+        this.telemetry.track(CRON_FIRED, {
+          recurring: task.recurring !== false,
+          coalesced_count: ctx.coalescedCount,
+          stale: origin.stale,
+          buffered,
+        });
+        return true;
+      },
+      (error: unknown) => {
+        this.debugLog(
+          `steer launch rejected for task ${task.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return false;
+      },
+    );
   }
 
   private advanceCursor(id: string, lastFiredAt: number): void {
@@ -482,9 +563,25 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     const ideal = computeNextCronRun(parsed, baseMs);
     if (ideal === null) return null;
     if (task.recurring === false) {
-      return oneShotJitteredNextCronRunMs(task, ideal, undefined, this.cronConfig.noJitter);
+      return oneShotJitteredNextCronRunMs(task, ideal, undefined, this.getCronConfig().noJitter);
     }
-    return jitteredNextCronRunMs(task, parsed, ideal, undefined, this.cronConfig.noJitter);
+    return jitteredNextCronRunMs(task, parsed, ideal, undefined, this.getCronConfig().noJitter);
+  }
+
+  computeDisplayNextFire(
+    task: CronTask,
+    parsed: ParsedCronExpression,
+    idealMs: number,
+  ): number | null {
+    // Apply the same jitter the scheduler will use — including the
+    // `KIMI_CRON_NO_JITTER` bypass — to an already-computed ideal fire time,
+    // so the `nextFireAt` reported by `CronCreate` matches the actual
+    // delivery (and what `CronList` shows via `getNextFireForTask`).
+    const noJitter = this.getCronConfig().noJitter;
+    if (task.recurring === false) {
+      return oneShotJitteredNextCronRunMs(task, idealMs, undefined, noJitter);
+    }
+    return jitteredNextCronRunMs(task, parsed, idealMs, undefined, noJitter);
   }
 
   private countCoalesced(
@@ -502,8 +599,8 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       if (next > nowMs) break;
       const jitteredNext =
         task.recurring === false
-          ? oneShotJitteredNextCronRunMs(task, next, undefined, this.cronConfig.noJitter)
-          : jitteredNextCronRunMs(task, parsed, next, undefined, this.cronConfig.noJitter);
+          ? oneShotJitteredNextCronRunMs(task, next, undefined, this.getCronConfig().noJitter)
+          : jitteredNextCronRunMs(task, parsed, next, undefined, this.getCronConfig().noJitter);
       if (jitteredNext > nowMs) break;
       count++;
       cursor = next;
@@ -542,7 +639,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   }
 
   private debugLog(message: string): void {
-    if (this.cronConfig.debug) {
+    if (this.getCronConfig().debug) {
       process.stderr.write(`[cron/session] ${message}\n`);
     }
   }
@@ -573,17 +670,21 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
   private generateUniqueId(): string {
     for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
-      const candidate = randomBytes(4).toString('hex');
+      // ULID: 128-bit (48-bit ms timestamp + 80-bit random), Crockford
+      // base32, 26 chars. The 80-bit random tail makes cross-session id
+      // collisions a practical impossibility, so two sessions sharing a
+      // workspace no longer risk overwriting each other's `<id>.json`.
+      const candidate = ulid();
       if (!CRON_ID_REGEX.test(candidate)) continue;
       if (!this.tasks.has(candidate)) return candidate;
     }
     throw new Error(
-      `SessionCronService: failed to generate a unique 8-hex id after ${MAX_ID_ATTEMPTS} attempts`,
+      `SessionCronService: failed to generate a unique ULID after ${MAX_ID_ATTEMPTS} attempts`,
     );
   }
 
   private isStaleAt(task: CronTask, now: number): boolean {
-    if (this.cronConfig.noStale) return false;
+    if (this.getCronConfig().noStale) return false;
     if (task.recurring === false) return false;
     const age = now - task.createdAt;
     return Number.isFinite(age) && age >= STALE_THRESHOLD_MS;
@@ -609,13 +710,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
   private bindSigusr1(): void {
     if (process.platform === 'win32') return;
-    if (!this.cronConfig.manualTick) return;
+    if (!this.getCronConfig().manualTick) return;
     if (this.sigusr1Handler !== null) return;
     const handler: NodeJS.SignalsListener = () => {
       try {
-        this.tick();
+        void this.tick();
       } catch (error) {
-        if (this.cronConfig.debug) {
+        if (this.getCronConfig().debug) {
           const msg = error instanceof Error ? error.message : String(error);
           process.stderr.write(`[cron/session] SIGUSR1 tick threw: ${msg}\n`);
         }
