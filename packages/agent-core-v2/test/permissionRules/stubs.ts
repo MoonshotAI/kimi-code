@@ -7,13 +7,9 @@
  * `../permissionRules/stubs`).
  */
 
-import { createHooks } from '#/hooks';
-import type { Hooks } from '#/hooks';
 import type {
   IAgentPermissionRulesService,
-  PermissionApprovalRecordedContext,
   PermissionRule,
-  PermissionRulesChangedContext,
 } from '#/agent/permissionRules/permissionRules';
 
 export function stubPermissionRulesService(
@@ -27,9 +23,5 @@ export function stubPermissionRulesService(
     sessionApprovalRulePatterns: [],
     addRules: () => {},
     recordApprovalResult: () => {},
-    hooks: createHooks(['onChanged', 'onApprovalRecorded']) as Hooks<{
-      onChanged: PermissionRulesChangedContext;
-      onApprovalRecorded: PermissionApprovalRecordedContext;
-    }>,
   };
 }

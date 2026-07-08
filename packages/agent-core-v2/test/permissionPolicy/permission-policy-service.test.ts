@@ -6,8 +6,6 @@ import type { ToolCall } from '#/app/llmProtocol/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createHooks } from '#/hooks';
-import type { Hooks } from '#/hooks';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import {
@@ -27,7 +25,6 @@ import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissio
 import {
   IAgentPermissionRulesService,
   type IAgentPermissionRulesService as PermissionRulesServiceContract,
-  type PermissionApprovalResultRecord,
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
@@ -691,10 +688,6 @@ function permissionRulesStub(
     },
     addRules: () => {},
     recordApprovalResult: () => {},
-    hooks: createHooks(['onChanged', 'onApprovalRecorded']) as Hooks<{
-      onChanged: { rules: readonly PermissionRule[] };
-      onApprovalRecorded: { record: PermissionApprovalResultRecord };
-    }>,
   };
 }
 

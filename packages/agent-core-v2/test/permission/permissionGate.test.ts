@@ -4,8 +4,6 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
-import { createHooks } from '#/hooks';
-import type { Hooks } from '#/hooks';
 import {
   ISessionApprovalService,
   type ApprovalRequest,
@@ -87,9 +85,11 @@ describe('AgentPermissionGate', () => {
   let rules: readonly PermissionRule[];
   let policyResult: PermissionPolicyEvaluation | undefined;
   let approvalResponse: ApprovalResponse;
+  let eventBus: IEventBus;
 
   beforeEach(() => {
     disposables = new DisposableStore();
+    eventBus = disposables.add(new EventBusService());
     mode = 'auto';
     rules = [];
     policyResult = undefined;
@@ -102,6 +102,7 @@ describe('AgentPermissionGate', () => {
           IAgentPermissionPolicyService,
           stubPermissionPolicyService(() => policyResult),
         );
+        reg.defineInstance(IEventBus, eventBus);
         reg.definePartialInstance(ITelemetryService, { track: () => {} });
         reg.defineInstance(ISessionApprovalService, stubApprovalService(() => approvalResponse));
         reg.defineInstance(ISessionContext, makeSessionContext({
@@ -393,7 +394,7 @@ describe('AgentPermissionGate', () => {
     expect(recorded.every((record) => record.sessionApprovalRule === undefined)).toBe(true);
   });
 
-  it('fires observer hooks while waiting for user approval', async () => {
+  it('publishes approval events while waiting for user approval', async () => {
     const permissionRequest = vi.fn();
     const permissionResult = vi.fn();
     policyResult = { policyName: 'p', result: { kind: 'ask' } };
@@ -402,14 +403,10 @@ describe('AgentPermissionGate', () => {
     const svc = make();
     const eventBus = ix.get(IEventBus);
     disposables.add(
-      eventBus.subscribe('permission.approval.requested', (ctx) => {
-        permissionRequest(ctx);
-      }),
+      eventBus.subscribe('permission.approval.requested', permissionRequest),
     );
     disposables.add(
-      eventBus.subscribe('permission.approval.resolved', (ctx) => {
-        permissionResult(ctx);
-      }),
+      eventBus.subscribe('permission.approval.resolved', permissionResult),
     );
 
     await expect(svc.authorize(makeContext('Bash', { command: 'printf first' }))).resolves
@@ -569,9 +566,5 @@ function mutablePermissionRulesService(
     },
     addRules: () => {},
     recordApprovalResult: (record) => options.record?.(record),
-    hooks: createHooks(['onChanged', 'onApprovalRecorded']) as Hooks<{
-      onChanged: { rules: readonly PermissionRule[] };
-      onApprovalRecorded: { record: PermissionApprovalResultRecord };
-    }>,
   };
 }

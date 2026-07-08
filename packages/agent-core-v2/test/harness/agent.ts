@@ -1891,10 +1891,6 @@ function createPermissionRulesStub(
   initialRules: readonly PermissionRule[],
 ): IAgentPermissionRulesService {
   let rules = [...initialRules];
-  const emptyHook = {
-    register: () => ({ dispose: () => { } }),
-    run: () => Promise.resolve(),
-  };
   return {
     _serviceBrand: undefined,
     get rules() {
@@ -1907,10 +1903,6 @@ function createPermissionRulesStub(
       rules = [...rules, ...nextRules];
     },
     recordApprovalResult: () => { },
-    hooks: {
-      onChanged: emptyHook,
-      onApprovalRecorded: emptyHook,
-    } as unknown as IAgentPermissionRulesService['hooks'],
   };
 }
 

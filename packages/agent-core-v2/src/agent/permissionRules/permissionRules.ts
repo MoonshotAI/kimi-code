@@ -1,8 +1,6 @@
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ApprovalResponse } from "@moonshot-ai/protocol";
 
-import type { Hooks } from '#/hooks';
-
 export interface PermissionApprovalResultRecord {
   readonly turnId: number;
   readonly toolCallId: string;
@@ -10,14 +8,6 @@ export interface PermissionApprovalResultRecord {
   readonly action: string;
   readonly sessionApprovalRule?: string;
   readonly result: ApprovalResponse;
-}
-
-export interface PermissionRulesChangedContext {
-  readonly rules: readonly PermissionRule[];
-}
-
-export interface PermissionApprovalRecordedContext {
-  readonly record: PermissionApprovalResultRecord;
 }
 
 export type PermissionRuleDecision = 'allow' | 'deny' | 'ask';
@@ -48,11 +38,6 @@ export interface IAgentPermissionRulesService {
   readonly sessionApprovalRulePatterns: readonly string[];
   addRules(rules: readonly PermissionRule[]): void;
   recordApprovalResult(record: PermissionApprovalResultRecord): void;
-
-  readonly hooks: Hooks<{
-    onChanged: PermissionRulesChangedContext;
-    onApprovalRecorded: PermissionApprovalRecordedContext;
-  }>;
 }
 
 export const IAgentPermissionRulesService =
