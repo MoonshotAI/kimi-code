@@ -139,9 +139,9 @@ const wsPickOpen = ref(false);
 const wsPickExpanded = ref(false);
 const contentWrapRef = ref<HTMLElement | null>(null);
 const wsPickMeasureRef = ref<HTMLElement | null>(null);
-const wsPickWidth = ref<string>('');
+const wsPickMenuWidth = ref<string>('');
 const wsPickStyle = computed<Record<string, string> | undefined>(() =>
-  wsPickWidth.value ? { '--ws-pick-width': wsPickWidth.value } : undefined,
+  wsPickMenuWidth.value ? { '--ws-pick-menu-width': wsPickMenuWidth.value } : undefined,
 );
 let wsPickMeasureFrame: number | null = null;
 
@@ -208,7 +208,7 @@ function updateWorkspacePickerWidth(): void {
     (max, workspace) => Math.max(max, measureText(workspace.shortPath, itemPathStyle)),
     0,
   );
-  wsPickWidth.value = measuredPathWidth
+  wsPickMenuWidth.value = measuredPathWidth
     ? `${Math.ceil(Math.min(measuredPathWidth, workspacePickerMaxWidth()))}px`
     : '';
 }
@@ -1509,8 +1509,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  width: var(--ws-pick-width, max-content);
-  max-width: calc(100vw - var(--space-8));
+  width: max-content;
+  max-width: min(100%, calc(100vw - var(--space-8)));
   padding: 5px 10px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1521,7 +1521,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   cursor: pointer;
 }
 .ws-pick-btn:hover { border-color: var(--color-accent-bd); color: var(--color-text); }
-.ws-pick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-pick-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
 .ws-pick-chev.open { transform: rotate(180deg); }
 .ws-pick-backdrop {
@@ -1535,8 +1535,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
   transform: translateX(-50%);
   top: calc(100% + 6px);
   z-index: var(--z-dropdown);
-  width: var(--ws-pick-width, max-content);
-  min-width: var(--ws-pick-width, max-content);
+  width: var(--ws-pick-menu-width, max-content);
+  min-width: var(--ws-pick-menu-width, max-content);
   max-width: calc(100vw - var(--space-8));
   max-height: 50vh;
   overflow-y: auto;
