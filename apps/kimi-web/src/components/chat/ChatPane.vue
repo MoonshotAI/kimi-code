@@ -632,7 +632,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             @open-agent="emit('openAgent', $event)"
           />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" @open-agent="emit('openAgent', $event)" />
-          <CronNotice v-else-if="blk.kind === 'cron'" :text="blk.text" :cron="blk.cron" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
           <Tooltip :text="`${turn.durationMs} ms`">
