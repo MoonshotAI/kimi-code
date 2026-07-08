@@ -48,11 +48,25 @@ export interface UsageRow {
 export interface ParsedManagedUsage {
   readonly summary: UsageRow | null;
   readonly limits: UsageRow[];
+  readonly extraUsage: UsageRow | null;
+}
+
+function parseBoosterWallet(raw: unknown): UsageRow | null {
+  if (!isRecord(raw)) return null;
+  const balance = raw['balance'];
+  if (!isRecord(balance)) return null;
+  if (balance['type'] !== 'BALANCE_BOOSTER') return null;
+  const amount = toInt(balance['amount']);
+  if (amount === null || amount <= 0) return null;
+  const amountLeft = toInt(balance['amountLeft']) ?? 0;
+  const used = Math.max(0, Math.min(amount - amountLeft, amount));
+  const resetHint = resetHintFrom(balance);
+  return { label: 'Extra Usage', used, limit: amount, resetHint };
 }
 
 export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
   if (typeof payload !== 'object' || payload === null) {
-    return { summary: null, limits: [] };
+    return { summary: null, limits: [], extraUsage: null };
   }
   const rec = payload as Record<string, unknown>;
   const summary = toUsageRow(rec['usage'], 'Weekly limit');
@@ -71,7 +85,8 @@ export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
       if (row !== null) limits.push(row);
     }
   }
-  return { summary, limits };
+  const extraUsage = parseBoosterWallet(rec['boosterWallet']);
+  return { summary, limits, extraUsage };
 }
 
 function toUsageRow(raw: unknown, defaultLabel: string): UsageRow | null {
@@ -126,7 +141,7 @@ function limitLabel(
 }
 
 function resetHintFrom(raw: Record<string, unknown>): string | undefined {
-  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime']) {
+  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime', 'period_end', 'periodEnd']) {
     const v = raw[key];
     if (typeof v === 'string' && v.length > 0) {
       return formatResetTime(v);

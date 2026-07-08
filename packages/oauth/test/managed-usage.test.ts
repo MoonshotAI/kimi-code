@@ -25,8 +25,8 @@ describe('isManagedKimiCode', () => {
 
 describe('parseManagedUsagePayload', () => {
   it('returns empty when payload is not an object', () => {
-    expect(parseManagedUsagePayload(null)).toEqual({ summary: null, limits: [] });
-    expect(parseManagedUsagePayload('nope')).toEqual({ summary: null, limits: [] });
+    expect(parseManagedUsagePayload(null)).toEqual({ summary: null, limits: [], extraUsage: null });
+    expect(parseManagedUsagePayload('nope')).toEqual({ summary: null, limits: [], extraUsage: null });
   });
 
   it('extracts a summary from the `usage` object', () => {
@@ -74,6 +74,44 @@ describe('parseManagedUsagePayload', () => {
     const parsed = parseManagedUsagePayload({ usage: { used: 1, limit: 10, resetAt: future } });
     expect(parsed.summary?.resetHint).toMatch(/resets in/);
   });
+
+  it('extracts extra usage from boosterWallet.balance', () => {
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 40, limit: 1000, name: 'Weekly limit' },
+      boosterWallet: {
+        id: 'wallet_1',
+        balance: {
+          type: 'BALANCE_BOOSTER',
+          amount: '1000',
+          amountLeft: '500',
+          unit: 'UNIT_CREDIT',
+          periodEnd: '2026-08-01T00:00:00Z',
+        },
+      },
+    });
+    expect(parsed.extraUsage).toEqual({
+      label: 'Extra Usage',
+      used: 500,
+      limit: 1000,
+      resetHint: expect.stringMatching(/resets in/),
+    });
+  });
+
+  it('returns null extra usage when boosterWallet is missing or invalid', () => {
+    expect(parseManagedUsagePayload({ usage: { used: 1, limit: 10 } }).extraUsage).toBeNull();
+    expect(
+      parseManagedUsagePayload({
+        usage: { used: 1, limit: 10 },
+        boosterWallet: { balance: { type: 'OTHER', amount: '100', amountLeft: '50' } },
+      }).extraUsage,
+    ).toBeNull();
+    expect(
+      parseManagedUsagePayload({
+        usage: { used: 1, limit: 10 },
+        boosterWallet: { balance: { type: 'BALANCE_BOOSTER', amount: '0', amountLeft: '0' } },
+      }).extraUsage,
+    ).toBeNull();
+  });
 });
 
 describe('fetchManagedUsage', () => {
@@ -92,6 +130,7 @@ describe('fetchManagedUsage', () => {
       parsed: {
         summary: { label: 'Weekly limit', used: 1, limit: 10 },
         limits: [],
+        extraUsage: null,
       },
     });
 
