@@ -721,6 +721,56 @@ describe('Agent tool execution contract', () => {
     completions[0]?.resolve({ summary: 'finished later' });
   });
 
+  it('rejects one of two concurrent background subagents when the task limit is reached', async () => {
+    const completions = [
+      deferred<{ readonly summary: string }>(),
+      deferred<{ readonly summary: string }>(),
+    ];
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-first', 'agent-second'],
+      runCompletion: (_agentId, _request, options) => {
+        const next = completions.shift();
+        if (next === undefined) throw new Error('unexpected run');
+        options.signal.addEventListener('abort', () => next.reject(options.signal.reason), {
+          once: true,
+        });
+        return next.promise;
+      },
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      configServices(() => ({
+        providers: {},
+        task: { maxRunningTasks: 1 },
+      })),
+    );
+
+    const first = executeAgentTool(context, {
+      prompt: 'Investigate first',
+      description: 'Find first',
+      run_in_background: true,
+    });
+    const second = executeAgentTool(context, {
+      prompt: 'Investigate second',
+      description: 'Find second',
+      run_in_background: true,
+    });
+
+    const results = await Promise.all([first, second]);
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(2);
+    expect(results).toContainEqual(
+      expect.objectContaining({ output: expect.stringContaining('status: running') }),
+    );
+    expect(results).toContainEqual(
+      expect.objectContaining({
+        isError: true,
+        output: 'Too many background tasks are already running.',
+      }),
+    );
+    completions[0]?.resolve({ summary: 'finished later' });
+  });
+
   it('logs background registration failures', async () => {
     const { entries, logger } = captureLogs();
     const completions = [
