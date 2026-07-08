@@ -1633,7 +1633,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  z-index: var(--z-sticky);
+  /* Positioned after the message flow, so base z-index is enough to float above
+     content while staying below composer dropdowns. */
+  z-index: var(--z-base);
 }
 .newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {
