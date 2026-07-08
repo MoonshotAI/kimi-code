@@ -19,7 +19,7 @@ import {
   type ReadMediaFileInput,
   type VideoUploader,
 } from '#/agent/media/tools/read-media';
-import { registerMediaTools } from '#/agent/media/registerMediaTools';
+import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { ToolAccesses } from '#/agent/tool/tool-access';
@@ -736,5 +736,78 @@ describe('AgentMediaToolsRegistrar', () => {
     // A status update after dispose must not resurrect the tool.
     bindModel('vision-model-2', capabilities({ image_in: true, video_in: true }));
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
+  });
+});
+
+describe('createVideoUploader', () => {
+  const uploadResult = {
+    type: 'video_url' as const,
+    videoUrl: { url: 'https://example.com/uploaded.mp4' },
+  };
+  const input = { data: new Uint8Array(2048), mimeType: 'video/mp4', filename: 'clip.mp4' };
+
+  function modelWith(uploadVideo: Model['uploadVideo']): Pick<Model, 'uploadVideo'> {
+    return { uploadVideo } as Pick<Model, 'uploadVideo'>;
+  }
+
+  it('returns undefined when the model does not support video upload', () => {
+    expect(createVideoUploader(undefined)).toBeUndefined();
+    expect(createVideoUploader({} as Pick<Model, 'uploadVideo'>)).toBeUndefined();
+  });
+
+  it('binds uploadVideo without telemetry', async () => {
+    const uploadVideo = vi.fn().mockResolvedValue(uploadResult);
+    const uploader = createVideoUploader(modelWith(uploadVideo));
+    await expect(uploader!(input)).resolves.toEqual(uploadResult);
+    expect(uploadVideo).toHaveBeenCalledWith(input);
+  });
+
+  it('reports video_upload telemetry on success', async () => {
+    const records: TelemetryRecord[] = [];
+    const uploader = createVideoUploader(modelWith(vi.fn().mockResolvedValue(uploadResult)), {
+      client: recordingTelemetry(records),
+      props: { model: 'example-model', protocol: 'kimi' },
+    });
+    await expect(uploader!(input)).resolves.toEqual(uploadResult);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.event).toBe('video_upload');
+    expect(records[0]!.properties).toMatchObject({
+      outcome: 'success',
+      mime_type: 'video/mp4',
+      size_bytes: 2048,
+      model: 'example-model',
+      protocol: 'kimi',
+    });
+    expect(records[0]!.properties?.['duration_ms']).toEqual(expect.any(Number));
+  });
+
+  it('reports an error outcome with the error type and rethrows', async () => {
+    const records: TelemetryRecord[] = [];
+    const failure = new TypeError('upload exploded');
+    const uploader = createVideoUploader(modelWith(vi.fn().mockRejectedValue(failure)), {
+      client: recordingTelemetry(records),
+    });
+    await expect(uploader!(input)).rejects.toBe(failure);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.event).toBe('video_upload');
+    expect(records[0]!.properties).toMatchObject({
+      outcome: 'error',
+      error_type: 'TypeError',
+      mime_type: 'video/mp4',
+      size_bytes: 2048,
+    });
+  });
+
+  it('never lets a throwing telemetry client break the upload', async () => {
+    const throwing = {
+      ...recordingTelemetry([]),
+      track: () => {
+        throw new Error('sink down');
+      },
+    } as ITelemetryService;
+    const uploader = createVideoUploader(modelWith(vi.fn().mockResolvedValue(uploadResult)), {
+      client: throwing,
+    });
+    await expect(uploader!(input)).resolves.toEqual(uploadResult);
   });
 });

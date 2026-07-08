@@ -65,6 +65,7 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     this.registeredKey = key;
     this.registration?.dispose();
     const workspaceCtx = this.workspaceCtx;
+    const model = this.profile.resolveModel();
     this.registration = registerMediaTools(this.toolRegistry, {
       fs: this.fs,
       env: this.env,
@@ -79,7 +80,14 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
         },
       },
       capabilities,
-      videoUploader: createVideoUploader(this.profile.resolveModel()),
+      videoUploader: createVideoUploader(model, {
+        client: this.telemetry,
+        props: {
+          model: this.profile.getModel(),
+          provider_type: model?.protocol,
+          protocol: model?.protocol,
+        },
+      }),
       telemetry: this.telemetry,
     });
   }

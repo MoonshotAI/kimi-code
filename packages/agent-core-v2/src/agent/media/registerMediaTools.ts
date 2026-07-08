@@ -65,12 +65,54 @@ export function registerMediaTools(
  * Bind a runnable Model's `uploadVideo` into the `VideoUploader` shape the
  * media tool expects. Returns `undefined` when the Model does not support
  * video upload, in which case the tool falls back to an inline data URL.
+ *
+ * With `telemetry` set, every upload reports a `video_upload` event — outcome
+ * (success/error), byte size, mime type, duration, and the caller's static
+ * props (model alias, protocol). A throwing telemetry client never affects
+ * the upload outcome.
  */
 export function createVideoUploader(
   model: Pick<Model, 'uploadVideo'> | undefined,
+  telemetry?: VideoUploadTelemetry,
 ): VideoUploader | undefined {
   const uploadVideo = model?.uploadVideo;
   if (uploadVideo === undefined) return undefined;
   const bound = uploadVideo.bind(model);
-  return (input) => bound(input);
+  if (telemetry === undefined) return (input) => bound(input);
+
+  return async (input) => {
+    const startedAt = Date.now();
+    const base = {
+      ...telemetry.props,
+      mime_type: input.mimeType,
+      size_bytes: input.data.length,
+    };
+    const track = (props: Record<string, string | number | boolean | undefined>): void => {
+      try {
+        telemetry.client.track('video_upload', props);
+      } catch {
+        // Telemetry must never affect the upload outcome.
+      }
+    };
+    try {
+      const part = await bound(input);
+      track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
+      return part;
+    } catch (error) {
+      track({
+        ...base,
+        outcome: 'error',
+        duration_ms: Date.now() - startedAt,
+        error_type: error instanceof Error ? error.name : 'Unknown',
+      });
+      throw error;
+    }
+  };
+}
+
+/** Wiring for the optional `video_upload` telemetry events. */
+export interface VideoUploadTelemetry {
+  readonly client: ITelemetryService;
+  /** Static properties merged into every event, e.g. model alias and protocol. */
+  readonly props?: Readonly<Record<string, string | number | boolean | undefined>>;
 }

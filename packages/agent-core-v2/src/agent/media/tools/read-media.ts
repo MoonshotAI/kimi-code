@@ -330,6 +330,10 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       }
 
       const data = Buffer.from(await this.fs.readBytes(safePath));
+      // The summary always reports the ORIGINAL pixel size and byte size: the
+      // model derives relative coordinates and scales them by the original
+      // dimensions, so it must see the pre-compression size even when the
+      // image_url below carries a downsampled copy.
       let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
       let mediaPart: ContentPart;
       let delivery: ImageDelivery | undefined;
@@ -363,6 +367,10 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           // in the decoded space, so the note must report it.
           dimensions = { width: outcome.originalWidth, height: outcome.originalHeight };
         } else if (args.full_resolution === true) {
+          // Native resolution on request — but the provider's per-image byte
+          // ceiling is a hard limit, so refuse explicitly rather than degrade.
+          // Exact byte counts accompany the rounded sizes: a file a hair over
+          // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
           if (data.length > IMAGE_BYTE_BUDGET) {
             return {
               isError: true,
