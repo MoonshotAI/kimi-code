@@ -11,7 +11,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentWireService } from '#/wire/tokens';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { IWireService, PersistedRecord } from '#/wire/wireService';
 import { WireService } from '#/wire/wireServiceImpl';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -44,6 +44,17 @@ async function readRecords(): Promise<PersistedRecord[]> {
     out.push(record);
   }
   return out;
+}
+
+function createFreshWire(logKey: string): { readonly fresh: IWireService; readonly freshLog: IAppendLogStore } {
+  const freshIx = disposables.add(new TestInstantiationService());
+  freshIx.stub(IFileSystemStorageService, new InMemoryStorageService());
+  freshIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  freshIx.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey }]));
+  return {
+    fresh: freshIx.get(IAgentWireService),
+    freshLog: freshIx.get(IAppendLogStore),
+  };
 }
 
 const a1 = { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 };
@@ -130,7 +141,7 @@ describe('AgentUsageService (wire-backed)', () => {
     expect('payload' in records[0]!).toBe(false);
   });
 
-  it('marks turn-scoped sources with usageScope: turn for v1 wire compatibility', async () => {
+  it('marks turn-scoped sources with usageScope and turnId without persisting request context', async () => {
     svc.record('model-a', a1, { type: 'turn', turnId: 7, step: 2 });
 
     const records = await readRecords();
@@ -140,7 +151,7 @@ describe('AgentUsageService (wire-backed)', () => {
         model: 'model-a',
         usage: a1,
         usageScope: 'turn',
-        context: { type: 'turn', turnId: 7, step: 2 },
+        turnId: 7,
       },
     ]);
   });
@@ -150,26 +161,53 @@ describe('AgentUsageService (wire-backed)', () => {
     svc.record('model-a', a2, { type: 'turn', turnId: 1 });
     const records = await readRecords();
 
-    const ix2 = disposables.add(new TestInstantiationService());
-    ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
-    ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.set(
-      IAgentWireService,
-      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'usage-replay' }]),
-    );
-    const log2 = ix2.get(IAppendLogStore);
-    const fresh = ix2.get(IAgentWireService);
+    const { fresh, freshLog } = createFreshWire('usage-replay');
 
-    void fresh.replay(...records);
+    await fresh.replay(...records);
 
     expect(fresh.getModel(UsageModel).byModel).toEqual({
       'model-a': { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 },
     });
 
     const written: PersistedRecord[] = [];
-    for await (const record of log2.read<PersistedRecord>(SCOPE, 'usage-replay')) {
+    for await (const record of freshLog.read<PersistedRecord>(SCOPE, 'usage-replay')) {
       written.push(record);
     }
     expect(written).toEqual([]);
+  });
+
+  it('replays legacy turn context records into current turn usage', async () => {
+    const { fresh } = createFreshWire('usage-legacy-context-replay');
+
+    await fresh.replay({
+      type: 'usage.record',
+      model: 'model-a',
+      usage: a1,
+      usageScope: 'turn',
+      context: { type: 'turn', turnId: 9, step: 3 },
+    });
+
+    expect(fresh.getModel(UsageModel)).toMatchObject({
+      currentTurnId: 9,
+      currentTurn: a1,
+    });
+  });
+
+  it('rejects conflicting usage turn ids during replay', async () => {
+    const fresh = ix.get(IAgentWireService);
+
+    await expect(
+      fresh.replay({
+        type: 'usage.record',
+        model: 'model-a',
+        usage: a1,
+        usageScope: 'turn',
+        turnId: 1,
+        context: { type: 'turn', turnId: 2 },
+      }),
+    ).rejects.toMatchObject({
+      code: 'usage.turn_id_conflict',
+      name: 'UsageError',
+    });
   });
 });

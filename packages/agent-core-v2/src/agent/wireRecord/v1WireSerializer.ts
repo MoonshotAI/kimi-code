@@ -36,7 +36,12 @@ function reshape(record: PersistedRecord): readonly PersistedRecord[] {
       return [out as PersistedRecord];
     }
     case 'context.append_message': {
-      return [record];
+      return [
+        {
+          ...record,
+          message: stripMessageId(record['message']),
+        } as PersistedRecord,
+      ];
     }
     case 'context.splice': {
       const messages = record['messages'] as
@@ -46,7 +51,7 @@ function reshape(record: PersistedRecord): readonly PersistedRecord[] {
       const out: PersistedRecord[] = [];
       for (const message of messages) {
         if (message?.origin?.kind === 'injection') {
-          out.push({ type: 'context.append_message', message });
+          out.push({ type: 'context.append_message', message: stripMessageId(message) });
         }
       }
       return out;
@@ -84,16 +89,15 @@ function reshape(record: PersistedRecord): readonly PersistedRecord[] {
       }
       return [out as PersistedRecord];
     }
-    case 'full_compaction.begin':
-      return [record];
-    case 'full_compaction.complete':
-      return [{ type: 'full_compaction.complete' } as PersistedRecord];
     case 'usage.record': {
       const rest: Record<string, unknown> = { ...(record as Record<string, unknown>) };
       const context = rest['context'] as
         | { type?: string; requestKind?: string }
         | undefined;
-      let usageScope = context?.type ?? rest['usageScope'];
+      let usageScope = rest['usageScope'];
+      if (usageScope === undefined && context !== undefined) {
+        usageScope = context.type;
+      }
       if (context?.type === 'operation' && context.requestKind === 'full_compaction') {
         usageScope = 'session';
       }
@@ -120,4 +124,11 @@ function reshape(record: PersistedRecord): readonly PersistedRecord[] {
     default:
       return [record];
   }
+}
+
+function stripMessageId(message: unknown): unknown {
+  if (message === null || typeof message !== 'object') return message;
+  const { id: _id, ...rest } = message as Record<string, unknown>;
+  void _id;
+  return rest;
 }

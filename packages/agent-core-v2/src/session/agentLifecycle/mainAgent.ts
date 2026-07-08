@@ -5,10 +5,12 @@
  * `agentId === 'main'`; `IAgentLifecycleService` itself knows nothing about
  * it. What *is* main-specific is session bootstrap business: the plugin
  * session-start service registers main-agent-only plugin guidance (matching
- * v1's `pluginSessionStarts: type === 'main' ? … : undefined`). `ensureMainAgent`
- * concentrates that business in one place so every bootstrapper (session
- * resume, legacy session/message services, the server edge) creates the main
- * agent the same way.
+ * v1's `pluginSessionStarts: type === 'main' ? … : undefined`) and the
+ * session cron service registers main-agent-only cron tools before the
+ * main-created notification fires. `ensureMainAgent` concentrates that
+ * business in one place so every bootstrapper (session resume, legacy
+ * session/message services, the server edge) creates the main agent the same
+ * way.
  *
  * Not a Service: a pure composition helper over the session handle.
  */
@@ -16,6 +18,7 @@
 import type { ISessionScopeHandle, IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import type { BindAgentInput } from '#/agent/profile/profile';
+import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import { IAgentLifecycleService } from './agentLifecycle';
 
@@ -35,6 +38,7 @@ export async function ensureMainAgent(
   opts?: EnsureMainAgentOptions,
 ): Promise<IAgentScopeHandle> {
   const agents = session.accessor.get(IAgentLifecycleService);
+  session.accessor.get(ISessionCronService);
   const existing = agents.getHandle(MAIN_AGENT_ID);
   if (existing !== undefined) return existing;
   const main = await agents.create({ agentId: MAIN_AGENT_ID, binding: opts?.binding });

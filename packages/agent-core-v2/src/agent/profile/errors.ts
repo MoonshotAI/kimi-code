@@ -8,6 +8,7 @@ export const ProfileErrors = {
   codes: {
     MODEL_NOT_CONFIGURED: 'model.not_configured',
     MODEL_CONFIG_INVALID: 'model.config_invalid',
+    THINKING_ALIAS_CONFLICT: 'profile.thinking_alias_conflict',
   },
 } as const satisfies ErrorDomain;
 

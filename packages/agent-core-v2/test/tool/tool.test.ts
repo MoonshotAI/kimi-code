@@ -69,6 +69,9 @@ function agentSwarmSchemaProperties<T = unknown>(): Record<string, T> {
   ).properties;
 }
 
+const BACKGROUND_AGENT_NEXT_STEP =
+  'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)';
+
 function deferred<T>(): {
   readonly promise: Promise<T>;
   resolve(value: T): void;
@@ -939,7 +942,7 @@ describe('Agent tool execution contract', () => {
     const taskId = result.output.match(/task_id: (agent-[0-9a-z]{8})/)?.[1];
     expect(taskId).toBeDefined();
     expect(result.output).toContain('next_step:');
-    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
+    expect(result.output).toContain(BACKGROUND_AGENT_NEXT_STEP);
     expect(result.output).not.toContain('block=false');
     expect(result.output).toContain('resume_hint:');
     expect(result.output).toContain('Agent(resume="agent-child"');

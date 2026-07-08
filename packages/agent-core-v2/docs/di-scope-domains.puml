@@ -301,6 +301,7 @@ fullCompaction --> contextMemory #34495E
 fullCompaction --> contextSize #34495E
 fullCompaction --> llmRequester #34495E
 fullCompaction --> profile #34495E
+fullCompaction --> toolRegistry #34495E
 fullCompaction --> telemetry #34495E
 fullCompaction --> wireRecord #34495E
 fullCompaction --> turn #34495E

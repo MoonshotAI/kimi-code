@@ -239,6 +239,7 @@ export type KimiErrorCode =
   | 'goal.not_resumable'
   | 'model.not_configured'
   | 'model.config_invalid'
+  | 'profile.thinking_alias_conflict'
   | 'model.not_found'
   | 'auth.login_required'
   | 'auth.provisioning_required'
@@ -260,6 +261,7 @@ export type KimiErrorCode =
   | 'compaction.failed'
   | 'compaction.unable'
   | 'task.task_id_empty'
+  | 'usage.turn_id_conflict'
   | 'mcp.server_not_found'
   | 'mcp.server_disabled'
   | 'mcp.startup_failed'
@@ -1087,6 +1089,7 @@ export const kimiErrorCodeSchema = z.enum([
   'goal.not_resumable',
   'model.not_configured',
   'model.config_invalid',
+  'profile.thinking_alias_conflict',
   'model.not_found',
   'auth.login_required',
   'auth.provisioning_required',
@@ -1108,6 +1111,7 @@ export const kimiErrorCodeSchema = z.enum([
   'compaction.failed',
   'compaction.unable',
   'task.task_id_empty',
+  'usage.turn_id_conflict',
   'mcp.server_not_found',
   'mcp.server_disabled',
   'mcp.startup_failed',

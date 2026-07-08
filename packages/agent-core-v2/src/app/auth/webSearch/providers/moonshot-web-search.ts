@@ -48,18 +48,11 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
   async search(
     query: string,
     options?: {
-      limit?: number;
-      includeContent?: boolean;
       toolCallId?: string;
       signal?: AbortSignal;
     },
   ): Promise<WebSearchResult[]> {
-    const body = {
-      text_query: query,
-      limit: options?.limit ?? 5,
-      enable_page_crawling: options?.includeContent ?? false,
-      timeout_seconds: 30,
-    };
+    const body = { text_query: query };
     const bodyJson = JSON.stringify(body);
 
     const toolCallId = options?.toolCallId;
@@ -90,7 +83,6 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
       };
       if (typeof r.date === 'string' && r.date.length > 0) out.date = r.date;
       if (typeof r.site_name === 'string' && r.site_name.length > 0) out.siteName = r.site_name;
-      if (typeof r.content === 'string' && r.content.length > 0) out.content = r.content;
       return out;
     });
   }

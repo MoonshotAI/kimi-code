@@ -65,11 +65,12 @@ export class AgentTurnService implements IAgentTurnService {
     }
 
     const turnId = this.wire.getModel(TurnModel).nextTurnId;
+    const origin = prompt?.origin ?? USER_PROMPT_ORIGIN;
     this.wire.dispatch(
       promptTurn({
         turnId,
         input: prompt?.input,
-        origin: prompt?.origin,
+        origin,
         steer: prompt?.steer,
       }),
     );
@@ -83,7 +84,7 @@ export class AgentTurnService implements IAgentTurnService {
     };
     void ready.catch(() => undefined);
     this.activeTurn = turn;
-    this.eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: prompt?.origin ?? USER_PROMPT_ORIGIN });
+    this.eventBus.publish({ type: 'turn.started', turnId: turn.id, origin });
     turn.result = this.runTurn(turn, ready);
     return turn;
   }

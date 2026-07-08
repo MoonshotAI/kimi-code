@@ -88,6 +88,29 @@ describe('AgentPromptService', () => {
     }));
   });
 
+  it('launches the turn before appending the user message', async () => {
+    const { context, prompt, turn } = createHarness();
+    const events: string[] = [];
+    const originalLaunch = turn.launch.bind(turn);
+    turn.launch = (...args) => {
+      events.push('turn.launch');
+      return originalLaunch(...args);
+    };
+    const originalAppend = context.append.bind(context);
+    context.append = (...messages) => {
+      events.push('context.append');
+      originalAppend(...messages);
+    };
+
+    await prompt.prompt(userMessage('ordered', { kind: 'user' }));
+
+    expect(events).toEqual(['turn.launch', 'context.append']);
+    expect(turn.launches).toEqual([0]);
+    expect(context.messages.map((message) => message.content[0])).toMatchObject([
+      { type: 'text', text: 'ordered' },
+    ]);
+  });
+
   it('runs submit hooks before queuing active steers', async () => {
     const { context, loop, prompt, turn } = createHarness({ hasActiveTurn: true });
     const activeTurn = turn.launch();
@@ -163,7 +186,12 @@ describe('AgentPromptService', () => {
 
     expect(result).toBeUndefined();
     expect(turn.launches).toEqual([]);
-    expect(context.messages).toHaveLength(1);
+    expect(context.messages).toMatchObject([
+      {
+        content: [{ type: 'text', text: 'blocked' }],
+        origin: { kind: 'system_trigger', name: 'test_block' },
+      },
+    ]);
   });
 
   it('delivers a declared steer through onDidExecuteTool and strips delivery', async () => {

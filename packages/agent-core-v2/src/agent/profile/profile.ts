@@ -4,7 +4,22 @@ import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { Model } from '#/app/model/modelInstance';
 
 import { createDecorator } from "#/_base/di/instantiation";
+import type { ErrorCode } from '#/_base/errors/codes';
+import { KimiError } from '#/_base/errors/errors';
 import type { ToolSource } from '#/agent/tool/toolContract';
+
+import { ProfileErrors } from './errors';
+
+export { ProfileErrors } from './errors';
+
+export type ProfileErrorCode = (typeof ProfileErrors.codes)[keyof typeof ProfileErrors.codes];
+
+export class ProfileError extends KimiError {
+  constructor(code: ProfileErrorCode, message: string, details?: Record<string, unknown>) {
+    super(code as ErrorCode, message, { details });
+    this.name = 'ProfileError';
+  }
+}
 
 /**
  * Data required to configure an agent: active model id, its capability

@@ -56,9 +56,13 @@ export class AgentPromptService implements IAgentPromptService {
 
   async prompt(message: ContextMessage): Promise<Turn | undefined> {
     const stamped = ensureMessageId(message);
+    if (await this.blockedByHook(stamped, false)) {
+      this.append(stamped);
+      return undefined;
+    }
+    const turn = this.launch({ input: stamped.content, origin: stamped.origin });
     this.append(stamped);
-    if (await this.blockedByHook(stamped, false)) return undefined;
-    return this.launch({ input: stamped.content, origin: stamped.origin });
+    return turn;
   }
 
   steer(message: ContextMessage): PromptSteerHandle {

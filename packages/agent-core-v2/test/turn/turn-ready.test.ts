@@ -392,11 +392,11 @@ describe('AgentTurnService wire state', () => {
     expect(ix.get(IAgentWireService).getModel(TurnModel)).toEqual({ nextTurnId: 1 });
   });
 
-  it('dispatch persists a flat { type, turnId } record (no payload key)', async () => {
+  it('dispatch persists a flat record with the default user origin at the source', async () => {
     turnService.launch();
 
     const records = await readRecords();
-    expect(records).toEqual([{ type: 'turn.prompt', turnId: 0 }]);
+    expect(records).toEqual([{ type: 'turn.prompt', turnId: 0, origin: { kind: 'user' } }]);
     expect('payload' in records[0]!).toBe(false);
   });
 

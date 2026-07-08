@@ -187,7 +187,7 @@ function createRecordingModel(
 }
 
 describe('AgentProfileService (wire-backed config.update)', () => {
-  it('update persists a flat config.update record and resolves thinkingLevel at the call site', async () => {
+  it('update persists a flat config.update record and resolves thinkingLevel as wire thinkingEffort at the call site', async () => {
     svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME, systemPrompt: 'You are helpful.' });
     svc.update({ thinkingLevel: 'on' });
 
@@ -206,7 +206,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
         profileName: DEFAULT_AGENT_PROFILE_NAME,
         systemPrompt: 'You are helpful.',
       },
-      { type: 'config.update', thinkingLevel: 'on' },
+      { type: 'config.update', thinkingEffort: 'on' },
     ]);
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
   });
@@ -250,7 +250,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       },
     });
 
-    void host.wire.replay(...records);
+    await host.wire.replay(...records);
     expect(modelOf(host.wire).cwd).toBe('/work');
     expect(modelOf(host.wire).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
     expect(replayChdir).toBe(0);
@@ -270,8 +270,27 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     // Fresh host whose config section would resolve differently is irrelevant:
     // the persisted resolved value ('on') is restored verbatim.
     const host = buildHost('profile-replay-thinking');
-    void host.wire.replay(...records);
+    await host.wire.replay(...records);
     expect(modelOf(host.wire).thinkingLevel).toBe('on');
+  });
+
+  it('replays legacy config.update thinkingLevel records', async () => {
+    const host = buildHost('profile-replay-legacy-thinking-level');
+
+    await host.wire.replay({ type: 'config.update', thinkingLevel: 'high' });
+
+    expect(modelOf(host.wire).thinkingLevel).toBe('high');
+  });
+
+  it('rejects conflicting config.update thinking aliases during replay', async () => {
+    const host = buildHost('profile-replay-conflicting-thinking-aliases');
+
+    await expect(
+      host.wire.replay({ type: 'config.update', thinkingEffort: 'low', thinkingLevel: 'high' }),
+    ).rejects.toMatchObject({
+      code: 'profile.thinking_alias_conflict',
+      name: 'ProfileError',
+    });
   });
 
   it('applies thinking.keep model override when thinking is enabled', () => {
