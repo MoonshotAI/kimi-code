@@ -65,6 +65,7 @@ watch(
   margin: 0;
   padding: 12px 14px;
   font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
+  font-weight: 425;
   color: var(--color-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
