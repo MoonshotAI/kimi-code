@@ -10,6 +10,7 @@ import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
+import ShortcutKey from '../ui/ShortcutKey.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
@@ -314,20 +315,20 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
               :loading="pendingAction === `option:${opt.label}`"
               :disabled="busy"
               @click="approveOption(opt.label)"
-            >{{ opt.label }}<span class="k">[{{ i + 1 }}]</span></Button>
+            >{{ opt.label }}<ShortcutKey class="k">[{{ i + 1 }}]</ShortcutKey></Button>
           </Tooltip>
         </template>
-        <Button v-else class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan">{{ t('approval.approvePlan') }}<span class="k">[1]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="revisePlan">{{ t('approval.revise') }}<span v-if="planReview.options.length === 0" class="k">[2]</span></Button>
-        <Button class="kbtn" size="sm" variant="danger-soft" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<span v-if="planReview.options.length === 0" class="k">[3]</span></Button>
+        <Button v-else class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan">{{ t('approval.approvePlan') }}<ShortcutKey class="k">[1]</ShortcutKey></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="revisePlan">{{ t('approval.revise') }}<ShortcutKey v-if="planReview.options.length === 0" class="k">[2]</ShortcutKey></Button>
+        <Button class="kbtn" size="sm" variant="danger-soft" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<ShortcutKey v-if="planReview.options.length === 0" class="k">[3]</ShortcutKey></Button>
       </div>
 
       <!-- default actions row -->
       <div v-else class="abtn">
-        <Button class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve">{{ t('approval.approve') }}<span class="k">[1]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession">{{ t('approval.approveSession') }}<span class="k">[2]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject">{{ t('approval.reject') }}<span class="k">[3]</span></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="openFeedback">{{ t('approval.feedback') }}<span class="k">[4]</span></Button>
+        <Button class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve">{{ t('approval.approve') }}<ShortcutKey class="k">[1]</ShortcutKey></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession">{{ t('approval.approveSession') }}<ShortcutKey class="k">[2]</ShortcutKey></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject">{{ t('approval.reject') }}<ShortcutKey class="k">[3]</ShortcutKey></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="openFeedback">{{ t('approval.feedback') }}<ShortcutKey class="k">[4]</ShortcutKey></Button>
       </div>
     </template>
   </Card>
@@ -554,7 +555,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   width: 100%;
 }
 .plan-actions { flex-wrap: wrap; }
-.k { margin-left: var(--space-2); font: var(--text-xs) var(--font-mono); opacity: .7; }
+.k { opacity: .75; }
 
 /* =========================================================================
    MOBILE (≤640px): the card spans the full chat column, inner previews scroll
