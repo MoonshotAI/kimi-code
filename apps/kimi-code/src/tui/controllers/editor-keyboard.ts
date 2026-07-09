@@ -46,6 +46,7 @@ export interface EditorKeyboardHost {
   openUndoSelector(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
+  handleYoloToggle(): void;
   handleInputModeChange(mode: 'prompt' | 'bash'): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
@@ -199,6 +200,11 @@ export class EditorKeyboardController {
         return;
       }
       this.armPendingUndoEsc();
+    };
+
+    editor.onCtrlY = () => {
+      host.track('shortcut_yolo_toggle');
+      host.handleYoloToggle();
     };
 
     editor.onShiftTab = () => {
