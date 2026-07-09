@@ -310,45 +310,60 @@ describe('compressImageForModel — byte budget', () => {
 
 // ── small byte budgets (per-image read budget scale) ────────────────
 
+// These walk many encode rungs over noise fixtures, which is slow on CI
+// runners — each carries an explicit timeout like the quality-ladder test
+// above.
 describe('compressImageForModel — small byte budgets', () => {
-  it('converges under a 128KB budget for high-entropy PNG content', async () => {
-    // Statistically random noise is the entropy upper bound (photos, dense
-    // charts): the old [2000, 1000] fallback floor left q20@1000px at ~200KB,
-    // over a read-scale budget. The extended ladder must land within it.
-    const budget = 128 * 1024;
-    const png = await randomNoisePng(1200, 1200);
-    expect(png.length).toBeGreaterThan(budget);
-    const result = await compressImageForModel(png, 'image/png', { byteBudget: budget });
-    expect(result.changed).toBe(true);
-    expect(result.finalByteLength).toBeLessThanOrEqual(budget);
-    expect(sniffImageDimensions(result.data)).not.toBeNull();
-  });
+  it(
+    'converges under a 128KB budget for high-entropy PNG content',
+    async () => {
+      // Statistically random noise is the entropy upper bound (photos, dense
+      // charts): the old [2000, 1000] fallback floor left q20@1000px at ~200KB,
+      // over a read-scale budget. The extended ladder must land within it.
+      const budget = 128 * 1024;
+      const png = await randomNoisePng(1200, 1200);
+      expect(png.length).toBeGreaterThan(budget);
+      const result = await compressImageForModel(png, 'image/png', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+      expect(sniffImageDimensions(result.data)).not.toBeNull();
+    },
+    15_000,
+  );
 
-  it('converges under a 128KB budget for a JPEG source', async () => {
-    const budget = 128 * 1024;
-    const jpeg = await randomNoiseJpeg(1200, 1200);
-    expect(jpeg.length).toBeGreaterThan(budget);
-    const result = await compressImageForModel(jpeg, 'image/jpeg', { byteBudget: budget });
-    expect(result.changed).toBe(true);
-    expect(result.mimeType).toBe('image/jpeg');
-    expect(result.finalByteLength).toBeLessThanOrEqual(budget);
-  });
+  it(
+    'converges under a 128KB budget for a JPEG source',
+    async () => {
+      const budget = 128 * 1024;
+      const jpeg = await randomNoiseJpeg(1200, 1200);
+      expect(jpeg.length).toBeGreaterThan(budget);
+      const result = await compressImageForModel(jpeg, 'image/jpeg', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.mimeType).toBe('image/jpeg');
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+    },
+    15_000,
+  );
 
-  it('shrinks pixels instead of passing through an already-optimized JPEG over budget', async () => {
-    // A JPEG already at the encoder's quality floor for its size: re-encoding
-    // at the same size cannot shrink it, so without sub-size fallbacks the
-    // "unhelpful" guard used to return the original — silently over budget.
-    const image = new Jimp({ width: 900, height: 900, color: 0x000000ff });
-    fillXorshiftNoise(image.bitmap.data);
-    const optimized = new Uint8Array(await image.getBuffer('image/jpeg', { quality: 20 }));
-    const budget = optimized.length - 10 * 1024;
-    expect(budget).toBeGreaterThan(0);
+  it(
+    'shrinks pixels instead of passing through an already-optimized JPEG over budget',
+    async () => {
+      // A JPEG already at the encoder's quality floor for its size: re-encoding
+      // at the same size cannot shrink it, so without sub-size fallbacks the
+      // "unhelpful" guard used to return the original — silently over budget.
+      const image = new Jimp({ width: 900, height: 900, color: 0x000000ff });
+      fillXorshiftNoise(image.bitmap.data);
+      const optimized = new Uint8Array(await image.getBuffer('image/jpeg', { quality: 20 }));
+      const budget = optimized.length - 10 * 1024;
+      expect(budget).toBeGreaterThan(0);
 
-    const result = await compressImageForModel(optimized, 'image/jpeg', { byteBudget: budget });
-    expect(result.changed).toBe(true);
-    expect(result.finalByteLength).toBeLessThanOrEqual(budget);
-    expect(Math.max(result.width, result.height)).toBeLessThan(900);
-  });
+      const result = await compressImageForModel(optimized, 'image/jpeg', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+      expect(Math.max(result.width, result.height)).toBeLessThan(900);
+    },
+    15_000,
+  );
 });
 
 // ── fallback / robustness ────────────────────────────────────────────
