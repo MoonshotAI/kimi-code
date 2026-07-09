@@ -20,6 +20,7 @@ import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
 import { wireMetadata } from '#/agent/wireRecord/metadataOps';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentTurnService } from '#/agent/turn/turn';
@@ -27,6 +28,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 
 import { createTestAgent, mcpServices, type TestAgentContext } from '../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
+import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
 import { stubTurnWithHooks } from '../turn/stubs';
 import { discoverTools, executeTool, fakeMcpClient } from './stubs';
 
@@ -167,6 +169,7 @@ describe('AgentMcpService', () => {
     ix.stub(ITelemetryService, recordingTelemetry(telemetryEvents));
     ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
+    ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentTurnService, stubTurnWithHooks());
     wire = disposables.add(new WireService({ logScope: 'mcp-test', logKey: 'wire.jsonl' }));
     ix.stub(IAgentWireService, wire);

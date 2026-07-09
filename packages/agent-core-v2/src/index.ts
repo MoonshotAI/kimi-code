@@ -386,6 +386,8 @@ export * from '#/agent/tool/toolHooks';
 export * from '#/agent/tool/toolName';
 export * from '#/agent/toolExecutor/toolExecutor';
 export * from '#/agent/toolExecutor/toolExecutorService';
+export * from '#/agent/toolResultTruncation/toolResultTruncation';
+import '#/agent/toolResultTruncation/toolResultTruncationService';
 import '#/agent/toolRegistry/builtinToolsRegistrar';
 import '#/agent/toolRegistry/toolContribution';
 import '#/agent/toolRegistry/toolRegistry';

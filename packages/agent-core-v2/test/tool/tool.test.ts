@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 
 import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
@@ -54,6 +57,7 @@ import {
   createTestAgent,
   execEnvServices,
   externalHookServices,
+  homeDirServices,
   sessionService,
   swarmServices,
   type TestAgentContext,
@@ -1784,12 +1788,20 @@ describe('Agent tools', () => {
   let ctx: TestAgentContext;
   let profile: IAgentProfileService;
   let tools: IAgentToolRegistryService;
+  let tempHomeDirs: string[] = [];
 
   afterEach(async () => {
     try {
       await ctx.expectResumeMatches();
     } finally {
-      await ctx.dispose();
+      try {
+        await ctx.dispose();
+      } finally {
+        for (const dir of tempHomeDirs) {
+          rmSync(dir, { recursive: true, force: true });
+        }
+        tempHomeDirs = [];
+      }
     }
   });
 
@@ -2286,8 +2298,57 @@ describe('Agent tools', () => {
           user: text "Can you still use Lookup?"
       `);
     });
+
+    it('persists oversized registered user tool results before adding them to context', async () => {
+      await ctx.dispose();
+      const homeDir = mkdtempSync(join(tmpdir(), 'tool-result-truncation-'));
+      tempHomeDirs.push(homeDir);
+      ctx = createTestAgent(homeDirServices(homeDir));
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'Lookup',
+        description: 'Look up a long test value.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      });
+
+      const fullOutput = `${'x'.repeat(50_001)}tail survives on disk`;
+      ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
+      await ctx.untilToolCall({
+        content: fullOutput,
+        output: fullOutput,
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'The lookup output was saved.' });
+      await ctx.untilTurnEnd();
+
+      const toolMessage = ctx.compactHistory().find((message) => message.role === 'tool')?.text;
+      expect(toolMessage).toContain('Tool output exceeded 50000 characters');
+      expect(toolMessage).toContain('tool_name: Lookup');
+      expect(toolMessage).toContain('tool_call_id: call_lookup');
+      expect(toolMessage).not.toContain('tail survives on disk');
+
+      const outputPath = renderedOutputPath(toolMessage);
+      expect(outputPath).toContain(
+        join(homeDir, 'sessions/test-workspace/test-session/agents/main/tool-results/Lookup-call_lookup-'),
+      );
+      expect(readFileSync(outputPath, 'utf8')).toBe(fullOutput);
+    });
   });
 });
+
+function renderedOutputPath(output: string | undefined): string {
+  if (output === undefined) throw new Error('expected tool output');
+  const match = /^output_path: (.+)$/m.exec(output);
+  if (match === null) throw new Error('expected tool output to include output_path');
+  return match[1]!;
+}
 
 function bashCall(): ToolCall {
   return {

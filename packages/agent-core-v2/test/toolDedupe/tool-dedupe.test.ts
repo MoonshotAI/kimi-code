@@ -22,6 +22,7 @@ import { WireService } from '#/wire/wireServiceImpl';
 import { stubWireRecord } from '../contextMemory/stubs';
 import { registerLogServices } from '../log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
+import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
 import { stubLoopWithHooks, stubTurnWithHooks } from '../turn/stubs';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
@@ -67,6 +68,7 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
       reg.defineInstance(IAgentTurnService, stubTurnWithHooks());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      registerToolResultTruncationServices(reg);
       reg.defineInstance(IAgentWireRecordService, stubWireRecord());
       reg.defineInstance(
         IAgentWireService,

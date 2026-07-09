@@ -89,6 +89,7 @@ package "Agent scope (per agent)" #FDF5E6 {
   rectangle "<b>llmRequester</b>\n<size:9><i>Agent</i></size>\n  IAgentLLMRequesterService" as llmRequester #FDEBD0
   rectangle "<b>toolRegistry</b>\n<size:9><i>Agent</i></size>\n  IAgentToolRegistryService" as toolRegistry #FDEBD0
   rectangle "<b>toolExecutor</b>\n<size:9><i>Agent</i></size>\n  IAgentToolExecutorService" as toolExecutor #FDEBD0
+  rectangle "<b>toolResultTruncation</b>\n<size:9><i>Agent</i></size>\n  IAgentToolResultTruncationService" as toolResultTruncation #FDEBD0
   rectangle "<b>toolDedupe</b>\n<size:9><i>Agent</i></size>\n  IAgentToolDedupeService" as toolDedupe #FDEBD0
   rectangle "<b>permissionGate</b>\n<size:9><i>Agent</i></size>\n  IAgentPermissionGate" as permissionGate #FDEBD0
   rectangle "<b>permissionMode</b>\n<size:9><i>Agent</i></size>\n  IAgentPermissionModeService" as permissionMode #FDEBD0
@@ -234,6 +235,10 @@ llmRequester --> wire #34495E
 toolExecutor --> toolRegistry #34495E
 toolExecutor --> wire #34495E
 toolExecutor --> telemetry #34495E
+toolExecutor --> toolResultTruncation #34495E
+toolResultTruncation --> bootstrap #34495E
+toolResultTruncation --> scopeContext #34495E
+toolResultTruncation --> storage #34495E
 toolDedupe --> telemetry #34495E
 toolDedupe --> loop #34495E
 toolDedupe --> toolExecutor #34495E
