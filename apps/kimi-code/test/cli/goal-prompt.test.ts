@@ -46,6 +46,12 @@ describe('parseHeadlessGoalCreate', () => {
     expect(parseHeadlessGoalCreate('/goal status')).toBeUndefined();
     expect(parseHeadlessGoalCreate('/goal pause')).toBeUndefined();
   });
+
+  it('rejects malformed goal create prompts instead of falling through', () => {
+    expect(() => parseHeadlessGoalCreate(`/goal ${'x'.repeat(4001)}`)).toThrow(
+      'Goal objective is too long',
+    );
+  });
 });
 
 describe('goal summary', () => {
@@ -165,6 +171,7 @@ describe('runPrompt headless goal mode', () => {
     mocks.experimentalFeatures = [{ id: 'micro_compaction', enabled: true }];
     mocks.sessions = [];
     mocks.session.createGoal.mockClear();
+    mocks.session.prompt.mockClear();
     mocks.session.waitForBackgroundTasksOnPrint.mockClear();
     mocks.session.getStatus.mockResolvedValue({ permission: 'auto', model: 'k2' } as never);
     mocks.session.getGoal.mockResolvedValue({ goal: snapshot({ status: 'complete' }) } as never);
@@ -287,6 +294,22 @@ describe('runPrompt headless goal mode', () => {
     expect(stdout.text()).toBe('• 1\n\n• 2\n\n');
     expect(stderr.text()).toContain('Goal [complete]');
     expect(stderr.text()).toContain('turns: 2');
+  });
+
+  it('does not send an invalid goal create prompt as a normal prompt', async () => {
+    const stdout = writer();
+    const stderr = writer();
+
+    await expect(
+      runPrompt(opts({ prompt: `/goal ${'x'.repeat(4001)}` }), 'test', {
+        stdout,
+        stderr,
+        process: { once: () => {}, off: () => {}, exit: () => undefined as never },
+      }),
+    ).rejects.toThrow('Goal objective is too long');
+
+    expect(mocks.session.createGoal).not.toHaveBeenCalled();
+    expect(mocks.session.prompt).not.toHaveBeenCalled();
   });
 
   it('validates the resumed session model before creating a headless goal', async () => {
