@@ -116,8 +116,8 @@ describe('ToolCallDeduplicator', () => {
         dedup.endStep();
       }
       expect(last!.output as string).toContain('<system-reminder>');
-      expect(last!.output as string).toContain('repeating the exact same tool call');
-      expect(last!.output as string).not.toContain('repeated_times');
+      expect(last!.output as string).toContain('what new information you expect');
+      expect(last!.output as string).not.toContain('Choose exactly one');
     });
 
     it('keeps injecting reminder1 at 4 consecutive', async () => {
@@ -129,7 +129,7 @@ describe('ToolCallDeduplicator', () => {
         dedup.endStep();
       }
       expect(last!.output as string).toContain('<system-reminder>');
-      expect(last!.output as string).toContain('repeating the exact same tool call');
+      expect(last!.output as string).toContain('what new information you expect');
     });
 
     it('injects reminder2 at exactly 5 consecutive', async () => {
@@ -141,9 +141,9 @@ describe('ToolCallDeduplicator', () => {
         dedup.endStep();
       }
       expect(last!.output as string).toContain('<system-reminder>');
-      expect(last!.output as string).toContain('repeated_times: 5');
-      expect(last!.output as string).toContain('tool: Read');
-      expect(last!.output as string).toContain('arguments:');
+      expect(last!.output as string).toContain('issued 5 times in a row');
+      expect(last!.output as string).toContain('Choose exactly one of the following');
+      expect(last!.output as string).toContain('Falsification check');
     });
 
     it.each([6, 7])('keeps injecting reminder2 at %i consecutive', async (streak) => {
@@ -155,8 +155,8 @@ describe('ToolCallDeduplicator', () => {
         dedup.endStep();
       }
       expect(last!.output as string).toContain('<system-reminder>');
-      expect(last!.output as string).toContain(`repeated_times: ${String(streak)}`);
-      expect(last!.output as string).toContain('tool: Read');
+      expect(last!.output as string).toContain(`issued ${String(streak)} times in a row`);
+      expect(last!.output as string).toContain('Choose exactly one of the following');
     });
 
     it('injects the dead-end reminder at exactly 8 consecutive', async () => {
@@ -168,7 +168,7 @@ describe('ToolCallDeduplicator', () => {
         dedup.endStep();
       }
       expect(last!.output as string).toContain('<system-reminder>');
-      expect(last!.output as string).toContain('stuck in a dead end');
+      expect(last!.output as string).toContain('without any further tool calls');
     });
 
     it('resets streak when a different call is interleaved', async () => {
@@ -214,9 +214,9 @@ describe('ToolCallDeduplicator', () => {
       dedup.endStep();
 
       expect(original.output as string).toContain('<system-reminder>');
-      expect(original.output as string).toContain('repeating the exact same tool call');
+      expect(original.output as string).toContain('what new information you expect');
       expect(finalDup.output as string).toContain('<system-reminder>');
-      expect(finalDup.output as string).toContain('repeating the exact same tool call');
+      expect(finalDup.output as string).toContain('what new information you expect');
     });
 
     it('same-step spam alone does not trigger reminder', async () => {
@@ -273,7 +273,7 @@ describe('ToolCallDeduplicator', () => {
       const arr = final.output as Array<{ type: string; text: string }>;
       expect(arr).toHaveLength(1);
       expect(arr[0]!.type).toBe('text');
-      expect(arr[0]!.text).toBe('hello' + makeReminderText2('X', 5, { a: 1 }));
+      expect(arr[0]!.text).toBe('hello' + makeReminderText2(5));
     });
 
     it('pushes a new text part when trailing part is non-text', async () => {
@@ -408,8 +408,8 @@ describe('ToolCallDeduplicator', () => {
       const dedup = new ToolCallDeduplicator();
       const last = await runStreak(dedup, 8);
       expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('stuck in a dead end');
-      expect(last.output as string).toContain('Stop all function calls immediately');
+      expect(last.output as string).toContain('Write your final response now');
+      expect(last.output as string).toContain('without any further tool calls');
       // 8 is the reminder threshold, not yet force-stop.
       expect(last.isError).toBeUndefined();
       expect(stopTurnOf(last)).toBeUndefined();
@@ -420,7 +420,7 @@ describe('ToolCallDeduplicator', () => {
       async (streak) => {
         const dedup = new ToolCallDeduplicator();
         const last = await runStreak(dedup, streak);
-        expect(last.output as string).toContain('stuck in a dead end');
+        expect(last.output as string).toContain('Write your final response now');
         expect(last.isError).toBeUndefined();
         expect(stopTurnOf(last)).toBeUndefined();
       },
@@ -429,7 +429,7 @@ describe('ToolCallDeduplicator', () => {
     it('force-stops the turn at exactly 12 consecutive without marking the tool failed', async () => {
       const dedup = new ToolCallDeduplicator();
       const last = await runStreak(dedup, 12);
-      expect(last.output as string).toContain('stuck in a dead end');
+      expect(last.output as string).toContain('Write your final response now');
       // The underlying tool succeeded — force-stop must not flip it to error.
       expect(last.isError).toBeUndefined();
       expect(stopTurnOf(last)).toBe(true);
@@ -459,7 +459,7 @@ describe('ToolCallDeduplicator', () => {
       // The underlying tool was an error — that must survive force-stop.
       expect(last!.isError).toBe(true);
       expect(stopTurnOf(last!)).toBe(true);
-      expect(last!.output as string).toContain('stuck in a dead end');
+      expect(last!.output as string).toContain('Write your final response now');
     });
   });
 
