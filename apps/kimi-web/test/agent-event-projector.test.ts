@@ -193,6 +193,31 @@ describe('turn.ended while a goal is active', () => {
     expect(ended.find((e) => e.type === 'sessionStatusChanged')).toMatchObject({ status: 'idle' });
   });
 
+  it('clears the owed idle when a new goal turn starts (UpdateGoal mid-turn)', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    // Turn 0 of the goal drive ends: mid-drive, so 'running' and idle is owed.
+    projector.project('turn.ended', { reason: 'completed' }, 's1');
+    // Continuation turn 1 begins; the model calls UpdateGoal('complete') INSIDE
+    // turn 1. The goal.updated must NOT synthesize an idle now — turn 1's own
+    // turn.ended will carry it, and an early idle would drain queued prompts
+    // into a still-busy core (turn.agent_busy).
+    projector.project('turn.started', { turnId: 1 }, 's1');
+    const completed = projector.project('goal.updated', { snapshot: { status: 'complete', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    expect(completed.filter((e) => e.type === 'sessionStatusChanged')).toHaveLength(0);
+    const ended = projector.project('turn.ended', { reason: 'completed' }, 's1');
+    expect(ended.find((e) => e.type === 'sessionStatusChanged')).toMatchObject({ status: 'idle' });
+  });
+
+  it('still pays the owed idle when the goal settles before the next turn starts', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    projector.project('turn.ended', { reason: 'completed' }, 's1');
+    // Goal is blocked in the gap before any continuation turn begins.
+    const blocked = projector.project('goal.updated', { snapshot: { status: 'blocked', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    expect(blocked.find((e) => e.type === 'sessionStatusChanged')).toMatchObject({ status: 'idle' });
+  });
+
   it('stays aborted when the user aborts and the goal is paused afterwards', () => {
     const projector = createAgentProjector();
     projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');

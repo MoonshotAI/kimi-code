@@ -727,6 +727,14 @@ export function createAgentProjector(): AgentProjector {
         // Fresh turn → fresh per-turn stream offsets.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        // We are mid-turn again, no longer in an inter-turn gap: an idle owed
+        // from the previous boundary must NOT be paid by a goal.updated that
+        // lands during this turn (e.g. UpdateGoal('complete') mid-turn) — its
+        // own turn.ended carries the idle instead, with goalActive already
+        // false. Without this clear, a multi-turn goal would synthesize idle
+        // while the core still runs this turn, and onSessionIdle would drain
+        // queued prompts into it (turn.agent_busy).
+        s.idleOwed = false;
 
         out.push({
           type: 'sessionStatusChanged',
