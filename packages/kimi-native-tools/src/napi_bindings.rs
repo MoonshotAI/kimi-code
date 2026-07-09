@@ -7,8 +7,10 @@ use crate::compaction::{self, CompactionConfigMeta, CompactionMessageMeta};
 use crate::edit::{self, EditResult};
 use crate::glob::{self, GlobConfig, GlobResult, MAX_MATCHES};
 use crate::grep::{self, GrepConfig, GrepResult, GrepStructuredConfig, GrepStructuredResult, OutputMode, DEFAULT_HEAD_LIMIT};
+use crate::image_compress;
 use crate::list_directory::{self, ListDirectoryConfig, ListDirectoryResult};
 use crate::read::{self, ReadConfig, ReadResult, MAX_BYTES, MAX_LINE_LENGTH, MAX_LINES};
+use crate::tool_access::{self, ToolAccessMeta};
 use crate::write::{self, WriteMode, WriteResult};
 use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
@@ -207,13 +209,13 @@ pub async fn native_grep_structured(
         path,
         literal,
         case_insensitive,
-        include_globs: if include_globs.is_empty() { None } else { Some(include_globs) },
-        exclude_globs: if exclude_globs.is_empty() { None } else { Some(exclude_globs) },
+        include_globs,
+        exclude_globs,
         context_lines,
         max_files,
         max_matches_per_file,
         max_total_matches,
-        timeout_ms,
+        timeout_ms: timeout_ms.into(),
         follow_gitignore,
     };
 
@@ -460,4 +462,248 @@ pub fn native_estimate_tokens(text: String) -> u32 {
 pub fn native_estimate_tokens_batch(texts: Vec<String>) -> u32 {
     let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
     tokens::estimate_tokens_batch(&refs) as u32
+}
+
+/// Truncate text to fit within a token budget, keeping the BEGINNING.
+///
+/// Walks bytes forward using the same ASCII/non-ASCII heuristic as
+/// `native_estimate_tokens` and stops at the first code point that would
+/// push the running total over the budget. Mirrors `truncateTextToTokens`
+/// in `compaction/handoff.ts`.
+#[napi]
+pub fn native_truncate_text_to_tokens(text: String, max_tokens: u32) -> String {
+    tokens::truncate_text_to_tokens(&text, max_tokens as usize)
+}
+
+/// Truncate text to fit within a token budget, keeping the END.
+///
+/// Walks bytes backward, skipping UTF-8 continuation bytes to consume
+/// multi-byte sequences whole. Mirrors `truncateTextToTokensFromEnd`
+/// in `compaction/handoff.ts`.
+#[napi]
+pub fn native_truncate_text_to_tokens_from_end(text: String, max_tokens: u32) -> String {
+    tokens::truncate_text_to_tokens_from_end(&text, max_tokens as usize)
+}
+
+// ============================================================================
+// Tool access conflict detection
+// ============================================================================
+
+/// Check whether any access in `left` conflicts with any access in `right`.
+///
+/// Two accesses conflict when they touch overlapping file paths and at
+/// least one side writes. Read-only accesses (read, search) never conflict
+/// with each other. `kind: "all"` conflicts with everything.
+///
+/// @param left - Array of tool access metadata.
+/// @param right - Array of tool access metadata.
+/// @returns True if any pair conflicts.
+#[napi]
+pub fn native_tool_accesses_conflict(
+    left: Vec<ToolAccessMeta>,
+    right: Vec<ToolAccessMeta>,
+) -> bool {
+    tool_access::conflict(&left, &right)
+}
+
+// ============================================================================
+// Image compression & cropping
+// ============================================================================
+
+/// Configuration for `native_compress_image`. All fields are required because
+/// the caller (TS wrapper) owns the fast-path checks and passes the resolved
+/// budgets here.
+#[napi(object)]
+pub struct NativeCompressImageConfig {
+    /// Longest-edge ceiling in pixels.
+    pub max_edge: u32,
+    /// Raw-byte budget for the encoded result.
+    pub byte_budget: u32,
+    /// Longest-edge step-downs tried when the budget cannot be met at the
+    /// fitted size (e.g. [2000, 1000]).
+    pub fallback_edges: Vec<u32>,
+    /// JPEG quality steps tried in descending order (e.g. [80, 60, 40, 20]).
+    pub jpeg_quality_steps: Vec<u32>,
+}
+
+/// Result of `native_compress_image`. When `changed` is false the caller
+/// should send the original bytes; when true, `data` holds the re-encoded
+/// image. `None` (the outer `Option`) means decode/encode failed entirely.
+#[napi(object)]
+pub struct NativeCompressImageResult {
+    pub data: Uint8Array,
+    pub mime_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub original_width: u32,
+    pub original_height: u32,
+    pub changed: bool,
+    pub original_byte_length: u32,
+    pub final_byte_length: u32,
+}
+
+/// Configuration for `native_crop_image`.
+#[napi(object)]
+pub struct NativeCropImageConfig {
+    pub max_edge: u32,
+    pub byte_budget: u32,
+    /// Keep the crop at native resolution (no edge-fit downscale). The byte
+    /// budget still applies.
+    pub skip_resize: bool,
+    pub fallback_edges: Vec<u32>,
+    pub jpeg_quality_steps: Vec<u32>,
+}
+
+/// Outcome of `native_crop_image`. A single struct (rather than a Result) so
+/// the napi boundary never throws — `ok` discriminates success vs. failure,
+/// matching the TS `CropImageOutcome` union.
+#[napi(object)]
+pub struct NativeCropImageOutcome {
+    pub ok: bool,
+    /// Error message when `ok` is false; empty string on success.
+    pub error: String,
+    /// Stable error kind for telemetry (e.g. "out_of_bounds", "budget",
+    /// "decode_failed"). Empty string on success. Matches TS `CropErrorKind`.
+    pub error_kind: String,
+    pub data: Uint8Array,
+    pub mime_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub original_width: u32,
+    pub original_height: u32,
+    pub region_x: u32,
+    pub region_y: u32,
+    pub region_width: u32,
+    pub region_height: u32,
+    pub resized: bool,
+    pub original_byte_length: u32,
+    pub final_byte_length: u32,
+}
+
+/// Compress (resize + re-encode) `data` to fit the pixel + byte budget.
+///
+/// Async: decode/resize/encode runs on tokio's blocking thread pool so the
+/// Node event loop stays responsive during large image work.
+///
+/// Returns `null` when the format is unsupported or decode/encode fails
+/// (caller passes through the original bytes). Returns a result with
+/// `changed: false` when the re-encode didn't help (caller still sends the
+/// original). Returns `changed: true` when the result is smaller — use `data`.
+#[napi]
+pub async fn native_compress_image(
+    data: Uint8Array,
+    mime_type: String,
+    config: NativeCompressImageConfig,
+) -> Result<Option<NativeCompressImageResult>, napi::Error> {
+    let bytes = data.to_vec();
+    let cfg = image_compress::CompressConfig {
+        max_edge: config.max_edge,
+        byte_budget: config.byte_budget as usize,
+        fallback_edges: config.fallback_edges,
+        jpeg_quality_steps: config
+            .jpeg_quality_steps
+            .into_iter()
+            .map(|q| q as u8)
+            .collect(),
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        image_compress::compress_image(&bytes, &mime_type, &cfg)
+    })
+    .await
+    .map_err(|e| napi::Error::from_reason(format!("compress_image task failed: {}", e)))?;
+    Ok(result.map(|r| NativeCompressImageResult {
+        data: Uint8Array::from(r.data.as_slice()),
+        mime_type: r.mime_type,
+        width: r.width,
+        height: r.height,
+        original_width: r.original_width,
+        original_height: r.original_height,
+        changed: r.changed,
+        original_byte_length: r.original_byte_length as u32,
+        final_byte_length: r.final_byte_length as u32,
+    }))
+}
+
+/// Crop `region` out of `data` and encode it for the model.
+///
+/// Async: runs on tokio's blocking thread pool. Returns an outcome struct
+/// (never throws): `ok: false` carries an `error` message safe to surface
+/// to the model; `ok: true` carries the encoded crop.
+#[napi]
+pub async fn native_crop_image(
+    data: Uint8Array,
+    mime_type: String,
+    region_x: f64,
+    region_y: f64,
+    region_width: f64,
+    region_height: f64,
+    config: NativeCropImageConfig,
+) -> Result<NativeCropImageOutcome, napi::Error> {
+    let bytes = data.to_vec();
+    let cfg = image_compress::CropConfig {
+        max_edge: config.max_edge,
+        byte_budget: config.byte_budget as usize,
+        skip_resize: config.skip_resize,
+        fallback_edges: config.fallback_edges,
+        jpeg_quality_steps: config
+            .jpeg_quality_steps
+            .into_iter()
+            .map(|q| q as u8)
+            .collect(),
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        image_compress::crop_image(
+            &bytes,
+            &mime_type,
+            region_x,
+            region_y,
+            region_width,
+            region_height,
+            &cfg,
+        )
+    })
+    .await
+    .map_err(|e| napi::Error::from_reason(format!("crop_image task failed: {}", e)))?;
+
+    Ok(match result {
+        Ok(r) => NativeCropImageOutcome {
+            ok: true,
+            error: String::new(),
+            error_kind: String::new(),
+            data: Uint8Array::from(r.data.as_slice()),
+            mime_type: r.mime_type,
+            width: r.width,
+            height: r.height,
+            original_width: r.original_width,
+            original_height: r.original_height,
+            region_x: r.region_x,
+            region_y: r.region_y,
+            region_width: r.region_width,
+            region_height: r.region_height,
+            resized: r.resized,
+            original_byte_length: r.original_byte_length as u32,
+            final_byte_length: r.final_byte_length as u32,
+        },
+        Err(err) => {
+            let kind = err.kind().to_string();
+            NativeCropImageOutcome {
+                ok: false,
+                error: err.error_message(),
+                error_kind: kind,
+                data: Uint8Array::from(&[]),
+                mime_type: String::new(),
+                width: 0,
+                height: 0,
+                original_width: 0,
+                original_height: 0,
+                region_x: 0,
+                region_y: 0,
+                region_width: 0,
+                region_height: 0,
+                resized: false,
+                original_byte_length: 0,
+                final_byte_length: 0,
+            }
+        }
+    })
 }

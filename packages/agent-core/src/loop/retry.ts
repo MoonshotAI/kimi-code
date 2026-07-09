@@ -29,6 +29,14 @@ const OVERLOAD_RETRY_MIN_TIMEOUT_MS = 5_000;
 const OVERLOAD_RETRY_MAX_TIMEOUT_MS = 30_000;
 const OVERLOAD_RETRY_FACTOR = 2;
 
+// ±25% jitter on rate-limit / overload backoff. Without it, concurrent turns
+// hitting the same 429/503 retry at identical timestamps and re-collide.
+// Mirrors the jitter applied in subagent-batch so the whole retry stack is
+// consistent.
+function applyJitter(delayMs: number): number {
+  return Math.round(delayMs * (0.75 + Math.random() * 0.5));
+}
+
 export interface ChatWithRetryInput {
   readonly llm: LLM;
   readonly params: LLMChatParams;
@@ -133,21 +141,23 @@ export function retryBackoffDelays(maxAttempts: number): number[] {
 }
 
 function rateLimitBackoffDelay(attempt: number): number {
-  return retry.createTimeout(Math.max(0, attempt - 1), {
+  const base = retry.createTimeout(Math.max(0, attempt - 1), {
     minTimeout: RATE_LIMIT_RETRY_MIN_TIMEOUT_MS,
     maxTimeout: RATE_LIMIT_RETRY_MAX_TIMEOUT_MS,
     factor: RATE_LIMIT_RETRY_FACTOR,
     randomize: false,
   });
+  return applyJitter(base);
 }
 
 function overloadBackoffDelay(attempt: number): number {
-  return retry.createTimeout(Math.max(0, attempt - 1), {
+  const base = retry.createTimeout(Math.max(0, attempt - 1), {
     minTimeout: OVERLOAD_RETRY_MIN_TIMEOUT_MS,
     maxTimeout: OVERLOAD_RETRY_MAX_TIMEOUT_MS,
     factor: OVERLOAD_RETRY_FACTOR,
     randomize: false,
   });
+  return applyJitter(base);
 }
 
 function isOverloadError(error: unknown): boolean {

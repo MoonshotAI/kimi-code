@@ -19,6 +19,37 @@ export interface ToolResourceAccessAll {
 export type ToolResourceAccess = ToolFileAccess | ToolResourceAccessAll;
 export type ToolAccesses = readonly ToolResourceAccess[];
 
+// ── Native module loading (lazy, with TS fallback) ──────────────────────────
+
+let nativeModule: {
+  nativeToolAccessesConflict?: (
+    left: ReadonlyArray<{
+      readonly kind: string;
+      readonly operation?: string;
+      readonly path?: string;
+      readonly recursive?: boolean;
+    }>,
+    right: ReadonlyArray<{
+      readonly kind: string;
+      readonly operation?: string;
+      readonly path?: string;
+      readonly recursive?: boolean;
+    }>,
+  ) => boolean;
+} | null | undefined;
+
+function getNative() {
+  if (nativeModule === null) return undefined;
+  if (nativeModule !== undefined) return nativeModule;
+  try {
+    nativeModule = require('@moonshot-ai/kimi-native-tools');
+    return nativeModule;
+  } catch {
+    nativeModule = null;
+    return undefined;
+  }
+}
+
 export const ToolAccesses = {
   none(): ToolAccesses {
     return [];
@@ -65,11 +96,19 @@ export const ToolAccesses = {
   },
 
   conflict(left: ToolAccesses, right: ToolAccesses): boolean {
-    return left.some((leftAccess) =>
-      right.some((rightAccess) => resourceAccessesConflict(leftAccess, rightAccess)),
-    );
+    const mod = getNative();
+    if (mod?.nativeToolAccessesConflict !== undefined) {
+      return mod.nativeToolAccessesConflict(left, right);
+    }
+    return tsConflict(left, right);
   },
 };
+
+function tsConflict(left: ToolAccesses, right: ToolAccesses): boolean {
+  return left.some((leftAccess) =>
+    right.some((rightAccess) => resourceAccessesConflict(leftAccess, rightAccess)),
+  );
+}
 
 function resourceAccessesConflict(left: ToolResourceAccess, right: ToolResourceAccess): boolean {
   if (left.kind === 'all' || right.kind === 'all') return true;

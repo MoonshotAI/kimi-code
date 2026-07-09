@@ -447,8 +447,6 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       const openText = `<${tag} path="${safePath}">`;
       const closeText = `</${tag}>`;
 
-      const dimensions =
-        fileType.kind === 'image' ? sniffImageDimensionsNative(data) ?? sniffImageDimensions(data) : null;
       const note = buildMediaNote({
         kind: fileType.kind,
         mimeType: fileType.mimeType,

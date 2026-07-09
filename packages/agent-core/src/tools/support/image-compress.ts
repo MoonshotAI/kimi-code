@@ -32,6 +32,83 @@ import type { TelemetryClient } from '#/telemetry';
 
 import { sniffImageDimensions } from './file-type';
 
+// ── Native module loading (lazy, with TS fallback) ──────────────────────────
+
+type NativeCompressImageConfig = {
+  readonly maxEdge: number;
+  readonly byteBudget: number;
+  readonly fallbackEdges: number[];
+  readonly jpegQualitySteps: number[];
+};
+
+type NativeCompressImageResult = {
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+  readonly width: number;
+  readonly height: number;
+  readonly originalWidth: number;
+  readonly originalHeight: number;
+  readonly changed: boolean;
+  readonly originalByteLength: number;
+  readonly finalByteLength: number;
+};
+
+type NativeCropImageConfig = {
+  readonly maxEdge: number;
+  readonly byteBudget: number;
+  readonly skipResize: boolean;
+  readonly fallbackEdges: number[];
+  readonly jpegQualitySteps: number[];
+};
+
+type NativeCropImageOutcome = {
+  readonly ok: boolean;
+  readonly error: string;
+  readonly errorKind: string;
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+  readonly width: number;
+  readonly height: number;
+  readonly originalWidth: number;
+  readonly originalHeight: number;
+  readonly regionX: number;
+  readonly regionY: number;
+  readonly regionWidth: number;
+  readonly regionHeight: number;
+  readonly resized: boolean;
+  readonly originalByteLength: number;
+  readonly finalByteLength: number;
+};
+
+let nativeModule: {
+  nativeCompressImage?: (
+    data: Uint8Array,
+    mimeType: string,
+    config: NativeCompressImageConfig,
+  ) => Promise<NativeCompressImageResult | null>;
+  nativeCropImage?: (
+    data: Uint8Array,
+    mimeType: string,
+    regionX: number,
+    regionY: number,
+    regionWidth: number,
+    regionHeight: number,
+    config: NativeCropImageConfig,
+  ) => Promise<NativeCropImageOutcome>;
+} | null | undefined;
+
+function getNative() {
+  if (nativeModule === null) return undefined;
+  if (nativeModule !== undefined) return nativeModule;
+  try {
+    nativeModule = require('@moonshot-ai/kimi-native-tools');
+    return nativeModule;
+  } catch {
+    nativeModule = null;
+    return undefined;
+  }
+}
+
 /** Longest-edge ceiling (px). Larger images are scaled down to fit. */
 export const MAX_IMAGE_EDGE_PX = 3000;
 
@@ -200,6 +277,41 @@ export async function compressImageForModel(
   // Refuse to decode very large byte payloads (e.g. a huge or invalid image
   // from an MCP tool) that would be loaded just to be dropped downstream.
   if (bytes.length > maxDecodeBytes) return finish('passthrough_guard', passthrough());
+
+  // Native path: the Rust `image` crate decodes/resizes/encodes 10–100× faster
+  // than pure-JS jimp. The native function handles only the compute-heavy
+  // quality-ladder path; all fast-path and guard checks above stay in TS.
+  // Falls back to jimp when the native module is unavailable.
+  const native = getNative();
+  if (native?.nativeCompressImage) {
+    try {
+      const result = await native.nativeCompressImage(bytes, normalizedMime, {
+        maxEdge,
+        byteBudget,
+        fallbackEdges: [...FALLBACK_EDGES_PX],
+        jpegQualitySteps: [...JPEG_QUALITY_STEPS],
+      });
+      if (result === null) {
+        return finish('passthrough_error', passthrough());
+      }
+      if (!result.changed) {
+        return finish('passthrough_unhelpful', passthrough());
+      }
+      return finish('compressed', {
+        data: result.data,
+        mimeType: result.mimeType,
+        width: result.width,
+        height: result.height,
+        originalWidth: result.originalWidth,
+        originalHeight: result.originalHeight,
+        changed: true,
+        originalByteLength: result.originalByteLength,
+        finalByteLength: result.finalByteLength,
+      });
+    } catch {
+      // Native call failed unexpectedly — fall through to the jimp path.
+    }
+  }
 
   try {
     const { Jimp } = await import('jimp');
@@ -561,6 +673,55 @@ export async function cropImageForModel(
   }
   if (bytes.length > maxDecodeBytes) {
     return fail('too_large', 'The image is too large to decode for cropping.');
+  }
+
+  // Native path: the Rust `image` crate handles decode/crop/encode 10–100×
+  // faster than pure-JS jimp. All pre-decode guards (empty, unsupported,
+  // region finiteness, decode-bomb) stay in TS; the native function handles
+  // out_of_bounds, budget, and decode failures with structured error kinds.
+  // Falls back to jimp when the native module is unavailable.
+  const native = getNative();
+  if (native?.nativeCropImage) {
+    try {
+      const outcome = await native.nativeCropImage(
+        bytes,
+        normalizedMime,
+        region.x,
+        region.y,
+        region.width,
+        region.height,
+        {
+          maxEdge,
+          byteBudget,
+          skipResize: options.skipResize === true,
+          fallbackEdges: [...FALLBACK_EDGES_PX],
+          jpegQualitySteps: [...JPEG_QUALITY_STEPS],
+        },
+      );
+      if (!outcome.ok) {
+        return fail(outcome.errorKind as CropErrorKind, outcome.error);
+      }
+      return succeed({
+        ok: true,
+        data: outcome.data,
+        mimeType: outcome.mimeType,
+        width: outcome.width,
+        height: outcome.height,
+        originalWidth: outcome.originalWidth,
+        originalHeight: outcome.originalHeight,
+        region: {
+          x: outcome.regionX,
+          y: outcome.regionY,
+          width: outcome.regionWidth,
+          height: outcome.regionHeight,
+        },
+        resized: outcome.resized,
+        originalByteLength: outcome.originalByteLength,
+        finalByteLength: outcome.finalByteLength,
+      });
+    } catch {
+      // Native call failed unexpectedly — fall through to the jimp path.
+    }
   }
 
   try {

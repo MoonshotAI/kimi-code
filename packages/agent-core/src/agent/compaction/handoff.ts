@@ -3,6 +3,25 @@ import { estimateTokensForMessage } from '../../utils/tokens';
 import type { PromptOrigin } from '../context/types';
 import summaryPrefixTemplate from './compaction-summary-prefix.md?raw';
 
+// ── Native module loading (lazy, with TS fallback) ──────────────────────────
+
+let nativeModule: {
+  nativeTruncateTextToTokens?: (text: string, maxTokens: number) => string;
+  nativeTruncateTextToTokensFromEnd?: (text: string, maxTokens: number) => string;
+} | null | undefined;
+
+function getNative() {
+  if (nativeModule === null) return undefined;
+  if (nativeModule !== undefined) return nativeModule;
+  try {
+    nativeModule = require('@moonshot-ai/kimi-native-tools');
+    return nativeModule;
+  } catch {
+    nativeModule = null;
+    return undefined;
+  }
+}
+
 /**
  * Compaction handoff helpers.
  *
@@ -117,6 +136,8 @@ export function collectCompactableUserMessages<T extends MessageLike>(messages: 
 
 function truncateTextToTokens(text: string, maxTokens: number): string {
   if (maxTokens <= 0) return '';
+  const mod = getNative();
+  if (mod?.nativeTruncateTextToTokens) return mod.nativeTruncateTextToTokens(text, maxTokens);
   // Single pass: walk the string once, mirroring estimateTokens' heuristic
   // (ASCII ~4 chars/token, non-ASCII ~1 char/token) and stop at the first
   // code point that would push the running total over the budget. This keeps
@@ -143,6 +164,8 @@ function truncateTextToTokens(text: string, maxTokens: number): string {
  */
 function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   if (maxTokens <= 0) return '';
+  const mod = getNative();
+  if (mod?.nativeTruncateTextToTokensFromEnd) return mod.nativeTruncateTextToTokensFromEnd(text, maxTokens);
   let asciiCount = 0;
   let nonAsciiCount = 0;
   let start = text.length;

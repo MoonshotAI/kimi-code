@@ -47,6 +47,7 @@ export class ToolScheduler<Result> {
     task: ToolCallTask<Result>,
     queuedBefore: readonly ToolCallTask<Result>[],
   ): boolean {
+    if (task.accesses.length === 0) return false;
     return (
       this.conflictsWithAny(task, this.activeTasks) || this.conflictsWithAny(task, queuedBefore)
     );
@@ -56,8 +57,9 @@ export class ToolScheduler<Result> {
     task: ToolCallTask<Result>,
     candidates: readonly ToolCallTask<Result>[],
   ): boolean {
-    return candidates.some((candidate) =>
-      ToolAccesses.conflict(task.accesses, candidate.accesses),
+    return candidates.some(
+      (candidate) =>
+        candidate.accesses.length > 0 && ToolAccesses.conflict(task.accesses, candidate.accesses),
     );
   }
 

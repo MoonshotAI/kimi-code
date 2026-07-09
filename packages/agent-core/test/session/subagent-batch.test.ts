@@ -1,6 +1,6 @@
 import { createControlledPromise } from '@antfu/utils';
 import { APIConnectionError, APIProviderRateLimitError } from '@moonshot-ai/kosong';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type QueuedSubagentTask,
@@ -20,6 +20,14 @@ import { userCancellationReason } from '../../src/utils/abort';
 const signal = new AbortController().signal;
 
 describe('SubagentBatch scheduling contract', () => {
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('normal phase starts five tasks immediately, then one task every 700ms', async () => {
     vi.useFakeTimers();
     try {
@@ -268,7 +276,7 @@ describe('SubagentBatch scheduling contract', () => {
     }
   });
 
-  it('fails the only unfinished task on provider rate limit instead of suspending forever', async () => {
+  it('rate-limited only-unfinished task requeues for retry instead of failing', async () => {
     vi.useFakeTimers();
     try {
       const onSuspended = vi.fn();
@@ -276,6 +284,7 @@ describe('SubagentBatch scheduling contract', () => {
       const running = runBatch(Array.from({ length: 2 }, (_, index) => queuedTask(index + 1)), {
         signal,
       });
+      void running.catch(() => {});
 
       await vi.advanceTimersByTimeAsync(0);
       expect(attempts).toHaveLength(2);
@@ -291,23 +300,32 @@ describe('SubagentBatch scheduling contract', () => {
       });
       await vi.advanceTimersByTimeAsync(0);
 
+      // Task 2 hits a rate limit — it requeues instead of failing.
       attempts[1]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-2' });
-      await expect(running).resolves.toMatchObject([
-        {
-          task: { data: 1 },
-          agentId: 'agent-1',
-          status: 'completed',
-          result: 'completed 1',
-        },
-        {
-          task: { data: 2 },
-          agentId: 'agent-2',
-          status: 'failed',
-          state: 'started',
-          error: 'Rate limited',
-        },
-      ]);
-      expect(onSuspended).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onSuspended).toHaveBeenCalledTimes(1);
+      expect(onSuspended).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'Provider rate limit; subagent requeued for retry.' }),
+      );
+
+      // After the rate-limit backoff (3 s with jitter=0), the retry launches.
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.retryAgentId).toBe('agent-2');
+
+      // The retry succeeds.
+      attempts[2]!.outcome.resolve({
+        task: attempts[2]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2 (retry)',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const results = await running;
+      expect(results[0]!.status).toBe('completed');
+      expect(results[1]!.status).toBe('completed');
+      expect(results[1]!.result).toBe('completed 2 (retry)');
     } finally {
       vi.useRealTimers();
     }
@@ -382,7 +400,7 @@ describe('SubagentBatch scheduling contract', () => {
     }
   });
 
-  it('fails the only unfinished task on transient error instead of suspending forever', async () => {
+  it('transient-error only-unfinished task requeues for retry instead of failing', async () => {
     vi.useFakeTimers();
     try {
       const onSuspended = vi.fn();
@@ -390,6 +408,7 @@ describe('SubagentBatch scheduling contract', () => {
       const running = runBatch(Array.from({ length: 2 }, (_, index) => queuedTask(index + 1)), {
         signal,
       });
+      void running.catch(() => {});
 
       await vi.advanceTimersByTimeAsync(0);
       expect(attempts).toHaveLength(2);
@@ -405,28 +424,38 @@ describe('SubagentBatch scheduling contract', () => {
       });
       await vi.advanceTimersByTimeAsync(0);
 
+      // Task 2 hits a transient error — it requeues instead of failing.
       attempts[1]!.outcome.resolve({ type: 'transient_error', agentId: 'agent-2' });
-      await expect(running).resolves.toMatchObject([
-        {
-          task: { data: 1 },
-          agentId: 'agent-1',
-          status: 'completed',
-          result: 'completed 1',
-        },
-        {
-          task: { data: 2 },
-          agentId: 'agent-2',
-          status: 'failed',
-          state: 'started',
-        },
-      ]);
-      expect(onSuspended).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onSuspended).toHaveBeenCalledTimes(1);
+      expect(onSuspended).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'Transient provider error; subagent requeued for retry.' }),
+      );
+
+      // After the transient backoff (5 s with jitter=0), the retry launches.
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.retryAgentId).toBe('agent-2');
+
+      // The retry succeeds.
+      attempts[2]!.outcome.resolve({
+        task: attempts[2]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2 (retry)',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const results = await running;
+      expect(results[0]!.status).toBe('completed');
+      expect(results[1]!.status).toBe('completed');
+      expect(results[1]!.result).toBe('completed 2 (retry)');
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('stops retrying transient errors after max retries', async () => {
+  it('stops retrying transient errors after max retries and failed-resume', async () => {
     vi.useFakeTimers();
     try {
       const onSuspended = vi.fn();
@@ -447,24 +476,36 @@ describe('SubagentBatch scheduling contract', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(onSuspended).toHaveBeenCalledTimes(1);
 
-      // First retry (retryCount=1) — another transient error.
-      // Tasks 1 and 3 are still running so the retry is not the only task.
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(attempts).toHaveLength(4);
-      attempts[3]!.outcome.resolve({ type: 'transient_error', agentId: 'agent-2' });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(onSuspended).toHaveBeenCalledTimes(2);
+      // 10 transient retries (retryCount 1→10), each with exponential backoff.
+      // The first 9 requeue as transient_error; the 10th exhausts transient
+      // retries and falls through to failed-resume (resumeCount 0→1).
+      const transientBackoffs = [
+        5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000,
+      ];
+      for (const backoff of transientBackoffs) {
+        await vi.advanceTimersByTimeAsync(backoff);
+        const retryAttempt = attempts[attempts.length - 1]!;
+        expect(retryAttempt.retryAgentId).toBe('agent-2');
+        retryAttempt.outcome.resolve({ type: 'transient_error', agentId: 'agent-2' });
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      // 10 transient requeues + 1 failed-resume (from the 10th iteration) = 11.
+      expect(onSuspended).toHaveBeenCalledTimes(11);
+      expect(onSuspended).toHaveBeenNthCalledWith(11, expect.objectContaining({
+        reason: 'Subagent failed; requeued for automatic recovery.',
+      }));
 
-      // Second retry (retryCount=2) — another transient error.
-      // retryCount is now 2 which equals TRANSIENT_MAX_RETRIES, so the
-      // next attempt should fail instead of requeue.
-      await vi.advanceTimersByTimeAsync(10000);
-      expect(attempts).toHaveLength(5);
-      attempts[4]!.outcome.resolve({ type: 'transient_error', agentId: 'agent-2' });
-      await vi.advanceTimersByTimeAsync(0);
-
-      // No more requeues — the task fails.
-      expect(onSuspended).toHaveBeenCalledTimes(2);
+      // 3 failed-resume retries (resumeCount 1→3). The first two requeue;
+      // the third exhausts failed-resume and truly fails.
+      for (let i = 0; i < 3; i += 1) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        const retryAttempt = attempts[attempts.length - 1]!;
+        expect(retryAttempt.retryAgentId).toBe('agent-2');
+        retryAttempt.outcome.resolve({ type: 'transient_error', agentId: 'agent-2' });
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      // 11 + 2 = 13. The 3rd failed-resume attempt truly fails (no requeue).
+      expect(onSuspended).toHaveBeenCalledTimes(13);
 
       // Complete the remaining tasks.
       attempts[0]!.outcome.resolve({
@@ -482,6 +523,127 @@ describe('SubagentBatch scheduling contract', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       const results = await running;
+      expect(results[1]!.status).toBe('failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('failed task with agentId is auto-requeued for recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const onSuspended = vi.fn();
+      const { runBatch, attempts } = createMockBatchRunner({ onSuspended });
+      const running = runBatch(Array.from({ length: 2 }, (_, index) => queuedTask(index + 1)), {
+        signal,
+      });
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      // Task 1 completes.
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Task 2 fails with a plain error — auto-requeued for recovery.
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'failed',
+        error: 'Task failed',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onSuspended).toHaveBeenCalledTimes(1);
+      expect(onSuspended).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'Subagent failed; requeued for automatic recovery.' }),
+      );
+
+      // After the failed-resume backoff (60 s with jitter=0), the retry launches.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.retryAgentId).toBe('agent-2');
+
+      // The retry succeeds — the subagent resumes from its existing context.
+      attempts[2]!.outcome.resolve({
+        task: attempts[2]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2 (retry)',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const results = await running;
+      expect(results[0]!.status).toBe('completed');
+      expect(results[1]!.status).toBe('completed');
+      expect(results[1]!.result).toBe('completed 2 (retry)');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('failed task exceeds FAILED_RESUME_MAX_RETRIES then truly fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const onSuspended = vi.fn();
+      const { runBatch, attempts } = createMockBatchRunner({ onSuspended });
+      const running = runBatch(Array.from({ length: 2 }, (_, index) => queuedTask(index + 1)), {
+        signal,
+      });
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      // Task 1 completes.
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Task 2 fails — auto-requeued for recovery (resumeCount 0→1).
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'failed',
+        error: 'Task failed',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onSuspended).toHaveBeenCalledTimes(1);
+
+      // 3 failed-resume retries, all failing. The first two requeue
+      // (resumeCount 1→2, 2→3); the third truly fails (resumeCount=3).
+      for (let i = 0; i < 3; i += 1) {
+        await vi.advanceTimersByTimeAsync(60_000);
+        const retryAttempt = attempts[attempts.length - 1]!;
+        expect(retryAttempt.retryAgentId).toBe('agent-2');
+        retryAttempt.outcome.resolve({
+          task: retryAttempt.task,
+          agentId: 'agent-2',
+          status: 'failed',
+          error: 'Task failed',
+        });
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      // 3 requeues total (initial + 2 retries). The 3rd retry truly fails.
+      expect(onSuspended).toHaveBeenCalledTimes(3);
+
+      const results = await running;
+      expect(results[0]!.status).toBe('completed');
       expect(results[1]!.status).toBe('failed');
     } finally {
       vi.useRealTimers();

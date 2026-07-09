@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 
 import type { ContentPart } from '@moonshot-ai/kosong';
 import { join } from 'pathe';
@@ -8,6 +8,10 @@ import type { ExecutableToolResult } from '../../loop';
 
 const TOOL_RESULT_MAX_CHARS = 50_000;
 const TOOL_RESULT_PREVIEW_CHARS = 2_000;
+const TOOL_RESULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const TOOL_RESULT_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+let lastCleanupAt = 0;
 
 interface BudgetToolResultOptions {
   readonly homedir?: string;
@@ -24,6 +28,7 @@ export async function budgetToolResultForModel(
   if (options.result.truncated === true) return options.result;
   if (options.homedir === undefined) return options.result;
 
+  void maybeCleanupOldToolResults(options.homedir);
   const outputPath = await saveToolResult(
     { homedir: options.homedir, toolName: options.toolName, toolCallId: options.toolCallId },
     text,
@@ -43,6 +48,32 @@ function persistableToolResultText(output: ExecutableToolResult['output']): stri
     return undefined;
   }
   return output.map((part) => part.text).join('');
+}
+
+async function maybeCleanupOldToolResults(homedir: string): Promise<void> {
+  const now = Date.now();
+  if (now - lastCleanupAt < TOOL_RESULT_CLEANUP_INTERVAL_MS) return;
+  lastCleanupAt = now;
+  try {
+    const dir = join(homedir, 'tool-results');
+    const entries = await readdir(dir);
+    const cutoff = now - TOOL_RESULT_MAX_AGE_MS;
+    await Promise.all(
+      entries.map(async (entry) => {
+        const entryPath = join(dir, entry);
+        try {
+          const stats = await stat(entryPath);
+          if (stats.isFile() && stats.mtimeMs < cutoff) {
+            await unlink(entryPath);
+          }
+        } catch {
+          // Individual file cleanup failures are best-effort.
+        }
+      }),
+    );
+  } catch {
+    // Directory may not exist yet; cleanup is best-effort.
+  }
 }
 
 async function saveToolResult(

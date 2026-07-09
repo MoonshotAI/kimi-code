@@ -19,13 +19,14 @@ Normal phase:
 
 Rate-limit phase:
 - A provider rate limit requeues while there is other unfinished work. Save the agent id for same-agent retry, emit suspended, and requeue the task at the front; its own eligibility delays are 3000 ms, 6000 ms, 12000 ms, then doubling.
-- If the rate-limited attempt is the only unfinished task, fail that task instead of suspending the whole batch forever.
+- Rate-limited and transient retries are capped at 10 requeues each. Once exhausted, the task falls through to the failed-resume path.
 - Enter with capacity equal to ready normal launches, minimum 1; set the next global launch no earlier than 3000 ms later; then shrink capacity by 1, minimum 1. Later rate limits shrink by 1, minimum 1, at most once per 2000 ms.
 - Each pass starts at most 1 task: active attempts must be below capacity, global launch time reached, and task eligibility reached. Choose the first eligible queued task, then set next global launch to now plus the current interval. If blocked by time or queued work remains after a launch, wake at the earlier of next launch/eligibility and next capacity recovery.
 - Core recovery rule: in rate-limit phase, if work is queued and no provider rate limit happened for 3 minutes, capacity increases by 1, which can launch one more task immediately. This can happen once per quiet window; a new rate limit restarts the window. If active attempts still fill capacity, wake at the next recovery time.
 
 Results and cancellation:
 - Completed, failed, aborted, and timed-out attempts occupy their input slots; when all slots have results, return the ordered list. A task timeout fails only that task and does not enter rate-limit phase or stop others.
+- A failed task with a known agent id is automatically requeued for recovery (up to 3 times, 60 s backoff with jitter) using launcher.retry() — the subagent resumes from its existing context without parent intervention.
 - The first task signal is the batch signal. User cancellation preserves existing results, marks ready or agent-known unfinished tasks aborted/started, and marks never-started tasks aborted/not_started. Non-user cancellation rejects.
 */
 
@@ -35,11 +36,26 @@ const RATE_LIMIT_RETRY_BASE_MS = 3000;
 const RATE_LIMIT_RETRY_FACTOR = 2;
 const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2000;
 const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 3 * 60 * 1000;
+const RATE_LIMIT_GLOBAL_RETRY_MAX_MS = 60_000;
+const RATE_LIMIT_MAX_RETRIES = 10;
 const RATE_LIMIT_SUSPENDED_REASON = 'Provider rate limit; subagent requeued for retry.';
 const TRANSIENT_SUSPENDED_REASON = 'Transient provider error; subagent requeued for retry.';
-const TRANSIENT_MAX_RETRIES = 2;
-const TRANSIENT_RETRY_BASE_MS = 5000;
-const TRANSIENT_RETRY_FACTOR = 2;
+const TRANSIENT_MAX_RETRIES = 10;
+const TRANSIENT_BACKOFF_DELAYS_MS = [
+  5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000,
+];
+const FAILED_RESUME_MAX_RETRIES = 3;
+const FAILED_RESUME_RETRY_MS = 60_000;
+const FAILED_RESUME_SUSPENDED_REASON = 'Subagent failed; requeued for automatic recovery.';
+
+function applyJitter(delayMs: number): number {
+  return Math.round(delayMs * (0.75 + Math.random() * 0.5));
+}
+
+function transientBackoffDelay(retryCount: number): number {
+  const index = Math.min(Math.max(retryCount - 1, 0), TRANSIENT_BACKOFF_DELAYS_MS.length - 1);
+  return applyJitter(TRANSIENT_BACKOFF_DELAYS_MS[index]!);
+}
 
 const AGENT_SWARM_MAX_CONCURRENCY_ENV = 'KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY';
 
@@ -114,6 +130,7 @@ type TaskState<T> = {
   agentId?: string;
   retryAgentId?: string;
   retryCount: number;
+  resumeCount: number;
   retryReadyAt: number;
   started: boolean;
 };
@@ -170,6 +187,7 @@ export class SubagentBatch<T> {
       index,
       task,
       retryCount: 0,
+      resumeCount: 0,
       retryReadyAt: 0,
       started: false,
     }));
@@ -366,6 +384,9 @@ export class SubagentBatch<T> {
       };
     } catch (error) {
       if (isProviderRateLimitError(error)) {
+        if (attempt.state.retryCount >= RATE_LIMIT_MAX_RETRIES) {
+          return this.failedAttemptOutcome(attempt, error);
+        }
         return {
           type: 'rate_limited',
           agentId: handle.agentId,
@@ -423,15 +444,16 @@ export class SubagentBatch<T> {
     if (this.finished) return;
 
     if ('status' in outcome) {
-      this.results[attempt.state.index] = outcome;
-    } else if (this.isOnlyUnfinishedTask(attempt.state)) {
-      this.results[attempt.state.index] = {
-        task: attempt.state.task,
-        agentId: outcome.agentId,
-        status: 'failed',
-        state: 'started',
-        error: outcome.error,
-      };
+      if (
+        outcome.status === 'failed' &&
+        outcome.agentId !== undefined &&
+        !attempt.timedOut &&
+        attempt.state.resumeCount < FAILED_RESUME_MAX_RETRIES
+      ) {
+        this.requeueFailedAttempt(attempt, outcome.agentId);
+      } else {
+        this.results[attempt.state.index] = outcome;
+      }
     } else if (outcome.type === 'transient_error') {
       this.requeueTransientError(attempt, outcome.agentId);
     } else {
@@ -471,18 +493,23 @@ export class SubagentBatch<T> {
     const now = Date.now();
     this.lastRateLimitAt = now;
     state.retryCount += 1;
-    const retryDelay = retry.createTimeout(Math.max(0, state.retryCount - 1), {
-      minTimeout: RATE_LIMIT_RETRY_BASE_MS,
-      maxTimeout: Number.POSITIVE_INFINITY,
-      factor: RATE_LIMIT_RETRY_FACTOR,
-      randomize: false,
-    });
+    const retryDelay = applyJitter(
+      retry.createTimeout(Math.max(0, state.retryCount - 1), {
+        minTimeout: RATE_LIMIT_RETRY_BASE_MS,
+        maxTimeout: Number.POSITIVE_INFINITY,
+        factor: RATE_LIMIT_RETRY_FACTOR,
+        randomize: false,
+      }),
+    );
     state.retryReadyAt = now + retryDelay;
     this.pending.unshift(state);
     this.enterRateLimitMode(now);
 
     if (!attempt.ready) {
-      this.globalRetryIntervalMs = Math.max(this.globalRetryIntervalMs * 2, retryDelay);
+      this.globalRetryIntervalMs = Math.min(
+        Math.max(this.globalRetryIntervalMs * 2, retryDelay),
+        RATE_LIMIT_GLOBAL_RETRY_MAX_MS,
+      );
       this.nextRateLimitLaunchAt = Math.max(
         this.nextRateLimitLaunchAt,
         now + this.globalRetryIntervalMs,
@@ -507,13 +534,23 @@ export class SubagentBatch<T> {
 
     const now = Date.now();
     state.retryCount += 1;
-    const retryDelay = retry.createTimeout(Math.max(0, state.retryCount - 1), {
-      minTimeout: TRANSIENT_RETRY_BASE_MS,
-      maxTimeout: Number.POSITIVE_INFINITY,
-      factor: TRANSIENT_RETRY_FACTOR,
-      randomize: false,
+    state.retryReadyAt = now + transientBackoffDelay(state.retryCount);
+    this.pending.unshift(state);
+  }
+
+  private requeueFailedAttempt(attempt: ActiveAttempt<T>, agentId: string): void {
+    const state = attempt.state;
+    state.agentId = agentId;
+    state.retryAgentId = agentId;
+    state.resumeCount += 1;
+    this.launcher.suspended?.({
+      task: state.task,
+      agentId,
+      reason: FAILED_RESUME_SUSPENDED_REASON,
     });
-    state.retryReadyAt = now + retryDelay;
+
+    const now = Date.now();
+    state.retryReadyAt = now + applyJitter(FAILED_RESUME_RETRY_MS);
     this.pending.unshift(state);
   }
 
@@ -550,7 +587,8 @@ export class SubagentBatch<T> {
     const nextRecoveryAt = this.nextRateLimitCapacityRecoveryAt();
     if (nextRecoveryAt > now) return;
 
-    this.rateLimitCapacity += 1;
+    const cap = this.maxConcurrency ?? INITIAL_LAUNCH_LIMIT;
+    this.rateLimitCapacity = Math.min(this.rateLimitCapacity + 1, cap);
     this.lastCapacityRecoveryAt = now;
     this.nextRateLimitLaunchAt = Math.min(this.nextRateLimitLaunchAt, now);
   }
@@ -601,10 +639,6 @@ export class SubagentBatch<T> {
       return true;
     }
     return false;
-  }
-
-  private isOnlyUnfinishedTask(state: TaskState<T>): boolean {
-    return this.results.every((result, index) => index === state.index || result !== undefined);
   }
 
   private finishWithUserCancellation(): void {

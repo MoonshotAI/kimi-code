@@ -289,6 +289,28 @@ function nativeEstimateTokensBatch(texts) {
   return binding.nativeEstimateTokensBatch(texts);
 }
 
+/**
+ * Truncate text to fit within a token budget, keeping the BEGINNING.
+ *
+ * @param {string} text - Text to truncate.
+ * @param {number} maxTokens - Maximum token budget.
+ * @returns {string} Truncated text (prefix).
+ */
+function nativeTruncateTextToTokens(text, maxTokens) {
+  return binding.nativeTruncateTextToTokens(text, maxTokens);
+}
+
+/**
+ * Truncate text to fit within a token budget, keeping the END.
+ *
+ * @param {string} text - Text to truncate.
+ * @param {number} maxTokens - Maximum token budget.
+ * @returns {string} Truncated text (suffix).
+ */
+function nativeTruncateTextToTokensFromEnd(text, maxTokens) {
+  return binding.nativeTruncateTextToTokensFromEnd(text, maxTokens);
+}
+
 // ============================================================================
 // Bash tool
 // ============================================================================
@@ -358,6 +380,69 @@ function nativeReduceCompactOnOverflow(messages, config) {
  */
 function nativeResolveCompactionMaxCompletionTokens(maxContextTokens, maxOutputSize) {
   return binding.nativeResolveCompactionMaxCompletionTokens(maxContextTokens, maxOutputSize);
+}
+
+// ============================================================================
+// Tool access conflict detection
+// ============================================================================
+
+/**
+ * Check whether any access in `left` conflicts with any access in `right`.
+ *
+ * @param {Array<{kind: string, operation?: string, path?: string, recursive?: boolean}>} left
+ * @param {Array<{kind: string, operation?: string, path?: string, recursive?: boolean}>} right
+ * @returns {boolean} True if any pair conflicts.
+ */
+function nativeToolAccessesConflict(left, right) {
+  return binding.nativeToolAccessesConflict(left, right);
+}
+
+// ============================================================================
+// Image compression & cropping
+// ============================================================================
+
+/**
+ * Compress (resize + re-encode) `data` to fit the pixel + byte budget.
+ *
+ * Runs decode/resize/encode on a blocking thread. Returns `null` when the
+ * format is unsupported or decode/encode fails (caller passes through the
+ * original bytes). Returns `{ changed: false }` when the re-encode didn't
+ * help. Returns `{ changed: true }` when the result is smaller.
+ *
+ * @param {Uint8Array} data - Raw image bytes (PNG or JPEG).
+ * @param {string} mimeType - MIME type ("image/png" or "image/jpeg").
+ * @param {{maxEdge: number, byteBudget: number, fallbackEdges: number[], jpegQualitySteps: number[]}} config
+ * @returns {Promise<{data: Uint8Array, mimeType: string, width: number, height: number, originalWidth: number, originalHeight: number, changed: boolean, originalByteLength: number, finalByteLength: number} | null>}
+ */
+function nativeCompressImage(data, mimeType, config) {
+  return binding.nativeCompressImage(data, mimeType, config);
+}
+
+/**
+ * Crop `region` out of `data` and encode it for the model.
+ *
+ * Returns an outcome object (never throws): `ok: false` carries an `error`
+ * message; `ok: true` carries the encoded crop.
+ *
+ * @param {Uint8Array} data - Raw image bytes (PNG or JPEG).
+ * @param {string} mimeType - MIME type ("image/png" or "image/jpeg").
+ * @param {number} regionX - Crop origin X (original-image pixel coordinates).
+ * @param {number} regionY - Crop origin Y.
+ * @param {number} regionWidth - Crop width.
+ * @param {number} regionHeight - Crop height.
+ * @param {{maxEdge: number, byteBudget: number, skipResize: boolean, fallbackEdges: number[], jpegQualitySteps: number[]}} config
+ * @returns {Promise<{ok: boolean, error: string, errorKind: string, data: Uint8Array, mimeType: string, width: number, height: number, originalWidth: number, originalHeight: number, regionX: number, regionY: number, regionWidth: number, regionHeight: number, resized: boolean, originalByteLength: number, finalByteLength: number}>}
+ */
+function nativeCropImage(data, mimeType, regionX, regionY, regionWidth, regionHeight, config) {
+  return binding.nativeCropImage(
+    data,
+    mimeType,
+    regionX,
+    regionY,
+    regionWidth,
+    regionHeight,
+    config,
+  );
 }
 
 // ============================================================================
@@ -432,12 +517,21 @@ module.exports = {
   nativeIsSensitiveFile,
   nativeEstimateTokens,
   nativeEstimateTokensBatch,
+  nativeTruncateTextToTokens,
+  nativeTruncateTextToTokensFromEnd,
   nativeBash,
 
   // Compaction
   nativeComputeCompactCount,
   nativeReduceCompactOnOverflow,
   nativeResolveCompactionMaxCompletionTokens,
+
+  // Tool access conflict
+  nativeToolAccessesConflict,
+
+  // Image compression & cropping
+  nativeCompressImage,
+  nativeCropImage,
 
   // Structured grep
   nativeGrepStructured,

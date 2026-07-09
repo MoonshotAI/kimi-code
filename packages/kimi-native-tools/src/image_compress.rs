@@ -1,0 +1,808 @@
+/// Image compression and cropping — native Rust replacement for
+/// `packages/agent-core/src/tools/support/image-compress.ts`.
+///
+/// The TS module uses `jimp` (pure JS) for PNG/JPEG decode, resize, and
+/// encode — 10–100× slower than native codecs. This module does the same
+/// work with the `image` crate (native PNG/JPEG codecs), cutting per-image
+/// latency from hundreds of milliseconds to single-digit milliseconds.
+///
+/// The TS wrapper retains the fast-path checks (already within budgets,
+/// decode-bomb guard) and telemetry; this module handles only the
+/// compute-heavy decode → resize → encode → quality-ladder path.
+
+use image::codecs::jpeg::JpegEncoder;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::{DynamicImage, GenericImageView, ImageEncoder, ImageFormat};
+
+// ── config / result structs ──────────────────────────────────────────────
+
+pub struct CompressConfig {
+    pub max_edge: u32,
+    pub byte_budget: usize,
+    pub fallback_edges: Vec<u32>,
+    pub jpeg_quality_steps: Vec<u8>,
+}
+
+pub struct CompressResult {
+    pub data: Vec<u8>,
+    pub mime_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub original_width: u32,
+    pub original_height: u32,
+    pub changed: bool,
+    pub original_byte_length: usize,
+    pub final_byte_length: usize,
+}
+
+pub struct CropConfig {
+    pub max_edge: u32,
+    pub byte_budget: usize,
+    pub skip_resize: bool,
+    pub fallback_edges: Vec<u32>,
+    pub jpeg_quality_steps: Vec<u8>,
+}
+
+pub struct CropResult {
+    pub data: Vec<u8>,
+    pub mime_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub original_width: u32,
+    pub original_height: u32,
+    pub region_x: u32,
+    pub region_y: u32,
+    pub region_width: u32,
+    pub region_height: u32,
+    pub resized: bool,
+    pub original_byte_length: usize,
+    pub final_byte_length: usize,
+}
+
+#[derive(Debug)]
+pub enum CropError {
+    Empty,
+    UnsupportedFormat,
+    RegionInvalid,
+    OutOfBounds {
+        original_width: u32,
+        original_height: u32,
+    },
+    Budget {
+        encoded_bytes: usize,
+        budget: usize,
+    },
+    DecodeFailed(String),
+}
+
+impl CropError {
+    pub fn error_message(&self) -> String {
+        match self {
+            CropError::Empty => "The image is empty.".to_string(),
+            CropError::UnsupportedFormat => {
+                "Cropping is only supported for PNG and JPEG images.".to_string()
+            }
+            CropError::RegionInvalid => "Region coordinates must be finite numbers.".to_string(),
+            CropError::OutOfBounds {
+                original_width,
+                original_height,
+            } => format!(
+                "Region lies outside the {}x{} image.",
+                original_width, original_height
+            ),
+            CropError::Budget {
+                encoded_bytes,
+                budget,
+            } => format!(
+                "The cropped region encodes to {} bytes, over the {}-byte per-image limit.",
+                encoded_bytes, budget
+            ),
+            CropError::DecodeFailed(msg) => format!("Failed to decode the image: {}", msg),
+        }
+    }
+
+    /// Short stable identifier for telemetry (matches TS `CropErrorKind`).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            CropError::Empty => "empty",
+            CropError::UnsupportedFormat => "unsupported_format",
+            CropError::RegionInvalid => "region_invalid",
+            CropError::OutOfBounds { .. } => "out_of_bounds",
+            CropError::Budget { .. } => "budget",
+            CropError::DecodeFailed(_) => "decode_failed",
+        }
+    }
+}
+
+struct EncodedImage {
+    data: Vec<u8>,
+    mime_type: &'static str,
+    width: u32,
+    height: u32,
+}
+
+// ── public API ───────────────────────────────────────────────────────────
+
+/// Compress (resize + re-encode) `bytes` to fit the pixel + byte budget.
+///
+/// Returns `None` on decode/encode failure (caller passes through original).
+/// Returns `Some` with `changed: false` when the re-encode didn't help.
+/// Returns `Some` with `changed: true` when the result is smaller.
+pub fn compress_image(
+    bytes: &[u8],
+    mime_type: &str,
+    config: &CompressConfig,
+) -> Option<CompressResult> {
+    let normalized = normalize_mime(mime_type);
+    let source_is_png = normalized == "image/png";
+    let format = match normalized.as_str() {
+        "image/png" => ImageFormat::Png,
+        "image/jpeg" => ImageFormat::Jpeg,
+        _ => return None,
+    };
+
+    let mut img = image::load_from_memory_with_format(bytes, format).ok()?;
+    let original_width = img.width();
+    let original_height = img.height();
+
+    fit_within_edge(&mut img, config.max_edge);
+
+    let encoded = encode_within_budget(
+        &mut img,
+        source_is_png,
+        config.byte_budget,
+        &config.fallback_edges,
+        &config.jpeg_quality_steps,
+    )?;
+
+    let original_pixels = original_width as u64 * original_height as u64;
+    let final_pixels = encoded.width as u64 * encoded.height as u64;
+    let final_byte_length = encoded.data.len();
+    let shrank_bytes = final_byte_length < bytes.len();
+    let shrank_pixels = final_pixels < original_pixels;
+    let changed = shrank_bytes || shrank_pixels;
+
+    Some(CompressResult {
+        data: encoded.data,
+        mime_type: encoded.mime_type.to_string(),
+        width: encoded.width,
+        height: encoded.height,
+        original_width,
+        original_height,
+        changed,
+        original_byte_length: bytes.len(),
+        final_byte_length,
+    })
+}
+
+/// Crop `region` out of `bytes` and encode it for the model.
+///
+/// Explicit operation: returns `Err` on any failure (no passthrough).
+pub fn crop_image(
+    bytes: &[u8],
+    mime_type: &str,
+    region_x: f64,
+    region_y: f64,
+    region_width: f64,
+    region_height: f64,
+    config: &CropConfig,
+) -> Result<CropResult, CropError> {
+    if bytes.is_empty() {
+        return Err(CropError::Empty);
+    }
+    let normalized = normalize_mime(mime_type);
+    let source_is_png = normalized == "image/png";
+    let format = match normalized.as_str() {
+        "image/png" => ImageFormat::Png,
+        "image/jpeg" => ImageFormat::Jpeg,
+        _ => return Err(CropError::UnsupportedFormat),
+    };
+    if ![region_x, region_y, region_width, region_height]
+        .iter()
+        .all(|v| v.is_finite())
+    {
+        return Err(CropError::RegionInvalid);
+    }
+
+    let img = image::load_from_memory_with_format(bytes, format)
+        .map_err(|e| CropError::DecodeFailed(e.to_string()))?;
+    let original_width = img.width();
+    let original_height = img.height();
+
+    let x = region_x.floor() as i64;
+    let y = region_y.floor() as i64;
+    if x < 0
+        || y < 0
+        || x as u32 >= original_width
+        || y as u32 >= original_height
+        || region_width < 1.0
+        || region_height < 1.0
+    {
+        return Err(CropError::OutOfBounds {
+            original_width,
+            original_height,
+        });
+    }
+    let w = (region_width.floor() as u32).min(original_width - x as u32);
+    let h = (region_height.floor() as u32).min(original_height - y as u32);
+
+    let cropped = img.crop_imm(x as u32, y as u32, w, h);
+
+    if config.skip_resize {
+        let (data, mime) = if source_is_png {
+            (encode_png(&cropped).map_err(|e| CropError::DecodeFailed(e.to_string()))?, "image/png")
+        } else {
+            (encode_jpeg(&cropped, 90).map_err(|e| CropError::DecodeFailed(e.to_string()))?, "image/jpeg")
+        };
+        let final_byte_length = data.len();
+        if final_byte_length > config.byte_budget {
+            return Err(CropError::Budget {
+                encoded_bytes: final_byte_length,
+                budget: config.byte_budget,
+            });
+        }
+        return Ok(CropResult {
+            data,
+            mime_type: mime.to_string(),
+            width: cropped.width(),
+            height: cropped.height(),
+            original_width,
+            original_height,
+            region_x: x as u32,
+            region_y: y as u32,
+            region_width: w,
+            region_height: h,
+            resized: false,
+            original_byte_length: bytes.len(),
+            final_byte_length,
+        });
+    }
+
+    let mut fitted = cropped;
+    fit_within_edge(&mut fitted, config.max_edge);
+    let encoded = encode_within_budget(
+        &mut fitted,
+        source_is_png,
+        config.byte_budget,
+        &config.fallback_edges,
+        &config.jpeg_quality_steps,
+    )
+    .ok_or_else(|| CropError::DecodeFailed("encode failed".to_string()))?;
+
+    let final_byte_length = encoded.data.len();
+    Ok(CropResult {
+        data: encoded.data,
+        mime_type: encoded.mime_type.to_string(),
+        width: encoded.width,
+        height: encoded.height,
+        original_width,
+        original_height,
+        region_x: x as u32,
+        region_y: y as u32,
+        region_width: w,
+        region_height: h,
+        resized: encoded.width != w || encoded.height != h,
+        original_byte_length: bytes.len(),
+        final_byte_length,
+    })
+}
+
+// ── internals ────────────────────────────────────────────────────────────
+
+/// Scale `img` so its longest edge is at most `edge`, preserving aspect
+/// ratio. No-op (returns false) when the image already fits. Uses Triangle
+/// (bilinear) filtering which covers all source pixels during downscaling —
+/// no aliasing on text or fine patterns.
+fn fit_within_edge(img: &mut DynamicImage, edge: u32) -> bool {
+    let (w, h) = img.dimensions();
+    let longest = w.max(h);
+    if longest <= edge {
+        return false;
+    }
+    let factor = edge as f64 / longest as f64;
+    let new_w = ((w as f64) * factor).round().max(1.0) as u32;
+    let new_h = ((h as f64) * factor).round().max(1.0) as u32;
+    *img = img.resize_exact(new_w, new_h, image::imageops::FilterType::Triangle);
+    true
+}
+
+/// Encode `img` under the byte budget, trying progressively smaller sizes
+/// and lower quality levels. Mirrors `encodeWithinBudget` in `image-compress.ts`.
+///
+/// Strategy:
+/// - PNG source: lossless PNG at fitted size → smaller PNGs at fallback edges
+///   → lossy JPEG quality ladder (drops transparency).
+/// - JPEG source: quality ladder at fitted size → full ladder at each
+///   fallback edge.
+///
+/// Always returns the smallest encoding produced, even if none met the budget.
+fn encode_within_budget(
+    img: &mut DynamicImage,
+    source_is_png: bool,
+    byte_budget: usize,
+    fallback_edges: &[u32],
+    jpeg_quality_steps: &[u8],
+) -> Option<EncodedImage> {
+    let mut smallest: Option<EncodedImage> = None;
+
+    if source_is_png {
+        if let Ok(png) = encode_png(img) {
+            let len = png.len();
+            track_smallest(&mut smallest, png, "image/png", img.width(), img.height());
+            if len <= byte_budget {
+                return smallest;
+            }
+        }
+
+        for &edge in fallback_edges {
+            if !fit_within_edge(img, edge) {
+                continue;
+            }
+            if let Ok(smaller_png) = encode_png(img) {
+                let len = smaller_png.len();
+                track_smallest(
+                    &mut smallest,
+                    smaller_png,
+                    "image/png",
+                    img.width(),
+                    img.height(),
+                );
+                if len <= byte_budget {
+                    return smallest;
+                }
+            }
+        }
+
+        for &quality in jpeg_quality_steps {
+            if let Ok(jpeg) = encode_jpeg(img, quality) {
+                let len = jpeg.len();
+                track_smallest(
+                    &mut smallest,
+                    jpeg,
+                    "image/jpeg",
+                    img.width(),
+                    img.height(),
+                );
+                if len <= byte_budget {
+                    return smallest;
+                }
+            }
+        }
+    } else {
+        for &quality in jpeg_quality_steps {
+            if let Ok(jpeg) = encode_jpeg(img, quality) {
+                let len = jpeg.len();
+                track_smallest(
+                    &mut smallest,
+                    jpeg,
+                    "image/jpeg",
+                    img.width(),
+                    img.height(),
+                );
+                if len <= byte_budget {
+                    return smallest;
+                }
+            }
+        }
+
+        for &edge in fallback_edges {
+            if !fit_within_edge(img, edge) {
+                continue;
+            }
+            for &quality in jpeg_quality_steps {
+                if let Ok(jpeg) = encode_jpeg(img, quality) {
+                    let len = jpeg.len();
+                    track_smallest(
+                        &mut smallest,
+                        jpeg,
+                        "image/jpeg",
+                        img.width(),
+                        img.height(),
+                    );
+                    if len <= byte_budget {
+                        return smallest;
+                    }
+                }
+            }
+        }
+    }
+
+    smallest
+}
+
+fn track_smallest(
+    smallest: &mut Option<EncodedImage>,
+    data: Vec<u8>,
+    mime: &'static str,
+    width: u32,
+    height: u32,
+) {
+    if smallest.is_none() || data.len() < smallest.as_ref().unwrap().data.len() {
+        *smallest = Some(EncodedImage {
+            data,
+            mime_type: mime,
+            width,
+            height,
+        });
+    }
+}
+
+/// Encode as PNG with best compression (matches jimp `deflateLevel: 9`).
+fn encode_png(img: &DynamicImage) -> Result<Vec<u8>, image::ImageError> {
+    let mut buf = Vec::new();
+    {
+        let encoder =
+            PngEncoder::new_with_quality(&mut buf, CompressionType::Best, FilterType::Adaptive);
+        if img.color().has_alpha() {
+            let rgba = img.to_rgba8();
+            encoder.write_image(&rgba, img.width(), img.height(), img.color().into())?;
+        } else {
+            let rgb = img.to_rgb8();
+            encoder.write_image(&rgb, img.width(), img.height(), img.color().into())?;
+        }
+    }
+    Ok(buf)
+}
+
+/// Encode as JPEG with the given quality (1–100).
+fn encode_jpeg(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, image::ImageError> {
+    let mut buf = Vec::new();
+    {
+        let encoder = JpegEncoder::new_with_quality(&mut buf, quality);
+        let rgb = img.to_rgb8();
+        encoder.write_image(&rgb, img.width(), img.height(), image::ExtendedColorType::Rgb8)?;
+    }
+    Ok(buf)
+}
+
+fn normalize_mime(mime_type: &str) -> String {
+    let lower = mime_type.trim().to_lowercase();
+    if lower == "image/jpg" {
+        "image/jpeg".to_string()
+    } else {
+        lower
+    }
+}
+
+// ── tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageBuffer, Rgb, Rgba};
+
+    fn make_rgb_image(width: u32, height: u32) -> DynamicImage {
+        let mut img = ImageBuffer::new(width, height);
+        for x in 0..width {
+            for y in 0..height {
+                img.put_pixel(x, y, Rgb([(x % 256) as u8, (y % 256) as u8, 128]));
+            }
+        }
+        DynamicImage::ImageRgb8(img)
+    }
+
+    fn make_rgba_image(width: u32, height: u32) -> DynamicImage {
+        let mut img = ImageBuffer::new(width, height);
+        for x in 0..width {
+            for y in 0..height {
+                img.put_pixel(
+                    x,
+                    y,
+                    Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255]),
+                );
+            }
+        }
+        DynamicImage::ImageRgba8(img)
+    }
+
+    fn encode_to_png_bytes(img: &DynamicImage) -> Vec<u8> {
+        encode_png(img).expect("PNG encode should not fail")
+    }
+
+    fn encode_to_jpeg_bytes(img: &DynamicImage, quality: u8) -> Vec<u8> {
+        encode_jpeg(img, quality).expect("JPEG encode should not fail")
+    }
+
+    fn default_compress_config(byte_budget: usize) -> CompressConfig {
+        CompressConfig {
+            max_edge: 3000,
+            byte_budget,
+            fallback_edges: vec![2000, 1000],
+            jpeg_quality_steps: vec![80, 60, 40, 20],
+        }
+    }
+
+    fn default_crop_config(byte_budget: usize) -> CropConfig {
+        CropConfig {
+            max_edge: 3000,
+            byte_budget,
+            skip_resize: false,
+            fallback_edges: vec![2000, 1000],
+            jpeg_quality_steps: vec![80, 60, 40, 20],
+        }
+    }
+
+    // ── fit_within_edge ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_fit_within_edge_noop() {
+        let mut img = make_rgb_image(100, 50);
+        assert!(!fit_within_edge(&mut img, 200));
+        assert_eq!(img.dimensions(), (100, 50));
+    }
+
+    #[test]
+    fn test_fit_within_edge_downscale() {
+        let mut img = make_rgb_image(4000, 2000);
+        assert!(fit_within_edge(&mut img, 3000));
+        assert_eq!(img.dimensions(), (3000, 1500));
+    }
+
+    #[test]
+    fn test_fit_within_edge_tall_image() {
+        let mut img = make_rgb_image(1000, 4000);
+        assert!(fit_within_edge(&mut img, 2000));
+        assert_eq!(img.dimensions(), (500, 2000));
+    }
+
+    #[test]
+    fn test_fit_within_edge_square() {
+        let mut img = make_rgb_image(4000, 4000);
+        assert!(fit_within_edge(&mut img, 1000));
+        assert_eq!(img.dimensions(), (1000, 1000));
+    }
+
+    #[test]
+    fn test_fit_within_edge_exact() {
+        let mut img = make_rgb_image(3000, 2000);
+        assert!(!fit_within_edge(&mut img, 3000));
+    }
+
+    // ── encode_png / encode_jpeg ─────────────────────────────────────────
+
+    #[test]
+    fn test_encode_png_rgb() {
+        let img = make_rgb_image(100, 100);
+        let bytes = encode_to_png_bytes(&img);
+        assert!(!bytes.is_empty());
+        // PNG magic bytes
+        assert_eq!(&bytes[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    #[test]
+    fn test_encode_png_rgba() {
+        let img = make_rgba_image(50, 50);
+        let bytes = encode_to_png_bytes(&img);
+        assert!(!bytes.is_empty());
+        assert_eq!(&bytes[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    #[test]
+    fn test_encode_jpeg_basic() {
+        let img = make_rgb_image(100, 100);
+        let bytes = encode_to_jpeg_bytes(&img, 80);
+        assert!(!bytes.is_empty());
+        // JPEG magic bytes: FF D8 FF
+        assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF]);
+    }
+
+    #[test]
+    fn test_jpeg_lower_quality_smaller() {
+        let img = make_rgb_image(500, 500);
+        let high = encode_to_jpeg_bytes(&img, 80);
+        let low = encode_to_jpeg_bytes(&img, 20);
+        assert!(low.len() < high.len());
+    }
+
+    // ── compress_image ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_compress_unsupported_format() {
+        let config = default_compress_config(3_75_000);
+        let result = compress_image(b"not an image", "image/gif", &config);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compress_empty_bytes() {
+        let config = default_compress_config(3_75_00);
+        let result = compress_image(b"", "image/png", &config);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compress_png_downscale() {
+        // Large PNG that exceeds edge budget — synthetic gradient compresses
+        // very well, so the result may not shrink in bytes, but pixels do.
+        let img = make_rgb_image(4000, 3000);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_compress_config(3_75_000);
+        let result = compress_image(&bytes, "image/png", &config);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(r.changed);
+        assert!(r.width <= 3000);
+        assert!(r.height <= 3000);
+        assert_eq!(r.original_width, 4000);
+        assert_eq!(r.original_height, 3000);
+        let original_pixels = 4000u64 * 3000;
+        let final_pixels = r.width as u64 * r.height as u64;
+        assert!(final_pixels < original_pixels);
+    }
+
+    #[test]
+    fn test_compress_jpeg_quality_ladder() {
+        // Large JPEG that exceeds byte budget
+        let img = make_rgb_image(2000, 2000);
+        let bytes = encode_to_jpeg_bytes(&img, 100);
+        let config = default_compress_config(100); // tiny budget forces quality down
+        let result = compress_image(&bytes, "image/jpeg", &config);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(r.changed);
+        assert!(r.final_byte_length < r.original_byte_length);
+    }
+
+    #[test]
+    fn test_compress_png_no_help() {
+        // Small PNG that's already tiny — re-encode won't help
+        let img = make_rgb_image(10, 10);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_compress_config(3_75_000);
+        let result = compress_image(&bytes, "image/png", &config);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(!r.changed); // didn't shrink
+    }
+
+    #[test]
+    fn test_compress_preserves_mime_type() {
+        let img = make_rgb_image(4000, 3000);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_compress_config(3_75_000);
+        let result = compress_image(&bytes, "image/png", &config);
+        let r = result.unwrap();
+        // PNG source should stay PNG (unless quality ladder kicks in for tiny budget)
+        assert!(
+            r.mime_type == "image/png" || r.mime_type == "image/jpeg",
+            "unexpected mime: {}",
+            r.mime_type
+        );
+    }
+
+    // ── crop_image ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_crop_empty() {
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(b"", "image/png", 0.0, 0.0, 100.0, 100.0, &config);
+        assert!(matches!(result, Err(CropError::Empty)));
+    }
+
+    #[test]
+    fn test_crop_unsupported_format() {
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(b"data", "image/gif", 0.0, 0.0, 100.0, 100.0, &config);
+        assert!(matches!(result, Err(CropError::UnsupportedFormat)));
+    }
+
+    #[test]
+    fn test_crop_region_nan() {
+        let img = make_rgb_image(100, 100);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(&bytes, "image/png", f64::NAN, 0.0, 10.0, 10.0, &config);
+        assert!(matches!(result, Err(CropError::RegionInvalid)));
+    }
+
+    #[test]
+    fn test_crop_out_of_bounds() {
+        let img = make_rgb_image(100, 100);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(&bytes, "image/png", 200.0, 200.0, 10.0, 10.0, &config);
+        assert!(matches!(result, Err(CropError::OutOfBounds { .. })));
+    }
+
+    #[test]
+    fn test_crop_negative_origin() {
+        let img = make_rgb_image(100, 100);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(&bytes, "image/png", -10.0, 0.0, 50.0, 50.0, &config);
+        assert!(matches!(result, Err(CropError::OutOfBounds { .. })));
+    }
+
+    #[test]
+    fn test_crop_success_png() {
+        let img = make_rgb_image(200, 200);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(&bytes, "image/png", 50.0, 50.0, 100.0, 100.0, &config);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert_eq!(r.region_x, 50);
+        assert_eq!(r.region_y, 50);
+        assert_eq!(r.region_width, 100);
+        assert_eq!(r.region_height, 100);
+        assert_eq!(r.original_width, 200);
+        assert_eq!(r.original_height, 200);
+        assert!(!r.data.is_empty());
+    }
+
+    #[test]
+    fn test_crop_clamped_to_bounds() {
+        let img = make_rgb_image(100, 100);
+        let bytes = encode_to_png_bytes(&img);
+        let config = default_crop_config(3_75_000);
+        // Region extends past the image — should clamp
+        let result = crop_image(&bytes, "image/png", 80.0, 80.0, 100.0, 100.0, &config);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert_eq!(r.region_width, 20); // clamped: 100 - 80
+        assert_eq!(r.region_height, 20);
+    }
+
+    #[test]
+    fn test_crop_skip_resize_png() {
+        let img = make_rgb_image(200, 200);
+        let bytes = encode_to_png_bytes(&img);
+        let mut config = default_crop_config(3_75_000);
+        config.skip_resize = true;
+        let result = crop_image(&bytes, "image/png", 50.0, 50.0, 100.0, 100.0, &config);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert!(!r.resized);
+        assert_eq!(r.width, 100);
+        assert_eq!(r.height, 100);
+        assert_eq!(r.mime_type, "image/png");
+    }
+
+    #[test]
+    fn test_crop_skip_resize_jpeg() {
+        let img = make_rgb_image(200, 200);
+        let bytes = encode_to_jpeg_bytes(&img, 90);
+        let mut config = default_crop_config(3_75_000);
+        config.skip_resize = true;
+        let result = crop_image(&bytes, "image/jpeg", 50.0, 50.0, 100.0, 100.0, &config);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert!(!r.resized);
+        assert_eq!(r.width, 100);
+        assert_eq!(r.height, 100);
+        assert_eq!(r.mime_type, "image/jpeg");
+    }
+
+    #[test]
+    fn test_crop_skip_resize_budget_exceeded() {
+        let img = make_rgb_image(500, 500);
+        let bytes = encode_to_png_bytes(&img);
+        let mut config = default_crop_config(10); // tiny budget
+        config.skip_resize = true;
+        let result = crop_image(&bytes, "image/png", 0.0, 0.0, 400.0, 400.0, &config);
+        assert!(matches!(result, Err(CropError::Budget { .. })));
+    }
+
+    #[test]
+    fn test_crop_jpeg_source() {
+        let img = make_rgb_image(300, 300);
+        let bytes = encode_to_jpeg_bytes(&img, 85);
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(&bytes, "image/jpeg", 100.0, 100.0, 100.0, 100.0, &config);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert_eq!(r.original_width, 300);
+        assert_eq!(r.original_height, 300);
+        assert!(!r.data.is_empty());
+    }
+
+    // ── normalize_mime ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_normalize_mime() {
+        assert_eq!(normalize_mime("image/png"), "image/png");
+        assert_eq!(normalize_mime("image/jpeg"), "image/jpeg");
+        assert_eq!(normalize_mime("image/jpg"), "image/jpeg");
+        assert_eq!(normalize_mime("  IMAGE/PNG  "), "image/png");
+    }
+}

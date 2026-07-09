@@ -131,10 +131,12 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   private tsComputeCompactCount(messages: readonly Message[], source: CompactionSource): number {
+    const tokens = messages.map((m) => estimateTokensForMessage(m));
+
     if (source === 'manual') {
       for (let i = messages.length - 1; i > 0; i--) {
         if (canSplitAfter(messages, i)) {
-          return this.fitCompactCountToWindow(messages, i + 1);
+          return this.fitCompactCountToWindow(messages, tokens, i + 1);
         }
       }
       return 0;
@@ -152,7 +154,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       if (m2.role === 'user') {
         recentUserMessages++;
       }
-      recentSize += estimateTokensForMessage(m2);
+      recentSize += tokens[messages.length - recentMessages]!;
 
       if (canSplitAfter(messages, splitIndex)) {
         bestN = splitIndex + 1;
@@ -166,7 +168,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       }
     }
 
-    return this.fitCompactCountToWindow(messages, bestN ?? 0);
+    return this.fitCompactCountToWindow(messages, tokens, bestN ?? 0);
   }
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {
@@ -180,6 +182,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   private tsReduceCompactOnOverflow(messages: readonly Message[]): number {
+    const tokens = messages.map((m) => estimateTokensForMessage(m));
     const minReducedSize = Math.max(
       1,
       Math.ceil(this.maxSize * this.config.minOverflowReductionRatio),
@@ -188,7 +191,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     let bestN: number | undefined;
 
     for (let i = messages.length - 2; i > 0; i--) {
-      reducedSize += estimateTokensForMessage(messages[i + 1]!);
+      reducedSize += tokens[i + 1]!;
       if (canSplitAfter(messages, i)) {
         bestN = i + 1;
         if (reducedSize >= minReducedSize) {
@@ -201,6 +204,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
   private fitCompactCountToWindow(
     messages: readonly Message[],
+    tokens: readonly number[],
     compactedCount: number,
   ): number {
     if (this.maxSize <= 0 || compactedCount <= 0) {
@@ -209,7 +213,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
     let compactedSize = 0;
     for (let i = 0; i < compactedCount; i++) {
-      compactedSize += estimateTokensForMessage(messages[i]!);
+      compactedSize += tokens[i]!;
     }
     if (compactedSize <= this.maxSize) {
       return compactedCount;
@@ -217,7 +221,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
     let bestN: number | undefined;
     for (let n = compactedCount - 1; n > 0; n--) {
-      compactedSize -= estimateTokensForMessage(messages[n]!);
+      compactedSize -= tokens[n]!;
       if (!canSplitAfter(messages, n - 1)) {
         continue;
       }

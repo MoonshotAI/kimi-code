@@ -19,6 +19,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 encoding_rs = "0.8"
 memchr = "2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [build-dependencies]
 napi-build = "2"

@@ -311,37 +311,6 @@ struct BraceGroup {
     alternatives: Vec<String>,
 }
 
-/// Check if a path matches any of the given glob patterns.
-///
-/// Uses `globset::GlobSet` to batch-compile all patterns and test the path
-/// in a single `is_match` call. This is significantly faster than compiling
-/// each pattern to a RegExp and testing individually — the TS equivalent
-/// (`matchesAnyGlob` in fsSearchService.ts) recompiles every glob on every
-/// call.
-///
-/// Patterns follow globset syntax (supports `**`, `*`, `?`, `{a,b}`, `[abc]`).
-/// Matching is case-sensitive, consistent with the TS `globToRegExp` behavior.
-pub fn glob_matches_any(globs: &[String], path: &str) -> bool {
-    if globs.is_empty() {
-        return false;
-    }
-
-    let mut builder = globset::GlobSetBuilder::new();
-    for g in globs {
-        if let Ok(glob) = globset::GlobBuilder::new(g)
-            .literal_separator(true)
-            .build()
-        {
-            builder.add(glob);
-        }
-    }
-
-    match builder.build() {
-        Ok(set) => set.is_match(path),
-        Err(_) => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

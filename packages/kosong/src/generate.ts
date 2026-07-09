@@ -340,11 +340,34 @@ function formatFinishReasonHint(stream: StreamedMessage): string {
 }
 
 /**
- * Produce a shallow-ish copy of a StreamedMessagePart.
+ * Produce an isolation copy of a StreamedMessagePart for callback use.
  *
- * This is intentionally minimal: we only need isolation for the mutable
- * string fields that `mergeInPlace` mutates (text, think, arguments).
+ * High-frequency streaming deltas (text, think, tool_call_part) carry only
+ * immutable string fields — a spread copy is sufficient and far cheaper than
+ * `structuredClone`, which dominated thinking-stream throughput. Low-frequency
+ * parts (media, tool calls) carry nested objects (`imageUrl`, `extras`) that
+ * callbacks may mutate, so those nested objects are copied explicitly.
  */
 function deepCopyPart(part: StreamedMessagePart): StreamedMessagePart {
-  return structuredClone(part);
+  switch (part.type) {
+    case 'text':
+    case 'think':
+    case 'tool_call_part':
+      return { ...part };
+    case 'image_url':
+      return { ...part, imageUrl: { ...part.imageUrl } };
+    case 'audio_url':
+      return { ...part, audioUrl: { ...part.audioUrl } };
+    case 'video_url':
+      return { ...part, videoUrl: { ...part.videoUrl } };
+    case 'function':
+      return {
+        ...part,
+        ...(part.extras !== undefined ? { extras: structuredClone(part.extras) } : {}),
+      };
+    default: {
+      const exhaustive: never = part;
+      throw new Error(`Unknown StreamedMessagePart type: ${String(exhaustive)}`);
+    }
+  }
 }
