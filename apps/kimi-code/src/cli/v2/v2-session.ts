@@ -13,6 +13,7 @@ import {
   IAgentProfileService,
   IAgentPromptLegacyService,
   IAgentTaskService,
+  IConfigService,
   IEventBus,
   ISessionLegacyService,
   type IAgentScopeHandle,
@@ -33,8 +34,15 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import type { PromptSession } from '../prompt-session';
-
 import { subscribeAgentEvents } from './adapt-events';
+
+const DEFAULT_PRINT_WAIT_CEILING_S = 3600;
+const TASK_CONFIG_SECTION = 'task';
+const LEGACY_BACKGROUND_CONFIG_SECTION = 'background';
+
+interface TaskPrintWaitConfig {
+  readonly printWaitCeilingS?: number;
+}
 
 export interface V2SessionContext {
   readonly core: Scope;
@@ -77,7 +85,9 @@ export class V2Session implements PromptSession {
   }
 
   async setPermission(mode: PermissionMode): Promise<void> {
-    this.agent.accessor.get(IAgentPermissionModeService).setMode(mode as 'yolo' | 'manual' | 'auto');
+    this.agent.accessor
+      .get(IAgentPermissionModeService)
+      .setMode(mode as 'yolo' | 'manual' | 'auto');
   }
 
   setApprovalHandler(_handler: ApprovalHandler | undefined): void {
@@ -105,28 +115,60 @@ export class V2Session implements PromptSession {
   }
 
   async waitForBackgroundTasksOnPrint(): Promise<void> {
-    // Best-effort drain of background agents/tasks spawned during the turn.
-    // v2 has no direct equivalent of v1's keep_alive_on_exit drain; we wait on
-    // whatever active tasks the session currently reports, bounded so a wedged
-    // task cannot keep the process alive forever.
-    const agents = this.session.accessor.get(IAgentLifecycleService).list();
-    const waits: Promise<unknown>[] = [];
-    for (const handle of agents) {
-      const tasks = handle.accessor.get(IAgentTaskService).list(true);
-      for (const task of tasks) {
-        waits.push(handle.accessor.get(IAgentTaskService).wait(task.taskId));
+    // Drain background tasks (background bash and background subagents) spawned
+    // during the turn before a `kimi -p` run exits. `-p` must be able to run
+    // long tasks to completion, so we wait until every active task across every
+    // agent reaches a terminal state — bounded only by `[task]/[background]
+    // print_wait_ceiling_s` (default 1h) so a genuinely wedged task cannot keep
+    // the process alive forever.
+    //
+    // Tasks are re-enumerated each round: a subagent may fan out new background
+    // tasks after a previous enumeration, and a single pass could return while
+    // those later tasks are still running. Terminal notifications are suppressed
+    // for each task while we wait, so a task completing cannot `turn.steer` the
+    // (already finished) main agent into launching a new turn.
+    const deadline = Date.now() + this.readPrintWaitCeilingMs();
+    const seen = new Set<string>();
+    const allWaiters: Promise<unknown>[] = [];
+    while (Date.now() < deadline) {
+      const batch: Promise<unknown>[] = [];
+      const suppressions: Promise<void>[] = [];
+      let activeCount = 0;
+      for (const handle of this.session.accessor.get(IAgentLifecycleService).list()) {
+        const taskService = handle.accessor.get(IAgentTaskService);
+        for (const task of taskService.list(true)) {
+          activeCount++;
+          if (seen.has(task.taskId)) continue;
+          seen.add(task.taskId);
+          suppressions.push(taskService.suppressTerminalNotification(task.taskId));
+          const remaining = Math.max(1, deadline - Date.now());
+          const waiter = taskService.wait(task.taskId, remaining);
+          batch.push(waiter);
+          allWaiters.push(waiter);
+        }
       }
+      if (suppressions.length > 0) await Promise.all(suppressions);
+      if (activeCount === 0 || batch.length === 0) break;
+      await Promise.all(batch);
     }
-    if (waits.length === 0) return;
-    await Promise.race([
-      Promise.allSettled(waits),
-      new Promise<void>((resolve) => setTimeout(resolve, 30_000).unref()),
-    ]);
+    if (allWaiters.length > 0) await Promise.all(allWaiters);
+  }
+
+  private readPrintWaitCeilingMs(): number {
+    const config = this.core.accessor.get(IConfigService);
+    const section =
+      config.get<TaskPrintWaitConfig>(TASK_CONFIG_SECTION) ??
+      config.get<TaskPrintWaitConfig>(LEGACY_BACKGROUND_CONFIG_SECTION);
+    const ceilingS = section?.printWaitCeilingS;
+    if (typeof ceilingS === 'number' && Number.isFinite(ceilingS) && ceilingS > 0) {
+      return ceilingS * 1000;
+    }
+    return DEFAULT_PRINT_WAIT_CEILING_S * 1000;
   }
 
   async createGoal(input: CreateGoalInput): Promise<GoalSnapshot> {
-    return (await this.agent
-      .accessor.get(IAgentGoalService)
+    return (await this.agent.accessor
+      .get(IAgentGoalService)
       .createGoal(input)) as unknown as GoalSnapshot;
   }
 

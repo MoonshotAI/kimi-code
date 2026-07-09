@@ -94,7 +94,6 @@ import {
   workspaceIdSchema,
 } from '@moonshot-ai/protocol';
 import type { Session, SessionStatus } from '@moonshot-ai/protocol';
-import { ulid } from 'ulid';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -278,7 +277,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const touched = await registry.createOrTouch(workDir);
 
       const handle = await core.accessor.get(ISessionLifecycleService).create({
-        sessionId: ulid(),
         workDir,
       });
       if (typeof body.title === 'string') {

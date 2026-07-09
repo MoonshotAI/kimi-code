@@ -19,7 +19,12 @@ import type { Event } from '#/_base/event';
 import type { Hooks } from '#/hooks';
 
 export interface CreateSessionOptions {
-  readonly sessionId: string;
+  /**
+   * Caller-supplied session id. When omitted, the lifecycle mints one in the
+   * canonical `session_<lowercase-uuid>` form (matches v1's `createSessionId`).
+   * Pass an explicit id only to resume/recreate a session under a known id.
+   */
+  readonly sessionId?: string;
   readonly workDir: string;
   /** Extra workspace roots for this session; relative paths resolve against workDir. */
   readonly additionalDirs?: readonly string[];
