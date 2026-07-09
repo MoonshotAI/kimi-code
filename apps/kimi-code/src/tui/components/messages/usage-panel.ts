@@ -195,13 +195,13 @@ export function buildExtraUsageSection(
     const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratio)), bar);
     const limit = formatCurrency(extraUsage.monthlyChargeLimitCents, extraUsage.currency);
     lines.push(`  ${barColoured}`);
-    lines.push(row('Balance', balance));
     lines.push(row('Used this month', used));
     lines.push(row('Monthly limit', limit));
-  } else {
     lines.push(row('Balance', balance));
+  } else {
     lines.push(row('Used this month', used));
     lines.push(row('Monthly limit', 'Unlimited'));
+    lines.push(row('Balance', balance));
   }
 
   return lines;
