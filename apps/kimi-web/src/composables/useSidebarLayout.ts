@@ -11,6 +11,9 @@ const SIDEBAR_WIDTH_KEY = STORAGE_KEYS.sidebarWidth;
 const SIDEBAR_COLLAPSED_KEY = STORAGE_KEYS.sidebarCollapsed;
 const SIDEBAR_DEFAULT = 270;
 const SIDEBAR_MIN = 170;
+// Hard cap on how wide the sidebar can be dragged, regardless of viewport.
+// Below this, the conversation-reserve rule still wins (narrow windows).
+const SIDEBAR_MAX = 480;
 // Minimum width kept for the conversation pane. The sidebar is capped so the
 // conversation keeps at least this much room, which also guarantees the sidebar
 // resize handle and collapse button stay inside the viewport even when a width
@@ -32,12 +35,13 @@ export function useSidebarLayout(options: UseSidebarLayoutOptions = {}) {
   // in useDetailPanel).
   const sidebarDragging = ref(false);
 
-  // Largest sidebar width that still leaves the conversation pane usable. When
-  // the right-side panel is open, also reserves its minimum width so the
-  // conversation column can never be squeezed to nothing.
+  // Largest sidebar width that still leaves the conversation pane usable, then
+  // clamped to SIDEBAR_MAX so it can never be dragged absurdly wide on large
+  // displays. When the right-side panel is open, also reserves its minimum
+  // width so the conversation column can never be squeezed to nothing.
   const sidebarMax = computed(() => {
     const reserve = CONVERSATION_MIN + (toValue(options.previewOpen) ? PREVIEW_MIN : 0);
-    return panelMaxWidth(viewportWidth.value, SIDEBAR_MIN, reserve);
+    return Math.min(SIDEBAR_MAX, panelMaxWidth(viewportWidth.value, SIDEBAR_MIN, reserve));
   });
 
   // Expanded width of the sidebar. Collapsing does NOT change this value: the
