@@ -181,10 +181,9 @@ export function buildExtraUsageSection(
   const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
   const used = formatCurrency(extraUsage.monthlyUsedCents, extraUsage.currency);
   const labelWidth = 14;
-  const row = (label: string, val: string): string =>
-    `  ${muted(label.padEnd(labelWidth, ' '))}  ${value(val)}`;
 
-  const lines: string[] = [accent('Extra Usage')];
+  const rows: Array<{ label: string; val: string }> = [];
+  let barLine: string | null = null;
 
   if (hasMonthlyLimit) {
     const ratio = Math.max(
@@ -192,17 +191,26 @@ export function buildExtraUsageSection(
       Math.min(extraUsage.monthlyUsedCents / extraUsage.monthlyChargeLimitCents, 1),
     );
     const bar = renderProgressBar(ratio, 20);
-    const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratio)), bar);
+    barLine = `  ${currentTheme.fg(severityColor(ratioSeverity(ratio)), bar)}`;
     const limit = formatCurrency(extraUsage.monthlyChargeLimitCents, extraUsage.currency);
-    lines.push(`  ${barColoured}`);
-    lines.push(row('Used this month', used));
-    lines.push(row('Monthly limit', limit));
-    lines.push(row('Balance', balance));
+    rows.push({ label: 'Used this month', val: used });
+    rows.push({ label: 'Monthly limit', val: limit });
+    rows.push({ label: 'Balance', val: balance });
   } else {
-    lines.push(row('Used this month', used));
-    lines.push(row('Monthly limit', 'Unlimited'));
-    lines.push(row('Balance', balance));
+    rows.push({ label: 'Used this month', val: used });
+    rows.push({ label: 'Monthly limit', val: 'Unlimited' });
+    rows.push({ label: 'Balance', val: balance });
   }
+
+  const valueWidth = Math.max(...rows.map((r) => visibleWidth(r.val)));
+  const row = (label: string, val: string): string => {
+    const pad = Math.max(0, valueWidth - visibleWidth(val));
+    return `  ${muted(label.padEnd(labelWidth, ' '))}  ${value(' '.repeat(pad) + val)}`;
+  };
+
+  const lines: string[] = [accent('Extra Usage')];
+  if (barLine !== null) lines.push(barLine);
+  for (const r of rows) lines.push(row(r.label, r.val));
 
   return lines;
 }
