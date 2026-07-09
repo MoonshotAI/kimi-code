@@ -159,6 +159,9 @@ const DOMAIN_LAYER = new Map([
   ['llmRequester', 4],
   ['profile', 4],
   ['prompt', 4],
+  // `shellCommand` orchestrates user `!` commands through `toolRegistry` (L3),
+  // `contextMemory` / `prompt` (L4) and `eventBus` (L1); its highest dependency is L4.
+  ['shellCommand', 4],
   ['replayBuilder', 4],
   ['todo', 4],
   ['web', 4],

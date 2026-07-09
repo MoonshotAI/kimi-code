@@ -1,7 +1,7 @@
 import type { ContentPart, Message } from '#/app/llmProtocol/message';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
-import type { CronJobOrigin, CronMissedOrigin } from '@moonshot-ai/protocol';
+import type { CronJobOrigin, CronMissedOrigin, ShellCommandOrigin } from '@moonshot-ai/protocol';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
@@ -68,6 +68,7 @@ export type PromptOrigin =
   | SkillActivationOrigin
   | PluginCommandOrigin
   | InjectionOrigin
+  | ShellCommandOrigin
   | CompactionSummaryOrigin
   | SystemTriggerOrigin
   | TaskOrigin

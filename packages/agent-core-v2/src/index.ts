@@ -368,6 +368,8 @@ export * from '#/app/messageLegacy/messageLegacy';
 export * from '#/app/messageLegacy/messageLegacyService';
 export * from '#/agent/replayBuilder/replayTimelineModel';
 export * from '#/agent/replayBuilder/types';
+export * from '#/agent/shellCommand/shellCommand';
+export * from '#/agent/shellCommand/shellCommandService';
 export * from '#/agent/rpc/rpc';
 export * from '#/agent/rpc/rpcService';
 export * from '#/agent/scopeContext/scopeContext';

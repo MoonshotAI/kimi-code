@@ -7,15 +7,10 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentGoalService } from '#/agent/goal/goal';
-import type {
-  PluginCommandActivatedEvent,
-  ShellOutputEvent,
-  ShellStartedEvent,
-} from '@moonshot-ai/protocol';
+import type { PluginCommandActivatedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, KimiError } from '#/errors';
-import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -24,13 +19,13 @@ import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentShellCommandService } from '#/agent/shellCommand/shellCommand';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import type { ToolUpdate } from '#/agent/tool/toolContract';
 import { IAgentTurnService } from '#/agent/turn/turn';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
@@ -71,20 +66,16 @@ import {
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    'shell.output': ShellOutputEvent;
-    'shell.started': ShellStartedEvent;
     'plugin_command.activated': PluginCommandActivatedEvent;
   }
 }
 
-const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
-
 export class AgentRPCService implements IAgentRPCService {
   declare readonly _serviceBrand: undefined;
-  private readonly shellCommandControllers = new Map<string, AbortController>();
 
   constructor(
     @IAgentPromptService private readonly promptService: IAgentPromptService,
+    @IAgentShellCommandService private readonly shellCommand: IAgentShellCommandService,
     @IAgentTurnService private readonly turnService: IAgentTurnService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
@@ -123,70 +114,12 @@ export class AgentRPCService implements IAgentRPCService {
     return turn === undefined ? undefined : { turn_id: turn.id };
   }
 
-  private ensureBashTool() {
-    const bash = this.toolRegistry.resolve('Bash');
-    if (bash === undefined) {
-      throw new Error('Bash tool is not registered.');
-    }
-    return bash;
-  }
-
   async runShellCommand(payload: RunShellCommandPayload): Promise<ShellCommandResult> {
-    const bash = this.ensureBashTool();
-
-    const controller = new AbortController();
-    if (payload.commandId !== undefined) {
-      this.shellCommandControllers.set(payload.commandId, controller);
-    }
-
-    let stdout = '';
-    let stderr = '';
-    try {
-      const execution = await bash.resolveExecution({
-        command: payload.command,
-        timeout: SHELL_FOREGROUND_TIMEOUT_S,
-      });
-      if (execution.isError === true) {
-        const output = typeof execution.output === 'string' ? execution.output : 'Command failed.';
-        return { stdout: '', stderr: output, isError: true };
-      }
-
-      const result = await execution.execute({
-        turnId: -1,
-        toolCallId: 'shell-command',
-        signal: controller.signal,
-        onUpdate: (update: ToolUpdate) => {
-          if (update.kind === 'stdout') stdout += update.text ?? '';
-          else if (update.kind === 'stderr') stderr += update.text ?? '';
-          else return;
-          if (payload.commandId !== undefined) {
-            this.eventBus.publish({ type: 'shell.output', commandId: payload.commandId, update });
-          }
-        },
-        onForegroundTaskStart: (taskId: string) => {
-          if (payload.commandId !== undefined) {
-            this.eventBus.publish({ type: 'shell.started', commandId: payload.commandId, taskId });
-          }
-        },
-      });
-
-      const isError = result.isError === true;
-      if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
-        return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
-      }
-      if (isError && stdout.length === 0 && stderr.length === 0) {
-        stderr = typeof result.output === 'string' ? result.output : 'Command failed.';
-      }
-      return { stdout, stderr, isError };
-    } finally {
-      if (payload.commandId !== undefined) {
-        this.shellCommandControllers.delete(payload.commandId);
-      }
-    }
+    return this.shellCommand.run(payload);
   }
 
   cancelShellCommand(payload: CancelShellCommandPayload): void {
-    this.shellCommandControllers.get(payload.commandId)?.abort(userCancellationReason());
+    this.shellCommand.cancel(payload.commandId);
   }
 
   async steer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {

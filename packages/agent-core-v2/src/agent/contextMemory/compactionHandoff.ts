@@ -154,6 +154,7 @@ export function compactionUserMessageDisposition(
     case 'plugin_command':
       return origin.trigger === 'user-slash' ? 'keep' : 'drop';
     case 'injection':
+    case 'shell_command':
     case 'compaction_summary':
     case 'system_trigger':
     case 'task':
