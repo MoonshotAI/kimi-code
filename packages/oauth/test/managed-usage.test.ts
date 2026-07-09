@@ -110,12 +110,12 @@ describe('parseManagedUsagePayload', () => {
     expect(negativeLeft.extraUsage).toEqual({ label: 'Extra Usage', used: 100, limit: 100 });
   });
 
-  it('treats missing amountLeft as zero usage', () => {
+  it('treats missing amountLeft as fully used', () => {
     const parsed = parseManagedUsagePayload({
       usage: { used: 1, limit: 10 },
       boosterWallet: { balance: { type: 'BOOSTER', amount: '100' } },
     });
-    expect(parsed.extraUsage).toEqual({ label: 'Extra Usage', used: 0, limit: 100 });
+    expect(parsed.extraUsage).toEqual({ label: 'Extra Usage', used: 100, limit: 100 });
   });
 
   it('returns null extra usage when boosterWallet is missing or invalid', () => {
