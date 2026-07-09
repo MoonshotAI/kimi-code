@@ -289,6 +289,87 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('0 installed · 1 available');
   });
 
+  it('renders the hardcoded Web Bridge entry on the Official tab while loading', () => {
+    const { panel } = makePanel({ initialTab: 'official' });
+    // The catalog is still loading, but the built-in Web Bridge entry is shown
+    // immediately because it is baked into the TUI, not fetched.
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).toContain('Loading marketplace');
+  });
+
+  it('keeps the Web Bridge entry visible when the Official catalog errors', () => {
+    const { panel } = makePanel({ initialTab: 'official' });
+    panel.setMarketplaceError('fetch failed');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi WebBridge  open in browser');
+    expect(out).toContain('Marketplace unavailable: fetch failed');
+  });
+
+  it('opens the Web Bridge webpage on Enter instead of installing', () => {
+    const { panel, onSelect } = makePanel({ initialTab: 'official' });
+    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
+    // Web Bridge is pinned at index 0, so Enter selects it directly.
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'open-url',
+      url: 'https://www.kimi.com/features/webbridge',
+      label: 'Kimi WebBridge',
+    });
+  });
+
+  it('installs a catalog official entry after navigating past Web Bridge', () => {
+    const { panel, onSelect } = makePanel({ initialTab: 'official' });
+    panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
+    panel.handleInput('\u001B[B'); // ↓ → kimi-datasource
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-datasource' }),
+    });
+  });
+
+  it('does not duplicate Web Bridge when the catalog also lists it', () => {
+    const entries = [
+      {
+        id: 'kimi-webbridge',
+        tier: 'official' as const,
+        displayName: 'Kimi WebBridge',
+        source: 'https://x/w.zip',
+      },
+      ...officialEntries,
+    ];
+    const { panel } = makePanel({ initialTab: 'official' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    // The label should appear exactly once — the hardcoded row wins, the
+    // catalog copy is filtered out.
+    expect(out.split('Kimi WebBridge').length - 1).toBe(1);
+  });
+
+  it('installs a Third-party entry whose id matches the pinned WebBridge', () => {
+    // A curated/custom marketplace entry can legitimately reuse the
+    // kimi-webbridge id; on the Third-party tab it must install normally, not
+    // open the WebBridge page (that shortcut is reserved for the pinned row).
+    const entries = [
+      {
+        id: 'kimi-webbridge',
+        tier: 'curated' as const,
+        displayName: 'Kimi WebBridge',
+        source: 'https://x/w.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi WebBridge  install');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'https://x/w.zip' }),
+    });
+  });
+
   it('installs the selected Third-party entry on Enter', () => {
     const { panel, onSelect } = makePanel({ installed: [superpowers], initialTab: 'third-party' });
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');
