@@ -436,6 +436,7 @@ function runPromptTurn(
 ): Promise<void> {
   let activeTurnId: number | undefined;
   let activeAgentId: string | undefined;
+  let latestStartedTurnId: number | undefined;
   const outputWriter =
     outputFormat === 'stream-json'
       ? new PromptJsonWriter(stdout)
@@ -470,6 +471,7 @@ function runPromptTurn(
         }
         activeTurnId = event.turnId;
         activeAgentId = event.agentId;
+        latestStartedTurnId = event.turnId;
         return;
       }
       if (
@@ -529,11 +531,18 @@ function runPromptTurn(
           if (event.reason === 'completed') {
             outputWriter.flushAssistant();
             if (waitForGoalTerminal) {
+              const completedTurnId = event.turnId;
               activeTurnId = undefined;
               activeAgentId = undefined;
               void (async () => {
                 try {
                   const { goal } = await session.getGoal();
+                  if (
+                    activeTurnId !== undefined ||
+                    latestStartedTurnId !== completedTurnId
+                  ) {
+                    return;
+                  }
                   if (goal?.status === 'active') return;
                   await finishCompletedTurn();
                 } catch (error) {

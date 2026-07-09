@@ -296,6 +296,53 @@ describe('runPrompt headless goal mode', () => {
     expect(stderr.text()).toContain('turns: 2');
   });
 
+  it('ignores stale goal checks once a continuation turn has started', async () => {
+    const completed = snapshot({ status: 'complete', turnsUsed: 2, tokensUsed: 160 });
+    let resolveFirstGoal: ((value: { goal: null }) => void) | undefined;
+    const firstGoal = new Promise<{ goal: null }>((resolve) => {
+      resolveFirstGoal = resolve;
+    });
+    mocks.session.getGoal
+      .mockImplementationOnce(() => firstGoal as never)
+      .mockResolvedValue({ goal: null } as never);
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      const emit = (event: Record<string, unknown>) => {
+        for (const handler of [...mocks.eventHandlers]) {
+          handler(mocks.mainEvent(event));
+        }
+      };
+      emit({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+      emit({ type: 'assistant.delta', turnId: 1, delta: '1' });
+      emit({ type: 'turn.ended', turnId: 1, reason: 'completed' });
+      emit({
+        type: 'turn.started',
+        turnId: 2,
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+      });
+      emit({ type: 'assistant.delta', turnId: 2, delta: '2' });
+      emit({
+        type: 'goal.updated',
+        snapshot: completed,
+        change: { kind: 'completion', status: 'complete' },
+      });
+      resolveFirstGoal?.({ goal: null });
+      await Promise.resolve();
+      emit({ type: 'assistant.delta', turnId: 2, delta: ' tail' });
+      emit({ type: 'turn.ended', turnId: 2, reason: 'completed' });
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), 'test', {
+      stdout,
+      stderr,
+      process: { once: () => {}, off: () => {}, exit: () => undefined as never },
+    });
+
+    expect(stdout.text()).toBe('• 1\n\n• 2 tail\n\n');
+    expect(stderr.text()).toContain('Goal [complete]');
+  });
+
   it('does not send an invalid goal create prompt as a normal prompt', async () => {
     const stdout = writer();
     const stderr = writer();
