@@ -41,7 +41,6 @@ export class ReadGroupComponent extends Container {
   private readonly bodyContainer: Container;
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallReadSnapshot['phase']>();
-  private _invalidating = false;
 
   constructor(private readonly ui: TUI | undefined) {
     super();
@@ -67,7 +66,6 @@ export class ReadGroupComponent extends Container {
     tc.setSnapshotListener(() => {
       this.scheduleRender();
     });
-    this.flushRender();
   }
 
   /**
@@ -126,7 +124,7 @@ export class ReadGroupComponent extends Container {
       if (snap !== undefined) this.lastFlushPhases.set(entry.toolCallId, snap.phase);
     });
 
-    this.invalidate();
+    super.invalidate();
     this.ui?.requestRender();
   }
 
@@ -171,13 +169,7 @@ export class ReadGroupComponent extends Container {
   }
 
   override invalidate(): void {
-    if (this._invalidating) {
-      super.invalidate();
-      return;
-    }
-    this._invalidating = true;
     this.flushRender();
-    this._invalidating = false;
   }
 
   /** Releases throttle timers so destroyed components cannot refresh later. */

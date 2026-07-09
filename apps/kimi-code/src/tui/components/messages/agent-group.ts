@@ -48,7 +48,6 @@ export class AgentGroupComponent extends Container {
   private readonly bodyContainer: Container;
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallSubagentSnapshot['phase']>();
-  private _invalidating = false;
 
   constructor(private readonly ui: TUI | undefined) {
     super();
@@ -85,7 +84,6 @@ export class AgentGroupComponent extends Container {
     tc.setSnapshotListener(() => {
       this.scheduleRender();
     });
-    this.flushRender();
   }
 
   /**
@@ -143,7 +141,7 @@ export class AgentGroupComponent extends Container {
       if (snap !== undefined) this.lastFlushPhases.set(entry.toolCallId, snap.phase);
     });
 
-    this.invalidate();
+    super.invalidate();
     this.ui?.requestRender();
   }
 
@@ -225,13 +223,7 @@ export class AgentGroupComponent extends Container {
 
   /** Releases throttle timers so destroyed components cannot refresh later. */
   override invalidate(): void {
-    if (this._invalidating) {
-      super.invalidate();
-      return;
-    }
-    this._invalidating = true;
     this.flushRender();
-    this._invalidating = false;
   }
 
   dispose(): void {
