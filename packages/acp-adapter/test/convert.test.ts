@@ -367,6 +367,39 @@ describe('compressPromptImageParts', () => {
     await rm(originalsDir, { recursive: true, force: true });
   });
 
+  it('downsamples to the caller-provided max edge instead of the built-in cap', async () => {
+    const originalsDir = await mkdtemp(join(tmpdir(), 'acp-originals-'));
+    const parts = acpBlocksToPromptParts([imageBlock(await pngBase64(3600, 1800), 'image/png')]);
+    const compressed = await compressPromptImageParts(parts, {
+      originalsDir,
+      maxImageEdgePx: 800,
+    });
+
+    const part = compressed[1];
+    if (part?.type !== 'image_url') throw new Error('expected an image_url part');
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(part.imageUrl.url);
+    expect(match).not.toBeNull();
+    const decoded = await Jimp.fromBuffer(Buffer.from(match![2]!, 'base64'));
+    expect(decoded.width).toBe(800);
+    expect(decoded.height).toBe(400);
+    await rm(originalsDir, { recursive: true, force: true });
+  });
+
+  it('uses the built-in 2000px cap when no max edge is provided', async () => {
+    const originalsDir = await mkdtemp(join(tmpdir(), 'acp-originals-'));
+    const parts = acpBlocksToPromptParts([imageBlock(await pngBase64(3600, 1800), 'image/png')]);
+    const compressed = await compressPromptImageParts(parts, { originalsDir });
+
+    const part = compressed[1];
+    if (part?.type !== 'image_url') throw new Error('expected an image_url part');
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(part.imageUrl.url);
+    expect(match).not.toBeNull();
+    const decoded = await Jimp.fromBuffer(Buffer.from(match![2]!, 'base64'));
+    expect(decoded.width).toBe(2000);
+    expect(decoded.height).toBe(1000);
+    await rm(originalsDir, { recursive: true, force: true });
+  });
+
   it('emits image_compress telemetry tagged acp_prompt', async () => {
     const originalsDir = await mkdtemp(join(tmpdir(), 'acp-originals-'));
     const events: { event: string; props: Record<string, unknown> }[] = [];
