@@ -6,6 +6,12 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.3 (2026-07-08)
+
+### Bug Fixes
+
+- Fix a misleading "OAuth login expired" message shown when a model is not available for the current account.
+
 ## 0.23.2 (2026-07-08)
 
 ### Features

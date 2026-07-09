@@ -6,6 +6,7 @@ import { diffStats } from '../../../lib/diffLines';
 import { buildEditDiffLines } from '../../../lib/toolDiff';
 import { toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
 import ToolRow from '../ToolRow.vue';
+import ToolOutputBlock from './ToolOutputBlock.vue';
 
 const props = withDefaults(
   defineProps<{
@@ -69,10 +70,7 @@ function toggle(): void {
       <span v-if="chip" class="chip">{{ chip }}</span>
     </template>
     <div v-if="summaryFull" class="bb-summary">{{ summaryFull }}</div>
-    <div class="bb-code">
-      <div v-if="!hasOutput" class="bb-empty">Waiting for output…</div>
-      <div v-for="(line, i) in tool.output ?? []" :key="i">{{ line }}</div>
-    </div>
+    <ToolOutputBlock :lines="tool.output" empty-text="Waiting for output…" />
   </ToolRow>
 </template>
 
@@ -88,15 +86,5 @@ function toggle(): void {
   padding-bottom: 6px;
   margin-bottom: 6px;
   word-break: break-all;
-}
-.bb-empty {
-  color: var(--color-text-muted);
-  font-style: italic;
-}
-.bb-code {
-  margin-top: 10px;
-  padding: 11px 13px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
 }
 </style>
