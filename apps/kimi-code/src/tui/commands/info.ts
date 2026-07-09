@@ -213,5 +213,5 @@ async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUs
   if (res.kind === 'error') {
     return { error: res.message };
   }
-  return { usage: { summary: res.summary, limits: res.limits } };
+  return { usage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage } };
 }

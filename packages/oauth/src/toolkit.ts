@@ -97,6 +97,7 @@ export type AuthManagedUsageResult =
       readonly kind: 'ok';
       readonly summary: ParsedManagedUsage['summary'];
       readonly limits: ParsedManagedUsage['limits'];
+      readonly extraUsage: ParsedManagedUsage['extraUsage'];
     }
   | FetchManagedUsageError;
 
@@ -291,6 +292,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         kind: 'ok',
         summary: result.parsed.summary,
         limits: result.parsed.limits,
+        extraUsage: result.parsed.extraUsage,
       };
     } catch (error) {
       return {
