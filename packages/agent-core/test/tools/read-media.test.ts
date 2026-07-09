@@ -5,7 +5,7 @@
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ContentPart, ModelCapability } from '@moonshot-ai/kosong';
 import { Jimp } from 'jimp';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
 import type { ExecutableToolResult } from '../../src/loop';
@@ -13,6 +13,7 @@ import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
+import { setConfiguredReadImageByteBudget } from '../../src/tools/support/image-compress';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import type { TelemetryClient } from '../../src/telemetry';
 import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
@@ -1012,6 +1013,98 @@ describe('ReadMediaFileTool', () => {
         signal,
       });
       expect(withFullRes.isError).toBe(true);
+    });
+  });
+
+  describe('read byte budget', () => {
+    afterEach(() => {
+      setConfiguredReadImageByteBudget(undefined);
+    });
+
+    /** High-entropy PNG whose bytes stay large after downscaling. */
+    async function noisePng(width: number, height: number): Promise<Buffer> {
+      const image = new Jimp({ width, height, color: 0x000000ff });
+      const data = image.bitmap.data;
+      let state = 0x9e3779b9;
+      for (let i = 0; i < data.length; i += 4) {
+        state ^= (state << 13) >>> 0;
+        state ^= state >>> 17;
+        state ^= (state << 5) >>> 0;
+        state >>>= 0;
+        data[i] = state & 0xff;
+        data[i + 1] = (state >>> 8) & 0xff;
+        data[i + 2] = (state >>> 16) & 0xff;
+        data[i + 3] = 0xff;
+      }
+      return Buffer.from(await image.getBuffer('image/png'));
+    }
+
+    function toolFor(data: Buffer): ReadMediaFileTool {
+      return makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+      });
+    }
+
+    function sentBytes(result: Awaited<ReturnType<typeof executeTool>>): Buffer {
+      const parts = outputParts(result);
+      const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
+      const match = /^data:image\/[a-z]+;base64,(.+)$/.exec(url);
+      expect(match).not.toBeNull();
+      return Buffer.from(match![1]!, 'base64');
+    }
+
+    it('compresses a default read to fit the configured read budget', async () => {
+      const budget = 64 * 1024;
+      setConfiguredReadImageByteBudget(budget);
+      const data = await noisePng(1200, 1200);
+      expect(data.length).toBeGreaterThan(budget);
+
+      const result = await executeTool(toolFor(data), {
+        turnId: 't1',
+        toolCallId: 'c_budget',
+        args: { path: '/workspace/noisy.png' },
+        signal,
+      });
+
+      expect(result.isError).toBe(false);
+      expect(sentBytes(result).length).toBeLessThanOrEqual(budget);
+      expect(noteText(result)).toMatch(/downsampled/);
+    });
+
+    it('full_resolution ignores the read budget (per-image provider limit applies)', async () => {
+      setConfiguredReadImageByteBudget(64 * 1024);
+      const data = await noisePng(600, 600);
+      expect(data.length).toBeGreaterThan(64 * 1024);
+
+      const result = await executeTool(toolFor(data), {
+        turnId: 't1',
+        toolCallId: 'c_fullres_budget',
+        args: { path: '/workspace/noisy.png', full_resolution: true },
+        signal,
+      });
+
+      expect(result.isError).toBe(false);
+      // Delivered byte-for-byte: the read budget must not shrink the
+      // full-fidelity escape hatch the downsample note promises.
+      expect(sentBytes(result).equals(data)).toBe(true);
+    });
+
+    it('region reads ignore the read budget so detail readback stays full-fidelity', async () => {
+      setConfiguredReadImageByteBudget(16 * 1024);
+      const data = await noisePng(800, 800);
+
+      const result = await executeTool(toolFor(data), {
+        turnId: 't1',
+        toolCallId: 'c_region_budget',
+        args: { path: '/workspace/noisy.png', region: { x: 0, y: 0, width: 400, height: 400 } },
+        signal,
+      });
+
+      expect(result.isError).toBe(false);
+      // A native-resolution noise crop is far larger than the read budget;
+      // it must still be delivered under the provider-scale budget.
+      expect(sentBytes(result).length).toBeGreaterThan(16 * 1024);
     });
   });
 });

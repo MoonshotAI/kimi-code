@@ -85,17 +85,70 @@ function isPositiveInt(value: number): boolean {
  */
 export const IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
 
+/**
+ * Built-in raw-byte budget for images the model reads for itself
+ * (ReadMediaFile's default path). Far below {@link IMAGE_BYTE_BUDGET}: a
+ * session that keeps screenshotting and reading images accumulates every one
+ * of them in the request body on every turn, so per-image size — not the
+ * provider's per-image ceiling — is what keeps the total under the
+ * provider's request-size limit. 256 KB keeps a clean 2000px UI screenshot
+ * on the lossless fast path while capping dense content at a readable
+ * q80/1000px JPEG; fine detail stays reachable through the `region`
+ * readback, which deliberately ignores this budget.
+ */
+export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
+
+/**
+ * Env var overriding the read-image byte budget. Read live on every
+ * resolution; a value that is not a positive integer is ignored.
+ */
+export const READ_IMAGE_BYTE_BUDGET_ENV = 'KIMI_IMAGE_READ_BYTE_BUDGET';
+
+/** The `[image] read_byte_budget` value from config.toml; see {@link setConfiguredMaxImageEdgePx}. */
+let configuredReadImageByteBudget: number | undefined;
+
+/** Push (or clear, with `undefined`) the config.toml read-image byte budget. */
+export function setConfiguredReadImageByteBudget(value: number | undefined): void {
+  configuredReadImageByteBudget = value !== undefined && isPositiveInt(value) ? value : undefined;
+}
+
+/**
+ * Effective read-image byte budget. Precedence mirrors
+ * {@link resolveMaxImageEdgePx}: env var > config.toml > built-in
+ * {@link READ_IMAGE_BYTE_BUDGET}.
+ */
+export function resolveReadImageByteBudget(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const raw = env[READ_IMAGE_BYTE_BUDGET_ENV]?.trim();
+  if (raw !== undefined && raw.length > 0 && /^\d+$/.test(raw)) {
+    const parsed = Number(raw);
+    if (isPositiveInt(parsed)) return parsed;
+  }
+  return configuredReadImageByteBudget ?? READ_IMAGE_BYTE_BUDGET;
+}
+
 /** Progressively lower JPEG quality until the payload fits the byte budget. */
 const JPEG_QUALITY_STEPS = [80, 60, 40, 20] as const;
 
 /**
  * Longest-edge step-downs tried when the budget cannot be met at the fitted
  * size. With the built-in 2000px ceiling the first step is a no-op; it
- * matters when a larger ceiling is configured (config/env/option), keeping
- * a 2000px encode that fits the budget instead of dropping straight to the
- * 1000px last resort.
+ * matters when a larger ceiling is configured (config/env/option). The
+ * sub-1000px tail exists for small (read-scale) budgets: JPEG bytes shrink
+ * roughly linearly with pixel count, so stepping down to 256px lets even
+ * entropy-upper-bound content (noise, photos) land within any budget of a
+ * few tens of KB instead of stalling at the q20@1000px floor.
  */
-const FALLBACK_EDGES_PX = [2000, 1000] as const;
+const FALLBACK_EDGES_PX = [2000, 1000, 768, 512, 384, 256] as const;
+
+/**
+ * PNG rescales stop at this edge; below it the ladder goes lossy instead.
+ * For text-bearing screenshots a q80 JPEG at 1000px reads better than a
+ * lossless PNG at 512px — resolution beats losslessness once both are
+ * degraded — so sub-floor edges are only ever tried with the JPEG ladder.
+ */
+const PNG_RESCALE_FLOOR_PX = 1000;
 
 /**
  * Pixel-count ceiling above which we skip compression entirely. A tiny-byte,
@@ -822,14 +875,17 @@ interface EncodeOptions {
  * Strategy — prefer the source format so a downscaled screenshot stays lossless
  * PNG (preserving text and transparency), and only fall back to lossy JPEG when
  * PNG cannot meet the byte budget:
- *  - PNG source: PNG at the fitted size → smaller PNG rescales, stepping down
- *    the fallback edges → JPEG ladder.
+ *  - PNG source: PNG at the fitted size → smaller PNG rescales down to the
+ *    {@link PNG_RESCALE_FLOOR_PX} floor → JPEG ladder at that size → JPEG
+ *    ladder again at each sub-floor edge.
  *  - JPEG source: the full quality ladder at the fitted size, then again at
  *    each fallback edge — a smaller rescale must not skip the high-quality
  *    rungs its extra pixels just paid for.
  *
- * Always returns the smallest buffer it produced, even if no attempt met the
- * budget — the caller still gates on whether it actually helped.
+ * The sub-floor edges make the ladder converge for small (read-scale)
+ * budgets: any budget of a few tens of KB is met by q20 at 256px even for
+ * entropy-upper-bound content. Below that, the smallest buffer produced is
+ * still returned — the caller gates on whether it actually helped.
  */
 async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promise<EncodedImage> {
   const { sourceIsPng, byteBudget, fallbackEdges } = opts;
@@ -843,43 +899,52 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
     return candidate;
   };
 
+  const jpegLadder = async (): Promise<EncodedImage | null> => {
+    for (const quality of JPEG_QUALITY_STEPS) {
+      const jpeg = await image.getBuffer('image/jpeg', { quality });
+      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
+      consider(jpeg, 'image/jpeg');
+    }
+    return null;
+  };
+
   if (sourceIsPng) {
     // Lossless PNG first: best for screenshots/UI (sharp text) and keeps alpha.
     const png = await image.getBuffer('image/png', { deflateLevel: 9 });
     if (png.length <= byteBudget) return consider(png, 'image/png');
     consider(png, 'image/png');
 
-    // Over budget: progressively smaller PNGs before going lossy.
+    // Over budget: progressively smaller PNGs (down to the floor) before
+    // going lossy.
     for (const edge of fallbackEdges) {
+      if (edge < PNG_RESCALE_FLOOR_PX) break;
       if (!fitWithinEdge(image, edge)) continue;
       const smallerPng = await image.getBuffer('image/png', { deflateLevel: 9 });
       if (smallerPng.length <= byteBudget) return consider(smallerPng, 'image/png');
       consider(smallerPng, 'image/png');
     }
 
-    // Last resort: lossy JPEG ladder (drops transparency) to meet the budget.
-    for (const quality of JPEG_QUALITY_STEPS) {
-      const jpeg = await image.getBuffer('image/jpeg', { quality });
-      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-      consider(jpeg, 'image/jpeg');
+    // Lossy JPEG ladder (drops transparency) at the floored size, then at
+    // each sub-floor edge until the budget is met.
+    const atFloor = await jpegLadder();
+    if (atFloor !== null) return atFloor;
+    for (const edge of fallbackEdges) {
+      if (edge >= PNG_RESCALE_FLOOR_PX) continue;
+      if (!fitWithinEdge(image, edge)) continue;
+      const atEdge = await jpegLadder();
+      if (atEdge !== null) return atEdge;
     }
     return smallest!;
   }
 
   // JPEG source: quality ladder at the fitted size, then the full ladder
   // again at each fallback rescale.
-  for (const quality of JPEG_QUALITY_STEPS) {
-    const jpeg = await image.getBuffer('image/jpeg', { quality });
-    if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-    consider(jpeg, 'image/jpeg');
-  }
+  const atFitted = await jpegLadder();
+  if (atFitted !== null) return atFitted;
   for (const edge of fallbackEdges) {
     if (!fitWithinEdge(image, edge)) continue;
-    for (const quality of JPEG_QUALITY_STEPS) {
-      const jpeg = await image.getBuffer('image/jpeg', { quality });
-      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-      consider(jpeg, 'image/jpeg');
-    }
+    const atEdge = await jpegLadder();
+    if (atEdge !== null) return atEdge;
   }
 
   return smallest!;

@@ -210,8 +210,9 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code runs a single non-interactive tu
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_edge_px` | `integer` | `2000` | Longest-edge ceiling in pixels. Larger images are scaled down proportionally to fit; raising it preserves more detail at the cost of larger request bodies |
+| `read_byte_budget` | `integer` | `262144` (256 KB) | Per-image byte budget for images the model reads for itself (`ReadMediaFile` default reads). It bounds the accumulated request-body size when the model keeps screenshotting and reading images; fine detail stays reachable through the `region` parameter, which reads a crop back at full fidelity (`region` and `full_resolution` are not subject to this budget) |
 
-`max_edge_px` can be overridden by the `KIMI_IMAGE_MAX_EDGE_PX` environment variable, which takes higher priority than `config.toml`.
+`max_edge_px` can be overridden by the `KIMI_IMAGE_MAX_EDGE_PX` environment variable and `read_byte_budget` by `KIMI_IMAGE_READ_BYTE_BUDGET`; both take higher priority than `config.toml`.
 
 <!--
 ## `experimental`

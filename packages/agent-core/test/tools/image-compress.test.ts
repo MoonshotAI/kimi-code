@@ -46,8 +46,12 @@ import {
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_ENV,
   MAX_IMAGE_EDGE_PX,
+  READ_IMAGE_BYTE_BUDGET,
+  READ_IMAGE_BYTE_BUDGET_ENV,
   resolveMaxImageEdgePx,
+  resolveReadImageByteBudget,
   setConfiguredMaxImageEdgePx,
+  setConfiguredReadImageByteBudget,
 } from '../../src/tools/support/image-compress';
 // eslint-disable-next-line import/no-unresolved
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
@@ -304,6 +308,49 @@ describe('compressImageForModel — byte budget', () => {
   );
 });
 
+// ── small byte budgets (per-image read budget scale) ────────────────
+
+describe('compressImageForModel — small byte budgets', () => {
+  it('converges under a 128KB budget for high-entropy PNG content', async () => {
+    // Statistically random noise is the entropy upper bound (photos, dense
+    // charts): the old [2000, 1000] fallback floor left q20@1000px at ~200KB,
+    // over a read-scale budget. The extended ladder must land within it.
+    const budget = 128 * 1024;
+    const png = await randomNoisePng(1200, 1200);
+    expect(png.length).toBeGreaterThan(budget);
+    const result = await compressImageForModel(png, 'image/png', { byteBudget: budget });
+    expect(result.changed).toBe(true);
+    expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+    expect(sniffImageDimensions(result.data)).not.toBeNull();
+  });
+
+  it('converges under a 128KB budget for a JPEG source', async () => {
+    const budget = 128 * 1024;
+    const jpeg = await randomNoiseJpeg(1200, 1200);
+    expect(jpeg.length).toBeGreaterThan(budget);
+    const result = await compressImageForModel(jpeg, 'image/jpeg', { byteBudget: budget });
+    expect(result.changed).toBe(true);
+    expect(result.mimeType).toBe('image/jpeg');
+    expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+  });
+
+  it('shrinks pixels instead of passing through an already-optimized JPEG over budget', async () => {
+    // A JPEG already at the encoder's quality floor for its size: re-encoding
+    // at the same size cannot shrink it, so without sub-size fallbacks the
+    // "unhelpful" guard used to return the original — silently over budget.
+    const image = new Jimp({ width: 900, height: 900, color: 0x000000ff });
+    fillXorshiftNoise(image.bitmap.data);
+    const optimized = new Uint8Array(await image.getBuffer('image/jpeg', { quality: 20 }));
+    const budget = optimized.length - 10 * 1024;
+    expect(budget).toBeGreaterThan(0);
+
+    const result = await compressImageForModel(optimized, 'image/jpeg', { byteBudget: budget });
+    expect(result.changed).toBe(true);
+    expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+    expect(Math.max(result.width, result.height)).toBeLessThan(900);
+  });
+});
+
 // ── fallback / robustness ────────────────────────────────────────────
 
 describe('compressImageForModel — fallback', () => {
@@ -514,6 +561,36 @@ describe('resolveMaxImageEdgePx', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(Math.max(result.width, result.height)).toBe(400);
+  });
+});
+
+describe('resolveReadImageByteBudget', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    setConfiguredReadImageByteBudget(undefined);
+  });
+
+  it('defaults to the built-in read budget', () => {
+    expect(READ_IMAGE_BYTE_BUDGET).toBe(256 * 1024);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+  });
+
+  it('uses the configured value when set, and clears with undefined', () => {
+    setConfiguredReadImageByteBudget(512 * 1024);
+    expect(resolveReadImageByteBudget()).toBe(512 * 1024);
+    setConfiguredReadImageByteBudget(undefined);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+  });
+
+  it('lets the env var override the configured value', () => {
+    setConfiguredReadImageByteBudget(512 * 1024);
+    vi.stubEnv(READ_IMAGE_BYTE_BUDGET_ENV, '100000');
+    expect(resolveReadImageByteBudget()).toBe(100000);
+  });
+
+  it.each(['abc', '-1', '0', '1.5', ' '])('ignores the invalid env value "%s"', (raw) => {
+    vi.stubEnv(READ_IMAGE_BYTE_BUDGET_ENV, raw);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
   });
 });
 
