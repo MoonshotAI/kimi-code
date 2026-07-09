@@ -70,12 +70,17 @@ describe('UsagePanelComponent', () => {
 
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
-    expect(output).toContain('Used');
-    expect(output).toContain('$50 / $200');
-    expect(output).toContain('Balance $100');
+    expect(output).toContain('Balance');
+    expect(output).toContain('$100');
+    expect(output).toContain('Used this month');
+    expect(output).toContain('$50');
+    expect(output).toContain('Monthly limit');
+    expect(output).toContain('$200');
+    // bar row contains block glyphs but no percentage text
+    expect(output).toContain('░');
   });
 
-  it('formats extra usage without a monthly limit using a dotted bar', () => {
+  it('formats extra usage without a monthly limit and omits the progress bar', () => {
     const lines = buildUsageReportLines({
       sessionUsage: { byModel: {} },
       contextUsage: 0,
@@ -97,10 +102,14 @@ describe('UsagePanelComponent', () => {
 
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
-    expect(output).toContain('Used');
-    expect(output).toContain('¥217.92 / Unlimited');
-    expect(output).toContain('Balance ¥182.08');
-    expect(output).toContain('····················');
+    expect(output).toContain('Balance');
+    expect(output).toContain('¥182.08');
+    expect(output).toContain('Used this month');
+    expect(output).toContain('¥217.92');
+    expect(output).toContain('Monthly limit');
+    expect(output).toContain('Unlimited');
+    expect(output).not.toContain('░');
+    expect(output).not.toContain('█');
   });
 
   it('omits the extra usage section when extraUsage is omitted or null', () => {
@@ -138,8 +147,12 @@ describe('UsagePanelComponent', () => {
     }).map(strip);
 
     const output = lines.join('\n');
-    expect(output).toContain('¥50 / ¥200');
-    expect(output).toContain('Balance ¥100');
+    expect(output).toContain('Balance');
+    expect(output).toContain('¥100');
+    expect(output).toContain('Used this month');
+    expect(output).toContain('¥50');
+    expect(output).toContain('Monthly limit');
+    expect(output).toContain('¥200');
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {

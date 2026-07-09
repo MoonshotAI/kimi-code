@@ -149,8 +149,6 @@ function severityColor(sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | '
   return sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 }
 
-const DOTTED_BAR = '·'.repeat(20);
-
 function currencySymbol(currency: string): string {
   switch (currency.toUpperCase()) {
     case 'CNY':
@@ -180,6 +178,14 @@ export function buildExtraUsageSection(
   const hasMonthlyLimit =
     extraUsage.monthlyChargeLimitEnabled && extraUsage.monthlyChargeLimitCents > 0;
 
+  const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
+  const used = formatCurrency(extraUsage.monthlyUsedCents, extraUsage.currency);
+  const labelWidth = 14;
+  const row = (label: string, val: string): string =>
+    `  ${muted(label.padEnd(labelWidth, ' '))}  ${value(val)}`;
+
+  const lines: string[] = [accent('Extra Usage')];
+
   if (hasMonthlyLimit) {
     const ratio = Math.max(
       0,
@@ -187,21 +193,18 @@ export function buildExtraUsageSection(
     );
     const bar = renderProgressBar(ratio, 20);
     const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratio)), bar);
-    const used = formatCurrency(extraUsage.monthlyUsedCents, extraUsage.currency);
     const limit = formatCurrency(extraUsage.monthlyChargeLimitCents, extraUsage.currency);
-    const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
-    return [
-      accent('Extra Usage'),
-      `  ${barColoured}  ${muted('Used')} ${value(`${used} / ${limit}`)}  ${muted(`·  Balance ${balance}`)}`,
-    ];
+    lines.push(`  ${barColoured}`);
+    lines.push(row('Balance', balance));
+    lines.push(row('Used this month', used));
+    lines.push(row('Monthly limit', limit));
+  } else {
+    lines.push(row('Balance', balance));
+    lines.push(row('Used this month', used));
+    lines.push(row('Monthly limit', 'Unlimited'));
   }
 
-  const used = formatCurrency(extraUsage.monthlyUsedCents, extraUsage.currency);
-  const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
-  return [
-    accent('Extra Usage'),
-    `  ${muted(DOTTED_BAR)}  ${muted('Used')} ${value(`${used} / Unlimited`)}  ${muted(`Balance ${balance}`)}`,
-  ];
+  return lines;
 }
 
 export function buildManagedUsageReportLines(options: ManagedUsageReportLineOptions): string[] {

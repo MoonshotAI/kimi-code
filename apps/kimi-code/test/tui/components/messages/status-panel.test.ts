@@ -98,9 +98,12 @@ describe('status panel report lines', () => {
 
     const output = lines.join('\n');
     expect(output).toContain('Extra Usage');
-    expect(output).toContain('Used');
-    expect(output).toContain('$50 / $200');
-    expect(output).toContain('Balance $150');
+    expect(output).toContain('Balance');
+    expect(output).toContain('$150');
+    expect(output).toContain('Used this month');
+    expect(output).toContain('$50');
+    expect(output).toContain('Monthly limit');
+    expect(output).toContain('$200');
   });
 
   it('falls back to app state and shows status load errors as warnings', () => {
