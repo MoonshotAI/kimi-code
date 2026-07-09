@@ -20,7 +20,6 @@ import {
 } from '#/persistence/interface/appendLogStore';
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 interface LogState {
   pending: unknown[];
@@ -47,6 +46,13 @@ export class AppendLogStore implements IAppendLogStore {
 
   async *read<R>(scope: string, key: string): AsyncIterable<R> {
     await this.flushLog(scope, key);
+    // A fresh `TextDecoder` per read: `TextDecoder` is stateful in `stream`
+    // mode (it buffers an incomplete trailing multi-byte sequence until the
+    // next `decode`). Sharing one instance across reads would let leftover
+    // state from an earlier read — e.g. one that returns early before flushing,
+    // like `ensureWireMetadata` bailing on the leading `metadata` record —
+    // leak into the next read and prepend a spurious U+FFFD to its first line.
+    const textDecoder = new TextDecoder();
     let pending = '';
     let lineNumber = 0;
     for await (const chunk of this.storage.readStream(scope, key)) {

@@ -186,8 +186,8 @@ export function foldLoopEvent(
 
 /**
  * Clear fold bookkeeping after an op that invalidates any open exchange
- * (`context.undo` / `context.clear` / `context.apply_compaction` /
- * `context.splice`). Returns the same state reference with a fresh fold ctx.
+ * (`context.undo` / `context.clear` / `context.apply_compaction`). Returns
+ * the same state reference with a fresh fold ctx.
  */
 export function resetFold(state: readonly ContextMessage[]): readonly ContextMessage[] {
   foldCtxMap.set(state, { openStepUuid: undefined, pending: new Set(), deferred: [] });

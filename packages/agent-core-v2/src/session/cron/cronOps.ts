@@ -10,14 +10,11 @@
  * task's `lastFiredAt`. Each `apply` returns a new `Map` on a real change and
  * the same reference on a no-op (a `cron.delete` of absent ids, or a
  * `cron.cursor` for an unknown id) so the wire's reference-equality gate stays
- * quiet. The Op types (`cron.add` / `cron.delete` / `cron.cursor`) match the
- * legacy record types, so `wire.replay` rebuilds the Model from the existing
- * shared append log. The cron engine's authoritative store remains the
- * App-scoped `ICronTaskPersistence`; the wire Model is the replay seed copied
- * back into the in-memory task map by the service's `wire.onRestored` handler
- * before the store load + timer start. Consumed cross-scope by the
- * Session-scope `SessionCronService`, which dispatches to the MAIN agent's
- * wire. The Ops register into the global `OP_REGISTRY` at import time.
+ * quiet. The Ops are live-only because cron records are not v1 wire types; the
+ * authoritative store is the App-scoped `ICronTaskPersistence`, reloaded on
+ * resume. Consumed cross-scope by the Session-scope `SessionCronService`,
+ * which dispatches to the MAIN agent's wire. The Ops register into the global
+ * `OP_REGISTRY` at import time.
  */
 
 import type { CronJobOrigin } from '@moonshot-ai/protocol';
@@ -42,8 +39,6 @@ export interface CronAddPayload {
 }
 
 export const cronAdd = defineOp(CronModel, 'cron.add', {
-  // Live-only: cron records are not v1 wire types; the authoritative store is
-  // the App-scoped `ICronTaskPersistence`, reloaded on resume.
   persist: false,
   apply: (s, p: CronAddPayload): CronModelState => {
     const next = new Map(s);

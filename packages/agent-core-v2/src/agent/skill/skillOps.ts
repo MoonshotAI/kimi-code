@@ -3,13 +3,13 @@
  * (`skillActivate`) for the agent's skill-activation fact log.
  *
  * Skill carries no state: the Model is a `null` placeholder and the Op's
- * `apply` is the identity function, so the record is a pure fact log ("this
- * skill was activated") whose only effect is persistence — `wire.replay`
- * applies it as a no-op. The `randomUUID()` activation id is generated at the
- * dispatch call site (`skillService.recordActivation`) and carried inside
- * `origin`, keeping `apply` free of non-determinism. Also augments `DomainEventMap`
- * with `skill.activated`, derived from the Op via `toEvent`. Consumed by the
- * Agent-scope `skillService`.
+ * `apply` is the identity function. `skill.activate` is live-only because it
+ * is not a v1 record type; it exists to derive the `skill.activated` event and
+ * carries no replayable state. The `randomUUID()` activation id is generated at
+ * the dispatch call site (`skillService.recordActivation`) and carried inside
+ * `origin`, keeping `apply` free of non-determinism. Also augments
+ * `DomainEventMap` with `skill.activated`, derived from the Op via `toEvent`.
+ * Consumed by the Agent-scope `skillService`.
  */
 
 import { defineModel } from '#/wire/model';
@@ -33,8 +33,6 @@ declare module '#/app/event/eventBus' {
 export const SkillModel = defineModel<null>('skill', () => null);
 
 export const skillActivate = defineOp(SkillModel, 'skill.activate', {
-  // Live-only: `skill.activate` is not a v1 record type; it exists for the
-  // `skill.activated` event derivation and carries no replayable state.
   persist: false,
   apply: (s, _p: { origin: SkillActivationOrigin }) => s,
   toEvent: (p) => ({

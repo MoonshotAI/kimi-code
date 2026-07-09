@@ -11,8 +11,6 @@ export interface CompactionResult extends ProtocolCompactionResult {
   droppedCount?: number;
 }
 
-export type FullCompactionCompleteData = Record<string, never>;
-
 export type CompactionSource = 'manual' | 'auto';
 
 export interface CompactionBeginData {

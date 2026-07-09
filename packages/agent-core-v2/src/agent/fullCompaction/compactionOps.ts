@@ -45,7 +45,7 @@ import type {
   CompactionStartedEvent,
 } from '@moonshot-ai/protocol';
 
-import type { CompactionBeginData, FullCompactionCompleteData } from './types';
+import type { CompactionBeginData } from './types';
 
 export type CompactionPhase = 'idle' | 'running' | 'cancelled' | 'completed';
 
@@ -82,7 +82,7 @@ export const fullCompactionCancel = defineOp(CompactionModel, 'full_compaction.c
   apply: (s): CompactionState => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });
 
-export type FullCompactionCompletePayload = FullCompactionCompleteData;
+export type FullCompactionCompletePayload = Record<string, never>;
 
 export const fullCompactionComplete = defineOp(CompactionModel, 'full_compaction.complete', {
   apply: (s, _p: FullCompactionCompletePayload): CompactionState =>

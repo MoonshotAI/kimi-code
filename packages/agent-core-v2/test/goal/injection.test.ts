@@ -195,7 +195,7 @@ describe('GoalInjection content', () => {
       await goals.createGoal({ objective: 'fix the bugs' });
     }))!;
     expect(text).toContain('Goal mode is iterative');
-    expect(text).toContain('one coherent slice of work');
+    expect(text).toContain('one bounded, useful slice of work');
     expect(text).toContain('Do not mark complete after only producing a plan');
   });
 
@@ -222,13 +222,11 @@ describe('GoalInjection content', () => {
 });
 
 function goalReminderRecords(persistence: InMemoryWireRecordPersistence) {
-  return persistence.records.filter(
-    (r) =>
-      r.type === 'context.splice' &&
-      (r as { messages?: Array<{ origin?: { kind?: string; variant?: string } }> }).messages?.some(
-        (m) => m.origin?.kind === 'injection' && m.origin?.variant === 'goal',
-      ),
-  );
+  return persistence.records.filter((r) => {
+    if (r.type !== 'context.append_message') return false;
+    const message = (r as { message?: { origin?: { kind?: string; variant?: string } } }).message;
+    return message?.origin?.kind === 'injection' && message?.origin?.variant === 'goal';
+  });
 }
 
 async function flushedGoalReminderRecords(
@@ -271,7 +269,7 @@ describe('GoalInjection integration', () => {
       }
     });
 
-    it('main-agent dynamic injection writes a context.splice with origin.variant goal', async () => {
+    it('main-agent dynamic injection writes a context.append_message with origin.variant goal', async () => {
       await goals.createGoal({ objective: 'Ship feature X' });
 
       await injectDynamic(injector);

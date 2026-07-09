@@ -7,10 +7,11 @@
  * replacement: it returns the SAME reference when the incoming phase is
  * unchanged under `phaseEqual` (which ignores `since` / `at` timestamps), so the
  * wire's reference-equality gate stays quiet and high-frequency deltas do not
- * flood the append log — only genuine phase transitions persist. The
- * `agent.status.updated` `phase` slice is derived from the Op's `toEvent`
- * (published on `dispatch`, never on `replay`). Consumed by the Agent-scope
- * `runtimeService`.
+ * flood subscribers. The Op is live-only because `runtime.set_phase` is not a
+ * v1 record type: nothing is persisted or replayed, and resumed agents start
+ * back at `idle`. The `agent.status.updated` `phase` slice is derived from
+ * the Op's `toEvent` (published on `dispatch`, never on `replay`). Consumed
+ * by the Agent-scope `runtimeService`.
  */
 
 import { defineModel } from '#/wire/model';
@@ -27,8 +28,6 @@ export const RuntimeModel = defineModel<RuntimeModelState>('runtime', () => ({
 }));
 
 export const setRuntimePhase = defineOp(RuntimeModel, 'runtime.set_phase', {
-  // Live-only: `runtime.set_phase` is not a v1 record type. Nothing is
-  // persisted or replayed, so a resumed agent starts back at `idle`.
   persist: false,
   apply: (s, p: { phase: AgentPhase }): RuntimeModelState =>
     phaseEqual(s.phase, p.phase) ? s : { phase: p.phase },

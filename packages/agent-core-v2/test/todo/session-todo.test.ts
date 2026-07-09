@@ -103,10 +103,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
         if (record.type === 'tools.update_store' && record['key'] === 'todo') {
           todoState = readTodoItems(record['value']);
         }
-        // Legacy replay path: early v2 dev logs persisted `todo.set`.
-        if (record.type === 'todo.set') {
-          todoState = readTodoItems(record['todos']);
-        }
       }
       // Replay is silent: subscribers are NOT notified. onRestored fires after.
       for (const h of restoredHandlers) h();
@@ -303,12 +299,14 @@ describe('SessionTodoService', () => {
     expect(sub.subscribed()).toBe(0);
   });
 
-  it('rebuilds the list when a todo.set record is replayed', async () => {
+  it('rebuilds the list when a todo tools.update_store record is replayed', async () => {
     const main = makeFakeAgent('main');
     const lifecycle = makeLifecycleStub([main.handle]);
     const service = new SessionTodoService(lifecycle.service);
 
-    await main.replay([{ type: 'todo.set', todos: [{ title: 'restored', status: 'done' }] }]);
+    await main.replay([
+      { type: 'tools.update_store', key: 'todo', value: [{ title: 'restored', status: 'done' }] },
+    ]);
 
     expect(service.getTodos()).toEqual([{ title: 'restored', status: 'done' }]);
   });
@@ -334,15 +332,16 @@ describe('SessionTodoService', () => {
     expect(typeof service.onDidChange).toBe('function');
   });
 
-  it('cleans malformed items from a replayed todo.set record', async () => {
+  it('cleans malformed items from a replayed todo tools.update_store record', async () => {
     const main = makeFakeAgent('main');
     const lifecycle = makeLifecycleStub([main.handle]);
     const service = new SessionTodoService(lifecycle.service);
 
     await main.replay([
       {
-        type: 'todo.set',
-        todos: [
+        type: 'tools.update_store',
+        key: 'todo',
+        value: [
           { title: 'valid', status: 'done' },
           { title: 'missing status' },
           { title: 123, status: 'pending' },
@@ -355,13 +354,13 @@ describe('SessionTodoService', () => {
     expect(service.getTodos()).toEqual([{ title: 'valid', status: 'done' }]);
   });
 
-  it('treats a non-array todo.set payload as an empty list on replay', async () => {
+  it('treats a non-array todo tools.update_store value as an empty list on replay', async () => {
     const main = makeFakeAgent('main');
     const lifecycle = makeLifecycleStub([main.handle]);
     const service = new SessionTodoService(lifecycle.service);
 
     await main.replay([
-      { type: 'todo.set', todos: 'not-an-array' } as unknown as PersistedRecord,
+      { type: 'tools.update_store', key: 'todo', value: 'not-an-array' } as unknown as PersistedRecord,
     ]);
 
     expect(service.getTodos()).toEqual([]);

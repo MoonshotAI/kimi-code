@@ -13,7 +13,9 @@
  * carries no non-determinism. The live `ManagedTask` (the running process, its
  * `AbortController`, output ring, timers) stays OUT of the Model (live-only);
  * the Model is the restore seed for `ghosts`, applied by the service's single
- * `wire.onRestored` handler before disk load + reconcile. Consumed by the
+ * `wire.onRestored` handler before disk load + reconcile. The Ops are
+ * live-only because task records are not v1 wire types; the durable registry
+ * lives in `AgentTaskPersistence` and is reconciled on resume. Consumed by the
  * Agent-scope `taskService`.
  */
 
@@ -38,8 +40,6 @@ export interface TaskInfoPayload {
 }
 
 export const taskStarted = defineOp(TaskModel, 'task.started', {
-  // Live-only: task records are not v1 wire types; the durable registry lives
-  // in `AgentTaskPersistence` on disk and is reconciled on resume.
   persist: false,
   apply: (s, p: TaskInfoPayload): TaskModelState => {
     const next = new Map(s);

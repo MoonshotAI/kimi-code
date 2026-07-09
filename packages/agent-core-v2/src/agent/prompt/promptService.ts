@@ -114,8 +114,6 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   retry(): Turn | undefined {
-    // v1 parity: a retry is persisted as a `turn.prompt` with empty input, so
-    // the replayed turn counter matches the live one.
     return this.launch({ input: [], origin: { kind: 'retry' } });
   }
 

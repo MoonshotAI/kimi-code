@@ -94,8 +94,9 @@ interface ManagedTask {
   outputSizeBytes: number;
   retainedOutputBytes: number;
   /**
-   * True once a command has crossed `MAX_TASK_OUTPUT_BYTES` and termination has
-   * been requested. One-shot guard so the ceiling fires exactly once.
+   * True once a foreground command has crossed `MAX_TASK_OUTPUT_BYTES` and
+   * termination has been requested. One-shot guard so the ceiling fires exactly
+   * once.
    */
   outputLimitTripped: boolean;
   status: AgentTaskStatus;
@@ -123,18 +124,16 @@ interface ManagedTask {
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 
 /**
- * Hard ceiling on the combined output a single shell command may stream before
- * it is force-terminated (SIGTERM → grace → SIGKILL). It guards both the
- * live-forward path and the on-disk `output.log` write chain from a runaway
- * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow
- * without bound — filling the disk, or retaining each pending-write chunk until
- * Node aborts with an out-of-memory crash. Scoped to process tasks (foreground
- * and background); subagent and user-question results are appended once and must
- * always be persisted, so they are intentionally not capped here.
+ * Hard ceiling on the combined output a single foreground shell command may
+ * stream before it is force-terminated (SIGTERM → grace → SIGKILL). It guards
+ * the live-forward path from a runaway command (e.g. `b3sum --length <huge>`)
+ * whose output would otherwise grow without bound until Node aborts with an
+ * out-of-memory crash. Detached process tasks are exempt because their output
+ * is consumed through the bounded live ring plus `output.log`.
  */
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
 
-/** Terminal `stopReason` recorded when a command trips the output ceiling. */
+/** Terminal `stopReason` recorded when a foreground command trips the output ceiling. */
 function outputLimitReason(): string {
   const mib = Math.floor(MAX_TASK_OUTPUT_BYTES / (1024 * 1024));
   return (
@@ -803,15 +802,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     entry.outputSizeBytes += chunkBytes;
     this.appendRetainedOutput(entry, chunk, chunkBytes);
 
-    // Output ceiling: a single shell command must not grow the (unbounded)
-    // live-forward buffer or the on-disk write chain until the process runs out
-    // of memory or fills the disk. Trip once, then request graceful termination
-    // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
-    // process tasks (foreground and background): subagent and user-question tasks
-    // append their bounded result in one shot and must always persist it, so they
-    // are intentionally not capped here.
+    // Foreground output ceiling: a single non-detached shell command must not
+    // grow the unbounded live-forward buffer until the process runs out of
+    // memory. Trip once, then request graceful termination through the shared
+    // stop path (SIGTERM → grace → SIGKILL). Detached tasks are exempt because
+    // their output is consumed through the bounded live ring plus output.log.
     if (
       !entry.outputLimitTripped &&
+      !this.isDetached(entry) &&
       entry.task?.kind === 'process' &&
       entry.outputSizeBytes > MAX_TASK_OUTPUT_BYTES
     ) {
@@ -1158,13 +1156,9 @@ function taskOriginsFromRecord(record: WireRecord): readonly TaskNotificationOri
   const raw = record as {
     readonly type: string;
     readonly message?: unknown;
-    readonly messages?: unknown;
   };
   if (raw.type === 'context.append_message') {
     return taskOriginFromMessage(raw.message);
-  }
-  if (raw.type === 'context.splice' && Array.isArray(raw.messages)) {
-    return raw.messages.flatMap(taskOriginFromMessage);
   }
   return [];
 }

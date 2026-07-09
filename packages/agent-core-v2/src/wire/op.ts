@@ -15,6 +15,9 @@
  * `dispatch(...ops: Op[])` rest parameter, while the precise payload type
  * survives on `Op.payload` for the Op's own caller. Registering a duplicate
  * `type` throws `DuplicateOpError` so the global Op-type namespace stays unique.
+ * Descriptors may opt out of persistence (`persist: false`) for live-only
+ * state, or opt out of timestamp stamping (`stamp: false`) for the metadata
+ * envelope. Both default to the v1-compatible persisted, stamped path.
  * Scope-agnostic.
  */
 
@@ -45,20 +48,7 @@ export interface OpDescriptor<K extends string, S, P> {
    * derive no event.
    */
   readonly toEvent?: (payload: P, state: S) => unknown;
-  /**
-   * `false` → the op applies, notifies subscribers, and derives `toEvent`
-   * facts on dispatch, but is never emitted nor appended to the wire log.
-   * Use for live-only state that must not appear in the v1-compatible
-   * `wire.jsonl` (the record vocabulary on disk stays exactly v1's
-   * `AgentRecordEvents`); such state is re-derived on resume instead of
-   * replayed. Defaults to `true`.
-   */
   readonly persist?: boolean;
-  /**
-   * `false` → the persisted record is not stamped with `time`. Only the
-   * `metadata` envelope opts out (matching v1, which appends metadata without
-   * a timestamp). Defaults to `true`.
-   */
   readonly stamp?: boolean;
 }
 

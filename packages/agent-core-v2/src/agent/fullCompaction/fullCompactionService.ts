@@ -1,6 +1,7 @@
 import { Disposable } from "#/_base/di/lifecycle";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { renderPrompt } from "#/_base/utils/render-prompt";
 import {
   estimateTokens,
@@ -54,7 +55,6 @@ import {
 } from './compactionOps';
 import {
   type CompactionBeginData,
-  type FullCompactionCompleteData,
   type CompactionResult,
 } from './types';
 import { OrderedHookSlot } from '#/hooks';
@@ -133,6 +133,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     @IAgentWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentTurnService private readonly turn: IAgentTurnService,
+    @ILogService private readonly log: ILogService,
     @IAgentLoopService loopService: IAgentLoopService,
   ) {
     super();
@@ -422,6 +423,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     try {
       const result = await this.compactionRound(active, data);
       if (this._compacting !== active) throw compactionCancelledReason(active);
+      try {
+        await this.profile.refreshSystemPrompt();
+      } catch (error) {
+        this.log.error('failed to refresh system prompt after compaction', { error });
+      }
       this.lastCompactedTokenCount = result.tokensAfter;
       if (!this.markCompleted(active)) {
         throw compactionCancelledReason(active);

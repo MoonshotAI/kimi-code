@@ -115,7 +115,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
     // Registered on the main agent's wire by `onDidCreateMain`, which fires in
     // `ensureMainAgent` strictly before that wire's `replay`. Bridge model
     // changes to `onDidChange`: replay applies silently (no notification), so
-    // this fires only for live `todo.set` writes, carrying the sanitized model.
+    // this fires only for live `tools.update_store` (`key: 'todo'`) writes, carrying the sanitized model.
     const disposable = wire.subscribe(TodoModel, (state) => {
       this.onDidChangeEmitter.fire(state);
     });

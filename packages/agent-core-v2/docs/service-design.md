@@ -190,10 +190,12 @@ an **event**, or a **hook**. From first principles, they answer three different 
   projected onto the wire, not handled by a direct call alone. `permission.set_mode`,
   `goal.create/update/clear`, and `plan_mode.enter/exit` are all in this category.
   Note that the wire is the *durable record*, not the live notification channel: a live
-  `spliceHistory(...)` call appends a `context.splice` record to the wire *and* applies it,
-  and `contextMemory` then fires `hooks.onSpliced`, which `contextSize` / `loop` /
-  `background` / `dynamicInjector` actually subscribe to. Those listeners
-  react to the **hook**, not the wire — the wire is what makes the splice replayable.
+  context mutation appends v1 wire records (`context.append_message` /
+  `context.append_loop_event` / `context.undo` / `context.clear` /
+  `context.apply_compaction`) *and* applies them, and `contextMemory` then fires a
+  `context.spliced` event, which `contextSize` / `loop` / `background` / `dynamicInjector`
+  actually subscribe to. Those listeners react to the **event**, not the wire — the wire is
+  what makes the mutation replayable.
 
 ### One-sentence rule
 

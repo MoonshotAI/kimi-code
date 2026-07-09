@@ -654,7 +654,7 @@ describe('AgentTaskService', () => {
     expect(forwardedChars).toBeLessThanOrEqual(LIMIT_BYTES);
   });
 
-  it('terminates a detached process task that exceeds the output limit', async () => {
+  it('does not terminate a detached process task that exceeds the foreground output limit', async () => {
     const { manager } = createAgentTaskService();
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc, killSpy } = streamingProcess(chunks);
@@ -666,9 +666,9 @@ describe('AgentTaskService', () => {
 
     const info = await waitForTerminal(manager, taskId);
 
-    expect(info).toMatchObject({ status: 'killed' });
-    expect(info?.stopReason ?? '').toMatch(/output limit/i);
-    expect(killSpy).toHaveBeenCalledWith('SIGTERM');
+    expect(info).toMatchObject({ status: 'completed' });
+    expect(info?.stopReason).toBeUndefined();
+    expect(killSpy).not.toHaveBeenCalledWith('SIGTERM');
   });
 
   it('stops appending persisted foreground output once the output limit trips', async () => {
@@ -697,7 +697,7 @@ describe('AgentTaskService', () => {
     }
   });
 
-  it('stops appending persisted background output once the output limit trips', async () => {
+  it('persists detached process output beyond the foreground output limit', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-limit-bg-'));
     try {
       const { manager } = createAgentTaskService({ sessionDir });
@@ -715,8 +715,9 @@ describe('AgentTaskService', () => {
       const info = await waitForTerminal(manager, taskId);
       const output = await manager.getOutputSnapshot(taskId, 1);
 
-      expect(info).toMatchObject({ status: 'killed' });
-      expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
+      expect(info).toMatchObject({ status: 'completed' });
+      expect(info?.stopReason).toBeUndefined();
+      expect(output.outputSizeBytes).toBe(20 * MiB);
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }

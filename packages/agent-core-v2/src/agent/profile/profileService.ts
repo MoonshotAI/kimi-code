@@ -110,6 +110,8 @@ export class AgentProfileService implements IAgentProfileService {
     );
   }
 
+  private activeProfile: ResolvedAgentProfile | undefined;
+
   constructor(
     @IAgentWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
@@ -137,6 +139,12 @@ export class AgentProfileService implements IAgentProfileService {
 
   update(changed: ProfileUpdateData): void {
     const { activeToolNames, ...configChanged } = changed;
+    if (
+      changed.profileName !== undefined &&
+      this.activeProfile?.name !== changed.profileName
+    ) {
+      this.activeProfile = undefined;
+    }
     if (Object.keys(configChanged).length > 0) {
       this.wire.dispatch(configUpdate(this.resolveConfigPayload(configChanged)));
       this.afterConfigDispatch(configChanged);
@@ -157,8 +165,8 @@ export class AgentProfileService implements IAgentProfileService {
 
     const context = await this.buildSystemPromptContext(input.cwd);
     const systemPrompt = profile.systemPrompt(context);
-    const { agentsMdWarning } = context;
-    this.agentsMdWarning = agentsMdWarning;
+    this.activeProfile = profile;
+    this.cacheAgentsMdWarning(context);
 
     const thinkingLevel = resolveThinkingEffort(
       input.thinking,
@@ -175,13 +183,7 @@ export class AgentProfileService implements IAgentProfileService {
     this.wire.dispatch(configUpdate({ modelAlias: input.model, thinkingEffort: thinkingLevel }));
     this.afterConfigDispatch({ modelAlias: input.model, thinkingLevel });
 
-    if (agentsMdWarning !== undefined) {
-      this.eventBus.publish({
-        type: 'warning',
-        message: agentsMdWarning,
-        code: 'agents-md-oversized',
-      });
-    }
+    this.publishAgentsMdWarning();
   }
 
   async setModel(alias: string): Promise<ProfileSetModelResult> {
@@ -217,6 +219,7 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
+    this.activeProfile = profile;
     this.update({
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
@@ -225,24 +228,24 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
-    const context = await prepareSystemPromptContext(
-      { fs: this.fs, homeDir: this.env.homeDir },
-      this.sessionContext.cwd,
-      this.bootstrap.homeDir,
-      {
-        additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs,
-      },
-    );
+    const context = await this.buildSystemPromptContext(undefined, options);
     this.useProfile(profile, context);
-    const { agentsMdWarning } = context;
-    this.agentsMdWarning = agentsMdWarning;
-    if (agentsMdWarning !== undefined) {
-      this.eventBus.publish({
-        type: 'warning',
-        message: agentsMdWarning,
-        code: 'agents-md-oversized',
-      });
-    }
+    this.cacheAgentsMdWarning(context);
+    this.publishAgentsMdWarning();
+  }
+
+  async refreshSystemPrompt(): Promise<void> {
+    const profile = this.resolveActiveProfile();
+    if (profile === undefined) return;
+
+    const context = await this.buildSystemPromptContext(this.cwd);
+    this.activeProfile = profile;
+    this.update({
+      profileName: profile.name,
+      systemPrompt: profile.systemPrompt(context),
+    });
+    this.cacheAgentsMdWarning(context);
+    this.publishAgentsMdWarning();
   }
 
   getAgentsMdWarning(): string | undefined {
@@ -494,13 +497,37 @@ export class AgentProfileService implements IAgentProfileService {
     }
   }
 
-  private async buildSystemPromptContext(cwd?: string): Promise<SystemPromptContext> {
+  private resolveActiveProfile(): ResolvedAgentProfile | undefined {
+    if (this.activeProfile !== undefined) return this.activeProfile;
+    const profileName = this.profileName;
+    if (profileName === undefined) return undefined;
+    return this.catalog.get(profileName);
+  }
+
+  private cacheAgentsMdWarning(context: Pick<SystemPromptContext, 'agentsMdWarning'>): void {
+    this.agentsMdWarning = context.agentsMdWarning;
+  }
+
+  private publishAgentsMdWarning(): void {
+    const warning = this.agentsMdWarning;
+    if (warning === undefined) return;
+    this.eventBus.publish({
+      type: 'warning',
+      message: warning,
+      code: 'agents-md-oversized',
+    });
+  }
+
+  private async buildSystemPromptContext(
+    cwd?: string,
+    options?: ApplyProfileOptions,
+  ): Promise<SystemPromptContext> {
     const effectiveCwd = cwd ?? this.sessionContext.cwd;
     const base = await prepareSystemPromptContext(
       { fs: this.fs, homeDir: this.env.homeDir },
       effectiveCwd,
       this.bootstrap.homeDir,
-      { additionalDirs: this.workspace.additionalDirs },
+      { additionalDirs: options?.additionalDirs ?? this.workspace.additionalDirs },
     );
     const skills = await this.resolveSkillListing();
     return {

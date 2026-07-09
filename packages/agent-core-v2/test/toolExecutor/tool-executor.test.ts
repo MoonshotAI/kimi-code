@@ -9,6 +9,7 @@ import { ToolAccesses } from '#/agent/tool/tool-access';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult, ToolUpdate } from '#/agent/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor/toolExecutorService';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
@@ -30,12 +31,14 @@ let registry: IAgentToolRegistryService;
 let events: ToolExecutorEvent[];
 let protocolEvents: AgentEvent[];
 let telemetryEvents: TelemetryRecord[];
+let truncateForModel: IAgentToolResultTruncationService['truncateForModel'];
 
 beforeEach(() => {
   disposables = new DisposableStore();
   events = [];
   protocolEvents = [];
   telemetryEvents = [];
+  truncateForModel = async (input) => input.result;
   ix = createServices(disposables, {
     additionalServices: (reg) => {
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
@@ -46,6 +49,10 @@ beforeEach(() => {
         disposables.add(new WireService({ logScope: 'wire', logKey: 'tool-executor' })),
       );
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
+      reg.defineInstance(IAgentToolResultTruncationService, {
+        _serviceBrand: undefined,
+        truncateForModel: (input) => truncateForModel(input),
+      });
       reg.defineInstance(IEventBus, {
         publish: (event: { type: string }) => {
           if (event.type.startsWith('tool.')) {
@@ -98,6 +105,30 @@ describe('AgentToolExecutorService', () => {
         duration_ms: expect.any(Number),
       }),
     });
+  });
+
+  it('truncates final tool results before publishing protocol events', async () => {
+    truncateForModel = async (input) => ({
+      ...input.result,
+      output: 'truncated output',
+      truncated: true,
+    });
+    const tool = new TestTool('large', { result: { output: 'raw output' } });
+    registry.register(tool);
+
+    const results = await execute([toolCall('call_large', 'large', {})]);
+
+    expect(results[0]).toMatchObject({
+      output: 'truncated output',
+      truncated: true,
+    });
+    expect(protocolEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.result',
+        toolCallId: 'call_large',
+        output: 'truncated output',
+      }),
+    );
   });
 
   it('preserves internal result notes without exposing them on protocol tool.result events', async () => {

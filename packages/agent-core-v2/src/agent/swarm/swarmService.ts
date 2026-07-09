@@ -67,10 +67,6 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
     const last = history[history.length - 1];
     const willPop =
       last?.origin?.kind === 'injection' && last.origin.variant === 'swarm_mode';
-    // The ContextModel cross-reducer on `swarm_mode.exit` performs the actual
-    // pop (replayable); this service only mirrors it into the live-only
-    // `context.spliced` event and appends the exit reminder when nothing was
-    // popped.
     this.wire.dispatch(swarmExit({}));
     if (trigger === 'tool') return;
     if (willPop) {

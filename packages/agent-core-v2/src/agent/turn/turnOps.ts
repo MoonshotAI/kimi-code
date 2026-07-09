@@ -14,11 +14,6 @@
  * observed in a replayed loop event — the v1 `observeRestoredTurnId` semantics.
  * The `turn.started` / `turn.ended` / `error` signals are not part of this Op
  * and remain on their existing path. Consumed by the Agent-scope `turnService`.
- *
- * `turn.launch` (`launchTurn`) is the pre-1.4 record type: it stays registered so
- * sessions written at wire protocol 1.5 still replay (restored via the
- * newer-version passthrough, no migration), but the live write path no longer
- * emits it.
  */
 
 import { defineModel } from '#/wire/model';
@@ -44,13 +39,6 @@ export const TurnModel = defineModel<TurnModelState>('turn', () => ({ nextTurnId
   },
 });
 
-function advanceTurnId(s: TurnModelState, turnId: number): TurnModelState {
-  if (Number.isInteger(turnId) && turnId >= s.nextTurnId) {
-    return { nextTurnId: turnId + 1 };
-  }
-  return s;
-}
-
 export interface PromptTurnPayload {
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
@@ -58,11 +46,6 @@ export interface PromptTurnPayload {
 
 export const promptTurn = defineOp(TurnModel, 'turn.prompt', {
   apply: (s, _p: PromptTurnPayload): TurnModelState => ({ nextTurnId: s.nextTurnId + 1 }),
-});
-
-/** @deprecated Legacy 1.5 record type; kept registered for replay of old sessions. */
-export const launchTurn = defineOp(TurnModel, 'turn.launch', {
-  apply: (s, p: { turnId: number }): TurnModelState => advanceTurnId(s, p.turnId),
 });
 
 export interface SteerTurnPayload {
@@ -85,7 +68,6 @@ export const cancelTurn = defineOp(TurnModel, 'turn.cancel', {
 declare module '#/agent/wireRecord/wireRecord' {
   interface WireRecordMap {
     'turn.prompt': PromptTurnPayload;
-    'turn.launch': { readonly turnId: number };
     'turn.steer': SteerTurnPayload;
     'turn.cancel': CancelTurnPayload;
   }

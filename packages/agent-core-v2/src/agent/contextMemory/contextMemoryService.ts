@@ -4,8 +4,7 @@
  * Owns the per-agent conversation history in the wire `ContextModel`
  * (`ContextMessage[]`): reads through `wire.getModel`, writes through the
  * v1 wire Ops (`append` / `appendLoopEvent` / `clear` / `undo` /
- * `applyCompaction`); `context.splice` stays registered replay-only for
- * protocol 1.5 sessions and is no longer dispatched live.
+ * `applyCompaction`).
  * As the sole live mutation gateway for the history, it also cascades a
  * (non-persisted) `context_size.measured` Op alongside every mutation that
  * changes the measured prefix — `clear` resets it, `applyCompaction` adopts
@@ -50,17 +49,6 @@ import {
 } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'context.splice': {
-      start: number;
-      deleteCount: number;
-      messages: readonly ContextMessage[];
-      tokens?: number;
-    };
-  }
-}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

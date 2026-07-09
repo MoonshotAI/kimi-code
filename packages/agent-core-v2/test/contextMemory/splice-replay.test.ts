@@ -2,10 +2,10 @@
  * `AgentContextMemoryService` wire contract, exercised without the full agent
  * harness (mirror of `test/goal/goal-wire.test.ts`): a `TestInstantiationService`
  * + `InMemoryStorageService` + `AppendLogStore` + `WireService` + stub
- * `IAgentBlobService`. Covers the splice Ops' NEW-reference + flat-record shape,
- * the live-only `onSpliced` hook (silent on replay), and — load-bearing — the
- * blob dehydrate-on-dispatch ↔ rehydrate-on-replay round-trip via
- * `ContextModel.blobs`.
+ * `IAgentBlobService`. Covers the context Ops' NEW-reference + flat-record
+ * shape, the live-only `context.spliced` event (silent on replay), and —
+ * load-bearing — the blob dehydrate-on-dispatch ↔ rehydrate-on-replay
+ * round-trip via `ContextModel.blobs`.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,7 +21,6 @@ import {
   contextAppendMessage,
   contextApplyCompaction,
   contextClear,
-  contextSplice,
   contextUndo,
 } from '#/agent/contextMemory/contextOps';
 import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
@@ -191,7 +190,8 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const model = () => host.wire.getModel(ContextModel) as readonly ContextMessage[];
 
     host.wire.dispatch(
-      contextSplice({ start: 0, deleteCount: 0, messages: [userMessage('a'), userMessage('b')] }),
+      contextAppendMessage({ message: userMessage('a') }),
+      contextAppendMessage({ message: userMessage('b') }),
     );
     expect(model()).toHaveLength(2);
 
@@ -226,7 +226,8 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const records = await readRecords(host.log);
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
     expect(records.map((record) => record.type)).toEqual([
-      'context.splice',
+      'context.append_message',
+      'context.append_message',
       'context.append_message',
       'context.undo',
       'context.apply_compaction',
@@ -403,7 +404,7 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const big = 'A'.repeat(200);
     const dataUri = `data:image/png;base64,${big}`;
 
-    host.wire.dispatch(contextSplice({ start: 0, deleteCount: 0, messages: [imageMessage(big)] }));
+    host.wire.dispatch(contextAppendMessage({ message: imageMessage(big) }));
     await host.wire.flush();
 
     const live = host.wire.getModel(ContextModel) as readonly ContextMessage[];
@@ -412,9 +413,9 @@ describe('AgentContextMemoryService (wire-backed)', () => {
 
     const records = await readRecords(host.log);
     expect(blob.offloadCalls).toBeGreaterThanOrEqual(1);
-    const splice = records.find((record) => record.type === 'context.splice');
-    expect(splice).toBeDefined();
-    const persisted = (splice!['messages'] as readonly ContextMessage[])[0]!;
+    const appended = records.find((record) => record.type === 'context.append_message');
+    expect(appended).toBeDefined();
+    const persisted = appended!['message'] as ContextMessage;
     expect(mediaUrl(persisted).startsWith(BLOBREF)).toBe(true);
     expect(mediaUrl(persisted)).not.toContain(big);
 
@@ -448,43 +449,6 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     await replay.wire.replay(...records);
     expect(replayed).toHaveLength(0);
     expect(replay.wire.getModel(ContextModel) as readonly ContextMessage[]).toHaveLength(2);
-  });
-
-  it('preserves the measured token count for a metadata-only splice inside the measured prefix', async () => {
-    const host = buildHost(KEY);
-
-    // Seed history and mark the first two messages as measured by the LLM.
-    host.svc.append(
-      { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
-      { role: 'assistant', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
-    );
-    host.wire.dispatch(contextSizeMeasured({ length: 2, tokens: 42 }));
-    await host.wire.flush();
-
-    const statusEvents: { contextTokens?: number }[] = [];
-    disposables.add(host.eventBus.subscribe('agent.status.updated', (event) => {
-      if ('contextTokens' in event) statusEvents.push({ contextTokens: event.contextTokens });
-    }));
-
-    // Patch providerMessageId on a message inside the measured prefix.
-    const history = host.svc.get();
-    host.wire.dispatch(contextSplice({
-      start: 1,
-      deleteCount: 1,
-      messages: [{ ...history[1]!, providerMessageId: 'mock-1' }],
-    }));
-
-    // The measured aggregate must stay intact; the metadata edit does not
-    // change the token-countable shape of the message.
-    const model = host.wire.getModel(ContextSizeModel);
-    expect(model).toEqual({ length: 2, tokens: 42 });
-    expect(statusEvents).toEqual([]);
-
-    await host.wire.flush();
-    const records = await readRecords(host.log);
-    // `context_size.measured` is live-only (persist: false) — nothing lands on disk.
-    const measuredAfterSplice = records.filter((record) => record.type === 'context_size.measured');
-    expect(measuredAfterSplice).toHaveLength(0);
   });
 
 });

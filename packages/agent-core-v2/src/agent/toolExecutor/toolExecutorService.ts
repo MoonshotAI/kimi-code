@@ -26,6 +26,7 @@ import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
@@ -88,6 +89,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentToolResultTruncationService
+    private readonly resultTruncation: IAgentToolResultTruncationService,
     @ILogService private readonly log?: ILogService,
   ) {}
 
@@ -522,7 +525,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     const coercedResult = coerceToolResult(didCtx.result, call.toolName);
     const effectiveResult = normalizeToolResult(coercedResult);
-    return {
+    const finalResult: ToolResult = {
       ...effectiveResult,
       message: coercedResult.message ?? result.message,
       description: result.description,
@@ -538,6 +541,11 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       // it by stripping it from `didCtx.result`; in that case this is undefined.
       delivery: coercedResult.delivery,
     };
+    return this.resultTruncation.truncateForModel({
+      toolName: call.toolName,
+      toolCallId: call.toolCall.id,
+      result: finalResult,
+    });
   }
 }
 

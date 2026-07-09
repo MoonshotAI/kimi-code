@@ -2010,12 +2010,6 @@ function contextMessagesFromRecord(record: PersistedWireRecord): readonly Contex
     const message = record['message'];
     return isContextMessageLike(message) ? [message] : [];
   }
-  if (record.type === 'context.splice') {
-    const messages = record['messages'];
-    return Array.isArray(messages)
-      ? messages.filter(isContextMessageLike)
-      : [];
-  }
   return [];
 }
 

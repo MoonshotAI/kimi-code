@@ -9,19 +9,17 @@
  * paths: `llmRequester` after each measured exchange (a true LLM-reported
  * count), and `contextMemoryService` cascading alongside every context mutation
  * that changes the measured prefix (`clear` resets, `applyCompaction` adopts
- * `tokensAfter`, `undo` / `splice` rebase to an estimate when the aggregate is
+ * `tokensAfter`, and `undo` rebases to an estimate when the aggregate is
  * truncated); `append` is intentionally not cascaded because new messages are
- * the unmeasured tail. Because both writes go through the same Op and the
- * cascaded values are persisted on the record, `wire.dispatch` and `wire.replay`
- * produce identical state. `apply` is pure — it normalizes the
- * payload and returns the SAME reference on a no-op so the wire's
- * reference-equality gate stays quiet — and carries no non-determinism (the
- * last measured record wins). The sparse `measuredPrefixTokens` array and the
- * per-message live `estimates` are intentionally NOT in the Model: only the
- * aggregate prefix is persisted, while sub-range estimates are recomputed on
- * the live read path from the surviving context — mirroring the `goal`
- * domain's `wallClockMs` split (deterministic in the Model, live-only out).
- * Consumed by the Agent-scope `contextSizeService`.
+ * the unmeasured tail. The Op is live-only because `context_size.measured` is
+ * not a v1 record type: resume starts from `{ 0, 0 }` and
+ * `contextSizeService.get()` estimates until the next measured exchange.
+ * `apply` is pure — it normalizes the payload and returns the SAME reference
+ * on a no-op so the wire's reference-equality gate stays quiet — and carries no
+ * non-determinism (the last measured record wins). The sparse
+ * `measuredPrefixTokens` array and the per-message live `estimates` are
+ * intentionally NOT in the Model. Consumed by the Agent-scope
+ * `contextSizeService`.
  */
 
 import { defineModel } from '#/wire/model';
@@ -43,9 +41,6 @@ export interface ContextSizeMeasuredPayload {
 }
 
 export const contextSizeMeasured = defineOp(ContextSizeModel, 'context_size.measured', {
-  // Live-only: `context_size.measured` is not a v1 record type, so it never
-  // reaches the wire log. After resume the model starts at `{ 0, 0 }` and
-  // `contextSizeService.get()` estimates until the next measured exchange.
   persist: false,
   apply: (s, p: ContextSizeMeasuredPayload): ContextSizeState => {
     const length = normalizeMeasuredLength(p.length);

@@ -8,7 +8,7 @@
  *   - `resolveExecution({})`               — query the current list
  *
  * The list is session-shared: the tool reads/writes `ISessionTodoService`,
- * which persists every change as a `todo.set` wire record on the main agent.
+ * which persists every change as a `tools.update_store` (`key: 'todo'`) wire record on the main agent.
  * Self-registers via `registerTool(TodoListTool)` at module load; the Eager
  * `AgentBuiltinToolsRegistrar` instantiates one per agent (resolving the
  * Session-scope `ISessionTodoService` from the parent scope) and registers it

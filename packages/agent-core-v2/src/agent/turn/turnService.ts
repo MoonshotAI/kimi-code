@@ -9,8 +9,7 @@
  * through `wire.signal` (legacy channel); `turn.ended` / `error` publish to
  * `IEventBus` and are also emitted through `wire.signal`. `wire.replay` rebuilds
  * the counter silently so resumed sessions keep allocating fresh ids without
- * re-firing anything. `turn.launch` (`launchTurn`) stays registered only to
- * replay sessions written at wire protocol 1.5. Bound at Agent scope.
+ * re-firing anything. Bound at Agent scope.
  */
 
 import { createControlledPromise } from '@antfu/utils';

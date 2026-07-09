@@ -18,7 +18,11 @@ export const TASK_AGENT_ROLE_PREFIX =
   'You must treat the parent agent as your caller. Do not directly ask the end user questions. ' +
   'If something is unclear, explain the ambiguity in your final summary to the parent agent.';
 
-export function renderSystemPrompt(roleAdditional: string, context: AgentProfileContext): string {
+export function renderSystemPrompt(
+  roleAdditional: string,
+  context: AgentProfileContext,
+  tools: readonly string[],
+): string {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
   return renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
@@ -30,6 +34,6 @@ export function renderSystemPrompt(roleAdditional: string, context: AgentProfile
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
-    KIMI_SKILLS: context.skills ?? '',
+    KIMI_SKILLS: tools.includes('Skill') ? (context.skills ?? '') : '',
   });
 }

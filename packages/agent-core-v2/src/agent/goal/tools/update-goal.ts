@@ -22,7 +22,9 @@ export const UpdateGoalToolInputSchema = z
   .object({
     status: z
       .enum(['active', 'complete', 'paused', 'blocked'])
-      .describe('The lifecycle status to set for the current goal.'),
+      .describe(
+        'The lifecycle status to set for the current goal. Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same non-terminal blocking condition repeats for at least 3 consecutive goal turns.',
+      ),
   })
   .strict();
 

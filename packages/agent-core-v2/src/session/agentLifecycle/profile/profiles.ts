@@ -88,8 +88,11 @@ const EXPLORE_TOOLS = [
 
 const CODER_ROLE =
   `${TASK_AGENT_ROLE_PREFIX}\n\n` +
-  'Use this agent for non-trivial software engineering work that may require reading files, ' +
-  'editing code, running commands, and returning a compact but technically complete summary to the parent agent.';
+  'Your final message is the entire handoff — the parent sees nothing else from your run. ' +
+  'Make it technically complete: what you changed and why, the path of every file you touched, ' +
+  'how you verified the change (tests or commands run, with results), and anything left undone ' +
+  'or worth follow-up. A final message of only a sentence or two is treated as too brief and ' +
+  'sent back to you for expansion, costing an extra turn.';
 
 const DEFAULT_SUMMARY_POLICY = {
   minChars: 200,
@@ -101,16 +104,17 @@ registerAgentProfile({
   name: 'agent',
   description: 'Default Kimi Code agent',
   tools: AGENT_TOOLS,
-  systemPrompt: (context) => renderSystemPrompt('', context),
+  systemPrompt: (context) => renderSystemPrompt('', context, AGENT_TOOLS),
 });
 
 registerAgentProfile({
   name: 'coder',
-  description: 'Good at general software engineering tasks.',
+  description:
+    'General software engineering agent — the only subagent type with file-editing tools; use it for any delegated task that must modify code.',
   whenToUse:
     'Use this agent for non-trivial software engineering work that may require reading files, editing code, running commands, and returning a compact but technically complete summary to the parent agent.',
   tools: CODER_TOOLS,
-  systemPrompt: (context) => renderSystemPrompt(CODER_ROLE, context),
+  systemPrompt: (context) => renderSystemPrompt(CODER_ROLE, context, CODER_TOOLS),
   summaryPolicy: DEFAULT_SUMMARY_POLICY,
 });
 
@@ -120,7 +124,7 @@ registerAgentProfile({
   whenToUse:
     'Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (e.g. "src/**/*.yaml"), search code for keywords (e.g. "database connection"), or answer questions about the codebase (e.g. "how does the auth module work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "thorough" for comprehensive analysis across multiple locations and naming conventions. Use this agent for any read-only exploration that will clearly require more than 3 search queries. Prefer launching multiple explore agents concurrently when investigating independent questions.',
   tools: EXPLORE_TOOLS,
-  systemPrompt: (context) => renderSystemPrompt(EXPLORE_ROLE, context),
+  systemPrompt: (context) => renderSystemPrompt(EXPLORE_ROLE, context, EXPLORE_TOOLS),
   promptPrefix: async ({ cwd, runner, log }) => {
     try {
       return await collectGitContext(runner, cwd, log);

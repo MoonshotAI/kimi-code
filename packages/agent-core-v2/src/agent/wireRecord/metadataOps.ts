@@ -3,9 +3,10 @@
  *
  * Declares a marker-only wire Model and the `metadata` Op whose flattened
  * record carries the wire-protocol envelope (`protocol_version`, `created_at`)
- * as the first record of each agent `wire.jsonl`. Defined through the low-level
- * `wire` registry so `WireService` can persist the envelope through the same
- * append path as every other Op. Scope-agnostic.
+ * as the first record of each agent `wire.jsonl`. It is the only persisted
+ * record that opts out of the `time` stamp, matching v1. Defined through the
+ * low-level `wire` registry so `WireService` can persist the envelope through
+ * the same append path as every other Op. Scope-agnostic.
  */
 
 import { defineModel } from '#/wire/model';
@@ -19,7 +20,6 @@ export interface WireMetadataPayload {
 }
 
 export const wireMetadata = defineOp(MetadataModel, 'metadata', {
-  // v1 parity: the metadata envelope is the only record without a `time` stamp.
   stamp: false,
   apply: (s, _p: WireMetadataPayload): null => s,
 });

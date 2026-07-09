@@ -7,13 +7,15 @@
  * `effective` config: the reserved model entry, `defaultModel`, and the request
  * `modelOverrides`. The overlay is applied ONLY to the in-memory `effective`
  * view; its `strip` removes the synthesized values on the write path so they
- * never reach `config.toml`. Registered into `IConfigRegistry` by `ModelService`
- * on construction, so the `config` domain never imports this domain's model
- * semantics.
+ * never reach `config.toml`. Self-registered into `IConfigRegistry` at module
+ * load (see `configOverlayContributions.ts`), so the `config` domain never
+ * imports this domain's model semantics, and so the overlay takes effect even
+ * when `ModelService` is never instantiated.
  */
 
 import { parseBooleanEnv } from '#/_base/utils/env';
 import type { ConfigEffectiveOverlay } from '#/app/config/config';
+import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
 import { ErrorCodes, KimiError } from '#/errors';
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
 
@@ -219,3 +221,8 @@ function collectModelOverrides(input: {
   }
   return Object.keys(modelOverrides).length > 0 ? modelOverrides : undefined;
 }
+
+// Self-register at module load so the overlay takes effect even when
+// `ModelService` is never instantiated (the DI layer does not auto-instantiate
+// `Eager` services). Drained by `ConfigRegistry` on construction.
+registerConfigOverlay(kimiModelEnvOverlay);

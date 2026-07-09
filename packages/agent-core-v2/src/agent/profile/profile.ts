@@ -154,6 +154,11 @@ export interface IAgentProfileService {
    */
   applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
   /**
+   * Re-render the active profile's system prompt from freshly gathered runtime
+   * context without changing the active tool set.
+   */
+  refreshSystemPrompt(): Promise<void>;
+  /**
    * The AGENTS.md size warning produced by the most recent {@link applyProfile},
    * if the combined AGENTS.md content exceeded the recommended soft budget.
    * `undefined` when no oversized content has been observed.

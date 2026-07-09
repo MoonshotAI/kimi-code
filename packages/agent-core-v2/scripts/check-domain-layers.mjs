@@ -121,6 +121,7 @@ const DOMAIN_LAYER = new Map([
   ['permissionGate', 3],
   ['flag', 3],
   ['toolExecutor', 3],
+  ['toolResultTruncation', 3],
   ['toolRegistry', 3],
   ['userTool', 3],
   ['permissionMode', 3],

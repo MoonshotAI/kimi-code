@@ -9,13 +9,12 @@
  * single log→model boundary: it ignores non-`todo` keys and sanitizes the
  * value through `readTodoItems`, so every consumer (`getTodos`, the tool
  * render, the stale reminder, the compaction summary) can trust the Model
- * without re-validating. A replay-only `todo.set` Op is kept for early v2
- * development logs that persisted the pre-alignment record type. Consumed
- * cross-scope by the Session-scope `SessionTodoService`: it dispatches to the
- * MAIN agent's wire (the single source of truth and replayable timeline) and,
- * on `wire.onRestored`, reads the rebuilt Model back from that same wire. The
- * Ops register into the global `OP_REGISTRY` at import time, so they are in
- * place before the main agent replays.
+ * without re-validating. Consumed cross-scope by the Session-scope
+ * `SessionTodoService`: it dispatches to the MAIN agent's wire (the single
+ * source of truth and replayable timeline) and, on `wire.onRestored`, reads the
+ * rebuilt Model back from that same wire. The Ops register into the global
+ * `OP_REGISTRY` at import time, so they are in place before the main agent
+ * replays.
  */
 
 import { defineModel } from '#/wire/model';
@@ -35,10 +34,4 @@ export interface ToolStoreUpdatePayload {
 export const todoSet = defineOp(TodoModel, 'tools.update_store', {
   apply: (s, p: ToolStoreUpdatePayload): TodoModelState =>
     p.key === 'todo' ? readTodoItems(p.value) : s,
-});
-
-/** @deprecated Replay-only: early v2 dev logs persisted `todo.set` before the v1 alignment. */
-export const legacyTodoSet = defineOp(TodoModel, 'todo.set', {
-  apply: (_s, p: { readonly todos: readonly TodoItem[] }): TodoModelState =>
-    readTodoItems(p.todos),
 });

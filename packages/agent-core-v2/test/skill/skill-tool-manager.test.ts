@@ -27,29 +27,33 @@ function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): Sk
 }
 
 function recordContainsSkillLoaded(record: unknown, skillName: string): boolean {
-  if (!isRecordWithMessages(record)) return false;
-  return record.messages.some((message) => {
-    return message.content?.some((part) => {
+  if (!isRecordWithMessage(record)) return false;
+  return (
+    record.message.content?.some((part) => {
       return (
         part.type === 'text' &&
         typeof part.text === 'string' &&
         part.text.includes(`<kimi-skill-loaded name="${skillName}"`)
       );
-    });
-  });
+    }) ?? false
+  );
 }
 
-function isRecordWithMessages(
+function isRecordWithMessage(
   record: unknown,
 ): record is {
   readonly type: string;
-  readonly messages: readonly {
+  readonly message: {
     readonly content?: readonly { readonly type?: string; readonly text?: string }[];
-  }[];
+  };
 } {
   if (record === null || typeof record !== 'object') return false;
-  const candidate = record as { readonly type?: unknown; readonly messages?: unknown };
-  return candidate.type === 'context.splice' && Array.isArray(candidate.messages);
+  const candidate = record as { readonly type?: unknown; readonly message?: unknown };
+  return (
+    candidate.type === 'context.append_message' &&
+    candidate.message !== null &&
+    typeof candidate.message === 'object'
+  );
 }
 
 describe('ToolManager SkillTool registration', () => {
@@ -232,29 +236,27 @@ describe('ToolManager SkillTool wire behavior', () => {
       (record) => recordContainsSkillLoaded(record, 'review'),
     );
     expect(skillSplice).toMatchObject({
-      type: 'context.splice',
-      messages: [
-        expect.objectContaining({
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: [
-                'Skill tool loaded instructions for this request. Follow them.',
-                '',
-                '<kimi-skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
-                'body of review',
-                '</kimi-skill-loaded>',
-              ].join('\n'),
-            },
-          ],
-          origin: expect.objectContaining({
-            kind: 'skill_activation',
-            skillName: 'review',
-            trigger: 'model-tool',
-          }),
+      type: 'context.append_message',
+      message: expect.objectContaining({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              'Skill tool loaded instructions for this request. Follow them.',
+              '',
+              '<kimi-skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
+              'body of review',
+              '</kimi-skill-loaded>',
+            ].join('\n'),
+          },
+        ],
+        origin: expect.objectContaining({
+          kind: 'skill_activation',
+          skillName: 'review',
+          trigger: 'model-tool',
         }),
-      ],
+      }),
     });
     expect(persistence.records.find((record) => record.type === 'skill.activate')).toMatchObject({
       type: 'skill.activate',
@@ -326,12 +328,7 @@ describe('ToolManager SkillTool restore behavior', () => {
 
     await ctx.restore([
       { type: 'skill.activate', origin },
-      {
-        type: 'context.splice',
-        start: 0,
-        deleteCount: 0,
-        messages: [message],
-      },
+      { type: 'context.append_message', message },
     ]);
 
     expect(emit).toHaveBeenCalledWith({

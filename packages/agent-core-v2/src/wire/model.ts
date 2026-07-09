@@ -26,6 +26,10 @@
  * this file stays free of `app/llmProtocol` imports (L2 → L3 boundary); the
  * cast happens once inside `WireService`.
  *
+ * A primary Model may register cross-model reducers keyed by foreign op types:
+ * `WireService.execute` runs them on both dispatch and replay, so v1-derived
+ * restore effects can stay replayable without persisting extra records.
+ *
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
  * for the references returned by `getModel` / `subscribe`: functions pass
  * through, `Map` / `Set` widen to `ReadonlyMap` / `ReadonlySet`, arrays and
@@ -49,15 +53,6 @@ export interface ModelDef<S> {
   readonly blobs?: ModelBlobCodec<S>;
 }
 
-/**
- * Cross-model fold registration: a primary model may declare `reducers` keyed
- * by *foreign* op types (ops owned by another model). `WireService.execute`
- * runs them on both dispatch and replay, so a state change that v1 derived
- * while restoring another domain's record (e.g. popping the swarm-mode
- * reminder when replaying `swarm_mode.exit`) stays replayable without
- * persisting an extra record. Registered at `defineModel` time into this
- * module-level registry, mirroring `OP_REGISTRY`.
- */
 export interface ModelCrossReducerEntry {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly model: ModelDef<any>;

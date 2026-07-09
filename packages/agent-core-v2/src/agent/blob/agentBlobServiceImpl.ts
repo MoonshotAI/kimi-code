@@ -18,6 +18,7 @@ import {
   IAgentBlobService,
   MISSING_MEDIA_PLACEHOLDER,
 } from './agentBlobService';
+import { ByteLruCache } from './byteLruCache';
 
 const DEFAULT_THRESHOLD = 4096;
 const DEFAULT_MAX_CACHE_SIZE = 50 * 1024 * 1024;
@@ -27,9 +28,7 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
   declare readonly _serviceBrand: undefined;
 
   private readonly storageScope: string;
-  private readonly cache = new Map<string, Buffer>();
-  private readonly cacheSizes = new Map<string, number>();
-  private currentCacheSize = 0;
+  private readonly cache = new ByteLruCache(DEFAULT_MAX_CACHE_SIZE);
 
   constructor(
     @IBlobStore private readonly blobs: IBlobStore,
@@ -40,10 +39,6 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
 
   protected get threshold(): number {
     return DEFAULT_THRESHOLD;
-  }
-
-  protected get maxCacheSize(): number {
-    return DEFAULT_MAX_CACHE_SIZE;
   }
 
   isBlobRef(url: string): boolean {
@@ -72,7 +67,21 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
     return changed ? out : parts;
   }
 
-  private async offloadContentPart(part: ContentPart): Promise<ContentPart> {
+  private offloadContentPart(part: ContentPart): Promise<ContentPart> {
+    return this.rewriteMediaUrls(part, (url) => this.maybeOffloadString(url));
+  }
+
+  private loadContentPart(part: ContentPart): Promise<ContentPart> {
+    return this.rewriteMediaUrls(part, async (url) => {
+      if (!this.isBlobRef(url)) return url;
+      return (await this.loadBlobRefUrl(url)) ?? MISSING_MEDIA_PLACEHOLDER;
+    });
+  }
+
+  private async rewriteMediaUrls(
+    part: ContentPart,
+    transformUrl: (url: string) => Promise<string>,
+  ): Promise<ContentPart> {
     let updated: Record<string, unknown> | undefined;
     for (const [key, value] of Object.entries(part)) {
       const mediaObj = asMediaContainer(value);
@@ -81,7 +90,7 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
       const url = mediaObj.url;
       if (typeof url !== 'string') continue;
 
-      const newUrl = await this.maybeOffloadString(url);
+      const newUrl = await transformUrl(url);
       if (newUrl === url) continue;
 
       if (updated === undefined) updated = { ...part };
@@ -90,50 +99,26 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
     return updated === undefined ? part : (updated as unknown as ContentPart);
   }
 
-  private async loadContentPart(part: ContentPart): Promise<ContentPart> {
-    let updated: Record<string, unknown> | undefined;
-    for (const [key, value] of Object.entries(part)) {
-      const mediaObj = asMediaContainer(value);
-      if (mediaObj === undefined) continue;
-
-      const url = mediaObj.url;
-      if (typeof url !== 'string' || !this.isBlobRef(url)) continue;
-
-      const newUrl = await this.loadBlobRefUrl(url);
-      if (updated === undefined) updated = { ...part };
-      updated[key] = { ...(value as object), url: newUrl ?? MISSING_MEDIA_PLACEHOLDER };
-    }
-    return updated === undefined ? part : (updated as unknown as ContentPart);
-  }
-
   private async loadBlobRefUrl(url: string): Promise<string | undefined> {
-    const rest = url.slice(BLOBREF_PROTOCOL.length);
-    const semiIdx = rest.indexOf(';');
-    if (semiIdx === -1) return undefined;
+    const ref = parseBlobRef(url);
+    if (ref === undefined) return undefined;
 
-    const mimeType = rest.slice(0, semiIdx);
-    const hash = rest.slice(semiIdx + 1);
-    if (hash.length === 0) return undefined;
-
-    const payload = await this.readBlob(hash);
+    const payload = await this.readBlob(ref.hash);
     if (payload === undefined) return undefined;
 
-    return `data:${mimeType};base64,${payload.toString('base64')}`;
+    return formatDataUri(ref.mimeType, payload);
   }
 
   private async readBlob(hash: string): Promise<Buffer | undefined> {
     const cached = this.cache.get(hash);
-    if (cached !== undefined) {
-      this.cache.delete(hash);
-      this.cache.set(hash, cached);
-      return cached;
-    }
+    if (cached !== undefined) return cached;
 
     const payload = await this.blobs.get(this.storageScope, hash).catch(() => undefined);
-    if (payload !== undefined) {
-      this.setCache(hash, Buffer.from(payload));
-    }
-    return payload !== undefined ? Buffer.from(payload) : undefined;
+    if (payload === undefined) return undefined;
+
+    const buffer = Buffer.from(payload);
+    this.cache.set(hash, buffer);
+    return buffer;
   }
 
   private async maybeOffloadString(value: string): Promise<string> {
@@ -153,35 +138,27 @@ export class AgentBlobServiceImpl implements IAgentBlobService {
     const hash = createHash('sha256').update(base64Payload, 'utf8').digest('hex');
     const binary = Buffer.from(base64Payload, 'base64');
     await this.blobs.put(this.storageScope, hash, binary);
-    this.setCache(hash, binary);
-    return `${BLOBREF_PROTOCOL}${mimeType};${hash}`;
+    this.cache.set(hash, binary);
+    return formatBlobRef(mimeType, hash);
   }
+}
 
-  private setCache(hash: string, payload: Buffer): void {
-    const size = payload.byteLength;
-    if (this.cache.has(hash)) {
-      const oldSize = this.cacheSizes.get(hash) ?? 0;
-      this.currentCacheSize += size - oldSize;
-      this.cache.delete(hash);
-    } else {
-      if (size > this.maxCacheSize) return;
-      while (this.currentCacheSize + size > this.maxCacheSize && this.cache.size > 0) {
-        this.evictLRU();
-      }
-      this.currentCacheSize += size;
-    }
-    this.cache.set(hash, payload);
-    this.cacheSizes.set(hash, size);
-  }
+function formatBlobRef(mimeType: string, hash: string): string {
+  return `${BLOBREF_PROTOCOL}${mimeType};${hash}`;
+}
 
-  private evictLRU(): void {
-    const lru = this.cache.keys().next().value;
-    if (lru === undefined) return;
-    const size = this.cacheSizes.get(lru) ?? 0;
-    this.currentCacheSize -= size;
-    this.cache.delete(lru);
-    this.cacheSizes.delete(lru);
-  }
+function parseBlobRef(url: string): { mimeType: string; hash: string } | undefined {
+  if (!url.startsWith(BLOBREF_PROTOCOL)) return undefined;
+  const rest = url.slice(BLOBREF_PROTOCOL.length);
+  const semiIdx = rest.indexOf(';');
+  if (semiIdx === -1) return undefined;
+  const hash = rest.slice(semiIdx + 1);
+  if (hash.length === 0) return undefined;
+  return { mimeType: rest.slice(0, semiIdx), hash };
+}
+
+function formatDataUri(mimeType: string, payload: Buffer): string {
+  return `data:${mimeType};base64,${payload.toString('base64')}`;
 }
 
 function asMediaContainer(value: unknown): { url: unknown } | undefined {

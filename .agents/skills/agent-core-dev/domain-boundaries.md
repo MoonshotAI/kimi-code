@@ -154,9 +154,8 @@ Entity-service conclusion for `agent`:
 | Concern | Owner | Notes |
 |---|---|---|
 | Active `Turn` handle | `turn` | `id`, `abortController`, `ready`, `result` |
-| Turn id allocation | `turn` | Restored from `turn.launch` records |
+| Turn id allocation | `turn` | Restored from `turn.prompt` records and `context.append_loop_event` turn ids |
 | Turn lifecycle hooks | `turn` | `onLaunched`, `onEnded`, `beforeStep`, `afterStep` |
-| `turn.launch` record type | `turn` | Durable fact carried by `wireRecord` |
 | `turn.started` / `turn.ended` live events | `turn` | Live event stream |
 
 `turn` must not own these:

@@ -71,13 +71,6 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'mcp.tools_discovered',
 ]);
 
-/** Registered for replaying old logs only; the live path never dispatches them. */
-const REPLAY_ONLY_TYPES: ReadonlySet<string> = new Set([
-  'turn.launch',
-  'todo.set',
-  'context.splice',
-]);
-
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
   const KEY = 'v1-vocabulary-test';
@@ -110,7 +103,6 @@ describe('v1 wire vocabulary', () => {
   it('every persisted op type is a v1 record type', () => {
     for (const [type, descriptor] of OP_REGISTRY) {
       if (descriptor.persist === false) continue;
-      if (REPLAY_ONLY_TYPES.has(type)) continue;
       expect(V1_RECORD_TYPES.has(type), `op "${type}" persists a non-v1 record type`).toBe(true);
     }
   });
@@ -396,16 +388,12 @@ describe('AgentRecords persistence metadata', () => {
     await ctx.restore([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
-        type: 'context.splice',
-        start: 0,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'restored prompt' }],
-            toolCalls: [],
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'restored prompt' }],
+          toolCalls: [],
+        },
       },
       {
         type: 'context_size.measured',
@@ -438,7 +426,7 @@ describe('IAgentWireRecordService.records()', () => {
   it('returns restored records in order, excluding metadata', async () => {
     const persistence = new InMemoryWireRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
-      { type: 'context.splice', start: 0, deleteCount: 0, messages: [userMessage('restored')] },
+      { type: 'context.append_message', message: userMessage('restored') },
     ]);
     const records = createTestAgent({ persistence, autoConfigure: false }).wireRecord;
     await records.restore();
@@ -447,7 +435,7 @@ describe('IAgentWireRecordService.records()', () => {
     const types = snapshot
       .map((record) => record.type)
       .filter((type) => type !== 'config.update');
-    expect(types).toEqual(['context.splice']);
+    expect(types).toEqual(['context.append_message']);
     // A copy is returned, so mutating it must not affect the service.
     const lengthBefore = records.getRecords().length;
     (snapshot as unknown as PersistedWireRecord[]).pop();

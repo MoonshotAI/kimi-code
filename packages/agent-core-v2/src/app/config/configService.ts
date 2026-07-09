@@ -49,6 +49,7 @@ import {
 } from './config';
 import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './configPure';
 import { getConfigSectionContributions } from './configSectionContributions';
+import { getConfigOverlayContributions } from './configOverlayContributions';
 import {
   applySectionToToml,
   camelToSnake,
@@ -149,6 +150,12 @@ export class ConfigRegistry implements IConfigRegistry {
     // is first resolved, independent of owning-Service construction.
     for (const c of getConfigSectionContributions()) {
       this.registerSection(c.domain, c.schema, c.options);
+    }
+    // Drain module-level overlay contributions (see
+    // `configOverlayContributions.ts`) for the same reason: an overlay must
+    // take effect even if its owning Service is never instantiated.
+    for (const overlay of getConfigOverlayContributions()) {
+      this.registerEffectiveOverlay(overlay);
     }
   }
 

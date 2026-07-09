@@ -182,67 +182,51 @@ describe('Agent resume', () => {
     const persistence = new RecordingAgentPersistence([
       resumeConfigRecord(),
       {
-        type: 'context.splice',
-        start: 0,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'Run lookup' }],
-            toolCalls: [],
-            origin: { kind: 'user' },
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run lookup' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
       },
       {
-        type: 'turn.launch',
-        turnId: 0,
+        type: 'turn.prompt',
+        input: [],
         origin: { kind: 'user' },
       },
       {
-        type: 'context.splice',
-        start: 1,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'assistant',
-            content: [],
-            toolCalls: [
-              {
-                type: 'function',
-                id: 'call_lookup',
-                name: 'Lookup',
-                arguments: JSON.stringify({ query: 'moon' }),
-              },
-            ],
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_lookup',
+              name: 'Lookup',
+              arguments: JSON.stringify({ query: 'moon' }),
+            },
+          ],
+        },
       },
       {
-        type: 'context.splice',
-        start: 2,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'Follow-up recorded before result' }],
-            toolCalls: [],
-            origin: { kind: 'user' },
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Follow-up recorded before result' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
       },
       {
-        type: 'context.splice',
-        start: 3,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'tool',
-            content: [{ type: 'text', text: 'lookup result' }],
-            toolCalls: [],
-            toolCallId: 'call_lookup',
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'lookup result' }],
+          toolCalls: [],
+          toolCallId: 'call_lookup',
+        },
       },
     ] as unknown as PersistedWireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
@@ -597,47 +581,35 @@ describe('Agent resume', () => {
   it('drops an orphan tool result whose call was never recorded', async () => {
     const persistence = new RecordingAgentPersistence([
       {
-        type: 'context.splice',
-        start: 0,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: 'Hi' }],
-            toolCalls: [],
-            origin: { kind: 'user' },
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hi' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
       },
       {
-        type: 'turn.launch',
-        turnId: 0,
+        type: 'turn.prompt',
+        input: [],
         origin: { kind: 'user' },
       },
       {
-        type: 'context.splice',
-        start: 1,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'Hello.' }],
-            toolCalls: [],
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Hello.' }],
+          toolCalls: [],
+        },
       },
       {
-        type: 'context.splice',
-        start: 2,
-        deleteCount: 0,
-        messages: [
-          {
-            role: 'tool',
-            content: [{ type: 'text', text: 'orphaned' }],
-            toolCalls: [],
-            toolCallId: 'call_ghost',
-          },
-        ],
+        type: 'context.append_message',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'orphaned' }],
+          toolCalls: [],
+          toolCallId: 'call_ghost',
+        },
       },
     ] as unknown as PersistedWireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
@@ -952,96 +924,76 @@ function resumeDeferredSystemReminderHistory(): PersistedWireRecord[] {
   return [
     resumeConfigRecord(),
     {
-      type: 'context.splice',
-      start: 0,
-      deleteCount: 0,
-      messages: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: 'Historical prompt before skill' }],
-          toolCalls: [],
-          origin: { kind: 'user' },
-        },
-      ],
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Historical prompt before skill' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
     },
     {
-      type: 'turn.launch',
-      turnId: 0,
+      type: 'turn.prompt',
+      input: [],
       origin: { kind: 'user' },
     },
     {
-      type: 'context.splice',
-      start: 1,
-      deleteCount: 0,
-      messages: [
-        {
-          role: 'assistant',
-          content: [],
-          toolCalls: [
-            {
-              type: 'function',
-              id: 'call_resume_write',
-              name: 'Write',
-              arguments: JSON.stringify({ path: 'result.txt' }),
-            },
-            {
-              type: 'function',
-              id: 'call_resume_skill',
-              name: 'Skill',
-              arguments: JSON.stringify({ skill: 'review' }),
-            },
-          ],
-        },
-      ],
-    },
-    {
-      type: 'context.splice',
-      start: 2,
-      deleteCount: 0,
-      messages: [
-        {
-          role: 'tool',
-          content: [{ type: 'text', text: 'wrote file' }],
-          toolCalls: [],
-          toolCallId: 'call_resume_write',
-        },
-      ],
-    },
-    {
-      type: 'context.splice',
-      start: 3,
-      deleteCount: 0,
-      messages: [
-        {
-          role: 'tool',
-          content: [{ type: 'text', text: 'skill loaded' }],
-          toolCalls: [],
-          toolCallId: 'call_resume_skill',
-        },
-      ],
-    },
-    {
-      type: 'context.splice',
-      start: 4,
-      deleteCount: 0,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: '<system-reminder>\nresume skill body\n</system-reminder>',
-            },
-          ],
-          toolCalls: [],
-          origin: {
-            kind: 'skill_activation',
-            activationId: 'act_resume_skill',
-            skillName: 'review',
-            trigger: 'model-tool',
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'call_resume_write',
+            name: 'Write',
+            arguments: JSON.stringify({ path: 'result.txt' }),
           },
+          {
+            type: 'function',
+            id: 'call_resume_skill',
+            name: 'Skill',
+            arguments: JSON.stringify({ skill: 'review' }),
+          },
+        ],
+      },
+    },
+    {
+      type: 'context.append_message',
+      message: {
+        role: 'tool',
+        content: [{ type: 'text', text: 'wrote file' }],
+        toolCalls: [],
+        toolCallId: 'call_resume_write',
+      },
+    },
+    {
+      type: 'context.append_message',
+      message: {
+        role: 'tool',
+        content: [{ type: 'text', text: 'skill loaded' }],
+        toolCalls: [],
+        toolCallId: 'call_resume_skill',
+      },
+    },
+    {
+      type: 'context.append_message',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<system-reminder>\nresume skill body\n</system-reminder>',
+          },
+        ],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act_resume_skill',
+          skillName: 'review',
+          trigger: 'model-tool',
         },
-      ],
+      },
     },
   ] as unknown as PersistedWireRecord[];
 }
@@ -1056,31 +1008,30 @@ function resumeConfigRecord(): PersistedWireRecord {
   } as unknown as PersistedWireRecord;
 }
 
-function contextSpliceRecord(
-  start: number,
+function contextAppendRecord(
+  _start: number,
   messages: readonly {
     readonly role: 'user' | 'assistant';
     readonly text: string;
     readonly origin?: PromptOrigin;
   }[],
 ): PersistedWireRecord {
+  const message = messages[0]!;
   return {
-    type: 'context.splice',
-    start,
-    deleteCount: 0,
-    messages: messages.map((message) => ({
+    type: 'context.append_message',
+    message: {
       role: message.role,
       content: [{ type: 'text', text: message.text }],
       toolCalls: [],
       origin: message.origin,
-    })),
+    },
   } as unknown as PersistedWireRecord;
 }
 
-function turnLaunchRecord(turnId: number, origin: PromptOrigin): PersistedWireRecord {
+function turnPromptRecord(_turnId: number, origin: PromptOrigin): PersistedWireRecord {
   return {
-    type: 'turn.launch',
-    turnId,
+    type: 'turn.prompt',
+    input: [],
     origin,
   } as unknown as PersistedWireRecord;
 }
@@ -1093,9 +1044,9 @@ function canonicalPromptedTurn(
 ): PersistedWireRecord[] {
   const origin: PromptOrigin = { kind: 'user' };
   return [
-    contextSpliceRecord(start, [{ role: 'user', text: promptText, origin }]),
-    turnLaunchRecord(turnId, origin),
-    contextSpliceRecord(start + 1, [{ role: 'assistant', text: responseText }]),
+    contextAppendRecord(start, [{ role: 'user', text: promptText, origin }]),
+    turnPromptRecord(turnId, origin),
+    contextAppendRecord(start + 1, [{ role: 'assistant', text: responseText }]),
   ];
 }
 
@@ -1105,8 +1056,8 @@ function canonicalContinuationTurn(
   start: number,
 ): PersistedWireRecord[] {
   return [
-    turnLaunchRecord(turnId, { kind: 'system_trigger', name: 'goal_continuation' }),
-    contextSpliceRecord(start, [{ role: 'assistant', text: responseText }]),
+    turnPromptRecord(turnId, { kind: 'system_trigger', name: 'goal_continuation' }),
+    contextAppendRecord(start, [{ role: 'assistant', text: responseText }]),
   ];
 }
 

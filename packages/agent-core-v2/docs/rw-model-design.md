@@ -7,6 +7,12 @@
 >
 > 阅读顺序：§1 问题 → §2 概念模型（核心） → §3–§6 各原语规范 → §7 订阅协议 →
 > §8 回环控制 → §9 迁移路径。附录 A 是"现有机制 → 新模型"的逐条映射。
+>
+> **更新注**：本文档撰写时，`todo.set` / `turn.launch` / `context.splice` 仍是
+> agent-core-v2 的 wire record 类型。后续的重构（v1 vocabulary 对齐）已删除这三个
+> replay-only / pre-alignment 类型，统一改用 v1 的 `tools.update_store`
+> （`key: 'todo'`）、`turn.prompt`、`context.append_message` 等。本文档中涉及这些
+> 类型的示例与映射，按上述替换理解。
 
 ---
 

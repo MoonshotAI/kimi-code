@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -19,14 +19,16 @@ import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../harness';
-import { appServices, createCommandRunner, execEnvServices, sessionServices, testAgent } from '../harness';
+import { appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../harness';
 import {
   IAgentFullCompactionService,
   IOAuthService,
   IAgentProfileService,
   ISessionTodoService,
+  type ResolvedAgentProfile,
 } from '#/index';
 import { IAgentTurnService } from '#/agent/turn/turn';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
@@ -53,6 +55,19 @@ const SNAPSHOT_VISIBLE_TOOLS = [
   'EnterPlanMode',
   'ExitPlanMode',
 ] as const;
+const EXACT_COMPACTION_REFRESH_PROFILE: ResolvedAgentProfile = {
+  name: 'exact-compaction-refresh',
+  systemPrompt: (context) =>
+    [
+      `cwd:${context.cwd ?? ''}`,
+      `os:${context.osKind ?? ''}`,
+      `shell:${context.shellName ?? ''}:${context.shellPath ?? ''}`,
+      `agents:${context.agentsMd ?? ''}`,
+      `ls:${context.cwdListing ?? ''}`,
+      `extra:${context.additionalDirsInfo ?? ''}`,
+    ].join('\n'),
+  tools: ['Read', 'Write', 'Skill'],
+};
 
 describe('FullCompaction', () => {
   it('keeps an oversized trailing user message as recent', () => {
@@ -278,6 +293,46 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('refreshes the active profile system prompt after compaction without resetting active tools', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-home-'));
+    const workDir = mkdtempSync(join(tmpdir(), 'kimi-compact-refresh-work-'));
+    try {
+      writeFileSync(join(workDir, 'AGENTS.md'), 'old project instructions', 'utf-8');
+      const ctx = testAgent(
+        execEnvServices({ hostFs: new HostFileSystem() }),
+        hostEnvironmentServices(homeDir),
+        { autoConfigure: false, cwd: workDir },
+      );
+      ctx.configureRuntimeModel(CATALOGUED_PROVIDER, CATALOGUED_MODEL_CAPABILITIES);
+      const profile = ctx.get(IAgentProfileService);
+      await profile.applyProfile(EXACT_COMPACTION_REFRESH_PROFILE);
+      profile.update({ activeToolNames: ['Read'] });
+
+      expect(profile.data().systemPrompt).toBe(
+        exactCompactionRefreshPrompt(workDir, 'old project instructions'),
+      );
+
+      const refreshSpy = vi.spyOn(profile, 'refreshSystemPrompt');
+      writeFileSync(join(workDir, 'AGENTS.md'), 'new project instructions', 'utf-8');
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+      const completed = ctx.once('compaction.completed');
+
+      ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+      await ctx.rpc.beginCompaction({});
+      await completed;
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+      expect(profile.data().systemPrompt).toBe(
+        exactCompactionRefreshPrompt(workDir, 'new project instructions'),
+      );
+      expect(profile.getActiveToolNames()).toEqual(['Read']);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a manual compaction while a turn is active', async () => {
     const ctx = testAgent(execEnvServices({ processRunner: createCommandRunner('should-not-run') }));
     ctx.configure({
@@ -317,10 +372,8 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     await ctx.dispatch({
-      type: 'context.splice',
-      start: ctx.context.get().length,
-      deleteCount: 0,
-      messages: [{ role: 'assistant', content: [], toolCalls: [] }],
+      type: 'context.append_message',
+      message: { role: 'assistant', content: [], toolCalls: [] },
     });
     ctx.appendExchange(3, 'old user two', 'old assistant two', 40);
     const compacted = new Promise<void>((resolve) => {
@@ -2441,6 +2494,17 @@ function countEvents(events: ReturnType<TestAgentContext['newEvents']>, type: st
     if (typeof event !== 'object' || event === null) return false;
     return (event as { readonly event?: unknown }).event === type;
   }).length;
+}
+
+function exactCompactionRefreshPrompt(workDir: string, agentsMd: string): string {
+  return [
+    `cwd:${workDir}`,
+    'os:Linux',
+    'shell:bash:/bin/bash',
+    `agents:<!-- From: ${join(workDir, 'AGENTS.md')} -->\n${agentsMd}`,
+    'ls:\u2514\u2500\u2500 AGENTS.md',
+    'extra:',
+  ].join('\n');
 }
 
 function oauthTestAgentOptions(

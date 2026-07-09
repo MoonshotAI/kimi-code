@@ -26,7 +26,6 @@
  *                                   at compaction summaries / clear floor)
  *   - `context.clear`             → keep prior transcript entries but reset the
  *                                   folded view
- *   - `context.splice`            → array splice (legacy 1.5 / internal)
  */
 
 import { type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
@@ -201,23 +200,6 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
       case 'context.append_loop_event':
         applyLoopEvent(record['event'] as LoopRecordedEvent);
         break;
-      case 'context.splice': {
-        const start = record['start'] as number;
-        const deleteCount = record['deleteCount'] as number;
-        const messages = record['messages'] as readonly ContextMessage[];
-        if (deleteCount === 0 && messages.length === 0) break;
-        // The transcript is append-only (matches the TUI / replay-builder
-        // transcript): a splice's inserted messages land at the tail and the
-        // deleted messages stay for display, so legacy compaction-via-splice
-        // keeps the pre-compaction prefix. `foldedLength` tracks the literal
-        // live-context length after the splice.
-        for (const message of messages) transcript.push(toMutableEntry(message));
-        const clampedStart = Math.min(Math.max(start, 0), foldedLength);
-        const removed = Math.min(deleteCount, foldedLength - clampedStart);
-        foldedLength = foldedLength - removed + messages.length;
-        resetOpenState();
-        break;
-      }
       case 'context.apply_compaction': {
         // The live context folds into `[...keptUserMessages, summary]`; the
         // transcript keeps the full history and appends the summary marker.

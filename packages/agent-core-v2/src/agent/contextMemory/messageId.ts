@@ -13,7 +13,6 @@
 
 import { ulid } from 'ulid';
 
-/** Allocate a fresh local (non-persisted) message id (`msg_<ulid>`). */
 export function newMessageId(): string {
   return `msg_${ulid()}`;
 }

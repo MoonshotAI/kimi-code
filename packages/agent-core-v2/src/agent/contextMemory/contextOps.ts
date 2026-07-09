@@ -3,8 +3,7 @@
  * 1.4 Ops `context.append_message` (`contextAppendMessage`) / `context.clear`
  * (`contextClear`) / `context.apply_compaction` (`contextApplyCompaction`) /
  * `context.undo` (`contextUndo`) / `context.append_loop_event`
- * (`contextAppendLoopEvent`) for the per-agent conversation history, plus the
- * legacy `context.splice` (`contextSplice`) Op.
+ * (`contextAppendLoopEvent`) for the per-agent conversation history.
  *
  * Declares the history as `ContextMessage[]` (initial `[]`); every Op's `apply`
  * is a pure array transform that returns a NEW reference on change and the SAME
@@ -18,18 +17,16 @@
  * same on-disk shape the v1 loop writes — and `contextAppendLoopEvent` folds
  * them into assistant / tool messages (see `loopEventFold.ts`) both at live
  * dispatch time and on replay, so v1- and v2-written sessions reduce
- * identically. `context.splice` (the pre-1.4 primitive) stays registered
- * replay-only so sessions written at wire protocol 1.5 still replay
- * (newer-version passthrough, no migration); the live path no longer
- * dispatches it. The swarm-mode exit reminder removal is a cross-model fold:
+ * identically. The swarm-mode exit reminder removal is a cross-model fold:
  * `ContextModel` registers a reducer on `swarm_mode.exit` (see
  * `popSwarmModeReminder`) so the pop replays from the `swarm_mode.exit` record
  * itself, exactly like v1's restore-time `popMatchedMessage`.
  *
  * Blob handling is declared as a `ModelBlobCodec` on `ContextModel.blobs`:
  * - `dehydrate(record, transform)`: at dispatch time, traverses message content
- *   in `context.splice` and `context.append_message` records, passing each
- *   `ContentPart[]` through `transform` to offload oversized data URIs.
+ *   in `context.append_message` and `context.append_loop_event` records,
+ *   passing each `ContentPart[]` through `transform` to offload oversized data
+ *   URIs.
  * - `rehydrate(state, transform)`: after replay, traverses the surviving final
  *   state and loads `blobref:` URLs back to inline data — skipping I/O for
  *   data that was compacted away during the session.
@@ -75,12 +72,6 @@ async function dehydrateRecord(
   record: PersistedRecord,
   transform: PartsTransformer,
 ): Promise<PersistedRecord> {
-  if (record.type === 'context.splice') {
-    const messages = record['messages'];
-    if (!Array.isArray(messages)) return record;
-    const { changed, result } = await dehydrateMessages(messages as ContextMessage[], transform);
-    return changed ? { ...record, messages: result } : record;
-  }
   if (record.type === 'context.append_message') {
     const message = record['message'] as ContextMessage | undefined;
     if (message === undefined) return record;
@@ -117,10 +108,6 @@ export const ContextModel = defineModel<ContextMessage[]>('contextMemory', () =>
     },
   },
   reducers: {
-    // v1 parity: replaying (or dispatching) `swarm_mode.exit` pops the
-    // swarm-mode enter reminder when it is the last message — the removal is
-    // derived from the exit record itself instead of persisting a splice,
-    // mirroring v1's `popMatchedMessage` during `swarm_mode.exit` restore.
     'swarm_mode.exit': popSwarmModeReminder,
   },
 });
@@ -132,23 +119,6 @@ function popSwarmModeReminder(state: ContextMessage[], _payload: unknown): Conte
   if (origin?.kind !== 'injection' || origin.variant !== 'swarm_mode') return state;
   return resetFold(state.slice(0, -1)) as ContextMessage[];
 }
-
-export interface ContextSplicePayload {
-  readonly start: number;
-  readonly deleteCount: number;
-  readonly messages: readonly ContextMessage[];
-  readonly tokens?: number;
-}
-
-/** @deprecated Legacy 1.5 record type; registered replay-only — the live path never dispatches it. */
-export const contextSplice = defineOp(ContextModel, 'context.splice', {
-  apply: (state, p: ContextSplicePayload): ContextMessage[] => {
-    if (p.deleteCount === 0 && p.messages.length === 0) return state;
-    const next = state.slice();
-    next.splice(p.start, p.deleteCount, ...p.messages);
-    return resetFold(next) as ContextMessage[];
-  },
-});
 
 export interface ContextMessagePayload {
   readonly message: ContextMessage;
@@ -163,14 +133,6 @@ export interface ContextLoopEventPayload {
   readonly event: LoopRecordedEvent;
 }
 
-/**
- * Folds a `context.append_loop_event` record into the history (see
- * `loopEventFold.ts`). Since the v1.4 wire-parity alignment the v2 live loop
- * dispatches (and persists) these records itself — one per streamed step
- * fragment, byte-compatible with the v1 loop — so the same fold runs both on
- * live dispatch and when `WireService.replay` reduces v1- or v2-written
- * sessions.
- */
 export const contextAppendLoopEvent = defineOp(ContextModel, 'context.append_loop_event', {
   apply: (state, p: ContextLoopEventPayload): ContextMessage[] =>
     foldLoopEvent(state, p.event) as ContextMessage[],

@@ -130,6 +130,65 @@ describe('AppendLogStore', () => {
     expect(out).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
   });
 
+  it('does not leak decoder state into a later read when an earlier read returns early', async () => {
+    // Regression for fork: `TextDecoder` in `stream` mode buffers a trailing
+    // incomplete multi-byte sequence. When a read returns early — the way
+    // `ensureWireMetadata` bails as soon as it sees the leading `metadata`
+    // record — it skips the final flushing `decode()`. A shared decoder would
+    // then carry that buffered sequence into the next read and prepend a
+    // U+FFFD to its first line, corrupting the `metadata` record
+    // (`append-log ...: corrupted line 1`) and breaking session fork.
+    const line1 = `${JSON.stringify({ type: 'metadata', protocol_version: '1.4' })}\n`;
+    const line2 = `${JSON.stringify({ type: 'context.append_message', s: '中文中文中文' })}\n`;
+    const bytes = enc.encode(line1 + line2);
+    // Split the first chunk through the middle of a '中' (3-byte UTF-8) in
+    // line2 so the decoder buffers an incomplete sequence when line1 is read.
+    const cut = bytes.indexOf(enc.encode('中')[0]!) + 1;
+    const chunks = [bytes.slice(0, cut), bytes.slice(cut)];
+    const localIx = disposables.add(new TestInstantiationService());
+    localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
+    localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const log = localIx.get(IAppendLogStore);
+
+    // First read: consume only the leading metadata record, then return early.
+    const first: Array<{ type: string }> = [];
+    for await (const r of log.read<{ type: string }>(SCOPE, KEY)) {
+      first.push(r);
+      break;
+    }
+    expect(first).toEqual([{ type: 'metadata', protocol_version: '1.4' }]);
+
+    // Second read: must start cleanly — no U+FFFD leaked from the first read.
+    const out: Array<{ type: string; s?: string }> = [];
+    for await (const r of log.read<{ type: string; s?: string }>(SCOPE, KEY)) out.push(r);
+    expect(out).toEqual([
+      { type: 'metadata', protocol_version: '1.4' },
+      { type: 'context.append_message', s: '中文中文中文' },
+    ]);
+  });
+
+  it('isolates decoder state between concurrent reads', async () => {
+    // Two reads of the same multi-byte content must not interfere with each
+    // other through a shared decoder: each read owns its decoder state.
+    const content = `${JSON.stringify({ s: '中文日本語' })}\n`;
+    const bytes = enc.encode(content);
+    // One byte per chunk to maximize the chance of mid-character splits.
+    const chunks = Array.from(bytes, (b) => new Uint8Array([b]));
+    const localIx = disposables.add(new TestInstantiationService());
+    localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
+    localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const log = localIx.get(IAppendLogStore);
+
+    const readAll = async (): Promise<Array<{ s: string }>> => {
+      const out: Array<{ s: string }> = [];
+      for await (const r of log.read<{ s: string }>(SCOPE, KEY)) out.push(r);
+      return out;
+    };
+    const [a, b] = await Promise.all([readAll(), readAll()]);
+    expect(a).toEqual([{ s: '中文日本語' }]);
+    expect(b).toEqual([{ s: '中文日本語' }]);
+  });
+
   it('reads across chunk boundaries with multi-byte UTF-8 split', async () => {
     const full = `${JSON.stringify({ n: 1, s: '中文' })}\n${JSON.stringify({ n: 2, s: '日本語' })}\n`;
     const bytes = enc.encode(full);

@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
 import { type ToolCall } from '#/app/llmProtocol/message';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/agent/tool/toolContract';
 import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool/toolHooks';
@@ -22,6 +25,7 @@ import { WireService } from '#/wire/wireServiceImpl';
 import { stubWireRecord } from '../contextMemory/stubs';
 import { registerLogServices } from '../log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
+import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
 import { stubLoopWithHooks, stubTurnWithHooks } from '../turn/stubs';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
@@ -63,10 +67,34 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
     additionalServices: (reg) => {
       reg.defineInstance(ITelemetryService, telemetry);
       reg.defineInstance(IEventBus, noopEventBus);
+      // Seeds the real executor needs to derive its per-agent homedir (used by
+      // the tool-result budgeter). Dedupe outputs are small, so the budgeter
+      // never writes to disk; a fixed path is sufficient.
+      const homedir = '/tmp/tool-dedupe-homedir';
+      reg.defineInstance(ISessionContext, {
+        _serviceBrand: undefined,
+        sessionId: 'session-1',
+        workspaceId: 'workspace-1',
+        sessionDir: homedir,
+        metaScope: 'sessions/workspace-1/session-1',
+        cwd: homedir,
+        scope: (sub?: string): string =>
+          sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
+      } satisfies ISessionContext);
+      reg.defineInstance(IAgentScopeContext, {
+        _serviceBrand: undefined,
+        agentId: 'main',
+        scope: (sub?: string): string => (sub ? `agents/main/${sub}` : 'agents/main'),
+      } satisfies IAgentScopeContext);
+      reg.defineInstance(IBootstrapService, {
+        homeDir: homedir,
+        agentHomedir: () => homedir,
+      } as unknown as IBootstrapService);
       reg.defineInstance(IAgentLoopService, loop);
       reg.defineInstance(IAgentTurnService, stubTurnWithHooks());
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      registerToolResultTruncationServices(reg);
       reg.defineInstance(IAgentWireRecordService, stubWireRecord());
       reg.defineInstance(
         IAgentWireService,
