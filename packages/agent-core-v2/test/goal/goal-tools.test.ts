@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  compileToolArgsValidator,
+  validateToolArgs,
+} from '#/_base/tools/args-validator';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { SetGoalBudgetTool } from '#/agent/goal/tools/set-goal-budget';
+import {
+  UpdateGoalTool,
+  UpdateGoalToolInputSchema,
+} from '#/agent/goal/tools/update-goal';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentTurnService } from '#/agent/turn/turn';
 import { IEventBus } from '#/app/event/eventBus';
@@ -17,7 +25,8 @@ describe('goal tools', () => {
   let goals: IAgentGoalService;
   let loopService: IAgentLoopService;
   let eventBus: IEventBus;
-  let tool: SetGoalBudgetTool;
+  let setGoalBudgetTool: SetGoalBudgetTool;
+  let updateGoalTool: UpdateGoalTool;
 
   beforeEach(() => {
     loopService = stubLoopWithHooks();
@@ -27,7 +36,8 @@ describe('goal tools', () => {
     );
     goals = ctx.get(IAgentGoalService);
     eventBus = ctx.get(IEventBus);
-    tool = new SetGoalBudgetTool(goals);
+    setGoalBudgetTool = new SetGoalBudgetTool(goals);
+    updateGoalTool = new UpdateGoalTool(goals);
   });
 
   afterEach(async () => {
@@ -35,7 +45,7 @@ describe('goal tools', () => {
   });
 
   it('SetGoalBudget reports no current goal without failing', async () => {
-    const execution = tool.resolveExecution({ value: 20, unit: 'turns' });
+    const execution = setGoalBudgetTool.resolveExecution({ value: 20, unit: 'turns' });
     if (execution.isError === true) throw new Error('execution should not be an error');
 
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_1', signal });
@@ -49,7 +59,7 @@ describe('goal tools', () => {
     await goals.createGoal({ objective: 'work' });
     await countGoalTurn(1);
 
-    const execution = tool.resolveExecution({ value: 1, unit: 'turns' });
+    const execution = setGoalBudgetTool.resolveExecution({ value: 1, unit: 'turns' });
     if (execution.isError === true) throw new Error('execution should not be an error');
 
     expect(execution.stopBatchAfterThis).toBe(true);
@@ -67,7 +77,7 @@ describe('goal tools', () => {
     await goals.createGoal({ objective: 'work' });
     await countGoalTurn(2);
 
-    const execution = tool.resolveExecution({ value: 5, unit: 'turns' });
+    const execution = setGoalBudgetTool.resolveExecution({ value: 5, unit: 'turns' });
     if (execution.isError === true) throw new Error('execution should not be an error');
 
     expect(execution.stopBatchAfterThis).toBeFalsy();
@@ -79,6 +89,32 @@ describe('goal tools', () => {
       status: 'active',
       budget: { turnBudget: 5, overBudget: false },
     });
+  });
+
+  it('UpdateGoal accepts only active / complete / blocked statuses', () => {
+    for (const status of ['active', 'complete', 'blocked']) {
+      expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);
+    }
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'blocked', reason: 'x' }).success).toBe(
+      false,
+    );
+    for (const status of ['paused', 'impossible', 'cancelled', '']) {
+      expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(false);
+    }
+  });
+
+  it('UpdateGoal forbids model-driven goal pauses', async () => {
+    await goals.createGoal({ objective: 'work' });
+    const validator = compileToolArgsValidator(updateGoalTool.parameters);
+
+    expect(validateToolArgs(validator, { status: 'paused' })).not.toBeNull();
+
+    const execution = updateGoalTool.resolveExecution({ status: 'paused' } as never);
+    expect(execution).toMatchObject({
+      isError: true,
+      output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+    });
+    expect(goals.getGoal().goal?.status).toBe('active');
   });
 
   async function countGoalTurn(turnId: number): Promise<void> {
