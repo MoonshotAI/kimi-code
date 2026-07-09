@@ -16,7 +16,7 @@ import {
 import { setConfiguredReadImageByteBudget } from '../../src/tools/support/image-compress';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import type { TelemetryClient } from '../../src/telemetry';
-import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
+import { createFakeKaos, FAKE_OS_ENV, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -1013,6 +1013,84 @@ describe('ReadMediaFileTool', () => {
         signal,
       });
       expect(withFullRes.isError).toBe(true);
+    });
+  });
+
+  describe('provider-unsupported formats (HEIC/HEIF)', () => {
+    /** Minimal ISO-BMFF header: size + 'ftyp' + the given brand. */
+    function ftypHeader(brand: string): Buffer {
+      const bytes = Buffer.alloc(16);
+      bytes.writeUInt32BE(16, 0);
+      bytes.write('ftyp', 4, 'latin1');
+      bytes.write(brand, 8, 'latin1');
+      return bytes;
+    }
+
+    function heicTool(osKind: string, brand = 'heic'): ReadMediaFileTool {
+      const data = ftypHeader(brand);
+      const kaos = createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+        osEnv: { ...FAKE_OS_ENV, osKind },
+      });
+      return new ReadMediaFileTool(kaos, PERMISSIVE_WORKSPACE, capabilities());
+    }
+
+    it('refuses HEIC with sips guidance on macOS instead of sending it to the provider', async () => {
+      const result = await executeTool(heicTool('macOS'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_mac',
+        args: { path: '/workspace/photo.HEIC' },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('image/heic');
+      expect(result.output).toContain('sips -s format jpeg');
+      expect(result.output).toContain('/workspace/photo.jpg');
+    });
+
+    it('refuses HEIC with heif-convert / ImageMagick guidance on Linux', async () => {
+      const result = await executeTool(heicTool('Linux'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_linux',
+        args: { path: '/workspace/photo.HEIC' },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('heif-convert');
+      expect(result.output).toContain('magick');
+    });
+
+    it('refuses HEIC with ImageMagick guidance on Windows', async () => {
+      const result = await executeTool(heicTool('Windows'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_win',
+        args: { path: '/workspace/photo.HEIC' },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('magick');
+      expect(result.output).toContain('winget');
+    });
+
+    it('refuses HEIF brands and region reads the same way', async () => {
+      const heif = await executeTool(heicTool('macOS', 'mif1'), {
+        turnId: 't1',
+        toolCallId: 'c_heif',
+        args: { path: '/workspace/photo.heif' },
+        signal,
+      });
+      expect(heif.isError).toBe(true);
+      expect(heif.output).toContain('image/heif');
+
+      const region = await executeTool(heicTool('macOS'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_region',
+        args: { path: '/workspace/photo.HEIC', region: { x: 0, y: 0, width: 10, height: 10 } },
+        signal,
+      });
+      expect(region.isError).toBe(true);
+      expect(region.output).toContain('sips');
     });
   });
 
