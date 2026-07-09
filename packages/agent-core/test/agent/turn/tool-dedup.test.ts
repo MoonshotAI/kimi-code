@@ -561,4 +561,373 @@ describe('ToolCallDeduplicator', () => {
       expect(true).toBe(true);
     });
   });
+
+  describe('wrong-tool error detection', () => {
+    const { toolOutputText, isWrongToolError } = __testing;
+
+    it('detects ReadMediaFile-on-text-file as wrong-tool error', () => {
+      const output = errResult(
+        '"/x.md" is a TEXT FILE, not an image or video. ' +
+          'ReadMediaFile CANNOT read text files. ' +
+          'You MUST use the Read tool to read this file.',
+      );
+      expect(isWrongToolError(output.output)).toBe(true);
+    });
+
+    it('detects the old text-file error message as wrong-tool error', () => {
+      const output = '"/x.md" is a text file. Use Read to read text files.';
+      expect(isWrongToolError(output)).toBe(true);
+    });
+
+    it('detects unsupported file error as wrong-tool error', () => {
+      const output = errResult(
+        '"/x.bin" is NOT a supported image or video file. ' +
+          'ReadMediaFile ONLY works with images and videos.',
+      );
+      expect(isWrongToolError(output.output)).toBe(true);
+    });
+
+    it('does not classify a random error as wrong-tool error', () => {
+      expect(isWrongToolError('permission denied')).toBe(false);
+      expect(isWrongToolError('file not found: /x.png')).toBe(false);
+      expect(isWrongToolError('network timeout')).toBe(false);
+    });
+
+    // Regression test for Codex review: isWrongToolError only does text matching,
+    // it does NOT check `isError`. The guard that prevents fast-tracking successful
+    // results lives in finalizeResult (result.isError === true && isWrongToolError(...)).
+    // This test documents that isWrongToolError is a pure text matcher.
+    it('isWrongToolError is a pure text matcher (isError is not its concern)', () => {
+      const successOutput = [
+        { type: 'text', text: 'Result: the file is a text file, use Read tool.' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,...' } },
+      ];
+      // isWrongToolError sees only text, so it returns true — the actual safeguard
+      // is the `result.isError === true` guard in finalizeResult.
+      expect(isWrongToolError(successOutput)).toBe(true);
+      expect(isWrongToolError('must use the Read tool for this')).toBe(true);
+    });
+
+    it('toolOutputText handles string output', () => {
+      expect(toolOutputText('hello')).toBe('hello');
+    });
+
+    it('toolOutputText collapses ContentPart[]', () => {
+      const output: ExecutableToolResult['output'] = [
+        { type: 'text', text: 'hello ' },
+        { type: 'text', text: 'world' },
+      ];
+      expect(toolOutputText(output)).toBe('hello world');
+    });
+
+    it('toolOutputText skips non-text parts', () => {
+      const output: ExecutableToolResult['output'] = [
+        { type: 'text', text: 'msg: ' },
+        { type: 'image_url', imageUrl: { url: 'data:foo' } },
+        { type: 'text', text: 'see above' },
+      ];
+      expect(toolOutputText(output)).toBe('msg: see above');
+    });
+  });
+
+  describe('wrong-tool error escalation', () => {
+    const { WRONG_TOOL_REMINDER_2_START, WRONG_TOOL_FORCE_STOP_STREAK } = __testing;
+
+    async function runWrongToolStreak(
+      dedup: ToolCallDeduplicator,
+      count: number,
+    ): Promise<ExecutableToolResult> {
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < count; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(
+          dedup,
+          `c${String(i)}`,
+          'ReadMediaFile',
+          { path: '/x.md' },
+          errResult(
+            '"/x.md" is a TEXT FILE, not an image or video. ' +
+              'ReadMediaFile CANNOT read text files.',
+          ),
+        );
+        dedup.endStep();
+      }
+      return last!;
+    }
+
+    it('triggers r2 at streak 2 for wrong-tool errors instead of waiting for streak 5', async () => {
+      const dedup = new ToolCallDeduplicator();
+
+      // streak 1 — no reminder
+      dedup.beginStep();
+      const r1 = await runOriginal(
+        dedup,
+        'c0',
+        'ReadMediaFile',
+        { path: '/x.md' },
+        errResult(
+          '"/x.md" is a TEXT FILE, not an image or video. ' +
+            'ReadMediaFile CANNOT read text files.',
+        ),
+      );
+      dedup.endStep();
+      expect(r1.output as string).not.toContain('<system-reminder>');
+
+      // streak 2 — should already get r2 reminder (not wait for streak 3 or 5)
+      dedup.beginStep();
+      const r2 = await runOriginal(
+        dedup,
+        'c1',
+        'ReadMediaFile',
+        { path: '/x.md' },
+        errResult(
+          '"/x.md" is a TEXT FILE, not an image or video. ' +
+            'ReadMediaFile CANNOT read text files.',
+        ),
+      );
+      dedup.endStep();
+      expect(r2.output as string).toContain('<system-reminder>');
+      expect(r2.output as string).toContain('repeated_times: 2');
+      expect(r2.output as string).toContain('tool: ReadMediaFile');
+    });
+
+    it('continues r2 at streak 3 and force-stops at streak 4 for wrong-tool errors', async () => {
+      const dedup = new ToolCallDeduplicator();
+      // streak 3 — still gets r2 (wrong-tool path only has r2→stop, no r3 tier)
+      const streak3 = await runWrongToolStreak(dedup, 3);
+      expect(streak3.output as string).toContain('<system-reminder>');
+      expect(streak3.output as string).toContain('repeated_times: 3');
+      expect(streak3.stopTurn).toBeUndefined();
+
+      // streak 4 — force-stop with dead-end text
+      dedup.beginStep();
+      const streak4 = await runOriginal(
+        dedup,
+        'c3',
+        'ReadMediaFile',
+        { path: '/x.md' },
+        errResult(
+          '"/x.md" is a TEXT FILE, not an image or video. ' +
+            'ReadMediaFile CANNOT read text files.',
+        ),
+      );
+      dedup.endStep();
+      expect(streak4.output as string).toContain('stuck in a dead end');
+      expect(streak4.stopTurn).toBe(true);
+    });
+
+    it('does NOT fast-track generic errors (they still follow the original thresholds)', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      // A generic error like "permission denied" — not a wrong-tool error
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(
+          dedup,
+          `c${String(i)}`,
+          'Bash',
+          { cmd: 'rm x' },
+          errResult('permission denied'),
+        );
+        dedup.endStep();
+      }
+      // At streak 3, generic errors get r1 (gentle nudge), not skipped
+      expect(last!.output as string).toContain('<system-reminder>');
+      expect(last!.output as string).toContain('repeating the exact same tool call');
+      expect(last!.output as string).not.toContain('repeated_times');
+      expect(last!.stopTurn).toBeUndefined();
+    });
+
+    // Regression test for Codex review: successful output that coincidentally
+    // contains wrong-tool phrases must follow the generic escalation path,
+    // NOT the fast wrong-tool path (r2 at streak 2, stop at streak 4).
+    // The guard `result.isError === true` in finalizeResult handles this.
+    it('does NOT fast-escalate successful results with wrong-tool-like text', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const { toolOutputText } = __testing;
+      // A successful result (isError !== true) that contains one of the
+      // wrong-tool error phrases — this must NOT trigger the wrong-tool fast path.
+      const successfulButContainingPhrase: ExecutableToolResult = {
+        output: [
+          { type: 'text', text: 'The file is a text file. Use the Read tool.' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,...' } },
+        ],
+      };
+
+      // Build streak to 3 (generic path: r1 at streak 3).
+      // Need to use checkSameStep first so finalizeResult can find the call key.
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        const cached = dedup.checkSameStep(`c${String(i)}`, 'SomeTool', { path: '/x' });
+        expect(cached).toBeNull(); // first occurrence, not a dup
+        await dedup.finalizeResult(
+          `c${String(i)}`,
+          'SomeTool',
+          { path: '/x' },
+          successfulButContainingPhrase,
+        );
+        dedup.endStep();
+      }
+
+      // After 3 successful repeats, should get r1 gentle nudge, NOT r2.
+      // Wrong-tool path would give r2 at streak 2 (and stop at streak 4).
+      dedup.beginStep();
+      const cached = dedup.checkSameStep('c3', 'SomeTool', { path: '/x' });
+      expect(cached).toBeNull();
+      const final = await dedup.finalizeResult(
+        'c3',
+        'SomeTool',
+        { path: '/x' },
+        successfulButContainingPhrase,
+      );
+      const outputText = toolOutputText(final.output);
+      // Generic path: r1 has "repeating the exact same tool call", r2+ has "repeated_times"
+      expect(outputText).toContain('<system-reminder>');
+      expect(outputText).toContain('repeating the exact same tool call');
+      expect(outputText).not.toContain('repeated_times');
+      expect(final.stopTurn).toBeUndefined();
+    });
+  });
+
+  /**
+   * End-to-end regression test for issue #1218:
+   * Agent repeatedly calls ReadMediaFile on a text file.
+   *
+   * ── A (BEFORE fix) ──
+   * Without wrong-tool error classification, escalation follows the generic
+   * path: streak 3 → R1 gentle nudge, streak 5 → R2, streak 8 → R3,
+   * streak 12 → force-stop. The model wastes up to 11 steps before stopping.
+   *
+   * ── B (AFTER fix) ──
+   * Wrong-tool errors (ReadMediaFile on text) are detected and escalate
+   * faster: streak 2 → R2 concrete reminder, streak 4 → force-stop.
+   *
+   * This test verifies the full escalation chain for the AFTER scenario.
+   */
+  describe('issue #1218 — ReadMediaFile on text file end-to-end', () => {
+    const READ_MEDIA_TEXT_ERROR = errResult(
+      '"/workspace/AGENTS.md" is a TEXT FILE, not an image or video. ' +
+        'ReadMediaFile CANNOT read text files. ' +
+        'You MUST use the Read tool to read this file. ' +
+        'Do NOT call ReadMediaFile for this file again.',
+    );
+    const READ_ARGS = { path: '/workspace/AGENTS.md' };
+
+    async function simulateStep(
+      dedup: ToolCallDeduplicator,
+      callId: string,
+    ): Promise<ExecutableToolResult> {
+      dedup.beginStep();
+
+      // The agent calls ReadMediaFile on a text file — dedup intercepts
+      const cached = dedup.checkSameStep(callId, 'ReadMediaFile', READ_ARGS);
+      let result: ExecutableToolResult;
+      if (cached !== null) {
+        // Cross-step dedup: replay cached result, no re-execution
+        // But the model doesn't know — it sees the same error again
+        result = cached;
+      } else {
+        // First call: tool actually executes, returns error
+        result = READ_MEDIA_TEXT_ERROR;
+      }
+      const final = await dedup.finalizeResult(
+        callId,
+        'ReadMediaFile',
+        READ_ARGS,
+        result,
+      );
+      dedup.endStep();
+      return final;
+    }
+
+    it('step 1: first call — tool executes, error returned, NO reminder', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const r = await simulateStep(dedup, 'c0');
+
+      // Tool executed (first time), returned the error
+      expect(r.output as string).toContain('TEXT FILE');
+      expect(r.output as string).toContain('ReadMediaFile CANNOT read text files');
+      // No reminder on first call
+      expect(r.output as string).not.toContain('<system-reminder>');
+      expect(r.stopTurn).toBeUndefined();
+    });
+
+    it('step 2: agent tries again — R2 reminder fires immediately (was: silent)', async () => {
+      const dedup = new ToolCallDeduplicator();
+
+      await simulateStep(dedup, 'c0'); // step 1
+      const r = await simulateStep(dedup, 'c1'); // step 2
+
+      // ✅ FIX: R2 fires at streak 2 (old behavior: nothing until streak 3)
+      expect(r.output as string).toContain('<system-reminder>');
+      expect(r.output as string).toContain('repeated_times: 2');
+      expect(r.output as string).toContain('tool: ReadMediaFile');
+      // Not force-stopped yet
+      expect(r.stopTurn).toBeUndefined();
+    });
+
+    it('step 3: agent keeps trying — R2 reminder persists', async () => {
+      const dedup = new ToolCallDeduplicator();
+
+      await simulateStep(dedup, 'c0');
+      await simulateStep(dedup, 'c1');
+      const r = await simulateStep(dedup, 'c2');
+
+      // Still getting R2
+      expect(r.output as string).toContain('<system-reminder>');
+      expect(r.output as string).toContain('repeated_times: 3');
+      expect(r.stopTurn).toBeUndefined();
+    });
+
+    it('step 4: force-stop — turn terminates (was: gentle nudge until streak 12)', async () => {
+      const dedup = new ToolCallDeduplicator();
+
+      await simulateStep(dedup, 'c0');
+      await simulateStep(dedup, 'c1');
+      await simulateStep(dedup, 'c2');
+      const r = await simulateStep(dedup, 'c3');
+
+      // ✅ FIX: force-stop at streak 4 (old behavior: streak 12)
+      expect(r.output as string).toContain('stuck in a dead end');
+      expect(r.stopTurn).toBe(true);
+      // Underlying error flag preserved
+      expect(r.isError).toBe(true);
+    });
+
+    it('CONTRAST: generic errors (not wrong-tool) still use original thresholds', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const genericError = errResult('permission denied');
+
+      let last: ExecutableToolResult | undefined;
+
+      // Build streak to 3 — generic errors should still be silent
+      for (let i = 0; i < 3; i++) {
+        dedup.beginStep();
+        const cached = dedup.checkSameStep(`g${i}`, 'Bash', { cmd: 'rm x' });
+        const result = cached ?? genericError;
+        last = await dedup.finalizeResult(`g${i}`, 'Bash', { cmd: 'rm x' }, result);
+        dedup.endStep();
+      }
+      // Streak 3: generic gets R1 (gentle nudge), not R2
+      expect(last!.output as string).toContain('repeating the exact same tool call');
+      expect(last!.output as string).not.toContain('repeated_times');
+      expect(last!.stopTurn).toBeUndefined();
+
+      // Continue to streak 5 — generic gets R2 only now
+      for (let i = 0; i < 2; i++) {
+        dedup.beginStep();
+        const cached = dedup.checkSameStep(`h${i}`, 'Bash', { cmd: 'rm x' });
+        const result = cached ?? genericError;
+        last = await dedup.finalizeResult(`h${i}`, 'Bash', { cmd: 'rm x' }, result);
+        dedup.endStep();
+      }
+      expect(last!.output as string).toContain('repeated_times');
+      const times = parseInt(
+        (last!.output as string).match(/repeated_times:\s*(\d+)/)?.[1] ?? '0',
+        10,
+      );
+      expect(times).toBeGreaterThanOrEqual(5);
+      expect(last!.stopTurn).toBeUndefined();
+    });
+  });
 });

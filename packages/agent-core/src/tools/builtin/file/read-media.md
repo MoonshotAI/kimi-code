@@ -1,3 +1,5 @@
+**CRITICAL: This tool ONLY reads image files (PNG, JPG, GIF, WebP, etc.) and video files (MP4, MOV, AVI, etc.). It CANNOT read text files — never pass a .md, .ts, .json, .txt, or any other text file path to this tool. For text files, use the Read tool. To list directories, use `ls` via Bash for a known directory, or Glob for pattern search.**
+
 Read media content from a file.
 
 **Tips:**
@@ -6,7 +8,6 @@ Read media content from a file.
 - Large images are downsampled by default to fit model limits, which can blur fine detail (small text, dense UI). Compute absolute coordinates from the original dimensions reported in the `<system>` block, never by measuring the displayed copy. When the `<system>` tag reports downsampling and you need that detail, call this tool again with the `region` parameter (original-image pixel coordinates) to view a crop at full fidelity, or set `full_resolution` to true when the whole file fits the per-image byte limit. Re-reading the same file without these parameters just reproduces the same downsampled image.
 - The system will notify you when there is anything wrong when reading the file.
 - This tool is a tool that you typically want to use in parallel. Always read multiple files in one response when possible.
-- This tool can only read image or video files. To read text files, use the Read tool. To list directories, use `ls` via Bash for a known directory, or Glob for pattern search.
 - If the file doesn't exist or path is invalid, an error will be returned.
 - The maximum size that can be read is {{ MAX_MEDIA_MEGABYTES }}MB. An error will be returned if the file is larger than this limit.
 - The media content will be returned in a form that you can directly view and understand.
