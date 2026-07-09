@@ -6,9 +6,9 @@ import {
   resolveKimiHome,
   type KimiConfig,
   type TelemetryClient,
-  type TelemetryProperties,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import type { PromptHarness } from './prompt-session';
 import {
   initializeTelemetry,
   setTelemetryContext,
@@ -27,11 +27,7 @@ export interface CliTelemetryBootstrap {
 }
 
 export interface InitializeCliTelemetryOptions {
-  readonly homeDir: string;
-  readonly auth: {
-    getCachedAccessToken(name: string): Promise<string | null | undefined>;
-  };
-  readonly track: (event: string, properties?: TelemetryProperties) => void;
+  readonly harness: PromptHarness;
   readonly bootstrap: CliTelemetryBootstrap;
   readonly config: Pick<KimiConfig, 'defaultModel' | 'telemetry'>;
   readonly version: string;
@@ -53,7 +49,7 @@ export function createCliTelemetryBootstrap(): CliTelemetryBootstrap {
 
 export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): void {
   initializeTelemetry({
-    homeDir: options.homeDir,
+    homeDir: options.harness.homeDir,
     deviceId: options.bootstrap.deviceId,
     enabled: options.config.telemetry !== false,
     appName: CLI_USER_AGENT_PRODUCT,
@@ -62,10 +58,10 @@ export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): 
     model: options.model ?? options.config.defaultModel,
     sessionId: options.sessionId,
     getAccessToken: async () =>
-      (await options.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+      (await options.harness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
   });
   if (options.bootstrap.firstLaunch) {
-    options.track('first_launch');
+    options.harness.track('first_launch');
   }
 }
 

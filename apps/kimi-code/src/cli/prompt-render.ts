@@ -9,9 +9,19 @@
  * event-filtering / completion flow intact.
  */
 
-import type { HookResultEvent } from '@moonshot-ai/kimi-code-sdk';
-
 import type { PromptOutputFormat } from './options';
+
+/**
+ * Structural hook-result shape the renderer reads. Both the v1 SDK
+ * `HookResultEvent` and the v2 native `hook.result` `DomainEvent` satisfy it,
+ * so the renderer stays engine-agnostic without depending on either event
+ * definition.
+ */
+interface HookResultEventLike {
+  readonly hookEvent: string;
+  readonly content: string;
+  readonly blocked?: boolean;
+}
 
 export interface PromptOutput {
   readonly columns?: number | undefined;
@@ -23,7 +33,7 @@ const PROMPT_BLOCK_INDENT = '  ';
 
 export interface PromptTurnWriter {
   writeAssistantDelta(delta: string): void;
-  writeHookResult(event: HookResultEvent): void;
+  writeHookResult(event: HookResultEventLike): void;
   writeThinkingDelta(delta: string): void;
   writeToolCall(toolCallId: string, name: string, args: unknown): void;
   writeToolCallDelta(
@@ -72,7 +82,7 @@ export class PromptTranscriptWriter implements PromptTurnWriter {
     this.assistantWriter.write(delta);
   }
 
-  writeHookResult(event: HookResultEvent): void {
+  writeHookResult(event: HookResultEventLike): void {
     this.thinkingWriter.finish();
     this.assistantWriter.finish();
     this.assistantWriter.write(formatHookResultPlain(event));
@@ -109,7 +119,7 @@ export class PromptJsonWriter implements PromptTurnWriter {
     this.assistantText += delta;
   }
 
-  writeHookResult(event: HookResultEvent): void {
+  writeHookResult(event: HookResultEventLike): void {
     this.flushAssistant();
     this.writeJsonLine({
       role: 'assistant',
@@ -263,15 +273,15 @@ function visibleCharWidth(char: string): number {
   return char === '\t' ? 4 : 1;
 }
 
-function formatHookResultPlain(event: HookResultEvent): string {
+function formatHookResultPlain(event: HookResultEventLike): string {
   return `${formatHookResultTitle(event)}\n\n${formatHookResultBody(event)}`;
 }
 
-function formatHookResultTitle(event: HookResultEvent): string {
+function formatHookResultTitle(event: HookResultEventLike): string {
   return `${event.hookEvent} hook${event.blocked === true ? ' blocked' : ''}`;
 }
 
-function formatHookResultBody(event: HookResultEvent): string {
+function formatHookResultBody(event: HookResultEventLike): string {
   const content = event.content.trim();
   return content.length === 0 ? '(empty)' : content;
 }

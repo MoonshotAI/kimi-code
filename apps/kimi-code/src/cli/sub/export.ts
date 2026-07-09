@@ -159,12 +159,7 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
     await currentHarness.ensureConfigFile();
     const config = await currentHarness.getConfig();
     initializeCliTelemetry({
-      homeDir: currentHarness.homeDir,
-      auth: currentHarness.auth,
-      track: (event, properties) =>
-        properties === undefined
-          ? currentHarness.track(event)
-          : currentHarness.track(event, properties),
+      harness: currentHarness,
       bootstrap: currentTelemetryBootstrap,
       config,
       version: identity.version,

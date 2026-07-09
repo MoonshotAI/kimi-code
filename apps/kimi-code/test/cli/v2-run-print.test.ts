@@ -10,8 +10,11 @@ import {
   IAuthSummaryService,
   IConfigService,
   IEventBus,
+  IFileSystemStorageService,
+  IOAuthToolkit,
   ISessionIndex,
   ISessionLifecycleService,
+  ITelemetryService,
   type DomainEvent,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -182,6 +185,21 @@ describe('runV2Print', () => {
         },
       ],
       [ISessionIndex, { list: vi.fn(async () => ({ items: [] })) }],
+      [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
+      [IFileSystemStorageService, {}],
+      [
+        ITelemetryService,
+        (() => {
+          const svc = {
+            setAppender: vi.fn(),
+            setContext: vi.fn(),
+            track: vi.fn(),
+            shutdown: vi.fn(async () => {}),
+            withContext: vi.fn(() => svc),
+          };
+          return svc;
+        })(),
+      ],
     ]);
     const app = fakeScope('app', appServices);
 

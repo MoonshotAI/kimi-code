@@ -16,6 +16,7 @@
  */
 
 import {
+  CloudAppender,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
@@ -25,35 +26,30 @@ import {
   IAuthSummaryService,
   IConfigService,
   IEventBus,
+  IFileSystemStorageService,
+  IOAuthToolkit,
   ISessionIndex,
   ISessionLifecycleService,
+  ITelemetryService,
   bootstrap,
   ensureMainAgent,
   hostRequestHeadersSeed,
   logSeed,
+  resolveKimiHome,
   resolveLoggingConfig,
   type DomainEvent,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
-import {
-  KimiAuthFacade,
-  log,
-  resolveConfigPath,
-  type HookResultEvent,
-  type KimiConfig,
-} from '@moonshot-ai/kimi-code-sdk';
-import {
-  setCrashPhase,
-  shutdownTelemetry,
-  track as telemetryTrack,
-  withTelemetryContext,
-} from '@moonshot-ai/kimi-telemetry';
+import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
 import { resolve } from 'pathe';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
+import {
+  CLI_SHUTDOWN_TIMEOUT_MS,
+  CLI_USER_AGENT_PRODUCT,
+  PROMPT_CLEANUP_TIMEOUT_MS,
+} from '#/constant/app';
 
 import {
   formatGoalSummaryText,
@@ -70,7 +66,6 @@ import {
   raceWithTimeout,
   requireConfiguredModel,
 } from '../run-prompt';
-import { createCliTelemetryBootstrap, initializeCliTelemetry } from '../telemetry';
 import { createKimiCodeHostIdentity } from '../version';
 
 import type { CLIOptions, PromptOutputFormat } from '../options';
@@ -106,65 +101,51 @@ export async function runV2Print(
 
   writeExperimentalVersion(version, outputFormat, stdout, stderr);
 
-  const telemetryBootstrap = createCliTelemetryBootstrap();
-  const homeDir = telemetryBootstrap.homeDir;
-  const configPath = resolveConfigPath({ homeDir });
+  const homeDir = resolveKimiHome();
+  let firstLaunch = false;
+  const deviceId = createKimiDeviceId(homeDir, {
+    onFirstLaunch: () => {
+      firstLaunch = true;
+    },
+  });
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   const identity = createKimiCodeHostIdentity(version);
   const hostHeaders = createKimiDefaultHeaders({ homeDir, ...identity });
 
-  const { app } = bootstrap({ homeDir, configPath }, [
+  const { app } = bootstrap({ homeDir }, [
     ...logSeed(logging),
     ...hostRequestHeadersSeed(hostHeaders),
   ]);
-
-  const auth = new KimiAuthFacade({
-    homeDir,
-    configPath,
-    identity,
-    onRefresh: (outcome) => {
-      telemetryTrack('oauth_refresh', {
-        outcome: outcome.success ? 'success' : 'error',
-        ...(outcome.success ? {} : { reason: outcome.reason }),
-      });
-    },
-  });
-
-  log.info('kimi-code starting', {
-    version,
-    uiMode: PROMPT_UI_MODE,
-    nodeVersion: process.version,
-    platform: `${process.platform}/${process.arch}`,
-    workDir,
-  });
+  const auth = app.accessor.get(IOAuthToolkit);
 
   const configService = app.accessor.get(IConfigService);
   await configService.ready;
   const defaultModel = configService.get<string>('defaultModel') ?? undefined;
-  let telemetryConfig: KimiConfig['telemetry'];
+  let telemetryEnabled = true;
   try {
-    telemetryConfig = configService.get<KimiConfig['telemetry']>('telemetry');
+    telemetryEnabled = configService.get('telemetry') !== false;
   } catch {
-    telemetryConfig = undefined;
+    telemetryEnabled = true;
   }
   for (const diagnostic of configService.diagnostics()) {
     if (diagnostic.severity === 'warning') {
       stderr.write(`Warning: ${diagnostic.message}\n`);
     }
   }
-  const config = { defaultModel, telemetry: telemetryConfig };
 
   let restorePermission = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
+  let telemetryService: ITelemetryService | undefined;
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
-      setCrashPhase('shutdown');
       try {
         await restorePermission();
       } finally {
-        await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+        if (telemetryService !== undefined) {
+          await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
+        }
         app.dispose();
       }
     })());
@@ -176,18 +157,25 @@ export async function runV2Print(
     const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
 
-    initializeCliTelemetry({
-      homeDir,
-      auth,
-      track: (event, properties) => telemetryTrack(event, properties),
-      bootstrap: telemetryBootstrap,
-      config,
-      version,
-      uiMode: PROMPT_UI_MODE,
-      model: resolved.telemetryModel,
-      sessionId: resolved.session.id,
-    });
-    setCrashPhase('runtime');
+    telemetryService = app.accessor.get(ITelemetryService);
+    if (telemetryEnabled) {
+      telemetryService.setAppender(
+        new CloudAppender({
+          storage: app.accessor.get(IFileSystemStorageService),
+          deviceId,
+          appName: CLI_USER_AGENT_PRODUCT,
+          version,
+          uiMode: PROMPT_UI_MODE,
+          model: resolved.telemetryModel,
+          getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
+          env: process.env,
+        }),
+      );
+    }
+    telemetryService.setContext({ sessionId: resolved.session.id });
+    if (firstLaunch) {
+      telemetryService.track('first_launch');
+    }
 
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
     if (goalCreate !== undefined) {
@@ -214,7 +202,7 @@ export async function runV2Print(
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
-    withTelemetryContext({ sessionId: resolved.session.id }).track('exit', {
+    telemetryService.withContext({ sessionId: resolved.session.id }).track('exit', {
       duration_ms: Date.now() - startedAt,
     });
   } finally {
@@ -369,8 +357,9 @@ async function runNativeTurn(
     if (result.reason === 'completed') {
       try {
         await drainBackgroundTasks(app, session);
-      } catch (error) {
-        log.warn('drainBackgroundTasks failed', { error });
+      } catch {
+        // Draining is best-effort; a wedged background task must not fail the
+        // (already completed) turn. Swallow and proceed to finish.
       }
       writer.finish();
       return;
@@ -444,7 +433,7 @@ function dispatchNativeEvent(
       writer.writeAssistantDelta(event.delta);
       return;
     case 'hook.result':
-      writer.writeHookResult(event as unknown as HookResultEvent);
+      writer.writeHookResult(event);
       return;
     case 'thinking.delta':
       writer.writeThinkingDelta(event.delta);
