@@ -39,7 +39,6 @@ import {
 } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentTurnService, type TurnResult } from '#/agent/turn/turn';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
 import type { TelemetryProperties } from '#/app/telemetry/telemetry';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, KimiError, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
@@ -392,7 +391,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private handleAfterStep(ctx: AfterStepContext): void {
     if (this.goalDrivenTurns.has(ctx.turnId)) {
-      const snapshot = this.accountTokenUsage(tokenUsageTotal(ctx.usage));
+      const snapshot = this.accountTokenUsage(ctx.usage.output);
       if (snapshot?.budget.overBudget === true) {
         // Over budget: account the usage but do not continue this turn. Note this
         // runs after the step's tools have already executed (the old
@@ -611,10 +610,6 @@ function budgetTelemetryProperties(limits: GoalBudgetLimits): TelemetryPropertie
     has_turn_budget: limits.turnBudget !== undefined,
     has_wall_clock_budget: limits.wallClockBudgetMs !== undefined,
   };
-}
-
-function tokenUsageTotal(usage: TokenUsage): number {
-  return usage.inputCacheRead + usage.inputCacheCreation + usage.inputOther + usage.output;
 }
 
 function normalizeCompletionCriterion(value: string | undefined): string | undefined {

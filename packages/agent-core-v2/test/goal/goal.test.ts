@@ -603,17 +603,18 @@ describe('AgentGoalService core workflow hooks', () => {
 
     expect(
       await runStepUsageHooks(loopService, goals, turn, {
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-        inputOther: 4,
-        output: 0,
+        inputCacheRead: 100_000,
+        inputCacheCreation: 50_000,
+        inputOther: 40_000,
+        output: 4,
       }),
     ).toBe(false);
+    expect(goals.getGoal().goal).toMatchObject({ status: 'active', tokensUsed: 4 });
     expect(
       await runStepUsageHooks(loopService, goals, turn, {
         inputCacheRead: 0,
         inputCacheCreation: 0,
-        inputOther: 0,
+        inputOther: 90_000,
         output: 3,
       }),
     ).toBe(true);
