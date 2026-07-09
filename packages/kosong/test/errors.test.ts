@@ -239,6 +239,11 @@ describe('normalizeAPIStatusError', () => {
     // RFC 9110 reason phrase / Node-style wording.
     [413, 'Payload Too Large'],
     [413, 'Content Too Large'],
+    // Plain wordings without "entity": generic gateways say "Request too
+    // large"; Go's http.MaxBytesReader says "http: request body too large".
+    [413, 'Request too large'],
+    [413, 'Request body too large'],
+    [413, 'http: request body too large'],
   ])('normalizes %i "%s" to APIRequestTooLargeError', (statusCode, message) => {
     const error = normalizeAPIStatusError(statusCode, message, 'req-large');
     expect(error).toBeInstanceOf(APIRequestTooLargeError);

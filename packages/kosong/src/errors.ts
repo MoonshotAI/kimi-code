@@ -177,6 +177,9 @@ const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
   // RFC 9110 reason phrase (both the pre-2022 and current names).
   /payload too large/,
   /content too large/,
+  // Plain wordings: generic gateways say "request too large"; Go's
+  // http.MaxBytesReader (common in Go proxies) says "request body too large".
+  /request (?:body )?too large/,
 ] as const;
 
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
