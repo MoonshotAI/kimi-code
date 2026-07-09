@@ -160,11 +160,18 @@ function currencySymbol(currency: string): string {
   }
 }
 
-function formatCurrency(cents: number, currency: string): string {
+interface CurrencyParts {
+  readonly symbol: string;
+  readonly number: string;
+}
+
+function formatCurrencyParts(cents: number, currency: string): CurrencyParts {
   const symbol = currencySymbol(currency);
   const main = cents / 100;
   const formatted = main.toFixed(2);
-  return symbol.length > 0 ? `${symbol}${formatted}` : `${formatted} ${currency}`;
+  return symbol.length > 0
+    ? { symbol, number: formatted }
+    : { symbol: '', number: `${formatted} ${currency}` };
 }
 
 export function buildExtraUsageSection(
@@ -178,11 +185,9 @@ export function buildExtraUsageSection(
   const hasMonthlyLimit =
     extraUsage.monthlyChargeLimitEnabled && extraUsage.monthlyChargeLimitCents > 0;
 
-  const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
-  const used = formatCurrency(extraUsage.monthlyUsedCents, extraUsage.currency);
-  const labelWidth = 14;
-
-  const rows: Array<{ label: string; val: string }> = [];
+  const balance = formatCurrencyParts(extraUsage.balanceCents, extraUsage.currency);
+  const used = formatCurrencyParts(extraUsage.monthlyUsedCents, extraUsage.currency);
+  const rows: Array<{ label: string; symbol: string; number: string }> = [];
   let barLine: string | null = null;
 
   if (hasMonthlyLimit) {
@@ -192,25 +197,35 @@ export function buildExtraUsageSection(
     );
     const bar = renderProgressBar(ratio, 20);
     barLine = `  ${currentTheme.fg(severityColor(ratioSeverity(ratio)), bar)}`;
-    const limit = formatCurrency(extraUsage.monthlyChargeLimitCents, extraUsage.currency);
-    rows.push({ label: 'Used this month', val: used });
-    rows.push({ label: 'Monthly limit', val: limit });
-    rows.push({ label: 'Balance', val: balance });
+    const limit = formatCurrencyParts(extraUsage.monthlyChargeLimitCents, extraUsage.currency);
+    rows.push({ label: 'Used this month', ...used });
+    rows.push({ label: 'Monthly limit', ...limit });
+    rows.push({ label: 'Balance', ...balance });
   } else {
-    rows.push({ label: 'Used this month', val: used });
-    rows.push({ label: 'Monthly limit', val: 'Unlimited' });
-    rows.push({ label: 'Balance', val: balance });
+    rows.push({ label: 'Used this month', ...used });
+    rows.push({ label: 'Monthly limit', symbol: '', number: 'Unlimited' });
+    rows.push({ label: 'Balance', ...balance });
   }
 
-  const valueWidth = Math.max(...rows.map((r) => visibleWidth(r.val)));
-  const row = (label: string, val: string): string => {
-    const pad = Math.max(0, valueWidth - visibleWidth(val));
-    return `  ${muted(label.padEnd(labelWidth, ' '))}  ${value(' '.repeat(pad) + val)}`;
+  // `Used this month` is the longest label; size the column to the widest label
+  // so the currency symbol starts in the same column on every row.
+  const labelWidth = Math.max(...rows.map((r) => r.label.length));
+  // Right-align the numeric part of currency rows against each other so the
+  // decimal points line up (e.g. `¥ 50.00` / `¥200.00`). Text-only rows such as
+  // `Unlimited` carry no currency symbol, so they must not widen the numeric
+  // column — otherwise money values get padded with stray spaces.
+  const numberWidth = Math.max(
+    0,
+    ...rows.filter((r) => r.symbol.length > 0).map((r) => visibleWidth(r.number)),
+  );
+  const row = (label: string, symbol: string, number: string): string => {
+    const cell = symbol.length > 0 ? symbol + number.padStart(numberWidth, ' ') : number;
+    return `  ${muted(label.padEnd(labelWidth, ' '))}  ${value(cell)}`;
   };
 
   const lines: string[] = [accent('Extra Usage')];
   if (barLine !== null) lines.push(barLine);
-  for (const r of rows) lines.push(row(r.label, r.val));
+  for (const r of rows) lines.push(row(r.label, r.symbol, r.number));
 
   return lines;
 }

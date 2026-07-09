@@ -71,11 +71,11 @@ describe('UsagePanelComponent', () => {
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
     expect(output).toContain('Balance');
-    expect(output).toContain('$100.00');
+    expect(output).toContain('100.00');
     expect(output).toContain('Used this month');
-    expect(output).toContain('$50.00');
+    expect(output).toContain('50.00');
     expect(output).toContain('Monthly limit');
-    expect(output).toContain('$200.00');
+    expect(output).toContain('200.00');
     // bar row contains block glyphs but no percentage text
     expect(output).toContain('░');
   });
@@ -148,11 +148,40 @@ describe('UsagePanelComponent', () => {
 
     const output = lines.join('\n');
     expect(output).toContain('Balance');
-    expect(output).toContain('¥100.00');
+    expect(output).toContain('100.00');
     expect(output).toContain('Used this month');
-    expect(output).toContain('¥50.00');
+    expect(output).toContain('50.00');
     expect(output).toContain('Monthly limit');
-    expect(output).toContain('¥200.00');
+    expect(output).toContain('200.00');
+  });
+
+  it('aligns the currency symbol and decimal point across extra usage rows', () => {
+    const lines = buildUsageReportLines({
+      sessionUsage: { byModel: {} },
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      managedUsage: {
+        summary: null,
+        limits: [],
+        extraUsage: {
+          balanceCents: 15901,
+          totalCents: 300000,
+          monthlyChargeLimitEnabled: true,
+          monthlyChargeLimitCents: 300000,
+          monthlyUsedCents: 24099,
+          currency: 'CNY',
+        },
+      },
+    }).map(strip);
+
+    const extraRows = lines.filter((line) => line.includes('¥'));
+    expect(extraRows).toHaveLength(3);
+    // The currency symbol stays in one column...
+    expect(new Set(extraRows.map((line) => line.indexOf('¥'))).size).toBe(1);
+    // ...and the right-aligned numeric parts end in the same column, so the
+    // decimal points line up across rows.
+    expect(new Set(extraRows.map((line) => line.length)).size).toBe(1);
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {
