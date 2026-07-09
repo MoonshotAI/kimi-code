@@ -71,11 +71,11 @@ describe('UsagePanelComponent', () => {
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
     expect(output).toContain('Balance');
-    expect(output).toContain('$100');
+    expect(output).toContain('$100.00');
     expect(output).toContain('Used this month');
-    expect(output).toContain('$50');
+    expect(output).toContain('$50.00');
     expect(output).toContain('Monthly limit');
-    expect(output).toContain('$200');
+    expect(output).toContain('$200.00');
     // bar row contains block glyphs but no percentage text
     expect(output).toContain('░');
   });
@@ -148,11 +148,11 @@ describe('UsagePanelComponent', () => {
 
     const output = lines.join('\n');
     expect(output).toContain('Balance');
-    expect(output).toContain('¥100');
+    expect(output).toContain('¥100.00');
     expect(output).toContain('Used this month');
-    expect(output).toContain('¥50');
+    expect(output).toContain('¥50.00');
     expect(output).toContain('Monthly limit');
-    expect(output).toContain('¥200');
+    expect(output).toContain('¥200.00');
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {

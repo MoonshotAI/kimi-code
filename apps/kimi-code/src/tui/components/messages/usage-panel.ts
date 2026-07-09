@@ -163,7 +163,7 @@ function currencySymbol(currency: string): string {
 function formatCurrency(cents: number, currency: string): string {
   const symbol = currencySymbol(currency);
   const main = cents / 100;
-  const formatted = cents % 100 === 0 ? String(main) : main.toFixed(2);
+  const formatted = main.toFixed(2);
   return symbol.length > 0 ? `${symbol}${formatted}` : `${formatted} ${currency}`;
 }
 
