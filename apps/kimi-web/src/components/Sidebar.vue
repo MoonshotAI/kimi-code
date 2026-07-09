@@ -9,18 +9,16 @@ import { serverEndpointLabel } from '../api/config';
 import { copyTextToClipboard } from '../lib/clipboard';
 import {
   loadCollapsedWorkspaces,
-  loadShowWorkspacePaths,
   saveCollapsedWorkspaces,
-  saveShowWorkspacePaths,
 } from '../lib/storage';
 import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
-import InternalBuildBanner from './InternalBuildBanner.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
 import IconButton from './ui/IconButton.vue';
 import Icon from './ui/Icon.vue';
+import Kbd from './ui/Kbd.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
@@ -49,6 +47,12 @@ const props = withDefaults(
     unreadBySession?: Record<string, boolean>;
     /** Width (px) of the session column, driven by the App resize handle. */
     colWidth?: number;
+    /** True when the sidebar is collapsed: the container animates to width 0
+     *  (content keeps `colWidth` and is clipped), then hides itself. */
+    collapsed?: boolean;
+    /** True while the resize handle is dragged — disables the width transition
+     *  so the sidebar follows the pointer 1:1. */
+    dragging?: boolean;
   }>(),
   {
     activeWorkspace: null,
@@ -57,6 +61,8 @@ const props = withDefaults(
     pendingBySession: () => ({}),
     unreadBySession: () => ({}),
     colWidth: 220,
+    collapsed: false,
+    dragging: false,
   },
 );
 
@@ -83,7 +89,7 @@ const emit = defineEmits<{
 // Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
 const showSearch = ref(false);
-const sessionSearchShortcut = isAppleShortcutPlatform() ? '⌘K' : 'Ctrl K';
+const sessionSearchKeys = isAppleShortcutPlatform() ? ['⌘', 'K'] : ['Ctrl', 'K'];
 
 function openSearch(): void {
   // Sessions are loaded per-workspace (first page only); lazily drain the rest
@@ -110,7 +116,7 @@ function isAppleShortcutPlatform(): boolean {
   return userAgentData?.platform === 'macOS' || userAgentData?.platform === 'iOS';
 }
 
-// Scroll-linked header seam: the .btn-wrap bottom border/shadow only appears
+// Scroll-linked header seam: the .search-wrap bottom border/shadow only appears
 // once the session list has actually scrolled, so an unscrolled list shows no
 // abrupt boundary.
 const sessionsScrolled = ref(false);
@@ -183,18 +189,6 @@ function onLoadMore(id: string): void {
     expandedIds.value = next;
   }
   emit('loadMoreSessions', id);
-}
-
-// ---------------------------------------------------------------------------
-// Workspace path display (toggle in the Workspaces section header)
-// ---------------------------------------------------------------------------
-// Off by default so the list stays compact; turning it on reveals every
-// workspace's root path as a stable subtitle (no hover-induced layout shift).
-const showWorkspacePaths = ref<boolean>(loadShowWorkspacePaths());
-
-function toggleShowWorkspacePaths(): void {
-  showWorkspacePaths.value = !showWorkspacePaths.value;
-  saveShowWorkspacePaths(showWorkspacePaths.value);
 }
 
 // ---------------------------------------------------------------------------
@@ -486,11 +480,6 @@ function chooseSortMode(mode: WorkspaceSortMode): void {
   closeSectionMenu();
 }
 
-function toggleShowWorkspacePathsFromMenu(): void {
-  toggleShowWorkspacePaths();
-  closeSectionMenu();
-}
-
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   document.removeEventListener('mousedown', onWsMenuDocClick);
@@ -559,51 +548,49 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside class="side" :class="{ 'macos-desktop': isMacosDesktop }">
+  <aside
+    class="side"
+    :class="{ 'macos-desktop': isMacosDesktop, collapsed, 'no-anim': dragging }"
+    :style="{ width: collapsed ? '0px' : colWidth + 'px' }"
+  >
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
-      <!-- Header: logo + settings (no hard border — flows into workspace list) -->
+      <!-- Header: brand + collapse. The collapse button lives INSIDE the header
+           on non-mac platforms (right-aligned); on macOS desktop the brand is
+           hidden (traffic lights own that corner) and the header is just a
+           window-drag strip — there the toggle is App.vue's resident floating
+           button beside the traffic lights. -->
       <div class="ch">
         <div class="ch-brand">
-          <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
-            <defs>
-              <mask id="kimiEyes" maskUnits="userSpaceOnUse">
-                <rect x="0" y="0" width="32" height="22" fill="#fff" />
-                <g class="ch-eyes" fill="#000">
-                  <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
-                  <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
-                </g>
-              </mask>
-            </defs>
-            <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
-          </svg>
-          <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
-          <InternalBuildBanner />
+          <template v-if="!isMacosDesktop">
+            <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+              <defs>
+                <mask id="kimiEyes" maskUnits="userSpaceOnUse">
+                  <rect x="0" y="0" width="32" height="22" fill="#fff" />
+                  <g class="ch-eyes" fill="#000">
+                    <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
+                    <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
+                  </g>
+                </mask>
+              </defs>
+              <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
+            </svg>
+            <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
+          </template>
         </div>
         <IconButton
+          v-if="!isMacosDesktop"
+          class="ch-collapse"
           size="sm"
           :label="t('sidebar.collapseSidebar')"
           @click.stop="emit('collapse')"
         >
           <Icon name="panel-collapse" />
         </IconButton>
-        <IconButton
-          size="sm"
-          :label="t('settings.title')"
-          @click.stop="emit('openSettings')"
-        >
-          <Icon name="settings" />
-        </IconButton>
       </div>
 
-      <!-- Session search — opens the Spotlight-style search dialog -->
-      <button class="search" type="button" @click="openSearch">
-        <Icon class="search-icon" name="search" />
-        <span class="search-input">{{ t('sidebar.searchShortcut', { shortcut: sessionSearchShortcut }) }}</span>
-      </button>
-
       <!-- New chat + new workspace buttons -->
-      <div class="btn-wrap" :class="{ 'btn-wrap--scrolled': sessionsScrolled }">
+      <div class="btn-wrap">
         <button class="btn-new-chat" type="button" @click.stop="emit('create')">
           <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
@@ -616,6 +603,16 @@ onBeforeUnmount(() => {
         >
           <Icon name="folder" />
         </IconButton>
+      </div>
+
+      <!-- Session search — opens the Spotlight-style search dialog. Last fixed
+           row above the list, so it carries the scroll-linked seam. -->
+      <div class="search-wrap" :class="{ 'search-wrap--scrolled': sessionsScrolled }">
+        <button class="search" type="button" @click="openSearch">
+          <Icon class="search-icon" name="search" />
+          <span class="search-input">{{ t('sidebar.search') }}</span>
+          <Kbd :keys="sessionSearchKeys" />
+        </button>
       </div>
 
       <!-- Session list — grouped by workspace -->
@@ -675,7 +672,6 @@ onBeforeUnmount(() => {
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
               :is-expanded="isExpanded"
-              :show-path="showWorkspacePaths"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
               @toggle-ws-menu="toggleWsMenu"
@@ -694,6 +690,14 @@ onBeforeUnmount(() => {
             />
           </div>
         </template>
+      </div>
+
+      <!-- Footer: settings entry pinned under the session list -->
+      <div class="side-footer">
+        <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
+          <Icon name="settings" />
+          <span>{{ t('settings.title') }}</span>
+        </button>
       </div>
     </div>
 
@@ -745,13 +749,6 @@ onBeforeUnmount(() => {
         </span>
         {{ t('sidebar.sortRecent') }}
       </MenuItem>
-      <MenuItem separator />
-      <MenuItem @click="toggleShowWorkspacePathsFromMenu()">
-        <span class="section-menu-check">
-          <Icon v-if="showWorkspacePaths" name="check" size="sm" />
-        </span>
-        {{ t('sidebar.showWorkspacePaths') }}
-      </MenuItem>
     </Menu>
     <!-- Session search dialog (Cmd/Ctrl+K) -->
     <SearchSessionsDialog
@@ -772,24 +769,48 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .side {
-  border-right: 1px solid var(--line);
-  background: var(--panel);
+  /* Sidebar sits on its own surface (--color-sidebar-bg, one step off --bg);
+     the 1px hairline on .col still separates it from the conversation pane. */
+  background: var(--color-sidebar-bg);
   display: flex;
   flex-direction: row;
+  /* Anchor content to the right edge: while the container width animates to 0
+     the fixed-width column slides out to the left and is clipped, instead of
+     reflowing. Mirrors the right-side preview panel (App.vue .global-preview). */
+  justify-content: flex-end;
+  overflow: hidden;
   min-width: 0;
   height: 100%;
-  /* Alignment contract, inherited by SessionRow and the de-terminalization
-     rules in style.css: text in the workspace header, the path line and session
-     rows all starts at --sb-pad-x + --sb-gutter + --sb-gap from the sidebar edge. */
-  --sb-pad-x: var(--space-4);  /* row horizontal padding */
-  --sb-gutter: 20px;           /* leading icon slot (14px folder icon + 6px margin) */
+  transition:
+    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0.28s;
+  /* Alignment contract, inherited by SessionRow and WorkspaceGroup:
+     - row boxes (hover/selected pills) sit --sb-inset from the sidebar edges;
+     - text/icons start at --sb-pad-x = --sb-inset + 8px row padding;
+     - row titles start at --sb-pad-x + --sb-gutter + --sb-gap. */
+  --sb-inset: var(--space-3);  /* row box inset from the sidebar edge */
+  --sb-pad-x: var(--space-5);  /* content start x (inset + row padding) */
+  --sb-gutter: 16px;           /* leading icon slot (matches the 16px folder icon, so the session title aligns under the workspace name) */
   --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
-  /* Sidebar stays one step above compact UI chrome, but still follows the
-     user-controlled font-size preference. */
-  --ui-font-size: var(--sidebar-ui-font-size);
+  /* Row hover wash — global --color-hover (lighter than the selected fill;
+     both translucent, so they sit on any surface). */
+  --sb-hover: var(--color-hover);
+}
+/* While dragging the resize handle, follow the pointer 1:1 (same pattern as
+   .global-preview.no-anim in App.vue). */
+.side.no-anim {
+  transition: none;
+}
+/* Fully collapsed: width 0 (animated), then drop out of hit-testing / tab
+   order once the transition ends (visibility interpolates to hidden at the
+   end when collapsing, and back to visible immediately when expanding). */
+.side.collapsed {
+  visibility: hidden;
 }
 
-/* Session column. Width is set inline from the App resize handle. */
+/* Session column. Width is set inline from the App resize handle; it stays
+   fixed while the collapsing container clips it. Carries the sidebar's right
+   hairline so the border is clipped away together with the content. */
 .col {
   flex: none;
   min-width: 0;
@@ -797,35 +818,38 @@ onBeforeUnmount(() => {
   flex-direction: column;
   min-height: 0;
   width: 100%;
+  box-sizing: border-box;
+  border-right: 1px solid var(--line);
   container-type: inline-size;
   container-name: sidebar-col;
 }
 
-/* Header: logo + settings (no border — flows into the workspace list). */
+/* Header: brand strip (no border — flows into the workspace list). On non-mac
+   platforms the brand sits on the left and the collapse button on the right
+   (justify-content: space-between); on macOS desktop the brand is hidden and
+   the header is a window-drag strip (see below). min-height keeps the 26px
+   control row (50px total with padding) so the list below starts at a stable
+   y. */
 .ch {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  padding: var(--space-3);
+  min-height: calc(26px + 2 * var(--space-3));
   width: 100%;
   box-sizing: border-box;
 }
-/* macOS desktop: the window uses a hidden title bar, so the traffic lights float
-   over the top-left of the sidebar. Push the header content right to clear them,
-   and turn the whole header into the window-drag region — matching the chat
-   header. The action buttons and the logo opt out with no-drag so they stay
-   clickable: this is the same no-drag-inside-drag pattern ChatHeader.vue relies
-   on (the previous "drag only the brand area" approach still captured the
-   sibling buttons, because Electron treats a flex-grown drag item's hit area as
-   covering the whole flex line). */
+/* macOS desktop: the window uses a hidden title bar, so the traffic lights
+   float over the top-left of the sidebar and the resident toggle sits beside
+   them. The header renders no content here (brand hidden) — it is purely a
+   window-drag strip. */
 .side.macos-desktop .ch {
   padding-left: 80px;
   -webkit-app-region: drag;
 }
-.side.macos-desktop .ch button,
-.side.macos-desktop .ch-logo {
-  -webkit-app-region: no-drag;
+.side.macos-desktop .ch-brand {
+  display: none;
 }
 .ch-logo {
   height: 22px;
@@ -880,22 +904,14 @@ onBeforeUnmount(() => {
   .ch-name { display: none; }
 }
 
-/* Action buttons */
- .btn-wrap {
+/* Action buttons — first row of the actions group (New chat + search): rows
+   inside the group stack flush (0 gap, same rhythm as the session list rows);
+   the group's bottom gap lives on .search-wrap. */
+.btn-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 var(--space-2) var(--space-2);
-  position: relative;
-  z-index: 1;
-  background: var(--panel);
-  border-bottom: 1px solid transparent;
-  transition: border-color var(--duration-base) var(--ease-out),
-    box-shadow var(--duration-base) var(--ease-out);
-}
-.btn-wrap--scrolled {
-  border-bottom-color: var(--line);
-  box-shadow: var(--shadow-sm);
+  padding: 0 var(--sb-inset);
 }
 .btn-new-chat {
   display: flex;
@@ -903,45 +919,61 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex: 1;
   min-width: 0;
-  min-height: 26px;
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--space-2));
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
   cursor: pointer;
   text-align: left;
 }
-.btn-new-chat:hover { background: var(--color-surface-sunken); }
+.btn-new-chat:hover { background: var(--sb-hover); }
 .btn-new-chat:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
-.btn-new-chat svg { flex: none; width: 16px; height: 16px; }
+.btn-new-chat svg { flex: none; }
 .btn-new-chat span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Session search */
+/* Session search — the wrapper is the last fixed row above the list and
+   carries the scroll-linked seam: its bottom border/shadow only appear once
+   the session list has actually scrolled, so an unscrolled list shows no
+   abrupt boundary. */
+.search-wrap {
+  padding: 0 var(--sb-inset);
+  position: relative;
+  z-index: 1;
+  background: var(--color-sidebar-bg);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+.search-wrap--scrolled {
+  border-bottom-color: var(--line);
+  box-shadow: var(--shadow-sm);
+}
 .search {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 26px;
-  margin: 0 var(--space-2) var(--space-2);
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--space-2));
+  width: 100%;
+  margin: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.search:hover { background: var(--color-surface-sunken); }
+.search:hover { background: var(--sb-hover); }
 .search:focus-visible {
-  background: var(--color-surface-sunken);
+  background: var(--sb-hover);
   color: var(--color-text);
   outline: 2px solid var(--color-accent-bd);
   outline-offset: -2px;
@@ -953,29 +985,68 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   color: var(--color-text);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Sessions */
+/* Sessions — owns the vertical padding around the list (the 12px gap to the
+   search row above and the bottom breathing room). Scrolled content passes
+   through the top padding and clips at the .search-wrap seam. Scrollbar: the
+   4px ::-webkit-scrollbar below; standard scrollbar-width would kill it on
+   Chromium (see the global scrollbar block in style.css). */
 .sessions {
   flex: 1;
   overflow-y: auto;
-  padding: 0 var(--space-2) var(--space-2);
+  padding: var(--space-3) var(--sb-inset);
   min-height: 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
 }
 .sessions::-webkit-scrollbar { width: 4px; }
 .sessions::-webkit-scrollbar-track { background: transparent; }
 .sessions::-webkit-scrollbar-thumb {
-  background: var(--line);
-  border-radius: var(--radius-xs);
+  /* Neutral, text-derived translucency — adapts to both schemes and sits
+     quietly on the sidebar surface (no accent tint on hover). */
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  border-radius: var(--radius-full);
 }
-.sessions::-webkit-scrollbar-thumb:hover { background: var(--color-accent-bd); }
+.sessions::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--color-text) 25%, transparent); }
+
+/* Footer — settings entry pinned under the session list. Same list-style
+   control family as search / New chat (full-width, left-aligned, hover
+   sunken — not a Button). */
+.side-footer {
+  flex: none;
+  padding: var(--space-2) var(--sb-inset);
+  border-top: 1px solid var(--line);
+}
+.btn-settings {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+  text-align: left;
+}
+.btn-settings:hover { background: var(--sb-hover); }
+.btn-settings:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.btn-settings svg { flex: none; }
+.btn-settings span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Section label — heads the workspace list below the action buttons. Aligns
    with the rows' leading inset (--sb-pad-x) so it reads as the list's title. */
@@ -985,9 +1056,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 8px;
   padding: 0 var(--space-3) var(--space-1) var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  letter-spacing: .08em;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
   text-transform: uppercase;
   color: var(--faint);
   user-select: none;

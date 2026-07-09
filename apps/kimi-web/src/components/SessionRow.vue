@@ -254,7 +254,7 @@ defineExpose({ closeMenu });
           :label="t('sidebar.options')"
           @click.stop="toggleMenu($event)"
         >
-          <Icon name="dots-horizontal" size="sm" />
+          <Icon name="dots-horizontal" />
         </IconButton>
       </span>
     </div>
@@ -287,22 +287,24 @@ defineExpose({ closeMenu });
 .se {
   /* --sb-* vars come from .side in Sidebar.vue: the title starts at
      --sb-pad-x + --sb-gutter + --sb-gap, exactly under the workspace name.
-     The row is an inset pill: a 6px horizontal margin + 10px padding lands the
-     leading icon at --sb-pad-x (16px), aligned with the workspace header. */
+     The row is an inset pill: the .sessions container's --sb-inset padding +
+     the row's own padding land the leading slot at --sb-pad-x, aligned with
+     the workspace header. */
   display: block;
   margin: 0;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-md);
+  padding: 8px var(--space-2);
+  border-radius: var(--radius-sm);
   font-family: var(--font-ui);
   color: var(--color-text);
   cursor: pointer;
   position: relative;
 }
-.se:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+.se:hover { background: var(--sb-hover, var(--color-surface-sunken)); color: var(--color-text); }
+/* Selected: neutral fill (NOT accent-tinted — selection reads as "where I
+   am", the accent stays reserved for actions and status). */
 .se.on {
-  background: var(--color-accent-soft);
-  color: var(--color-accent-hover);
-  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
+  background: var(--color-selected);
+  color: var(--color-text);
 }
 
 .row {
@@ -310,9 +312,9 @@ defineExpose({ closeMenu });
   align-items: center;
   gap: var(--sb-gap, 6px);
   min-width: 0;
-  /* Floor the row at the hover-kebab height (IconButton sm = 26px) so swapping
-     the timestamp for the kebab on hover doesn't grow the row. */
-  min-height: 26px;
+  /* Row height is font-driven: title line-height (13×1.25≈16px) + 2×5px
+     .se padding ≈ 26px. The hover kebab is absolutely positioned (see .act)
+     so it never contributes to row height and can't cause hover jitter. */
 }
 
 .left {
@@ -341,8 +343,9 @@ defineExpose({ closeMenu });
 
 .t {
   color: inherit;
-  font-size: var(--ui-font-size);
-  font-weight: var(--weight-regular);
+  font-size: var(--ui-font-size-sm);
+  font-weight: 450;
+  line-height: var(--leading-tight);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -353,29 +356,39 @@ defineExpose({ closeMenu });
 .ts {
   color: var(--color-text-faint);
   font-size: var(--text-xs);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-weight: 475;
+  line-height: var(--leading-tight);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
-/* Trailing action slot: time and kebab share one grid cell (grid-area:1/1).
-   Both stay in the layout and swap via `visibility` (never display:none), so
-   the slot width = max(time width, IconButton sm 26px) is identical in hover
-   and rest — the badges and title don't reflow, eliminating hover jitter.
-   `.act .kebab` out-specificities IconButton's own display so the hidden
-   default wins. */
+/* Trailing action slot: the relative time (in flow) sets the slot size; the
+   kebab is absolutely positioned over it and swapped via `visibility`, so it
+   contributes neither height (the row stays font-driven) nor width changes
+   (min-width reserves the kebab's footprint, the title doesn't reflow). */
 .act {
-  display: inline-grid;
+  position: relative;
   flex: none;
+  display: inline-flex;
   align-items: center;
-  justify-items: center;
+  justify-content: flex-end;
+  /* Reserve the kebab's width so the trailing slot (and thus the title) never
+     shifts between the time and the kebab, even for short times like "2m". */
+  min-width: 26px;
 }
-.act .ts,
-.act .kebab { grid-area: 1 / 1; }
-.act .kebab { visibility: hidden; }
+.act .kebab {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  visibility: hidden;
+}
 .se:hover .act .kebab,
 .act:has(.kebab.open) .kebab { visibility: visible; }
 .se:hover .act .ts,
 .act:has(.kebab.open) .ts { visibility: hidden; }
-.kebab.open { color: var(--color-text); background: var(--color-surface-sunken); }
+.kebab.open { color: var(--color-text); background: var(--sb-hover, var(--color-surface-sunken)); }
 
 /* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu
    is teleported to <body> so the collapsing list's `overflow: hidden` can't clip it. */
@@ -409,15 +422,10 @@ defineExpose({ closeMenu });
 
 .sessions .se {
   margin: 0;
-  border-radius: var(--radius-md);
-  /* Trim the row padding by the inset margin so the title still starts at the
-     same x as the workspace name (whose header has no inset). */
-  padding: var(--space-1) calc(var(--sb-pad-x, 12px) - var(--space-2));
-}
-.sessions .se:hover { background: var(--panel2); }
-.sessions .se.on {
-  background: var(--color-accent-soft);
-  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
+  border-radius: var(--radius-sm);
+  /* Trim the row padding by the container inset so the title still starts at
+     the same x as the workspace name (whose header has no inset). */
+  padding: 8px calc(var(--sb-pad-x, 20px) - var(--sb-inset, 12px));
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
 .sessions .se .kebab { border-radius: var(--radius-sm); }

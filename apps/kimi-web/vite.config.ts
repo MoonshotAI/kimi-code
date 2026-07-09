@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import Icons from 'unplugin-icons/vite';
+import { FileSystemIconLoader } from 'unplugin-icons/loaders';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const webPort = Number(process.env.WEB_PORT) || 5175;
 // Where the dev proxy forwards server traffic. Defaults to the local server
@@ -12,7 +14,19 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 };
 
 export default defineConfig({
-  plugins: [vue(), Icons({ compiler: 'vue3' })],
+  plugins: [
+    vue(),
+    Icons({
+      compiler: 'vue3',
+      // Local Kimi Design System icons (24×24 outlined, fill="currentColor"),
+      // copied from the design-system icon pack into src/icons/kimi/ and
+      // imported as `~icons/kimi/<file-name>` (plus `?raw`), same as the ri
+      // collection. Registered in src/lib/icons.ts only.
+      customCollections: {
+        kimi: FileSystemIconLoader(fileURLToPath(new URL('./src/icons/kimi', import.meta.url))),
+      },
+    }),
+  ],
   // Expose the dev proxy's upstream server target to the client so the UI can
   // show which server it is connected to (the browser otherwise only sees its
   // own same-origin URL). Unused by the same-origin production build.

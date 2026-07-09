@@ -452,7 +452,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .qstep {
   color: var(--color-text-muted);
-  font: var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
   margin-left: var(--space-1);
 }
 /* Minimize toggle — pinned to the right of the header row. */
@@ -482,6 +482,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+  font-family: var(--font-ui);
 }
 .qstep-dot {
   display: inline-flex;
@@ -493,7 +494,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   border: 1px solid var(--color-line);
   background: var(--color-surface);
   color: var(--color-text-muted);
-  font: var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
   cursor: pointer;
   padding: 0;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
@@ -545,7 +546,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
 .qopt-key {
   color: var(--color-text-muted);
-  font: var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
+  font-weight: var(--weight-medium);
   width: 12px;
   flex: none;
   text-align: center;
@@ -560,8 +562,16 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   flex-direction: column;
   gap: 2px;
 }
-.qopt-label { color: var(--color-text); }
-.qopt-desc { color: var(--color-text-muted); font: var(--text-xs)/var(--leading-normal) var(--font-ui); }
+.qopt-label {
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+.qopt-desc {
+  color: var(--color-text-muted);
+  font: var(--text-xs)/var(--leading-normal) var(--font-ui);
+  font-weight: var(--weight-medium);
+}
 
 .chk, .rad { font: var(--text-base) var(--font-mono); }
 
@@ -603,7 +613,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   .qstep-dot {
     width: 28px;
     height: 28px;
-    font: var(--text-xs) var(--font-mono);
+    font: var(--text-xs) var(--font-ui);
   }
 
   /* Options → taller, finger-friendly rows. Label + description already stack

@@ -87,11 +87,12 @@ timeout = 5
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
+| `image` | `table` | — | 图片压缩参数 → [`image`](#image) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
 
-以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`services`、`permission` 等嵌套表逐一展开。
+以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission` 等嵌套表逐一展开。
 
 ## `providers`
 
@@ -201,6 +202,17 @@ display_name = "Kimi for Coding (custom)"
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
 
 在 print 模式（`kimi -p "<prompt>"`）下，Kimi Code 只跑一个非交互的单轮 turn，主 agent 一结束就退出。如果你启动了后台任务（例如通过 `Agent(run_in_background=true)` 并发子代理）并希望它们跑完，请设置 `keep_alive_on_exit = true`：进程会在退出前等待所有后台任务进入终态，最长不超过 `print_wait_ceiling_s`。否则，单轮 turn 结束时后台任务会随进程一起被清理。
+
+## `image`
+
+`image` 控制图片发送给模型前的压缩行为，对所有图片入口生效（粘贴图片、`ReadMediaFile` 读图、MCP 工具结果里的图片等）。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `max_edge_px` | `integer` | `2000` | 图片最长边上限（像素）。超过时按比例缩小到该值以内；调大可保留更多细节，代价是更大的请求体积 |
+| `read_byte_budget` | `integer` | `262144`（256 KB） | 模型自行读取的图片（`ReadMediaFile` 默认读取）的单图字节预算。会话中模型反复截图、读图时，累计请求体大小由它控制；细节可通过 `region` 参数按原图坐标全保真回读（`region` 与 `full_resolution` 不受此预算限制） |
+
+`max_edge_px` 可被环境变量 `KIMI_IMAGE_MAX_EDGE_PX` 覆盖，`read_byte_budget` 可被 `KIMI_IMAGE_READ_BYTE_BUDGET` 覆盖，优先级均高于配置文件。
 
 <!--
 ## `experimental`

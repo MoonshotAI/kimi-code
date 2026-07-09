@@ -1,13 +1,22 @@
 // apps/kimi-web/src/lib/icons.ts
 // Single source of truth for apps/kimi-web icons (design-system §02).
 //
-// Icons come from Remix Icon (https://remixicon.com/, Apache-2.0) and are
-// bundled by unplugin-icons at build time — only the icons listed below end up
-// in the production bundle. Each icon is imported twice: once as a Vue
-// component (for <Icon name=... />) and once as a `?raw` SVG string (for
-// iconSvg() in v-html contexts such as lib/toolMeta.ts).
+// Icons come from three collections, all bundled by unplugin-icons at build
+// time — only the icons listed below end up in the production bundle:
+//   - `~icons/kimi/*` — Kimi Design System icons (24×24 outlined,
+//     fill="currentColor"), local SVGs under src/icons/kimi/ registered as a
+//     custom collection in vite.config.ts. Preferred when a Kimi icon exists
+//     for the intent.
+//   - `~icons/tabler/*` — Tabler Icons (https://tabler.io/icons, MIT),
+//     24×24 stroke-based (stroke="currentColor"); used for the sidebar
+//     panel toggle, which neither pack above covers well.
+//   - `~icons/ri/*` — Remix Icon (https://remixicon.com/, Apache-2.0) for
+//     the remaining intents.
+// Each icon is imported twice: once as a Vue component (for <Icon name=... />)
+// and once as a `?raw` SVG string (for iconSvg() in v-html contexts such as
+// lib/toolMeta.ts).
 //
-// Remix icons are fill-based (fill="currentColor") on a 24x24 source grid; the
+// All collections share the 24x24 source grid and follow currentColor; the
 // rendered size comes from the size token prop. Colour follows text.
 //
 // Two consumers share this registry:
@@ -16,7 +25,19 @@
 
 import type { Component } from 'vue';
 
-// Components (Vue) ---------------------------------------------------------
+// Components (Kimi collection) ----------------------------------------------
+import KimiAddConversation from '~icons/kimi/add-conversation';
+import KimiFolder from '~icons/kimi/folder';
+import KimiFolderOpen from '~icons/kimi/folder-open';
+import KimiMore from '~icons/kimi/more';
+import KimiSearch from '~icons/kimi/search';
+import KimiSetting from '~icons/kimi/setting';
+
+// Components (Tabler) ---------------------------------------------------------
+import TablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse';
+import TablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand';
+
+// Components (Remix) ---------------------------------------------------------
 import RiAddLine from '~icons/ri/add-line';
 import RiAlertLine from '~icons/ri/alert-line';
 import RiArrowDownLine from '~icons/ri/arrow-down-line';
@@ -29,27 +50,23 @@ import RiBracesLine from '~icons/ri/braces-line';
 import RiCalendarCloseLine from '~icons/ri/calendar-close-line';
 import RiCalendarScheduleLine from '~icons/ri/calendar-schedule-line';
 import RiCalendarTodoLine from '~icons/ri/calendar-todo-line';
-import RiChatNewLine from '~icons/ri/chat-new-line';
 import RiCheckLine from '~icons/ri/check-line';
 import RiCloseLine from '~icons/ri/close-line';
 import RiCodeLine from '~icons/ri/code-line';
 import RiCollapseDiagonalLine from '~icons/ri/collapse-diagonal-line';
-import RiContractLeftLine from '~icons/ri/contract-left-line';
 import RiDownloadLine from '~icons/ri/download-line';
 import RiDraggable from '~icons/ri/draggable';
 import RiEqualizerLine from '~icons/ri/equalizer-line';
 import RiExpandDiagonalLine from '~icons/ri/expand-diagonal-line';
-import RiExpandRightLine from '~icons/ri/expand-right-line';
 import RiExternalLinkLine from '~icons/ri/external-link-line';
 import RiFileAddLine from '~icons/ri/file-add-line';
 import RiFileCopyLine from '~icons/ri/file-copy-line';
+import RiFileEditLine from '~icons/ri/file-edit-line';
 import RiFileLine from '~icons/ri/file-line';
 import RiFileTextLine from '~icons/ri/file-text-line';
 import RiFlashlightLine from '~icons/ri/flashlight-line';
 import RiFolderAddLine from '~icons/ri/folder-add-line';
 import RiFolderFill from '~icons/ri/folder-fill';
-import RiFolderLine from '~icons/ri/folder-line';
-import RiFolderOpenLine from '~icons/ri/folder-open-line';
 import RiGitPullRequestLine from '~icons/ri/git-pull-request-line';
 import RiGlobalLine from '~icons/ri/global-line';
 import RiImageLine from '~icons/ri/image-line';
@@ -60,24 +77,35 @@ import RiListUnordered from '~icons/ri/list-unordered';
 import RiLoginBoxLine from '~icons/ri/login-box-line';
 import RiMailLine from '~icons/ri/mail-line';
 import RiMessageLine from '~icons/ri/message-line';
-import RiMoreLine from '~icons/ri/more-line';
+import RiPauseFill from '~icons/ri/pause-fill';
 import RiPencilLine from '~icons/ri/pencil-line';
 import RiPlayFill from '~icons/ri/play-fill';
 import RiQuestionLine from '~icons/ri/question-line';
-import RiSearchLine from '~icons/ri/search-line';
-import RiSettings3Line from '~icons/ri/settings-3-line';
 import RiSortDesc from '~icons/ri/sort-desc';
 import RiSparklingLine from '~icons/ri/sparkling-line';
 import RiStarFill from '~icons/ri/star-fill';
 import RiStarLine from '~icons/ri/star-line';
 import RiStopFill from '~icons/ri/stop-fill';
 import RiSubtractLine from '~icons/ri/subtract-line';
+import RiTargetLine from '~icons/ri/target-line';
 import RiTerminalBoxLine from '~icons/ri/terminal-box-line';
 import RiTimeLine from '~icons/ri/time-line';
 import RiToolsLine from '~icons/ri/tools-line';
 import RiUserLine from '~icons/ri/user-line';
 
-// Raw SVG strings ----------------------------------------------------------
+// Raw SVG strings (Kimi collection) -----------------------------------------
+import RawKimiAddConversation from '~icons/kimi/add-conversation?raw';
+import RawKimiFolder from '~icons/kimi/folder?raw';
+import RawKimiFolderOpen from '~icons/kimi/folder-open?raw';
+import RawKimiMore from '~icons/kimi/more?raw';
+import RawKimiSearch from '~icons/kimi/search?raw';
+import RawKimiSetting from '~icons/kimi/setting?raw';
+
+// Raw SVG strings (Tabler) ----------------------------------------------------
+import RawTablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse?raw';
+import RawTablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand?raw';
+
+// Raw SVG strings (Remix) ----------------------------------------------------
 import RawAddLine from '~icons/ri/add-line?raw';
 import RawAlertLine from '~icons/ri/alert-line?raw';
 import RawArrowDownLine from '~icons/ri/arrow-down-line?raw';
@@ -90,27 +118,23 @@ import RawBracesLine from '~icons/ri/braces-line?raw';
 import RawCalendarCloseLine from '~icons/ri/calendar-close-line?raw';
 import RawCalendarScheduleLine from '~icons/ri/calendar-schedule-line?raw';
 import RawCalendarTodoLine from '~icons/ri/calendar-todo-line?raw';
-import RawChatNewLine from '~icons/ri/chat-new-line?raw';
 import RawCheckLine from '~icons/ri/check-line?raw';
 import RawCloseLine from '~icons/ri/close-line?raw';
 import RawCodeLine from '~icons/ri/code-line?raw';
 import RawCollapseDiagonalLine from '~icons/ri/collapse-diagonal-line?raw';
-import RawContractLeftLine from '~icons/ri/contract-left-line?raw';
 import RawDownloadLine from '~icons/ri/download-line?raw';
 import RawDraggable from '~icons/ri/draggable?raw';
 import RawEqualizerLine from '~icons/ri/equalizer-line?raw';
 import RawExpandDiagonalLine from '~icons/ri/expand-diagonal-line?raw';
-import RawExpandRightLine from '~icons/ri/expand-right-line?raw';
 import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
 import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFileCopyLine from '~icons/ri/file-copy-line?raw';
+import RawFileEditLine from '~icons/ri/file-edit-line?raw';
 import RawFileLine from '~icons/ri/file-line?raw';
 import RawFileTextLine from '~icons/ri/file-text-line?raw';
 import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
 import RawFolderAddLine from '~icons/ri/folder-add-line?raw';
 import RawFolderFill from '~icons/ri/folder-fill?raw';
-import RawFolderLine from '~icons/ri/folder-line?raw';
-import RawFolderOpenLine from '~icons/ri/folder-open-line?raw';
 import RawGitPullRequestLine from '~icons/ri/git-pull-request-line?raw';
 import RawGlobalLine from '~icons/ri/global-line?raw';
 import RawImageLine from '~icons/ri/image-line?raw';
@@ -121,18 +145,17 @@ import RawListUnordered from '~icons/ri/list-unordered?raw';
 import RawLoginBoxLine from '~icons/ri/login-box-line?raw';
 import RawMailLine from '~icons/ri/mail-line?raw';
 import RawMessageLine from '~icons/ri/message-line?raw';
-import RawMoreLine from '~icons/ri/more-line?raw';
+import RawPauseFill from '~icons/ri/pause-fill?raw';
 import RawPencilLine from '~icons/ri/pencil-line?raw';
 import RawPlayFill from '~icons/ri/play-fill?raw';
 import RawQuestionLine from '~icons/ri/question-line?raw';
-import RawSearchLine from '~icons/ri/search-line?raw';
-import RawSettings3Line from '~icons/ri/settings-3-line?raw';
 import RawSortDesc from '~icons/ri/sort-desc?raw';
 import RawSparklingLine from '~icons/ri/sparkling-line?raw';
 import RawStarFill from '~icons/ri/star-fill?raw';
 import RawStarLine from '~icons/ri/star-line?raw';
 import RawStopFill from '~icons/ri/stop-fill?raw';
 import RawSubtractLine from '~icons/ri/subtract-line?raw';
+import RawTargetLine from '~icons/ri/target-line?raw';
 import RawTerminalBoxLine from '~icons/ri/terminal-box-line?raw';
 import RawTimeLine from '~icons/ri/time-line?raw';
 import RawToolsLine from '~icons/ri/tools-line?raw';
@@ -177,6 +200,7 @@ export type IconName =
   | 'folder-solid'
   | 'file'
   | 'file-text'
+  | 'file-edit'
   | 'file-plus'
   | 'file-off'
   | 'image-off'
@@ -197,6 +221,8 @@ export type IconName =
   | 'alert-triangle'
   | 'clock'
   | 'sparkles'
+  | 'target'
+  | 'pause'
   | 'play'
   | 'stop'
   | 'star'
@@ -220,13 +246,13 @@ function entry(component: Component, svg: string): IconEntry {
 
 export const ICONS: Record<IconName, IconEntry> = {
   plus: entry(RiAddLine, RawAddLine),
-  'chat-new': entry(RiChatNewLine, RawChatNewLine),
+  'chat-new': entry(KimiAddConversation, RawKimiAddConversation),
   'calendar-close': entry(RiCalendarCloseLine, RawCalendarCloseLine),
   'calendar-schedule': entry(RiCalendarScheduleLine, RawCalendarScheduleLine),
   'calendar-todo': entry(RiCalendarTodoLine, RawCalendarTodoLine),
   close: entry(RiCloseLine, RawCloseLine),
   check: entry(RiCheckLine, RawCheckLine),
-  search: entry(RiSearchLine, RawSearchLine),
+  search: entry(KimiSearch, RawKimiSearch),
   copy: entry(RiFileCopyLine, RawFileCopyLine),
   link: entry(RiLinksLine, RawLinksLine),
   'external-link': entry(RiExternalLinkLine, RawExternalLinkLine),
@@ -234,7 +260,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   undo: entry(RiArrowGoBackLine, RawArrowGoBackLine),
   send: entry(RiArrowUpLine, RawArrowUpLine),
   image: entry(RiImageLine, RawImageLine),
-  settings: entry(RiSettings3Line, RawSettings3Line),
+  settings: entry(KimiSetting, RawKimiSetting),
   sliders: entry(RiEqualizerLine, RawEqualizerLine),
   'log-in': entry(RiLoginBoxLine, RawLoginBoxLine),
   'chevron-down': entry(RiArrowDownSLine, RawArrowDownSLine),
@@ -243,19 +269,20 @@ export const ICONS: Record<IconName, IconEntry> = {
   'arrow-down': entry(RiArrowDownLine, RawArrowDownLine),
   'arrow-right': entry(RiArrowRightLine, RawArrowRightLine),
   minus: entry(RiSubtractLine, RawSubtractLine),
-  'panel-collapse': entry(RiContractLeftLine, RawContractLeftLine),
-  'panel-expand': entry(RiExpandRightLine, RawExpandRightLine),
+  'panel-collapse': entry(TablerSidebarLeftCollapse, RawTablerSidebarLeftCollapse),
+  'panel-expand': entry(TablerSidebarLeftExpand, RawTablerSidebarLeftExpand),
   expand: entry(RiExpandDiagonalLine, RawExpandDiagonalLine),
   collapse: entry(RiCollapseDiagonalLine, RawCollapseDiagonalLine),
   list: entry(RiListUnordered, RawListUnordered),
   sort: entry(RiSortDesc, RawSortDesc),
   grip: entry(RiDraggable, RawDraggable),
-  folder: entry(RiFolderOpenLine, RawFolderOpenLine),
-  'folder-closed': entry(RiFolderLine, RawFolderLine),
+  folder: entry(KimiFolderOpen, RawKimiFolderOpen),
+  'folder-closed': entry(KimiFolder, RawKimiFolder),
   'folder-plus': entry(RiFolderAddLine, RawFolderAddLine),
   'folder-solid': entry(RiFolderFill, RawFolderFill),
   file: entry(RiFileLine, RawFileLine),
   'file-text': entry(RiFileTextLine, RawFileTextLine),
+  'file-edit': entry(RiFileEditLine, RawFileEditLine),
   'file-plus': entry(RiFileAddLine, RawFileAddLine),
   'file-off': entry(RiFileLine, RawFileLine),
   'image-off': entry(RiImageLine, RawImageLine),
@@ -276,11 +303,13 @@ export const ICONS: Record<IconName, IconEntry> = {
   'alert-triangle': entry(RiAlertLine, RawAlertLine),
   clock: entry(RiTimeLine, RawTimeLine),
   sparkles: entry(RiSparklingLine, RawSparklingLine),
+  target: entry(RiTargetLine, RawTargetLine),
+  pause: entry(RiPauseFill, RawPauseFill),
   play: entry(RiPlayFill, RawPlayFill),
   stop: entry(RiStopFill, RawStopFill),
   star: entry(RiStarFill, RawStarFill),
   'star-outline': entry(RiStarLine, RawStarLine),
-  'dots-horizontal': entry(RiMoreLine, RawMoreLine),
+  'dots-horizontal': entry(KimiMore, RawKimiMore),
 };
 
 export function getIcon(name: IconName): IconEntry {
@@ -353,6 +382,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'folder-solid',
       'file',
       'file-text',
+      'file-edit',
       'file-plus',
       'file-off',
       'image-off',
@@ -365,6 +395,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'check-list',
       'bolt',
       'git-pull-request',
+      'target',
       'calendar-schedule',
       'calendar-todo',
       'calendar-close',
@@ -379,6 +410,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'alert-triangle',
       'clock',
       'sparkles',
+      'pause',
       'play',
       'stop',
       'star',

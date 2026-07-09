@@ -3,6 +3,7 @@
  */
 
 import { createRPC, KimiCore } from '../../rpc';
+import type { ImageLimits } from '../../tools/support/image-limits';
 import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
@@ -35,6 +36,11 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
   public readonly kimiRequestHeaders: Record<string, string> | undefined;
 
   public readonly telemetry: TelemetryClient;
+
+  /** The core's owner-scoped [image] limits; see ICoreProcessService. */
+  public get imageLimits(): ImageLimits {
+    return this._core.imageLimits;
+  }
 
   /**
    * The in-process `KimiCore` instance. Kept private so daemon-side code can't

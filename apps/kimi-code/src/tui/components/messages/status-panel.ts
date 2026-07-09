@@ -22,7 +22,11 @@ import {
   safeUsageRatio,
 } from '#/utils/usage/usage-format';
 
-import { buildManagedUsageReportLines, type ManagedUsageReport } from './usage-panel';
+import {
+  buildExtraUsageSection,
+  buildManagedUsageReportLines,
+  type ManagedUsageReport,
+} from './usage-panel';
 
 interface FieldRow {
   readonly label: string;
@@ -143,6 +147,17 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   if (managedSection.length > 0) {
     lines.push('');
     lines.push(...managedSection);
+  }
+
+  const extraSection = buildExtraUsageSection(
+    options.managedUsage?.extraUsage,
+    accent,
+    value,
+    muted,
+  );
+  if (extraSection.length > 0) {
+    lines.push('');
+    lines.push(...extraSection);
   }
 
   return lines;

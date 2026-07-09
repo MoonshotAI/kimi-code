@@ -18,6 +18,8 @@ import {
   type CompactionResult,
 } from '../compaction';
 import {
+  degradeOlderMediaParts,
+  MEDIA_DEGRADE_KEEP_RECENT,
   project,
   type ProjectionAnomaly,
   type ProjectOptions,
@@ -486,6 +488,17 @@ export class ContextMemory {
       dropLeadingNonUser: true,
       mergeConsecutiveAssistants: true,
     });
+  }
+
+  // Fallback projection for the post-413 media-degraded resend: the normal
+  // wire projection with all but the most recent media parts replaced by text
+  // markers, so a request body bloated by accumulated base64 media fits the
+  // provider's size limit. Purely read-side — the history keeps its media —
+  // and only used when the provider has already rejected the normal
+  // projection as too large; see the request-too-large fallback in
+  // `turn-step`.
+  get mediaDegradedMessages(): Message[] {
+    return degradeOlderMediaParts(this.messages, MEDIA_DEGRADE_KEEP_RECENT);
   }
 
   useProjectedHistoryFrom(source: ContextMemory): void {

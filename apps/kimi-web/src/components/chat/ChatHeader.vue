@@ -51,6 +51,25 @@ const behind = computed(() => props.behind ?? 0);
 const adds = computed(() => props.gitDiffStats?.totalAdditions ?? 0);
 const dels = computed(() => props.gitDiffStats?.totalDeletions ?? 0);
 const hasLineStats = computed(() => adds.value > 0 || dels.value > 0);
+const PR_STATE_LABEL_KEYS: Record<string, string> = {
+  open: 'header.prStatusOpen',
+  closed: 'header.prStatusClosed',
+  merged: 'header.prStatusMerged',
+  draft: 'header.prStatusDraft',
+};
+
+function normalizedPrState(state: string): string {
+  return state.trim().toLowerCase().replaceAll('_', '-');
+}
+
+function prStateClass(state: string): string {
+  const stateClass = normalizedPrState(state);
+  return PR_STATE_LABEL_KEYS[stateClass] ? `pr-${stateClass}` : 'pr-unknown';
+}
+
+function prStateLabel(state: string): string {
+  return t(PR_STATE_LABEL_KEYS[normalizedPrState(state)] ?? 'header.prStatusUnknown');
+}
 
 // ---------------------------------------------------------------------------
 // More-menu (kebab dropdown)
@@ -295,11 +314,11 @@ async function startArchive(): Promise<void> {
       v-if="pr"
       type="button"
       class="ch-pill ch-pr"
-      :class="`pr-${pr.state}`"
+      :class="prStateClass(pr.state)"
       @click="pr && emit('openPr', pr.url)"
     >
       <Icon name="git-pull-request" size="sm" />
-      <span>PR #{{ pr.number }} · {{ pr.state }}</span>
+      <span>PR #{{ pr.number }} · {{ prStateLabel(pr.state) }}</span>
     </button>
 
   </header>
@@ -420,6 +439,7 @@ async function startArchive(): Promise<void> {
 .ch-pr.pr-merged { color: var(--color-done); border-color: var(--color-done-bd); background: var(--color-done-soft); }
 .ch-pr.pr-closed { color: var(--color-danger); border-color: var(--color-danger-bd); background: var(--color-danger-soft); }
 .ch-pr.pr-draft { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-surface-sunken); }
+.ch-pr.pr-unknown { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-surface-sunken); }
 .ch-pr:hover { border-color: var(--color-line-strong); }
 
 /* Fixed more-menu, anchored to the kebab trigger. Surface / items come from

@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 0.23.3
+
+### Patch Changes
+
+- [#1506](https://github.com/MoonshotAI/kimi-code/pull/1506) [`e83511a`](https://github.com/MoonshotAI/kimi-code/commit/e83511a7118652a67676bbcfd41148907ad7b8de) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix a misleading "OAuth login expired" message shown when a model is not available for the current account.
+
 ## 0.23.2
 
 ### Patch Changes

@@ -44,6 +44,8 @@ export interface McpOutputOptions {
   readonly originalsDir?: string | undefined;
   /** Report an `image_compress` event per compressed tool-result image. */
   readonly telemetry?: TelemetryClient | undefined;
+  /** Owner-resolved longest-edge ceiling (px) for tool-result images. */
+  readonly maxImageEdgePx?: number | undefined;
 }
 
 // MCP servers can produce arbitrarily large outputs; cap what we feed back to
@@ -188,6 +190,7 @@ export async function mcpResultToExecutableOutput(
   // DATA (never inserted into the parts), so tool output that merely quotes
   // a caption can never be mistaken for a generated one.
   const compressed = await compressImageContentParts(budgeted.parts, {
+    maxEdge: options.maxImageEdgePx,
     telemetry:
       options.telemetry === undefined
         ? undefined

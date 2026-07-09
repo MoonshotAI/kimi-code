@@ -139,6 +139,7 @@ export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
     telemetry: rpc.telemetry,
     ensureConfigFile: () => rpc.ensureConfigFile(),
     onClose: () => rpc.close(),
+    imageLimits: rpc.core.imageLimits,
     sessionStartedProperties: options.sessionStartedProperties,
   });
 }
