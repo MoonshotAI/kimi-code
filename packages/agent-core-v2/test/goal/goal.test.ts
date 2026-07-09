@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
@@ -657,7 +657,7 @@ describe('AgentGoalService core workflow hooks', () => {
     });
   });
 
-  it('continues after creating a goal mid-turn without counting the starter turn', async () => {
+  it('counts the goal-creating turn as the first goal turn and continues', async () => {
     const turn = makeTurn(2);
     eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
     await runGoalStep(loopService, turn);
@@ -665,11 +665,49 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'finish the task' }, 'model');
     endTurn(eventBus, turn);
 
+    await vi.waitFor(() => expect(turnService.launches).toHaveLength(1));
     expect(goals.getGoal().goal).toMatchObject({
       status: 'active',
-      turnsUsed: 0,
+      turnsUsed: 1,
     });
-    expect(turnService.launches).toHaveLength(1);
+  });
+
+  it('blocks at the turn budget when the goal-creating turn consumes it', async () => {
+    const turn = makeTurn(12);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await runGoalStep(loopService, turn);
+
+    await goals.createGoal({ objective: 'finish the task' }, 'model');
+    await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
+    endTurn(eventBus, turn);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      status: 'blocked',
+      turnsUsed: 1,
+      terminalReason: 'Blocked after goal budget reached: turn budget 1',
+    });
+    expect(turnService.launches).toEqual([]);
+  });
+
+  it('charges post-creation step output tokens for the goal-creating turn', async () => {
+    const turn = makeTurn(13);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await runGoalStep(loopService, turn);
+
+    await goals.createGoal({ objective: 'finish the task' }, 'model');
+    expect(
+      await runStepUsageHooks(loopService, goals, turn, {
+        inputCacheRead: 100,
+        inputCacheCreation: 0,
+        inputOther: 50,
+        output: 6,
+      }),
+    ).toBe(false);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      status: 'active',
+      tokensUsed: 6,
+    });
   });
 
   it('requests one final outcome turn after model completion', async () => {

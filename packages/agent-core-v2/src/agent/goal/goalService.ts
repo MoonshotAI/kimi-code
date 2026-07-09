@@ -144,8 +144,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
   private wallClockResumedAt?: number;
+  private liveTurnId?: number;
   private readonly goalDrivenTurns = new Set<number>();
   private readonly countedGoalTurns = new Set<number>();
+  private readonly goalStarterTurns = new Set<number>();
   private readonly goalOutcomeContinuationTurns = new Set<number>();
 
   constructor(
@@ -238,6 +240,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this.wallClockResumedAt = Date.now();
+    this.adoptStarterTurn();
     const state = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(state));
     this.telemetry.track('goal_created', { actor, replace: input.replace === true });
@@ -382,8 +385,21 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private handleTurnLaunched(turnId: number): void {
+    this.liveTurnId = turnId;
     if (this.goalState?.status === 'active') this.goalDrivenTurns.add(turnId);
     this.goalOutcomeContinuationTurns.delete(turnId);
+  }
+
+  // The ordinary turn that created or resumed the goal counts as the first
+  // active goal turn. Its later steps are token-charged like any goal turn,
+  // but the turn itself is counted at turn end (see handleTurnEnded), not at
+  // the next step boundary — countedGoalTurns suppresses per-step counting.
+  private adoptStarterTurn(): void {
+    const turnId = this.liveTurnId;
+    if (turnId === undefined || this.goalDrivenTurns.has(turnId)) return;
+    this.goalDrivenTurns.add(turnId);
+    this.countedGoalTurns.add(turnId);
+    this.goalStarterTurns.add(turnId);
   }
 
   private async handleBeforeStep(ctx: BeforeStepContext): Promise<void> {
@@ -414,6 +430,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     turnId: number,
     result: { reason: TurnResult['reason']; error?: TurnResult['error'] },
   ): Promise<void> {
+    if (this.liveTurnId === turnId) this.liveTurnId = undefined;
+    const starterTurn = this.goalStarterTurns.delete(turnId);
     this.goalDrivenTurns.delete(turnId);
     this.countedGoalTurns.delete(turnId);
     this.goalOutcomeContinuationTurns.delete(turnId);
@@ -431,6 +449,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       await this.pauseActiveGoal({ reason: goalFailurePauseReason(result.error) });
       return;
     }
+
+    if (starterTurn) await this.incrementTurn();
 
     const state = this.goalState;
     if (state === null || state.status !== 'active') return;
@@ -492,6 +512,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const wallClockMs = this.settleWallClock(state);
     if (status === 'active') {
       this.wallClockResumedAt = Date.now();
+      this.adoptStarterTurn();
     } else if (state.status === 'active') {
       this.wallClockResumedAt = undefined;
     }
