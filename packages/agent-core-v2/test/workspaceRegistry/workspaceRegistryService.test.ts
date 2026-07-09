@@ -167,4 +167,28 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     await build().delete(created.id);
     expect(await restart().get(created.id)).toBeUndefined();
   });
+
+  it('collapses duplicate registered entries for the same root, preferring the canonical id', async () => {
+    const root = join(homeDir, 'dup');
+    const canonicalId = encodeWorkDirKey(root);
+    // Simulate a registry that also holds a legacy id for the same folder (e.g.
+    // one produced by an older encodeWorkDirKey).
+    const legacyId = 'wd_duplegacy_deadbeef0000';
+    const entry: PersistedWorkspaceEntry = {
+      root,
+      name: 'dup',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    };
+    await writeWorkspacesJson({
+      // Legacy first so the canonical entry must actively replace it.
+      [legacyId]: entry,
+      [canonicalId]: entry,
+    });
+
+    const list = await build().list();
+    const matches = list.filter((w) => w.root === root);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.id).toBe(canonicalId);
+  });
 });

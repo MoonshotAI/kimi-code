@@ -49,7 +49,7 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   list(): Promise<readonly Workspace[]> {
     return this.runExclusive(async () => {
       const cache = await this.ensureLoaded();
-      return [...cache.values()];
+      return dedupeByRoot(cache);
     });
   }
 
@@ -172,6 +172,30 @@ function parseSessionIndexLine(line: string): SessionIndexLine | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Collapse registered workspaces that share a `root`. The persisted catalog
+ * (v1-compatible `workspaces.json`) can hold legacy entries whose id was
+ * computed by an older `encodeWorkDirKey` (e.g. realpath-based on Windows) for
+ * the same folder, so one root may map to multiple ids. Prefer the entry whose
+ * id matches the current canonical key so current sessions' `workspace_id`
+ * still resolves and the same folder is not listed twice.
+ */
+function dedupeByRoot(cache: ReadonlyMap<string, Workspace>): Workspace[] {
+  const byRoot = new Map<string, Workspace>();
+  for (const ws of cache.values()) {
+    const existing = byRoot.get(ws.root);
+    if (existing === undefined) {
+      byRoot.set(ws.root, ws);
+      continue;
+    }
+    const canonicalId = encodeWorkDirKey(ws.root);
+    if (existing.id !== canonicalId && ws.id === canonicalId) {
+      byRoot.set(ws.root, ws);
+    }
+  }
+  return [...byRoot.values()];
 }
 
 registerScopedService(
