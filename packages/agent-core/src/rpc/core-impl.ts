@@ -7,6 +7,7 @@ import { PluginManager } from '#/plugin';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
+import { setConfiguredMaxImageEdgePx, setConfiguredReadImageByteBudget } from '#/tools/support/image-compress';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
 import { resolveThinkingEffort } from '../agent/config/thinking';
@@ -205,6 +206,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       FLAG_DEFINITIONS,
       this.config.experimental,
     );
+    setConfiguredMaxImageEdgePx(this.config.image?.maxEdgePx);
+    setConfiguredReadImageByteBudget(this.config.image?.readByteBudget);
     this.sessionStore = new SessionStore(this.homeDir);
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
@@ -1079,6 +1082,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private setRuntimeConfig(config: KimiConfig): KimiConfig {
     this.config = config;
     this.experimentalFlags.setConfigOverrides(config.experimental);
+    setConfiguredMaxImageEdgePx(config.image?.maxEdgePx);
+    setConfiguredReadImageByteBudget(config.image?.readByteBudget);
     return this.config;
   }
 

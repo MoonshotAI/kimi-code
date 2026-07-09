@@ -9,7 +9,11 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { isRecoverableRequestStructureError, type TokenUsage } from '@moonshot-ai/kosong';
+import {
+  APIRequestTooLargeError,
+  isRecoverableRequestStructureError,
+  type TokenUsage,
+} from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
@@ -35,6 +39,8 @@ export interface ExecuteLoopStepDeps {
   readonly signal: AbortSignal;
   readonly buildMessages: LoopMessageBuilder;
   readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
+  /** See RunTurnInput.buildMessagesMediaDegraded. */
+  readonly buildMessagesMediaDegraded?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly llm: LLM;
   readonly tools?: readonly ExecutableTool[] | undefined;
@@ -57,12 +63,20 @@ export interface ExecuteLoopStepDeps {
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   readonly usage: TokenUsage;
   readonly stopReason: LoopStepStopReason;
+  /**
+   * True when this step only succeeded after resending with the
+   * media-degraded projection. The turn loop uses it to keep later steps on
+   * that projection — re-sending the full-media history would pay a fresh
+   * rejection on every step of the turn.
+   */
+  readonly mediaDegradedResendUsed?: boolean;
 }> {
   const {
     turnId,
     signal,
     buildMessages,
     buildMessagesStrict,
+    buildMessagesMediaDegraded,
     dispatchEvent,
     llm,
     tools,
@@ -140,49 +154,90 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     log,
   } as const;
   let response: LLMChatResponse;
+  let mediaDegradedResendUsed = false;
   try {
     response = await chatWithRetry({ ...retryInput, params: chatParams });
   } catch (error) {
-    // A structural request rejection (tool_use/tool_result pairing, empty or
-    // whitespace-only text, non-user first message, non-alternating roles) means
-    // the projected history is not wire-compliant for a strict provider — and
-    // since the same history is re-sent every turn, the session would stay stuck
-    // on this error forever. Resend ONCE with a strict, guaranteed-compliant
-    // rebuild (every open call closed, stray results dropped, leading non-user
-    // trimmed, consecutive assistants merged) as a last resort. Any other error,
-    // or a host that supplied no strict builder, propagates unchanged.
-    if (buildMessagesStrict === undefined || !isRecoverableRequestStructureError(error)) throw error;
-    signal.throwIfAborted();
-    log?.warn('provider rejected request structure; resending with strict projection', {
-      turnStep: `${turnId}.${String(currentStep)}`,
-      model: llm.modelName,
-    });
-    const strictMessages = await buildMessagesStrict();
-    signal.throwIfAborted();
-    try {
-      response = await chatWithRetry({
-        ...retryInput,
-        params: {
-          ...chatParams,
-          messages: strictMessages,
-          requestLogFields: { projection: 'strict' },
-        },
-      });
-    } catch (strictError) {
-      // The strictly-sanitized rebuild was still rejected — our wire-compliance
-      // repair did not cover this case. Surface it loudly: the session is stuck
-      // and this is the signal we need to diagnose the gap.
-      log?.error('strict resend still rejected by provider; request remains wire-invalid', {
+    if (buildMessagesMediaDegraded !== undefined && error instanceof APIRequestTooLargeError) {
+      // The provider rejected the request BODY as too large (HTTP 413) —
+      // accumulated base64 media, not tokens, so compaction's token-driven
+      // recovery never fires (media is estimated at a small flat cost). The
+      // same media is re-sent on every request, so without intervention the
+      // session stays stuck. Resend ONCE with the media-degraded projection
+      // (old media replaced by text markers, the most recent kept); a
+      // rejection of that rebuild propagates unchanged.
+      signal.throwIfAborted();
+      log?.warn('provider rejected request as too large; resending with degraded media', {
         turnStep: `${turnId}.${String(currentStep)}`,
         model: llm.modelName,
-        originalError: errorMessage(error),
-        strictError: errorMessage(strictError),
       });
-      throw strictError;
+      const degradedMessages = await buildMessagesMediaDegraded();
+      signal.throwIfAborted();
+      try {
+        response = await chatWithRetry({
+          ...retryInput,
+          params: {
+            ...chatParams,
+            messages: degradedMessages,
+            requestLogFields: { projection: 'media-degraded' },
+          },
+        });
+      } catch (degradedError) {
+        log?.error('media-degraded resend still rejected by provider', {
+          turnStep: `${turnId}.${String(currentStep)}`,
+          model: llm.modelName,
+          originalError: errorMessage(error),
+          degradedError: errorMessage(degradedError),
+        });
+        throw degradedError;
+      }
+      mediaDegradedResendUsed = true;
+      log?.info('recovered after media-degraded resend', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+      });
+    } else if (buildMessagesStrict !== undefined && isRecoverableRequestStructureError(error)) {
+      // A structural request rejection (tool_use/tool_result pairing, empty or
+      // whitespace-only text, non-user first message, non-alternating roles) means
+      // the projected history is not wire-compliant for a strict provider — and
+      // since the same history is re-sent every turn, the session would stay stuck
+      // on this error forever. Resend ONCE with a strict, guaranteed-compliant
+      // rebuild (every open call closed, stray results dropped, leading non-user
+      // trimmed, consecutive assistants merged) as a last resort. Any other error,
+      // or a host that supplied no strict builder, propagates unchanged.
+      signal.throwIfAborted();
+      log?.warn('provider rejected request structure; resending with strict projection', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+        model: llm.modelName,
+      });
+      const strictMessages = await buildMessagesStrict();
+      signal.throwIfAborted();
+      try {
+        response = await chatWithRetry({
+          ...retryInput,
+          params: {
+            ...chatParams,
+            messages: strictMessages,
+            requestLogFields: { projection: 'strict' },
+          },
+        });
+      } catch (strictError) {
+        // The strictly-sanitized rebuild was still rejected — our wire-compliance
+        // repair did not cover this case. Surface it loudly: the session is stuck
+        // and this is the signal we need to diagnose the gap.
+        log?.error('strict resend still rejected by provider; request remains wire-invalid', {
+          turnStep: `${turnId}.${String(currentStep)}`,
+          model: llm.modelName,
+          originalError: errorMessage(error),
+          strictError: errorMessage(strictError),
+        });
+        throw strictError;
+      }
+      log?.info('recovered after strict resend', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+      });
+    } else {
+      throw error;
     }
-    log?.info('recovered after strict resend', {
-      turnStep: `${turnId}.${String(currentStep)}`,
-    });
   }
   const usage = response.usage;
   const usageResult = await recordUsage(usage);
@@ -244,6 +299,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     usage,
     stopReason:
       stopTurnAfterStep && effectiveStopReason === 'tool_use' ? 'end_turn' : effectiveStopReason,
+    mediaDegradedResendUsed,
   };
 }
 
