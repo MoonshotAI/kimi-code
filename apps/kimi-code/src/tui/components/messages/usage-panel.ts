@@ -192,7 +192,7 @@ export function buildExtraUsageSection(
     const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
     return [
       accent('Extra Usage'),
-      `  ${barColoured}  ${value(`${used} / ${limit}`)}  ${muted(`·  Balance ${balance}`)}`,
+      `  ${barColoured}  ${muted('Used')} ${value(`${used} / ${limit}`)}  ${muted(`·  Balance ${balance}`)}`,
     ];
   }
 
@@ -200,7 +200,7 @@ export function buildExtraUsageSection(
   const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
   return [
     accent('Extra Usage'),
-    `  ${muted(DOTTED_BAR)}  ${value(`${used} / 无限制`)}  ${muted(`Balance ${balance}`)}`,
+    `  ${muted(DOTTED_BAR)}  ${muted('Used')} ${value(`${used} / Unlimited`)}  ${muted(`Balance ${balance}`)}`,
   ];
 }
 

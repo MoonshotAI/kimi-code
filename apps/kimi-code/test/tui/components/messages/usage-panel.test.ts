@@ -70,6 +70,7 @@ describe('UsagePanelComponent', () => {
 
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
+    expect(output).toContain('Used');
     expect(output).toContain('$50 / $200');
     expect(output).toContain('Balance $100');
   });
@@ -96,7 +97,8 @@ describe('UsagePanelComponent', () => {
 
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
-    expect(output).toContain('¥217.92 / 无限制');
+    expect(output).toContain('Used');
+    expect(output).toContain('¥217.92 / Unlimited');
     expect(output).toContain('Balance ¥182.08');
     expect(output).toContain('····················');
   });

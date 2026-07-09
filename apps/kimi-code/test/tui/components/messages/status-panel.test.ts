@@ -98,6 +98,7 @@ describe('status panel report lines', () => {
 
     const output = lines.join('\n');
     expect(output).toContain('Extra Usage');
+    expect(output).toContain('Used');
     expect(output).toContain('$50 / $200');
     expect(output).toContain('Balance $150');
   });
