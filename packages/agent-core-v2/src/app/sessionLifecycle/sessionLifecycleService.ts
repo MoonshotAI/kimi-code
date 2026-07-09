@@ -65,7 +65,8 @@ import {
   ISessionLifecycleService,
 } from './sessionLifecycle';
 
-type MaterializeSessionOptions = CreateSessionOptions & {
+type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
+  readonly sessionId: string;
   readonly workspaceId?: string;
 };
 
@@ -105,8 +106,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
-    const handle = await this.materializeSession(opts);
-    await this.announceCreated({ sessionId: opts.sessionId, handle, source: 'startup' });
+    const sessionId = opts.sessionId ?? createSessionId();
+    const handle = await this.materializeSession({ ...opts, sessionId });
+    await this.announceCreated({ sessionId, handle, source: 'startup' });
     return handle;
   }
 
@@ -299,7 +301,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         : await this.readMetaFromDisk(workspaceId, sourceId);
 
     // 5. Mint the target id and reject collisions.
-    const targetId = opts.newSessionId ?? randomUUID();
+    const targetId = opts.newSessionId ?? createSessionId();
     if (this.sessions.has(targetId) || (await this.index.get(targetId)) !== undefined) {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${targetId}" already exists`);
     }
@@ -432,6 +434,18 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];
   for await (const item of iterable) items.push(item);
   return items;
+}
+
+/**
+ * Mint a session id in the canonical `session_<lowercase-uuid>` form, matching
+ * v1's `createSessionId` (`packages/agent-core/src/rpc/core-impl.ts`).
+ * `randomUUID` already returns lowercase hex, so the result is lowercase by
+ * construction. Used as the default for both `create` and `fork` when the
+ * caller does not supply an id, so every session id shares one format and the
+ * edge layers never mint their own.
+ */
+function createSessionId(): string {
+  return `session_${randomUUID()}`;
 }
 
 function freshMetadataRecord(): PersistedWireRecord {

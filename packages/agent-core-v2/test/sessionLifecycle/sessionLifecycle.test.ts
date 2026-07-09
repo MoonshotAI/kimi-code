@@ -685,5 +685,42 @@ describe('SessionLifecycleService', () => {
 
       expect(dirsOf(target)).toEqual(['/tmp/extra']);
     });
+
+    it('create mints a session_-prefixed lowercase id when none is supplied', async () => {
+      const svc = build();
+      const h = await svc.create({ workDir: '/tmp/proj' });
+
+      expect(h.id).toMatch(/^session_[0-9a-f-]{36}$/);
+      expect(h.id).toBe(h.id.toLowerCase());
+      expect(svc.get(h.id)).toBe(h);
+    });
+
+    it('fork mints a session_-prefixed lowercase id when newSessionId is omitted', async () => {
+      const svc = build([
+        stubPair(ISessionActivity, {
+          _serviceBrand: undefined,
+          status: () => 'idle' as const,
+          isIdle: () => true,
+        }),
+        stubPair(IWorkspaceRegistry, {
+          ...workspaceRegistryStub(),
+          get: () =>
+            Promise.resolve({
+              id: 'wd_stub',
+              root: '/tmp/proj',
+              name: 'stub',
+              createdAt: 0,
+              lastOpenedAt: 0,
+            }),
+        }),
+      ]);
+
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      const target = await svc.fork({ sourceSessionId: 'src' });
+
+      expect(target.id).toMatch(/^session_[0-9a-f-]{36}$/);
+      expect(target.id).toBe(target.id.toLowerCase());
+      expect(target.id).not.toBe('src');
+    });
   });
 });

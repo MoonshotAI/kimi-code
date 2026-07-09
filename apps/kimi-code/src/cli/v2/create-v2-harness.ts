@@ -32,7 +32,6 @@ import {
   type SessionSummary,
   type TelemetryProperties,
 } from '@moonshot-ai/kimi-code-sdk';
-import { randomUUID } from 'node:crypto';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -144,7 +143,6 @@ class V2PromptHarness implements PromptHarness {
 
   async createSession(options: CreateSessionOptions): Promise<PromptSession> {
     const session = await this.core.accessor.get(ISessionLifecycleService).create({
-      sessionId: randomUUID(),
       workDir: options.workDir,
       additionalDirs: options.additionalDirs,
     });
