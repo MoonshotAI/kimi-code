@@ -858,6 +858,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     skillName: string,
     args?: string,
   ): Promise<void> {
+    // Same reentry window as startSessionAndSendPrompt (see the guard there):
+    // draft-session creation selects the new session before the activation,
+    // so concurrent first actions must be dropped here.
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    startingFirstPromptWorkspaces.add(workspaceId);
     try {
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
@@ -894,6 +899,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       await modelProvider.activateSkill(skillName, args, sid);
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
+    } finally {
+      startingFirstPromptWorkspaces.delete(workspaceId);
     }
   }
 
@@ -910,12 +917,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     workspaceId: string,
     prompt?: string,
   ): Promise<void> {
+    // Same reentry window as startSessionAndSendPrompt (see the guard there).
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    startingFirstPromptWorkspaces.add(workspaceId);
     try {
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
       await sideChat.openSideChatOn(sid, prompt);
     } catch (err) {
       pushOperationFailure('startSessionAndOpenSideChat', err);
+    } finally {
+      startingFirstPromptWorkspaces.delete(workspaceId);
     }
   }
 

@@ -20,6 +20,10 @@ import Pill from '../ui/Pill.vue';
 const props = defineProps<{
   sessionId?: string;
   running?: boolean;
+  /** True while the empty-composer first prompt is being created + submitted.
+   *  Covers the gap where draft-session creation already selected the new
+   *  session (empty state → dock) before the first prompt is submitted. */
+  starting?: boolean;
   queued?: QueuedPromptView[];
   searchFiles?: (q: string) => Promise<FileItem[]>;
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
@@ -256,6 +260,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       :models="models"
       :starred-ids="starredIds"
       :skills="skills"
+      :starting="starting"
       @submit="emit('submit', $event)"
       @steer="emit('steer', $event)"
       @command="emit('command', $event)"

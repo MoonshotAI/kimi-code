@@ -160,4 +160,45 @@ describe('turn.ended while a goal is active', () => {
     const status = events.find((e) => e.type === 'sessionStatusChanged');
     expect(status).toMatchObject({ type: 'sessionStatusChanged', status: 'aborted' });
   });
+
+  it('emits the owed idle when the goal is blocked in the inter-turn gap', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    const ended = projector.project('turn.ended', { reason: 'completed' }, 's1');
+    expect(ended.find((e) => e.type === 'sessionStatusChanged')).toMatchObject({ status: 'running' });
+    // driveGoal marks the goal blocked AFTER the turn.ended above, so no
+    // further turn.ended will carry the idle.
+    const blocked = projector.project('goal.updated', { snapshot: { status: 'blocked', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    const status = blocked.find((e) => e.type === 'sessionStatusChanged');
+    expect(status).toMatchObject({ type: 'sessionStatusChanged', status: 'idle', previousStatus: 'running' });
+  });
+
+  it('emits the owed idle when the goal is paused in the inter-turn gap', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    projector.project('turn.ended', { reason: 'completed' }, 's1');
+    const paused = projector.project('goal.updated', { snapshot: { status: 'paused', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    expect(paused.find((e) => e.type === 'sessionStatusChanged')).toMatchObject({ status: 'idle' });
+  });
+
+  it('does not double-emit idle when the goal settles mid-turn', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    projector.project('turn.started', { turnId: 0 }, 's1');
+    // UpdateGoal('blocked') fires mid-turn: the following turn.ended carries
+    // the idle, so goal.updated must not emit one itself.
+    const blocked = projector.project('goal.updated', { snapshot: { status: 'blocked', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    expect(blocked.filter((e) => e.type === 'sessionStatusChanged')).toHaveLength(0);
+    const ended = projector.project('turn.ended', { reason: 'completed' }, 's1');
+    expect(ended.find((e) => e.type === 'sessionStatusChanged')).toMatchObject({ status: 'idle' });
+  });
+
+  it('stays aborted when the user aborts and the goal is paused afterwards', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    const cancelled = projector.project('turn.ended', { reason: 'cancelled' }, 's1');
+    expect(cancelled.find((e) => e.type === 'sessionStatusChanged')).toMatchObject({ status: 'aborted' });
+    const paused = projector.project('goal.updated', { snapshot: { status: 'paused', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    expect(paused.filter((e) => e.type === 'sessionStatusChanged')).toHaveLength(0);
+  });
 });

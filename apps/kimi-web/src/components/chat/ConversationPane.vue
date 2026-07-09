@@ -1295,6 +1295,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :style="chatDockStyle"
         :session-id="sessionId"
         :running="running"
+        :starting="starting"
         :queued="queued"
         :search-files="searchFiles"
         :upload-image="uploadImage"
