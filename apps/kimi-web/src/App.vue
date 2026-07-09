@@ -685,6 +685,7 @@ function openPr(url: string): void {
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
         @open-settings="showSettings = true"
+        @collapse="toggleSidebarCollapse"
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
@@ -792,18 +793,18 @@ function openPr(url: string): void {
       @edit-message="handleEditMessage"
     />
 
-    <!-- Sidebar toggle — the ONLY toggle, resident on all desktop layouts:
-         pinned to the top-left corner (beside the traffic lights on macOS
-         desktop), rendered in both states. The sidebar slides underneath it
-         and only the glyph swaps, so the button never moves or flashes (the
-         previous two-element handoff — in-sidebar collapse button + floating
-         expand button — could not avoid flashing). It must come AFTER
+    <!-- Sidebar toggle — floating only when the in-header control can't serve:
+         on macOS desktop it's RESIDENT (always rendered beside the traffic
+         lights, the sidebar slides underneath and only the glyph swaps, so it
+         never moves or flashes); on Windows/web the collapse button lives
+         inside the sidebar header, so this floating button only appears while
+         COLLAPSED (to re-expand the sidebar). It must come AFTER
          ConversationPane in the DOM: Electron computes the window-drag region
          in tree order (drag rects union, no-drag rects subtract), so a no-drag
          element placed before the ChatHeader drag region would have its hole
          painted back over — making the button an inert drag area. -->
     <IconButton
-      v-if="!isMobile"
+      v-if="!isMobile && (isMacosDesktop || sidebarCollapsed)"
       class="sidebar-toggle-btn"
       size="sm"
       :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
@@ -1161,23 +1162,33 @@ function openPr(url: string): void {
 .app:not(.mobile) > .con { grid-column: 3; }
 .preview-handle { grid-column: 4; }
 
-/* Sidebar toggle — resident floating button pinned to the top-left corner;
-   the sidebar slides underneath it (see the template comment). While
-   collapsed the conversation header pads left so its content clears the
-   button (global block below). */
+/* Sidebar toggle — floating button pinned to the top-left corner. On macOS
+   desktop it is resident (rendered in both states beside the traffic lights);
+   on Windows/web it only appears while the sidebar is collapsed (the collapse
+   button lives inside the sidebar header). While collapsed the conversation
+   header pads left so its content clears the button (global block below). */
 .sidebar-toggle-btn {
   position: absolute;
   /* Vertically centered in the 48px conversation header. */
   top: 11px;
   left: 16px;
   z-index: var(--z-sticky);
+  /* Fade in on appearance (Windows/web: only rendered while collapsed, so
+     this plays as the sidebar finishes sliding away). macOS disables it. */
+  animation: sidebar-toggle-btn-in 0.18s var(--ease-out) 0.12s backwards;
   /* Floats over the macOS-desktop window-drag header; keep it clickable. */
   -webkit-app-region: no-drag;
 }
-/* macOS desktop (hidden title bar): clear the floating traffic lights (green
-   light's right edge ≈ 68px; 72 keeps a gap that matches the lights' own
-   8px rhythm). */
-.app.macos-desktop .sidebar-toggle-btn { left: 72px; }
+/* macOS desktop (hidden title bar): resident beside the floating traffic
+   lights (green light's right edge ≈ 68px; 72 keeps a gap that matches the
+   lights' own 8px rhythm); no entrance animation since it never appears. */
+.app.macos-desktop .sidebar-toggle-btn {
+  left: 72px;
+  animation: none;
+}
+@keyframes sidebar-toggle-btn-in {
+  from { opacity: 0; }
+}
 
 /* Internal-build tag pinned to the app's bottom-right corner (desktop app
    only — the component renders nothing elsewhere). Informational: never

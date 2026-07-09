@@ -82,6 +82,7 @@ const emit = defineEmits<{
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   openSettings: [];
+  collapse: [];
 }>();
 
 // ---------------------------------------------------------------------------
@@ -554,13 +555,11 @@ onBeforeUnmount(() => {
   >
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
-      <!-- Header: brand only — the sidebar toggle is NOT rendered here on any
-           platform. App.vue owns a single resident floating toggle pinned to
-           the top-left corner (beside the traffic lights on macOS desktop);
-           the sidebar slides underneath it and only the glyph swaps, so the
-           toggle never moves or flashes. The brand pads left to clear it; on
-           macOS desktop the brand is hidden too and the header is just a
-           window-drag strip. -->
+      <!-- Header: brand + collapse. The collapse button lives INSIDE the header
+           on non-mac platforms (right-aligned); on macOS desktop the brand is
+           hidden (traffic lights own that corner) and the header is just a
+           window-drag strip — there the toggle is App.vue's resident floating
+           button beside the traffic lights. -->
       <div class="ch">
         <div class="ch-brand">
           <template v-if="!isMacosDesktop">
@@ -579,6 +578,15 @@ onBeforeUnmount(() => {
             <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
           </template>
         </div>
+        <IconButton
+          v-if="!isMacosDesktop"
+          class="ch-collapse"
+          size="sm"
+          :label="t('sidebar.collapseSidebar')"
+          @click.stop="emit('collapse')"
+        >
+          <Icon name="panel-collapse" />
+        </IconButton>
       </div>
 
       <!-- New chat + new workspace buttons -->
@@ -816,18 +824,18 @@ onBeforeUnmount(() => {
   container-name: sidebar-col;
 }
 
-/* Header: brand strip (no border — flows into the workspace list). The
-   sidebar toggle is App.vue's resident floating button pinned over this
-   header's left edge, so the brand pads left to clear it (16px offset + 26px
-   button + 8px gap = 50px). min-height keeps the 26px control row (50px total
-   with padding) so the list below starts at a stable y. */
+/* Header: brand strip (no border — flows into the workspace list). On non-mac
+   platforms the brand sits on the left and the collapse button on the right
+   (justify-content: space-between); on macOS desktop the brand is hidden and
+   the header is a window-drag strip (see below). min-height keeps the 26px
+   control row (50px total with padding) so the list below starts at a stable
+   y. */
 .ch {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: var(--space-3);
-  padding-left: 50px;
   min-height: calc(26px + 2 * var(--space-3));
   width: 100%;
   box-sizing: border-box;
