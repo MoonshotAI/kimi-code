@@ -83,6 +83,10 @@ declare module '#/agent/wireRecord/wireRecord' {
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 
+// The criterion is repeated in every goal reminder, so it is truncated instead
+// of rejected: an over-long criterion never fails goal creation outright.
+const MAX_GOAL_COMPLETION_CRITERION_LENGTH = MAX_GOAL_OBJECTIVE_LENGTH;
+
 const GOAL_CANCELLED_REMINDER = [
   'The user cancelled the current goal.',
   'Ignore earlier active-goal reminders for that goal.',
@@ -614,7 +618,8 @@ function budgetTelemetryProperties(limits: GoalBudgetLimits): TelemetryPropertie
 
 function normalizeCompletionCriterion(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed?.length ? trimmed : undefined;
+  if (!trimmed?.length) return undefined;
+  return trimmed.slice(0, MAX_GOAL_COMPLETION_CRITERION_LENGTH);
 }
 
 function isGoalOutcomeReminder(message: ContextMessage | undefined): boolean {

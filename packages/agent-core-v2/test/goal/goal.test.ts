@@ -160,6 +160,16 @@ describe('AgentGoalService', () => {
       expect(goals.getGoal().goal?.completionCriterion).toBe('tests pass');
     });
 
+    it('truncates an over-long completion criterion instead of failing', async () => {
+      const snapshot = await goals.createGoal({
+        objective: 'Ship feature X',
+        completionCriterion: 'c'.repeat(4001),
+      });
+
+      expect(snapshot.completionCriterion).toBe('c'.repeat(4000));
+      expect(goals.getGoal().goal?.completionCriterion).toBe('c'.repeat(4000));
+    });
+
     it('sets no default work caps when none is provided', async () => {
       const snapshot = await goals.createGoal({ objective: 'Do work' });
 
