@@ -203,9 +203,10 @@ export class ProviderManager implements ModelProvider {
         } catch (error) {
           if (!(error instanceof APIStatusError) || error.statusCode !== 401) throw error;
           if (refreshed) {
+            const reason = error.message.replaceAll('\r', '');
             throw new KimiError(
-              ErrorCodes.AUTH_LOGIN_REQUIRED,
-              'OAuth provider credentials were rejected. Send /login to login.',
+              ErrorCodes.PROVIDER_AUTH_ERROR,
+              reason.length > 0 ? reason : 'OAuth provider credentials were rejected.',
               {
                 cause: error,
                 details: { statusCode: error.statusCode, requestId: error.requestId },

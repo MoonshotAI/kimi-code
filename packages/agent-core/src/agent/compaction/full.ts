@@ -595,7 +595,12 @@ export class FullCompaction {
         thinking_effort: this.agent.config.thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
       });
-      if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
+      if (
+        isKimiError(error) &&
+        (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
+          error.code === ErrorCodes.PROVIDER_AUTH_ERROR)
+      )
+        throw error;
       throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
     }
   }
