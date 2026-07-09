@@ -1420,7 +1420,7 @@ onUnmounted(() => {
             <p>The group head and session rows share <code>--sb-*</code>: folder icon (open/closed) → name, with the kebab and "+" revealed on hover.</p>
             <ul class="clean">
               <li>The folder icon leads the row (switching icons between open and closed states) with the plain <code>--sb-gap</code> before the name — it does not pad out the <code>--sb-gutter</code> slot.</li>
-              <li>The name is quiet by design — regular weight, normal <code>--color-text</code> (grouping is carried by position and the folder icon, not by dimming). No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
+              <li>The name is quiet by design — regular weight, muted color (<code>--color-text-muted</code>, one step lighter than session titles), so group heads read as grouping labels. No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
               <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm, shown on hover or keyboard focus (when not hovered they stay in the tab order via <code>opacity:0</code>, keeping them keyboard-reachable).</li>
               <li>The group is collapsible; when collapsed its session list is hidden.</li>
             </ul>

@@ -252,14 +252,15 @@ function onHeaderDragStart(event: DragEvent): void {
 
 .gh-folder {
   flex: none;
-  color: var(--color-text);
+  color: var(--color-text-muted);
 }
 
-/* Group title — quiet by design: regular weight (no bold), normal text color;
-   grouping is carried by position and the folder icon, not by dimming. */
+/* Group title — quiet by design: regular weight (no bold), muted color (one
+   step lighter than the session titles), so group heads read as grouping
+   labels rather than list content. */
 .gh-name {
   font-size: var(--ui-font-size-lg);
-  color: var(--color-text);
+  color: var(--color-text-muted);
   flex: 1;
   min-width: 0;
   overflow: hidden;
