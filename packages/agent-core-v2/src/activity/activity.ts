@@ -95,6 +95,9 @@ export interface ISessionActivityKernel {
 
   lane(): SessionLane;
 
+  /** Leaves the restore/materialize window and admits normal session commands. */
+  markActive(): void;
+
   /** Admission table for edge (gateway / rpc / legacy) and `agentLifecycle` commands. */
   canAccept(command: SessionCommand): boolean;
 

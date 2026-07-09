@@ -325,6 +325,7 @@ function registerSessionExportServices(
     resume: async () => options.lifecycleHandle,
     close: async () => {},
     archive: async () => {},
+    restore: async () => options.lifecycleHandle,
     fork: async () => {
       throw new Error('fork should not be called by session export');
     },

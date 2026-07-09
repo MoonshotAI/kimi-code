@@ -324,6 +324,28 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(got.body.data.archived).toBe(true);
   });
 
+  it('restores an archived session via :restore and returns it to the default list', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+
+    await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+
+    const restored = await postJson<SessionWire>(`/api/v1/sessions/${id}:restore`);
+    expect(restored.body.code).toBe(0);
+    expect(restored.body.data.id).toBe(id);
+    expect(restored.body.data.archived).toBe(false);
+
+    const listed = await getJson<PageWire>('/api/v1/sessions');
+    expect(listed.body.code).toBe(0);
+    expect(listed.body.data.items.find((s) => s.id === id)?.archived).toBe(false);
+  });
+
+  it('returns 40401 when restoring a missing session', async () => {
+    const { body } = await postJson<null>('/api/v1/sessions/sess_missing:restore');
+    expect(body.code).toBe(40401);
+  });
+
   it('cold-loads a persisted session on :undo instead of 40401', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -482,11 +504,62 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(all.body.data.items.some((s) => s.id === archivedId)).toBe(true);
   });
 
+  it('paginates archived_only without returning empty filtered pages', async () => {
+    const cwd = home as string;
+    const archivedOlder = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    await postJson<{ archived: boolean }>(
+      `/api/v1/sessions/${archivedOlder.body.data.id}:archive`,
+    );
+
+    const archivedNewer = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    await postJson<{ archived: boolean }>(
+      `/api/v1/sessions/${archivedNewer.body.data.id}:archive`,
+    );
+
+    await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+
+    const first = await getJson<PageWire>('/api/v1/sessions?archived_only=true&page_size=1');
+    expect(first.body.code).toBe(0);
+    expect(first.body.data.items).toHaveLength(1);
+    expect(first.body.data.items[0]).toMatchObject({
+      id: archivedNewer.body.data.id,
+      archived: true,
+    });
+    expect(first.body.data.has_more).toBe(true);
+
+    const second = await getJson<PageWire>(
+      `/api/v1/sessions?archived_only=true&page_size=1&before_id=${archivedNewer.body.data.id}`,
+    );
+    expect(second.body.code).toBe(0);
+    expect(second.body.data.items).toHaveLength(1);
+    expect(second.body.data.items[0]).toMatchObject({
+      id: archivedOlder.body.data.id,
+      archived: true,
+    });
+    expect(second.body.data.has_more).toBe(false);
+  });
+
   it('rejects archived_only combined with include_archive (40001)', async () => {
     const { body } = await getJson<null>(
       '/api/v1/sessions?archived_only=true&include_archive=true',
     );
     expect(body.code).toBe(40001);
+  });
+
+  it('returns a terminal empty page when archived_only status filtering finds no match', async () => {
+    const cwd = home as string;
+    const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const second = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+
+    await postJson<{ archived: boolean }>(`/api/v1/sessions/${first.body.data.id}:archive`);
+    await postJson<{ archived: boolean }>(`/api/v1/sessions/${second.body.data.id}:archive`);
+
+    const page = await getJson<PageWire>(
+      '/api/v1/sessions?archived_only=true&status=running&page_size=1',
+    );
+    expect(page.body.code).toBe(0);
+    expect(page.body.data).toEqual({ items: [], has_more: false });
   });
 
   it('rejects a malformed workspace_id when listing (40001)', async () => {

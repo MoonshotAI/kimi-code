@@ -31,6 +31,10 @@ export class SessionActivityKernel extends Disposable implements ISessionActivit
     return 'active';
   }
 
+  markActive(): void {
+    // Placeholder kernel is already active.
+  }
+
   canAccept(_command: SessionCommand): boolean {
     return true;
   }

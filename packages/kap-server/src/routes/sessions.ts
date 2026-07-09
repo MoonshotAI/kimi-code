@@ -9,15 +9,15 @@
  *   GET    /sessions/{session_id}/profile
  *   POST   /sessions/{session_id}/profile      update title / metadata / agent_config
  *   POST   /sessions/{tail}                    action: fork / compact / undo /
- *                                              abort / btw / archive
+ *                                              abort / btw / archive / restore
  *   GET    /sessions/{session_id}/children     list child sessions
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
  *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
- * pass-throughs — `fork` / `compact` / `abort` / `archive` — call the native v2
- * services directly (`ISessionLifecycleService.fork` / `archive`,
+ * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
+ * the native v2 services directly (`ISessionLifecycleService.fork` / `archive` / `restore`,
  * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
  * calls `IAgentPromptService.undo` directly (it now throws
@@ -55,7 +55,9 @@
  * is real on every session-producing endpoint here. `GET /sessions` and
  * `GET /sessions/{id}/children` filter their projected page by the `status`
  * query param (post-page, matching v1 — `has_more` reflects the pre-filter
- * page). The `aborted` phase is not derived yet (gap G10); v2 never reports it.
+ * page), except `archived_only` lists filter status before route pagination so
+ * they can drain archived pages the same way v1 does. The `aborted` phase is not
+ * derived yet (gap G10); v2 never reports it.
  *
  * **cwd resolution (gap G3 closed)**: the session's frozen work dir is
  * persisted on its metadata document (`ISessionMetadata`) and surfaced on the
@@ -144,6 +146,8 @@ const booleanQueryParam = z.preprocess((value) => {
   if (value === 'false' || value === '0' || value === 0 || value === false) return false;
   return value;
 }, z.boolean().optional());
+
+const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
 
 // NOTE: mirrors v1's `GET /sessions` query. `before_id`/`after_id` id-cursors
 // and `page_size` ARE applied in the route handler (the `FileSessionIndex` does
@@ -365,18 +369,20 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         includeArchived: archivedOnly ? true : raw.include_archive,
       });
 
-      // Filter down to the sequence the client actually sees BEFORE computing
-      // the cursor position and the page boundary, so a cursor carried over
-      // from a previous page always resolves to the same index. `cwd` is read
-      // from the session's own summary first (gap G3 closed — an unregistered
-      // workspace no longer drops the session); the registry `roots` map is
-      // only a back-compat fallback for sessions written before `cwd` was
-      // persisted. A session with no recoverable cwd is still skipped.
-      const eligible: { summary: (typeof page.items)[number]; cwd: string }[] = [];
+      // Filter down to the sequence the client can page over BEFORE computing
+      // the cursor position. `cwd` is read from the session's own summary first
+      // (gap G3 closed — an unregistered workspace no longer drops the session);
+      // the registry `roots` map is only a back-compat fallback for sessions
+      // written before `cwd` was persisted. A session with no recoverable cwd is
+      // still skipped.
+      const eligible: {
+        readonly summary: (typeof page.items)[number];
+        readonly cwd: string;
+        readonly status?: Session['status'];
+      }[] = [];
       for (const summary of page.items) {
         const cwd = summary.cwd ?? roots.get(summary.workspaceId);
         if (cwd === undefined) continue;
-        if (archivedOnly && summary.archived !== true) continue;
         if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
         eligible.push({ summary, cwd });
       }
@@ -399,18 +405,30 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       }
 
       const window = eligible.slice(start, end);
-      const limit = pageSize ?? window.length;
-      const hasMore = window.length > limit;
-      const projected: Session[] = window
+      let visible = window;
+      if (archivedOnly) {
+        visible =
+          raw.status === undefined
+            ? window.filter((entry) => entry.summary.archived === true)
+            : window.flatMap((entry) => {
+                if (entry.summary.archived !== true) return [];
+                const status = resolveSessionStatus(core, entry.summary.id);
+                return status === raw.status ? [{ ...entry, status }] : [];
+              });
+      }
+      const limit = archivedOnly
+        ? (pageSize ?? DEFAULT_SESSION_LIST_PAGE_SIZE)
+        : (pageSize ?? visible.length);
+      const hasMore = visible.length > limit;
+      const projected: Session[] = visible
         .slice(0, limit)
-        .map(({ summary, cwd }) =>
-          toWireSession(summary, cwd, resolveSessionStatus(core, summary.id)),
+        .map(({ summary, cwd, status }) =>
+          toWireSession(summary, cwd, status ?? resolveSessionStatus(core, summary.id)),
         );
-      // v1 filters the projected page by `status` (post-page); `has_more` keeps
-      // reflecting the pre-filter page, so a filtered page may be short or empty
-      // while `has_more` is still true — match that exactly.
+      // v1 filters ordinary lists by `status` post-page; `archived_only` already
+      // applied status before pagination above so it can drain to a full page.
       const items =
-        raw.status !== undefined
+        raw.status !== undefined && !archivedOnly
           ? projected.filter((session) => session.status === raw.status)
           : projected;
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
@@ -593,7 +611,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const { tail } = req.params;
         const parsed = parseActionSuffix({
           tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive'] as const,
+          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive', 'restore'] as const,
           resourceLabel: 'session',
         });
         if (parsed.kind !== 'action') {
@@ -694,6 +712,22 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           await core.accessor.get(IAuthSummaryService).ensureReady();
           const agentId = await session.accessor.get(ISessionBtwService).start();
           reply.send(okEnvelope({ agent_id: agentId }, req.id));
+          return;
+        }
+
+        if (parsed.action === 'restore') {
+          const restored = await core.accessor.get(ISessionLifecycleService).restore(parsed.id);
+          if (restored === undefined) {
+            throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
+          }
+          const meta = await restored.accessor.get(ISessionMetadata).read();
+          const ctx = restored.accessor.get(ISessionContext);
+          const session = toWireSession(
+            { ...meta, workspaceId: ctx.workspaceId },
+            ctx.cwd,
+            resolveSessionStatus(core, meta.id),
+          );
+          reply.send(okEnvelope(session, req.id));
           return;
         }
 

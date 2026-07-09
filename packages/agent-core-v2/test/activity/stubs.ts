@@ -24,6 +24,7 @@ export function stubSessionActivityKernel(
   return {
     _serviceBrand: undefined,
     lane: () => lane,
+    markActive: () => undefined,
     canAccept: (_command: SessionCommand) => lane === 'active',
     admitTurn(_agentId: string, lease: ActivityLease): IDisposable {
       leases.add(lease);

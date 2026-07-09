@@ -11,6 +11,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
+import { ISessionActivityKernel } from '#/activity/activity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IEventService } from '#/app/event/event';
@@ -35,6 +36,7 @@ import { SessionWorkspaceContextService } from '#/session/workspaceContext/works
 import { IWorkspaceRegistry, type Workspace } from '#/app/workspaceRegistry/workspaceRegistry';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { stubSessionActivityKernel } from '../activity/stubs';
 
 function bootstrapStub(): IBootstrapService {
   return {
@@ -331,6 +333,7 @@ describe('SessionLifecycleService', () => {
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
       stubPair(IEventService, eventStub()),
       stubPair(IAgentLifecycleService, agentLifecycleStub()),
+      stubPair(ISessionActivityKernel, stubSessionActivityKernel()),
       stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub()),
       ...extra,
     ]);
@@ -483,6 +486,26 @@ describe('SessionLifecycleService', () => {
       { type: 'event.session.archived', payload: { sessionId: 's1' } },
     ]);
     expect(svc.get('s1')).toBeUndefined();
+  });
+
+  it('restore clears the archived flag when the session exists on disk', async () => {
+    let archived: boolean | undefined;
+    const svc = build([
+      stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
+      stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
+      stubPair(ISessionMetadata, {
+        ...metadataStub(),
+        setArchived: (value: boolean) => {
+          archived = value;
+          return Promise.resolve();
+        },
+      }),
+    ]);
+
+    const restored = await svc.restore('s1');
+
+    expect(restored?.id).toBe('s1');
+    expect(archived).toBe(false);
   });
 
   it('fires onDidCreateSession with the new handle', async () => {

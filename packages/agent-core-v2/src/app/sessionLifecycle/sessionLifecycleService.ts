@@ -5,7 +5,7 @@
  * through the DI scope tree and seeding each with its identity and storage
  * addressing, running lifecycle hook slots, and tearing them down on
  * close/archive — archiving flags the session's `sessionMetadata`, removes
- * its `agentLifecycle` agents, and
+ * its `agentLifecycle` agents, restoring clears the archived flag, and
  * broadcasts through `event`. Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
@@ -275,6 +275,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.delete(sessionId);
     handle.dispose();
     this._onDidArchiveSession.fire({ sessionId });
+  }
+
+  async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+    const handle = await this.resume(sessionId);
+    if (handle === undefined) return undefined;
+    await handle.accessor.get(ISessionMetadata).setArchived(false);
+    return handle;
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {

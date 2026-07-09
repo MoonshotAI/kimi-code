@@ -186,6 +186,7 @@ function stubSessionLifecycle(): ISessionLifecycleService {
     resume: async () => undefined,
     close: async () => {},
     archive: async () => {},
+    restore: async () => undefined,
     fork: async () => {
       throw new Error('not implemented');
     },
