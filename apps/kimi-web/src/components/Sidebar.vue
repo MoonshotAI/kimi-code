@@ -23,6 +23,7 @@ import IconButton from './ui/IconButton.vue';
 import Icon from './ui/Icon.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
+import ShortcutKey from './ui/ShortcutKey.vue';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 
 const { t } = useI18n();
@@ -599,7 +600,10 @@ onBeforeUnmount(() => {
       <!-- Session search — opens the Spotlight-style search dialog -->
       <button class="search" type="button" @click="openSearch">
         <Icon class="search-icon" name="search" />
-        <span class="search-input">{{ t('sidebar.searchShortcut', { shortcut: sessionSearchShortcut }) }}</span>
+        <span class="search-input">
+          <span class="search-label">{{ t('sidebar.searchPlaceholder') }}</span>
+          <ShortcutKey>{{ sessionSearchShortcut }}</ShortcutKey>
+        </span>
       </button>
 
       <!-- New chat + new workspace buttons -->
@@ -911,6 +915,7 @@ onBeforeUnmount(() => {
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   text-align: left;
 }
@@ -950,14 +955,24 @@ onBeforeUnmount(() => {
   flex: none;
 }
 .search-input {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   flex: 1;
   min-width: 0;
   color: var(--color-text);
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   font-size: var(--ui-font-size);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.search-input > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-label {
+  font-weight: var(--weight-medium);
 }
 
 /* Sessions */

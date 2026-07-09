@@ -10,8 +10,10 @@
  *     comes back as JPEG, strictly smaller than the input
  *   - alpha: a translucent PNG stays PNG when the budget allows, and only
  *     drops to JPEG as a last resort to meet a tiny budget
- *   - fallback: corrupt/empty bytes and non-recodable formats (GIF/WebP)
- *     return the original unchanged — never throws
+ *   - fallback: corrupt/empty bytes and non-recodable formats (GIF,
+ *     animated WebP) return the original unchanged — never throws
+ *   - webp: still WebP decodes through the bundled wasm codec and re-encodes
+ *     on the lossless-first ladder; animated WebP passes through whole
  *   - invariant: `changed` implies the result is strictly smaller
  *   - base64 wrapper round-trips
  *   - performance: the fast path is codec-free; a large image compresses
@@ -32,8 +34,10 @@
  *     result is a no-op; extreme aspect ratios never collapse to zero
  */
 
+import { createRequire } from 'node:module';
+
 import { Jimp, ResizeStrategy } from 'jimp';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // eslint-disable-next-line import/no-unresolved
 import {
@@ -44,7 +48,14 @@ import {
   cropImageForModel,
   extractImageCompressionCaptions,
   IMAGE_BYTE_BUDGET,
+  MAX_IMAGE_EDGE_ENV,
   MAX_IMAGE_EDGE_PX,
+  READ_IMAGE_BYTE_BUDGET,
+  READ_IMAGE_BYTE_BUDGET_ENV,
+  resolveMaxImageEdgePx,
+  resolveReadImageByteBudget,
+  setConfiguredMaxImageEdgePx,
+  setConfiguredReadImageByteBudget,
 } from '../../src/tools/support/image-compress';
 // eslint-disable-next-line import/no-unresolved
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
@@ -184,11 +195,11 @@ describe('compressImageForModel — dimension cap', () => {
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
     expect(Math.max(result.width, result.height)).toBe(MAX_IMAGE_EDGE_PX);
-    // 4500x2250 → 3000x1500 (aspect 2:1 preserved).
-    expect(result.width).toBe(3000);
-    expect(result.height).toBe(1500);
+    // 4500x2250 → 2000x1000 (aspect 2:1 preserved).
+    expect(result.width).toBe(2000);
+    expect(result.height).toBe(1000);
     const dims = sniffImageDimensions(result.data);
-    expect(dims).toEqual({ width: 3000, height: 1500 });
+    expect(dims).toEqual({ width: 2000, height: 1000 });
   });
 
   it('respects a custom maxEdge', async () => {
@@ -239,9 +250,10 @@ describe('compressImageForModel — byte budget', () => {
   });
 
   it('steps down through the 2000px edge before the 1000px fallback', async () => {
-    // Regression guard for the 3000px cap raise: a PNG whose fitted encode
-    // is over budget but whose 2000px encode fits must come back at 2000px
-    // (as it did under the old cap), not skip straight to 1000px.
+    // Fallback-ladder guard, pinned with an explicit 3000px ceiling (the
+    // built-in default is 2000px, where the first fallback edge is a no-op):
+    // a PNG whose fitted encode is over budget but whose 2000px encode fits
+    // must come back at 2000px, not skip straight to 1000px.
     // The budget is anchored to the actual 2000px encode size (probed with
     // an unlimited budget) so the test does not depend on exact deflate
     // output sizes.
@@ -258,6 +270,7 @@ describe('compressImageForModel — byte budget', () => {
     expect(probe.finalByteLength + 1024).toBeLessThan(png.length);
 
     const result = await compressImageForModel(png, 'image/png', {
+      maxEdge: 3000,
       byteBudget: probe.finalByteLength + 1024,
     });
     expect(result.changed).toBe(true);
@@ -299,6 +312,195 @@ describe('compressImageForModel — byte budget', () => {
   );
 });
 
+// ── webp fixtures (encoder wasm loaded manually from node_modules) ──
+
+/**
+ * Encode RGBA pixels to WebP using the encoder wasm from node_modules —
+ * test-fixture only; production never encodes WebP. The emscripten glue
+ * cannot auto-locate its wasm under Node (it tries fetch on a file URL), so
+ * the module is compiled and injected manually, mirroring how production
+ * initializes the decoder from the bundled base64.
+ */
+async function encodeWebp(
+  image: { bitmap: { data: Buffer | Uint8Array; width: number; height: number } },
+  quality = 90,
+): Promise<Uint8Array> {
+  const requireLocal = createRequire(import.meta.url);
+  const encMod = (await import(
+    requireLocal.resolve('@jsquash/webp/encode.js')
+  )) as typeof import('@jsquash/webp/encode.js');
+  const { readFileSync } = await import('node:fs');
+  // The repo tsconfig has no DOM lib, so the global WebAssembly name is
+  // reached structurally (same approach as the production decoder).
+  const wasmNamespace = (
+    globalThis as unknown as { WebAssembly: { compile(bytes: Uint8Array): Promise<object> } }
+  ).WebAssembly;
+  const wasm = await wasmNamespace.compile(
+    readFileSync(requireLocal.resolve('@jsquash/webp/codec/enc/webp_enc.wasm')),
+  );
+  await encMod.init(wasm as never);
+  const { bitmap } = image;
+  const encoded = await encMod.default(
+    {
+      data: new Uint8ClampedArray(
+        bitmap.data.buffer,
+        bitmap.data.byteOffset,
+        bitmap.data.byteLength,
+      ),
+      width: bitmap.width,
+      height: bitmap.height,
+    } as never,
+    { quality },
+  );
+  return new Uint8Array(encoded);
+}
+
+/** Minimal VP8X container header with the ANIM flag set. */
+function animatedWebpHeader(): Uint8Array {
+  const bytes = new Uint8Array(30);
+  const ascii = (s: string, at: number) => {
+    for (let i = 0; i < s.length; i++) bytes[at + i] = s.charCodeAt(i);
+  };
+  ascii('RIFF', 0);
+  new DataView(bytes.buffer).setUint32(4, 22, true);
+  ascii('WEBP', 8);
+  ascii('VP8X', 12);
+  new DataView(bytes.buffer).setUint32(16, 10, true);
+  bytes[20] = 0x02; // ANIM flag
+  return bytes;
+}
+
+describe('compressImageForModel — webp', () => {
+  it(
+    'downscales an oversized WebP to the edge cap',
+    async () => {
+      const source = new Jimp({ width: 2600, height: 1300, color: 0x3366ccff });
+      const webp = await encodeWebp(source);
+      const result = await compressImageForModel(webp, 'image/webp');
+      expect(result.changed).toBe(true);
+      expect(Math.max(result.width, result.height)).toBe(2000);
+      expect(result.originalWidth).toBe(2600);
+      expect(result.originalHeight).toBe(1300);
+      expect(sniffImageDimensions(result.data)).toEqual({ width: 2000, height: 1000 });
+    },
+    15_000,
+  );
+
+  it(
+    're-encodes an over-budget WebP within the byte budget',
+    async () => {
+      const budget = 128 * 1024;
+      const noisy = new Jimp({ width: 1200, height: 1200, color: 0x000000ff });
+      fillXorshiftNoise(noisy.bitmap.data);
+      const webp = await encodeWebp(noisy, 100);
+      expect(webp.length).toBeGreaterThan(budget);
+      const result = await compressImageForModel(webp, 'image/webp', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+    },
+    15_000,
+  );
+
+  it(
+    'keeps alpha when re-encoding a translucent WebP',
+    async () => {
+      const translucent = new Jimp({ width: 2600, height: 1300, color: 0x33_66_cc_80 });
+      const webp = await encodeWebp(translucent);
+      const result = await compressImageForModel(webp, 'image/webp');
+      expect(result.changed).toBe(true);
+      expect(result.mimeType).toBe('image/png');
+      expect(await decodeAlpha(result.data)).toBe(true);
+    },
+    15_000,
+  );
+
+  it('passes an animated WebP through to preserve animation', async () => {
+    const animated = animatedWebpHeader();
+    const result = await compressImageForModel(animated, 'image/webp');
+    expect(result.changed).toBe(false);
+    expect(result.data).toBe(animated);
+  });
+
+  it(
+    'crops a region out of a WebP',
+    async () => {
+      const source = new Jimp({ width: 800, height: 400, color: 0x3366ccff });
+      const webp = await encodeWebp(source);
+      const result = await cropImageForModel(webp, 'image/webp', {
+        x: 10,
+        y: 20,
+        width: 300,
+        height: 200,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.width).toBe(300);
+      expect(result.height).toBe(200);
+      expect(result.originalWidth).toBe(800);
+      expect(result.originalHeight).toBe(400);
+    },
+    15_000,
+  );
+});
+
+// ── small byte budgets (per-image read budget scale) ────────────────
+
+// These walk many encode rungs over noise fixtures, which is slow on CI
+// runners — each carries an explicit timeout like the quality-ladder test
+// above.
+describe('compressImageForModel — small byte budgets', () => {
+  it(
+    'converges under a 128KB budget for high-entropy PNG content',
+    async () => {
+      // Statistically random noise is the entropy upper bound (photos, dense
+      // charts): the old [2000, 1000] fallback floor left q20@1000px at ~200KB,
+      // over a read-scale budget. The extended ladder must land within it.
+      const budget = 128 * 1024;
+      const png = await randomNoisePng(1200, 1200);
+      expect(png.length).toBeGreaterThan(budget);
+      const result = await compressImageForModel(png, 'image/png', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+      expect(sniffImageDimensions(result.data)).not.toBeNull();
+    },
+    15_000,
+  );
+
+  it(
+    'converges under a 128KB budget for a JPEG source',
+    async () => {
+      const budget = 128 * 1024;
+      const jpeg = await randomNoiseJpeg(1200, 1200);
+      expect(jpeg.length).toBeGreaterThan(budget);
+      const result = await compressImageForModel(jpeg, 'image/jpeg', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.mimeType).toBe('image/jpeg');
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+    },
+    15_000,
+  );
+
+  it(
+    'shrinks pixels instead of passing through an already-optimized JPEG over budget',
+    async () => {
+      // A JPEG already at the encoder's quality floor for its size: re-encoding
+      // at the same size cannot shrink it, so without sub-size fallbacks the
+      // "unhelpful" guard used to return the original — silently over budget.
+      const image = new Jimp({ width: 900, height: 900, color: 0x000000ff });
+      fillXorshiftNoise(image.bitmap.data);
+      const optimized = new Uint8Array(await image.getBuffer('image/jpeg', { quality: 20 }));
+      const budget = optimized.length - 10 * 1024;
+      expect(budget).toBeGreaterThan(0);
+
+      const result = await compressImageForModel(optimized, 'image/jpeg', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+      expect(Math.max(result.width, result.height)).toBeLessThan(900);
+    },
+    15_000,
+  );
+});
+
 // ── fallback / robustness ────────────────────────────────────────────
 
 describe('compressImageForModel — fallback', () => {
@@ -325,7 +527,10 @@ describe('compressImageForModel — fallback', () => {
     expect(result.data).toBe(gif);
   });
 
-  it('passes WebP through (no codec in the default build)', async () => {
+  it('passes undecodable WebP bytes through (never throws)', async () => {
+    // A bare RIFF/WEBP container header with no image payload: the sniffer
+    // reports no dimensions and the wasm decoder cannot decode it, so it
+    // passes through unchanged like any other undecodable input.
     const webp = new Uint8Array([
       0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
     ]);
@@ -444,7 +649,101 @@ describe('compressImageForModel — performance', () => {
 
   it('exposes a sane default budget', () => {
     expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
-    expect(MAX_IMAGE_EDGE_PX).toBe(3000);
+    expect(MAX_IMAGE_EDGE_PX).toBe(2000);
+  });
+});
+
+// ── default edge resolution (env + config) ──────────────────────────
+
+describe('resolveMaxImageEdgePx', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    setConfiguredMaxImageEdgePx(undefined);
+  });
+
+  it('defaults to the built-in ceiling', () => {
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('uses the configured value when set, and clears with undefined', () => {
+    setConfiguredMaxImageEdgePx(1200);
+    expect(resolveMaxImageEdgePx()).toBe(1200);
+    setConfiguredMaxImageEdgePx(undefined);
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('lets the env var override the configured value', () => {
+    setConfiguredMaxImageEdgePx(1200);
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '900');
+    expect(resolveMaxImageEdgePx()).toBe(900);
+  });
+
+  it.each(['abc', '-100', '0', '1.5', ' '])('ignores the invalid env value "%s"', (raw) => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, raw);
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('drives compressImageForModel when no explicit maxEdge is passed', async () => {
+    setConfiguredMaxImageEdgePx(1200);
+    const png = await solidPng(1600, 800);
+    const result = await compressImageForModel(png, 'image/png');
+    expect(result.changed).toBe(true);
+    expect(result.width).toBe(1200);
+    expect(result.height).toBe(600);
+  });
+
+  it('an explicit maxEdge option still wins over env and config', async () => {
+    setConfiguredMaxImageEdgePx(1200);
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '900');
+    const png = await solidPng(1600, 800);
+    const result = await compressImageForModel(png, 'image/png', { maxEdge: 800 });
+    expect(result.changed).toBe(true);
+    expect(result.width).toBe(800);
+    expect(result.height).toBe(400);
+  });
+
+  it('drives cropImageForModel region fitting', async () => {
+    setConfiguredMaxImageEdgePx(400);
+    const png = await solidPng(1600, 800);
+    const result = await cropImageForModel(png, 'image/png', {
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 800,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Math.max(result.width, result.height)).toBe(400);
+  });
+});
+
+describe('resolveReadImageByteBudget', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    setConfiguredReadImageByteBudget(undefined);
+  });
+
+  it('defaults to the built-in read budget', () => {
+    expect(READ_IMAGE_BYTE_BUDGET).toBe(256 * 1024);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+  });
+
+  it('uses the configured value when set, and clears with undefined', () => {
+    setConfiguredReadImageByteBudget(512 * 1024);
+    expect(resolveReadImageByteBudget()).toBe(512 * 1024);
+    setConfiguredReadImageByteBudget(undefined);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+  });
+
+  it('lets the env var override the configured value', () => {
+    setConfiguredReadImageByteBudget(512 * 1024);
+    vi.stubEnv(READ_IMAGE_BYTE_BUDGET_ENV, '100000');
+    expect(resolveReadImageByteBudget()).toBe(100000);
+  });
+
+  it.each(['abc', '-1', '0', '1.5', ' '])('ignores the invalid env value "%s"', (raw) => {
+    vi.stubEnv(READ_IMAGE_BYTE_BUDGET_ENV, raw);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
   });
 });
 
@@ -546,7 +845,7 @@ describe('compressImageForModel — original dimensions metadata', () => {
     expect(shrunk.changed).toBe(true);
     expect(shrunk.originalWidth).toBe(4500);
     expect(shrunk.originalHeight).toBe(2250);
-    expect(shrunk.width).toBe(3000);
+    expect(shrunk.width).toBe(2000);
   });
 
   it('reports original dimensions through the base64 wrapper', async () => {
@@ -556,8 +855,8 @@ describe('compressImageForModel — original dimensions metadata', () => {
     expect(result.changed).toBe(true);
     expect(result.originalWidth).toBe(3900);
     expect(result.originalHeight).toBe(1950);
-    expect(result.width).toBe(3000);
-    expect(result.height).toBe(1500);
+    expect(result.width).toBe(2000);
+    expect(result.height).toBe(1000);
   });
 });
 
@@ -680,7 +979,7 @@ describe('cropImageForModel', () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/PNG and JPEG/);
+    expect(result.error).toMatch(/PNG, JPEG, and WebP/);
   });
 
   it('rejects corrupt bytes without throwing', async () => {
@@ -1021,14 +1320,14 @@ describe('compressImageForModel — downscale quality guards', () => {
   });
 
   it('keeps a degenerate aspect ratio at least 1px tall (no zero-size collapse)', async () => {
-    // 9000×2 scaled to a 3000px edge would round the short side to 0.67px;
-    // the resizer must clamp to 1, not produce an undecodable 3000×0 image.
+    // 9000×2 scaled to a 2000px edge would round the short side to 0.44px;
+    // the resizer must clamp to 1, not produce an undecodable 2000×0 image.
     const png = await solidPng(9000, 2);
     const result = await compressImageForModel(png, 'image/png');
     expect(result.changed).toBe(true);
-    expect(result.width).toBe(3000);
+    expect(result.width).toBe(2000);
     expect(result.height).toBe(1);
-    expect(sniffImageDimensions(result.data)).toEqual({ width: 3000, height: 1 });
+    expect(sniffImageDimensions(result.data)).toEqual({ width: 2000, height: 1 });
   });
 });
 
@@ -1067,8 +1366,8 @@ describe('compressImageForModel — telemetry', () => {
     expect(props['final_bytes']).toBe(result.finalByteLength);
     expect(props['original_width']).toBe(4500);
     expect(props['original_height']).toBe(2250);
-    expect(props['final_width']).toBe(3000);
-    expect(props['final_height']).toBe(1500);
+    expect(props['final_width']).toBe(2000);
+    expect(props['final_height']).toBe(1000);
     expect(props['exif_transposed']).toBe(false);
     expect(typeof props['duration_ms']).toBe('number');
   });

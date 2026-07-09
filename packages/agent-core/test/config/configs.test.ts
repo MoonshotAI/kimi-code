@@ -104,6 +104,10 @@ keep_alive_on_exit = false
 kill_grace_period_ms = 2000
 print_wait_ceiling_s = 3600
 
+[image]
+max_edge_px = 1500
+read_byte_budget = 131072
+
 [[hooks]]
 event = "PreToolUse"
 matcher = "Shell"
@@ -181,6 +185,7 @@ describe('harness config TOML loader', () => {
       killGracePeriodMs: 2000,
       printWaitCeilingS: 3600,
     });
+    expect(config.image).toEqual({ maxEdgePx: 1500, readByteBudget: 131072 });
     expect(config.hooks).toEqual([
       {
         event: 'PreToolUse',
@@ -199,6 +204,23 @@ describe('harness config TOML loader', () => {
     expect('theme' in config).toBe(false);
     expect(config.raw?.['theme']).toBe('dark');
     expect(config.raw?.['notifications']).toEqual({ claim_stale_after_ms: 15000 });
+  });
+
+  it('round-trips the [image] section', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'image-round-trip.toml');
+    const toml = `
+[image]
+max_edge_px = 2500
+read_byte_budget = 524288
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.image).toEqual({ maxEdgePx: 2500, readByteBudget: 524288 });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.image).toEqual({ maxEdgePx: 2500, readByteBudget: 524288 });
   });
 
   it('round-trips a custom registry source field on a provider', async () => {

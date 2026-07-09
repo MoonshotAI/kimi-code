@@ -48,7 +48,7 @@ export class ConfigState {
     });
     if (changed.cwd) {
       this._cwd = changed.cwd;
-      void this.agent.kaos.chdir(changed.cwd);
+      this.agent.setKaos(this.agent.kaos.withCwd(changed.cwd));
     }
     if (changed.modelAlias) {
       this._modelAlias = changed.modelAlias;

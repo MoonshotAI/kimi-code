@@ -57,6 +57,19 @@ export class APIContextOverflowError extends APIStatusError {
 }
 
 /**
+ * HTTP 413 that specifically means the serialized request body exceeded the
+ * provider's byte ceiling (e.g. accumulated base64 images), as opposed to a
+ * token-count overflow. Token overflow is recoverable by compaction; a body
+ * size rejection is not — it needs media to be dropped or shrunk.
+ */
+export class APIRequestTooLargeError extends APIStatusError {
+  constructor(statusCode: number, message: string, requestId?: string | null) {
+    super(statusCode, message, requestId);
+    this.name = 'APIRequestTooLargeError';
+  }
+}
+
+/**
  * HTTP status error that specifically means the provider rate-limited the
  * request.
  */
@@ -146,6 +159,29 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /rate-limited/,
 ] as const;
 
+// Wordings that mean the serialized request BODY was too big, matched against
+// the lowercased message of a 413. Kept separate from the context-overflow
+// patterns above: those describe token counts, these describe bytes. A 413
+// whose message matches neither family stays a plain `APIStatusError` —
+// Vertex phrases prompt-too-long as a 413, so the status alone is not proof
+// of a body-size rejection.
+const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
+  // Moonshot / Kimi: "Request exceeds the maximum size".
+  /request exceeds the maximum size/,
+  // Reverse proxies (nginx-style HTML body): "413 Request Entity Too Large".
+  /request entity too large/,
+  // Anthropic: error type `request_too_large`, message "Request exceeds the
+  // maximum allowed number of bytes".
+  /request_too_large/,
+  /exceeds? the maximum allowed number of bytes/,
+  // RFC 9110 reason phrase (both the pre-2022 and current names).
+  /payload too large/,
+  /content too large/,
+  // Plain wordings: generic gateways say "request too large"; Go's
+  // http.MaxBytesReader (common in Go proxies) says "request body too large".
+  /request (?:body )?too large/,
+] as const;
+
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
   return code === 'context_length_exceeded';
 }
@@ -158,8 +194,13 @@ export function normalizeAPIStatusError(
   if (statusCode === 429) {
     return new APIProviderRateLimitError(message, requestId);
   }
+  // Context overflow first: Vertex returns prompt-too-long as a 413, and a
+  // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
     return new APIContextOverflowError(statusCode, message, requestId);
+  }
+  if (isRequestTooLargeStatusError(statusCode, message)) {
+    return new APIRequestTooLargeError(statusCode, message, requestId);
   }
   return new APIStatusError(statusCode, message, requestId);
 }
@@ -168,6 +209,12 @@ export function isContextOverflowStatusError(statusCode: number, message: string
   if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
   const lowerMessage = message.toLowerCase();
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
+export function isRequestTooLargeStatusError(statusCode: number, message: string): boolean {
+  if (statusCode !== 413) return false;
+  const lowerMessage = message.toLowerCase();
+  return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
 // Strict providers reject a request whose assistant `tool_use`/`tool_calls` and

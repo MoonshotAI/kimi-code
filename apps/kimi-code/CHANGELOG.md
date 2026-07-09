@@ -1,5 +1,43 @@
 # @moonshot-ai/kimi-code
 
+## 0.23.3
+
+### Patch Changes
+
+- [#1506](https://github.com/MoonshotAI/kimi-code/pull/1506) [`e83511a`](https://github.com/MoonshotAI/kimi-code/commit/e83511a7118652a67676bbcfd41148907ad7b8de) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix a misleading "OAuth login expired" message shown when a model is not available for the current account.
+
+## 0.23.2
+
+### Patch Changes
+
+- [#1489](https://github.com/MoonshotAI/kimi-code/pull/1489) [`2206d21`](https://github.com/MoonshotAI/kimi-code/commit/2206d21327129aa2331b6b159cfce61110b7f94f) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Add the Vercel plugin to the bundled plugin marketplace. Run /plugins and select Vercel Plugin to install it.
+
+- [#1477](https://github.com/MoonshotAI/kimi-code/pull/1477) [`150206a`](https://github.com/MoonshotAI/kimi-code/commit/150206a6f7027879df954e26736b4baa5d336235) Thanks [@chengluyu](https://github.com/chengluyu)! - Count the turn that starts an autonomous goal toward its goal turn usage.
+
+- [#1483](https://github.com/MoonshotAI/kimi-code/pull/1483) [`f30781b`](https://github.com/MoonshotAI/kimi-code/commit/f30781bb273321f3e3bbb548a9d0724ab6299fc6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix `kimi -p` runs exiting with code 0 when a turn fails.
+
+- [#1466](https://github.com/MoonshotAI/kimi-code/pull/1466) [`063bce2`](https://github.com/MoonshotAI/kimi-code/commit/063bce2a2f52601abaa0d13173ab88371cbbe9ae) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix console windows flashing on Windows each time a hook runs.
+
+- [#1474](https://github.com/MoonshotAI/kimi-code/pull/1474) [`11c6a37`](https://github.com/MoonshotAI/kimi-code/commit/11c6a37ce030f8e64de5c810da07ec7fab3b0615) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix the connection error toast lingering after the WebSocket reconnects when returning from the background.
+
+- [#1476](https://github.com/MoonshotAI/kimi-code/pull/1476) [`d1a964f`](https://github.com/MoonshotAI/kimi-code/commit/d1a964fba9b3dca902ea6f81bacaccc839955c03) Thanks [@chengluyu](https://github.com/chengluyu)! - Prevent autonomous goals from being paused by model-reported status updates.
+
+- [#1481](https://github.com/MoonshotAI/kimi-code/pull/1481) [`1317000`](https://github.com/MoonshotAI/kimi-code/commit/131700097a732b97b3d17c5e2efa1c5a44b013ef) Thanks [@chengluyu](https://github.com/chengluyu)! - Tighten goal-mode guidance for blocked and complete status updates.
+
+- [#1460](https://github.com/MoonshotAI/kimi-code/pull/1460) [`474ce28`](https://github.com/MoonshotAI/kimi-code/commit/474ce289dd39aa42d1a77a9a2e15531aee49aa15) Thanks [@RealKai42](https://github.com/RealKai42)! - Raise the image downscale cap from 2000px to 3000px, and fix swapped width/height for EXIF-rotated (portrait) photos in compression captions and media read notes so region readback coordinates map correctly.
+
+- [#1467](https://github.com/MoonshotAI/kimi-code/pull/1467) [`ee38545`](https://github.com/MoonshotAI/kimi-code/commit/ee385456d0eda380fec067db92c025462db13f5a) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Compile icons at build time so the bundled web UI only carries the icons it renders.
+
+- [#1471](https://github.com/MoonshotAI/kimi-code/pull/1471) [`9b76e5b`](https://github.com/MoonshotAI/kimi-code/commit/9b76e5bff631cceaeecb2b0cbc096533c5fdc8cc) Thanks [@starquakee](https://github.com/starquakee)! - Progressive tool disclosure (`select_tools`, experimental): compaction now discards the loaded tool schemas instead of re-injecting them. After a compaction the boundary announcement re-lists every loadable tool name and the model re-selects what it still needs; a from-memory call to a no-longer-loaded tool is rejected with guidance to select it first. This keeps the post-compaction context at its minimal users+summary floor and removes the schema-rebuild budget heuristics. No effect unless the `tool-select` experimental flag and a `select_tools`-capable model are active.
+
+- [#1491](https://github.com/MoonshotAI/kimi-code/pull/1491) [`0cc9831`](https://github.com/MoonshotAI/kimi-code/commit/0cc9831a2f79d93903259bd3353e746abac01b67) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: The composer model switcher switches the active session's model as before and additionally bumps the global default model, so new sessions inherit the choice.
+
+- [#1490](https://github.com/MoonshotAI/kimi-code/pull/1490) [`b30a45e`](https://github.com/MoonshotAI/kimi-code/commit/b30a45efecfa5ece4f4f10f2c5403ba097e7690b) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Press Enter to confirm in archive and other confirmation dialogs.
+
+- [#1480](https://github.com/MoonshotAI/kimi-code/pull/1480) [`2ad0120`](https://github.com/MoonshotAI/kimi-code/commit/2ad0120c2a5c8383892e4da1ee7c6853926ed365) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Redesign the scheduled reminder UI.
+
+- [#1492](https://github.com/MoonshotAI/kimi-code/pull/1492) [`b0809dd`](https://github.com/MoonshotAI/kimi-code/commit/b0809ddac833d8d920d95187f7ef64f97bafdbc6) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Show session skills in the slash menu as `/skill:<name>` so they are distinguishable from built-in commands; typing the bare skill name still works.
+
 ## 0.23.1
 
 ### Patch Changes

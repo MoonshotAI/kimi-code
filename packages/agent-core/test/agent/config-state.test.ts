@@ -4,8 +4,27 @@ import { emptyUsage } from '@moonshot-ai/kosong';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { KimiConfig } from '../../src/config';
 import { testAgent } from './harness';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 
 describe('ConfigState model capabilities', () => {
+  it('updates the agent cwd without requiring the directory to exist', () => {
+    const chdir = vi.fn(async () => {
+      throw Object.assign(new Error('missing workspace'), { code: 'ENOENT' });
+    });
+    const ctx = testAgent({
+      kaos: createFakeKaos({
+        getcwd: () => '/workspace',
+        chdir,
+      }),
+    });
+
+    ctx.agent.config.update({ cwd: '/tmp/missing-workdir' });
+
+    expect(ctx.agent.config.cwd).toBe('/tmp/missing-workdir');
+    expect(ctx.agent.kaos.getcwd()).toBe('/tmp/missing-workdir');
+    expect(chdir).not.toHaveBeenCalled();
+  });
+
   it('computes provider and model capabilities from ProviderManager metadata', () => {
     const ctx = testAgent({
       providerManager: new ProviderManager({

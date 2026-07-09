@@ -394,7 +394,7 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
 }
 .mgh-name {
   font-size: var(--ui-font-size-lg);
-  font-weight: 500;
+  font-weight: 550;
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -402,6 +402,7 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
 }
 .mgh-path {
   font-size: var(--text-base);
+  font-weight: 425;
   color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -430,12 +431,14 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
 .srow .m { flex: 1; min-width: 0; }
 .srow .m .t {
   font-size: var(--text-base);
+  font-weight: 450;
+  line-height: var(--leading-tight);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.srow.cur .m .t { font-weight: 500; color: var(--color-accent-hover); }
+.srow.cur .m .t { color: var(--color-accent-hover); }
 
 /* Running indicator — pulse dot in the indent gutter left of the title,
    mirroring the desktop SessionRow (.t.run::before). */
@@ -471,6 +474,8 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
 }
 .srow .m .s {
   font-size: var(--text-base);
+  font-weight: 475;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-faint);
   margin-top: 1px;
   overflow: hidden;

@@ -1,5 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ConversationPane.vue -->
 <script setup lang="ts">
+import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
@@ -14,6 +15,8 @@ import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
+
+const { t, locale } = useI18n();
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -134,6 +137,13 @@ const emit = defineEmits<{
 // Empty-composer workspace picker.
 const wsPickOpen = ref(false);
 const wsPickExpanded = ref(false);
+const contentWrapRef = ref<HTMLElement | null>(null);
+const wsPickMeasureRef = ref<HTMLElement | null>(null);
+const wsPickMenuWidth = ref<string>('');
+const wsPickStyle = computed<Record<string, string> | undefined>(() =>
+  wsPickMenuWidth.value ? { '--ws-pick-menu-width': wsPickMenuWidth.value } : undefined,
+);
+let wsPickMeasureFrame: number | null = null;
 
 const activeWorkspaceLabel = computed(() => {
   const w = props.workspaces?.find((ws) => ws.id === props.activeWorkspaceId);
@@ -161,7 +171,81 @@ function pickWorkspace(id: string): void {
   if (id !== props.activeWorkspaceId) emit('selectWorkspace', id);
 }
 
-const { t } = useI18n();
+function cssPx(value: string): number {
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function canvasFont(style: CSSStyleDeclaration): string {
+  return `${style.fontStyle || 'normal'} ${style.fontWeight || '400'} ${style.fontSize} ${style.fontFamily}`;
+}
+
+function letterSpacingPx(style: CSSStyleDeclaration): number {
+  return style.letterSpacing === 'normal' ? 0 : cssPx(style.letterSpacing);
+}
+
+function measureText(text: string, style: CSSStyleDeclaration): number {
+  if (!text) return 0;
+  const prepared = prepareWithSegments(text, canvasFont(style), { letterSpacing: letterSpacingPx(style) });
+  return measureNaturalWidth(prepared);
+}
+
+function workspacePickerMaxWidth(): number {
+  const containerWidth = contentWrapRef.value?.getBoundingClientRect().width ?? window.innerWidth;
+  return Math.max(0, containerWidth * 0.75);
+}
+
+function updateWorkspacePickerWidth(): void {
+  const probe = wsPickMeasureRef.value;
+  if (!probe) return;
+
+  const itemPath = probe.querySelector<HTMLElement>('.ws-pick-item-path');
+  if (!itemPath) return;
+
+  const itemPathStyle = getComputedStyle(itemPath);
+
+  const measuredPathWidth = (props.workspaces ?? []).reduce(
+    (max, workspace) => Math.max(max, measureText(workspace.shortPath, itemPathStyle)),
+    0,
+  );
+  wsPickMenuWidth.value = measuredPathWidth
+    ? `${Math.ceil(Math.min(measuredPathWidth, workspacePickerMaxWidth()))}px`
+    : '';
+}
+
+function scheduleWorkspacePickerMeasure(): void {
+  if (typeof window === 'undefined') return;
+  void nextTick(() => {
+    if (wsPickMeasureFrame !== null) window.cancelAnimationFrame(wsPickMeasureFrame);
+    wsPickMeasureFrame = window.requestAnimationFrame(() => {
+      wsPickMeasureFrame = null;
+      updateWorkspacePickerWidth();
+    });
+  });
+}
+
+watch(
+  () => [
+    props.activeWorkspaceId,
+    props.workspaceName,
+    props.workspaces?.map((w) => `${w.id}\u0000${w.name}\u0000${w.shortPath}`).join('\u0001') ?? '',
+    hiddenWorkspaceCount.value,
+    locale.value,
+  ],
+  scheduleWorkspacePickerMeasure,
+  { immediate: true },
+);
+
+onMounted(() => {
+  scheduleWorkspacePickerMeasure();
+  window.addEventListener('resize', scheduleWorkspacePickerMeasure);
+  void document.fonts?.ready.then(scheduleWorkspacePickerMeasure);
+});
+
+onUnmounted(() => {
+  if (wsPickMeasureFrame !== null) window.cancelAnimationFrame(wsPickMeasureFrame);
+  window.removeEventListener('resize', scheduleWorkspacePickerMeasure);
+});
 
 // The align toggle was removed with its UI (6e50cb7) — reading layout is
 // always centered now. Drop the old persisted preference so users who once
@@ -1045,7 +1129,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         class="panes chat-scroll"
         @scroll.passive="onPanesScroll"
       >
-        <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
+        <div ref="contentWrapRef" class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
           <template v-if="turns.length === 0 && !sessionLoading">
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
@@ -1053,7 +1137,27 @@ defineExpose({ loadComposerForEdit, focusComposer });
               <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
               <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
               <!-- Workspace picker: choose where this new conversation starts. -->
-              <div v-if="hasWorkspaces" class="ws-pick">
+              <div v-if="hasWorkspaces" class="ws-pick" :style="wsPickStyle">
+                <div ref="wsPickMeasureRef" class="ws-pick-measure" aria-hidden="true">
+                  <button type="button" class="ws-pick-btn" tabindex="-1">
+                    <Icon name="folder" size="sm" />
+                    <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
+                    <Icon class="ws-pick-chev" name="chevron-down" size="sm" />
+                  </button>
+                  <div class="ws-pick-menu">
+                    <button type="button" class="ws-pick-item" tabindex="-1">
+                      <span class="ws-pick-item-name" />
+                      <span class="ws-pick-item-path" />
+                    </button>
+                    <button type="button" class="ws-pick-item ws-pick-more" tabindex="-1">
+                      <span>{{ t('conversation.moreWorkspaces', { count: hiddenWorkspaceCount }) }}</span>
+                    </button>
+                    <button type="button" class="ws-pick-action" tabindex="-1">
+                      <Icon name="plus" size="sm" />
+                      <span>{{ t('conversation.addWorkspace') }}</span>
+                    </button>
+                  </div>
+                </div>
                 <Tooltip :text="t('conversation.switchWorkspace')">
                   <button type="button" class="ws-pick-btn" @click.stop="wsPickOpen = !wsPickOpen">
                     <Icon name="folder" size="sm" />
@@ -1116,6 +1220,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :plan-mode="planMode"
               :swarm-mode="swarmMode"
               :goal-mode="goalMode"
+              :goal="goal"
               :activation-badges="activationBadges"
               :models="models"
               :starred-ids="starredIds"
@@ -1337,11 +1442,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
   text-align: center;
   padding: 0 16px 16px;
   color: var(--color-text);
-  font-family: var(--sans);
+  font-family: var(--font-ui);
 }
 .empty-hint-title {
   font-size: calc(var(--ui-font-size) + 16px);
-  font-weight: 500;
+  font-optical-sizing: auto;
+  font-weight: 600;
 }
 .empty-hint-text {
   display: inline-block;
@@ -1382,13 +1488,31 @@ defineExpose({ loadComposerForEdit, focusComposer });
 /* Empty-composer workspace picker */
 .ws-pick {
   position: relative;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
+}
+.ws-pick-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  width: max-content;
+  height: 0;
+  overflow: hidden;
+}
+.ws-pick-measure .ws-pick-menu {
+  position: static;
+  transform: none;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
 }
 .ws-pick-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: 320px;
+  width: max-content;
+  max-width: min(100%, calc(100vw - var(--space-8)));
   padding: 5px 10px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1399,7 +1523,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   cursor: pointer;
 }
 .ws-pick-btn:hover { border-color: var(--color-accent-bd); color: var(--color-text); }
-.ws-pick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-pick-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
 .ws-pick-chev.open { transform: rotate(180deg); }
 .ws-pick-backdrop {
@@ -1413,8 +1537,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
   transform: translateX(-50%);
   top: calc(100% + 6px);
   z-index: var(--z-dropdown);
-  min-width: 220px;
-  max-width: min(86vw, 340px);
+  width: var(--ws-pick-menu-width, max-content);
+  min-width: var(--ws-pick-menu-width, max-content);
+  max-width: calc(100vw - var(--space-8));
   max-height: 50vh;
   overflow-y: auto;
   background: var(--color-surface-raised);
@@ -1435,16 +1560,23 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 6px;
   padding: 6px 10px;
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
 }
 .ws-pick-item:hover { background: var(--panel2); }
 .ws-pick-item.on { background: var(--color-accent-soft); }
-.ws-pick-item-name { font-size: var(--ui-font-size-sm); color: var(--color-text); }
-.ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); font-weight: 500; }
-.ws-pick-item-path { font-size: var(--text-base); color: var(--muted); }
+.ws-pick-item-name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+.ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); }
+.ws-pick-item-path { font-size: var(--text-xs); font-weight: 475; color: var(--muted); }
 .ws-pick-item.ws-pick-more {
   flex-direction: row;
-  justify-content: center;
+  align-items: center;
+  justify-content: flex-start;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   color: var(--dim);
 }
 .ws-pick-item.ws-pick-more:hover { color: var(--color-text); }
@@ -1464,8 +1596,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 6px;
   padding: 7px 10px;
   cursor: pointer;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   color: var(--dim);
 }
 .ws-pick-action:hover { background: var(--panel2); color: var(--color-text); }
@@ -1500,7 +1633,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  z-index: var(--z-sticky);
+  /* Positioned after the message flow, so base z-index is enough to float above
+     content while staying below composer dropdowns. */
+  z-index: var(--z-base);
 }
 .newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {

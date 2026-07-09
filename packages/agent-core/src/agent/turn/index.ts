@@ -724,6 +724,7 @@ export class TurnFlow {
           llm: this.agent.llm,
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
+          buildMessagesMediaDegraded: () => this.agent.context.mediaDegradedMessages,
           dispatchEvent: this.buildDispatchEvent(turnId),
           // Re-read per step (not snapshotted per turn) so a select_tools load
           // is dispatchable on the very next step of the same turn.
