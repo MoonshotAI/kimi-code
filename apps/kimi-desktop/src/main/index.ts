@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, Menu, nativeTheme, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 
 import { ensureServer, kimiHome, serverLogPath } from './ensure-server';
@@ -170,10 +170,19 @@ function createWindow(): void {
   win.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
   });
-  // Electron quirk (electron#33697): with titleBarStyle 'hidden' + a custom
-  // trafficLightPosition, the traffic lights can vanish (or lose their custom
-  // position) after a full-screen round-trip or focus change. Re-assert both
-  // on every transition so the buttons stay permanently visible.
+  // macOS traffic lights.
+  //
+  // 1) Visibility across transitions: with titleBarStyle 'hidden' + a custom
+  //    trafficLightPosition, the buttons can vanish (or lose their custom
+  //    position) after a full-screen round-trip or on re-focus. Re-assert both
+  //    on those transitions (observed on Electron 33; belt-and-braces).
+  //
+  // 2) Blur is NOT such a case: unfocused traffic lights are merely DIMMED by
+  //    AppKit, and the dimmed color follows the WINDOW appearance, not the
+  //    page (electron#27295) — with the OS in dark mode but the web UI on a
+  //    light theme, the light-gray dimmed dots become invisible against the
+  //    light sidebar. That is fixed by the theme sync below, which keeps the
+  //    window appearance aligned with the web UI's <html data-color-scheme>.
   if (process.platform === 'darwin') {
     const showTrafficLights = (): void => {
       if (win.isDestroyed()) return;
@@ -183,6 +192,40 @@ function createWindow(): void {
     win.on('enter-full-screen', showTrafficLights);
     win.on('leave-full-screen', showTrafficLights);
     win.on('focus', showTrafficLights);
+
+    // Theme sync: no preload/IPC channel exists, so inject a tiny observer
+    // that reports <html data-color-scheme> ('light' | 'dark' | 'system')
+    // through a tagged console message, and mirror it into
+    // nativeTheme.themeSource (same three states). The startup/error screens
+    // (data: URLs) have no such attribute and harmlessly report 'system'.
+    const THEME_TAG = '__kimi_desktop_theme__:';
+    win.webContents.on('console-message', (_event, _level, message) => {
+      if (!message.startsWith(THEME_TAG)) return;
+      const scheme = message.slice(THEME_TAG.length);
+      if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
+        nativeTheme.themeSource = scheme;
+      }
+    });
+    win.webContents.on('did-finish-load', () => {
+      win.webContents
+        .executeJavaScript(
+          `(() => {
+            const report = () => {
+              const v = document.documentElement.dataset.colorScheme;
+              console.info(${JSON.stringify(THEME_TAG)} + (v === 'light' || v === 'dark' ? v : 'system'));
+            };
+            new MutationObserver(report).observe(document.documentElement, {
+              attributes: true,
+              attributeFilter: ['data-color-scheme'],
+            });
+            report();
+          })();`,
+        )
+        .catch(() => {
+          // Navigation can tear the page down mid-injection; theme sync is
+          // cosmetic, so ignore.
+        });
+    });
   }
   win.on('close', () => {
     saveBounds(win);
