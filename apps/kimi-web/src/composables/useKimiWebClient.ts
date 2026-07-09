@@ -1688,9 +1688,7 @@ const isSending = computed<boolean>(() => {
 // True while the empty-composer first prompt for the active workspace is being
 // created + submitted (before the session id exists). Drives the empty-session
 // "starting conversation…" loading state in ConversationPane / Composer.
-const isStartingFirstPrompt = computed<boolean>(() =>
-  workspaceState.isStartingFirstPrompt(rawState.activeWorkspaceId),
-);
+const isStartingFirstPrompt = computed<boolean>(() => workspaceState.isStartingFirstPrompt());
 
 const sideChat = useSideChat(rawState, {
   pushOperationFailure,

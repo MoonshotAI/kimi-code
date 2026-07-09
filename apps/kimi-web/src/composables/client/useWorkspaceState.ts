@@ -2220,11 +2220,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     searchFiles,
     loadOlderMessages,
     refreshSessionSidecars,
-    /** True while the empty-composer first prompt for `workspaceId` is being
-     *  created + submitted (the window covered by startingFirstPromptWorkspaces).
-     *  Drives the empty-session "starting conversation…" loading state. */
-    isStartingFirstPrompt: (workspaceId: string | null | undefined) =>
-      workspaceId !== null && workspaceId !== undefined && startingFirstPromptWorkspaces.has(workspaceId),
+    /** True while any empty-composer first prompt is being created + submitted
+     *  (the window covered by startingFirstPromptWorkspaces). Drives the
+     *  empty-session "starting conversation…" loading state. Intentionally
+     *  keyed by the lock set itself rather than the current activeWorkspaceId:
+     *  createDraftSession can swap activeWorkspaceId to a registered id
+     *  mid-flight, and a workspace-keyed read would prematurely re-enable the
+     *  composer and reopen the duplicate first-submit race. */
+    isStartingFirstPrompt: () => startingFirstPromptWorkspaces.size > 0,
   };
 }
 
