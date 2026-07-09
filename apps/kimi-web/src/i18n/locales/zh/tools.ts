@@ -13,6 +13,10 @@ export default {
     task: '任务',
     swarm: 'Swarm',
     ask_user: '提问',
+    goal_create: '启动目标',
+    goal_get: '读取目标',
+    goal_budget: '设置目标预算',
+    goal_update: '更新目标',
   },
   swarm: {
     progress: '{done} / {total}',
@@ -31,6 +35,17 @@ export default {
     edited: '已编辑',
     created: '已创建',
     todos: '{count} 项',
+  },
+  goal: {
+    objectiveWithCriterion: '{objective} · {criterion}',
+    status: '状态：{status}',
+    budget: '{value} {unit}',
+    turns: '{value} 轮',
+    tokens: '{value} token',
+    milliseconds: '{value} 毫秒',
+    seconds: '{value} 秒',
+    minutes: '{value} 分钟',
+    hours: '{value} 小时',
   },
   group: {
     title: '{count} 个工具调用',

@@ -61,6 +61,7 @@ import RiExpandDiagonalLine from '~icons/ri/expand-diagonal-line';
 import RiExternalLinkLine from '~icons/ri/external-link-line';
 import RiFileAddLine from '~icons/ri/file-add-line';
 import RiFileCopyLine from '~icons/ri/file-copy-line';
+import RiFileEditLine from '~icons/ri/file-edit-line';
 import RiFileLine from '~icons/ri/file-line';
 import RiFileTextLine from '~icons/ri/file-text-line';
 import RiFlashlightLine from '~icons/ri/flashlight-line';
@@ -76,6 +77,7 @@ import RiListUnordered from '~icons/ri/list-unordered';
 import RiLoginBoxLine from '~icons/ri/login-box-line';
 import RiMailLine from '~icons/ri/mail-line';
 import RiMessageLine from '~icons/ri/message-line';
+import RiPauseFill from '~icons/ri/pause-fill';
 import RiPencilLine from '~icons/ri/pencil-line';
 import RiPlayFill from '~icons/ri/play-fill';
 import RiQuestionLine from '~icons/ri/question-line';
@@ -85,6 +87,7 @@ import RiStarFill from '~icons/ri/star-fill';
 import RiStarLine from '~icons/ri/star-line';
 import RiStopFill from '~icons/ri/stop-fill';
 import RiSubtractLine from '~icons/ri/subtract-line';
+import RiTargetLine from '~icons/ri/target-line';
 import RiTerminalBoxLine from '~icons/ri/terminal-box-line';
 import RiTimeLine from '~icons/ri/time-line';
 import RiToolsLine from '~icons/ri/tools-line';
@@ -126,6 +129,7 @@ import RawExpandDiagonalLine from '~icons/ri/expand-diagonal-line?raw';
 import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
 import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFileCopyLine from '~icons/ri/file-copy-line?raw';
+import RawFileEditLine from '~icons/ri/file-edit-line?raw';
 import RawFileLine from '~icons/ri/file-line?raw';
 import RawFileTextLine from '~icons/ri/file-text-line?raw';
 import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
@@ -141,6 +145,7 @@ import RawListUnordered from '~icons/ri/list-unordered?raw';
 import RawLoginBoxLine from '~icons/ri/login-box-line?raw';
 import RawMailLine from '~icons/ri/mail-line?raw';
 import RawMessageLine from '~icons/ri/message-line?raw';
+import RawPauseFill from '~icons/ri/pause-fill?raw';
 import RawPencilLine from '~icons/ri/pencil-line?raw';
 import RawPlayFill from '~icons/ri/play-fill?raw';
 import RawQuestionLine from '~icons/ri/question-line?raw';
@@ -150,6 +155,7 @@ import RawStarFill from '~icons/ri/star-fill?raw';
 import RawStarLine from '~icons/ri/star-line?raw';
 import RawStopFill from '~icons/ri/stop-fill?raw';
 import RawSubtractLine from '~icons/ri/subtract-line?raw';
+import RawTargetLine from '~icons/ri/target-line?raw';
 import RawTerminalBoxLine from '~icons/ri/terminal-box-line?raw';
 import RawTimeLine from '~icons/ri/time-line?raw';
 import RawToolsLine from '~icons/ri/tools-line?raw';
@@ -194,6 +200,7 @@ export type IconName =
   | 'folder-solid'
   | 'file'
   | 'file-text'
+  | 'file-edit'
   | 'file-plus'
   | 'file-off'
   | 'image-off'
@@ -214,6 +221,8 @@ export type IconName =
   | 'alert-triangle'
   | 'clock'
   | 'sparkles'
+  | 'target'
+  | 'pause'
   | 'play'
   | 'stop'
   | 'star'
@@ -273,6 +282,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'folder-solid': entry(RiFolderFill, RawFolderFill),
   file: entry(RiFileLine, RawFileLine),
   'file-text': entry(RiFileTextLine, RawFileTextLine),
+  'file-edit': entry(RiFileEditLine, RawFileEditLine),
   'file-plus': entry(RiFileAddLine, RawFileAddLine),
   'file-off': entry(RiFileLine, RawFileLine),
   'image-off': entry(RiImageLine, RawImageLine),
@@ -293,6 +303,8 @@ export const ICONS: Record<IconName, IconEntry> = {
   'alert-triangle': entry(RiAlertLine, RawAlertLine),
   clock: entry(RiTimeLine, RawTimeLine),
   sparkles: entry(RiSparklingLine, RawSparklingLine),
+  target: entry(RiTargetLine, RawTargetLine),
+  pause: entry(RiPauseFill, RawPauseFill),
   play: entry(RiPlayFill, RawPlayFill),
   stop: entry(RiStopFill, RawStopFill),
   star: entry(RiStarFill, RawStarFill),
@@ -370,6 +382,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'folder-solid',
       'file',
       'file-text',
+      'file-edit',
       'file-plus',
       'file-off',
       'image-off',
@@ -382,6 +395,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'check-list',
       'bolt',
       'git-pull-request',
+      'target',
       'calendar-schedule',
       'calendar-todo',
       'calendar-close',
@@ -396,6 +410,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'alert-triangle',
       'clock',
       'sparkles',
+      'pause',
       'play',
       'stop',
       'star',

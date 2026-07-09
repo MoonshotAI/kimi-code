@@ -344,8 +344,9 @@ defineExpose({ closeMenu });
 
 .t {
   color: inherit;
-  font-size: var(--ui-font-size);
-  font-weight: var(--weight-regular);
+  font-size: var(--text-base);
+  font-weight: 450;
+  line-height: var(--leading-tight);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -356,7 +357,10 @@ defineExpose({ closeMenu });
 .ts {
   color: var(--color-text-faint);
   font-size: var(--text-xs);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-weight: 475;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* Trailing action slot: time and kebab share one grid cell (grid-area:1/1).
@@ -369,7 +373,7 @@ defineExpose({ closeMenu });
   display: inline-grid;
   flex: none;
   align-items: center;
-  justify-items: center;
+  justify-items: end;
 }
 .act .ts,
 .act .kebab { grid-area: 1 / 1; }

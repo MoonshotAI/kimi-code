@@ -474,12 +474,12 @@ function copyDiff(code: string, idx: number) {
 
 /* Base prose — assistant message text. */
 .md {
-  font: 500 15px/1.6 var(--font-ui);
+  font: 400 15px/1.6 var(--font-ui);
   color: var(--color-text);
   word-break: break-word;
 }
 .md :deep(.markdown-renderer) {
-  font: 500 15px/1.6 var(--font-ui);
+  font: 400 15px/1.6 var(--font-ui);
   color: var(--color-text);
 }
 .md :deep(.markstream-vue),
@@ -523,8 +523,9 @@ function copyDiff(code: string, idx: number) {
   font-size: var(--content-font-size);
 }
 
-/* Emphasis — bold steps up from the body (medium/500) to semibold (700). */
+/* Emphasis — keep the weight strong, but soften the ink slightly. */
 .md :deep(strong) {
+  color: color-mix(in srgb, var(--color-text) 86%, var(--color-text-muted));
   font-weight: var(--weight-semibold);
 }
 
@@ -534,7 +535,8 @@ function copyDiff(code: string, idx: number) {
 .md :deep(h3),
 .md :deep(h4) {
   color: var(--color-text);
-  font-weight: var(--weight-medium);
+  font-optical-sizing: auto;
+  font-weight: 600;
   margin: 0.85em 0 0.35em;
   line-height: var(--leading-tight);
 }
@@ -573,8 +575,14 @@ function copyDiff(code: string, idx: number) {
   font: .9em var(--font-mono);
   background: var(--color-surface-sunken);
   color: var(--color-fg);
-  padding: 0 5px;
+  padding: 0 4px;
   border-radius: var(--radius-sm);
+}
+.md :deep(strong code),
+.md :deep(strong .inline-code),
+.md :deep(b code),
+.md :deep(b .inline-code) {
+  font-weight: var(--weight-semibold);
 }
 
 /* ---------------------------------------------------------------------------
@@ -601,6 +609,9 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.code-block-header *) {
   color: var(--color-text-muted);
   font: var(--text-xs) var(--font-mono);
+}
+.md :deep(.code-block-header .code-header-main) {
+  font-family: var(--font-ui);
 }
 /* Copy button — mirrors the §03 IconButton: muted glyph, sunken hover, soft
    radius, and the shared focus ring. markstream renders its own button, so we

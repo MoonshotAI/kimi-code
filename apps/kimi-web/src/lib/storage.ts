@@ -31,6 +31,7 @@ export const STORAGE_KEYS = {
   conversationToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
   notifyOnQuestion: 'kimi-web.notify-on-question',
+  notifyOnApproval: 'kimi-web.notify-on-approval',
   soundOnComplete: 'kimi-web.sound-on-complete',
   inputHistory: 'kimi-web.input-history',
   // cross-file

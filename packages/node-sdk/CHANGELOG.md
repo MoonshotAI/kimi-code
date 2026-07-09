@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.13.1
+
+### Patch Changes
+
+- [#1460](https://github.com/MoonshotAI/kimi-code/pull/1460) [`474ce28`](https://github.com/MoonshotAI/kimi-code/commit/474ce289dd39aa42d1a77a9a2e15531aee49aa15) Thanks [@RealKai42](https://github.com/RealKai42)! - Raise the image downscale cap from 2000px to 3000px, and fix swapped width/height for EXIF-rotated (portrait) photos in compression captions and media read notes so region readback coordinates map correctly.
+
 ## 0.13.0
 
 ### Minor Changes

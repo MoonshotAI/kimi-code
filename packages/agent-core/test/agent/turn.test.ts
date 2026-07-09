@@ -1409,7 +1409,7 @@ describe('Agent turn flow', () => {
     );
   });
 
-  it('falls back to login_required when force-refresh and replay both 401', async () => {
+  it('treats 401 after force-refresh as provider auth error', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthAgentOptions(
@@ -1447,7 +1447,7 @@ describe('Agent turn flow', () => {
         args: expect.objectContaining({
           reason: 'failed',
           error: expect.objectContaining({
-            code: 'auth.login_required',
+            code: 'provider.auth_error',
             details: expect.objectContaining({
               statusCode: 401,
               requestId: 'req-401',
@@ -1644,7 +1644,7 @@ describe('Agent turn flow', () => {
     expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/3' });
   });
 
-  it('force-refreshes OAuth credentials on video upload 401 and falls back to login_required when replay 401', async () => {
+  it('force-refreshes OAuth credentials on video upload 401 and surfaces the provider auth error when replay 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthAgentOptions(
@@ -1689,8 +1689,9 @@ describe('Agent turn flow', () => {
     expect(result.isError).toBe(true);
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
     expect(tokenCalls).toEqual([undefined, true]);
-    expect(result.output).toContain('OAuth provider credentials were rejected');
-    expect(result.output).toContain('Send /login to login');
+    expect(result.output).toContain('Unauthorized');
+    expect(result.output).not.toContain('OAuth provider credentials were rejected');
+    expect(result.output).not.toContain('Send /login to login');
   });
 
   it('cancels an active turn', async () => {
