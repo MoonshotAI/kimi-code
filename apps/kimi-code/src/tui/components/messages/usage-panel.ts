@@ -196,8 +196,12 @@ export function buildExtraUsageSection(
     ];
   }
 
+  const used = formatCurrency(extraUsage.monthlyUsedCents, extraUsage.currency);
   const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
-  return [accent('Extra Usage'), `  ${muted(DOTTED_BAR)}  ${value(`${balance} / 无限制`)}`];
+  return [
+    accent('Extra Usage'),
+    `  ${muted(DOTTED_BAR)}  ${value(`${used} / 无限制`)}  ${muted(`Balance ${balance}`)}`,
+  ];
 }
 
 export function buildManagedUsageReportLines(options: ManagedUsageReportLineOptions): string[] {

@@ -84,19 +84,20 @@ describe('UsagePanelComponent', () => {
         summary: null,
         limits: [],
         extraUsage: {
-          balanceCents: 20000,
-          totalCents: 20000,
+          balanceCents: 18208,
+          totalCents: 40000,
           monthlyChargeLimitEnabled: false,
           monthlyChargeLimitCents: 0,
-          monthlyUsedCents: 0,
-          currency: 'USD',
+          monthlyUsedCents: 21792,
+          currency: 'CNY',
         },
       },
     }).map(strip);
 
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
-    expect(output).toContain('$200 / 无限制');
+    expect(output).toContain('¥217.92 / 无限制');
+    expect(output).toContain('Balance ¥182.08');
     expect(output).toContain('····················');
   });
 
