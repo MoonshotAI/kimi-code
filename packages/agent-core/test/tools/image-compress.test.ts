@@ -45,7 +45,14 @@ import {
   extractImageCompressionCaptions,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
+  MAX_IMAGE_EDGE_ENV,
+  READ_IMAGE_BYTE_BUDGET,
+  READ_IMAGE_BYTE_BUDGET_ENV,
+  resolveMaxImageEdgePx,
+  resolveReadImageByteBudget,
 } from '../../src/tools/support/image-compress';
+// eslint-disable-next-line import/no-unresolved
+import { ImageLimits } from '../../src/tools/support/image-limits';
 // eslint-disable-next-line import/no-unresolved
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
 // eslint-disable-next-line import/no-unresolved
@@ -451,7 +458,139 @@ describe('compressImageForModel — performance', () => {
 
   it('exposes a sane default budget', () => {
     expect(IMAGE_BYTE_BUDGET).toBeGreaterThan(0);
-    expect(MAX_IMAGE_EDGE_PX).toBe(3000);
+    expect(MAX_IMAGE_EDGE_PX).toBe(2000);
+  });
+});
+
+// ── default edge resolution (env-only fallback) ─────────────────────
+
+describe('resolveMaxImageEdgePx', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to the built-in ceiling', () => {
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('lets the env var override the built-in ceiling', () => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '900');
+    expect(resolveMaxImageEdgePx()).toBe(900);
+  });
+
+  it.each(['abc', '-100', '0', '1.5', ' '])('ignores the invalid env value "%s"', (raw) => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, raw);
+    expect(resolveMaxImageEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('drives compressImageForModel when no explicit maxEdge is passed', async () => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '1200');
+    const png = await solidPng(1600, 800);
+    const result = await compressImageForModel(png, 'image/png');
+    expect(result.changed).toBe(true);
+    expect(result.width).toBe(1200);
+    expect(result.height).toBe(600);
+  });
+
+  it('an explicit maxEdge option still wins over the env var', async () => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '900');
+    const png = await solidPng(1600, 800);
+    const result = await compressImageForModel(png, 'image/png', { maxEdge: 800 });
+    expect(result.changed).toBe(true);
+    expect(result.width).toBe(800);
+    expect(result.height).toBe(400);
+  });
+
+  it('drives cropImageForModel region fitting', async () => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '400');
+    const png = await solidPng(1600, 800);
+    const result = await cropImageForModel(png, 'image/png', {
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 800,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Math.max(result.width, result.height)).toBe(400);
+  });
+});
+
+describe('resolveReadImageByteBudget', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to the built-in read budget', () => {
+    expect(READ_IMAGE_BYTE_BUDGET).toBe(256 * 1024);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+  });
+
+  it('lets the env var override the built-in budget', () => {
+    vi.stubEnv(READ_IMAGE_BYTE_BUDGET_ENV, '100000');
+    expect(resolveReadImageByteBudget()).toBe(100000);
+  });
+
+  it.each(['abc', '-1', '0', '1.5', ' '])('ignores the invalid env value "%s"', (raw) => {
+    vi.stubEnv(READ_IMAGE_BYTE_BUDGET_ENV, raw);
+    expect(resolveReadImageByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+  });
+});
+
+// ── ImageLimits (owner-scoped [image] config) ───────────────────────
+
+describe('ImageLimits', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves built-in defaults when no config is set', () => {
+    const limits = new ImageLimits();
+    expect(limits.maxEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+    expect(limits.readByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+  });
+
+  it('uses the owning config when set', () => {
+    const limits = new ImageLimits(process.env, { maxEdgePx: 1200, readByteBudget: 512 * 1024 });
+    expect(limits.maxEdgePx()).toBe(1200);
+    expect(limits.readByteBudget()).toBe(512 * 1024);
+  });
+
+  it('lets the env vars override the config', () => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, '900');
+    vi.stubEnv(READ_IMAGE_BYTE_BUDGET_ENV, '100000');
+    const limits = new ImageLimits(process.env, { maxEdgePx: 1200, readByteBudget: 512 * 1024 });
+    expect(limits.maxEdgePx()).toBe(900);
+    expect(limits.readByteBudget()).toBe(100000);
+  });
+
+  it('falls back to the config when the env value is invalid', () => {
+    vi.stubEnv(MAX_IMAGE_EDGE_ENV, 'abc');
+    const limits = new ImageLimits(process.env, { maxEdgePx: 1200 });
+    expect(limits.maxEdgePx()).toBe(1200);
+  });
+
+  it('setConfig replaces and clears the config (reload semantics)', () => {
+    const limits = new ImageLimits(process.env, { maxEdgePx: 1200 });
+    limits.setConfig({ maxEdgePx: 1500 });
+    expect(limits.maxEdgePx()).toBe(1500);
+    limits.setConfig(undefined);
+    expect(limits.maxEdgePx()).toBe(MAX_IMAGE_EDGE_PX);
+  });
+
+  it('instances are isolated — one owner cannot leak limits into another', () => {
+    // The regression this class exists for: two cores in one process (the
+    // SDK's multi-client pattern) must each compress with their own [image]
+    // settings, and a reload of one must not restamp the other.
+    const first = new ImageLimits(process.env, { maxEdgePx: 800, readByteBudget: 64 * 1024 });
+    const second = new ImageLimits(process.env, { maxEdgePx: 1600 });
+    expect(first.maxEdgePx()).toBe(800);
+    expect(second.maxEdgePx()).toBe(1600);
+    expect(second.readByteBudget()).toBe(READ_IMAGE_BYTE_BUDGET);
+
+    second.setConfig({ maxEdgePx: 1000 });
+    expect(first.maxEdgePx()).toBe(800);
+    expect(first.readByteBudget()).toBe(64 * 1024);
   });
 });
 

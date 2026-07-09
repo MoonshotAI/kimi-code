@@ -25,6 +25,7 @@ import {
 } from '#/tui/controllers/editor-keyboard';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import { parseImageMeta } from '#/utils/image/image-mime';
+import { ImageLimits, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 // vitest hoists vi.mock/vi.hoisted above the imports above, so the mock still
 // applies to the editor-keyboard module that pulls in readClipboardMedia.
@@ -41,7 +42,7 @@ interface PasteHarness {
   pasteImage(): Promise<void>;
 }
 
-function createPasteHarness(options: { sessionDir?: string } = {}): PasteHarness {
+function createPasteHarness(options: { sessionDir?: string; imageLimits?: ImageLimits } = {}): PasteHarness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
   };
@@ -65,6 +66,11 @@ function createPasteHarness(options: { sessionDir?: string } = {}): PasteHarness
     openUndoSelector: vi.fn(),
     cancelRunningShellCommand: vi.fn(),
   } as unknown as EditorKeyboardHost;
+  if (options.imageLimits !== undefined) {
+    (host as unknown as { harness: KimiHarness }).harness = {
+      imageLimits: options.imageLimits,
+    } as unknown as KimiHarness;
+  }
 
   const controller = new EditorKeyboardController(host, store);
   controller.install();
@@ -149,6 +155,25 @@ describe('clipboard image paste compression', () => {
     const dims = parseImageMeta(att.bytes);
     expect(dims).not.toBeNull();
     expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(3000);
+  });
+
+  it('honors the harness [image] max_edge_px when pasting', async () => {
+    const big = await solidPng(3600, 1800);
+    readClipboardMedia.mockResolvedValue({ kind: 'image', bytes: big, mimeType: 'image/png' });
+
+    const { store, pasteImage } = createPasteHarness({
+      imageLimits: new ImageLimits(process.env, { maxEdgePx: 800 }),
+    });
+    await pasteImage();
+
+    const att = store.get(1);
+    if (att?.kind !== 'image') throw new Error('expected image attachment');
+    // The harness [image] config — not the built-in 2000px — drives ingestion.
+    expect(Math.max(att.width, att.height)).toBe(800);
+    expect(att.placeholder).toContain('800×400');
+    const dims = parseImageMeta(att.bytes);
+    expect(dims).not.toBeNull();
+    expect(Math.max(dims!.width, dims!.height)).toBe(800);
   });
 
   it('records and persists the pre-compression original for an oversized paste', async () => {

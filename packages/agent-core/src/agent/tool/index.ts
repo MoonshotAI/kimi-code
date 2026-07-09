@@ -332,6 +332,8 @@ export class ToolManager {
               return mcpResultToExecutableOutput(result, qualified, {
                 originalsDir: this.agent.mediaOriginalsDir,
                 telemetry: this.agent.telemetry,
+                // Resolved per call so a config reload applies immediately.
+                maxImageEdgePx: this.agent.imageLimits?.maxEdgePx(),
               });
             },
           };
@@ -751,6 +753,7 @@ export class ToolManager {
             modelCapabilities,
             videoUploader,
             this.agent.telemetry,
+            this.agent.imageLimits,
           ),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),

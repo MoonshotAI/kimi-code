@@ -49,6 +49,7 @@ import {
   type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '../../support/image-compress';
+import { ImageLimits } from '../../support/image-limits';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
@@ -235,12 +236,14 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
+  private readonly imageLimits: ImageLimits;
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader | undefined,
     telemetry?: TelemetryClient,
+    imageLimits?: ImageLimits,
   ) {
     if (!capabilities.image_in && !capabilities.video_in) {
       const skip = new Error('ReadMediaFile requires image_in or video_in capability');
@@ -250,6 +253,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     this.description = buildDescription(capabilities);
     this.compressTelemetry =
       telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
+    this.imageLimits = imageLimits ?? new ImageLimits();
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
@@ -353,6 +357,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           // full fidelity, so a prior downsampled view can be zoomed into.
           const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
             skipResize: args.full_resolution === true,
+            maxEdge: this.imageLimits.maxEdgePx(),
             telemetry: this.compressTelemetry,
           });
           if (!outcome.ok) {
@@ -409,6 +414,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           // on any failure compressImageForModel returns the original bytes, so
           // the read still succeeds with the uncompressed image.
           const compressed = await compressImageForModel(data, fileType.mimeType, {
+            maxEdge: this.imageLimits.maxEdgePx(),
+            byteBudget: this.imageLimits.readByteBudget(),
             telemetry: this.compressTelemetry,
           });
           const base64 = Buffer.from(compressed.data).toString('base64');

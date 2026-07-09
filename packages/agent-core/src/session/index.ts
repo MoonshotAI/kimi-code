@@ -52,6 +52,7 @@ import { SessionSubagentHost } from './subagent-host';
 import { sessionMediaOriginalsDir } from '../tools/support/image-originals';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
+import { ImageLimits } from '../tools/support/image-limits';
 import { abortError } from '../utils/abort';
 
 export interface SessionOptions {
@@ -75,6 +76,8 @@ export interface SessionOptions {
   readonly pluginCommands?: readonly PluginCommandDef[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  /** Owner-scoped [image] limits, threaded from the owning core into every agent. */
+  readonly imageLimits?: ImageLimits;
   readonly additionalDirs?: readonly string[];
   /**
    * Print-mode (`kimi -p`) only: hold the main turn open while background
@@ -169,6 +172,7 @@ export class Session {
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
+  readonly imageLimits: ImageLimits;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
   private additionalDirs: readonly string[];
@@ -202,6 +206,7 @@ export class Session {
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
     this.rpc = options.rpc;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
+    this.imageLimits = options.imageLimits ?? new ImageLimits();
     this.hookEngine = new HookEngine(options.hooks, {
       cwd: options.kaos.getcwd(),
       sessionId: options.id,
@@ -837,6 +842,7 @@ export class Session {
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       pluginCommands: type === 'main' ? this.options.pluginCommands : undefined,
       experimentalFlags: this.experimentalFlags,
+      imageLimits: this.imageLimits,
       additionalDirs: parentAgent?.getAdditionalDirs() ?? this.additionalDirs,
       systemPromptContextProvider: () =>
         prepareSystemPromptContext(

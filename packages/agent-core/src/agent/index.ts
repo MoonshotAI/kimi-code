@@ -14,6 +14,7 @@ import type { PluginCommandOrigin } from './context';
 
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
+import { ImageLimits } from '../tools/support/image-limits';
 import {
   prepareSystemPromptContext,
   type PreparedSystemPromptContext,
@@ -96,6 +97,8 @@ export interface AgentOptions {
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly pluginCommands?: readonly PluginCommandDef[];
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  /** Owner-scoped [image] limits; a standalone Agent gets env/built-in defaults. */
+  readonly imageLimits?: ImageLimits;
   readonly replay?: ReplayBuilderOptions;
   readonly additionalDirs?: readonly string[];
   readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
@@ -124,6 +127,7 @@ export class Agent {
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
   readonly experimentalFlags: ExperimentalFlagResolver;
+  readonly imageLimits: ImageLimits;
 
   readonly llmRequestLogger: LlmRequestLogger;
   readonly llmRequestRecorder: LlmRequestRecorder;
@@ -178,6 +182,7 @@ export class Agent {
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
+    this.imageLimits = options.imageLimits ?? new ImageLimits();
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
     this.systemPromptContextProvider = options.systemPromptContextProvider;
 

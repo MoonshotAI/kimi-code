@@ -64,9 +64,13 @@ export {
   compressImageContentParts,
   cropImageForModel,
   formatByteSize,
+  resolveMaxImageEdgePx,
+  resolveReadImageByteBudget,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
+  READ_IMAGE_BYTE_BUDGET,
 } from './tools/support/image-compress';
+export { ImageLimits } from './tools/support/image-limits';
 export type {
   CompressAnnotateOptions,
   CompressedContentParts,

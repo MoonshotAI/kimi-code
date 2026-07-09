@@ -110,7 +110,38 @@ function getNative() {
 }
 
 /** Longest-edge ceiling (px). Larger images are scaled down to fit. */
-export const MAX_IMAGE_EDGE_PX = 3000;
+export const MAX_IMAGE_EDGE_PX = 2000;
+export const MAX_IMAGE_EDGE_ENV = 'KIMI_IMAGE_MAX_EDGE_PX';
+
+/** The env override for the longest-edge ceiling, or undefined when unset/invalid. */
+export function maxImageEdgeFromEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number | undefined {
+  return positiveIntFromEnv(env, MAX_IMAGE_EDGE_ENV);
+}
+
+/**
+ * Default longest-edge ceiling (px) for calls that pass no explicit
+ * `maxEdge` and have no config owner: env var > built-in
+ * {@link MAX_IMAGE_EDGE_PX}. Owned call sites (tools under an Agent, server
+ * ingestion under a core) resolve through their `ImageLimits` instance
+ * instead, which adds the owner's `[image]` config between the two.
+ */
+export function resolveMaxImageEdgePx(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  return maxImageEdgeFromEnv(env) ?? MAX_IMAGE_EDGE_PX;
+}
+
+function positiveIntFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  name: string,
+): number | undefined {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw.length === 0 || !/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
 
 /**
  * Raw-byte budget for a single image. base64 inflates bytes by ~4/3, so a
@@ -118,6 +149,42 @@ export const MAX_IMAGE_EDGE_PX = 3000;
  * provider's per-image limit.
  */
 export const IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
+
+/**
+ * Built-in raw-byte budget for images the model reads for itself
+ * (ReadMediaFile's default path). Far below {@link IMAGE_BYTE_BUDGET}: a
+ * session that keeps screenshotting and reading images accumulates every one
+ * of them in the request body on every turn, so per-image size — not the
+ * provider's per-image ceiling — is what keeps the total under the
+ * provider's request-size limit. 256 KB keeps a clean 2000px UI screenshot
+ * on the lossless fast path while capping dense content at a readable
+ * q80/1000px JPEG; fine detail stays reachable through the `region`
+ * readback, which deliberately ignores this budget.
+ */
+export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
+
+/**
+ * Env var overriding the read-image byte budget. Read live on every
+ * resolution; a value that is not a positive integer is ignored.
+ */
+export const READ_IMAGE_BYTE_BUDGET_ENV = 'KIMI_IMAGE_READ_BYTE_BUDGET';
+
+/** The env override for the read-image byte budget, or undefined when unset/invalid. */
+export function readImageByteBudgetFromEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number | undefined {
+  return positiveIntFromEnv(env, READ_IMAGE_BYTE_BUDGET_ENV);
+}
+
+/**
+ * Read-image byte budget for callers with no config owner; see
+ * {@link resolveMaxImageEdgePx} for the ownership model.
+ */
+export function resolveReadImageByteBudget(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  return readImageByteBudgetFromEnv(env) ?? READ_IMAGE_BYTE_BUDGET;
+}
 
 /** Progressively lower JPEG quality until the payload fits the byte budget. */
 const JPEG_QUALITY_STEPS = [80, 60, 40, 20] as const;
@@ -157,7 +224,11 @@ const MAX_DECODE_BYTES = 64 * 1024 * 1024;
 const RECODABLE_MIME = new Set(['image/png', 'image/jpeg']);
 
 export interface CompressImageOptions {
-  /** Override the longest-edge ceiling (px). */
+  /**
+   * Override the longest-edge ceiling (px). When omitted, owned call sites
+   * pass their {@link ImageLimits.maxEdgePx}; ownerless ones fall back to
+   * {@link resolveMaxImageEdgePx} (env var, then built-in).
+   */
   readonly maxEdge?: number;
   /** Override the raw-byte budget. */
   readonly byteBudget?: number;
@@ -229,7 +300,7 @@ export async function compressImageForModel(
   options: CompressImageOptions = {},
 ): Promise<CompressImageResult> {
   const startedAt = Date.now();
-  const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+  const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const normalizedMime = normalizeMime(mimeType);
@@ -633,7 +704,7 @@ export async function cropImageForModel(
   options: CropImageOptions = {},
 ): Promise<CropImageOutcome> {
   const startedAt = Date.now();
-  const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+  const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const normalizedMime = normalizeMime(mimeType);

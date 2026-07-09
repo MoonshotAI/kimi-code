@@ -140,6 +140,8 @@ export function registerPromptsRoutes(
                 : withTelemetryContext(core.telemetry, { sessionId: session_id }),
             // Resolved lazily — only when an inline base64 image actually
             // got compressed — so image-free prompts never pay the lookup.
+            // Resolved per request so a config reload applies immediately.
+            maxImageEdgePx: core.imageLimits?.maxEdgePx(),
             resolveOriginalsDir: async () => {
               const summaries = await core.rpc.listSessions({ sessionId: session_id });
               const sessionDir = summaries[0]?.sessionDir;
@@ -278,6 +280,8 @@ interface ResolvePromptMediaOptions {
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
   /** Report an `image_compress` event per compressed prompt image. */
   readonly telemetry?: TelemetryClient;
+  /** Owner-resolved longest-edge ceiling (px) from the core's [image] config. */
+  readonly maxImageEdgePx?: number;
 }
 
 async function resolvePromptMediaFiles(
@@ -305,6 +309,7 @@ async function resolvePromptMediaFiles(
     // image as `{ source: { kind: 'base64' } }` instead of uploading a file.
     if (part.type === 'image' && part.source.kind === 'base64') {
       const compressed = await compressBase64ForModel(part.source.data, part.source.media_type, {
+        maxEdge: options.maxImageEdgePx,
         telemetry: telemetryFor('prompt_inline'),
       });
       if (compressed.changed) {
@@ -370,6 +375,7 @@ async function resolvePromptMediaFiles(
     let bytes: Uint8Array = data;
     if (part.type === 'image') {
       const compressed = await compressImageForModel(data, mediaType, {
+        maxEdge: options.maxImageEdgePx,
         telemetry: telemetryFor('prompt_file'),
       });
       if (compressed.changed) {
