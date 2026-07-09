@@ -3,7 +3,7 @@
  *
  * Discovers project skills from the session's current `workDir`
  * (`workspaceContext`) through `ISkillDiscovery`, contributing them at priority
- * 20 (above user, below plugin). Bound at Session scope so each session reads
+ * 20 (above user and plugin). Bound at Session scope so each session reads
  * its own workspace root.
  */
 

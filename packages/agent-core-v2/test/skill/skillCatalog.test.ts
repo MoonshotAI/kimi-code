@@ -102,6 +102,41 @@ describe('SessionSkillCatalogService', () => {
     host.dispose();
   });
 
+  it('orders project, user and plugin skills as project > user > plugin', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([
+      stubSkill('shared', { description: 'from user' }),
+      stubSkill('user-plugin', { description: 'from user' }),
+    ]);
+    store.setProjectSkills([stubSkill('shared', { description: 'from project' })]);
+    store.setPluginSkills([
+      stubSkill('shared', {
+        description: 'from plugin',
+        source: 'extra',
+        plugin: { id: 'demo' },
+      }),
+      stubSkill('user-plugin', {
+        description: 'from plugin',
+        source: 'extra',
+        plugin: { id: 'demo' },
+      }),
+    ]);
+    const pluginRoot: SkillRoot = {
+      path: '/plugins/demo/skills',
+      source: 'extra',
+      plugin: { id: 'demo' },
+    };
+    const { stub: ws } = workspaceStub('/work');
+    const { host, session } = makeHost(store, ws, [pluginRoot]);
+
+    const catalog = session.accessor.get(ISessionSkillCatalog);
+    await catalog.load();
+
+    expect(catalog.catalog.getSkill('shared')?.description).toBe('from project');
+    expect(catalog.catalog.getSkill('user-plugin')?.description).toBe('from user');
+    host.dispose();
+  });
+
   it('reload replaces project skills when the workDir changes', async () => {
     const store = new InMemorySkillDiscovery();
     store.setUserSkills([stubSkill('global-only')]);
@@ -150,7 +185,9 @@ describe('SessionSkillCatalogService', () => {
       declare readonly _serviceBrand: undefined;
       receivedRoots: readonly SkillRoot[] | undefined;
       async discover(roots: readonly SkillRoot[]) {
-        this.receivedRoots = roots;
+        if (roots.some((root) => root.plugin !== undefined)) {
+          this.receivedRoots = roots;
+        }
         const pluginSkills = roots
           .filter((root) => root.plugin !== undefined)
           .map((root) => stubSkill('demo-skill', { source: 'extra', plugin: root.plugin }));

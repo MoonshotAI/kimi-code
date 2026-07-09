@@ -79,6 +79,7 @@ Only set tokens from this set — unknown keys are silently ignored at load. If 
 | `diffGutter` | Diff line-number gutter |
 | `diffMeta` | Diff meta / hunk headers |
 | `roleUser` | User message bullet and text, skill-activation name (the one role color with its own hue) |
+| `shellMode` | Shell mode (`!`) prompt, editor border, and the echoed `$ command` line |
 
 ## Workflow
 

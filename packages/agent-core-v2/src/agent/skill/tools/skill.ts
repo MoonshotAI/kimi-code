@@ -61,8 +61,17 @@ export interface SkillToolInput {
 }
 
 export const SkillToolInputSchema: z.ZodType<SkillToolInput> = z.object({
-  skill: z.string(),
-  args: z.string().optional(),
+  skill: z
+    .string()
+    .describe(
+      'The exact name of the skill to invoke, spelled as it appears in the current skill listing (e.g. "commit", "pdf").',
+    ),
+  args: z
+    .string()
+    .optional()
+    .describe(
+      'Optional argument string for the skill, written like a command line (e.g. `-m "fix bug"`, `123`, a file path). It is split on whitespace (quotes group a token) and expanded into the skill\'s placeholders ($NAME, $1, $ARGUMENTS); if the skill body has no placeholders, the whole string is still appended as a trailing `ARGUMENTS:` line. Omit it only when there is nothing to pass.',
+    ),
 });
 
 export class SkillTool implements BuiltinTool<SkillToolInput> {

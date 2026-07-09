@@ -2,8 +2,9 @@
  * `sessionSkillCatalog` domain (L3) — plugin `ISkillSource` producer.
  *
  * Discovers skills contributed by enabled plugins through `ISkillDiscovery`
- * (roots from `plugin.pluginSkillRoots()`), contributing them at priority 25
- * (above workspace, so plugin skills win name collisions). Re-emits
+ * (roots from `plugin.pluginSkillRoots()`), contributing them at priority 5
+ * (above builtin, below user/workspace, so project and user skills win name
+ * collisions). Re-emits
  * `plugin.onDidReload` as `onDidChange` so the sink re-pulls plugin skills when
  * plugins reload. Bound at Session scope.
  */
@@ -27,7 +28,7 @@ export class PluginSkillSource implements IPluginSkillSource {
   declare readonly _serviceBrand: undefined;
 
   readonly id = 'plugin';
-  readonly priority = 25;
+  readonly priority = 5;
   readonly onDidChange: Event<void> = (listener, thisArg, disposables) =>
     this.plugins.onDidReload(() => listener(undefined as void), thisArg, disposables);
 

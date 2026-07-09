@@ -14,6 +14,7 @@ import {
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
   SkillTool,
+  SkillToolInputSchema,
 } from '#/agent/skill/tools/skill';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -241,16 +242,26 @@ describe('SkillTool', () => {
 
     expect(tool.name).toBe('Skill');
     expect(tool.description).toContain('Invoke a registered skill');
-    expect(tool.description).toContain(String(MAX_SKILL_QUERY_DEPTH));
+    expect(tool.description).toContain('kimi-skill-loaded');
+    expect(tool.description).toContain('with the same `args`');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       required: ['skill'],
       additionalProperties: false,
       properties: {
-        skill: expect.objectContaining({ type: 'string' }),
-        args: expect.objectContaining({ type: 'string' }),
+        skill: expect.objectContaining({
+          type: 'string',
+          description: expect.stringMatching(/skill listing/i),
+        }),
+        args: expect.objectContaining({
+          type: 'string',
+          description: expect.stringMatching(/argument/i),
+        }),
       },
     });
+    expect(SkillToolInputSchema.safeParse({ skill: 'commit' }).success).toBe(true);
+    expect(SkillToolInputSchema.safeParse({ skill: 'commit', args: '-m fix' }).success).toBe(true);
+    expect(SkillToolInputSchema.safeParse({}).success).toBe(false);
   });
 
   it('returns a tool error when the skill is unknown', async () => {

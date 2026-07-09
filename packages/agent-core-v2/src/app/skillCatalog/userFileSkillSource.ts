@@ -2,8 +2,8 @@
  * `skillCatalog` domain (L3) — user/brand `ISkillSource` producer.
  *
  * Discovers user skills from the bootstrap home directories through
- * `ISkillDiscovery`, contributing them at priority 10 (above builtin, below
- * workspace). Reads home paths from `bootstrap`. Bound at App scope.
+ * `ISkillDiscovery`, contributing them at priority 10 (above builtin and
+ * plugin, below workspace). Reads home paths from `bootstrap`. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
