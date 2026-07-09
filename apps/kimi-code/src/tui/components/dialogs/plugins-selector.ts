@@ -706,7 +706,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     const status = isPinnedWebBridgeEntry(entry)
-      ? 'webpage'
+      ? 'open in browser'
       : marketplaceEntryStatus(entry, this.installedVersions);
     const line =
       prefix + labelStyle(entry.displayName) + '  ' + marketplaceStatusStyle(status, colors)(status);

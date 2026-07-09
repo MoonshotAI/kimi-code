@@ -294,7 +294,7 @@ describe('plugins selector dialogs', () => {
     // The catalog is still loading, but the built-in Web Bridge entry is shown
     // immediately because it is baked into the TUI, not fetched.
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  webpage');
+    expect(out).toContain('Kimi WebBridge  open in browser');
     expect(out).toContain('Loading marketplace');
   });
 
@@ -302,7 +302,7 @@ describe('plugins selector dialogs', () => {
     const { panel } = makePanel({ initialTab: 'official' });
     panel.setMarketplaceError('fetch failed');
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Kimi WebBridge  webpage');
+    expect(out).toContain('Kimi WebBridge  open in browser');
     expect(out).toContain('Marketplace unavailable: fetch failed');
   });
 
