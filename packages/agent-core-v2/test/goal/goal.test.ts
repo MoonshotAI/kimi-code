@@ -1090,3 +1090,55 @@ describe('AgentGoalService goal outcome tool result flow', () => {
     }
   });
 });
+
+describe('AgentGoalService fork boundaries', () => {
+  let ctx: TestAgentContext;
+  let context: IAgentContextMemoryService;
+  let goals: IAgentGoalService;
+
+  beforeEach(() => {
+    ctx = createTestAgent(wireRecordPersistenceServices(new InMemoryWireRecordPersistence()));
+    context = ctx.get(IAgentContextMemoryService);
+    goals = ctx.get(IAgentGoalService);
+  });
+
+  afterEach(async () => {
+    try {
+      await ctx.expectResumeMatches();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('appends a fork-cleared reminder when a fork clears a copied goal', async () => {
+    await restoreGoalRecords(ctx, goals, [
+      { type: 'goal.create', goalId: 'source-goal', objective: 'source work' },
+      { type: 'forked' },
+    ]);
+
+    expect(goals.getGoal().goal).toBeNull();
+    const reminder = context.get().at(-1);
+    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    const text = JSON.stringify(reminder?.content);
+    expect(text).toContain('This fork does not have a current goal.');
+    expect(text).toContain('Ignore earlier active-goal reminders from the source session.');
+    expect(text).toContain('Handle requests normally unless the user starts a new goal.');
+  });
+
+  it('does not append a fork-cleared reminder when the fork had no goal', async () => {
+    await restoreGoalRecords(ctx, goals, [{ type: 'forked' }]);
+
+    expect(goals.getGoal().goal).toBeNull();
+    expect(context.get()).toEqual([]);
+  });
+
+  it('does not append a fork-cleared reminder when the goal was cleared before the fork', async () => {
+    await restoreGoalRecords(ctx, goals, [
+      { type: 'goal.create', goalId: 'source-goal', objective: 'source work' },
+      { type: 'goal.clear' },
+      { type: 'forked' },
+    ]);
+
+    expect(context.get()).toEqual([]);
+  });
+});

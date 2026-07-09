@@ -44,6 +44,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, KimiError, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import { IAgentWireService } from '#/wire/tokens';
+import { defineDerivedModel } from '#/wire/model';
 import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -94,6 +95,14 @@ const GOAL_CANCELLED_REMINDER = [
   'Handle the next user request normally unless the user starts or resumes a goal.',
 ].join(' ');
 
+const GOAL_FORK_CLEARED_REMINDER = [
+  'This fork does not have a current goal.',
+  'Ignore earlier active-goal reminders from the source session.',
+  'Handle requests normally unless the user starts a new goal.',
+].join(' ');
+
+const GOAL_FORK_CLEARED_REMINDER_NAME = 'goal_fork_cleared';
+
 const GOAL_CONTINUATION_ORIGIN: PromptOrigin = {
   kind: 'system_trigger',
   name: 'goal_continuation',
@@ -140,6 +149,40 @@ const GOAL_CONTINUATION_PROMPT = [
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
+interface GoalForkNoticeState {
+  readonly goalPresent: boolean;
+  readonly reminderPending: boolean;
+}
+
+// Derived (never persisted) fork bookkeeping, folded over the same records on
+// dispatch and replay: a `forked` boundary that clears a copied goal marks the
+// fork-cleared reminder as pending. The live reminder append is its own
+// acknowledgment — replaying the appended reminder record flips the flag back
+// off, so later resumes never duplicate it.
+const GoalForkNoticeModel = defineDerivedModel<GoalForkNoticeState>(
+  'goalForkNotice',
+  () => ({ goalPresent: false, reminderPending: false }),
+  {
+    'goal.create': (state) => ({ ...state, goalPresent: true }),
+    'goal.clear': (state) => ({ ...state, goalPresent: false }),
+    forked: (state) => ({
+      goalPresent: false,
+      reminderPending: state.goalPresent || state.reminderPending,
+    }),
+    'context.append_message': (state, payload: { message?: ContextMessage }) =>
+      state.reminderPending && isGoalForkClearedReminder(payload.message)
+        ? { ...state, reminderPending: false }
+        : state,
+  },
+);
+
+function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean {
+  return (
+    message?.origin?.kind === 'system_trigger' &&
+    message.origin.name === GOAL_FORK_CLEARED_REMINDER_NAME
+  );
+}
+
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
@@ -172,7 +215,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         dynamicInjector,
       ),
     );
-    // fork clear handled by wire forkGoal op; reminder intentionally dropped (reversible).
+    // The wire forkGoal op clears the goal at a fork boundary; the derived
+    // notice model tracks whether that clear dropped a copied goal so the
+    // post-replay pass can tell the model about it exactly once.
+    this._register(this.wire.attach(GoalForkNoticeModel));
     this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
     this._register(
       this.eventBus.subscribe('turn.started', (e) => this.handleTurnLaunched(e.turnId)),
@@ -498,6 +544,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private normalizeAfterReplay(): void {
+    this.appendForkClearedReminder();
     const state = this.goalState;
     if (state === null) return;
     this.wallClockResumedAt = undefined;
@@ -517,6 +564,14 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this.trackStatusChanged(this.requireState(), 'runtime');
+  }
+
+  private appendForkClearedReminder(): void {
+    if (!this.wire.getModel(GoalForkNoticeModel).reminderPending) return;
+    this.reminders.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
+      kind: 'system_trigger',
+      name: GOAL_FORK_CLEARED_REMINDER_NAME,
+    });
   }
 
   private clearInternal(

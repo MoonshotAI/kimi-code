@@ -341,13 +341,15 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toEqual({});
-    expect(persistence.records.map((record) => record.type)).toEqual([
+    expect(persistence.records.slice(0, 3).map((record) => record.type)).toEqual([
       'metadata',
       'goal.create',
       'forked',
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
-    expect(context.get()).toHaveLength(0);
+    const reminder = context.get().at(-1);
+    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
   it('keeps goals created after the forked boundary', async () => {
@@ -371,7 +373,10 @@ describe('AgentRecords persistence metadata', () => {
       goalId: 'fork-goal',
       objective: 'fork work',
     });
-    expect(context.get()).toHaveLength(0);
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'system_trigger',
+      name: 'goal_fork_cleared',
+    });
   });
 
   it('does not add a fork-cleared reminder when a forked record has no copied goal', async () => {
