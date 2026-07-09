@@ -58,7 +58,7 @@ function parseBoosterWallet(raw: unknown): UsageRow | null {
   if (balance['type'] !== 'BOOSTER') return null;
   const amount = toInt(balance['amount']);
   if (amount === null || amount <= 0) return null;
-  const amountLeft = toInt(balance['amountLeft']) ?? 0;
+  const amountLeft = toInt(balance['amountLeft']) ?? amount;
   const used = Math.max(0, Math.min(amount - amountLeft, amount));
   return { label: 'Extra Usage', used, limit: amount };
 }
