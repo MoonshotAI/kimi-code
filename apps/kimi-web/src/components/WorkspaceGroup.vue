@@ -252,15 +252,14 @@ function onHeaderDragStart(event: DragEvent): void {
 
 .gh-folder {
   flex: none;
-  color: var(--color-text-muted);
+  color: var(--color-text);
 }
 
-/* Group title — quiet by design: regular weight, muted color, so the
-   workspace headers read as grouping labels rather than competing with the
-   session titles below. */
+/* Group title — quiet by design: regular weight (no bold), normal text color;
+   grouping is carried by position and the folder icon, not by dimming. */
 .gh-name {
   font-size: var(--ui-font-size-lg);
-  color: var(--color-text-muted);
+  color: var(--color-text);
   flex: 1;
   min-width: 0;
   overflow: hidden;

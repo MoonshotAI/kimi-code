@@ -389,7 +389,13 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-line-strong: #d4d9e0;
   /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
      accent-tinted, so selection reads as "where I am", not as an action. */
-  --color-selected: #eceff3;
+  --color-selected: #00000014;
+  /* Row hover wash — lighter than the selected fill (hover < selected); both
+     are translucent black so they sit naturally on any light surface. */
+  --color-hover: #0000000d;
+  /* Sidebar surface — one step off --color-bg (warm off-white / near-black)
+     so the session column reads as its own plane. */
+  --color-sidebar-bg: #fbfaf9;
   --color-accent: var(--accent-primary);
   --color-accent-hover: #0f6fe0;
   --color-accent-soft: #e8f3ff;
@@ -513,7 +519,9 @@ html[data-color-scheme="dark"] {
   --color-text-faint: #6b7280;
   --color-line: #2d333b;
   --color-line-strong: #3d444d;
-  --color-selected: #2d333b;
+  --color-selected: #ffffff14;
+  --color-hover: #ffffff0d;
+  --color-sidebar-bg: #181817;
   --color-accent: #58a6ff;
   --color-accent-hover: #79b8ff;
   --color-accent-soft: rgba(88, 166, 255, 0.14);
@@ -553,7 +561,9 @@ html[data-color-scheme="dark"] {
     --color-text-faint: #6b7280;
     --color-line: #2d333b;
     --color-line-strong: #3d444d;
-    --color-selected: #2d333b;
+    --color-selected: #ffffff14;
+    --color-hover: #ffffff0d;
+    --color-sidebar-bg: #181817;
     --color-accent: #58a6ff;
     --color-accent-hover: #79b8ff;
     --color-accent-soft: rgba(88, 166, 255, 0.14);

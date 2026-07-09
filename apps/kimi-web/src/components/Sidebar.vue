@@ -82,7 +82,6 @@ const emit = defineEmits<{
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   openSettings: [];
-  collapse: [];
 }>();
 
 // ---------------------------------------------------------------------------
@@ -555,10 +554,12 @@ onBeforeUnmount(() => {
   >
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
-      <!-- Header: logo + collapse (no hard border — flows into workspace list).
-           On macOS desktop the brand (logo + name) is hidden — the floating
-           traffic lights own that corner; the empty brand keeps its flex slack
-           so the collapse button stays pinned right and the row stays a
+      <!-- Header: brand only — the sidebar toggle is NOT rendered here on any
+           platform. App.vue owns a single resident floating toggle pinned to
+           the top-left corner (beside the traffic lights on macOS desktop);
+           the sidebar slides underneath it and only the glyph swaps, so the
+           toggle never moves or flashes. The brand pads left to clear it; on
+           macOS desktop the brand is hidden too and the header is just a
            window-drag strip. -->
       <div class="ch">
         <div class="ch-brand">
@@ -578,13 +579,6 @@ onBeforeUnmount(() => {
             <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
           </template>
         </div>
-        <IconButton
-          size="sm"
-          :label="t('sidebar.collapseSidebar')"
-          @click.stop="emit('collapse')"
-        >
-          <Icon name="panel-collapse" />
-        </IconButton>
       </div>
 
       <!-- New chat + new workspace buttons -->
@@ -767,9 +761,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .side {
-  /* Same surface as the conversation pane — the 1px hairline on .col is the
-     only separator (reference: flat, near-white shell). */
-  background: var(--bg);
+  /* Sidebar sits on its own surface (--color-sidebar-bg, one step off --bg);
+     the 1px hairline on .col still separates it from the conversation pane. */
+  background: var(--color-sidebar-bg);
   display: flex;
   flex-direction: row;
   /* Anchor content to the right edge: while the container width animates to 0
@@ -790,9 +784,9 @@ onBeforeUnmount(() => {
   --sb-pad-x: var(--space-5);  /* content start x (inset + row padding) */
   --sb-gutter: 20px;           /* leading icon slot (14px folder icon + 6px margin) */
   --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
-  /* Row hover wash — half-strength neutral selected fill, so hover < selected
-     holds in both schemes on the flat background. */
-  --sb-hover: color-mix(in srgb, var(--color-selected) 50%, transparent);
+  /* Row hover wash — global --color-hover (lighter than the selected fill;
+     both translucent, so they sit on any surface). */
+  --sb-hover: var(--color-hover);
 }
 /* While dragging the resize handle, follow the pointer 1:1 (same pattern as
    .global-preview.no-anim in App.vue). */
@@ -822,38 +816,32 @@ onBeforeUnmount(() => {
   container-name: sidebar-col;
 }
 
-/* Header: logo + collapse (no border — flows into the workspace list). */
+/* Header: brand strip (no border — flows into the workspace list). The
+   sidebar toggle is App.vue's resident floating button pinned over this
+   header's left edge, so the brand pads left to clear it (16px offset + 26px
+   button + 8px gap = 50px). min-height keeps the 26px control row (50px total
+   with padding) so the list below starts at a stable y. */
 .ch {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: var(--space-3);
+  padding-left: 50px;
+  min-height: calc(26px + 2 * var(--space-3));
   width: 100%;
   box-sizing: border-box;
 }
-/* macOS desktop: the window uses a hidden title bar, so the traffic lights float
-   over the top-left of the sidebar. Push the header content right to clear them,
-   and turn the whole header into the window-drag region — matching the chat
-   header. The action buttons and the logo opt out with no-drag so they stay
-   clickable: this is the same no-drag-inside-drag pattern ChatHeader.vue relies
-   on (the previous "drag only the brand area" approach still captured the
-   sibling buttons, because Electron treats a flex-grown drag item's hit area as
-   covering the whole flex line). */
+/* macOS desktop: the window uses a hidden title bar, so the traffic lights
+   float over the top-left of the sidebar and the resident toggle sits beside
+   them. The header renders no content here (brand hidden) — it is purely a
+   window-drag strip. */
 .side.macos-desktop .ch {
   padding-left: 80px;
   -webkit-app-region: drag;
 }
-/* The brand is not rendered on macOS desktop (empty shell) — drop it entirely
-   so the collapse button hugs the traffic lights on the LEFT instead of being
-   pushed to the far edge. Same x as the floating expand button (App.vue), so
-   collapsing/expanding never makes the toggle jump. */
 .side.macos-desktop .ch-brand {
   display: none;
-}
-.side.macos-desktop .ch button,
-.side.macos-desktop .ch-logo {
-  -webkit-app-region: no-drag;
 }
 .ch-logo {
   height: 22px;
@@ -952,7 +940,7 @@ onBeforeUnmount(() => {
   padding: 0 var(--sb-inset);
   position: relative;
   z-index: 1;
-  background: var(--bg);
+  background: var(--color-sidebar-bg);
   border-bottom: 1px solid transparent;
   transition: border-color var(--duration-base) var(--ease-out),
     box-shadow var(--duration-base) var(--ease-out);
@@ -1013,10 +1001,12 @@ onBeforeUnmount(() => {
 .sessions::-webkit-scrollbar { width: 4px; }
 .sessions::-webkit-scrollbar-track { background: transparent; }
 .sessions::-webkit-scrollbar-thumb {
-  background: var(--line);
-  border-radius: var(--radius-xs);
+  /* Neutral, text-derived translucency — adapts to both schemes and sits
+     quietly on the sidebar surface (no accent tint on hover). */
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  border-radius: var(--radius-full);
 }
-.sessions::-webkit-scrollbar-thumb:hover { background: var(--color-accent-bd); }
+.sessions::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--color-text) 25%, transparent); }
 
 /* Footer — settings entry pinned under the session list. Same list-style
    control family as search / New chat (full-width, left-aligned, hover

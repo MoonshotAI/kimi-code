@@ -662,7 +662,6 @@ function openPr(url: string): void {
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
         @open-settings="showSettings = true"
-        @collapse="toggleSidebarCollapse"
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
@@ -770,20 +769,24 @@ function openPr(url: string): void {
       @edit-message="handleEditMessage"
     />
 
-    <!-- Collapsed sidebar: no rail is kept, so the expand button floats over
-         the conversation header (which pads left to make room). It must come
-         AFTER ConversationPane in the DOM: Electron computes the window-drag
-         region in tree order (drag rects union, no-drag rects subtract), so a
-         no-drag element placed before the ChatHeader drag region would have its
-         hole painted back over — making the button an inert drag area. -->
+    <!-- Sidebar toggle — the ONLY toggle, resident on all desktop layouts:
+         pinned to the top-left corner (beside the traffic lights on macOS
+         desktop), rendered in both states. The sidebar slides underneath it
+         and only the glyph swaps, so the button never moves or flashes (the
+         previous two-element handoff — in-sidebar collapse button + floating
+         expand button — could not avoid flashing). It must come AFTER
+         ConversationPane in the DOM: Electron computes the window-drag region
+         in tree order (drag rects union, no-drag rects subtract), so a no-drag
+         element placed before the ChatHeader drag region would have its hole
+         painted back over — making the button an inert drag area. -->
     <IconButton
-      v-if="sidebarCollapsed && !isMobile"
-      class="sidebar-expand-btn"
+      v-if="!isMobile"
+      class="sidebar-toggle-btn"
       size="sm"
-      :label="t('sidebar.expandSidebar')"
+      :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
       @click="toggleSidebarCollapse"
     >
-      <Icon name="panel-expand" size="sm" />
+      <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" size="sm" />
     </IconButton>
 
     <ResizeHandle
@@ -1133,25 +1136,21 @@ function openPr(url: string): void {
 .app:not(.mobile) > .con { grid-column: 3; }
 .preview-handle { grid-column: 4; }
 
-/* Collapsed sidebar: no rail is kept — the sidebar animates to width 0 and the
-   expand button floats over the conversation header (which pads left for it,
-   see the global block below). */
-.sidebar-expand-btn {
+/* Sidebar toggle — resident floating button pinned to the top-left corner;
+   the sidebar slides underneath it (see the template comment). While
+   collapsed the conversation header pads left so its content clears the
+   button (global block below). */
+.sidebar-toggle-btn {
   position: absolute;
   /* Vertically centered in the 48px conversation header. */
   top: 11px;
   left: 16px;
   z-index: var(--z-sticky);
-  /* Fade in once the sidebar has mostly slid away, instead of overlapping it. */
-  animation: sidebar-expand-btn-in 0.18s var(--ease-out) 0.12s backwards;
   /* Floats over the macOS-desktop window-drag header; keep it clickable. */
   -webkit-app-region: no-drag;
 }
 /* macOS desktop (hidden title bar): clear the floating traffic lights. */
-.app.macos-desktop .sidebar-expand-btn { left: 80px; }
-@keyframes sidebar-expand-btn-in {
-  from { opacity: 0; }
-}
+.app.macos-desktop .sidebar-toggle-btn { left: 80px; }
 
 /* Internal-build tag pinned to the app's bottom-right corner (desktop app
    only — the component renders nothing elsewhere). Informational: never
@@ -1232,7 +1231,7 @@ function openPr(url: string): void {
 }
 
 /* Sidebar collapsed (desktop): the conversation header pads left so its
-   content clears the floating expand button (.sidebar-expand-btn) — and the
+   content clears the floating sidebar toggle (.sidebar-toggle-btn) — and the
    macOS traffic lights on desktop builds. Animated in step with the sidebar
    width transition. Cross-component rule (ChatHeader renders the header), so
    it lives in this global block. */
