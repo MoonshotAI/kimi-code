@@ -584,7 +584,7 @@ onBeforeUnmount(() => {
       <!-- New chat + new workspace buttons -->
       <div class="btn-wrap">
         <button class="btn-new-chat" type="button" @click.stop="emit('create')">
-          <Icon name="chat-new" size="sm" />
+          <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
         <IconButton
@@ -601,7 +601,7 @@ onBeforeUnmount(() => {
            row above the list, so it carries the scroll-linked seam. -->
       <div class="search-wrap" :class="{ 'search-wrap--scrolled': sessionsScrolled }">
         <button class="search" type="button" @click="openSearch">
-          <Icon class="search-icon" name="search" size="sm" />
+          <Icon class="search-icon" name="search" />
           <span class="search-input">{{ t('sidebar.search') }}</span>
           <Kbd :keys="sessionSearchKeys" />
         </button>
@@ -687,7 +687,7 @@ onBeforeUnmount(() => {
       <!-- Footer: settings entry pinned under the session list -->
       <div class="side-footer">
         <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
-          <Icon name="settings" size="sm" />
+          <Icon name="settings" />
           <span>{{ t('settings.title') }}</span>
         </button>
       </div>
@@ -782,7 +782,7 @@ onBeforeUnmount(() => {
      - row titles start at --sb-pad-x + --sb-gutter + --sb-gap. */
   --sb-inset: var(--space-3);  /* row box inset from the sidebar edge */
   --sb-pad-x: var(--space-5);  /* content start x (inset + row padding) */
-  --sb-gutter: 20px;           /* leading icon slot (14px folder icon + 6px margin) */
+  --sb-gutter: 20px;           /* leading icon slot (16px folder icon + 4px slack) */
   --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
   /* Row hover wash — global --color-hover (lighter than the selected fill;
      both translucent, so they sit on any surface). */

@@ -116,8 +116,8 @@ function onHeaderDragStart(event: DragEvent): void {
     >
       <div class="gh-top">
         <!-- Folder icon -->
-        <Icon v-if="isCollapsed(group.workspace.id)" class="gh-folder" name="folder-closed" size="sm" />
-        <Icon v-else class="gh-folder" name="folder" size="sm" />
+        <Icon v-if="isCollapsed(group.workspace.id)" class="gh-folder" name="folder-closed" />
+        <Icon v-else class="gh-folder" name="folder" />
 
         <!-- Workspace name — hover reveals the full root path -->
         <Tooltip v-if="renamingId !== group.workspace.id" :text="group.workspace.root">
@@ -144,7 +144,7 @@ function onHeaderDragStart(event: DragEvent): void {
           :aria-expanded="wsMenuOpenId === group.workspace.id"
           @click.stop="emit('toggleWsMenu', group.workspace, $event)"
         >
-          <Icon name="dots-horizontal" size="sm" />
+          <Icon name="dots-horizontal" />
         </IconButton>
 
         <IconButton

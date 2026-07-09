@@ -254,7 +254,7 @@ defineExpose({ closeMenu });
           :label="t('sidebar.options')"
           @click.stop="toggleMenu($event)"
         >
-          <Icon name="dots-horizontal" size="sm" />
+          <Icon name="dots-horizontal" />
         </IconButton>
       </span>
     </div>

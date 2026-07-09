@@ -786,7 +786,7 @@ function openPr(url: string): void {
       :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
       @click="toggleSidebarCollapse"
     >
-      <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" size="sm" />
+      <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
     </IconButton>
 
     <ResizeHandle
@@ -1149,8 +1149,10 @@ function openPr(url: string): void {
   /* Floats over the macOS-desktop window-drag header; keep it clickable. */
   -webkit-app-region: no-drag;
 }
-/* macOS desktop (hidden title bar): clear the floating traffic lights. */
-.app.macos-desktop .sidebar-toggle-btn { left: 80px; }
+/* macOS desktop (hidden title bar): clear the floating traffic lights (green
+   light's right edge ≈ 68px; 72 keeps a gap that matches the lights' own
+   8px rhythm). */
+.app.macos-desktop .sidebar-toggle-btn { left: 72px; }
 
 /* Internal-build tag pinned to the app's bottom-right corner (desktop app
    only — the component renders nothing elsewhere). Informational: never
@@ -1242,6 +1244,6 @@ function openPr(url: string): void {
   padding-left: 52px;
 }
 .app.sidebar-collapsed.macos-desktop .chat-header {
-  padding-left: 116px;
+  padding-left: 108px;
 }
 </style>

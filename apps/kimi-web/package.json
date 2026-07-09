@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@iconify-json/ri": "^1.2.10",
+    "@iconify-json/tabler": "^1.2.35",
     "@vitejs/plugin-vue": "^5.2.4",
     "typescript": "6.0.2",
     "unplugin-icons": "^23.0.0",

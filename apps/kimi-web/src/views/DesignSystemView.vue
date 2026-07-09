@@ -1376,7 +1376,7 @@ onUnmounted(() => {
               <tbody>
                 <tr><td class="tk">--sb-inset</td><td class="val">12px</td><td>row box (hover/selected pill) inset from the sidebar edges — matches the brand header's 12px padding</td></tr>
                 <tr><td class="tk">--sb-pad-x</td><td class="val">20px</td><td>content start x (= --sb-inset + 8px row padding)</td></tr>
-                <tr><td class="tk">--sb-gutter</td><td class="val">20px</td><td>leading icon slot width (14px icon + 6px whitespace)</td></tr>
+                <tr><td class="tk">--sb-gutter</td><td class="val">20px</td><td>leading icon slot width (16px icon + 4px whitespace)</td></tr>
                 <tr><td class="tk">--sb-gap</td><td class="val">6px</td><td>gap between the icon slot and the text</td></tr>
               </tbody>
             </table>
