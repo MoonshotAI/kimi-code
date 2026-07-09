@@ -15,6 +15,7 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   type MergeAllAvailableSkillsConfig,
 } from '#/app/skillCatalog/configSection';
+import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { projectRoots } from '#/app/skillCatalog/skillRoots';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
@@ -37,9 +38,13 @@ export class WorkspaceFileSkillSource implements IWorkspaceFileSkillSource {
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IConfigService private readonly config: IConfigService,
+    @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
   ) {}
 
   async load(): Promise<SkillContribution> {
+    if ((this.runtimeOptions.explicitDirs?.length ?? 0) > 0) {
+      return { skills: [] };
+    }
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     return this.discovery.discover(await projectRoots(this.workspace.workDir, { mergeAllAvailableSkills }));

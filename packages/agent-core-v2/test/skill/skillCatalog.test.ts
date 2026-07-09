@@ -10,6 +10,7 @@ import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/app/skillCatalog/configSection';
+import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import '../../src/index';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -106,12 +107,18 @@ function makeHost(
   store: ISkillDiscovery,
   ws: ISessionWorkspaceContext,
   pluginRoots: readonly SkillRoot[] = [],
+  explicitDirs?: readonly string[],
 ) {
   const config = configStub();
+  const runtimeOptions = {
+    _serviceBrand: undefined,
+    explicitDirs,
+  } as unknown as ISkillCatalogRuntimeOptions;
   const host = createScopedTestHost([
     stubPair(ISkillDiscovery, store),
     stubPair(IBootstrapService, bootstrapStub),
     stubPair(IConfigService, config),
+    stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
     stubPair(IPluginService, pluginStub(pluginRoots)),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
@@ -187,6 +194,37 @@ describe('SessionSkillCatalogService', () => {
     expect(catalog.catalog.getSkill('shared')?.description).toBe('from project');
     expect(catalog.catalog.getSkill('user-plugin')?.description).toBe('from user');
     expect(catalog.catalog.getSkill('extra-plugin')?.description).toBe('from extra');
+    host.dispose();
+  });
+
+  it('replaces default user and project discovery with explicitDirs', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('from-explicit', { description: 'from explicit' })]);
+    store.setProjectSkills([stubSkill('project-only', { description: 'from project' })]);
+    store.setExtraSkills([stubSkill('extra-only', { description: 'from extra', source: 'extra' })]);
+    store.setPluginSkills([
+      stubSkill('plugin-only', {
+        description: 'from plugin',
+        source: 'extra',
+        plugin: { id: 'demo' },
+      }),
+    ]);
+    const pluginRoot: SkillRoot = {
+      path: '/plugins/demo/skills',
+      source: 'extra',
+      plugin: { id: 'demo' },
+    };
+    const { stub: ws } = workspaceStub('/work');
+    const { host, session, config } = makeHost(store, ws, [pluginRoot], ['/']);
+    config.setExtraSkillDirs(['/']);
+
+    const catalog = session.accessor.get(ISessionSkillCatalog);
+    await catalog.load();
+
+    expect(catalog.catalog.getSkill('from-explicit')?.description).toBe('from explicit');
+    expect(catalog.catalog.getSkill('project-only')).toBeUndefined();
+    expect(catalog.catalog.getSkill('extra-only')?.description).toBe('from extra');
+    expect(catalog.catalog.getSkill('plugin-only')?.description).toBe('from plugin');
     host.dispose();
   });
 
