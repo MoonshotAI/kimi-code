@@ -344,7 +344,7 @@ defineExpose({ closeMenu });
 
 .t {
   color: inherit;
-  font-size: var(--text-base);
+  font-size: var(--ui-font-size-sm);
   font-weight: 450;
   line-height: var(--leading-tight);
   flex: 1;

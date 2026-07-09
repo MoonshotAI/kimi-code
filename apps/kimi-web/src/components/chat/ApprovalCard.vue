@@ -10,7 +10,7 @@ import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
-import ShortcutKey from '../ui/ShortcutKey.vue';
+import Kbd from '../ui/Kbd.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
@@ -315,20 +315,20 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
               :loading="pendingAction === `option:${opt.label}`"
               :disabled="busy"
               @click="approveOption(opt.label)"
-            >{{ opt.label }}<ShortcutKey class="k">[{{ i + 1 }}]</ShortcutKey></Button>
+            >{{ opt.label }}<Kbd class="k" :keys="[String(i + 1)]" /></Button>
           </Tooltip>
         </template>
-        <Button v-else class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan">{{ t('approval.approvePlan') }}<ShortcutKey class="k">[1]</ShortcutKey></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="revisePlan">{{ t('approval.revise') }}<ShortcutKey v-if="planReview.options.length === 0" class="k">[2]</ShortcutKey></Button>
-        <Button class="kbtn" size="sm" variant="danger-soft" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<ShortcutKey v-if="planReview.options.length === 0" class="k">[3]</ShortcutKey></Button>
+        <Button v-else class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan">{{ t('approval.approvePlan') }}<Kbd class="k" :keys="['1']" /></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="revisePlan">{{ t('approval.revise') }}<Kbd v-if="planReview.options.length === 0" class="k" :keys="['2']" /></Button>
+        <Button class="kbtn" size="sm" variant="danger-soft" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<Kbd v-if="planReview.options.length === 0" class="k" :keys="['3']" /></Button>
       </div>
 
       <!-- default actions row -->
       <div v-else class="abtn">
-        <Button class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve">{{ t('approval.approve') }}<ShortcutKey class="k">[1]</ShortcutKey></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession">{{ t('approval.approveSession') }}<ShortcutKey class="k">[2]</ShortcutKey></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject">{{ t('approval.reject') }}<ShortcutKey class="k">[3]</ShortcutKey></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="openFeedback">{{ t('approval.feedback') }}<ShortcutKey class="k">[4]</ShortcutKey></Button>
+        <Button class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve">{{ t('approval.approve') }}<Kbd class="k" :keys="['1']" /></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession">{{ t('approval.approveSession') }}<Kbd class="k" :keys="['2']" /></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject">{{ t('approval.reject') }}<Kbd class="k" :keys="['3']" /></Button>
+        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="openFeedback">{{ t('approval.feedback') }}<Kbd class="k" :keys="['4']" /></Button>
       </div>
     </template>
   </Card>

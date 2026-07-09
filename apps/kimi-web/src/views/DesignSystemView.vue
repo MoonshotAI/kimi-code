@@ -1423,7 +1423,7 @@ onUnmounted(() => {
             <ul class="clean">
               <li>The folder icon leads the row (switching icons between open and closed states) with the plain <code>--sb-gap</code> before the name — it does not pad out the <code>--sb-gutter</code> slot.</li>
               <li>The name is quiet by design — regular weight, muted color (<code>--color-text-muted</code>, one step lighter than session titles), so group heads read as grouping labels. No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
-              <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm, shown on hover or keyboard focus (when not hovered they stay in the tab order via <code>opacity:0</code>, keeping them keyboard-reachable).</li>
+              <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm inside a floating actions layer anchored to the row's right edge — no reserved layout space, so the name uses the full row width when idle. Shown on hover, keyboard focus, or while the menu is open; the layer backs itself with the sidebar surface (container background) plus the row hover wash (an <code>::after</code> shown only while the row is hovered), so its color exactly equals the row's current background and the overlapped name tail doesn't bleed through (hidden via <code>opacity:0</code>, staying in the tab order).</li>
               <li>The group is collapsible; when collapsed its session list is hidden.</li>
             </ul>
 

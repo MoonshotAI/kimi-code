@@ -135,26 +135,35 @@ function onHeaderDragStart(event: DragEvent): void {
           @click.stop
         />
 
-        <IconButton
-          class="gh-more"
+        <!-- Hover actions — float over the row's right edge (no reserved
+             layout space, the name gets the full row width when idle). Hidden
+             while renaming so the floating buttons can't cover the input. -->
+        <div
+          v-if="renamingId !== group.workspace.id"
+          class="gh-actions"
           :class="{ open: wsMenuOpenId === group.workspace.id }"
-          size="sm"
-          :label="t('sidebar.options')"
-          aria-haspopup="menu"
-          :aria-expanded="wsMenuOpenId === group.workspace.id"
-          @click.stop="emit('toggleWsMenu', group.workspace, $event)"
         >
-          <Icon name="dots-horizontal" />
-        </IconButton>
+          <IconButton
+            class="gh-more"
+            :class="{ open: wsMenuOpenId === group.workspace.id }"
+            size="sm"
+            :label="t('sidebar.options')"
+            aria-haspopup="menu"
+            :aria-expanded="wsMenuOpenId === group.workspace.id"
+            @click.stop="emit('toggleWsMenu', group.workspace, $event)"
+          >
+            <Icon name="dots-horizontal" />
+          </IconButton>
 
-        <IconButton
-          class="gh-add"
-          size="sm"
-          :label="t('workspace.newInGroup')"
-          @click.stop="emit('createInWorkspace', group.workspace.id)"
-        >
-          <Icon name="chat-new" />
-        </IconButton>
+          <IconButton
+            class="gh-add"
+            size="sm"
+            :label="t('workspace.newInGroup')"
+            @click.stop="emit('createInWorkspace', group.workspace.id)"
+          >
+            <Icon name="chat-new" />
+          </IconButton>
+        </div>
       </div>
     </div>
     <div
@@ -243,6 +252,7 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh:active { cursor: grabbing; }
 .gh:hover { background: var(--sb-hover, var(--color-surface-sunken)); }
 .gh-top {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
@@ -259,7 +269,7 @@ function onHeaderDragStart(event: DragEvent): void {
    step lighter than the session titles), so group heads read as grouping
    labels rather than list content. */
 .gh-name {
-  font-size: var(--ui-font-size-lg);
+  font-size: var(--ui-font-size-sm);
   color: var(--color-text-muted);
   flex: 1;
   min-width: 0;
@@ -269,21 +279,49 @@ function onHeaderDragStart(event: DragEvent): void {
   cursor: pointer;
 }
 
-/* More + add buttons — hidden until hover (or while the more menu is open /
-   focused). `.gh .gh-more` / `.gh .gh-add` out-specificity IconButton's display
-   so the hidden default wins. */
-.gh .gh-more,
-.gh .gh-add {
+/* More + add buttons — float over the row's right edge instead of reserving
+   layout space, so the name can use the full row width when idle (no
+   truncation caused by invisible buttons). Revealed on hover / keyboard focus
+   / while the more menu is open; the backing stacks the row hover wash on the
+   sidebar surface so the overlapped title tail doesn't bleed through. */
+.gh-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-left: var(--space-1);
+  border-radius: var(--radius-md);
+  isolation: isolate;
+  /* Opaque sidebar surface — hides the overlapped name tail. The ::after
+     hover wash sits above this (still behind the buttons) so the layer reads
+     seamless with the row. */
+  background: var(--color-sidebar-bg);
   opacity: 0;
   pointer-events: none;
 }
-.gh:hover .gh-more,
-.gh:hover .gh-add,
-.gh:focus-within .gh-more,
-.gh:focus-within .gh-add,
-.gh-more.open,
-.gh-more:focus-visible,
-.gh-add:focus-visible {
+/* Row hover wash — only while the row is actually hovered. Painted above the
+   element background (z-index 0) but below the buttons (z-index 1). */
+.gh-actions::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+.gh:hover .gh-actions::after {
+  background: var(--sb-hover, var(--color-surface-sunken));
+}
+.gh-actions > * {
+  position: relative;
+  z-index: 1;
+}
+.gh:hover .gh-actions,
+.gh:focus-within .gh-actions,
+.gh-actions.open {
   opacity: 1;
   pointer-events: auto;
 }
