@@ -8,14 +8,16 @@
  * untouched — the common case is a fast, codec-free pass-through.
  *
  * Design notes:
- *  - Pure JS (jimp), imported lazily so the codec is only paid for when an
- *    image actually needs work; startup and the fast path stay cheap.
+ *  - Pure JS (jimp + a wasm WebP decoder), imported lazily so the codecs are
+ *    only paid for when an image actually needs work; startup and the fast
+ *    path stay cheap.
  *  - Best effort: any decode/encode failure returns the original bytes
  *    unchanged (`changed: false`), so a compression problem never blocks a
  *    prompt. Callers simply send the original instead.
- *  - Only PNG and JPEG are re-encoded. GIF is passed through to preserve
- *    animation; WebP is passed through because the default jimp build ships no
- *    WebP codec. Unknown formats are passed through.
+ *  - PNG, JPEG, and (non-animated) WebP are re-encoded; WebP re-encodes
+ *    through the PNG/JPEG ladder, so only its decoder wasm ships. GIF and
+ *    animated WebP are passed through to preserve animation. Unknown formats
+ *    are passed through.
  *  - Compression must never be silent to the model: results carry the
  *    original dimensions, {@link buildImageCompressionCaption} renders the
  *    shared "what was compressed, where is the original" note every ingestion
@@ -31,9 +33,53 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import type { TelemetryClient } from '#/telemetry';
 
 import { sniffImageDimensions } from './file-type';
+import { decodeWebp, isAnimatedWebp } from './webp-decode';
 
-/** Longest-edge ceiling (px). Larger images are scaled down to fit. */
-export const MAX_IMAGE_EDGE_PX = 3000;
+/**
+ * Built-in longest-edge ceiling (px). Larger images are scaled down to fit.
+ * This is the default only: the effective ceiling is resolved per call by
+ * {@link resolveMaxImageEdgePx} (explicit option > env > config > this).
+ */
+export const MAX_IMAGE_EDGE_PX = 2000;
+
+/**
+ * Env var overriding the longest-edge ceiling (px). Read live on every
+ * resolution so it applies in any process without wiring; a value that is
+ * not a positive integer is ignored.
+ */
+export const MAX_IMAGE_EDGE_ENV = 'KIMI_IMAGE_MAX_EDGE_PX';
+
+/**
+ * The `[image] max_edge_px` value from config.toml, pushed by the config
+ * owner (KimiCore) on load and reload. Processes that never load config
+ * (TUI paste, ACP adapter) leave this unset and get env/built-in behavior.
+ */
+let configuredMaxImageEdgePx: number | undefined;
+
+/** Push (or clear, with `undefined`) the config.toml longest-edge ceiling. */
+export function setConfiguredMaxImageEdgePx(value: number | undefined): void {
+  configuredMaxImageEdgePx = value !== undefined && isPositiveInt(value) ? value : undefined;
+}
+
+/**
+ * Effective default longest-edge ceiling (px), for calls that pass no
+ * explicit `maxEdge`. Precedence mirrors the experimental-flag resolver:
+ * env var > config.toml > built-in {@link MAX_IMAGE_EDGE_PX}.
+ */
+export function resolveMaxImageEdgePx(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const raw = env[MAX_IMAGE_EDGE_ENV]?.trim();
+  if (raw !== undefined && raw.length > 0 && /^\d+$/.test(raw)) {
+    const parsed = Number(raw);
+    if (isPositiveInt(parsed)) return parsed;
+  }
+  return configuredMaxImageEdgePx ?? MAX_IMAGE_EDGE_PX;
+}
+
+function isPositiveInt(value: number): boolean {
+  return Number.isInteger(value) && value > 0;
+}
 
 /**
  * Raw-byte budget for a single image. base64 inflates bytes by ~4/3, so a
@@ -42,16 +88,70 @@ export const MAX_IMAGE_EDGE_PX = 3000;
  */
 export const IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
 
+/**
+ * Built-in raw-byte budget for images the model reads for itself
+ * (ReadMediaFile's default path). Far below {@link IMAGE_BYTE_BUDGET}: a
+ * session that keeps screenshotting and reading images accumulates every one
+ * of them in the request body on every turn, so per-image size — not the
+ * provider's per-image ceiling — is what keeps the total under the
+ * provider's request-size limit. 256 KB keeps a clean 2000px UI screenshot
+ * on the lossless fast path while capping dense content at a readable
+ * q80/1000px JPEG; fine detail stays reachable through the `region`
+ * readback, which deliberately ignores this budget.
+ */
+export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
+
+/**
+ * Env var overriding the read-image byte budget. Read live on every
+ * resolution; a value that is not a positive integer is ignored.
+ */
+export const READ_IMAGE_BYTE_BUDGET_ENV = 'KIMI_IMAGE_READ_BYTE_BUDGET';
+
+/** The `[image] read_byte_budget` value from config.toml; see {@link setConfiguredMaxImageEdgePx}. */
+let configuredReadImageByteBudget: number | undefined;
+
+/** Push (or clear, with `undefined`) the config.toml read-image byte budget. */
+export function setConfiguredReadImageByteBudget(value: number | undefined): void {
+  configuredReadImageByteBudget = value !== undefined && isPositiveInt(value) ? value : undefined;
+}
+
+/**
+ * Effective read-image byte budget. Precedence mirrors
+ * {@link resolveMaxImageEdgePx}: env var > config.toml > built-in
+ * {@link READ_IMAGE_BYTE_BUDGET}.
+ */
+export function resolveReadImageByteBudget(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const raw = env[READ_IMAGE_BYTE_BUDGET_ENV]?.trim();
+  if (raw !== undefined && raw.length > 0 && /^\d+$/.test(raw)) {
+    const parsed = Number(raw);
+    if (isPositiveInt(parsed)) return parsed;
+  }
+  return configuredReadImageByteBudget ?? READ_IMAGE_BYTE_BUDGET;
+}
+
 /** Progressively lower JPEG quality until the payload fits the byte budget. */
 const JPEG_QUALITY_STEPS = [80, 60, 40, 20] as const;
 
 /**
  * Longest-edge step-downs tried when the budget cannot be met at the fitted
- * size. The 2000px step preserves the behavior of the previous 2000px cap:
- * an image whose 2000px encode fits the budget keeps that resolution
- * instead of dropping straight to the 1000px last resort.
+ * size. With the built-in 2000px ceiling the first step is a no-op; it
+ * matters when a larger ceiling is configured (config/env/option). The
+ * sub-1000px tail exists for small (read-scale) budgets: JPEG bytes shrink
+ * roughly linearly with pixel count, so stepping down to 256px lets even
+ * entropy-upper-bound content (noise, photos) land within any budget of a
+ * few tens of KB instead of stalling at the q20@1000px floor.
  */
-const FALLBACK_EDGES_PX = [2000, 1000] as const;
+const FALLBACK_EDGES_PX = [2000, 1000, 768, 512, 384, 256] as const;
+
+/**
+ * PNG rescales stop at this edge; below it the ladder goes lossy instead.
+ * For text-bearing screenshots a q80 JPEG at 1000px reads better than a
+ * lossless PNG at 512px — resolution beats losslessness once both are
+ * degraded — so sub-floor edges are only ever tried with the JPEG ladder.
+ */
+const PNG_RESCALE_FLOOR_PX = 1000;
 
 /**
  * Pixel-count ceiling above which we skip compression entirely. A tiny-byte,
@@ -76,11 +176,13 @@ const MAX_DECODE_PIXELS = 100_000_000;
  */
 const MAX_DECODE_BYTES = 64 * 1024 * 1024;
 
-/** Formats we can both decode and re-encode with the default jimp build. */
-const RECODABLE_MIME = new Set(['image/png', 'image/jpeg']);
+/** Formats we can decode and re-encode. WebP decodes via the bundled wasm
+ * codec and re-encodes through the PNG/JPEG ladder (animated WebP is gated
+ * to a passthrough before decoding). */
+const RECODABLE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 export interface CompressImageOptions {
-  /** Override the longest-edge ceiling (px). */
+  /** Override the longest-edge ceiling (px); defaults to {@link resolveMaxImageEdgePx}. */
   readonly maxEdge?: number;
   /** Override the raw-byte budget. */
   readonly byteBudget?: number;
@@ -152,7 +254,7 @@ export async function compressImageForModel(
   options: CompressImageOptions = {},
 ): Promise<CompressImageResult> {
   const startedAt = Date.now();
-  const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+  const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const normalizedMime = normalizeMime(mimeType);
@@ -183,6 +285,11 @@ export async function compressImageForModel(
   if (bytes.length === 0) return finish('passthrough_unsupported', passthrough());
   // Only re-encode formats the codec handles; everything else passes through.
   if (!RECODABLE_MIME.has(normalizedMime)) return finish('passthrough_unsupported', passthrough());
+  // Animated WebP would be flattened to one frame by decoding — pass it
+  // through whole, the same reason GIF is never re-encoded.
+  if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
+    return finish('passthrough_unsupported', passthrough());
+  }
 
   // Fast path: already within both budgets — no codec load, no allocation.
   const longestEdge = dims ? Math.max(dims.width, dims.height) : 0;
@@ -202,9 +309,10 @@ export async function compressImageForModel(
   if (bytes.length > maxDecodeBytes) return finish('passthrough_guard', passthrough());
 
   try {
-    const { Jimp } = await import('jimp');
-    const image = await Jimp.fromBuffer(Buffer.from(bytes));
-    const sourceIsPng = normalizedMime === 'image/png';
+    const image = await decodeToJimp(bytes, normalizedMime);
+    // WebP joins PNG on the lossless-first ladder: both carry alpha and
+    // screenshot-grade detail that the PNG rungs preserve.
+    const preferLossless = normalizedMime !== 'image/jpeg';
     // The decoded bitmap is authoritative for the original size: jimp
     // applies EXIF orientation while decoding, and this is the coordinate
     // space the encoded result and any later crop region (see
@@ -218,7 +326,7 @@ export async function compressImageForModel(
     fitWithinEdge(image, maxEdge);
 
     const encoded = await encodeWithinBudget(image, {
-      sourceIsPng,
+      preferLossless,
       byteBudget,
       fallbackEdges: FALLBACK_EDGES_PX,
     });
@@ -518,7 +626,7 @@ export async function cropImageForModel(
   options: CropImageOptions = {},
 ): Promise<CropImageOutcome> {
   const startedAt = Date.now();
-  const maxEdge = options.maxEdge ?? MAX_IMAGE_EDGE_PX;
+  const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const normalizedMime = normalizeMime(mimeType);
@@ -538,8 +646,13 @@ export async function cropImageForModel(
   if (!RECODABLE_MIME.has(normalizedMime)) {
     return fail(
       'unsupported_format',
-      `Cropping is only supported for PNG and JPEG images; got ${mimeType}.`,
+      `Cropping is only supported for PNG, JPEG, and WebP images; got ${mimeType}.`,
     );
+  }
+  // A crop is a still image by definition; decoding an animated WebP would
+  // silently crop a single frame, so refuse explicitly.
+  if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
+    return fail('unsupported_format', 'Cropping is not supported for animated WebP images.');
   }
   // NaN slips past every </>= comparison in the bounds guard below, so gate
   // on finiteness explicitly rather than surfacing a codec-internal error.
@@ -564,8 +677,7 @@ export async function cropImageForModel(
   }
 
   try {
-    const { Jimp } = await import('jimp');
-    const image = await Jimp.fromBuffer(Buffer.from(bytes));
+    const image = await decodeToJimp(bytes, normalizedMime);
     const originalWidth = image.width;
     const originalHeight = image.height;
 
@@ -582,13 +694,15 @@ export async function cropImageForModel(
     const h = Math.min(Math.floor(region.height), originalHeight - y);
     const applied: ImageCropRegion = { x, y, width: w, height: h };
     image.crop({ x, y, w, h });
-    const sourceIsPng = normalizedMime === 'image/png';
+    // WebP joins PNG on the lossless side: both carry alpha and
+    // screenshot-grade detail that PNG output preserves.
+    const preferLossless = normalizedMime !== 'image/jpeg';
 
     if (options.skipResize === true) {
       // Native resolution requested: encode once, favoring fidelity (lossless
       // PNG, or high-quality JPEG), and refuse rather than degrade when the
       // result cannot fit the byte budget.
-      const buffer = sourceIsPng
+      const buffer = preferLossless
         ? await image.getBuffer('image/png', { deflateLevel: 9 })
         : await image.getBuffer('image/jpeg', { quality: 90 });
       if (buffer.length > byteBudget) {
@@ -603,7 +717,7 @@ export async function cropImageForModel(
       return succeed({
         ok: true,
         data: new Uint8Array(buffer),
-        mimeType: sourceIsPng ? 'image/png' : 'image/jpeg',
+        mimeType: preferLossless ? 'image/png' : 'image/jpeg',
         width: image.width,
         height: image.height,
         originalWidth,
@@ -617,7 +731,7 @@ export async function cropImageForModel(
 
     fitWithinEdge(image, maxEdge);
     const encoded = await encodeWithinBudget(image, {
-      sourceIsPng,
+      preferLossless,
       byteBudget,
       fallbackEdges: FALLBACK_EDGES_PX,
     });
@@ -767,9 +881,31 @@ interface EncodedImage {
 }
 
 interface EncodeOptions {
-  readonly sourceIsPng: boolean;
+  /** Lossless-first (PNG rungs before JPEG): PNG and WebP sources, which
+   * carry alpha and screenshot-grade detail. JPEG sources skip straight to
+   * the quality ladder — their detail is already lossy. */
+  readonly preferLossless: boolean;
   readonly byteBudget: number;
   readonly fallbackEdges: readonly number[];
+}
+
+/**
+ * Decode `bytes` into a jimp image. PNG/JPEG decode through jimp itself
+ * (which applies EXIF orientation); WebP decodes through the bundled wasm
+ * codec and enters jimp as a raw RGBA bitmap (WebP carries no EXIF-style
+ * orientation, so the decoded pixels are already display space).
+ */
+async function decodeToJimp(bytes: Uint8Array, normalizedMime: string): Promise<JimpImage> {
+  const { Jimp } = await import('jimp');
+  if (normalizedMime === 'image/webp') {
+    const decoded = await decodeWebp(bytes);
+    return Jimp.fromBitmap({
+      data: Buffer.from(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength),
+      width: decoded.width,
+      height: decoded.height,
+    });
+  }
+  return Jimp.fromBuffer(Buffer.from(bytes));
 }
 
 /**
@@ -778,17 +914,20 @@ interface EncodeOptions {
  * Strategy — prefer the source format so a downscaled screenshot stays lossless
  * PNG (preserving text and transparency), and only fall back to lossy JPEG when
  * PNG cannot meet the byte budget:
- *  - PNG source: PNG at the fitted size → smaller PNG rescales, stepping down
- *    the fallback edges → JPEG ladder.
+ *  - PNG source: PNG at the fitted size → smaller PNG rescales down to the
+ *    {@link PNG_RESCALE_FLOOR_PX} floor → JPEG ladder at that size → JPEG
+ *    ladder again at each sub-floor edge.
  *  - JPEG source: the full quality ladder at the fitted size, then again at
  *    each fallback edge — a smaller rescale must not skip the high-quality
  *    rungs its extra pixels just paid for.
  *
- * Always returns the smallest buffer it produced, even if no attempt met the
- * budget — the caller still gates on whether it actually helped.
+ * The sub-floor edges make the ladder converge for small (read-scale)
+ * budgets: any budget of a few tens of KB is met by q20 at 256px even for
+ * entropy-upper-bound content. Below that, the smallest buffer produced is
+ * still returned — the caller gates on whether it actually helped.
  */
 async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promise<EncodedImage> {
-  const { sourceIsPng, byteBudget, fallbackEdges } = opts;
+  const { preferLossless, byteBudget, fallbackEdges } = opts;
   let smallest: EncodedImage | null = null;
 
   const consider = (data: Buffer, mimeType: string): EncodedImage => {
@@ -799,43 +938,52 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
     return candidate;
   };
 
-  if (sourceIsPng) {
+  const jpegLadder = async (): Promise<EncodedImage | null> => {
+    for (const quality of JPEG_QUALITY_STEPS) {
+      const jpeg = await image.getBuffer('image/jpeg', { quality });
+      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
+      consider(jpeg, 'image/jpeg');
+    }
+    return null;
+  };
+
+  if (preferLossless) {
     // Lossless PNG first: best for screenshots/UI (sharp text) and keeps alpha.
     const png = await image.getBuffer('image/png', { deflateLevel: 9 });
     if (png.length <= byteBudget) return consider(png, 'image/png');
     consider(png, 'image/png');
 
-    // Over budget: progressively smaller PNGs before going lossy.
+    // Over budget: progressively smaller PNGs (down to the floor) before
+    // going lossy.
     for (const edge of fallbackEdges) {
+      if (edge < PNG_RESCALE_FLOOR_PX) break;
       if (!fitWithinEdge(image, edge)) continue;
       const smallerPng = await image.getBuffer('image/png', { deflateLevel: 9 });
       if (smallerPng.length <= byteBudget) return consider(smallerPng, 'image/png');
       consider(smallerPng, 'image/png');
     }
 
-    // Last resort: lossy JPEG ladder (drops transparency) to meet the budget.
-    for (const quality of JPEG_QUALITY_STEPS) {
-      const jpeg = await image.getBuffer('image/jpeg', { quality });
-      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-      consider(jpeg, 'image/jpeg');
+    // Lossy JPEG ladder (drops transparency) at the floored size, then at
+    // each sub-floor edge until the budget is met.
+    const atFloor = await jpegLadder();
+    if (atFloor !== null) return atFloor;
+    for (const edge of fallbackEdges) {
+      if (edge >= PNG_RESCALE_FLOOR_PX) continue;
+      if (!fitWithinEdge(image, edge)) continue;
+      const atEdge = await jpegLadder();
+      if (atEdge !== null) return atEdge;
     }
     return smallest!;
   }
 
   // JPEG source: quality ladder at the fitted size, then the full ladder
   // again at each fallback rescale.
-  for (const quality of JPEG_QUALITY_STEPS) {
-    const jpeg = await image.getBuffer('image/jpeg', { quality });
-    if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-    consider(jpeg, 'image/jpeg');
-  }
+  const atFitted = await jpegLadder();
+  if (atFitted !== null) return atFitted;
   for (const edge of fallbackEdges) {
     if (!fitWithinEdge(image, edge)) continue;
-    for (const quality of JPEG_QUALITY_STEPS) {
-      const jpeg = await image.getBuffer('image/jpeg', { quality });
-      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-      consider(jpeg, 'image/jpeg');
-    }
+    const atEdge = await jpegLadder();
+    if (atEdge !== null) return atEdge;
   }
 
   return smallest!;

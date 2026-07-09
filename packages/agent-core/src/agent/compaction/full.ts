@@ -8,10 +8,12 @@ import {
   APIEmptyResponseError,
   inputTotal,
   isRetryableGenerateError,
+  type ContentPart,
   type GenerateResult,
   type Message,
   type TokenUsage,
   APIContextOverflowError,
+  APIRequestTooLargeError,
   APIStatusError,
   createUserMessage,
 } from '@moonshot-ai/kosong';
@@ -430,6 +432,7 @@ export class FullCompaction {
       // prefix-race check and `compactedCount`.
       let historyForModel: readonly ContextMessage[] = stripDynamicToolContext(originalHistory);
       let droppedCount = 0;
+      let mediaStripAttempted = false;
       let overflowShrinkCount = 0;
       let emptyOrTruncatedShrinkCount = 0;
       while (true) {
@@ -465,6 +468,24 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
+          // A request-body-size rejection (HTTP 413) is first retried with
+          // media parts replaced by text markers: accumulated base64 payloads
+          // are the usual culprit, and a text summary does not need them —
+          // the conversation already narrates what was seen, and the
+          // ReadMediaFile `<image path="...">` text wrapper survives. Only
+          // the summarizer input copy is rewritten; the real history keeps
+          // its media. A 413 after the strip (or with no media to strip)
+          // falls through to the overflow shrink below — dropping oldest
+          // messages shrinks the body too.
+          if (error instanceof APIRequestTooLargeError && !mediaStripAttempted) {
+            mediaStripAttempted = true;
+            const stripped = replaceMediaPartsWithMarkers(historyForModel);
+            if (stripped !== historyForModel) {
+              historyForModel = stripped;
+              retryCount = 0;
+              continue;
+            }
+          }
           const isContextOverflow = this.shouldRecoverFromContextOverflow(
             error,
             estimatedCompactionRequestTokens,
@@ -472,7 +493,9 @@ export class FullCompaction {
           if (isContextOverflow) {
             this.observeContextOverflow(estimatedCompactionRequestTokens);
           }
-          if (isContextOverflow && historyForModel.length > 1) {
+          const shouldShrinkAfterOverflow =
+            isContextOverflow || error instanceof APIRequestTooLargeError;
+          if (shouldShrinkAfterOverflow && historyForModel.length > 1) {
             overflowShrinkCount += 1;
             if (overflowShrinkCount > MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS) {
               throw error;
@@ -638,6 +661,40 @@ export class FullCompaction {
 
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
+
+const MEDIA_PART_MARKERS = {
+  image_url: '[image]',
+  audio_url: '[audio]',
+  video_url: '[video]',
+} as const;
+
+function isMediaPart(part: ContentPart): part is ContentPart & { type: keyof typeof MEDIA_PART_MARKERS } {
+  return part.type in MEDIA_PART_MARKERS;
+}
+
+/**
+ * Replace media parts (image/audio/video) with text markers in the summarizer
+ * input, for the 413 strip-and-retry above. Messages without media are
+ * returned by reference (keeping the per-message token-estimate cache warm),
+ * and when nothing changed the input array itself is returned so the caller
+ * can tell there was no media to strip.
+ */
+function replaceMediaPartsWithMarkers(
+  messages: readonly ContextMessage[],
+): readonly ContextMessage[] {
+  let changed = false;
+  const out = messages.map((message) => {
+    if (!message.content.some(isMediaPart)) return message;
+    changed = true;
+    return {
+      ...message,
+      content: message.content.map((part): ContentPart =>
+        isMediaPart(part) ? { type: 'text', text: MEDIA_PART_MARKERS[part.type] } : part,
+      ),
+    };
+  });
+  return changed ? out : messages;
+}
 
 function shrinkCompactionHistoryAfterOverflow<T extends Message>(
   messages: readonly T[],

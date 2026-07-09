@@ -41,6 +41,15 @@ export interface RunTurnInput {
    * a tool_use/tool_result adjacency 400 (see `executeLoopStep`).
    */
   readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
+  /**
+   * Optional media-degraded rebuild of the request messages: old media parts
+   * replaced by text markers, the most recent kept. Used to resend once after
+   * the provider rejects the request body as too large (HTTP 413 on
+   * accumulated media, see `executeLoopStep`); after a successful degraded
+   * resend, later steps of the same turn build from this projection directly
+   * so each step does not pay a fresh rejection.
+   */
+  readonly buildMessagesMediaDegraded?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly tools?: readonly ExecutableTool[] | undefined;
   /**
@@ -74,6 +83,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     llm,
     buildMessages,
     buildMessagesStrict,
+    buildMessagesMediaDegraded,
     dispatchEvent,
     tools,
     buildTools,
@@ -89,6 +99,11 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
   // Normal exits overwrite this with the completed step's stop reason.
   let stopReason: LoopTurnStopReason = 'end_turn';
   let activeStep: number | undefined;
+  // Once a step only succeeded via the media-degraded resend, later steps of
+  // this turn build from the degraded projection directly: the full-media
+  // history is deterministically over the provider's body-size limit, so
+  // rebuilding it would pay a fresh rejection on every step.
+  let mediaDegradedActive = false;
   const recordStepUsage = async (
     stepUsage: TokenUsage,
   ): Promise<RecordStepUsageResult | void> => {
@@ -109,8 +124,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
       const stepResult = await executeLoopStep({
         turnId,
         signal,
-        buildMessages,
+        buildMessages:
+          mediaDegradedActive && buildMessagesMediaDegraded !== undefined
+            ? buildMessagesMediaDegraded
+            : buildMessages,
         buildMessagesStrict,
+        buildMessagesMediaDegraded,
         dispatchEvent,
         llm,
         tools,
@@ -127,6 +146,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         recordUsage: recordStepUsage,
       });
       activeStep = undefined;
+      mediaDegradedActive = mediaDegradedActive || stepResult.mediaDegradedResendUsed === true;
 
       if (stepResult.stopReason === 'tool_use') {
         continue;

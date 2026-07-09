@@ -3,6 +3,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderRateLimitError,
+  APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -112,6 +113,23 @@ describe('APIProviderRateLimitError', () => {
   });
 });
 
+describe('APIRequestTooLargeError', () => {
+  it('extends APIStatusError and preserves HTTP details', () => {
+    const err = new APIRequestTooLargeError(413, 'Request exceeds the maximum size.', 'req-large');
+    expect(err).toBeInstanceOf(APIStatusError);
+    expect(err).toBeInstanceOf(ChatProviderError);
+    expect(err.name).toBe('APIRequestTooLargeError');
+    expect(err.statusCode).toBe(413);
+    expect(err.requestId).toBe('req-large');
+  });
+
+  it('is not retryable', () => {
+    expect(
+      isRetryableGenerateError(new APIRequestTooLargeError(413, 'Request exceeds the maximum size.')),
+    ).toBe(false);
+  });
+});
+
 describe('isRetryableGenerateError', () => {
   it('matches transient provider errors and empty generate responses', () => {
     expect(isRetryableGenerateError(new APIConnectionError('conn'))).toBe(true);
@@ -207,6 +225,52 @@ describe('normalizeAPIStatusError', () => {
   ])('keeps %i "%s" as APIStatusError', (statusCode, message) => {
     const error = normalizeAPIStatusError(statusCode, message);
     expect(error).toBeInstanceOf(APIStatusError);
+    expect(error).not.toBeInstanceOf(APIContextOverflowError);
+  });
+
+  it.each([
+    // Moonshot / Kimi 413 observed in the field when accumulated media pushed
+    // the request body over the provider's byte ceiling.
+    [413, 'Request exceeds the maximum size'],
+    // Reverse-proxy (nginx-style) 413 with an HTML body.
+    [413, '413 <html><head><title>413 Request Entity Too Large</title></head></html>'],
+    // Anthropic request_too_large: body over the 32 MB API ceiling.
+    [413, 'request_too_large: Request exceeds the maximum allowed number of bytes'],
+    // RFC 9110 reason phrase / Node-style wording.
+    [413, 'Payload Too Large'],
+    [413, 'Content Too Large'],
+    // Plain wordings without "entity": generic gateways say "Request too
+    // large"; Go's http.MaxBytesReader says "http: request body too large".
+    [413, 'Request too large'],
+    [413, 'Request body too large'],
+    [413, 'http: request body too large'],
+  ])('normalizes %i "%s" to APIRequestTooLargeError', (statusCode, message) => {
+    const error = normalizeAPIStatusError(statusCode, message, 'req-large');
+    expect(error).toBeInstanceOf(APIRequestTooLargeError);
+    expect(error.statusCode).toBe(statusCode);
+    expect(error.requestId).toBe('req-large');
+  });
+
+  it('keeps a 413 with token-overflow wording as APIContextOverflowError', () => {
+    // Vertex phrases prompt-too-long as a 413; that is a token problem
+    // (recoverable by compaction), not a request-body-size problem.
+    const error = normalizeAPIStatusError(413, 'prompt is too long: 210000 tokens > 200000 maximum');
+    expect(error).toBeInstanceOf(APIContextOverflowError);
+    expect(error).not.toBeInstanceOf(APIRequestTooLargeError);
+  });
+
+  it.each([
+    // A bare 413 with unrecognized wording stays unclassified: Vertex abuses
+    // 413 for prompt-too-long, so the status alone is not proof of a
+    // body-size rejection.
+    [413, 'Request failed'],
+    // Size wording without the 413 status is not classified either.
+    [400, 'Payload too large'],
+    [422, 'Request entity too large'],
+  ])('keeps %i "%s" as plain APIStatusError', (statusCode, message) => {
+    const error = normalizeAPIStatusError(statusCode, message);
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error).not.toBeInstanceOf(APIRequestTooLargeError);
     expect(error).not.toBeInstanceOf(APIContextOverflowError);
   });
 });

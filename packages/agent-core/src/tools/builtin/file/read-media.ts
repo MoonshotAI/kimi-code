@@ -45,6 +45,7 @@ import {
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
+  resolveReadImageByteBudget,
   type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '../../support/image-compress';
@@ -213,6 +214,45 @@ function buildMediaNote(input: {
 
 // ── Implementation ───────────────────────────────────────────────────
 
+/**
+ * Refusal message for HEIC/HEIF with a conversion command matching the
+ * execution environment (`kaos.osEnv.osKind` — where Bash actually runs, so
+ * SSH/container sessions get the right command too). macOS converts with the
+ * built-in `sips`; Linux and Windows have no built-in HEIC decoder, so the
+ * guidance names the common tools and how to get them.
+ */
+function buildHeicConversionGuidance(path: string, mimeType: string, osKind: string): string {
+  const converted = path.replace(/\.[^./\\]+$/, '') + '.jpg';
+  return (
+    `"${path}" is a ${mimeType} image, which the provider does not accept. ` +
+    'Convert it to JPEG first, then read the converted file. ' +
+    heicConversionCommand(path, converted, osKind)
+  );
+}
+
+function heicConversionCommand(path: string, converted: string, osKind: string): string {
+  switch (osKind) {
+    case 'macOS':
+      return `On macOS: sips -s format jpeg "${path}" --out "${converted}"`;
+    case 'Linux':
+      return (
+        `On Linux: heif-convert "${path}" "${converted}" (package libheif-examples), ` +
+        `or with ImageMagick: magick "${path}" "${converted}"`
+      );
+    case 'Windows':
+      return (
+        `On Windows, with ImageMagick: magick "${path}" "${converted}" ` +
+        '(install it first if missing: winget install ImageMagick.ImageMagick)'
+      );
+    default:
+      return (
+        `Options: sips -s format jpeg "${path}" --out "${converted}" (macOS), ` +
+        `heif-convert "${path}" "${converted}" (Linux, package libheif-examples), ` +
+        `or magick "${path}" "${converted}" (ImageMagick)`
+      );
+  }
+}
+
 export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
@@ -291,6 +331,17 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           output:
             'The current model does not support image input. ' +
             'Tell the user to use a model with image input capability.',
+        };
+      }
+      // HEIC/HEIF must never reach the provider: no provider accepts them,
+      // and once the image_url lands in the history every subsequent request
+      // in the session is rejected. Refuse with a conversion command for the
+      // execution environment instead — the model can run it through Bash
+      // (under the normal permission flow) and read the converted file.
+      if (fileType.mimeType === 'image/heic' || fileType.mimeType === 'image/heif') {
+        return {
+          isError: true,
+          output: buildHeicConversionGuidance(args.path, fileType.mimeType, this.kaos.osEnv.osKind),
         };
       }
       if (fileType.kind === 'video' && !this.capabilities.video_in) {
@@ -388,10 +439,14 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           };
         } else {
           // Shrink oversized images so a large screenshot neither wastes context
-          // tokens nor trips the provider's per-image byte ceiling. Best effort:
-          // on any failure compressImageForModel returns the original bytes, so
-          // the read still succeeds with the uncompressed image.
+          // tokens nor trips the provider's per-image byte ceiling. Model-read
+          // images get the much tighter read budget: they accumulate in the
+          // request body on every turn, and detail stays reachable through the
+          // region readback (which ignores the budget). Best effort: on any
+          // failure compressImageForModel returns the original bytes, so the
+          // read still succeeds with the uncompressed image.
           const compressed = await compressImageForModel(data, fileType.mimeType, {
+            byteBudget: resolveReadImageByteBudget(),
             telemetry: this.compressTelemetry,
           });
           const base64 = Buffer.from(compressed.data).toString('base64');

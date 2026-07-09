@@ -5,7 +5,7 @@
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ContentPart, ModelCapability } from '@moonshot-ai/kosong';
 import { Jimp } from 'jimp';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
 import type { ExecutableToolResult } from '../../src/loop';
@@ -13,9 +13,10 @@ import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
+import { setConfiguredReadImageByteBudget } from '../../src/tools/support/image-compress';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import type { TelemetryClient } from '../../src/telemetry';
-import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
+import { createFakeKaos, FAKE_OS_ENV, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -711,7 +712,7 @@ describe('ReadMediaFileTool', () => {
     // The image actually sent to the model is downsampled to the edge cap.
     const sentBytes = Buffer.from(match![2]!, 'base64');
     const sentDims = sniffImageDimensions(sentBytes);
-    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(3000);
+    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
 
     // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
@@ -746,7 +747,7 @@ describe('ReadMediaFileTool', () => {
 
     const systemText = noteText(result);
     expect(systemText).toContain('Original dimensions: 1800x3600');
-    expect(systemText).toMatch(/downsampled to 1500x3000/);
+    expect(systemText).toMatch(/downsampled to 1000x2000/);
   });
 
   it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
@@ -893,7 +894,7 @@ describe('ReadMediaFileTool', () => {
       // Wording must not depend on serialization order: some providers keep
       // the note inline after the media, others flatten tool text and
       // re-attach the image after it — so no "above"/"below".
-      expect(systemText).toMatch(/The attached image was downsampled to 3000x3000/);
+      expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
       expect(systemText).toMatch(/fine detail/i);
       expect(systemText).toContain('region');
     });
@@ -1013,5 +1014,183 @@ describe('ReadMediaFileTool', () => {
       });
       expect(withFullRes.isError).toBe(true);
     });
+  });
+
+  describe('provider-unsupported formats (HEIC/HEIF)', () => {
+    /** Minimal ISO-BMFF header: size + 'ftyp' + the given brand. */
+    function ftypHeader(brand: string): Buffer {
+      const bytes = Buffer.alloc(16);
+      bytes.writeUInt32BE(16, 0);
+      bytes.write('ftyp', 4, 'latin1');
+      bytes.write(brand, 8, 'latin1');
+      return bytes;
+    }
+
+    function heicTool(osKind: string, brand = 'heic'): ReadMediaFileTool {
+      const data = ftypHeader(brand);
+      const kaos = createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+        osEnv: { ...FAKE_OS_ENV, osKind },
+      });
+      return new ReadMediaFileTool(kaos, PERMISSIVE_WORKSPACE, capabilities());
+    }
+
+    it('refuses HEIC with sips guidance on macOS instead of sending it to the provider', async () => {
+      const result = await executeTool(heicTool('macOS'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_mac',
+        args: { path: '/workspace/photo.HEIC' },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('image/heic');
+      expect(result.output).toContain('sips -s format jpeg');
+      expect(result.output).toContain('/workspace/photo.jpg');
+    });
+
+    it('refuses HEIC with heif-convert / ImageMagick guidance on Linux', async () => {
+      const result = await executeTool(heicTool('Linux'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_linux',
+        args: { path: '/workspace/photo.HEIC' },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('heif-convert');
+      expect(result.output).toContain('magick');
+    });
+
+    it('refuses HEIC with ImageMagick guidance on Windows', async () => {
+      const result = await executeTool(heicTool('Windows'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_win',
+        args: { path: '/workspace/photo.HEIC' },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('magick');
+      expect(result.output).toContain('winget');
+    });
+
+    it('refuses HEIF brands and region reads the same way', async () => {
+      const heif = await executeTool(heicTool('macOS', 'mif1'), {
+        turnId: 't1',
+        toolCallId: 'c_heif',
+        args: { path: '/workspace/photo.heif' },
+        signal,
+      });
+      expect(heif.isError).toBe(true);
+      expect(heif.output).toContain('image/heif');
+
+      const region = await executeTool(heicTool('macOS'), {
+        turnId: 't1',
+        toolCallId: 'c_heic_region',
+        args: { path: '/workspace/photo.HEIC', region: { x: 0, y: 0, width: 10, height: 10 } },
+        signal,
+      });
+      expect(region.isError).toBe(true);
+      expect(region.output).toContain('sips');
+    });
+  });
+
+  describe('read byte budget', () => {
+    afterEach(() => {
+      setConfiguredReadImageByteBudget(undefined);
+    });
+
+    /** High-entropy PNG whose bytes stay large after downscaling. */
+    async function noisePng(width: number, height: number): Promise<Buffer> {
+      const image = new Jimp({ width, height, color: 0x000000ff });
+      const data = image.bitmap.data;
+      let state = 0x9e3779b9;
+      for (let i = 0; i < data.length; i += 4) {
+        state ^= (state << 13) >>> 0;
+        state ^= state >>> 17;
+        state ^= (state << 5) >>> 0;
+        state >>>= 0;
+        data[i] = state & 0xff;
+        data[i + 1] = (state >>> 8) & 0xff;
+        data[i + 2] = (state >>> 16) & 0xff;
+        data[i + 3] = 0xff;
+      }
+      return Buffer.from(await image.getBuffer('image/png'));
+    }
+
+    function toolFor(data: Buffer): ReadMediaFileTool {
+      return makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+      });
+    }
+
+    function sentBytes(result: Awaited<ReturnType<typeof executeTool>>): Buffer {
+      const parts = outputParts(result);
+      const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
+      const match = /^data:image\/[a-z]+;base64,(.+)$/.exec(url);
+      expect(match).not.toBeNull();
+      return Buffer.from(match![1]!, 'base64');
+    }
+
+    it(
+      'compresses a default read to fit the configured read budget',
+      async () => {
+        const budget = 64 * 1024;
+        setConfiguredReadImageByteBudget(budget);
+        const data = await noisePng(1200, 1200);
+        expect(data.length).toBeGreaterThan(budget);
+
+        const result = await executeTool(toolFor(data), {
+          turnId: 't1',
+          toolCallId: 'c_budget',
+          args: { path: '/workspace/noisy.png' },
+          signal,
+        });
+
+        expect(result.isError).toBe(false);
+        expect(sentBytes(result).length).toBeLessThanOrEqual(budget);
+        expect(noteText(result)).toMatch(/downsampled/);
+      },
+      15_000,
+    );
+
+    it('full_resolution ignores the read budget (per-image provider limit applies)', async () => {
+      setConfiguredReadImageByteBudget(64 * 1024);
+      const data = await noisePng(600, 600);
+      expect(data.length).toBeGreaterThan(64 * 1024);
+
+      const result = await executeTool(toolFor(data), {
+        turnId: 't1',
+        toolCallId: 'c_fullres_budget',
+        args: { path: '/workspace/noisy.png', full_resolution: true },
+        signal,
+      });
+
+      expect(result.isError).toBe(false);
+      // Delivered byte-for-byte: the read budget must not shrink the
+      // full-fidelity escape hatch the downsample note promises.
+      expect(sentBytes(result).equals(data)).toBe(true);
+    });
+
+    it(
+      'region reads ignore the read budget so detail readback stays full-fidelity',
+      async () => {
+        setConfiguredReadImageByteBudget(16 * 1024);
+        const data = await noisePng(800, 800);
+
+        const result = await executeTool(toolFor(data), {
+          turnId: 't1',
+          toolCallId: 'c_region_budget',
+          args: { path: '/workspace/noisy.png', region: { x: 0, y: 0, width: 400, height: 400 } },
+          signal,
+        });
+
+        expect(result.isError).toBe(false);
+        // A native-resolution noise crop is far larger than the read budget;
+        // it must still be delivered under the provider-scale budget.
+        expect(sentBytes(result).length).toBeGreaterThan(16 * 1024);
+      },
+      15_000,
+    );
   });
 });

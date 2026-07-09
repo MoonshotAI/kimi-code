@@ -465,3 +465,58 @@ export function trimTrailingOpenToolExchange(history: readonly Message[]): Messa
   const closed = assistant.toolCalls.every((toolCall) => trailingToolCallIds.has(toolCall.id));
   return closed ? [...history] : history.slice(0, lastNonToolIndex);
 }
+
+/**
+ * How many of the most recent media parts survive the media-degraded
+ * projection. The tail images are what the model is actively working from
+ * (the screenshot it just took); everything older is replaced by a marker.
+ */
+export const MEDIA_DEGRADE_KEEP_RECENT = 2;
+
+const MEDIA_DEGRADED_PLACEHOLDERS = {
+  image_url:
+    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+  audio_url:
+    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
+  video_url:
+    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+} as const;
+
+function isDegradableMediaPart(
+  part: ContentPart,
+): part is ContentPart & { type: keyof typeof MEDIA_DEGRADED_PLACEHOLDERS } {
+  return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
+}
+
+/**
+ * Replace all but the `keepRecent` most recent media parts with deterministic
+ * text markers. This is the media-degraded projection used to resend a request
+ * the provider rejected as too large (HTTP 413 on accumulated base64 media):
+ * a purely read-side transform — the underlying history is left untouched —
+ * that trades old pixels for bytes while the surrounding text (including
+ * ReadMediaFile's `<image path="...">` wrapper) survives, so the model can
+ * re-read any file it still needs. Untouched messages are returned by
+ * reference, and when nothing needs degrading the input array itself is
+ * returned.
+ */
+export function degradeOlderMediaParts(
+  messages: readonly Message[],
+  keepRecent: number,
+): Message[] {
+  const mediaCount = messages.reduce(
+    (count, message) => count + message.content.filter(isDegradableMediaPart).length,
+    0,
+  );
+  let toDegrade = Math.max(0, mediaCount - keepRecent);
+  if (toDegrade === 0) return messages as Message[];
+
+  return messages.map((message) => {
+    if (toDegrade === 0 || !message.content.some(isDegradableMediaPart)) return message;
+    const content = message.content.map((part): ContentPart => {
+      if (toDegrade === 0 || !isDegradableMediaPart(part)) return part;
+      toDegrade -= 1;
+      return { type: 'text', text: MEDIA_DEGRADED_PLACEHOLDERS[part.type] };
+    });
+    return { ...message, content };
+  });
+}
