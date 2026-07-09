@@ -3,7 +3,7 @@
  *
  * Discovers skills contributed by enabled plugins through `ISkillDiscovery`
  * (roots from `plugin.pluginSkillRoots()`), contributing them at priority 5
- * (above builtin, below user/workspace, so project and user skills win name
+ * (above builtin, below extra / user / workspace, so project, user and extra skills win name
  * collisions). Re-emits
  * `plugin.onDidReload` as `onDidChange` so the sink re-pulls plugin skills when
  * plugins reload. Bound at Session scope.
@@ -14,7 +14,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import type { Event } from '#/_base/event';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
-import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
+import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
 import { IPluginService } from '#/app/plugin/plugin';
 
 export interface IPluginSkillSource extends ISkillSource {
@@ -28,7 +28,7 @@ export class PluginSkillSource implements IPluginSkillSource {
   declare readonly _serviceBrand: undefined;
 
   readonly id = 'plugin';
-  readonly priority = 5;
+  readonly priority = SKILL_SOURCE_PRIORITY.plugin;
   readonly onDidChange: Event<void> = (listener, thisArg, disposables) =>
     this.plugins.onDidReload(() => listener(undefined as void), thisArg, disposables);
 

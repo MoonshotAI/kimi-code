@@ -1,10 +1,10 @@
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { projectRoots, userRoots } from '#/app/skillCatalog/skillRoots';
+import { configuredRoots, projectRoots, userRoots } from '#/app/skillCatalog/skillRoots';
 
 describe('skillRoots', () => {
   let root: string;
@@ -90,6 +90,27 @@ describe('skillRoots', () => {
       expect(roots.some((r) => r.path.endsWith('.agents/skills') && r.source === 'user')).toBe(
         true,
       );
+    });
+  });
+
+  describe('configuredRoots', () => {
+    it('resolves ~, ~/, absolute, and project-relative paths', async () => {
+      await markGitRoot();
+      const homeDir = join(root, 'home');
+      const absDir = join(root, 'abs');
+      await mkdir(homeDir, { recursive: true });
+      await mkdir(join(homeDir, 'notes'), { recursive: true });
+      await mkdir(absDir, { recursive: true });
+      await mkdir(join(root, 'relative'), { recursive: true });
+
+      const roots = await configuredRoots(['~', '~/notes', absDir, 'relative'], root, homeDir, 'extra');
+      const paths = roots.map((root) => root.path);
+
+      expect(roots.every((root) => root.source === 'extra')).toBe(true);
+      expect(paths).toContain(await realpath(homeDir));
+      expect(paths).toContain(await realpath(join(homeDir, 'notes')));
+      expect(paths).toContain(await realpath(absDir));
+      expect(paths).toContain(await realpath(join(root, 'relative')));
     });
   });
 });

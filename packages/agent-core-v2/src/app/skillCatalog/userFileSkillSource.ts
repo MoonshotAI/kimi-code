@@ -2,18 +2,23 @@
  * `skillCatalog` domain (L3) — user/brand `ISkillSource` producer.
  *
  * Discovers user skills from the bootstrap home directories through
- * `ISkillDiscovery`, contributing them at priority 10 (above builtin and
- * plugin, below workspace). Reads home paths from `bootstrap`. Bound at App scope.
+ * `ISkillDiscovery`, contributing them at priority 20 (above extra / plugin /
+ * builtin, below workspace). Reads home paths from `bootstrap`. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
 
+import {
+  MERGE_ALL_AVAILABLE_SKILLS_SECTION,
+  type MergeAllAvailableSkillsConfig,
+} from './configSection';
 import { ISkillDiscovery } from './skillDiscovery';
 import { userRoots } from './skillRoots';
-import type { ISkillSource, SkillContribution } from './skillSource';
+import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from './skillSource';
 
 export interface IUserFileSkillSource extends ISkillSource {
   readonly _serviceBrand: undefined;
@@ -26,15 +31,20 @@ export class UserFileSkillSource implements IUserFileSkillSource {
   declare readonly _serviceBrand: undefined;
 
   readonly id = 'user';
-  readonly priority = 10;
+  readonly priority = SKILL_SOURCE_PRIORITY.user;
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   async load(): Promise<SkillContribution> {
-    return this.discovery.discover(await userRoots(this.bootstrap.homeDir, this.bootstrap.osHomeDir));
+    const mergeAllAvailableSkills =
+      this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
+    return this.discovery.discover(
+      await userRoots(this.bootstrap.homeDir, this.bootstrap.osHomeDir, { mergeAllAvailableSkills }),
+    );
   }
 }
 

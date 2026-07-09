@@ -1,10 +1,10 @@
 /**
  * `sessionSkillCatalog` domain (L3) — `ISessionSkillCatalog` sink implementation.
  *
- * Dumb ordered-merge table: pulls the four eager `ISkillSource`s (builtin /
- * user / workspace / plugin) and folds their contributions into an in-memory
+ * Dumb ordered-merge table: pulls the five eager `ISkillSource`s (builtin /
+ * user / extra / workspace / plugin) and folds their contributions into an in-memory
  * catalog by priority, so higher-priority sources win name collisions. `ready`
- * resolves once all four have completed their first `load()`+merge; a source's
+ * resolves once all five have completed their first `load()`+merge; a source's
  * `onDidChange` (e.g. plugin reload) re-pulls just that source and re-merges,
  * firing `onDidChange`. `set`/`remove` (`ISkillCatalogSink`) let ad-hoc sources
  * push contributions. Bound at Session scope; the same instance is the
@@ -22,6 +22,7 @@ import type { SkillCatalog } from '#/app/skillCatalog/types';
 import { IUserFileSkillSource } from '#/app/skillCatalog/userFileSkillSource';
 
 import { IPluginSkillSource } from './pluginSkillSource';
+import { IExtraFileSkillSource } from './extraFileSkillSource';
 import { ISessionSkillCatalog, type ISkillCatalogSink } from './skillCatalog';
 import { IWorkspaceFileSkillSource } from './workspaceFileSkillSource';
 
@@ -44,11 +45,12 @@ export class SessionSkillCatalogService
   constructor(
     @IBuiltinSkillSource builtin: IBuiltinSkillSource,
     @IUserFileSkillSource user: IUserFileSkillSource,
+    @IExtraFileSkillSource extra: IExtraFileSkillSource,
     @IWorkspaceFileSkillSource workspace: IWorkspaceFileSkillSource,
     @IPluginSkillSource plugin: IPluginSkillSource,
   ) {
     super();
-    this.sources = [builtin, user, workspace, plugin].toSorted((a, b) => a.priority - b.priority);
+    this.sources = [builtin, user, extra, workspace, plugin].toSorted((a, b) => a.priority - b.priority);
     for (const s of this.sources) {
       if (s.onDidChange) this._register(s.onDidChange(() => { void this.reloadSource(s.id); }));
     }

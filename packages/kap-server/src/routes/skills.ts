@@ -17,8 +17,8 @@
  * would, so clients can populate the composer skill menu before a session
  * exists. The workspace id is resolved to its root via
  * `IWorkspaceRegistry.get` (`40410` when unknown); the root is then scanned by
- * composing the same four sources the per-session catalog merges — builtin /
- * user / project(workDir) / plugin — through the shared `ISkillDiscovery`,
+ * composing the same five sources the per-session catalog merges — builtin /
+ * user / extra / project(workDir) / plugin — through the shared `ISkillDiscovery`,
  * `skillRoots` and `InMemorySkillCatalog` primitives, so the result matches the
  * session listing for the same cwd. The composition is intentionally edge-side:
  * `InMemorySkillCatalog` is not a scoped service and the `skillRoots` helpers
@@ -68,8 +68,10 @@
 import {
   BUILTIN_SKILLS,
   ErrorCodes,
+  EXTRA_SKILL_DIRS_SECTION,
   IAgentSkillService,
   IBootstrapService,
+  IConfigService,
   IPluginService,
   ISessionIndex,
   ISessionLifecycleService,
@@ -78,11 +80,16 @@ import {
   IWorkspaceRegistry,
   InMemorySkillCatalog,
   isKimiError,
+  MERGE_ALL_AVAILABLE_SKILLS_SECTION,
+  SKILL_SOURCE_PRIORITY,
+  configuredRoots,
   projectRoots,
   userRoots,
   type ISessionScopeHandle,
   type Scope,
   type SkillDefinition,
+  type ExtraSkillDirsConfig,
+  type MergeAllAvailableSkillsConfig,
 } from '@moonshot-ai/agent-core-v2';
 import {
   ErrorCode,
@@ -296,15 +303,14 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
 
 /**
  * Scan the skills a new session rooted at `workDir` would see, without creating
- * a session. Resolves the same four sources the per-session catalog merges —
- * builtin / user / project(`workDir`) / plugin — through the shared
+ * a session. Resolves the same five sources the per-session catalog merges —
+ * builtin / user / extra / project(`workDir`) / plugin — through the shared
  * `ISkillDiscovery` and `skillRoots` primitives, then folds them into an
  * `InMemorySkillCatalog` by the documented source priorities (lower priority
  * first; `replace: true` lets higher-priority sources win name collisions). The
- * priority numbers mirror `builtinSkillSource` (0), `userFileSkillSource` (10),
- * `workspaceFileSkillSource` (20) and `pluginSkillSource` (25); the resulting
- * name set is priority-invariant, but matching them keeps descriptor resolution
- * identical to the session catalog.
+ * priority numbers come from `SKILL_SOURCE_PRIORITY`; the resulting name set is
+ * priority-invariant, but matching them keeps descriptor resolution identical to
+ * the session catalog.
  */
 async function listWorkspaceSkillsForRoot(
   core: Scope,
@@ -313,24 +319,32 @@ async function listWorkspaceSkillsForRoot(
   const discovery = core.accessor.get(ISkillDiscovery);
   const bootstrap = core.accessor.get(IBootstrapService);
   const plugins = core.accessor.get(IPluginService);
+  const config = core.accessor.get(IConfigService);
+  const extraSkillDirs = config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
+  const mergeAllAvailableSkills =
+    config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
+  const rootOptions = { mergeAllAvailableSkills };
 
-  const [userRootList, projectRootList, pluginRootList] = await Promise.all([
-    userRoots(bootstrap.homeDir, bootstrap.osHomeDir),
-    projectRoots(workDir),
+  const [userRootList, projectRootList, extraRootList, pluginRootList] = await Promise.all([
+    userRoots(bootstrap.homeDir, bootstrap.osHomeDir, rootOptions),
+    projectRoots(workDir, rootOptions),
+    configuredRoots(extraSkillDirs, workDir, bootstrap.homeDir, 'extra'),
     plugins.pluginSkillRoots(),
   ]);
-  const [user, project, plugin] = await Promise.all([
+  const [user, project, extra, plugin] = await Promise.all([
     discovery.discover(userRootList),
     discovery.discover(projectRootList),
+    discovery.discover(extraRootList),
     discovery.discover(pluginRootList),
   ]);
 
   const catalog = new InMemorySkillCatalog();
   const ordered = [
-    { skills: BUILTIN_SKILLS, priority: 0 },
-    { skills: user.skills, priority: 10 },
-    { skills: project.skills, priority: 20 },
-    { skills: plugin.skills, priority: 25 },
+    { skills: BUILTIN_SKILLS, priority: SKILL_SOURCE_PRIORITY.builtin },
+    { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },
+    { skills: extra.skills, priority: SKILL_SOURCE_PRIORITY.extra },
+    { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },
+    { skills: project.skills, priority: SKILL_SOURCE_PRIORITY.workspace },
   ].toSorted((a, b) => a.priority - b.priority);
   for (const { skills } of ordered) {
     for (const skill of skills) catalog.register(skill, { replace: true });

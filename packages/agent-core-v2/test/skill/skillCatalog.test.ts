@@ -5,6 +5,11 @@ import { LifecycleScope } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IConfigService } from '#/app/config/config';
+import {
+  EXTRA_SKILL_DIRS_SECTION,
+  MERGE_ALL_AVAILABLE_SKILLS_SECTION,
+} from '#/app/skillCatalog/configSection';
 import '../../src/index';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -18,6 +23,40 @@ const bootstrapStub = {
   homeDir: '/home',
   osHomeDir: '/home',
 } as unknown as IBootstrapService;
+
+function configStub(): IConfigService & {
+  setExtraSkillDirs(dirs: readonly string[]): void;
+  setMergeAllAvailableSkills(value: boolean): void;
+} {
+  let extraSkillDirs: readonly string[] = [];
+  let mergeAllAvailableSkills = true;
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidChangeConfiguration: () => ({ dispose: () => {} }),
+    onDidSectionChange: () => ({ dispose: () => {} }),
+    get: (domain: string) => {
+      if (domain === EXTRA_SKILL_DIRS_SECTION) return [...extraSkillDirs];
+      if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return mergeAllAvailableSkills;
+      return undefined;
+    },
+    inspect: () => ({ value: undefined, defaultValue: undefined, userValue: undefined, memoryValue: undefined }),
+    getAll: () => ({}),
+    set: async () => {},
+    replace: async () => {},
+    reload: async () => {},
+    diagnostics: () => [],
+    setExtraSkillDirs: (dirs: readonly string[]) => {
+      extraSkillDirs = [...dirs];
+    },
+    setMergeAllAvailableSkills: (value: boolean) => {
+      mergeAllAvailableSkills = value;
+    },
+  } as unknown as IConfigService & {
+    setExtraSkillDirs(dirs: readonly string[]): void;
+    setMergeAllAvailableSkills(value: boolean): void;
+  };
+}
 
 function pluginStub(skillRoots: readonly SkillRoot[] = []): IPluginService {
   return {
@@ -68,13 +107,15 @@ function makeHost(
   ws: ISessionWorkspaceContext,
   pluginRoots: readonly SkillRoot[] = [],
 ) {
+  const config = configStub();
   const host = createScopedTestHost([
     stubPair(ISkillDiscovery, store),
     stubPair(IBootstrapService, bootstrapStub),
+    stubPair(IConfigService, config),
     stubPair(IPluginService, pluginStub(pluginRoots)),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
-  return { host, session };
+  return { host, session, config };
 }
 
 describe('SessionSkillCatalogService', () => {
@@ -109,6 +150,11 @@ describe('SessionSkillCatalogService', () => {
       stubSkill('user-plugin', { description: 'from user' }),
     ]);
     store.setProjectSkills([stubSkill('shared', { description: 'from project' })]);
+    store.setExtraSkills([
+      stubSkill('shared', { description: 'from extra', source: 'extra' }),
+      stubSkill('user-plugin', { description: 'from extra', source: 'extra' }),
+      stubSkill('extra-plugin', { description: 'from extra', source: 'extra' }),
+    ]);
     store.setPluginSkills([
       stubSkill('shared', {
         description: 'from plugin',
@@ -120,6 +166,11 @@ describe('SessionSkillCatalogService', () => {
         source: 'extra',
         plugin: { id: 'demo' },
       }),
+      stubSkill('extra-plugin', {
+        description: 'from plugin',
+        source: 'extra',
+        plugin: { id: 'demo' },
+      }),
     ]);
     const pluginRoot: SkillRoot = {
       path: '/plugins/demo/skills',
@@ -127,13 +178,15 @@ describe('SessionSkillCatalogService', () => {
       plugin: { id: 'demo' },
     };
     const { stub: ws } = workspaceStub('/work');
-    const { host, session } = makeHost(store, ws, [pluginRoot]);
+    const { host, session, config } = makeHost(store, ws, [pluginRoot]);
+    config.setExtraSkillDirs(['/']);
 
     const catalog = session.accessor.get(ISessionSkillCatalog);
     await catalog.load();
 
     expect(catalog.catalog.getSkill('shared')?.description).toBe('from project');
     expect(catalog.catalog.getSkill('user-plugin')?.description).toBe('from user');
+    expect(catalog.catalog.getSkill('extra-plugin')?.description).toBe('from extra');
     host.dispose();
   });
 

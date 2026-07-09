@@ -22,22 +22,46 @@ const USER_GENERIC_DIRS = ['.agents/skills'] as const;
 const PROJECT_BRAND_DIRS = ['.kimi-code/skills'] as const;
 const PROJECT_GENERIC_DIRS = ['.agents/skills'] as const;
 
+export interface SkillRootsOptions {
+  readonly mergeAllAvailableSkills?: boolean;
+}
+
 export async function userRoots(
   homeDir: string,
   osHomeDir: string,
+  options: SkillRootsOptions = {},
 ): Promise<readonly SkillRoot[]> {
   const roots: SkillRoot[] = [];
+  const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
   // homeDir is already the brand data dir, so brand skills live at <homeDir>/skills.
-  await pushBrandGroup(roots, USER_BRAND_DIRS, homeDir, 'user');
+  await pushBrandGroup(roots, USER_BRAND_DIRS, homeDir, 'user', mergeAllAvailableSkills);
   await pushFirstExisting(roots, USER_GENERIC_DIRS, osHomeDir, 'user');
   return roots;
 }
 
-export async function projectRoots(workDir: string): Promise<readonly SkillRoot[]> {
+export async function projectRoots(
+  workDir: string,
+  options: SkillRootsOptions = {},
+): Promise<readonly SkillRoot[]> {
   const projectRoot = await findProjectRoot(workDir);
   const roots: SkillRoot[] = [];
-  await pushBrandGroup(roots, PROJECT_BRAND_DIRS, projectRoot, 'project');
+  const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
+  await pushBrandGroup(roots, PROJECT_BRAND_DIRS, projectRoot, 'project', mergeAllAvailableSkills);
   await pushFirstExisting(roots, PROJECT_GENERIC_DIRS, projectRoot, 'project');
+  return roots;
+}
+
+export async function configuredRoots(
+  dirs: readonly string[],
+  workDir: string,
+  homeDir: string,
+  source: SkillSource,
+): Promise<readonly SkillRoot[]> {
+  const projectRoot = await findProjectRoot(workDir);
+  const roots: SkillRoot[] = [];
+  for (const dir of dirs) {
+    await pushExistingRoot(roots, resolveConfiguredDir(dir, projectRoot, homeDir), source);
+  }
   return roots;
 }
 
@@ -68,7 +92,12 @@ async function pushBrandGroup(
   dirs: readonly string[],
   base: string,
   source: SkillSource,
+  mergeAllAvailableSkills: boolean,
 ): Promise<void> {
+  if (!mergeAllAvailableSkills) {
+    await pushFirstExisting(out, dirs, base, source);
+    return;
+  }
   for (const dir of dirs) {
     await pushExistingRoot(out, path.join(base, dir), source);
   }
@@ -83,6 +112,13 @@ async function pushExistingRoot(
   const resolved = await realpath(dir);
   if (!out.some((root) => root.path === resolved)) out.push({ path: resolved, source });
   return true;
+}
+
+function resolveConfiguredDir(dir: string, projectRoot: string, homeDir: string): string {
+  if (dir === '~') return homeDir;
+  if (dir.startsWith('~/')) return path.join(homeDir, dir.slice(2));
+  if (path.isAbsolute(dir)) return dir;
+  return path.resolve(projectRoot, dir);
 }
 
 async function isDir(p: string): Promise<boolean> {

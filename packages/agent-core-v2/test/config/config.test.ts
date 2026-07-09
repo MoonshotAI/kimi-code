@@ -18,6 +18,11 @@ import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 // live-overlay test below can read `config.get('cron')`.
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
+import '#/app/skillCatalog/configSection';
+import {
+  EXTRA_SKILL_DIRS_SECTION,
+  MERGE_ALL_AVAILABLE_SKILLS_SECTION,
+} from '#/app/skillCatalog/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -321,6 +326,15 @@ describe('ConfigService env overlay (live)', () => {
     expect(config.get<CronConfig>('cron').disabled).toBe(false);
 
     disposables.dispose();
+  });
+});
+
+describe('skill config sections', () => {
+  it('registers defaults for extraSkillDirs and mergeAllAvailableSkills', () => {
+    const registry = new ConfigRegistry();
+
+    expect(registry.getSection(EXTRA_SKILL_DIRS_SECTION)?.defaultValue).toEqual([]);
+    expect(registry.getSection(MERGE_ALL_AVAILABLE_SKILLS_SECTION)?.defaultValue).toBe(true);
   });
 });
 
