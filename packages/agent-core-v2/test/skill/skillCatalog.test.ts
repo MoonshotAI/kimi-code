@@ -28,14 +28,19 @@ const bootstrapStub = {
 function configStub(): IConfigService & {
   setExtraSkillDirs(dirs: readonly string[]): void;
   setMergeAllAvailableSkills(value: boolean): void;
+  fireSectionChange(domain: string): void;
 } {
   let extraSkillDirs: readonly string[] = [];
   let mergeAllAvailableSkills = true;
+  const sectionChangeListeners: Array<(event: unknown) => void> = [];
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     onDidChangeConfiguration: () => ({ dispose: () => {} }),
-    onDidSectionChange: () => ({ dispose: () => {} }),
+    onDidSectionChange: (listener: (event: unknown) => void) => {
+      sectionChangeListeners.push(listener);
+      return { dispose: () => {} };
+    },
     get: (domain: string) => {
       if (domain === EXTRA_SKILL_DIRS_SECTION) return [...extraSkillDirs];
       if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return mergeAllAvailableSkills;
@@ -53,9 +58,15 @@ function configStub(): IConfigService & {
     setMergeAllAvailableSkills: (value: boolean) => {
       mergeAllAvailableSkills = value;
     },
+    fireSectionChange: (domain: string) => {
+      for (const listener of sectionChangeListeners) {
+        listener({ domain, source: 'set', value: undefined, previousValue: undefined });
+      }
+    },
   } as unknown as IConfigService & {
     setExtraSkillDirs(dirs: readonly string[]): void;
     setMergeAllAvailableSkills(value: boolean): void;
+    fireSectionChange(domain: string): void;
   };
 }
 
@@ -273,6 +284,41 @@ describe('SessionSkillCatalogService', () => {
     await loading;
 
     expect(catalog.catalog.getSkill('extra-only')?.description).toBe('from extra');
+    host.dispose();
+  });
+
+  it('reloads user and workspace sources when mergeAllAvailableSkills changes', async () => {
+    class CountingDiscovery implements ISkillDiscovery {
+      declare readonly _serviceBrand: undefined;
+      calls = 0;
+      async discover() {
+        this.calls++;
+        return { skills: [], skipped: [], scannedRoots: [] };
+      }
+    }
+    const store = new CountingDiscovery();
+    const config = configStub();
+    const runtimeOptions = {
+      _serviceBrand: undefined,
+    } as unknown as ISkillCatalogRuntimeOptions;
+    const { stub: ws } = workspaceStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, store),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, config),
+      stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
+      stubPair(IPluginService, pluginStub()),
+    ]);
+    const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
+
+    const catalog = session.accessor.get(ISessionSkillCatalog);
+    await catalog.load();
+    const afterLoad = store.calls;
+
+    config.fireSectionChange(MERGE_ALL_AVAILABLE_SKILLS_SECTION);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(store.calls).toBeGreaterThanOrEqual(afterLoad + 2);
     host.dispose();
   });
 

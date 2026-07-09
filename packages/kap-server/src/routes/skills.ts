@@ -321,6 +321,7 @@ async function listWorkspaceSkillsForRoot(
   const bootstrap = core.accessor.get(IBootstrapService);
   const plugins = core.accessor.get(IPluginService);
   const config = core.accessor.get(IConfigService);
+  await config.ready;
   const runtimeOptions = core.accessor.get(ISkillCatalogRuntimeOptions);
   const extraSkillDirs = config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
   const mergeAllAvailableSkills =

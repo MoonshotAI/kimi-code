@@ -9,6 +9,8 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { InstantiationType } from '#/_base/di/extensions';
+import { Disposable } from '#/_base/di/lifecycle';
+import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -28,18 +30,27 @@ export interface IWorkspaceFileSkillSource extends ISkillSource {
 export const IWorkspaceFileSkillSource: ServiceIdentifier<IWorkspaceFileSkillSource> =
   createDecorator<IWorkspaceFileSkillSource>('workspaceFileSkillSource');
 
-export class WorkspaceFileSkillSource implements IWorkspaceFileSkillSource {
+export class WorkspaceFileSkillSource extends Disposable implements IWorkspaceFileSkillSource {
   declare readonly _serviceBrand: undefined;
 
   readonly id = 'workspace';
   readonly priority = SKILL_SOURCE_PRIORITY.workspace;
+  private readonly onDidChangeEmitter = this._register(new Emitter<void>());
+  readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IConfigService private readonly config: IConfigService,
     @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
-  ) {}
+  ) {
+    super();
+    this._register(
+      this.config.onDidSectionChange((event) => {
+        if (event.domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) this.onDidChangeEmitter.fire();
+      }),
+    );
+  }
 
   async load(): Promise<SkillContribution> {
     if ((this.runtimeOptions.explicitDirs?.length ?? 0) > 0) {
