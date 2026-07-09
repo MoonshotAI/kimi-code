@@ -76,6 +76,7 @@ import {
   ISessionIndex,
   ISessionLifecycleService,
   ISessionSkillCatalog,
+  ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
   IWorkspaceRegistry,
   InMemorySkillCatalog,
@@ -320,20 +321,27 @@ async function listWorkspaceSkillsForRoot(
   const bootstrap = core.accessor.get(IBootstrapService);
   const plugins = core.accessor.get(IPluginService);
   const config = core.accessor.get(IConfigService);
+  const runtimeOptions = core.accessor.get(ISkillCatalogRuntimeOptions);
   const extraSkillDirs = config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
   const mergeAllAvailableSkills =
     config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
+  const explicitDirs = runtimeOptions.explicitDirs ?? [];
+  const useExplicitDirs = explicitDirs.length > 0;
   const rootOptions = { mergeAllAvailableSkills };
 
-  const [userRootList, projectRootList, extraRootList, pluginRootList] = await Promise.all([
-    userRoots(bootstrap.homeDir, bootstrap.osHomeDir, rootOptions),
-    projectRoots(workDir, rootOptions),
-    configuredRoots(extraSkillDirs, workDir, bootstrap.homeDir, 'extra'),
+  const [userRootList, projectRootList, explicitRootList, extraRootList, pluginRootList] = await Promise.all([
+    useExplicitDirs ? Promise.resolve([]) : userRoots(bootstrap.homeDir, bootstrap.osHomeDir, rootOptions),
+    useExplicitDirs ? Promise.resolve([]) : projectRoots(workDir, rootOptions),
+    useExplicitDirs
+      ? configuredRoots(explicitDirs, workDir, bootstrap.osHomeDir, 'user')
+      : Promise.resolve([]),
+    configuredRoots(extraSkillDirs, workDir, bootstrap.osHomeDir, 'extra'),
     plugins.pluginSkillRoots(),
   ]);
-  const [user, project, extra, plugin] = await Promise.all([
+  const [user, project, explicit, extra, plugin] = await Promise.all([
     discovery.discover(userRootList),
     discovery.discover(projectRootList),
+    discovery.discover(explicitRootList),
     discovery.discover(extraRootList),
     discovery.discover(pluginRootList),
   ]);
@@ -344,6 +352,7 @@ async function listWorkspaceSkillsForRoot(
     { skills: plugin.skills, priority: SKILL_SOURCE_PRIORITY.plugin },
     { skills: extra.skills, priority: SKILL_SOURCE_PRIORITY.extra },
     { skills: user.skills, priority: SKILL_SOURCE_PRIORITY.user },
+    { skills: explicit.skills, priority: SKILL_SOURCE_PRIORITY.user },
     { skills: project.skills, priority: SKILL_SOURCE_PRIORITY.workspace },
   ].toSorted((a, b) => a.priority - b.priority);
   for (const { skills } of ordered) {

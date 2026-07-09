@@ -56,7 +56,7 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
   async load(): Promise<SkillContribution> {
     const extraSkillDirs = this.config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
     return this.discovery.discover(
-      await configuredRoots(extraSkillDirs, this.workspace.workDir, this.bootstrap.homeDir, 'extra'),
+      await configuredRoots(extraSkillDirs, this.workspace.workDir, this.bootstrap.osHomeDir, 'extra'),
     );
   }
 }

@@ -44,7 +44,7 @@ export class ExplicitFileSkillSource implements IExplicitFileSkillSource {
       return { skills: [] };
     }
     return this.discovery.discover(
-      await configuredRoots(explicitDirs, this.workspace.workDir, this.bootstrap.homeDir, 'user'),
+      await configuredRoots(explicitDirs, this.workspace.workDir, this.bootstrap.osHomeDir, 'user'),
     );
   }
 }

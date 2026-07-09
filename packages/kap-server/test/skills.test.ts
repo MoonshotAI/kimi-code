@@ -28,6 +28,7 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   ISessionLifecycleService,
+  ISkillCatalogRuntimeOptions,
 } from '@moonshot-ai/agent-core-v2';
 import {
   activateSkillResultSchema,
@@ -136,6 +137,15 @@ describe('server-v2 /api/v1 skills', () => {
     await writeFile(
       join(dir, 'SKILL.md'),
       `---\nname: ${name}\ndescription: e2e test skill ${name}\n---\n\nSay hello to $ARGUMENTS.\n`,
+    );
+  }
+
+  async function seedExplicitSkill(root: string, name: string): Promise<void> {
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: explicit skill ${name}\n---\n\nSay hello to $ARGUMENTS.\n`,
     );
   }
 
@@ -257,6 +267,35 @@ describe('server-v2 /api/v1 skills', () => {
       const sessSkills = listSkillsResponseSchema.parse(sessRes.body.data).skills;
       const names = (xs: readonly { name: string }[]) => xs.map((s) => s.name).toSorted();
       expect(names(wsSkills)).toEqual(names(sessSkills));
+    });
+
+    it('honors explicit skill dirs in workspace preview', async () => {
+      const workspaceDir = await makeWorkspaceDir();
+      await seedProjectSkill(workspaceDir, 'e2e-explicit');
+      const explicitDir = await makeWorkspaceDir();
+      await seedExplicitSkill(explicitDir, 'e2e-explicit');
+
+      await server!.close();
+      server = undefined;
+      server = await startServer({
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+        seeds: [[ISkillCatalogRuntimeOptions, { _serviceBrand: undefined, explicitDirs: [explicitDir] }]] as never,
+      });
+      base = `http://127.0.0.1:${server.port}`;
+
+      const wid = await registerWorkspace(workspaceDir);
+      const { body } = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/workspaces/${wid}/skills`,
+      );
+      expect(body.code).toBe(0);
+      const skills = listSkillsResponseSchema.parse(body.data).skills;
+      const seeded = skills.find((s) => s.name === 'e2e-explicit');
+      expect(seeded).toBeDefined();
+      expect(seeded?.source).toBe('user');
+      expect(seeded?.description).toBe('explicit skill e2e-explicit');
     });
 
     it('returns 40410 for an unknown workspace', async () => {

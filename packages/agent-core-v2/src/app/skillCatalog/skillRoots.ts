@@ -54,13 +54,13 @@ export async function projectRoots(
 export async function configuredRoots(
   dirs: readonly string[],
   workDir: string,
-  homeDir: string,
+  osHomeDir: string,
   source: SkillSource,
 ): Promise<readonly SkillRoot[]> {
   const projectRoot = await findProjectRoot(workDir);
   const roots: SkillRoot[] = [];
   for (const dir of dirs) {
-    await pushExistingRoot(roots, resolveConfiguredDir(dir, projectRoot, homeDir), source);
+    await pushExistingRoot(roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
   }
   return roots;
 }
@@ -114,9 +114,9 @@ async function pushExistingRoot(
   return true;
 }
 
-function resolveConfiguredDir(dir: string, projectRoot: string, homeDir: string): string {
-  if (dir === '~') return homeDir;
-  if (dir.startsWith('~/')) return path.join(homeDir, dir.slice(2));
+function resolveConfiguredDir(dir: string, projectRoot: string, osHomeDir: string): string {
+  if (dir === '~') return osHomeDir;
+  if (dir.startsWith('~/')) return path.join(osHomeDir, dir.slice(2));
   if (path.isAbsolute(dir)) return dir;
   return path.resolve(projectRoot, dir);
 }
