@@ -418,7 +418,16 @@ export function todoListToSessionUpdate(
   // session-scoped (types.gen.d.ts:3499 — "The client replaces the
   // entire plan with each update") so we do not embed it in the payload.
   void turnId;
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    // Return an empty plan update so ACP clients clear stale tasks.
+    return {
+      sessionId,
+      update: {
+        sessionUpdate: 'plan',
+        entries: [],
+      },
+    };
+  }
   const entries: PlanEntry[] = items.map((item) => ({
     content: item.title,
     priority: 'medium',
