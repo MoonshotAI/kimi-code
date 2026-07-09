@@ -86,16 +86,20 @@ describe('status panel report lines', () => {
         summary: null,
         limits: [],
         extraUsage: {
-          label: 'Extra Usage',
-          used: 250,
-          limit: 1000,
+          balanceCents: 15000,
+          totalCents: 20000,
+          monthlyChargeLimitEnabled: true,
+          monthlyChargeLimitCents: 20000,
+          monthlyUsedCents: 5000,
+          currency: 'USD',
         },
       },
     }).map(strip);
 
     const output = lines.join('\n');
     expect(output).toContain('Extra Usage');
-    expect(output).toContain('25% used');
+    expect(output).toContain('$50 / $200');
+    expect(output).toContain('Balance $150');
   });
 
   it('falls back to app state and shows status load errors as warnings', () => {

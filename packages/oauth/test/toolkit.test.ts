@@ -578,9 +578,12 @@ describe('KimiOAuthToolkit', () => {
           boosterWallet: {
             balance: {
               type: 'BOOSTER',
-              amount: '50',
-              amountLeft: '30',
+              amount: '20000000000',
+              amountLeft: '10000000000',
             },
+            monthlyChargeLimitEnabled: true,
+            monthlyChargeLimit: { currency: 'USD', priceInCents: '20000' },
+            monthlyUsed: { currency: 'USD', priceInCents: '5000' },
           },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -598,7 +601,14 @@ describe('KimiOAuthToolkit', () => {
       kind: 'ok',
       summary: { label: 'Weekly limit', used: 10, limit: 100 },
       limits: [],
-      extraUsage: { label: 'Extra Usage', used: 20, limit: 50 },
+      extraUsage: {
+        balanceCents: 10000,
+        totalCents: 20000,
+        monthlyChargeLimitEnabled: true,
+        monthlyChargeLimitCents: 20000,
+        monthlyUsedCents: 5000,
+        currency: 'USD',
+      },
     });
   });
 

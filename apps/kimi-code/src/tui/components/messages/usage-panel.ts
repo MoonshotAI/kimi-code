@@ -30,10 +30,19 @@ export interface ManagedUsageRow {
   readonly resetHint?: string;
 }
 
+export interface BoosterWalletInfo {
+  readonly balanceCents: number;
+  readonly totalCents: number;
+  readonly monthlyChargeLimitEnabled: boolean;
+  readonly monthlyChargeLimitCents: number;
+  readonly monthlyUsedCents: number;
+  readonly currency: string;
+}
+
 export interface ManagedUsageReport {
   readonly summary: ManagedUsageRow | null;
   readonly limits: readonly ManagedUsageRow[];
-  readonly extraUsage?: ManagedUsageRow | null;
+  readonly extraUsage?: BoosterWalletInfo | null;
 }
 
 export interface UsageReportOptions {
@@ -140,27 +149,55 @@ function severityColor(sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | '
   return sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 }
 
+const DOTTED_BAR = '·'.repeat(20);
+
+function currencySymbol(currency: string): string {
+  switch (currency.toUpperCase()) {
+    case 'CNY':
+      return '¥';
+    case 'USD':
+      return '$';
+    default:
+      return '';
+  }
+}
+
+function formatCurrency(cents: number, currency: string): string {
+  const symbol = currencySymbol(currency);
+  const main = cents / 100;
+  const formatted = cents % 100 === 0 ? String(main) : main.toFixed(2);
+  return symbol.length > 0 ? `${symbol}${formatted}` : `${formatted} ${currency}`;
+}
+
 export function buildExtraUsageSection(
-  extraUsage: ManagedUsageRow | undefined | null,
+  extraUsage: BoosterWalletInfo | undefined | null,
   accent: Colorize,
   value: Colorize,
   muted: Colorize,
 ): string[] {
   if (extraUsage === undefined || extraUsage === null) return [];
-  const used = Number(extraUsage.used);
-  const limit = Number(extraUsage.limit);
-  if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) {
-    return [];
+
+  const hasMonthlyLimit =
+    extraUsage.monthlyChargeLimitEnabled && extraUsage.monthlyChargeLimitCents > 0;
+
+  if (hasMonthlyLimit) {
+    const ratio = Math.max(
+      0,
+      Math.min(extraUsage.monthlyUsedCents / extraUsage.monthlyChargeLimitCents, 1),
+    );
+    const bar = renderProgressBar(ratio, 20);
+    const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratio)), bar);
+    const used = formatCurrency(extraUsage.monthlyUsedCents, extraUsage.currency);
+    const limit = formatCurrency(extraUsage.monthlyChargeLimitCents, extraUsage.currency);
+    const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
+    return [
+      accent('Extra Usage'),
+      `  ${barColoured}  ${value(`${used} / ${limit}`)}  ${muted(`·  Balance ${balance}`)}`,
+    ];
   }
-  const usedRatio = Math.max(0, Math.min(used / limit, 1));
-  const bar = renderProgressBar(usedRatio, 20);
-  const pct = `${Math.round(usedRatio * 100)}% used`;
-  const barColoured = currentTheme.fg(severityColor(ratioSeverity(usedRatio)), bar);
-  const resetStr = extraUsage.resetHint ? `  ${muted(extraUsage.resetHint)}` : '';
-  return [
-    accent('Extra Usage'),
-    `  ${barColoured}  ${value(pct.padEnd(6, ' '))}${resetStr}`,
-  ];
+
+  const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
+  return [accent('Extra Usage'), `  ${muted(DOTTED_BAR)}  ${value(`Balance ${balance}`)}`];
 }
 
 export function buildManagedUsageReportLines(options: ManagedUsageReportLineOptions): string[] {

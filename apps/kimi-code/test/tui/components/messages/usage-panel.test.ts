@@ -48,7 +48,7 @@ describe('UsagePanelComponent', () => {
     expect(lines.join('\n')).toContain('resets tomorrow');
   });
 
-  it('formats an extra usage section from booster wallet data', () => {
+  it('formats extra usage with a monthly limit', () => {
     const lines = buildUsageReportLines({
       sessionUsage: { byModel: {} },
       contextUsage: 0,
@@ -58,15 +58,46 @@ describe('UsagePanelComponent', () => {
         summary: null,
         limits: [],
         extraUsage: {
-          label: 'Extra Usage',
-          used: 500,
-          limit: 1000,
+          balanceCents: 10000,
+          totalCents: 20000,
+          monthlyChargeLimitEnabled: true,
+          monthlyChargeLimitCents: 20000,
+          monthlyUsedCents: 5000,
+          currency: 'USD',
         },
       },
     }).map(strip);
 
+    const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
-    expect(lines.join('\n')).toContain('50% used');
+    expect(output).toContain('$50 / $200');
+    expect(output).toContain('Balance $100');
+  });
+
+  it('formats extra usage without a monthly limit using a dotted bar', () => {
+    const lines = buildUsageReportLines({
+      sessionUsage: { byModel: {} },
+      contextUsage: 0,
+      contextTokens: 0,
+      maxContextTokens: 0,
+      managedUsage: {
+        summary: null,
+        limits: [],
+        extraUsage: {
+          balanceCents: 20000,
+          totalCents: 20000,
+          monthlyChargeLimitEnabled: false,
+          monthlyChargeLimitCents: 0,
+          monthlyUsedCents: 0,
+          currency: 'USD',
+        },
+      },
+    }).map(strip);
+
+    const output = lines.join('\n');
+    expect(lines).toContain('Extra Usage');
+    expect(output).toContain('Balance $200');
+    expect(output).toContain('····················');
   });
 
   it('omits the extra usage section when extraUsage is omitted or null', () => {
@@ -76,40 +107,14 @@ describe('UsagePanelComponent', () => {
         contextUsage: 0,
         contextTokens: 0,
         maxContextTokens: 0,
-        managedUsage: {
-          summary: null,
-          limits: [],
-          extraUsage: extraUsage,
-        },
+        managedUsage: { summary: null, limits: [], extraUsage },
       }).map(strip);
 
       expect(lines).not.toContain('Extra Usage');
     }
   });
 
-  it('omits the extra usage section when extraUsage.limit is not positive', () => {
-    for (const limit of [0, -10]) {
-      const lines = buildUsageReportLines({
-        sessionUsage: { byModel: {} },
-        contextUsage: 0,
-        contextTokens: 0,
-        maxContextTokens: 0,
-        managedUsage: {
-          summary: null,
-          limits: [],
-          extraUsage: {
-            label: 'Extra Usage',
-            used: 0,
-            limit,
-          },
-        },
-      }).map(strip);
-
-      expect(lines).not.toContain('Extra Usage');
-    }
-  });
-
-  it('coerces string used and limit values for the extra usage section', () => {
+  it('formats extra usage with CNY currency', () => {
     const lines = buildUsageReportLines({
       sessionUsage: { byModel: {} },
       contextUsage: 0,
@@ -119,66 +124,19 @@ describe('UsagePanelComponent', () => {
         summary: null,
         limits: [],
         extraUsage: {
-          label: 'Extra Usage',
-          used: '500' as unknown as number,
-          limit: '1000' as unknown as number,
+          balanceCents: 10000,
+          totalCents: 20000,
+          monthlyChargeLimitEnabled: true,
+          monthlyChargeLimitCents: 20000,
+          monthlyUsedCents: 5000,
+          currency: 'CNY',
         },
       },
     }).map(strip);
 
-    expect(lines).toContain('Extra Usage');
-    expect(lines.join('\n')).toContain('50% used');
-  });
-
-  it('clamps the extra usage ratio to the [0, 1] range', () => {
-    for (const [used, expectedPct] of [
-      [-100, '0% used'],
-      [2000, '100% used'],
-    ] as const) {
-      const lines = buildUsageReportLines({
-        sessionUsage: { byModel: {} },
-        contextUsage: 0,
-        contextTokens: 0,
-        maxContextTokens: 0,
-        managedUsage: {
-          summary: null,
-          limits: [],
-          extraUsage: {
-            label: 'Extra Usage',
-            used,
-            limit: 1000,
-          },
-        },
-      }).map(strip);
-
-      expect(lines).toContain('Extra Usage');
-      expect(lines.join('\n')).toContain(expectedPct);
-    }
-  });
-
-  it('omits the extra usage section when used or limit cannot be coerced to a finite number', () => {
-    const cases = [
-      { used: Number.NaN, limit: 1000 },
-      { used: 100, limit: Number.NaN },
-      { used: 'not-a-number' as unknown as number, limit: 1000 },
-      { used: 100, limit: 'not-a-number' as unknown as number },
-    ];
-
-    for (const extraUsage of cases) {
-      const lines = buildUsageReportLines({
-        sessionUsage: { byModel: {} },
-        contextUsage: 0,
-        contextTokens: 0,
-        maxContextTokens: 0,
-        managedUsage: {
-          summary: null,
-          limits: [],
-          extraUsage: { label: 'Extra Usage', ...extraUsage },
-        },
-      }).map(strip);
-
-      expect(lines).not.toContain('Extra Usage');
-    }
+    const output = lines.join('\n');
+    expect(output).toContain('¥50 / ¥200');
+    expect(output).toContain('Balance ¥100');
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {

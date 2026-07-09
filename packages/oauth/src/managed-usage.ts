@@ -45,22 +45,73 @@ export interface UsageRow {
   readonly resetHint?: string | undefined;
 }
 
+export interface BoosterWalletInfo {
+  /** Remaining balance in whole cents (from balance.amountLeft). */
+  readonly balanceCents: number;
+  /** Total balance in whole cents (from balance.amount). */
+  readonly totalCents: number;
+  /** Whether the user enabled a monthly spending cap. */
+  readonly monthlyChargeLimitEnabled: boolean;
+  /** Monthly spending cap in whole cents; 0 means unlimited. */
+  readonly monthlyChargeLimitCents: number;
+  /** Monthly spend so far in whole cents. */
+  readonly monthlyUsedCents: number;
+  /** ISO currency code, e.g. USD / CNY. */
+  readonly currency: string;
+}
+
 export interface ParsedManagedUsage {
   readonly summary: UsageRow | null;
   readonly limits: UsageRow[];
-  readonly extraUsage: UsageRow | null;
+  readonly extraUsage: BoosterWalletInfo | null;
 }
 
-function parseBoosterWallet(raw: unknown): UsageRow | null {
+const FIXED_POINT_CENTS = 1_000_000;
+
+function fixedPointToCents(value: number): number {
+  const cents = value / FIXED_POINT_CENTS;
+  if (cents > 0 && cents < 1) return 1;
+  return Math.round(cents);
+}
+
+function parseMoney(raw: unknown): { cents: number; currency: string } | null {
+  if (!isRecord(raw)) return null;
+  const cents = toInt(raw['priceInCents']);
+  if (cents === null) return null;
+  const currency = typeof raw['currency'] === 'string' ? raw['currency'] : '';
+  return { cents, currency };
+}
+
+function parseBoosterWallet(raw: unknown): BoosterWalletInfo | null {
   if (!isRecord(raw)) return null;
   const balance = raw['balance'];
   if (!isRecord(balance)) return null;
   if (balance['type'] !== 'BOOSTER') return null;
-  const amount = toInt(balance['amount']);
-  if (amount === null || amount <= 0) return null;
-  const amountLeft = toInt(balance['amountLeft']) ?? 0;
-  const used = Math.max(0, Math.min(amount - amountLeft, amount));
-  return { label: 'Extra Usage', used, limit: amount };
+  const amountRaw = toInt(balance['amount']);
+  if (amountRaw === null || amountRaw <= 0) return null;
+  const totalCents = fixedPointToCents(amountRaw);
+  const amountLeftRaw = toInt(balance['amountLeft']);
+  const balanceCents = amountLeftRaw !== null ? fixedPointToCents(amountLeftRaw) : 0;
+
+  const monthlyLimit = parseMoney(raw['monthlyChargeLimit']);
+  const monthlyUsed = parseMoney(raw['monthlyUsed']);
+  const monthlyChargeLimitEnabled = raw['monthlyChargeLimitEnabled'] === true;
+
+  const currency =
+    monthlyLimit && monthlyLimit.currency.length > 0
+      ? monthlyLimit.currency
+      : monthlyUsed && monthlyUsed.currency.length > 0
+        ? monthlyUsed.currency
+        : 'USD';
+
+  return {
+    balanceCents,
+    totalCents,
+    monthlyChargeLimitEnabled,
+    monthlyChargeLimitCents: monthlyLimit?.cents ?? 0,
+    monthlyUsedCents: monthlyUsed?.cents ?? 0,
+    currency,
+  };
 }
 
 export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {

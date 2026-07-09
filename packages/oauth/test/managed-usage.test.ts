@@ -82,40 +82,48 @@ describe('parseManagedUsagePayload', () => {
         id: 'wallet_1',
         balance: {
           type: 'BOOSTER',
-          amount: '1000',
-          amountLeft: '500',
-          unit: 'UNIT_CREDIT',
-          periodEnd: '2026-08-01T00:00:00Z',
+          amount: '20000000000',
+          amountLeft: '10000000000',
+          unit: 'UNIT_CURRENCY',
         },
+        monthlyChargeLimitEnabled: true,
+        monthlyChargeLimit: { currency: 'USD', priceInCents: '20000' },
+        monthlyUsed: { currency: 'USD', priceInCents: '5000' },
       },
     });
     expect(parsed.extraUsage).toEqual({
-      label: 'Extra Usage',
-      used: 500,
-      limit: 1000,
+      balanceCents: 10000,
+      totalCents: 20000,
+      monthlyChargeLimitEnabled: true,
+      monthlyChargeLimitCents: 20000,
+      monthlyUsedCents: 5000,
+      currency: 'USD',
     });
   });
 
-  it('clamps extra usage used to [0, amount]', () => {
-    const overused = parseManagedUsagePayload({
-      usage: { used: 1, limit: 10 },
-      boosterWallet: { balance: { type: 'BOOSTER', amount: '100', amountLeft: '200' } },
-    });
-    expect(overused.extraUsage).toEqual({ label: 'Extra Usage', used: 0, limit: 100 });
-
-    const negativeLeft = parseManagedUsagePayload({
-      usage: { used: 1, limit: 10 },
-      boosterWallet: { balance: { type: 'BOOSTER', amount: '100', amountLeft: '-50' } },
-    });
-    expect(negativeLeft.extraUsage).toEqual({ label: 'Extra Usage', used: 100, limit: 100 });
-  });
-
-  it('treats missing amountLeft as fully used', () => {
+  it('treats missing amountLeft as zero balance', () => {
     const parsed = parseManagedUsagePayload({
       usage: { used: 1, limit: 10 },
-      boosterWallet: { balance: { type: 'BOOSTER', amount: '100' } },
+      boosterWallet: { balance: { type: 'BOOSTER', amount: '20000000000' } },
     });
-    expect(parsed.extraUsage).toEqual({ label: 'Extra Usage', used: 100, limit: 100 });
+    expect(parsed.extraUsage).toMatchObject({ totalCents: 20000, balanceCents: 0 });
+  });
+
+  it('defaults monthly limit fields when absent', () => {
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10 },
+      boosterWallet: {
+        balance: { type: 'BOOSTER', amount: '20000000000', amountLeft: '20000000000' },
+      },
+    });
+    expect(parsed.extraUsage).toEqual({
+      balanceCents: 20000,
+      totalCents: 20000,
+      monthlyChargeLimitEnabled: false,
+      monthlyChargeLimitCents: 0,
+      monthlyUsedCents: 0,
+      currency: 'USD',
+    });
   });
 
   it('returns null extra usage when boosterWallet is missing or invalid', () => {
