@@ -7,7 +7,7 @@ import { PluginManager } from '#/plugin';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
-import { setConfiguredMaxImageEdgePx, setConfiguredReadImageByteBudget } from '#/tools/support/image-compress';
+import { ImageLimits } from '#/tools/support/image-limits';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
 import { resolveThinkingEffort } from '../agent/config/thinking';
@@ -169,6 +169,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private pluginsLoadError: Error | undefined;
   private readonly appVersion: string | undefined;
   private readonly experimentalFlags: FlagResolver;
+  /** Owner-scoped [image] limits; reload pushes the new config via setConfig. */
+  readonly imageLimits: ImageLimits;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -206,8 +208,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       FLAG_DEFINITIONS,
       this.config.experimental,
     );
-    setConfiguredMaxImageEdgePx(this.config.image?.maxEdgePx);
-    setConfiguredReadImageByteBudget(this.config.image?.readByteBudget);
+    this.imageLimits = new ImageLimits(process.env, this.config.image);
     this.sessionStore = new SessionStore(this.homeDir);
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
@@ -301,6 +302,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
+      imageLimits: this.imageLimits,
       telemetry: sessionTelemetry,
       pluginSessionStarts,
       pluginCommands,
@@ -436,6 +438,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
+      imageLimits: this.imageLimits,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
       pluginSessionStarts,
@@ -1082,8 +1085,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private setRuntimeConfig(config: KimiConfig): KimiConfig {
     this.config = config;
     this.experimentalFlags.setConfigOverrides(config.experimental);
-    setConfiguredMaxImageEdgePx(config.image?.maxEdgePx);
-    setConfiguredReadImageByteBudget(config.image?.readByteBudget);
+    this.imageLimits.setConfig(config.image);
     return this.config;
   }
 

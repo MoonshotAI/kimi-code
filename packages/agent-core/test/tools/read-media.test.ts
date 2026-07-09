@@ -13,7 +13,7 @@ import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
-import { setConfiguredReadImageByteBudget } from '../../src/tools/support/image-compress';
+import { ImageLimits } from '../../src/tools/support/image-limits';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import type { TelemetryClient } from '../../src/telemetry';
 import { createFakeKaos, FAKE_OS_ENV, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
@@ -90,6 +90,7 @@ function makeReadMediaTool(
     readonly readBytes?: Kaos['readBytes'] | undefined;
     readonly modelCapabilities?: ModelCapability | undefined;
     readonly telemetry?: TelemetryClient | undefined;
+    readonly imageLimits?: ImageLimits | undefined;
   } = {},
 ): ReadMediaFileTool {
   const kaos = createFakeKaos({
@@ -102,6 +103,7 @@ function makeReadMediaTool(
     input.modelCapabilities ?? capabilities(),
     undefined,
     input.telemetry,
+    input.imageLimits,
   );
 }
 
@@ -849,10 +851,11 @@ describe('ReadMediaFileTool', () => {
       );
     }
 
-    function toolFor(data: Buffer): ReadMediaFileTool {
+    function toolFor(data: Buffer, imageLimits?: ImageLimits): ReadMediaFileTool {
       return makeReadMediaTool({
         stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
         readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+        imageLimits,
       });
     }
 
@@ -1095,10 +1098,6 @@ describe('ReadMediaFileTool', () => {
   });
 
   describe('read byte budget', () => {
-    afterEach(() => {
-      setConfiguredReadImageByteBudget(undefined);
-    });
-
     /** High-entropy PNG whose bytes stay large after downscaling. */
     async function noisePng(width: number, height: number): Promise<Buffer> {
       const image = new Jimp({ width, height, color: 0x000000ff });
@@ -1117,10 +1116,11 @@ describe('ReadMediaFileTool', () => {
       return Buffer.from(await image.getBuffer('image/png'));
     }
 
-    function toolFor(data: Buffer): ReadMediaFileTool {
+    function toolFor(data: Buffer, imageLimits?: ImageLimits): ReadMediaFileTool {
       return makeReadMediaTool({
         stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
         readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
+        imageLimits,
       });
     }
 
@@ -1136,11 +1136,11 @@ describe('ReadMediaFileTool', () => {
       'compresses a default read to fit the configured read budget',
       async () => {
         const budget = 64 * 1024;
-        setConfiguredReadImageByteBudget(budget);
+        const limits = new ImageLimits(process.env, { readByteBudget: budget });
         const data = await noisePng(1200, 1200);
         expect(data.length).toBeGreaterThan(budget);
 
-        const result = await executeTool(toolFor(data), {
+        const result = await executeTool(toolFor(data, limits), {
           turnId: 't1',
           toolCallId: 'c_budget',
           args: { path: '/workspace/noisy.png' },
@@ -1155,11 +1155,11 @@ describe('ReadMediaFileTool', () => {
     );
 
     it('full_resolution ignores the read budget (per-image provider limit applies)', async () => {
-      setConfiguredReadImageByteBudget(64 * 1024);
+      const limits = new ImageLimits(process.env, { readByteBudget: 64 * 1024 });
       const data = await noisePng(600, 600);
       expect(data.length).toBeGreaterThan(64 * 1024);
 
-      const result = await executeTool(toolFor(data), {
+      const result = await executeTool(toolFor(data, limits), {
         turnId: 't1',
         toolCallId: 'c_fullres_budget',
         args: { path: '/workspace/noisy.png', full_resolution: true },
@@ -1175,10 +1175,10 @@ describe('ReadMediaFileTool', () => {
     it(
       'region reads ignore the read budget so detail readback stays full-fidelity',
       async () => {
-        setConfiguredReadImageByteBudget(16 * 1024);
+        const limits = new ImageLimits(process.env, { readByteBudget: 16 * 1024 });
         const data = await noisePng(800, 800);
 
-        const result = await executeTool(toolFor(data), {
+        const result = await executeTool(toolFor(data, limits), {
           turnId: 't1',
           toolCallId: 'c_region_budget',
           args: { path: '/workspace/noisy.png', region: { x: 0, y: 0, width: 400, height: 400 } },
@@ -1189,6 +1189,34 @@ describe('ReadMediaFileTool', () => {
         // A native-resolution noise crop is far larger than the read budget;
         // it must still be delivered under the provider-scale budget.
         expect(sentBytes(result).length).toBeGreaterThan(16 * 1024);
+      },
+      15_000,
+    );
+
+    it(
+      'two tools honor their own limits independently (no shared process state)',
+      async () => {
+        const data = await noisePng(1200, 1200);
+        const tight = toolFor(data, new ImageLimits(process.env, { readByteBudget: 48 * 1024 }));
+        const roomy = toolFor(data, new ImageLimits(process.env, { maxEdgePx: 1200 }));
+
+        const tightResult = await executeTool(tight, {
+          turnId: 't1',
+          toolCallId: 'c_iso_tight',
+          args: { path: '/workspace/noisy.png' },
+          signal,
+        });
+        const roomyResult = await executeTool(roomy, {
+          turnId: 't1',
+          toolCallId: 'c_iso_roomy',
+          args: { path: '/workspace/noisy.png' },
+          signal,
+        });
+
+        expect(sentBytes(tightResult).length).toBeLessThanOrEqual(48 * 1024);
+        // The roomy tool keeps the default 256 KB budget and its own edge cap:
+        // its output is far larger than the tight tool's budget.
+        expect(sentBytes(roomyResult).length).toBeGreaterThan(48 * 1024);
       },
       15_000,
     );

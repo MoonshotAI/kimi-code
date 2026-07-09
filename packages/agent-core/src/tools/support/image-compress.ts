@@ -49,36 +49,34 @@ export const MAX_IMAGE_EDGE_PX = 2000;
  */
 export const MAX_IMAGE_EDGE_ENV = 'KIMI_IMAGE_MAX_EDGE_PX';
 
-/**
- * The `[image] max_edge_px` value from config.toml, pushed by the config
- * owner (KimiCore) on load and reload. Processes that never load config
- * (TUI paste, ACP adapter) leave this unset and get env/built-in behavior.
- */
-let configuredMaxImageEdgePx: number | undefined;
-
-/** Push (or clear, with `undefined`) the config.toml longest-edge ceiling. */
-export function setConfiguredMaxImageEdgePx(value: number | undefined): void {
-  configuredMaxImageEdgePx = value !== undefined && isPositiveInt(value) ? value : undefined;
+/** The env override for the longest-edge ceiling, or undefined when unset/invalid. */
+export function maxImageEdgeFromEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number | undefined {
+  return positiveIntFromEnv(env, MAX_IMAGE_EDGE_ENV);
 }
 
 /**
- * Effective default longest-edge ceiling (px), for calls that pass no
- * explicit `maxEdge`. Precedence mirrors the experimental-flag resolver:
- * env var > config.toml > built-in {@link MAX_IMAGE_EDGE_PX}.
+ * Default longest-edge ceiling (px) for calls that pass no explicit
+ * `maxEdge` and have no config owner: env var > built-in
+ * {@link MAX_IMAGE_EDGE_PX}. Owned call sites (tools under an Agent, server
+ * ingestion under a core) resolve through their `ImageLimits` instance
+ * instead, which adds the owner's `[image]` config between the two.
  */
 export function resolveMaxImageEdgePx(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): number {
-  const raw = env[MAX_IMAGE_EDGE_ENV]?.trim();
-  if (raw !== undefined && raw.length > 0 && /^\d+$/.test(raw)) {
-    const parsed = Number(raw);
-    if (isPositiveInt(parsed)) return parsed;
-  }
-  return configuredMaxImageEdgePx ?? MAX_IMAGE_EDGE_PX;
+  return maxImageEdgeFromEnv(env) ?? MAX_IMAGE_EDGE_PX;
 }
 
-function isPositiveInt(value: number): boolean {
-  return Number.isInteger(value) && value > 0;
+function positiveIntFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  name: string,
+): number | undefined {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw.length === 0 || !/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 /**
@@ -107,28 +105,21 @@ export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
  */
 export const READ_IMAGE_BYTE_BUDGET_ENV = 'KIMI_IMAGE_READ_BYTE_BUDGET';
 
-/** The `[image] read_byte_budget` value from config.toml; see {@link setConfiguredMaxImageEdgePx}. */
-let configuredReadImageByteBudget: number | undefined;
-
-/** Push (or clear, with `undefined`) the config.toml read-image byte budget. */
-export function setConfiguredReadImageByteBudget(value: number | undefined): void {
-  configuredReadImageByteBudget = value !== undefined && isPositiveInt(value) ? value : undefined;
+/** The env override for the read-image byte budget, or undefined when unset/invalid. */
+export function readImageByteBudgetFromEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number | undefined {
+  return positiveIntFromEnv(env, READ_IMAGE_BYTE_BUDGET_ENV);
 }
 
 /**
- * Effective read-image byte budget. Precedence mirrors
- * {@link resolveMaxImageEdgePx}: env var > config.toml > built-in
- * {@link READ_IMAGE_BYTE_BUDGET}.
+ * Read-image byte budget for callers with no config owner; see
+ * {@link resolveMaxImageEdgePx} for the ownership model.
  */
 export function resolveReadImageByteBudget(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): number {
-  const raw = env[READ_IMAGE_BYTE_BUDGET_ENV]?.trim();
-  if (raw !== undefined && raw.length > 0 && /^\d+$/.test(raw)) {
-    const parsed = Number(raw);
-    if (isPositiveInt(parsed)) return parsed;
-  }
-  return configuredReadImageByteBudget ?? READ_IMAGE_BYTE_BUDGET;
+  return readImageByteBudgetFromEnv(env) ?? READ_IMAGE_BYTE_BUDGET;
 }
 
 /** Progressively lower JPEG quality until the payload fits the byte budget. */
@@ -182,7 +173,11 @@ const MAX_DECODE_BYTES = 64 * 1024 * 1024;
 const RECODABLE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 export interface CompressImageOptions {
-  /** Override the longest-edge ceiling (px); defaults to {@link resolveMaxImageEdgePx}. */
+  /**
+   * Override the longest-edge ceiling (px). When omitted, owned call sites
+   * pass their {@link ImageLimits.maxEdgePx}; ownerless ones fall back to
+   * {@link resolveMaxImageEdgePx} (env var, then built-in).
+   */
   readonly maxEdge?: number;
   /** Override the raw-byte budget. */
   readonly byteBudget?: number;
