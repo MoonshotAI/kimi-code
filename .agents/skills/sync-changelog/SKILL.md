@@ -148,8 +148,8 @@ The docs changelog uses five section types:
 | English section | Chinese section | Meaning |
 |---|---|---|
 | `### Features` | `### 新功能` | New user-facing functionality, such as a new command, flag, mode, or capability that did not exist before |
-| `### Bug Fixes` | `### 修复` | Fixes for behavior that was broken |
 | `### Polish` | `### 优化` | User-visible improvements to existing functionality, including UX adjustments, behavior tweaks, and performance improvements that are not fixes or new capabilities |
+| `### Bug Fixes` | `### 修复` | Fixes for behavior that was broken |
 | `### Refactors` | `### 重构` | Internal changes with no user-visible behavior change, including build, CI, tests, dependency cleanup, and internal renames |
 | `### Other` | `### 其他` | Anything that does not fit above, such as CDN/endpoint swaps and docs-related artifacts |
 
@@ -176,7 +176,7 @@ Keyword hints:
 Within each version, section order is:
 
 ```text
-Features → Bug Fixes → Polish → Refactors → Other
+Features → Polish → Bug Fixes → Refactors → Other
 ```
 
 Omit empty sections. Within each section, order entries by reader value, not upstream order:
