@@ -347,6 +347,29 @@ describe('plugins selector dialogs', () => {
     expect(out.split('Kimi WebBridge').length - 1).toBe(1);
   });
 
+  it('installs a Third-party entry whose id matches the pinned WebBridge', () => {
+    // A curated/custom marketplace entry can legitimately reuse the
+    // kimi-webbridge id; on the Third-party tab it must install normally, not
+    // open the WebBridge page (that shortcut is reserved for the pinned row).
+    const entries = [
+      {
+        id: 'kimi-webbridge',
+        tier: 'curated' as const,
+        displayName: 'Kimi WebBridge',
+        source: 'https://x/w.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ initialTab: 'third-party' });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+    const out = strip(renderRaw(panel));
+    expect(out).toContain('Kimi WebBridge  install');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'kimi-webbridge', source: 'https://x/w.zip' }),
+    });
+  });
+
   it('installs the selected Third-party entry on Enter', () => {
     const { panel, onSelect } = makePanel({ installed: [superpowers], initialTab: 'third-party' });
     panel.setMarketplace(marketplaceEntries, '/tmp/marketplace.json');

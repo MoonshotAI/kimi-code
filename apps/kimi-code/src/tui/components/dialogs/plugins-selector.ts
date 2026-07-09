@@ -42,8 +42,11 @@ const WEB_BRIDGE_ENTRY: PluginMarketplaceEntry = {
   description: 'Control your real browser from Kimi Code — navigate, click, type, and screenshot',
 };
 
-function isWebBridgeEntry(entry: PluginMarketplaceEntry): boolean {
-  return entry.id === WEB_BRIDGE_ENTRY.id;
+// Only the hardcoded pinned row should open the WebBridge install page. Match
+// by reference (not id) so a catalog entry on another tab that happens to
+// reuse the same id still installs normally instead of being hijacked.
+function isPinnedWebBridgeEntry(entry: PluginMarketplaceEntry): boolean {
+  return entry === WEB_BRIDGE_ENTRY;
 }
 
 interface PluginsOverviewItem {
@@ -428,8 +431,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private get officialCatalogEntries(): readonly PluginMarketplaceEntry[] {
+    // Dedupe by id (not reference): if the official catalog also lists
+    // kimi-webbridge, the pinned row already represents it, so suppress the
+    // catalog copy to avoid a duplicate row on the Official tab.
     return this.marketplaceEntries.filter(
-      (entry) => entry.tier === 'official' && !isWebBridgeEntry(entry),
+      (entry) => entry.tier === 'official' && entry.id !== WEB_BRIDGE_ENTRY.id,
     );
   }
 
@@ -544,7 +550,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     if (matchesKey(data, Key.enter)) {
       const entry = entries[this.selectedIndex];
       if (entry === undefined) return;
-      if (isWebBridgeEntry(entry)) {
+      if (isPinnedWebBridgeEntry(entry)) {
         this.opts.onSelect({ kind: 'open-url', url: WEB_BRIDGE_URL, label: entry.displayName });
         return;
       }
@@ -699,7 +705,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
-    const status = isWebBridgeEntry(entry)
+    const status = isPinnedWebBridgeEntry(entry)
       ? 'webpage'
       : marketplaceEntryStatus(entry, this.installedVersions);
     const line =
