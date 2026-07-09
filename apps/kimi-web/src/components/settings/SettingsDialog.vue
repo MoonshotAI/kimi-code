@@ -32,6 +32,8 @@ const props = defineProps<{
   notify: boolean;
   /** Browser-notification-on-question (needs answer) preference. */
   notifyQuestion: boolean;
+  /** Browser-notification-on-approval preference. */
+  notifyApproval: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
   notifyPermission?: string;
   /** Play-a-sound-on-completion preference. */
@@ -54,6 +56,7 @@ const emit = defineEmits<{
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
   setNotifyQuestion: [on: boolean];
+  setNotifyApproval: [on: boolean];
   setSound: [on: boolean];
   setConversationToc: [on: boolean];
   login: [];
@@ -415,6 +418,18 @@ function archiveTime(iso: string): string {
                 :disabled="notifyPermission === 'denied'"
                 :label="t('settings.notifyOnQuestion')"
                 @update:model-value="emit('setNotifyQuestion', $event)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.notifyOnApproval') }}
+                <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
+              </span>
+              <Switch
+                :model-value="notifyApproval"
+                :disabled="notifyPermission === 'denied'"
+                :label="t('settings.notifyOnApproval')"
+                @update:model-value="emit('setNotifyApproval', $event)"
               />
             </div>
             <div class="row">

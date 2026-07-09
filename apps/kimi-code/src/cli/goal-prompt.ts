@@ -46,13 +46,18 @@ const GOAL_PREFIX = /^\/goal(\s|$)/;
  * Parses a headless prompt into a goal-create request, or `undefined` when the
  * prompt is not a `/goal` create command (so the caller runs it as a normal
  * prompt). Non-create goal subcommands are not supported headless and fall
- * through to normal prompt handling.
+ * through to normal prompt handling. Malformed create commands throw instead of
+ * falling through, so validation errors are reported before anything is sent to
+ * the model.
  */
 export function parseHeadlessGoalCreate(prompt: string): HeadlessGoalCreate | undefined {
   const trimmed = prompt.trim();
   if (!GOAL_PREFIX.test(trimmed)) return undefined;
   const args = trimmed.replace(/^\/goal/, '').trim();
   const parsed = parseGoalCommand(args);
+  if (parsed.kind === 'error') {
+    throw new Error(parsed.message);
+  }
   if (parsed.kind !== 'create') return undefined;
   return { objective: parsed.objective, replace: parsed.replace };
 }

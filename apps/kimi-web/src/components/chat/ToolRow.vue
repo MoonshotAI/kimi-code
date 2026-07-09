@@ -55,10 +55,12 @@ function onHeadClick(): void {
   >
     <div class="bh" ref="bhEl" @click="onHeadClick">
       <span v-if="icon" class="gl" v-html="icon" aria-hidden="true" />
-      <span class="a">{{ name }}</span>
-      <Tooltip :text="arg">
-        <span v-if="arg" class="p">{{ arg }}</span>
-      </Tooltip>
+      <span class="bh-text">
+        <span class="a">{{ name }}</span>
+        <Tooltip :text="arg">
+          <span v-if="arg" class="p">{{ arg }}</span>
+        </Tooltip>
+      </span>
       <span class="rt">
         <span class="status" :class="status" role="status" :aria-label="status">
           <Icon v-if="status === 'ok'" name="check" size="sm" />
@@ -133,6 +135,13 @@ function onHeadClick(): void {
   color: var(--color-text-faint);
   flex: none;
 }
+.bh-text {
+  display: flex;
+  align-items: baseline;
+  gap: inherit;
+  flex: 1;
+  min-width: 0;
+}
 .a {
   color: var(--color-text);
   font-weight: var(--weight-medium);
@@ -140,6 +149,7 @@ function onHeadClick(): void {
 }
 .p {
   color: var(--color-text-muted);
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -160,6 +170,7 @@ function onHeadClick(): void {
 }
 :slotted(.chip) {
   color: var(--color-text-muted);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
   flex: none;
 }
@@ -196,7 +207,7 @@ function onHeadClick(): void {
 .bb-pad {
   min-height: 0;
   overflow: hidden;
-  padding: 0 11px 11px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
   background: var(--color-surface-sunken);
   border-top: 1px solid var(--color-line);
   color: var(--color-text);

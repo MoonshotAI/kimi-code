@@ -265,7 +265,7 @@ function onHeaderDragStart(event: DragEvent): void {
 
 .gh-name {
   font-size: var(--ui-font-size-lg);
-  font-weight: var(--weight-medium);
+  font-weight: 550;
   color: var(--color-text);
   flex: 1;
   min-width: 0;
@@ -276,6 +276,7 @@ function onHeaderDragStart(event: DragEvent): void {
 }
 .gh-path {
   color: var(--color-text-faint);
+  font-weight: 425;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -317,10 +318,10 @@ function onHeaderDragStart(event: DragEvent): void {
 .gh-more.open { color: var(--color-text); background: var(--color-line); }
 
 .group-empty {
-  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) + var(--sb-gutter) + var(--sb-gap));
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) - var(--space-2) + var(--sb-gutter) + var(--sb-gap));
   font-size: var(--text-xs);
   color: var(--color-text-faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
 }
 /* Show-more / show-less — a session-row-shaped compact list control (§07). The
    empty lead slot mirrors a session row's status gutter, so the label text lands
@@ -338,7 +339,7 @@ function onHeaderDragStart(event: DragEvent): void {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-text);
+  color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   text-align: left;

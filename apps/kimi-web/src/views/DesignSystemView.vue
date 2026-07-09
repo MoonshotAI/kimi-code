@@ -227,18 +227,19 @@ onUnmounted(() => {
             <p>All disabled controls use <code>opacity:.5</code> + <code>cursor:not-allowed</code> uniformly; do not separately grey out or recolor.</p>
 
             <h3 class="sub">Font families</h3>
-            <p>Kimi Web uses two font families: <b>--font-ui</b> (UI and body, system fonts first) and <b>--font-mono</b> (code and monospace). Components always reference the variables; do not hard-code font names.</p>
+            <p>Kimi Web uses two font families: <b>--font-ui</b> (UI and body, Inter first) and <b>--font-mono</b> (code and monospace). Components always reference the variables; do not hard-code font names.</p>
 
-            <h4 class="mini">--font-ui · UI &amp; body (system fonts first)</h4>
-            <p>Body and UI use each platform's native UI font — close to the system feel, comfortable for long text and CJK. Fallback chain:</p>
-            <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-ui</span></div><pre>--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI",
+            <h4 class="mini">--font-ui · UI &amp; body (Inter first)</h4>
+            <p>Body and UI use self-hosted Inter as the primary face. CJK and platform system UI fonts sit late in the fallback chain so Latin glyphs resolve to Inter while Chinese text can fall through to native CJK fonts:</p>
+            <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-ui</span></div><pre>--font-ui: "Inter Variable", "Inter", "Helvetica Neue", Arial,
       "PingFang SC", "Microsoft YaHei", "Noto Sans SC",
-      "Helvetica Neue", Arial, sans-serif,
+      -apple-system, BlinkMacSystemFont, "Segoe UI",
+      Roboto, Ubuntu, sans-serif,
       "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";</pre></div>
             <ul class="clean">
-              <li>System UI fonts first: SF Pro on macOS / iOS, Segoe UI on Windows.</li>
-              <li>CJK next: PingFang SC (macOS) / Microsoft YaHei (Windows) / Noto Sans SC (Linux).</li>
-              <li>Helvetica Neue / Arial / sans-serif as generic fallbacks; emoji fonts at the end.</li>
+              <li>Inter first: self-hosted Latin UI and body text, loaded through the optical-size normal and italic variable faces.</li>
+              <li>Western fallbacks next: Helvetica Neue / Arial for environments where Inter cannot load.</li>
+              <li>CJK and system UI fallbacks late: PingFang SC / Microsoft YaHei / Noto Sans SC, then platform UI fonts and emoji fonts.</li>
             </ul>
 
             <h4 class="mini">--font-mono · Code &amp; monospace</h4>
@@ -251,8 +252,8 @@ onUnmounted(() => {
               <thead><tr><th>Font</th><th>Source</th><th>Bundled</th><th>Usage</th></tr></thead>
               <tbody>
                 <tr><td class="tk">JetBrains Mono</td><td class="val">@fontsource-variable/jetbrains-mono</td><td class="val">✓ self-hosted</td><td>monospace / code (--font-mono)</td></tr>
-                <tr><td class="tk">Inter</td><td class="val">@fontsource-variable/inter</td><td class="val">✓ self-hosted</td><td>optional: page titles / brand wordmark (--font-display)</td></tr>
-                <tr><td class="tk">System UI / CJK fonts</td><td class="val">operating system</td><td class="val">—</td><td>body / UI (--font-ui), not bundled</td></tr>
+                <tr><td class="tk">Inter</td><td class="val">@fontsource-variable/inter/opsz.css + opsz-italic.css</td><td class="val">✓ self-hosted</td><td>UI / body / display (--font-ui, --font-display), wght 100-900, opsz 14-32, normal + italic</td></tr>
+                <tr><td class="tk">System UI / CJK fonts</td><td class="val">operating system</td><td class="val">—</td><td>late fallback for UI / body, not bundled</td></tr>
               </tbody>
             </table>
             <div class="callout good"><span class="ico">✓</span><div>
@@ -262,8 +263,9 @@ onUnmounted(() => {
             <h4 class="mini">Usage rules</h4>
             <ul class="clean check">
               <li>Components always use <code>var(--font-ui)</code> / <code>var(--font-mono)</code>; do not hard-code font names like <code>'Inter'</code> / <code>'JetBrains Mono'</code>.</li>
-              <li>Body / UI use <code>--font-ui</code> (system fonts first); code / monospace use <code>--font-mono</code> (JetBrains Mono).</li>
-              <li>Inter is used only for headings / brand scenarios that need a unified look (optional <code>--font-display</code>); it is no longer the body default.</li>
+              <li>Body / UI use <code>--font-ui</code> (Inter first); code / monospace use <code>--font-mono</code> (JetBrains Mono).</li>
+              <li>Inter is loaded from the complete optical-size variable faces, including normal and italic styles; <code>font-optical-sizing: auto</code> is enabled globally.</li>
+              <li>CJK and platform system UI fonts stay late in the <code>--font-ui</code> fallback chain, after Inter and Western fallbacks.</li>
             </ul>
 
             <h3 class="sub">Type scale &amp; weight</h3>
@@ -281,7 +283,7 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
-                <tr><td class="tk">--font-ui</td><td class="val">-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"…</td><td>UI &amp; body (system fonts first)</td></tr>
+                <tr><td class="tk">--font-ui</td><td class="val">"Inter Variable", "Inter", "Helvetica Neue", Arial…</td><td>UI &amp; body (Inter first)</td></tr>
                 <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>code, tool names, line numbers, diffs</td></tr>
                 <tr><td class="tk">--base-ui-font-size</td><td class="val">14px user preference</td><td>root setting that drives UI, reading body, and sidebar font sizes</td></tr>
                 <tr><td class="tk">--content-font-size</td><td class="val">calc(base + 1px)</td><td>chat Markdown, message bubbles, composer</td></tr>

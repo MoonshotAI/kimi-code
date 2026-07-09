@@ -206,9 +206,8 @@ summary {
   --content-font-size: calc(var(--base-ui-font-size) + 1px);
   --sidebar-ui-font-size: calc(var(--base-ui-font-size) + 1px);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  /* Body/UI font follows the design-system canonical token (system UI font
-     first; Inter intentionally NOT in the body chain — it stays reserved for
-     --font-display headings). Mirrors --font-ui so the two can never drift. */
+  /* Body/UI font follows the design-system canonical token. Mirrors --font-ui
+     so the legacy alias can never drift from the current text face. */
   --sans: var(--font-ui);
   color-scheme: light dark;
 }
@@ -454,14 +453,15 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --duration-slow: 260ms;
 
   /* -- type families ------------------------------------------------------- */
-  /* UI/body use the platform's native UI font first (design-system §02);
-     Inter is intentionally NOT in this chain — it is reserved for
-     --font-display (optional headings / brand wordmarks) below. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans SC",
-    Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji",
-    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-display: "Inter Variable", "Inter", var(--font-ui);
+  /* UI/body use self-hosted Inter first. CJK and platform system UI families
+     stay late in the fallback chain so Latin glyphs resolve to Inter while
+     Chinese text can still fall through to native CJK fonts. */
+  --font-ui: "Inter Variable", "Inter", "Helvetica Neue", Arial,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+    "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Ubuntu, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-display: var(--font-ui);
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
     "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -643,6 +643,7 @@ body {
   font-size: var(--ui-font-size);
   font-weight: 400;
   line-height: 1.6;
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: auto;
