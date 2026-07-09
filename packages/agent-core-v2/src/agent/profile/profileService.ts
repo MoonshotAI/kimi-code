@@ -200,11 +200,15 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   setThinking(level: string): void {
-    const wasEnabled = this.thinkingLevel !== 'off';
+    const previousEffort = this.thinkingLevel;
     this.update({ thinkingLevel: level });
-    const enabled = this.thinkingLevel !== 'off';
-    if (enabled !== wasEnabled) {
-      this.telemetry.track('thinking_toggle', { enabled });
+    const effort = this.thinkingLevel;
+    if (effort !== previousEffort) {
+      this.telemetry.track('thinking_toggle', {
+        enabled: effort !== 'off',
+        effort,
+        from: previousEffort,
+      });
     }
   }
 

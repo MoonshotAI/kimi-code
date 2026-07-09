@@ -8,8 +8,10 @@ import {
   createTestAgent,
   llmGenerateServices,
   modelProviderOptionServices,
+  telemetryServices,
   type TestAgentContext,
 } from '../harness';
+import { recordingTelemetry, type TelemetryRecord } from '../telemetry/stubs';
 
 type TestKimiConfig = ReturnType<Parameters<typeof configServices>[0]>;
 type GenerateFn = Parameters<typeof llmGenerateServices>[0];
@@ -24,15 +26,18 @@ describe('ConfigState model capabilities', () => {
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
+  let records: TelemetryRecord[];
 
   beforeEach(() => {
     kimiConfig = {
       providers: {},
     };
     generate = defaultGenerate;
+    records = [];
     ctx = createTestAgent(
       configServices(() => kimiConfig),
       llmGenerateServices((...args) => generate(...args)),
+      telemetryServices(recordingTelemetry(records)),
     );
     profile = ctx.get(IAgentProfileService);
     requester = ctx.get(IAgentLLMRequesterService);
@@ -75,6 +80,35 @@ describe('ConfigState model capabilities', () => {
       thinking: true,
       tool_use: true,
       max_context_tokens: 1_000_000,
+    });
+  });
+
+  it('tracks thinking_toggle with the effort payload when effort changes', () => {
+    kimiConfig = {
+      providers: {
+        kimi: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'kimi',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
+    profile.setThinking('off');
+    records.length = 0;
+
+    profile.setThinking('low');
+
+    expect(records).toContainEqual({
+      event: 'thinking_toggle',
+      properties: { enabled: true, effort: 'low', from: 'off' },
     });
   });
 

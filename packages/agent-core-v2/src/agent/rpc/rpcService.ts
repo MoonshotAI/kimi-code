@@ -141,7 +141,9 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   undoHistory(payload: UndoHistoryPayload): number {
-    return this.promptService.undo(payload.count);
+    const undone = this.promptService.undo(payload.count);
+    this.telemetry.track('conversation_undo', { count: payload.count });
+    return undone;
   }
 
   setThinking(payload: SetThinkingPayload): void {
