@@ -129,6 +129,11 @@ function formatMs(ms: number): string {
 .goal-strip :deep(.ui-card__foot) {
   padding: var(--composer-send-inset);
 }
+.goal-strip :deep(.ui-card__head),
+.goal-strip :deep(.ui-card__body),
+.goal-strip :deep(.ui-card__foot) {
+  padding-left: calc((var(--composer-send-inset) + var(--composer-send-size)) / 2);
+}
 /* When collapsed the body/foot slots are not rendered; collapse the (always-
    rendered) Card body and drop the head border so the strip is a single row. */
 .goal-strip:not(.expanded) :deep(.ui-card__body) { display: none; }
