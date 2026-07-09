@@ -3,6 +3,7 @@ export default {
   send: '发送 ↵',
   queueLabel: '队列',
   placeholderRunning: '输入会加入队列 · Ctrl+S 立即插入运行中的回合',
+  starting: '正在发送…',
   queueAutoDrain: '当前回合结束后自动逐条发送',
   queueNext: '下一条',
   queueDragTitle: '拖拽排序',
