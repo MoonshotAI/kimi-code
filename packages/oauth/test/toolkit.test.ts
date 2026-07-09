@@ -577,7 +577,7 @@ describe('KimiOAuthToolkit', () => {
           limits: [],
           boosterWallet: {
             balance: {
-              type: 'BALANCE_BOOSTER',
+              type: 'BOOSTER',
               amount: '50',
               amountLeft: '30',
             },

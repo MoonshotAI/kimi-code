@@ -81,7 +81,7 @@ describe('parseManagedUsagePayload', () => {
       boosterWallet: {
         id: 'wallet_1',
         balance: {
-          type: 'BALANCE_BOOSTER',
+          type: 'BOOSTER',
           amount: '1000',
           amountLeft: '500',
           unit: 'UNIT_CREDIT',
@@ -100,13 +100,13 @@ describe('parseManagedUsagePayload', () => {
   it('clamps extra usage used to [0, amount]', () => {
     const overused = parseManagedUsagePayload({
       usage: { used: 1, limit: 10 },
-      boosterWallet: { balance: { type: 'BALANCE_BOOSTER', amount: '100', amountLeft: '200' } },
+      boosterWallet: { balance: { type: 'BOOSTER', amount: '100', amountLeft: '200' } },
     });
     expect(overused.extraUsage).toEqual({ label: 'Extra Usage', used: 0, limit: 100 });
 
     const negativeLeft = parseManagedUsagePayload({
       usage: { used: 1, limit: 10 },
-      boosterWallet: { balance: { type: 'BALANCE_BOOSTER', amount: '100', amountLeft: '-50' } },
+      boosterWallet: { balance: { type: 'BOOSTER', amount: '100', amountLeft: '-50' } },
     });
     expect(negativeLeft.extraUsage).toEqual({ label: 'Extra Usage', used: 100, limit: 100 });
   });
@@ -122,7 +122,7 @@ describe('parseManagedUsagePayload', () => {
     expect(
       parseManagedUsagePayload({
         usage: { used: 1, limit: 10 },
-        boosterWallet: { balance: { type: 'BALANCE_BOOSTER', amount: '0', amountLeft: '0' } },
+        boosterWallet: { balance: { type: 'BOOSTER', amount: '0', amountLeft: '0' } },
       }).extraUsage,
     ).toBeNull();
   });

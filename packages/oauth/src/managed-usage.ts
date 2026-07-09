@@ -55,7 +55,7 @@ function parseBoosterWallet(raw: unknown): UsageRow | null {
   if (!isRecord(raw)) return null;
   const balance = raw['balance'];
   if (!isRecord(balance)) return null;
-  if (balance['type'] !== 'BALANCE_BOOSTER') return null;
+  if (balance['type'] !== 'BOOSTER') return null;
   const amount = toInt(balance['amount']);
   if (amount === null || amount <= 0) return null;
   const amountLeft = toInt(balance['amountLeft']) ?? 0;
@@ -239,7 +239,6 @@ export async function fetchManagedUsage(
       return { kind: 'error', status, message: await readApiErrorMessage(res, hint) };
     }
     const json: unknown = await res.json();
-    console.error('[managed-usage] /usages response:', JSON.stringify(json, null, 2));
     return { kind: 'ok', parsed: parseManagedUsagePayload(json) };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
