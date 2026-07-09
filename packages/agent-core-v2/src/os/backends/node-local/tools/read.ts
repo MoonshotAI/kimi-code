@@ -1,11 +1,12 @@
 /**
  * `fileTools` domain — ReadTool, the model's UTF-8 text file reader.
  *
- * Renders a text file as `<line-number>\t<content>` per line and appends a
- * `<system>…</system>` status block summarizing how much was read (line and
- * byte counts, truncation, and line-ending notes). Pure CRLF files are
- * displayed with LF line endings; mixed or lone carriage returns are shown as
- * `\r` so the model can reproduce them exactly.
+ * Renders a text file as `<line-number>\t<content>` per line as `output`, and
+ * rides a `<system>…</system>` status block on the `note` side channel
+ * (rendered to the model at projection time, never to UIs) summarizing how
+ * much was read (line and byte counts, truncation, and line-ending notes).
+ * Pure CRLF files are displayed with LF line endings; mixed or lone carriage
+ * returns are shown as `\r` so the model can reproduce them exactly.
  *
  * Binary, non-UTF-8, NUL-containing, image and video files are refused;
  * images/videos are redirected to ReadMediaFile. Supports one-based
@@ -468,15 +469,13 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   }
 
   private finishReadResult(input: FinishReadResultInput): ExecutableToolResult {
+    // The status line rides the `note` side channel (model-only); `output` is
+    // the rendered file content and nothing else. The `<system>` wrapping is
+    // this tool's wording choice.
     return {
-      output: this.finishOutput(input.renderedLines, this.finishMessage(input)),
+      output: input.renderedLines.join('\n'),
+      note: `<system>${this.finishMessage(input)}</system>`,
     };
-  }
-
-  private finishOutput(renderedLines: readonly string[], message: string): string {
-    const rendered = renderedLines.join('\n');
-    const status = `<system>${message}</system>`;
-    return rendered.length > 0 ? `${rendered}\n${status}` : status;
   }
 
   private finishMessage(input: FinishReadResultInput): string {
