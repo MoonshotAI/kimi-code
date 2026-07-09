@@ -61,14 +61,12 @@ describe('UsagePanelComponent', () => {
           label: 'Extra Usage',
           used: 500,
           limit: 1000,
-          resetHint: 'resets in 23d',
         },
       },
     }).map(strip);
 
     expect(lines).toContain('Extra Usage');
     expect(lines.join('\n')).toContain('50% used');
-    expect(lines.join('\n')).toContain('resets in 23d');
   });
 
   it('omits the extra usage section when extraUsage is omitted or null', () => {
@@ -124,14 +122,12 @@ describe('UsagePanelComponent', () => {
           label: 'Extra Usage',
           used: '500' as unknown as number,
           limit: '1000' as unknown as number,
-          resetHint: 'resets in 23d',
         },
       },
     }).map(strip);
 
     expect(lines).toContain('Extra Usage');
     expect(lines.join('\n')).toContain('50% used');
-    expect(lines.join('\n')).toContain('resets in 23d');
   });
 
   it('clamps the extra usage ratio to the [0, 1] range', () => {

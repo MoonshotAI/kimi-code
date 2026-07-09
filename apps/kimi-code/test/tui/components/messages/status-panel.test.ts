@@ -89,7 +89,6 @@ describe('status panel report lines', () => {
           label: 'Extra Usage',
           used: 250,
           limit: 1000,
-          resetHint: 'resets in 10d',
         },
       },
     }).map(strip);
@@ -97,7 +96,6 @@ describe('status panel report lines', () => {
     const output = lines.join('\n');
     expect(output).toContain('Extra Usage');
     expect(output).toContain('25% used');
-    expect(output).toContain('resets in 10d');
   });
 
   it('falls back to app state and shows status load errors as warnings', () => {

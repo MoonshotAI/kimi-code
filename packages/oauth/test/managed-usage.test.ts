@@ -93,7 +93,6 @@ describe('parseManagedUsagePayload', () => {
       label: 'Extra Usage',
       used: 500,
       limit: 1000,
-      resetHint: expect.stringMatching(/resets in/),
     });
   });
 

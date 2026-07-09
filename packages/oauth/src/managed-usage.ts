@@ -60,8 +60,7 @@ function parseBoosterWallet(raw: unknown): UsageRow | null {
   if (amount === null || amount <= 0) return null;
   const amountLeft = toInt(balance['amountLeft']) ?? 0;
   const used = Math.max(0, Math.min(amount - amountLeft, amount));
-  const resetHint = resetHintFrom(balance);
-  return { label: 'Extra Usage', used, limit: amount, resetHint };
+  return { label: 'Extra Usage', used, limit: amount };
 }
 
 export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
@@ -141,7 +140,7 @@ function limitLabel(
 }
 
 function resetHintFrom(raw: Record<string, unknown>): string | undefined {
-  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime', 'period_end', 'periodEnd']) {
+  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime']) {
     const v = raw[key];
     if (typeof v === 'string' && v.length > 0) {
       return formatResetTime(v);
