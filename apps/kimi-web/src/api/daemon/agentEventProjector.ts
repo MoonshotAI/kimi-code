@@ -125,21 +125,6 @@ interface SessionState {
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
-
-  // Goal lifecycle. While a goal is `active`, the core keeps `activeTurn` set
-  // across continuation turns (driveGoal), so a turn.ended in that window does
-  // NOT mean the session is idle. Track it here so turn.ended can keep the
-  // session 'running' instead of projecting a false 'idle' — which would let
-  // onSessionIdle drain the local queue into a still-busy core and trip
-  // `turn.agent_busy`.
-  goalActive: boolean;
-
-  // True after a turn.ended was projected as 'running' because the goal was
-  // still active — an 'idle' projection is then owed once the goal settles.
-  // A goal can flip to blocked/paused AFTER that turn.ended (driveGoal marks
-  // it in the inter-turn gap), and no further turn.ended will arrive to carry
-  // the idle. goal.updated is where the debt gets paid back.
-  idleOwed: boolean;
 }
 
 function createSessionState(): SessionState {
@@ -160,8 +145,6 @@ function createSessionState(): SessionState {
     model: '',
     messages: [],
     subagentMeta: new Map(),
-    goalActive: false,
-    idleOwed: false,
   };
 }
 
@@ -727,14 +710,6 @@ export function createAgentProjector(): AgentProjector {
         // Fresh turn → fresh per-turn stream offsets.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
-        // We are mid-turn again, no longer in an inter-turn gap: an idle owed
-        // from the previous boundary must NOT be paid by a goal.updated that
-        // lands during this turn (e.g. UpdateGoal('complete') mid-turn) — its
-        // own turn.ended carries the idle instead, with goalActive already
-        // false. Without this clear, a multi-turn goal would synthesize idle
-        // while the core still runs this turn, and onSessionIdle would drain
-        // queued prompts into it (turn.agent_busy).
-        s.idleOwed = false;
 
         out.push({
           type: 'sessionStatusChanged',
@@ -998,21 +973,8 @@ export function createAgentProjector(): AgentProjector {
         const usageSnapshot = buildUsageSnapshot(s);
         out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
 
-        // While a goal is still active, this turn.ended is just the boundary
-        // between two goal-driven continuation turns — the core kept
-        // `activeTurn` set, so the session is NOT idle. Projecting 'idle' here
-        // would fire onSessionIdle, drain the local queue, and hit the still-
-        // busy core with `turn.agent_busy`. Keep 'running' until the goal
-        // actually completes (goal.updated clears s.goalActive) — and remember
-        // the owed 'idle' in case the goal settles in the inter-turn gap,
-        // where no further turn.ended will carry it.
         const newStatus =
-          reason === 'cancelled' || reason === 'failed' || reason === 'filtered'
-            ? 'aborted'
-            : s.goalActive
-              ? 'running'
-              : 'idle';
-        s.idleOwed = newStatus === 'running';
+          reason === 'cancelled' || reason === 'failed' || reason === 'filtered' ? 'aborted' : 'idle';
         out.push({
           type: 'sessionStatusChanged',
           sessionId,
@@ -1247,27 +1209,6 @@ export function createAgentProjector(): AgentProjector {
 
       case 'goal.updated': {
         const goal = mapGoalSnapshot(p?.snapshot ?? null);
-        // Mirror goal-active into per-session projector state so a later
-        // turn.ended knows whether the core is merely between continuation
-        // turns (goal still driving) or truly idle.
-        const wasActive = s.goalActive;
-        s.goalActive = goal?.status === 'active';
-        // The goal just settled (blocked/paused/completed) in an inter-turn
-        // gap after a turn.ended was projected as 'running'. No further
-        // turn.ended will arrive, so emit the owed 'idle' here — otherwise
-        // the session stays 'running' forever and in-flight / sending /
-        // queued state never flushes. A goal settling mid-turn takes the
-        // normal path instead: its upcoming turn.ended projects idle itself
-        // (goalActive already false there), and idleOwed is not set.
-        if (wasActive && !s.goalActive && s.idleOwed) {
-          s.idleOwed = false;
-          out.push({
-            type: 'sessionStatusChanged',
-            sessionId,
-            status: 'idle',
-            previousStatus: 'running',
-          });
-        }
         out.push({
           type: 'goalUpdated',
           sessionId,
