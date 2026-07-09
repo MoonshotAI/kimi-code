@@ -97,6 +97,7 @@ const mocks = vi.hoisted(() => {
         handler(mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
       }
     }),
+    waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
   };
   return {
     session,
@@ -164,6 +165,7 @@ describe('runPrompt headless goal mode', () => {
     mocks.experimentalFeatures = [{ id: 'micro_compaction', enabled: true }];
     mocks.sessions = [];
     mocks.session.createGoal.mockClear();
+    mocks.session.waitForBackgroundTasksOnPrint.mockClear();
     mocks.session.getStatus.mockResolvedValue({ permission: 'auto', model: 'k2' } as never);
     mocks.session.getGoal.mockResolvedValue({ goal: snapshot({ status: 'complete' }) } as never);
   });
@@ -241,6 +243,50 @@ describe('runPrompt headless goal mode', () => {
     });
     expect(mocks.session.createGoal).toHaveBeenCalled();
     expect(mocks.session.prompt).toHaveBeenCalledWith('Ship feature X');
+  });
+
+  it('keeps listening across continuation turns until the goal is terminal', async () => {
+    const active = snapshot({ status: 'active', turnsUsed: 1, tokensUsed: 80 });
+    const completed = snapshot({ status: 'complete', turnsUsed: 2, tokensUsed: 160 });
+    mocks.session.getGoal.mockResolvedValueOnce({ goal: active } as never);
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: '1' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      }
+      await Promise.resolve();
+      for (const handler of mocks.eventHandlers) {
+        handler(
+          mocks.mainEvent({
+            type: 'turn.started',
+            turnId: 2,
+            origin: { kind: 'system_trigger', name: 'goal_continuation' },
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 2, delta: '2' }));
+        handler(
+          mocks.mainEvent({
+            type: 'goal.updated',
+            snapshot: completed,
+            change: { kind: 'completion', status: 'complete' },
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), 'test', {
+      stdout,
+      stderr,
+      process: { once: () => {}, off: () => {}, exit: () => undefined as never },
+    });
+
+    expect(stdout.text()).toBe('• 1\n\n• 2\n\n');
+    expect(stderr.text()).toContain('Goal [complete]');
+    expect(stderr.text()).toContain('turns: 2');
   });
 
   it('validates the resumed session model before creating a headless goal', async () => {
