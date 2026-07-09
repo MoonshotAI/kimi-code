@@ -45,6 +45,7 @@ export class WorkspaceFileSkillSource implements IWorkspaceFileSkillSource {
     if ((this.runtimeOptions.explicitDirs?.length ?? 0) > 0) {
       return { skills: [] };
     }
+    await this.config.ready;
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     return this.discovery.discover(await projectRoots(this.workspace.workDir, { mergeAllAvailableSkills }));

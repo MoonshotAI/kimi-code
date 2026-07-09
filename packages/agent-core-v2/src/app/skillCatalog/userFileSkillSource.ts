@@ -45,6 +45,7 @@ export class UserFileSkillSource implements IUserFileSkillSource {
     if ((this.runtimeOptions.explicitDirs?.length ?? 0) > 0) {
       return { skills: [] };
     }
+    await this.config.ready;
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     return this.discovery.discover(

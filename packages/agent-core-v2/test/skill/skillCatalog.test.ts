@@ -228,6 +228,54 @@ describe('SessionSkillCatalogService', () => {
     host.dispose();
   });
 
+  it('waits for config ready before loading extra skill dirs', async () => {
+    let markReady!: () => void;
+    let ready = false;
+    const configReady = new Promise<void>((resolve) => {
+      markReady = () => {
+        ready = true;
+        resolve();
+      };
+    });
+    const config = {
+      ...configStub(),
+      ready: configReady,
+      get: (domain: string) => {
+        if (domain === EXTRA_SKILL_DIRS_SECTION) return ready ? ['/'] : [];
+        if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return true;
+        return undefined;
+      },
+    } as unknown as IConfigService;
+    const store = new InMemorySkillDiscovery();
+    store.setExtraSkills([stubSkill('extra-only', { description: 'from extra', source: 'extra' })]);
+    const runtimeOptions = {
+      _serviceBrand: undefined,
+    } as unknown as ISkillCatalogRuntimeOptions;
+    const { stub: ws } = workspaceStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, store),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, config),
+      stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
+      stubPair(IPluginService, pluginStub()),
+    ]);
+    const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
+
+    const catalog = session.accessor.get(ISessionSkillCatalog);
+    let settled = false;
+    const loading = catalog.load().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+
+    markReady();
+    await loading;
+
+    expect(catalog.catalog.getSkill('extra-only')?.description).toBe('from extra');
+    host.dispose();
+  });
+
   it('reload replaces project skills when the workDir changes', async () => {
     const store = new InMemorySkillDiscovery();
     store.setUserSkills([stubSkill('global-only')]);
