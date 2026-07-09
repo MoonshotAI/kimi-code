@@ -363,6 +363,7 @@ mod tests {
         let r = write_chunk("hello", 100, 50, None, false);
         assert_eq!(r.output, TRUNCATION_MARKER);
         assert!(r.truncated);
+        assert_eq!(r.chars_written, 0);
         assert_eq!(r.new_nchars, 100 + TRUNCATION_MARKER.len());
     }
 

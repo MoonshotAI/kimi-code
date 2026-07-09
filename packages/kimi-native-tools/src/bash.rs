@@ -57,7 +57,7 @@ pub fn bash_exec(config: &BashConfig) -> BashResult {
         .unwrap_or(DEFAULT_TIMEOUT_S)
         .min(MAX_TIMEOUT_S);
 
-    let (shell, shell_arg) = detect_shell();
+    let (shell, shell_arg) = detect_shell_for(&config.command);
 
     let mut cmd = Command::new(&shell);
     cmd.arg(&shell_arg);
@@ -182,6 +182,26 @@ fn truncate_output(s: &str, max_bytes: usize) -> String {
     }
 }
 
+/// Detect the shell to use for a given command.
+///
+/// On Windows, .bat/.cmd files must be run via `cmd.exe` because Git Bash
+/// does not recognize the `.bat` extension. For all other commands, Git Bash
+/// is preferred (when available) for POSIX compatibility.
+fn detect_shell_for(command: &str) -> (String, String) {
+    #[cfg(unix)]
+    {
+        let _ = command;
+        ("/bin/bash".to_string(), "-c".to_string())
+    }
+    #[cfg(windows)]
+    {
+        if is_bat_command(command) {
+            return ("cmd.exe".to_string(), "/c".to_string());
+        }
+        detect_shell()
+    }
+}
+
 #[cfg(unix)]
 fn detect_shell() -> (String, String) {
     ("/bin/bash".to_string(), "-c".to_string())
@@ -195,6 +215,25 @@ fn detect_shell() -> (String, String) {
     }
     // Fall back to cmd.exe.
     ("cmd.exe".to_string(), "/c".to_string())
+}
+
+/// Check if the command is invoking a .bat or .cmd file.
+///
+/// Extracts the first token of the command (before any whitespace or shell
+/// operator) and checks if it ends with `.bat` or `.cmd` (case-insensitive).
+#[cfg(windows)]
+fn is_bat_command(command: &str) -> bool {
+    let trimmed = command.trim_start();
+    // Find the end of the first token (whitespace or shell operator).
+    let first_token: &str = match trimmed.find(|c: char| c.is_whitespace() || c == '|' || c == '&' || c == ';' || c == '>' || c == '<') {
+        Some(idx) => &trimmed[..idx],
+        None => trimmed,
+    };
+    if first_token.is_empty() {
+        return false;
+    }
+    let lower = first_token.to_ascii_lowercase();
+    lower.ends_with(".bat") || lower.ends_with(".cmd")
 }
 
 #[cfg(windows)]
@@ -320,5 +359,20 @@ mod tests {
         });
         // Empty command should succeed (bash -c '' is valid).
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_is_bat_command() {
+        assert!(is_bat_command("test.bat"));
+        assert!(is_bat_command("build.cmd"));
+        assert!(is_bat_command("TEST.BAT"));
+        assert!(is_bat_command("test.bat arg1 arg2"));
+        assert!(is_bat_command("./scripts/run.bat"));
+        assert!(is_bat_command("C:\\path\\to\\script.bat"));
+        assert!(!is_bat_command("echo hello"));
+        assert!(!is_bat_command("bash script.sh"));
+        assert!(!is_bat_command(""));
+        assert!(!is_bat_command("test.bat.txt"));
     }
 }
