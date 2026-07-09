@@ -782,7 +782,7 @@ onBeforeUnmount(() => {
      - row titles start at --sb-pad-x + --sb-gutter + --sb-gap. */
   --sb-inset: var(--space-3);  /* row box inset from the sidebar edge */
   --sb-pad-x: var(--space-5);  /* content start x (inset + row padding) */
-  --sb-gutter: 20px;           /* leading icon slot (16px folder icon + 4px slack) */
+  --sb-gutter: 16px;           /* leading icon slot (matches the 16px folder icon, so the session title aligns under the workspace name) */
   --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
   /* Row hover wash — global --color-hover (lighter than the selected fill;
      both translucent, so they sit on any surface). */
@@ -911,15 +911,14 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex: 1;
   min-width: 0;
-  /* Padding included (border-box) — matches the 34px sidebar-wide row height. */
-  min-height: 34px;
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset));
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
   cursor: pointer;
   text-align: left;
 }
@@ -953,13 +952,11 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  /* Padding included (border-box) — matches the 34px sidebar-wide row height. */
-  min-height: 34px;
   width: 100%;
   margin: 0;
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset));
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font: inherit;
@@ -982,6 +979,7 @@ onBeforeUnmount(() => {
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1022,15 +1020,14 @@ onBeforeUnmount(() => {
   gap: 12px;
   width: 100%;
   min-width: 0;
-  /* Padding included (border-box) — matches the 34px sidebar-wide row height. */
-  min-height: 34px;
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset));
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
   cursor: pointer;
   text-align: left;
 }

@@ -292,8 +292,8 @@ defineExpose({ closeMenu });
      the workspace header. */
   display: block;
   margin: 0;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-md);
+  padding: 8px var(--space-2);
+  border-radius: var(--radius-sm);
   font-family: var(--font-ui);
   color: var(--color-text);
   cursor: pointer;
@@ -312,10 +312,9 @@ defineExpose({ closeMenu });
   align-items: center;
   gap: var(--sb-gap, 6px);
   min-width: 0;
-  /* Floor the row at the hover-kebab height (IconButton sm = 26px) so swapping
-     the timestamp for the kebab on hover doesn't grow the row. Total row height
-     = 26 + 2x4px .se padding = 34px, the sidebar-wide row height. */
-  min-height: 26px;
+  /* Row height is font-driven: title line-height (13×1.25≈16px) + 2×5px
+     .se padding ≈ 26px. The hover kebab is absolutely positioned (see .act)
+     so it never contributes to row height and can't cause hover jitter. */
 }
 
 .left {
@@ -359,25 +358,32 @@ defineExpose({ closeMenu });
   font-size: var(--text-xs);
   font-family: var(--font-ui);
   font-weight: 475;
+  line-height: var(--leading-tight);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
-/* Trailing action slot: time and kebab share one grid cell (grid-area:1/1).
-   Both stay in the layout and swap via `visibility` (never display:none), so
-   the slot width = max(time width, IconButton sm 26px) is identical in hover
-   and rest — the badges and title don't reflow, eliminating hover jitter.
-   `.act .kebab` out-specificities IconButton's own display so the hidden
-   default wins. */
+/* Trailing action slot: the relative time (in flow) sets the slot size; the
+   kebab is absolutely positioned over it and swapped via `visibility`, so it
+   contributes neither height (the row stays font-driven) nor width changes
+   (min-width reserves the kebab's footprint, the title doesn't reflow). */
 .act {
-  display: inline-grid;
+  position: relative;
   flex: none;
+  display: inline-flex;
   align-items: center;
-  justify-items: end;
+  justify-content: flex-end;
+  /* Reserve the kebab's width so the trailing slot (and thus the title) never
+     shifts between the time and the kebab, even for short times like "2m". */
+  min-width: 26px;
 }
-.act .ts,
-.act .kebab { grid-area: 1 / 1; }
-.act .kebab { visibility: hidden; }
+.act .kebab {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  visibility: hidden;
+}
 .se:hover .act .kebab,
 .act:has(.kebab.open) .kebab { visibility: visible; }
 .se:hover .act .ts,
@@ -416,10 +422,10 @@ defineExpose({ closeMenu });
 
 .sessions .se {
   margin: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   /* Trim the row padding by the container inset so the title still starts at
      the same x as the workspace name (whose header has no inset). */
-  padding: var(--space-1) calc(var(--sb-pad-x, 20px) - var(--sb-inset, 12px));
+  padding: 8px calc(var(--sb-pad-x, 20px) - var(--sb-inset, 12px));
 }
 .sessions .se .rename-input { border-radius: var(--radius-sm); font-family: var(--sans); }
 .sessions .se .kebab { border-radius: var(--radius-sm); }

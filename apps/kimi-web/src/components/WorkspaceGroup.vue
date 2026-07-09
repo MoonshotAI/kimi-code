@@ -239,7 +239,7 @@ function onHeaderDragStart(event: DragEvent): void {
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset));
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border-radius: var(--radius-sm);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
@@ -256,8 +256,8 @@ function onHeaderDragStart(event: DragEvent): void {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
-  /* 26 + 2x4px .gh padding = 34px total — the sidebar-wide row height. */
-  min-height: 26px;
+  /* Header height is font-driven: name line-height (13×1.25≈16px) + 2×5px
+     .gh padding ≈ 26px. The floating .gh-actions never contribute to height. */
 }
 
 .gh-folder {
@@ -270,6 +270,7 @@ function onHeaderDragStart(event: DragEvent): void {
    labels rather than list content. */
 .gh-name {
   font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
   color: var(--color-text-muted);
   flex: 1;
   min-width: 0;
@@ -293,7 +294,7 @@ function onHeaderDragStart(event: DragEvent): void {
   align-items: center;
   gap: var(--space-1);
   padding-left: var(--space-1);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   isolation: isolate;
   /* Opaque sidebar surface — hides the overlapped name tail. The ::after
      hover wash sits above this (still behind the buttons) so the layer reads
@@ -309,7 +310,7 @@ function onHeaderDragStart(event: DragEvent): void {
   position: absolute;
   inset: 0;
   z-index: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
 }
 .gh:hover .gh-actions::after {
@@ -345,16 +346,15 @@ function onHeaderDragStart(event: DragEvent): void {
   align-items: center;
   gap: var(--sb-gap);
   width: 100%;
-  /* Padding included (border-box) — matches the 34px sidebar-wide row height. */
-  min-height: 34px;
   margin: 0;
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset));
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
+  line-height: var(--leading-tight);
   text-align: left;
   cursor: pointer;
 }

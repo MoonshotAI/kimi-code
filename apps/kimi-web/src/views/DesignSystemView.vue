@@ -1378,7 +1378,7 @@ onUnmounted(() => {
               <tbody>
                 <tr><td class="tk">--sb-inset</td><td class="val">12px</td><td>row box (hover/selected pill) inset from the sidebar edges — matches the brand header's 12px padding</td></tr>
                 <tr><td class="tk">--sb-pad-x</td><td class="val">20px</td><td>content start x (= --sb-inset + 8px row padding)</td></tr>
-                <tr><td class="tk">--sb-gutter</td><td class="val">20px</td><td>leading icon slot width (16px icon + 4px whitespace)</td></tr>
+                <tr><td class="tk">--sb-gutter</td><td class="val">16px</td><td>leading icon slot width — matches the workspace folder icon so the session title aligns under the workspace name</td></tr>
                 <tr><td class="tk">--sb-gap</td><td class="val">6px</td><td>gap between the icon slot and the text</td></tr>
               </tbody>
             </table>
@@ -1408,7 +1408,7 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Part</th><th>Rule</th></tr></thead>
               <tbody>
-                <tr><td>Container</td><td><code>padding: 4px 8px</code> inside the list's <code>--sb-inset</code> gutter, <code>radius-md</code>; inner row <code>min-height: 26px</code> (the hover-kebab height) → 34px total, the sidebar-wide row height; hover = <code>--sb-hover</code> (the global <code>--color-hover</code> wash); active = <code>--color-selected</code> — neutral, no accent tint, no border, no weight change</td></tr>
+                <tr><td>Container</td><td><code>padding: 8px 8px</code> inside the list's <code>--sb-inset</code> gutter, <code>radius-sm</code>; <b>no fixed/min height</b> — row height is font-driven (title <code>line-height: --leading-tight</code>, ≈16px) → ≈32px total, the sidebar-wide row rhythm. The hover kebab is absolutely positioned so it never forces the row taller (no hover jitter). hover = <code>--sb-hover</code> (the global <code>--color-hover</code> wash); active = <code>--color-selected</code> — neutral, no accent tint, no border, no weight change</td></tr>
                 <tr><td>Status slot (lead)</td><td>fixed <code>--sb-gutter</code> width; running = <code>Spinner</code> sm, otherwise unread = 7px accent dot</td></tr>
                 <tr><td>Title</td><td>flex:1 with truncation; double-click enters inline rename (compact input, not Input)</td></tr>
                 <tr><td>Time</td><td>mono xs, <code>fg-faint</code>; yields to the kebab on hover</td></tr>
@@ -1432,7 +1432,7 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Part</th><th>Rule</th></tr></thead>
               <tbody>
-                <tr><td class="tk">Container</td><td>session-row pill: <code>display:flex; gap:--sb-gap; min-height:34px</code> (padding included — the sidebar-wide row height), same padding as a session row, <code>radius-md</code>; hover = <code>--sb-hover</code> (no text recolor); <code>:focus-visible</code> uses <code>--p-focus-ring</code></td></tr>
+                <tr><td class="tk">Container</td><td>session-row pill: <code>display:flex; gap:--sb-gap; padding:8px …</code>, <b>no fixed/min height</b> (font-driven, ≈32px like a session row), same padding as a session row, <code>radius-sm</code>; hover = <code>--sb-hover</code> (no text recolor); <code>:focus-visible</code> uses <code>--p-focus-ring</code></td></tr>
                 <tr><td class="tk">Lead slot</td><td>empty, <code>--sb-gutter</code> wide, so the label's start x aligns with the session titles (<code>--sb-pad-x + --sb-gutter + --sb-gap</code>)</td></tr>
                 <tr><td class="tk">Label</td><td><code>font-ui</code>, <code>text-xs</code>, <code>--color-text</code>; flex:1, truncated</td></tr>
                 <tr><td class="tk">Behavior</td><td>"Load more" fetches the next page and auto-expands; once more than the first page is loaded, "Show less" appears and collapses back to the first page (view-layer trim — data is kept, no refetch); "Show all" re-expands</td></tr>
