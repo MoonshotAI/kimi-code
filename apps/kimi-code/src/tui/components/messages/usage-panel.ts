@@ -197,7 +197,7 @@ export function buildExtraUsageSection(
   }
 
   const balance = formatCurrency(extraUsage.balanceCents, extraUsage.currency);
-  return [accent('Extra Usage'), `  ${muted(DOTTED_BAR)}  ${value(`Balance ${balance}`)}`];
+  return [accent('Extra Usage'), `  ${muted(DOTTED_BAR)}  ${value(`${balance} / 无限制`)}`];
 }
 
 export function buildManagedUsageReportLines(options: ManagedUsageReportLineOptions): string[] {

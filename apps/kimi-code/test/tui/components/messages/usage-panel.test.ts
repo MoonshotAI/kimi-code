@@ -96,7 +96,7 @@ describe('UsagePanelComponent', () => {
 
     const output = lines.join('\n');
     expect(lines).toContain('Extra Usage');
-    expect(output).toContain('Balance $200');
+    expect(output).toContain('$200 / 无限制');
     expect(output).toContain('····················');
   });
 
