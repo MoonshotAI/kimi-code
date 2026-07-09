@@ -71,6 +71,8 @@ MCP 工具按 `mcp__<server>__<tool>` 格式命名，例如 `mcp__github__create
 
 未命中权限规则的调用会触发审批请求；在审批弹窗中选择"Approve for this session"后，本次会话内的后续同类调用自动放行。
 
+按 server 匹配的规则信任配置中的 server 名称。如果项目级 MCP 配置定义了与用户级配置相同的 server 名称，项目定义会覆盖用户定义，`mcp__github__*` 等匹配规则可能会应用到项目定义的 server。
+
 也可以在 `config.toml` 的 `[[permission.rules]]` 中预置永久规则：
 
 ```toml

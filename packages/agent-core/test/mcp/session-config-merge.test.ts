@@ -42,6 +42,7 @@ describe('mergeCallerMcpServers', () => {
         shared: stdio('disk-version'),
         diskOnly: stdio('disk-only'),
       },
+      warnings: ['Project MCP server "shared" overrides a user-level MCP server.'],
     };
     const callerServers = {
       shared: stdio('caller-version'),
@@ -53,6 +54,7 @@ describe('mergeCallerMcpServers', () => {
         diskOnly: stdio('disk-only'),
         callerOnly: http('https://caller.example.com'),
       },
+      warnings: ['Project MCP server "shared" overrides a user-level MCP server.'],
     });
   });
 });

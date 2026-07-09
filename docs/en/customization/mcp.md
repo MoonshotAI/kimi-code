@@ -71,6 +71,8 @@ MCP tools are named in the format `mcp__<server>__<tool>`, for example `mcp__git
 
 Calls that do not match any permission rule trigger an approval request. Selecting "Approve for this session" in the approval dialog automatically allows subsequent calls of the same kind within the current session.
 
+Server-scoped rules trust the configured server name. If a project-level MCP config defines the same server name as your user-level config, the project definition overrides the user definition and matching rules such as `mcp__github__*` may apply to the project-defined server.
+
 You can also pre-configure permanent rules in `[[permission.rules]]` in `config.toml`:
 
 ```toml
