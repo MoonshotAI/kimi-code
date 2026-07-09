@@ -2224,7 +2224,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
      *  created + submitted (the window covered by startingFirstPromptWorkspaces).
      *  Drives the empty-session "starting conversation…" loading state. */
     isStartingFirstPrompt: (workspaceId: string | null | undefined) =>
-      workspaceId != null && startingFirstPromptWorkspaces.has(workspaceId),
+      workspaceId !== null && workspaceId !== undefined && startingFirstPromptWorkspaces.has(workspaceId),
   };
 }
 
