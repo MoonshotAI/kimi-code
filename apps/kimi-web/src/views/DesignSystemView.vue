@@ -566,6 +566,18 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- ===== Kbd ===== -->
+            <h3 class="sub">Kbd · keyboard shortcut</h3>
+            <p><b>Kbd</b> renders a shortcut as keycaps — one block per key, never inline text like <code>(⌘K)</code>. Caps are 18px tall (Badge sm rhythm): sunken surface, 1px border with a 2px bottom edge, 11px UI font, muted text. Typical placement: pushed to the row's trailing edge, opposite the label (e.g. the sidebar search row).</p>
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">Kbd · keycaps</span></div>
+              <div class="stage p">
+                <span class="p-kbd"><kbd>⌘</kbd><kbd>K</kbd></span>
+                <span class="p-kbd"><kbd>Ctrl</kbd><kbd>K</kbd></span>
+                <span class="p-kbd"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd></span>
+              </div>
+            </div>
+
             <!-- ===== Card / Surface ===== -->
             <h3 class="sub">Card / Surface</h3>
             <p>All cards across the site share <b>one shell</b>: flat, <code>1px</code> border, <code>--radius-md</code> radius, <b>no shadow</b>. The structure is split into three parts — <code>head / body / foot</code>. Cards differ <b>only in the head</b> — in two tiers by visual weight, while the shell stays consistent:</p>
@@ -1377,7 +1389,7 @@ onUnmounted(() => {
               <tbody>
                 <tr><td>Brand header</td><td>logo + name + IconButton</td><td>collapse uses IconButton sm; the logo is animated (a blinking eye)</td></tr>
                 <tr><td>New chat</td><td>full-width left-aligned button (custom)</td><td>same rhythm as the session rows in the list (left-aligned, hover = <code>--sb-hover</code>). <b>Do not</b> use Button (centered, breaks the rhythm)</td></tr>
-                <tr><td>Search</td><td>bare search row (custom)</td><td>no border, hover/focus shows a sunken background; icon + input + clear IconButton. <b>Do not</b> use Input (the 38px bordered version is too heavy). Last fixed row above the list — its wrapper carries the scroll-linked seam</td></tr>
+                <tr><td>Search</td><td>bare search row (custom)</td><td>no border, hover/focus shows a sunken background; icon + label, with the <code>Kbd</code> keycaps (⌘K / Ctrl K) pushed to the trailing edge — label and shortcut are justified apart. <b>Do not</b> use Input (the 38px bordered version is too heavy). Last fixed row above the list — its wrapper carries the scroll-linked seam</td></tr>
                 <tr><td>Section label</td><td><code>.p-section-label</code></td><td>uppercase muted small titles like "Workspaces"</td></tr>
                 <tr><td>Workspace head / session row</td><td>see next two sections</td><td>share <code>--sb-*</code> alignment</td></tr>
                 <tr><td>Settings footer</td><td>full-width left-aligned button (custom)</td><td>pinned row under the session list, separated by a 1px <code>--line</code> top border; icon + label, same list-style family as New chat</td></tr>
@@ -1445,7 +1457,7 @@ onUnmounted(() => {
             </ul>
 
             <div class="callout info"><span class="ico">i</span><div>
-              <b>One-sentence principle:</b> the sidebar / shell is a "list + grid" skeleton that reuses the §02 tokens and §03 primitives (Button / IconButton / Badge / Menu / Spinner / PanelHeader); compact list controls that don't fit a primitive (search, New chat, inline rename, show-more) keep their custom form, governed by this section.
+              <b>One-sentence principle:</b> the sidebar / shell is a "list + grid" skeleton that reuses the §02 tokens and §03 primitives (Button / IconButton / Badge / Kbd / Menu / Spinner / PanelHeader); compact list controls that don't fit a primitive (search, New chat, inline rename, show-more) keep their custom form, governed by this section.
             </div></div>
           </section>
 
@@ -1934,6 +1946,16 @@ onUnmounted(() => {
   .p-badge.danger { background: var(--p-danger-soft); border-color: var(--p-danger-bd); color: var(--p-danger); }
   .p-badge.solid { background: var(--p-text); color: var(--p-bg); border-color: var(--p-text); }
   .p-badge .p-ic { width: 12px; height: 12px; }
+
+  /* Kbd — shortcut keycaps (one <kbd> block per key) */
+  .p-kbd { display: inline-flex; align-items: center; gap: 3px; }
+  .p-kbd kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border: 1px solid var(--p-line); border-bottom-width: 2px; border-radius: var(--p-r-xs);
+    background: var(--p-surface-sunken); color: var(--p-text-muted);
+    font-family: var(--p-font-sans); font-size: 11px; line-height: 1;
+  }
 
   /* model / mode pill (composer toolbar) */
   .p-pill {

@@ -18,6 +18,7 @@ import WorkspaceGroup from './WorkspaceGroup.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
 import IconButton from './ui/IconButton.vue';
 import Icon from './ui/Icon.vue';
+import Kbd from './ui/Kbd.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
@@ -88,7 +89,7 @@ const emit = defineEmits<{
 // Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
 const showSearch = ref(false);
-const sessionSearchShortcut = isAppleShortcutPlatform() ? '⌘K' : 'Ctrl K';
+const sessionSearchKeys = isAppleShortcutPlatform() ? ['⌘', 'K'] : ['Ctrl', 'K'];
 
 function openSearch(): void {
   // Sessions are loaded per-workspace (first page only); lazily drain the rest
@@ -607,7 +608,8 @@ onBeforeUnmount(() => {
       <div class="search-wrap" :class="{ 'search-wrap--scrolled': sessionsScrolled }">
         <button class="search" type="button" @click="openSearch">
           <Icon class="search-icon" name="search" size="sm" />
-          <span class="search-input">{{ t('sidebar.searchShortcut', { shortcut: sessionSearchShortcut }) }}</span>
+          <span class="search-input">{{ t('sidebar.search') }}</span>
+          <Kbd :keys="sessionSearchKeys" />
         </button>
       </div>
 
