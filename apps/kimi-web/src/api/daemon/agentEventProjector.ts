@@ -125,6 +125,14 @@ interface SessionState {
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
+
+  // Goal lifecycle. While a goal is `active`, the core keeps `activeTurn` set
+  // across continuation turns (driveGoal), so a turn.ended in that window does
+  // NOT mean the session is idle. Track it here so turn.ended can keep the
+  // session 'running' instead of projecting a false 'idle' — which would let
+  // onSessionIdle drain the local queue into a still-busy core and trip
+  // `turn.agent_busy`.
+  goalActive: boolean;
 }
 
 function createSessionState(): SessionState {
@@ -145,6 +153,7 @@ function createSessionState(): SessionState {
     model: '',
     messages: [],
     subagentMeta: new Map(),
+    goalActive: false,
   };
 }
 
@@ -973,8 +982,18 @@ export function createAgentProjector(): AgentProjector {
         const usageSnapshot = buildUsageSnapshot(s);
         out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
 
+        // While a goal is still active, this turn.ended is just the boundary
+        // between two goal-driven continuation turns — the core kept
+        // `activeTurn` set, so the session is NOT idle. Projecting 'idle' here
+        // would fire onSessionIdle, drain the local queue, and hit the still-
+        // busy core with `turn.agent_busy`. Keep 'running' until the goal
+        // actually completes (goal.updated clears s.goalActive).
         const newStatus =
-          reason === 'cancelled' || reason === 'failed' || reason === 'filtered' ? 'aborted' : 'idle';
+          reason === 'cancelled' || reason === 'failed' || reason === 'filtered'
+            ? 'aborted'
+            : s.goalActive
+              ? 'running'
+              : 'idle';
         out.push({
           type: 'sessionStatusChanged',
           sessionId,
@@ -1209,6 +1228,10 @@ export function createAgentProjector(): AgentProjector {
 
       case 'goal.updated': {
         const goal = mapGoalSnapshot(p?.snapshot ?? null);
+        // Mirror goal-active into per-session projector state so a later
+        // turn.ended knows whether the core is merely between continuation
+        // turns (goal still driving) or truly idle.
+        s.goalActive = goal?.status === 'active';
         out.push({
           type: 'goalUpdated',
           sessionId,

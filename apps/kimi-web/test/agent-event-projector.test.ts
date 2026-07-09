@@ -134,3 +134,30 @@ describe('classifyFrame cron.fired', () => {
     expect(classifyFrame('event.cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
   });
 });
+
+describe('turn.ended while a goal is active', () => {
+  it('keeps the session running so a queued prompt is not drained into a still-busy core', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    const events = projector.project('turn.ended', { reason: 'completed' }, 's1');
+    const status = events.find((e) => e.type === 'sessionStatusChanged');
+    expect(status).toMatchObject({ type: 'sessionStatusChanged', status: 'running' });
+  });
+
+  it('projects idle once the goal has completed', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    projector.project('goal.updated', { snapshot: { status: 'complete', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    const events = projector.project('turn.ended', { reason: 'completed' }, 's1');
+    const status = events.find((e) => e.type === 'sessionStatusChanged');
+    expect(status).toMatchObject({ type: 'sessionStatusChanged', status: 'idle' });
+  });
+
+  it('still projects aborted for a cancelled turn even while a goal is active', () => {
+    const projector = createAgentProjector();
+    projector.project('goal.updated', { snapshot: { status: 'active', goalId: 'g1', objective: 'do stuff' } }, 's1');
+    const events = projector.project('turn.ended', { reason: 'cancelled' }, 's1');
+    const status = events.find((e) => e.type === 'sessionStatusChanged');
+    expect(status).toMatchObject({ type: 'sessionStatusChanged', status: 'aborted' });
+  });
+});

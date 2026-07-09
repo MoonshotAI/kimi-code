@@ -82,6 +82,17 @@ const pendingQuestionActions = reactive<Record<string, 'answer' | 'dismiss'>>({}
 const pendingApprovalActions = reactive<Record<string, true>>({});
 /** Task ids with an in-flight cancel, keyed by taskId. */
 const pendingTaskCancellations = reactive<Record<string, true>>({});
+/**
+ * Workspace ids whose empty-session first prompt is currently being created +
+ * submitted. The empty-composer path (`startSessionAndSendPrompt`) awaits
+ * `createDraftSession` (addWorkspace + createSession + selectSession) before
+ * the session id exists, so the per-session `inFlightPromptSessions` guard
+ * cannot cover that window — a second Enter / send-button click during it
+ * would otherwise fire a second concurrent POST and trip the daemon's
+ * `turn.agent_busy` race. Module-level singleton — matches the other
+ * `pending*Actions` guards above.
+ */
+const startingFirstPromptWorkspaces = reactive(new Set<string>());
 
 type SyncSessionResult = 'ok' | 'not-found' | 'failed';
 
@@ -815,12 +826,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     text: string,
     attachments?: PromptAttachment[],
   ): Promise<void> {
+    // Guard the whole "create draft session + submit first prompt" flow: the
+    // session id doesn't exist until `createDraftSession` resolves, so the
+    // per-session `inFlightPromptSessions` guard can't cover this window. A
+    // second Enter / send-button click in that window would otherwise fire a
+    // concurrent first POST for the same new session and trip the daemon's
+    // `turn.agent_busy` race.
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    startingFirstPromptWorkspaces.add(workspaceId);
     try {
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
       await submitPromptInternal(sid, text, attachments);
     } catch (err) {
       pushOperationFailure('startSessionAndSendPrompt', err);
+    } finally {
+      startingFirstPromptWorkspaces.delete(workspaceId);
     }
   }
 
@@ -862,6 +883,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           : rawState.defaultModel) ?? undefined;
       await persistSessionProfile(
         {
+          model,
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
@@ -2186,6 +2208,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     searchFiles,
     loadOlderMessages,
     refreshSessionSidecars,
+    /** True while the empty-composer first prompt for `workspaceId` is being
+     *  created + submitted (the window covered by startingFirstPromptWorkspaces).
+     *  Drives the empty-session "starting conversation…" loading state. */
+    isStartingFirstPrompt: (workspaceId: string | null | undefined) =>
+      workspaceId != null && startingFirstPromptWorkspaces.has(workspaceId),
   };
 }
 

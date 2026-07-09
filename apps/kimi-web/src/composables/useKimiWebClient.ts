@@ -1680,6 +1680,13 @@ const isSending = computed<boolean>(() => {
   return rawState.sendingBySession[sid] ?? false;
 });
 
+// True while the empty-composer first prompt for the active workspace is being
+// created + submitted (before the session id exists). Drives the empty-session
+// "starting conversation…" loading state in ConversationPane / Composer.
+const isStartingFirstPrompt = computed<boolean>(() =>
+  workspaceState.isStartingFirstPrompt(rawState.activeWorkspaceId),
+);
+
 const sideChat = useSideChat(rawState, {
   pushOperationFailure,
   nextOptimisticMsgId,
@@ -2479,6 +2486,7 @@ export function useKimiWebClient() {
     questions,
     activity,
     isSending,
+    isStartingFirstPrompt,
     fastMoon: appearance.fastMoon,
 
     // Model + Provider reactive state
