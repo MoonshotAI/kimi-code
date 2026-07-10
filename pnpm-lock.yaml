@@ -475,6 +475,52 @@ importers:
 
   kimi-code/packages/telemetry: {}
 
+  packages/web-core:
+    devDependencies:
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-i18n:
+        specifier: ^11.4.5
+        version: 11.4.6(vue@3.5.39(typescript@6.0.2))
+      vue-tsc:
+        specifier: ~3.2.0
+        version: 3.2.9(typescript@6.0.2)
+
+  packages/web-markdown:
+    dependencies:
+      markstream-vue:
+        specifier: ^1.0.4
+        version: 1.0.5(katex@0.17.0)(mermaid@11.16.0)(stream-markdown@0.0.16(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2)))(vue-i18n@11.4.6(vue@3.5.39(typescript@6.0.2)))(vue@3.5.39(typescript@6.0.2))
+      stream-markdown:
+        specifier: ^0.0.16
+        version: 0.0.16(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2))
+    devDependencies:
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-tsc:
+        specifier: ~3.2.0
+        version: 3.2.9(typescript@6.0.2)
+
+  packages/web-ui:
+    devDependencies:
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-tsc:
+        specifier: ~3.2.0
+        version: 3.2.9(typescript@6.0.2)
+
 packages:
 
   7zip-bin@5.2.0:

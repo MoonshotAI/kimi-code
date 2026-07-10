@@ -1,0 +1,19 @@
+{
+  "name": "@moonshot-ai/web-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.35",
+    "vue-i18n": "^11.4.5"
+  },
+  "devDependencies": {
+    "vue": "^3.5.35",
+    "vue-i18n": "^11.4.5",
+    "vue-tsc": "~3.2.0",
+    "typescript": "6.0.2"
+  }
+}

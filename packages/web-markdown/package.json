@@ -1,0 +1,21 @@
+{
+  "name": "@moonshot-ai/web-markdown",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "markstream-vue": "^1.0.4",
+    "stream-markdown": "^0.0.16"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.35"
+  },
+  "devDependencies": {
+    "vue": "^3.5.35",
+    "vue-tsc": "~3.2.0",
+    "typescript": "6.0.2"
+  }
+}
