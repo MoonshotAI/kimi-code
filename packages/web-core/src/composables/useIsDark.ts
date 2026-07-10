@@ -12,7 +12,7 @@ const isDark = ref(false);
 let started = false;
 
 function compute(): boolean {
-  const scheme = document.documentElement.dataset.colorScheme;
+  const scheme = document.documentElement.dataset['colorScheme'];
   if (scheme === 'dark') return true;
   if (scheme === 'light') return false;
   return window.matchMedia('(prefers-color-scheme: dark)').matches;

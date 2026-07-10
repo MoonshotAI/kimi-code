@@ -56,7 +56,7 @@ function loadAccent(): Accent {
 
 function applyAccent(a: Accent): void {
   if (typeof document === 'undefined' || !document.documentElement) return;
-  document.documentElement.dataset.accent = a;
+  document.documentElement.dataset['accent'] = a;
 }
 
 function loadColorScheme(): ColorScheme {
@@ -67,7 +67,7 @@ function loadColorScheme(): ColorScheme {
 
 function applyColorScheme(c: ColorScheme): void {
   if (typeof document === 'undefined' || !document.documentElement) return;
-  document.documentElement.dataset.colorScheme = c;
+  document.documentElement.dataset['colorScheme'] = c;
 
   // Mobile browser chrome (status/address bar) follows <meta name=theme-color>.
   const metas = document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]');
