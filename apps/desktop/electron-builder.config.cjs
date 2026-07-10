@@ -13,8 +13,8 @@
 //     APPLE_API_KEY=<path to .p8>  APPLE_API_KEY_ID=<id>  APPLE_API_ISSUER=<id>
 //
 // The entitlements (hardened runtime) are applied to the app AND every nested
-// Mach-O — including the bundled Kimi SEA backend — via entitlementsInherit, so
-// the whole bundle passes notarization. Mirrors the TUI's native entitlements.
+// Mach-O — including native `.node` modules loaded by the in-process server —
+// via entitlementsInherit, so the whole bundle passes notarization.
 
 const notarize = process.env.KIMI_DESKTOP_NOTARIZE === 'true';
 
@@ -46,8 +46,7 @@ module.exports = {
 
   files: ['out/**', 'package.json'],
 
-  beforePack: './scripts/before-pack.cjs',
-  extraResources: [{ from: 'resources-stage/bin', to: 'bin' }],
+  extraResources: [{ from: 'web-dist', to: 'web-dist' }],
 
   mac: {
     category: 'public.app-category.developer-tools',
