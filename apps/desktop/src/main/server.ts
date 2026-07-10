@@ -22,7 +22,12 @@ export interface DesktopServerHandle {
 }
 
 export interface StartDesktopServerOptions {
-  /** Directory that holds the built web UI (`apps/desktop/web-dist` in dev, `<resources>/web-dist` packaged). */
+  /**
+   * Directory that holds the built renderer assets
+   * (`apps/desktop/desktop-dist` in dev, `<resources>/desktop-dist` packaged).
+   * The server primarily serves the API; this is only the static-asset fallback,
+   * and it points at the same `desktop-dist` the `app://renderer` protocol maps.
+   */
   readonly webAssetsDir: string;
   /** Host identity required upstream (Kimi-for-Coding rejects without it, 40340). */
   readonly identity: KimiHostIdentity;

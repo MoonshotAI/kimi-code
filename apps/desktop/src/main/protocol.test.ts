@@ -66,12 +66,46 @@ describe('handleRendererRequest', () => {
     expect(res.status).toBe(404);
   });
 
-  it('rejects directory traversal (..)', async () => {
+  it('serves files from the configured desktop-dist root (app://renderer/<path>)', async () => {
+    const root = await makeRoot();
+    await writeFile(join(root, 'assets', 'marker.js'), 'desktop-dist-root');
+    const res = await handleRendererRequest(
+      { url: 'app://renderer/assets/marker.js' } as any,
+      () => root,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('desktop-dist-root');
+  });
+
+  it('rejects directory traversal (..) in the raw target', async () => {
     const root = await makeRoot();
     const res = await handleRendererRequest(
       { url: 'app://renderer/../secret' } as any,
       () => root,
     );
     expect(res.status).toBe(403);
+  });
+
+  it('never serves a file outside the root via literal or encoded `..`', async () => {
+    const root = await makeRoot();
+    // A sibling of the root, i.e. outside it. Traversal must never return this.
+    const outside = join(root, '..', 'kimi-renderer-secret.txt');
+    await writeFile(outside, 'leaked');
+
+    // Layer 1: literal `..` in the raw target is rejected before parsing.
+    const literal = await handleRendererRequest(
+      { url: 'app://renderer/../kimi-renderer-secret.txt' } as any,
+      () => root,
+    );
+    expect(literal.status).toBe(403);
+
+    // Layers 2 + 3: the URL parser percent-decodes and collapses `%2e%2e`, so an
+    // encoded traversal never resolves to the out-of-root file either — it is
+    // forbidden (403) or simply not found (404), but is NEVER 200 with the secret.
+    const encoded = await handleRendererRequest(
+      { url: 'app://renderer/assets/%2e%2e/%2e%2e/kimi-renderer-secret.txt' } as any,
+      () => root,
+    );
+    expect(encoded.status).not.toBe(200);
   });
 });

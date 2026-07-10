@@ -10,24 +10,36 @@
   "main": "out/main.cjs",
   "scripts": {
     "build": "tsdown",
-    "prebuild": "node scripts/copy-web-dist.mjs",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "prebuild": "npm run build:renderer",
     "start": "electron .",
     "dev": "tsdown && electron .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "postinstall": "electron-rebuild",
-    "dist": "tsdown && electron-builder --config electron-builder.config.cjs"
+    "dist": "npm run build:renderer && tsdown && electron-builder --config electron-builder.config.cjs"
   },
   "dependencies": {
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
-    "@moonshot-ai/server": "workspace:^"
+    "@moonshot-ai/server": "workspace:^",
+    "@moonshot-ai/web-core": "workspace:*",
+    "@moonshot-ai/web-i18n": "workspace:*",
+    "@moonshot-ai/web-markdown": "workspace:*",
+    "@moonshot-ai/web-ui": "workspace:*",
+    "vue": "^3.5.35",
+    "vue-i18n": "^11.4.5"
   },
   "devDependencies": {
     "@electron/rebuild": "3.7.1",
+    "@moonshot-ai/vite-preset": "workspace:*",
+    "@vitejs/plugin-vue": "^5.2.4",
     "electron": "33.4.11",
     "electron-builder": "25.1.8",
     "tsdown": "0.22.0",
     "typescript": "6.0.2",
-    "vitest": "4.1.4"
+    "unplugin-icons": "^23.0.0",
+    "vite": "^6.3.3",
+    "vitest": "4.1.4",
+    "vue-tsc": "~3.2.0"
   }
 }

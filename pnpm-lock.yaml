@@ -43,10 +43,34 @@ importers:
       '@moonshot-ai/server':
         specifier: workspace:^
         version: link:../../kimi-code/packages/server
+      '@moonshot-ai/web-core':
+        specifier: workspace:*
+        version: link:../../packages/web-core
+      '@moonshot-ai/web-i18n':
+        specifier: workspace:*
+        version: link:../../packages/web-i18n
+      '@moonshot-ai/web-markdown':
+        specifier: workspace:*
+        version: link:../../packages/web-markdown
+      '@moonshot-ai/web-ui':
+        specifier: workspace:*
+        version: link:../../packages/web-ui
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-i18n:
+        specifier: ^11.4.5
+        version: 11.4.6(vue@3.5.39(typescript@6.0.2))
     devDependencies:
       '@electron/rebuild':
         specifier: 3.7.1
         version: 3.7.1
+      '@moonshot-ai/vite-preset':
+        specifier: workspace:*
+        version: link:../../packages/vite-preset
+      '@vitejs/plugin-vue':
+        specifier: ^5.2.4
+        version: 5.2.4(vite@6.4.3(@types/node@22.20.1)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@6.0.2))
       electron:
         specifier: 33.4.11
         version: 33.4.11
@@ -59,9 +83,18 @@ importers:
       typescript:
         specifier: 6.0.2
         version: 6.0.2
+      unplugin-icons:
+        specifier: ^23.0.0
+        version: 23.0.1(@vue/compiler-sfc@3.5.39)
+      vite:
+        specifier: ^6.3.3
+        version: 6.4.3(@types/node@22.20.1)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
       vitest:
         specifier: 4.1.4
-        version: 4.1.4(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
+        version: 4.1.4(@types/node@22.20.1)(vite@6.4.3(@types/node@22.20.1)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
+      vue-tsc:
+        specifier: ~3.2.0
+        version: 3.2.9(typescript@6.0.2)
 
   apps/web:
     dependencies:

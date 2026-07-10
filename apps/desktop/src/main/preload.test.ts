@@ -2,33 +2,113 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const expose = vi.fn();
 const send = vi.fn();
-const on = vi.fn();
 const removeListener = vi.fn();
 const invoke = vi.fn().mockResolvedValue(undefined);
+
+// `ipcRenderer.on` records the listener so a test can fire it and assert the
+// renderer callback receives the forwarded payload (not just the channel name).
+const listeners = new Map<string, (...args: unknown[]) => void>();
+const on = vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
+  listeners.set(channel, listener);
+});
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: expose },
   ipcRenderer: { send, on, removeListener, invoke },
 }));
 
+const WHITELIST = [
+  'getServerToken',
+  'onMenu',
+  'onMenuAction',
+  'onShortcut',
+  'openExternal',
+  'setTheme',
+  'showOpenDialog',
+  'showSaveDialog',
+];
+
 beforeEach(() => {
-  expose.mockClear(); send.mockClear(); on.mockClear(); removeListener.mockClear(); invoke.mockClear();
+  // `preload.ts` runs `contextBridge.exposeInMainWorld` at import time, so each
+  // test needs a fresh module execution to observe its own `expose` call.
+  vi.resetModules();
+  expose.mockClear();
+  send.mockClear();
+  on.mockClear();
+  removeListener.mockClear();
+  invoke.mockClear();
+  listeners.clear();
 });
 
-it('exposes kimiDesktop via contextBridge with the expected surface', async () => {
-  await import('./preload');
-  expect(expose).toHaveBeenCalledOnce();
-  const [name, exposed] = expose.mock.calls[0]!;
-  expect(name).toBe('kimiDesktop');
-  expect(Object.keys(exposed).sort()).toEqual(['onMenu', 'openExternal', 'setTheme']);
-  exposed.setTheme('dark');
-  expect(send).toHaveBeenCalledWith('kimi:theme', 'dark');
-  exposed.setTheme('bogus');
-  expect(send).toHaveBeenCalledTimes(1); // ignored invalid scheme
-  const off = exposed.onMenu(() => {});
-  expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
-  off();
-  expect(removeListener).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
-  await exposed.openExternal('https://example.com');
-  expect(invoke).toHaveBeenCalledWith('kimi:open-external', 'https://example.com');
+describe('kimiDesktop preload bridge', () => {
+  it('exposes only the whitelisted API via contextBridge (no ipcRenderer/node/require)', async () => {
+    await import('./preload');
+    expect(expose).toHaveBeenCalledOnce();
+    const [name, exposed] = expose.mock.calls[0]!;
+
+    expect(name).toBe('kimiDesktop');
+    expect(Object.keys(exposed).sort()).toEqual([...WHITELIST].sort());
+
+    // Sandbox boundary: the raw escape hatches must never reach the renderer.
+    expect(Object.keys(exposed)).not.toContain('ipcRenderer');
+    expect(Object.keys(exposed)).not.toContain('node');
+    expect(Object.keys(exposed)).not.toContain('require');
+    for (const key of Object.keys(exposed)) {
+      expect(typeof exposed[key]).toBe('function');
+    }
+  });
+
+  it('wires each whitelisted method to the correct ipcRenderer channel', async () => {
+    await import('./preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    exposed.setTheme('dark');
+    expect(send).toHaveBeenCalledWith('kimi:theme', 'dark');
+    exposed.setTheme('bogus');
+    expect(send).toHaveBeenCalledTimes(1); // invalid scheme ignored
+
+    const offMenu = exposed.onMenu(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
+    offMenu();
+    expect(removeListener).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
+
+    const offAction = exposed.onMenuAction(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:menu-action', expect.any(Function));
+    offAction();
+    expect(removeListener).toHaveBeenCalledWith('kimi:menu-action', expect.any(Function));
+
+    const offShortcut = exposed.onShortcut(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:shortcut', expect.any(Function));
+    offShortcut();
+    expect(removeListener).toHaveBeenCalledWith('kimi:shortcut', expect.any(Function));
+
+    await exposed.openExternal('https://example.com');
+    expect(invoke).toHaveBeenCalledWith('kimi:open-external', 'https://example.com');
+
+    const openOpts = { properties: ['openDirectory'] };
+    await exposed.showOpenDialog(openOpts);
+    expect(invoke).toHaveBeenCalledWith('kimi:dialog-open', openOpts);
+
+    const saveOpts = { defaultPath: 'untitled.txt' };
+    await exposed.showSaveDialog(saveOpts);
+    expect(invoke).toHaveBeenCalledWith('kimi:dialog-save', saveOpts);
+
+    await exposed.getServerToken();
+    expect(invoke).toHaveBeenCalledWith('kimi:get-server-token');
+  });
+
+  it('forwards menu-action and shortcut payloads to the renderer callback', async () => {
+    await import('./preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    const actionCb = vi.fn();
+    exposed.onMenuAction(actionCb);
+    listeners.get('kimi:menu-action')?.({}, 'new-conversation');
+    expect(actionCb).toHaveBeenCalledWith('new-conversation');
+
+    const shortcutCb = vi.fn();
+    exposed.onShortcut(shortcutCb);
+    listeners.get('kimi:shortcut')?.({}, 'CommandOrControl+Alt+K');
+    expect(shortcutCb).toHaveBeenCalledWith('CommandOrControl+Alt+K');
+  });
 });

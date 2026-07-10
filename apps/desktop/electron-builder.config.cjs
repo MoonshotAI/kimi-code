@@ -53,7 +53,11 @@ module.exports = {
 
   files: ['out/**', 'package.json'],
 
-  extraResources: [{ from: 'web-dist', to: 'web-dist' }],
+  // The desktop renderer is built independently via `vite.renderer.config.ts`
+  // into `desktop-dist` (decoupled from the CLI/SEA `web-dist`). Ship it as an
+  // extra resource so the `app://renderer` protocol and the server's static
+  // fallback both read from `<resourcesPath>/desktop-dist`.
+  extraResources: [{ from: 'desktop-dist', to: 'desktop-dist' }],
 
   mac: {
     category: 'public.app-category.developer-tools',

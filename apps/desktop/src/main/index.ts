@@ -1,9 +1,19 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow, Menu, nativeTheme, shell, ipcMain } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  nativeTheme,
+  shell,
+  dialog,
+  globalShortcut,
+  ipcMain,
+} from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
+import { serverTokenPath } from '@moonshot-ai/server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
 import { registerRendererScheme, registerRendererProtocol, rendererUrl } from './protocol';
@@ -11,10 +21,21 @@ import { registerRendererScheme, registerRendererProtocol, rendererUrl } from '.
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: DesktopServerHandle | null = null;
 
-function webDistRoot(): string {
+function rendererDistRoot(): string {
   return app.isPackaged
-    ? join(process.resourcesPath, 'web-dist')
-    : join(app.getAppPath(), 'web-dist');
+    ? join(process.resourcesPath, 'desktop-dist')
+    : join(app.getAppPath(), 'desktop-dist');
+}
+
+// Token used by the renderer's `credentialStore.getToken()` (Task 4.5). Read in
+// the main process from the server's token file; the renderer never touches fs.
+function readServerToken(): string | undefined {
+  try {
+    const token = readFileSync(serverTokenPath(resolveKimiHome()), 'utf-8').trim();
+    return token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function serverLogPath(): string {
@@ -114,7 +135,7 @@ async function connect(win: BrowserWindow): Promise<void> {
   try {
     serverHandle?.close().catch(() => {});
     serverHandle = await startDesktopServer({
-      webAssetsDir: webDistRoot(),
+      webAssetsDir: rendererDistRoot(),
       identity: { userAgentProduct: 'kimi-desktop', version: app.getVersion() },
     });
     const { origin, token } = serverHandle;
@@ -198,6 +219,32 @@ function createWindow(): void {
   void connect(win);
 }
 
+// --- renderer event channels (menu / shortcut) -------------------------------
+//
+// Native menu items and global shortcuts forward to the renderer over the
+// preload-whitelisted `kimi:menu-action` / `kimi:shortcut` channels. Task 4.5
+// connects the renderer side; here we only open the channels.
+
+function sendToRenderer(channel: string, payload: string): void {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
+
+// Best-effort global shortcut registration (Task 4.4 channel smoke test). A
+// registration that collides with an existing OS/app binding returns false and
+// is skipped with a warning rather than throwing. Task 4.5 finalizes the set.
+const GLOBAL_SHORTCUTS = ['CommandOrControl+Alt+K'];
+
+function registerGlobalShortcuts(): void {
+  for (const accel of GLOBAL_SHORTCUTS) {
+    const ok = globalShortcut.register(accel, () => sendToRenderer('kimi:shortcut', accel));
+    if (!ok) {
+      process.stderr.write(`[kimi-desktop] global shortcut ${accel} not registered (already taken)\n`);
+    }
+  }
+}
+
 // --- native menu --------------------------------------------------------------
 
 function buildMenu(): void {
@@ -207,8 +254,11 @@ function buildMenu(): void {
     submenu: [
       ...(isMac ? [{ role: 'about' as const }, { type: 'separator' as const }] : []),
       {
+        id: 'retry-connection',
         label: '重试连接',
         click: () => {
+          // Forward to the renderer (4.5) in addition to the main-process retry.
+          sendToRenderer('kimi:menu-action', 'retry-connection');
           if (mainWindow !== null) {
             void connect(mainWindow);
           } else {
@@ -261,8 +311,25 @@ function main(): void {
     }
   });
   ipcMain.handle('kimi:open-external', (_event, url: string) => shell.openExternal(url));
+  // File dialogs: the renderer asks (whitelisted `showOpenDialog`/`showSaveDialog`),
+  // the main process opens the native dialog and returns the user's selection.
+  ipcMain.handle('kimi:dialog-open', (_event, opts: Record<string, unknown> = {}) => {
+    const win = mainWindow !== null && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    return win === undefined
+      ? dialog.showOpenDialog(opts)
+      : dialog.showOpenDialog(win, opts);
+  });
+  ipcMain.handle('kimi:dialog-save', (_event, opts: Record<string, unknown> = {}) => {
+    const win = mainWindow !== null && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    return win === undefined
+      ? dialog.showSaveDialog(opts)
+      : dialog.showSaveDialog(win, opts);
+  });
+  // Token for the renderer's credentialStore (Task 4.5); read in main, never fs in renderer.
+  ipcMain.handle('kimi:get-server-token', () => readServerToken());
 
   app.on('before-quit', () => {
+    globalShortcut.unregisterAll();
     void serverHandle?.close();
   });
 
@@ -273,7 +340,8 @@ function main(): void {
   });
 
   void app.whenReady().then(() => {
-    registerRendererProtocol(webDistRoot);
+    registerRendererProtocol(rendererDistRoot);
+    registerGlobalShortcuts();
     buildMenu();
     createWindow();
     app.on('activate', () => {

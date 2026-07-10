@@ -63,12 +63,13 @@ export function rendererUrl(origin: string, token: string | undefined): string {
 }
 
 /**
- * Map `app://renderer/<path>` to `<webDistRoot>/<path>` with MIME + traversal
- * protection. Returns a Response for `protocol.handle`.
+ * Map `app://renderer/<path>` to `<rendererDistRoot>/<path>` (the desktop
+ * renderer build, `desktop-dist`) with MIME + traversal protection. Returns a
+ * Response for `protocol.handle`.
  */
 export async function handleRendererRequest(
   request: Request,
-  getWebDistRoot: () => string,
+  getRendererDistRoot: () => string,
 ): Promise<Response> {
   const url = new URL(request.url);
   // Reject traversal before the URL parser collapses `..`: inspect the raw
@@ -87,7 +88,7 @@ export async function handleRendererRequest(
     return new Response('forbidden', { status: 403 });
   }
   const rel = decodedPathname === '/' ? '/index.html' : decodedPathname;
-  const root = getWebDistRoot();
+  const root = getRendererDistRoot();
   const filePath = resolve(join(root, rel));
   if (!filePath.startsWith(root)) {
     return new Response('forbidden', { status: 403 });
@@ -106,6 +107,6 @@ export async function handleRendererRequest(
   });
 }
 
-export function registerRendererProtocol(getWebDistRoot: () => string): void {
-  protocol.handle(RENDERER_SCHEME, (request) => handleRendererRequest(request, getWebDistRoot));
+export function registerRendererProtocol(getRendererDistRoot: () => string): void {
+  protocol.handle(RENDERER_SCHEME, (request) => handleRendererRequest(request, getRendererDistRoot));
 }
