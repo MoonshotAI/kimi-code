@@ -25,6 +25,22 @@ const USER_MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">(?:<\/\1>
 const SYSTEM_MIME_RE = /Mime type:\s*([^.\s]+)/i;
 const SYSTEM_SIZE_RE = /Size:\s*(\d+)\s*bytes/i;
 const SYSTEM_DIMENSIONS_RE = /Original dimensions:\s*(\d+)x(\d+)\s*pixels/i;
+// agent-core wraps harness-injected asides inside user/tool messages in
+// `<system>…</system>` (supplementary context for the model — distinct from
+// authoritative `<system-reminder>`, see agent-core's default system.md). The
+// visible case here is the image-compression caption the server inlines next
+// to a compressed upload (buildImageCompressionCaption), which rides along as
+// a text part of the persisted user message. None of these asides are
+// user-typed and the raw markup must never reach the bubble (or the
+// edit/preview text derived from `turn.text`), so strip every `<system>` block
+// from a user turn's text parts. Keying on the tag — not on any sentence —
+// keeps the stripping robust to caption wording changes.
+const SYSTEM_TAG_RE = /<system>[\s\S]*?<\/system>/g;
+
+function stripSystemTags(text: string): string {
+  if (!text.includes('<system>')) return text;
+  return text.replace(SYSTEM_TAG_RE, '');
+}
 
 function unescapeAttr(value: string): string {
   // &amp; last so a doubly-escaped value isn't decoded twice.
@@ -698,7 +714,9 @@ export function messagesToTurns(
                 continue;
               }
             }
-            textParts.push(c.text);
+            const stripped = stripSystemTags(c.text);
+            if (stripped !== c.text && stripped.trim().length === 0) continue;
+            textParts.push(stripped);
           }
         }
         const media = resolveMediaUrl(c);
