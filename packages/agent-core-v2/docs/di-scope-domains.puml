@@ -160,6 +160,7 @@ sessionSkillCatalog --> skillCatalog #34495E
 sessionSkillCatalog --> plugin #34495E
 sessionSkillCatalog --> workspaceContext #34495E
 skillCatalog --> bootstrap #34495E
+skillCatalog --> log #34495E
 sessionFs --> workspaceContext #34495E
 sessionFs --> process #34495E
 process --> session_context #34495E

@@ -12,7 +12,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
-import { UnsupportedSkillTypeError, parseSkillText } from './parser';
+import { ILogService } from '#/_base/log/log';
+
+import { SkillParseError, UnsupportedSkillTypeError, parseSkillText } from './parser';
 import type { SkillDiscoveryResult, ISkillDiscovery } from './skillDiscovery';
 import type { SkillDefinition, SkillRoot, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';
@@ -24,12 +26,17 @@ const MAX_SKILL_SCAN_DEPTH = 8;
 export class FileSkillDiscovery implements ISkillDiscovery {
   declare readonly _serviceBrand: undefined;
 
+  constructor(@ILogService private readonly log: ILogService) {}
+
   async discover(roots: readonly SkillRoot[]): Promise<SkillDiscoveryResult> {
-    return scanRoots(roots);
+    return scanRoots(roots, this.log);
   }
 }
 
-async function scanRoots(roots: readonly SkillRoot[]): Promise<SkillDiscoveryResult> {
+async function scanRoots(
+  roots: readonly SkillRoot[],
+  log: ILogService,
+): Promise<SkillDiscoveryResult> {
   const byName = new Map<string, SkillDefinition>();
   const skipped: SkippedSkill[] = [];
 
@@ -69,6 +76,7 @@ async function scanRoots(roots: readonly SkillRoot[]): Promise<SkillDiscoveryRes
       const skill = await parseAndRegister({
         byName,
         skipped,
+        log,
         skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
         skillDirName: entry,
         root,
@@ -91,6 +99,7 @@ async function scanRoots(roots: readonly SkillRoot[]): Promise<SkillDiscoveryRes
           await parseAndRegister({
             byName,
             skipped,
+            log,
             skillMdPath: rootSkillMd,
             skillDirName: path.basename(dirPath),
             root,
@@ -108,6 +117,7 @@ async function scanRoots(roots: readonly SkillRoot[]): Promise<SkillDiscoveryRes
         await parseAndRegister({
           byName,
           skipped,
+          log,
           skillMdPath,
           skillDirName: skillName,
           root,
@@ -142,6 +152,7 @@ async function scanRoots(roots: readonly SkillRoot[]): Promise<SkillDiscoveryRes
 async function parseAndRegister(input: {
   readonly byName: Map<string, SkillDefinition>;
   readonly skipped: SkippedSkill[];
+  readonly log: ILogService;
   readonly skillMdPath: string;
   readonly skillDirName: string;
   readonly root: SkillRoot;
@@ -181,9 +192,11 @@ async function parseAndRegister(input: {
         type: error.skillType,
         reason: `unsupported skill type "${error.skillType}"`,
       });
+    } else if (error instanceof SkillParseError) {
+      input.log.warn(`Skipping invalid skill at ${input.skillMdPath}: ${error.message}`, error);
+    } else {
+      input.log.warn(`Skipping skill at ${input.skillMdPath} due to unexpected error`, error);
     }
-    // SkillParseError and unexpected errors are dropped silently here; a future
-    // phase will route them through the log service.
     return undefined;
   }
 }

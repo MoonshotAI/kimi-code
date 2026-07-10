@@ -2,9 +2,11 @@
  * `skillCatalog` domain (L3) — concrete in-memory skill catalog.
  *
  * Owns registered skill lookup, plugin-scoped skill lookup, prompt rendering,
- * and model-facing skill listings for `skill`. Held internally by the Session
- * skill-catalog sink (`ISessionSkillCatalog`) and composed directly by the edge
- * to resolve a workspace's skills without a Session; it is not a scoped service.
+ * and model-facing skill listings for `skill`, plus the skipped-skill /
+ * scanned-root diagnostics accumulated from discovery results. Held internally
+ * by the Session skill-catalog sink (`ISessionSkillCatalog`) and composed
+ * directly by the edge to resolve a workspace's skills without a Session; it is
+ * not a scoped service.
  */
 
 import { escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
@@ -46,6 +48,16 @@ export class InMemorySkillCatalog implements SkillCatalog {
       this.byName.set(key, skill);
     }
     this.indexPluginSkill(skill, options);
+  }
+
+  recordSkipped(skills: readonly SkippedSkill[]): void {
+    this.skipped.push(...skills);
+  }
+
+  addRoots(roots: readonly string[]): void {
+    for (const root of roots) {
+      if (!this.roots.includes(root)) this.roots.push(root);
+    }
   }
 
   getSkill(name: string): SkillDefinition | undefined {

@@ -1,7 +1,12 @@
+import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+
+import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { LifecycleScope } from '#/_base/di/scope';
+import type { Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -134,6 +139,32 @@ function makeHost(
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
   return { host, session, config };
+}
+
+function waitForEvents(event: Event<void>, count: number): Promise<void> {
+  return new Promise((resolve) => {
+    let received = 0;
+    const disposable = event(() => {
+      received += 1;
+      if (received === count) {
+        disposable.dispose();
+        resolve();
+      }
+    });
+  });
+}
+
+async function withSkillCatalogWorkspace(
+  run: (fixture: { readonly workDir: string; readonly skillRoot: string }) => Promise<void>,
+): Promise<void> {
+  const workDir = await mkdtemp(join(tmpdir(), 'skill-catalog-'));
+  const skillRoot = join(workDir, '.kimi-code', 'skills');
+  await mkdir(skillRoot, { recursive: true });
+  try {
+    await run({ workDir, skillRoot: await realpath(skillRoot) });
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
 }
 
 describe('SessionSkillCatalogService', () => {
@@ -315,10 +346,11 @@ describe('SessionSkillCatalogService', () => {
     await catalog.load();
     const afterLoad = store.calls;
 
+    const reloaded = waitForEvents(catalog.onDidChange, 2);
     config.fireSectionChange(MERGE_ALL_AVAILABLE_SKILLS_SECTION);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await reloaded;
 
-    expect(store.calls).toBeGreaterThanOrEqual(afterLoad + 2);
+    expect(store.calls).toBe(afterLoad + 2);
     host.dispose();
   });
 
@@ -390,5 +422,65 @@ describe('SessionSkillCatalogService', () => {
     expect(catalog.catalog.getSkill('demo-skill')?.plugin?.id).toBe('demo');
     expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeDefined();
     host.dispose();
+  });
+
+  it('feeds scanned roots from file sources into the merged catalog', async () => {
+    await withSkillCatalogWorkspace(async ({ workDir, skillRoot }) => {
+      class RootDiscovery implements ISkillDiscovery {
+        declare readonly _serviceBrand: undefined;
+        async discover(roots: readonly SkillRoot[]) {
+          return {
+            skills: [],
+            skipped: [],
+            scannedRoots: roots
+              .filter((root) => root.source === 'project')
+              .map((root) => root.path),
+          };
+        }
+      }
+      const { stub: ws } = workspaceStub(workDir);
+      const { host, session } = makeHost(new RootDiscovery(), ws);
+
+      try {
+        const catalog = session.accessor.get(ISessionSkillCatalog);
+        await catalog.load();
+
+        expect(catalog.catalog.getSkillRoots()).toEqual([skillRoot]);
+      } finally {
+        host.dispose();
+      }
+    });
+  });
+
+  it('feeds skipped skills from file sources into the merged catalog', async () => {
+    await withSkillCatalogWorkspace(async ({ workDir }) => {
+      const skippedEntry = {
+        path: join(workDir, '.kimi-code', 'skills', 'bad', 'SKILL.md'),
+        type: 'nope',
+        reason: 'unsupported skill type "nope"',
+      };
+      class SkippingDiscovery implements ISkillDiscovery {
+        declare readonly _serviceBrand: undefined;
+        async discover(roots: readonly SkillRoot[]) {
+          const isProject = roots.some((root) => root.source === 'project');
+          return {
+            skills: [],
+            skipped: isProject ? [skippedEntry] : [],
+            scannedRoots: [],
+          };
+        }
+      }
+      const { stub: ws } = workspaceStub(workDir);
+      const { host, session } = makeHost(new SkippingDiscovery(), ws);
+
+      try {
+        const catalog = session.accessor.get(ISessionSkillCatalog);
+        await catalog.load();
+
+        expect(catalog.catalog.getSkippedByPolicy()).toEqual([skippedEntry]);
+      } finally {
+        host.dispose();
+      }
+    });
   });
 });

@@ -63,6 +63,7 @@ export interface SkillCatalog {
   listSkills(): readonly SkillDefinition[];
   listInvocableSkills(): readonly SkillDefinition[];
   getSkillRoots(): readonly string[];
+  getSkippedByPolicy(): readonly SkippedSkill[];
   getModelSkillListing(): string;
 }
 
