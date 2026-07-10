@@ -5,7 +5,7 @@
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ContentPart, ModelCapability } from '@moonshot-ai/kosong';
 import { Jimp } from 'jimp';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
 import type { ExecutableToolResult } from '../../src/loop';
@@ -14,9 +14,10 @@ import {
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
 import { ImageLimits } from '../../src/tools/support/image-limits';
+import { setConfiguredReadImageByteBudget } from '../../src/tools/support/image-compress';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import type { TelemetryClient } from '../../src/telemetry';
-import { createFakeKaos, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
+import { createFakeKaos, FAKE_OS_ENV, PERMISSIVE_WORKSPACE } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -714,7 +715,7 @@ describe('ReadMediaFileTool', () => {
     // The image actually sent to the model is downsampled to the edge cap.
     const sentBytes = Buffer.from(match![2]!, 'base64');
     const sentDims = sniffImageDimensions(sentBytes);
-    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(3000);
+    expect(Math.max(sentDims!.width, sentDims!.height)).toBeLessThanOrEqual(2000);
 
     // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
@@ -749,7 +750,7 @@ describe('ReadMediaFileTool', () => {
 
     const systemText = noteText(result);
     expect(systemText).toContain('Original dimensions: 1800x3600');
-    expect(systemText).toMatch(/downsampled to 1500x3000/);
+    expect(systemText).toMatch(/downsampled to 1000x2000/);
   });
 
   it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
@@ -897,7 +898,7 @@ describe('ReadMediaFileTool', () => {
       // Wording must not depend on serialization order: some providers keep
       // the note inline after the media, others flatten tool text and
       // re-attach the image after it — so no "above"/"below".
-      expect(systemText).toMatch(/The attached image was downsampled to 3000x3000/);
+      expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
       expect(systemText).toMatch(/fine detail/i);
       expect(systemText).toContain('region');
     });
@@ -1098,6 +1099,10 @@ describe('ReadMediaFileTool', () => {
   });
 
   describe('read byte budget', () => {
+    afterEach(() => {
+      setConfiguredReadImageByteBudget(undefined);
+    });
+
     /** High-entropy PNG whose bytes stay large after downscaling. */
     async function noisePng(width: number, height: number): Promise<Buffer> {
       const image = new Jimp({ width, height, color: 0x000000ff });
@@ -1136,11 +1141,11 @@ describe('ReadMediaFileTool', () => {
       'compresses a default read to fit the configured read budget',
       async () => {
         const budget = 64 * 1024;
-        const limits = new ImageLimits(process.env, { readByteBudget: budget });
+        setConfiguredReadImageByteBudget(budget);
         const data = await noisePng(1200, 1200);
         expect(data.length).toBeGreaterThan(budget);
 
-        const result = await executeTool(toolFor(data, limits), {
+        const result = await executeTool(toolFor(data), {
           turnId: 't1',
           toolCallId: 'c_budget',
           args: { path: '/workspace/noisy.png' },
@@ -1155,11 +1160,11 @@ describe('ReadMediaFileTool', () => {
     );
 
     it('full_resolution ignores the read budget (per-image provider limit applies)', async () => {
-      const limits = new ImageLimits(process.env, { readByteBudget: 64 * 1024 });
+      setConfiguredReadImageByteBudget(64 * 1024);
       const data = await noisePng(600, 600);
       expect(data.length).toBeGreaterThan(64 * 1024);
 
-      const result = await executeTool(toolFor(data, limits), {
+      const result = await executeTool(toolFor(data), {
         turnId: 't1',
         toolCallId: 'c_fullres_budget',
         args: { path: '/workspace/noisy.png', full_resolution: true },
@@ -1175,10 +1180,10 @@ describe('ReadMediaFileTool', () => {
     it(
       'region reads ignore the read budget so detail readback stays full-fidelity',
       async () => {
-        const limits = new ImageLimits(process.env, { readByteBudget: 16 * 1024 });
+        setConfiguredReadImageByteBudget(16 * 1024);
         const data = await noisePng(800, 800);
 
-        const result = await executeTool(toolFor(data, limits), {
+        const result = await executeTool(toolFor(data), {
           turnId: 't1',
           toolCallId: 'c_region_budget',
           args: { path: '/workspace/noisy.png', region: { x: 0, y: 0, width: 400, height: 400 } },

@@ -59,6 +59,7 @@
   },
   "dependencies": {
     "@antfu/utils": "^9.3.0",
+    "@jsquash/webp": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kaos": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",

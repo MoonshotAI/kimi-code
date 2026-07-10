@@ -9,19 +9,21 @@
  * each compress with their own `[image]` settings and a reload of one never
  * restamps the other.
  *
- * Resolution precedence per value: env var > owning config > built-in
- * default. Env stays process-level on purpose — it is the operator's
- * override for everything in the process, exactly like the experimental-flag
- * env switches.
+ * Resolution precedence per value: env var > owning config > global config
+ * > built-in default. Env stays process-level on purpose — it is the
+ * operator's override for everything in the process, exactly like the
+ * experimental-flag env switches. The global config layer (pushed by
+ * KimiCore via {@link setConfiguredMaxImageEdgePx}) ensures ownerless call
+ * sites and instances without per-instance config still respect config.toml.
  */
 
 import type { ImageConfig } from '#/config/schema';
 
 import {
-  MAX_IMAGE_EDGE_PX,
   maxImageEdgeFromEnv,
-  READ_IMAGE_BYTE_BUDGET,
   readImageByteBudgetFromEnv,
+  resolveMaxImageEdgePx,
+  resolveReadImageByteBudget,
 } from './image-compress';
 
 export class ImageLimits {
@@ -38,13 +40,15 @@ export class ImageLimits {
 
   /** Longest-edge ceiling (px) for compressing images for the model. */
   maxEdgePx(): number {
-    return maxImageEdgeFromEnv(this.env) ?? this.config?.maxEdgePx ?? MAX_IMAGE_EDGE_PX;
+    return maxImageEdgeFromEnv(this.env) ?? this.config?.maxEdgePx ?? resolveMaxImageEdgePx(this.env);
   }
 
   /** Raw-byte budget for model-initiated image reads (ReadMediaFile default path). */
   readByteBudget(): number {
     return (
-      readImageByteBudgetFromEnv(this.env) ?? this.config?.readByteBudget ?? READ_IMAGE_BYTE_BUDGET
+      readImageByteBudgetFromEnv(this.env) ??
+      this.config?.readByteBudget ??
+      resolveReadImageByteBudget(this.env)
     );
   }
 }

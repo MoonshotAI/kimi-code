@@ -177,8 +177,9 @@ export interface AgentRecordEvents {
     messageCount: number;
     turnStep?: string;
     attempt?: string;
-    /** Set when this request is the strict wire-compliant rebuild resend. */
-    projection?: 'strict';
+    /** Set when this request is a fallback resend (strict rebuild or
+     * media-degraded rebuild). */
+    projection?: 'strict' | 'media-degraded';
     /** Compaction only: messages dropped so far by overflow/empty shrinking. */
     droppedCount?: number;
   };

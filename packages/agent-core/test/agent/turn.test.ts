@@ -9,9 +9,11 @@ import { createControlledPromise } from '@antfu/utils';
 import {
   APIConnectionError,
   APIEmptyResponseError,
+  APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
   type ChatProvider,
+  type Message,
   type ModelCapability,
   type ToolCall,
 } from '@moonshot-ai/kosong';
@@ -60,6 +62,76 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 }
 
 describe('Agent turn flow', () => {
+  it('degrades older history media and retries when the provider rejects the request body as too large', async () => {
+    let attempts = 0;
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      histories.push(structuredClone(history));
+      if (attempts === 1) {
+        throw new APIRequestTooLargeError(413, 'Request exceeds the maximum size');
+      }
+      return {
+        id: 'mock-degraded-recovery',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+      modelCapabilities: {
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 256_000,
+      },
+    });
+    // Three ReadMediaFile-shaped image results in the history.
+    for (const name of ['a', 'b', 'c']) {
+      ctx.agent.context.appendUserMessage(
+        [
+          { type: 'text', text: `<image path="/workspace/${name}.png">` },
+          { type: 'image_url', imageUrl: { url: `data:image/png;base64,${name}AAA` } },
+          { type: 'text', text: '</image>' },
+        ],
+        { kind: 'user' },
+      );
+    }
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'inspect the screenshots' }] });
+    await ctx.untilTurnEnd();
+
+    expect(attempts).toBe(2);
+    // The first request carried all three images.
+    const firstParts = histories[0]!.flatMap((message) => message.content);
+    expect(firstParts.filter((part) => part.type === 'image_url')).toHaveLength(3);
+    // The retry keeps only the two most recent images; the oldest becomes a
+    // placeholder while its path wrapper survives for readback.
+    const retryParts = histories[1]!.flatMap((message) => message.content);
+    const retryImages = retryParts.filter((part) => part.type === 'image_url');
+    expect(retryImages).toHaveLength(2);
+    expect(
+      retryImages.map((part) => (part.type === 'image_url' ? part.imageUrl.url : '')),
+    ).toEqual(['data:image/png;base64,bAAA', 'data:image/png;base64,cAAA']);
+    const retryText = retryParts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(retryText).toContain('[image omitted:');
+    expect(retryText).toContain('<image path="/workspace/a.png">');
+    // The real history is untouched.
+    expect(
+      ctx.agent.context.history
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url'),
+    ).toHaveLength(3);
+  });
+
   it('tracks turn_started and turn_interrupted telemetry', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({ telemetry: recordingTelemetry(records) });
