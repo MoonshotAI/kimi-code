@@ -1,0 +1,4 @@
+[submodule "kimi-code"]
+	path = kimi-code
+	url = /Users/moonshot/Desktop/moonshot/kimi-code-2
+	branch = chore/split-clients-to-code-app
