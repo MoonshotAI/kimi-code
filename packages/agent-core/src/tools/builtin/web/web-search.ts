@@ -117,23 +117,47 @@ function classifySearchError(error: unknown): string {
   const name = error instanceof Error ? error.name : '';
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
+  const httpStatus = parseHttpStatus(message);
 
   if (name === 'AbortError' || lower.includes('abort')) {
     return `Search cancelled: ${message}`;
   }
-  if (name === 'TimeoutError' || lower.includes('timed out') || lower.includes('timeout')) {
+  if (
+    httpStatus === 408 ||
+    name === 'TimeoutError' ||
+    lower.includes('timed out') ||
+    lower.includes('timeout')
+  ) {
     return `Search timed out: ${message}`;
   }
-  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
+  if (httpStatus !== undefined) {
+    if (httpStatus === 401) {
+      return `Search failed (authentication): ${message}`;
+    }
+    if (httpStatus === 403) {
+      return `Search failed (authorization): ${message}`;
+    }
+    if (httpStatus === 429) {
+      return `Search failed (rate limit): ${message}`;
+    }
+    if (httpStatus >= 500) {
+      return `Search failed (server): ${message}`;
+    }
+    if (httpStatus >= 400) {
+      return `Search failed (bad request): ${message}`;
+    }
+  }
+  if (lower.includes('unauthorized') || lower.includes('auth')) {
     return `Search failed (authentication): ${message}`;
   }
-  if (
-    lower.includes('http ') ||
-    lower.includes('network') ||
-    lower.includes('fetch') ||
-    name === 'TypeError'
-  ) {
+  if (lower.includes('network') || lower.includes('fetch') || name === 'TypeError') {
     return `Search failed (network): ${message}`;
   }
   return `Search failed: ${message}`;
+}
+
+function parseHttpStatus(message: string): number | undefined {
+  const match = /\bHTTP\s+(\d{3})\b/i.exec(message);
+  if (match?.[1] === undefined) return undefined;
+  return Number.parseInt(match[1], 10);
 }

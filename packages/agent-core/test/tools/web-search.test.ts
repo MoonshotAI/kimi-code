@@ -228,6 +228,103 @@ describe('WebSearchTool', () => {
     expect(content).toContain('HTTP 401');
   });
 
+  it('classifies authorization failures', async () => {
+    const provider: WebSearchProvider = {
+      search: vi.fn().mockRejectedValue(new Error('Moonshot search request failed: HTTP 403.')),
+    };
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-forbidden',
+      args: { query: 'fail' },
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    const content = toolContentString(result);
+    expect(content).toContain('Search failed (authorization):');
+    expect(content).toContain('HTTP 403');
+  });
+
+  it('classifies rate limit failures', async () => {
+    const provider: WebSearchProvider = {
+      search: vi.fn().mockRejectedValue(new Error('Moonshot search request failed: HTTP 429.')),
+    };
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-rate-limit',
+      args: { query: 'fail' },
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    const content = toolContentString(result);
+    expect(content).toContain('Search failed (rate limit):');
+    expect(content).toContain('HTTP 429');
+  });
+
+  it('classifies server failures', async () => {
+    const provider: WebSearchProvider = {
+      search: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Moonshot search request failed: HTTP 500. {"error":{"type":"server_error"}}',
+          ),
+        ),
+    };
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-server',
+      args: { query: 'fail' },
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    const content = toolContentString(result);
+    expect(content).toContain('Search failed (server):');
+    expect(content).toContain('HTTP 500');
+  });
+
+  it('classifies bad request failures', async () => {
+    const provider: WebSearchProvider = {
+      search: vi.fn().mockRejectedValue(new Error('Moonshot search request failed: HTTP 400.')),
+    };
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-bad-request',
+      args: { query: 'fail' },
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    const content = toolContentString(result);
+    expect(content).toContain('Search failed (bad request):');
+    expect(content).toContain('HTTP 400');
+  });
+
+  it('prefers HTTP status over body text when classifying failures', async () => {
+    const provider: WebSearchProvider = {
+      search: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Moonshot search request failed: HTTP 500. {"error":{"message":"auth upstream failed"}}',
+          ),
+        ),
+    };
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-status-priority',
+      args: { query: 'fail' },
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    const content = toolContentString(result);
+    expect(content).toContain('Search failed (server):');
+    expect(content).not.toContain('Search failed (authentication):');
+  });
+
   it('classifies timeout failures', async () => {
     const err = new Error('request timed out');
     err.name = 'TimeoutError';
@@ -245,6 +342,23 @@ describe('WebSearchTool', () => {
     expect(content).toContain('Search timed out:');
     // The original error text is preserved alongside the prefix.
     expect(content).toContain('request timed out');
+  });
+
+  it('classifies HTTP 408 as a timeout failure', async () => {
+    const provider: WebSearchProvider = {
+      search: vi.fn().mockRejectedValue(new Error('Moonshot search request failed: HTTP 408.')),
+    };
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-http-timeout',
+      args: { query: 'fail' },
+      signal,
+    });
+    expect(result.isError).toBe(true);
+    const content = toolContentString(result);
+    expect(content).toContain('Search timed out:');
+    expect(content).toContain('HTTP 408');
   });
 
   it('classifies aborted requests', async () => {
