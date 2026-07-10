@@ -6,6 +6,18 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.5 (2026-07-10)
+
+### Polish
+
+- Retry provider 429, overload, and other transient errors more reliably, honoring the server Retry-After delay, and surface retries in `-p --output-format stream-json`.
+
+### Bug Fixes
+
+- Stop unsupported image formats (AVIF, BMP, TIFF, ICO, …) from breaking sessions at every entry point — including remote image URLs and images mislabeled by a tool — and recover an already-stuck session by dropping the offending image and retrying, so one such image can no longer make every later request fail.
+- web: Fix the "Turn finished" desktop notification and completion sound firing twice per turn.
+- web: Hide the internal image-compression note so it no longer renders as user message text.
+
 ## 0.23.4 (2026-07-10)
 
 ### Features
