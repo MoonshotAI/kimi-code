@@ -39,15 +39,16 @@ module.exports = {
     output: 'dist-app',
   },
 
-  // Native `.node` modules (node-pty, clipboard, koffi) are rebuilt for the
-  // Electron ABI by `@electron/rebuild` (postinstall) and unpacked from the
-  // asar via `asarUnpack` so the in-process server can `dlopen` them at runtime.
+  // `node-pty` is the only native `.node` module in the desktop closure
+  // (agent-core's terminal service). It is rebuilt for the Electron ABI by
+  // `@electron/rebuild` (postinstall) and unpacked from the asar via
+  // `asarUnpack` so the in-process server can `dlopen` it at runtime.
+  // (`@mariozechner/clipboard` and `koffi` are CLI / pi-tui only and not present
+  // in the desktop closure.)
   npmRebuild: false,
   asar: true,
   asarUnpack: [
     'node_modules/node-pty/**',
-    'node_modules/@mariozechner/clipboard*/**',
-    'node_modules/koffi/**',
   ],
 
   files: ['out/**', 'package.json'],

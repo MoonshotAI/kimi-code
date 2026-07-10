@@ -1,8 +1,11 @@
 import { defineConfig } from 'tsdown';
 
-// Electron main process is CommonJS (`out/main.cjs`). Native modules loaded via
-// agent-core (`node-pty`, optional clipboard/koffi) must stay external so
-// Electron loads the rebuilt `.node` binaries at runtime (see asarUnpack).
+// Electron main process is CommonJS (`out/main.cjs`). `node-pty` (used by
+// agent-core's terminal service) is the only native module in the desktop
+// closure and must stay external so Electron loads the rebuilt `.node` binary
+// at runtime (see asarUnpack).
+// Note: `@mariozechner/clipboard` and `koffi` belong to the CLI / pi-tui, not to
+// the server/agent-core closure, so they are intentionally NOT listed here.
 export default defineConfig({
   entry: { main: 'src/main/index.ts' },
   format: ['cjs'],
@@ -16,13 +19,6 @@ export default defineConfig({
     neverBundle: [
       'electron',
       'node-pty',
-      '@mariozechner/clipboard',
-      '@mariozechner/clipboard-darwin-arm64',
-      '@mariozechner/clipboard-darwin-x64',
-      '@mariozechner/clipboard-win32-x64',
-      '@mariozechner/clipboard-linux-x64',
-      '@mariozechner/clipboard-linux-arm64',
-      'koffi',
     ],
   },
 });
