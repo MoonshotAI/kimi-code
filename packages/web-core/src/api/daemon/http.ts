@@ -1,10 +1,10 @@
-// apps/kimi-web/src/api/daemon/http.ts
+// web-core api/daemon/http.ts
 // DaemonHttpClient — REST transport with envelope unwrap and allowCodes support.
 
 import { buildRestUrl } from '../config';
+import { noopTracer } from '../../contracts';
+import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
 import { DaemonApiError, DaemonNetworkError } from '../errors';
-import { traceRestFailure, traceRestRequest, traceRestResponse } from '../../debug/trace';
-import { getCredential, markAuthRequired } from './serverAuth';
 import type { WireEnvelope } from './wire';
 
 /** Per-request timeout. Without one, a hung connection (half-open TCP after a
@@ -19,11 +19,11 @@ const BODY_PREVIEW_LIMIT = 500;
 // middleware/auth.ts AUTH_ERROR_CODE). Distinct from provider-auth 40110–40113.
 const SERVER_AUTH_UNAUTHORIZED_CODE = 40101;
 
-export interface DaemonHttpClientIdentity {
-  readonly clientId: string;
-  readonly clientName: string;
-  readonly clientVersion: string;
-  readonly clientUiMode: string;
+export interface DaemonHttpClientOptions {
+  origin: string;
+  identity: ClientIdentity;
+  tracer?: Tracer;
+  credentialStore?: CredentialStore;
 }
 
 /** AbortSignal.timeout with a fallback for older environments (jsdom). */
@@ -89,10 +89,11 @@ async function readResponsePreview(response: Response): Promise<string | undefin
 }
 
 export class DaemonHttpClient {
-  constructor(
-    private readonly origin: string,
-    private readonly identity?: DaemonHttpClientIdentity,
-  ) {}
+  private readonly tracer: Tracer;
+
+  constructor(private readonly opts: DaemonHttpClientOptions) {
+    this.tracer = opts.tracer ?? noopTracer;
+  }
 
   async get<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
     return this.request<T>('GET', path, undefined, query);
@@ -103,17 +104,17 @@ export class DaemonHttpClient {
    *  fetches natively and cannot authorize on its own. Returns the body as a
    *  Blob on 2xx; otherwise parses the daemon envelope and throws. */
   async getBlob(path: string): Promise<Blob> {
-    const url = buildRestUrl(this.origin, path);
+    const url = buildRestUrl(this.opts.origin, path);
     const requestId = createRequestId();
     const headers: Record<string, string> = { 'X-Request-Id': requestId };
     this.addClientHeaders(headers);
     const startedAt = Date.now();
-    traceRestRequest({ method: 'GET', path, url, requestId });
+    this.tracer.restRequest?.({ method: 'GET', path, url, requestId });
     let response: Response;
     try {
       response = await fetch(url, { method: 'GET', headers, signal: timeoutSignal() });
     } catch (err) {
-      traceRestFailure({
+      this.tracer.restFailure?.({
         method: 'GET',
         path,
         requestId,
@@ -135,7 +136,7 @@ export class DaemonHttpClient {
       });
     }
     if (response.ok) {
-      traceRestResponse({
+      this.tracer.restResponse?.({
         method: 'GET',
         path,
         requestId,
@@ -154,7 +155,7 @@ export class DaemonHttpClient {
       // not JSON — fall back to the HTTP status below
     }
     this.checkAuthRequired(response, envelope?.code ?? 0);
-    traceRestResponse({
+    this.tracer.restResponse?.({
       method: 'GET',
       path,
       requestId,
@@ -180,19 +181,19 @@ export class DaemonHttpClient {
 
   /** Send multipart/form-data (FormData). Does NOT set Content-Type — browser sets it with boundary. */
   async postForm<T>(path: string, formData: FormData): Promise<T> {
-    const url = buildRestUrl(this.origin, path);
+    const url = buildRestUrl(this.opts.origin, path);
     const requestId = createRequestId();
     const headers: Record<string, string> = {
       'X-Request-Id': requestId,
     };
     this.addClientHeaders(headers);
     const startedAt = Date.now();
-    traceRestRequest({ method: 'POST', path, url, requestId, body: describeFormData(formData) });
+    this.tracer.restRequest?.({ method: 'POST', path, url, requestId, body: describeFormData(formData) });
     let response: Response;
     try {
       response = await fetch(url, { method: 'POST', headers, body: formData, signal: timeoutSignal() });
     } catch (err) {
-      traceRestFailure({ method: 'POST', path, requestId, phase: 'fetch', durationMs: Date.now() - startedAt, error: err });
+      this.tracer.restFailure?.({ method: 'POST', path, requestId, phase: 'fetch', durationMs: Date.now() - startedAt, error: err });
       throw new DaemonNetworkError({
         message: `Network error calling POST ${path}`,
         cause: err,
@@ -211,7 +212,7 @@ export class DaemonHttpClient {
     try {
       envelope = (await response.json()) as WireEnvelope<T>;
     } catch (err) {
-      traceRestFailure({ method: 'POST', path, requestId, phase: 'parse', durationMs: Date.now() - startedAt, status: response.status, error: err });
+      this.tracer.restFailure?.({ method: 'POST', path, requestId, phase: 'parse', durationMs: Date.now() - startedAt, status: response.status, error: err });
       throw new DaemonNetworkError({
         message: `Failed to parse JSON response from POST ${path}`,
         cause: err,
@@ -229,7 +230,7 @@ export class DaemonHttpClient {
         durationMs: Date.now() - startedAt,
       });
     }
-    traceRestResponse({
+    this.tracer.restResponse?.({
       method: 'POST',
       path,
       requestId,
@@ -270,7 +271,7 @@ export class DaemonHttpClient {
     allowCodes: number[] = [],
   ): Promise<T> {
     // Build URL, appending query string (omit undefined values)
-    let url = buildRestUrl(this.origin, path);
+    let url = buildRestUrl(this.opts.origin, path);
     if (query) {
       const params = new URLSearchParams();
       for (const [key, value] of Object.entries(query)) {
@@ -293,7 +294,7 @@ export class DaemonHttpClient {
     }
 
     const startedAt = Date.now();
-    traceRestRequest({ method, path, url, requestId, body });
+    this.tracer.restRequest?.({ method, path, url, requestId, body });
 
     // Execute fetch
     let response: Response;
@@ -305,7 +306,7 @@ export class DaemonHttpClient {
         signal: timeoutSignal(),
       });
     } catch (err) {
-      traceRestFailure({ method, path, requestId, phase: 'fetch', durationMs: Date.now() - startedAt, error: err });
+      this.tracer.restFailure?.({ method, path, requestId, phase: 'fetch', durationMs: Date.now() - startedAt, error: err });
       throw new DaemonNetworkError({
         message: `Network error calling ${method} ${path}`,
         cause: err,
@@ -326,7 +327,7 @@ export class DaemonHttpClient {
     try {
       envelope = (await response.json()) as WireEnvelope<T>;
     } catch (err) {
-      traceRestFailure({ method, path, requestId, phase: 'parse', durationMs: Date.now() - startedAt, status: response.status, error: err });
+      this.tracer.restFailure?.({ method, path, requestId, phase: 'parse', durationMs: Date.now() - startedAt, status: response.status, error: err });
       throw new DaemonNetworkError({
         message: `Failed to parse JSON response from ${method} ${path}`,
         cause: err,
@@ -345,7 +346,7 @@ export class DaemonHttpClient {
       });
     }
 
-    traceRestResponse({
+    this.tracer.restResponse?.({
       method,
       path,
       requestId,
@@ -377,23 +378,20 @@ export class DaemonHttpClient {
   }
 
   private addClientHeaders(headers: Record<string, string>): void {
-    const credential = getCredential();
-    if (credential !== undefined) {
-      headers['Authorization'] = `Bearer ${credential}`;
+    const token = this.opts.credentialStore?.getToken();
+    if (token !== undefined) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
-    if (this.identity === undefined) return;
-    headers['X-Kimi-Client-Id'] = this.identity.clientId;
-    headers['X-Kimi-Client-Name'] = this.identity.clientName;
-    headers['X-Kimi-Client-Version'] = this.identity.clientVersion;
-    headers['X-Kimi-Client-Ui-Mode'] = this.identity.clientUiMode;
+    const identity = this.opts.identity;
+    headers['X-Kimi-Client-Id'] = identity.clientId;
+    headers['X-Kimi-Client-Name'] = identity.clientName;
+    headers['X-Kimi-Client-Version'] = identity.clientVersion;
+    headers['X-Kimi-Client-Ui-Mode'] = identity.clientUiMode;
   }
 
   private checkAuthRequired(response: Response, envelopeCode: number): void {
-    if (
-      response.status === 401 ||
-      envelopeCode === SERVER_AUTH_UNAUTHORIZED_CODE
-    ) {
-      markAuthRequired();
+    if (response.status === 401 || envelopeCode === SERVER_AUTH_UNAUTHORIZED_CODE) {
+      this.opts.credentialStore?.markAuthRequired?.();
     }
   }
 }

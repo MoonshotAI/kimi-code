@@ -1,0 +1,24 @@
+// web-core api — daemon REST + WS client and its supporting types.
+//
+// The transport (DaemonHttpClient / DaemonEventSocket) and the high-level client
+// (DaemonKimiWebApi) are constructed with an injected Tracer + CredentialStore
+// (plus a consumer-supplied projector factory), so this package never imports a
+// consumer's tracer, credential store, i18n, or tool labeling.
+
+export { DaemonKimiWebApi } from './daemon/client';
+export type { DaemonKimiWebApiOptions } from './daemon/client';
+export { DaemonHttpClient } from './daemon/http';
+export type { DaemonHttpClientOptions } from './daemon/http';
+export { DaemonEventSocket } from './daemon/ws';
+export type { DaemonEventSocketOptions } from './daemon/ws';
+export type { AgentProjector, ProjectMeta } from './daemon/projector';
+export { toAppEvent, toAppMessageContent } from './daemon/mappers';
+export type { WireMessageContent } from './daemon/wire';
+export { buildRestUrl, buildWsUrl } from './config';
+export {
+  DaemonApiError,
+  DaemonNetworkError,
+  isDaemonApiError,
+  isDaemonNetworkError,
+} from './errors';
+export * from './types';

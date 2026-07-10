@@ -27,8 +27,8 @@ import type {
 } from '../types';
 import { i18n } from '../../i18n';
 import { toolLabel, toolSummary } from '../../lib/toolMeta';
-import { toAppMessageContent } from './mappers';
-import type { WireMessageContent } from './wire';
+import { toAppMessageContent } from '@moonshot-ai/web-core/api';
+import type { AgentProjector, ProjectMeta, WireMessageContent } from '@moonshot-ai/web-core/api';
 
 // Subagent turns share the parent session id: their turn / step / delta / tool
 // frames stream over the SAME session channel, each tagged with the subagent's
@@ -479,41 +479,8 @@ function buildUsageSnapshot(state: SessionState): AppSessionUsage {
 // AgentProjector
 // ---------------------------------------------------------------------------
 
-export interface ProjectMeta {
-  /**
-   * Wire-level pre-append stream offset on volatile text-delta frames (v2
-   * sync protocol). Used to skip duplicate deltas and detect gaps after a
-   * snapshot seed.
-   */
-  offset?: number;
-}
-
-export interface AgentProjector {
-  /** Project a single raw agent-core event into zero or more AppEvents. Never throws. */
-  project(rawType: string, payload: unknown, sessionId: string, meta?: ProjectMeta): AppEvent[];
-  /**
-   * Bind an externally-known promptId to the next turn.startd for this session.
-   * Call this right after submitPrompt() returns, before the first turn.started arrives.
-   */
-  bindNextPromptId(sessionId: string, promptId: string): void;
-  /**
-   * Seed mid-turn state from a session snapshot's `in_flight_turn` (v2 sync):
-   * resets per-session state, builds the partially-streamed assistant message
-   * (thinking + text + running tool_use parts), and returns the AppEvents
-   * (sessionStatusChanged + messageCreated) to apply to the reducer. Live
-   * deltas continue appending; their wire `offset` aligns against the seeded
-   * text so the overlap window around snapshot/subscribe is exact.
-   */
-  seedInFlight(sessionId: string, turn: AppInFlightTurn): AppEvent[];
-  /** Reset all per-session state (call on re-subscribe / resync). */
-  reset(sessionId: string): void;
-  /**
-   * Mark an agent id as a side-channel (e.g. BTW side chat) rather than a
-   * background subagent. Its text/thinking deltas and turn boundary are then
-   * emitted as agent-scoped events instead of being dropped.
-   */
-  markSideChannelAgent(agentId: string): void;
-}
+// ProjectMeta + AgentProjector contracts live in @moonshot-ai/web-core/api
+// (imported above); this is the apps/web implementation (i18n + toolMeta).
 
 export function createAgentProjector(): AgentProjector {
   const sessions = new Map<string, SessionState>();
@@ -1271,173 +1238,4 @@ export function createAgentProjector(): AgentProjector {
   }
 
   return { project, bindNextPromptId, seedInFlight, reset, markSideChannelAgent };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers for integration layer
-// ---------------------------------------------------------------------------
-
-/**
- * Detect whether an incoming WS frame type is a raw agent-core event
- * (as opposed to a projected "event.*" protocol event or a control frame).
- *
- * Raw agent-core events do NOT start with "event." and are not control frames.
- * Control frames: server_hello, ack, ping, resync_required, error.
- */
-const CONTROL_FRAME_TYPES = new Set([
-  'server_hello',
-  'ack',
-  'ping',
-  'resync_required',
-  'error',
-  'pong',
-]);
-
-export function isRawAgentCoreEvent(frameType: string): boolean {
-  if (frameType.startsWith('event.')) return false;
-  if (CONTROL_FRAME_TYPES.has(frameType)) return false;
-  return true;
-}
-
-/**
- * Agent-core event names the projector knows how to project. These are the
- * raw events the real daemon emits. The same names may arrive WITH an "event."
- * prefix (newer daemon) or WITHOUT it (older daemon).
- */
-const KNOWN_AGENT_CORE_TYPES = new Set([
-  'turn.started',
-  'turn.step.started',
-  'turn.step.completed',
-  'turn.step.retrying',
-  'turn.step.interrupted',
-  'turn.ended',
-  'thinking.delta',
-  'assistant.delta',
-  'tool.call.started',
-  'tool.use', // alias the daemon may use for tool.call.started
-  'tool.call.delta',
-  'tool.progress',
-  'tool.result',
-  'agent.status.updated',
-  'prompt.submitted',
-  'prompt.completed',
-  'session.meta.updated',
-  'compaction.started',
-  'compaction.completed',
-  'compaction.cancelled',
-  'goal.updated',
-  'error',
-  'warning',
-  'subagent.spawned',
-  'subagent.started',
-  'subagent.suspended',
-  'subagent.completed',
-  'subagent.failed',
-  'background.task.started',
-  'background.task.terminated',
-  'cron.fired',
-]);
-
-/**
- * "event."-prefixed names that are GENUINE protocol events (control/projected
- * events produced server-side). The agent projector must NOT re-handle these —
- * they go through the existing toAppEvent() path. This includes approval /
- * question requests (which drive the approval/question UI) and the no-op-but-
- * known streaming/tool protocol events.
- */
-const PROTOCOL_EVENT_NAMES = new Set([
-  // Session lifecycle (projected)
-  'session.created',
-  'session.updated',
-  'session.deleted',
-  'session.status_changed',
-  'session.usage_updated',
-  'session.history_compacted',
-  // Message lifecycle (projected)
-  'message.created',
-  'message.updated',
-  // Approval / Question — MUST stay on the protocol path to drive the UI
-  'approval.requested',
-  'approval.resolved',
-  'approval.expired',
-  'question.requested',
-  'question.answered',
-  'question.dismissed',
-  // Background tasks (projected)
-  'task.created',
-  'task.progress',
-  'task.completed',
-  // No-op-but-known protocol streaming / tool events
-  'assistant.tool_use_started',
-  'assistant.tool_use_delta',
-  'assistant.tool_use_completed',
-  'assistant.completed',
-  'tool.started',
-  'tool.output',
-  'tool.completed',
-]);
-
-/**
- * Names that are ambiguous between the raw agent-core form (payload.delta is a
- * STRING) and the already-projected protocol form (payload.delta is an object
- * { text? | thinking? }, or the payload carries message_id / content_index).
- */
-const AMBIGUOUS_DELTA_NAMES = new Set(['assistant.delta', 'thinking.delta']);
-
-export type FrameRoute =
-  | { route: 'protocol' }
-  | { route: 'agent'; agentType: string }
-  | { route: 'ignore' };
-
-/**
- * Classify a (possibly "event."-prefixed) WS frame into the path it should take.
- *
- * - 'protocol' → hand the original frame to toAppEvent() (existing path).
- * - 'agent'    → hand `agentType` + payload to the agent projector.
- * - 'ignore'   → drop (no session context / unroutable).
- *
- * Robust to all three observed shapes:
- *   1) raw agent-core (no prefix):        turn.started, assistant.delta{delta:'…'}
- *   2) "event."-prefixed agent-core:      event.turn.started, event.assistant.delta{delta:'…'}
- *   3) genuine protocol "event.*" events: event.message.created, event.session.*, …
- */
-export function classifyFrame(rawType: string, payload: unknown): FrameRoute {
-  if (CONTROL_FRAME_TYPES.has(rawType)) return { route: 'ignore' };
-
-  const hasPrefix = rawType.startsWith('event.');
-  const name = hasPrefix ? rawType.slice('event.'.length) : rawType;
-
-  // Ambiguous delta events: disambiguate by payload shape regardless of prefix.
-  if (AMBIGUOUS_DELTA_NAMES.has(name)) {
-    if (deltaIsRawAgentCore(payload)) return { route: 'agent', agentType: name };
-    // Object delta or protocol-shaped payload → projected protocol event.
-    return { route: 'protocol' };
-  }
-
-  // Unprefixed frames are raw agent-core (real daemon) when we know the name.
-  if (!hasPrefix) {
-    if (KNOWN_AGENT_CORE_TYPES.has(name)) return { route: 'agent', agentType: name };
-    // Unknown unprefixed name with no protocol meaning → still try the projector
-    // (it safely no-ops on unknown types and advances nothing).
-    return { route: 'agent', agentType: name };
-  }
-
-  // Prefixed frames: genuine protocol events take priority.
-  if (PROTOCOL_EVENT_NAMES.has(name)) return { route: 'protocol' };
-  // Prefixed agent-core event (e.g. event.turn.started) → strip + project.
-  if (KNOWN_AGENT_CORE_TYPES.has(name)) return { route: 'agent', agentType: name };
-  // Unknown "event.*" → let toAppEvent() record it as an unknown protocol event.
-  return { route: 'protocol' };
-}
-
-/**
- * True when an assistant.delta / thinking.delta payload is in the RAW agent-core
- * form: payload.delta is a plain string, and there is no protocol-only field
- * (message_id / content_index). The protocol form uses delta:{text|thinking}.
- */
-function deltaIsRawAgentCore(payload: unknown): boolean {
-  if (!payload || typeof payload !== 'object') return false;
-  const p = payload as Record<string, unknown>;
-  if ('message_id' in p || 'content_index' in p) return false;
-  return typeof p['delta'] === 'string';
 }

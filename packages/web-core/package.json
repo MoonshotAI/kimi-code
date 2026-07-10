@@ -4,13 +4,16 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./api": "./src/api/index.ts",
+    "./contracts": "./src/contracts.ts"
   },
   "peerDependencies": {
     "vue": "^3.5.35",
     "vue-i18n": "^11.4.5"
   },
   "devDependencies": {
+    "vitest": "4.1.4",
     "vue": "^3.5.35",
     "vue-i18n": "^11.4.5",
     "vue-tsc": "~3.2.0",

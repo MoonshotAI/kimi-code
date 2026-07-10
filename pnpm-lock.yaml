@@ -74,6 +74,9 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.2.8
         version: 5.2.8
+      '@moonshot-ai/web-core':
+        specifier: workspace:*
+        version: link:../../packages/web-core
       '@moonshot-ai/web-markdown':
         specifier: workspace:*
         version: link:../../packages/web-markdown
@@ -486,6 +489,9 @@ importers:
       typescript:
         specifier: 6.0.2
         version: 6.0.2
+      vitest:
+        specifier: 4.1.4
+        version: 4.1.4(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
       vue:
         specifier: ^3.5.35
         version: 3.5.39(typescript@6.0.2)

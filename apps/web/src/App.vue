@@ -38,7 +38,7 @@ import { openDialogCount } from '@moonshot-ai/web-ui';
 import { IsDarkKey } from '@moonshot-ai/web-markdown';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
-import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
+import { initServerAuth, onAuthRequired } from './lib/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { coerceThinkingForModel, commitLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';

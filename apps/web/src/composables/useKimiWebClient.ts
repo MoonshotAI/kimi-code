@@ -62,7 +62,7 @@ import type {
   ThinkingLevel,
 } from '../api/types';
 import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
-import { toAppEvent } from '../api/daemon/mappers';
+import { toAppEvent } from '@moonshot-ai/web-core/api';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';

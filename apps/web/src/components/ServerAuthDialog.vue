@@ -6,7 +6,7 @@
      the unified v2 dialog look. -->
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
-import { setCredential } from '../api/daemon/serverAuth';
+import { setCredential } from '../lib/serverAuth';
 import { Button, Input } from '@moonshot-ai/web-ui';
 
 const credential = ref('');

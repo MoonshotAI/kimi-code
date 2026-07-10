@@ -1,8 +1,9 @@
-// apps/kimi-web/src/api/daemon/client.ts
+// web-core api/daemon/client.ts
 // DaemonKimiWebApi — implements KimiWebApi using the daemon REST + WS APIs.
 
-import type { KimiApiConfig } from '../config';
 import { buildRestUrl, buildWsUrl } from '../config';
+import { noopTracer } from '../../contracts';
+import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
 import type {
   AppConfig,
   AppMessage,
@@ -32,8 +33,8 @@ import type {
   PromptSubmitResult,
   QuestionResponse,
 } from '../types';
-import { createAgentProjector } from './agentEventProjector';
 import { DaemonHttpClient } from './http';
+import type { AgentProjector } from './projector';
 import {
   toAppApprovalRequest,
   toAppConfig,
@@ -241,17 +242,28 @@ function isCompactionReason(reason: string): boolean {
 // DaemonKimiWebApi
 // ---------------------------------------------------------------------------
 
+export interface DaemonKimiWebApiOptions {
+  origin: string;
+  identity: ClientIdentity;
+  tracer?: Tracer;
+  credentialStore?: CredentialStore;
+  /** Factory for the raw-agent-core event projector (consumer-supplied; the
+   *  implementation carries i18n / tool-labeling that the api client must not
+   *  depend on). */
+  projectorFactory: () => AgentProjector;
+}
+
 export class DaemonKimiWebApi implements KimiWebApi {
   private readonly http: DaemonHttpClient;
-  private readonly config: KimiApiConfig;
+  private readonly tracer: Tracer;
 
-  constructor(config: KimiApiConfig) {
-    this.config = config;
-    this.http = new DaemonHttpClient(config.serverHttpUrl, {
-      clientId: config.clientId,
-      clientName: config.clientName,
-      clientVersion: config.clientVersion,
-      clientUiMode: config.clientUiMode,
+  constructor(private readonly opts: DaemonKimiWebApiOptions) {
+    this.tracer = opts.tracer ?? noopTracer;
+    this.http = new DaemonHttpClient({
+      origin: opts.origin,
+      identity: opts.identity,
+      tracer: this.tracer,
+      credentialStore: opts.credentialStore,
     });
   }
 
@@ -936,7 +948,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   getFileDownloadUrl(sessionId: string, path: string): string {
     const encodedPath = path.split('/').map((part) => encodeURIComponent(part)).join('/');
     return buildRestUrl(
-      this.config.serverHttpUrl,
+      this.opts.origin,
       `/sessions/${encodeURIComponent(sessionId)}/fs/${encodedPath}:download`,
     );
   }
@@ -1254,7 +1266,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   getFileUrl(fileId: string): string {
-    return buildRestUrl(this.config.serverHttpUrl, `/files/${encodeURIComponent(fileId)}`);
+    return buildRestUrl(this.opts.origin, `/files/${encodeURIComponent(fileId)}`);
   }
 
   /** Fetch a file's bytes with the Bearer credential attached. Use this (not
@@ -1269,13 +1281,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
   // -------------------------------------------------------------------------
 
   connectEvents(handlers: KimiEventHandlers): KimiEventConnection {
-    const wsUrl = buildWsUrl(this.config.serverHttpUrl, this.config.clientId);
+    const wsUrl = buildWsUrl(this.opts.origin, this.opts.identity.clientId);
 
     // Per-session projector for raw agent-core events.
     // Keyed by session_id; reset when a session is re-subscribed or resynced.
-    const projector = createAgentProjector();
+    const projector = this.opts.projectorFactory();
 
-    const socket = new DaemonEventSocket(wsUrl, this.config.clientId, {
+    const socket = new DaemonEventSocket({
+      wsUrl,
+      clientId: this.opts.identity.clientId,
+      tracer: this.tracer,
+      credentialStore: this.opts.credentialStore,
+      handlers: {
       // -----------------------------------------------------------------------
       // Projected "event.*" frames — existing path (kept working for stub / spec)
       // -----------------------------------------------------------------------
@@ -1337,6 +1354,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       onTerminalExit: (sessionId, terminalId, exitCode) => {
         handlers.onTerminalExit?.(sessionId, terminalId, exitCode);
       },
+    }
     });
 
     socket.connect();

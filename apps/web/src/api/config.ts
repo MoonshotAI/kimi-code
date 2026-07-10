@@ -1,5 +1,9 @@
-// apps/kimi-web/src/api/config.ts
-// Reads Vite env, builds REST/WS URLs, manages stable clientId.
+// apps/web src/api/config.ts — reads Vite env + window, resolves the server
+// origin, and derives the stable client identity for the DaemonKimiWebApi.
+//
+// Pure URL builders (buildRestUrl / buildWsUrl) live in @moonshot-ai/web-core;
+// this module keeps only the consumer-runtime concerns (window / import.meta.env
+// / storage) that the package deliberately does not own.
 
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
 
@@ -97,18 +101,6 @@ export function serverEndpointLabel(): string {
   const origin =
     typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
   return shortOrigin(origin);
-}
-
-// The real server serves everything (incl. healthz + ws) under the /api/v1 prefix.
-export function buildRestUrl(origin: string, path: string): string {
-  return `${origin}/api/v1${path.startsWith('/') ? path : `/${path}`}`;
-}
-
-export function buildWsUrl(origin: string, clientId: string): string {
-  const url = new URL(`${origin}/api/v1/ws`);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.searchParams.set('client_id', clientId);
-  return url.toString();
 }
 
 function getClientId(): string {

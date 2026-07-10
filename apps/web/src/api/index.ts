@@ -1,13 +1,5 @@
-// apps/kimi-web/src/api/index.ts
-// Singleton factory for the KimiWebApi daemon client.
-
-import { readKimiApiConfig } from './config';
-import type { KimiWebApi } from './types';
-import { DaemonKimiWebApi } from './daemon/client';
-
-let singleton: KimiWebApi | undefined;
-
-export function getKimiWebApi(): KimiWebApi {
-  singleton ??= new DaemonKimiWebApi(readKimiApiConfig());
-  return singleton;
-}
+// apps/web src/api — thin barrel. The api client + transport now live in
+// @moonshot-ai/web-core; this module exposes the apps/web-composed singleton
+// (see ./bootstrap) so existing `import { getKimiWebApi } from '../api'` sites
+// keep working unchanged.
+export { api, getKimiWebApi } from './bootstrap';
