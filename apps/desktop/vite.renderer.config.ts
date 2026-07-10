@@ -16,22 +16,27 @@ import { kimiRendererViteConfig } from '@moonshot-ai/vite-preset';
 const root = fileURLToPath(new URL('./src/renderer', import.meta.url));
 const outDir = fileURLToPath(new URL('./desktop-dist', import.meta.url));
 
-// Decision 1 (iconsDir): inline the shared web SVG collection at build time.
-// Resolved as an absolute path against this config file; the SVGs are bundled
-// into `desktop-dist`, so the packaged app does not depend on apps/web's
-// filesystem at runtime. Fallback (only if this absolute path breaks the build):
-// copy apps/web/src/icons/kimi into src/renderer/icons/kimi and point iconsDir
-// there (accept duplicated icons to avoid a cross-app filesystem dependency).
-const iconsDir = fileURLToPath(new URL('../web/src/icons/kimi', import.meta.url));
+// iconsDir: the web source tree (including src/icons/kimi) is now copied into
+// src/renderer (desktop and web maintain two copies for now, on purpose), so
+// point iconsDir at the in-tree copy. SVGs are bundled into desktop-dist at
+// build time, so the packaged app does not depend on apps/web's filesystem.
+const iconsDir = fileURLToPath(new URL('./src/renderer/icons/kimi', import.meta.url));
 
 const preset = kimiRendererViteConfig({
   root,
   iconsDir,
   defines: {
-    // Desktop renderer flag. Deliberately NO `__KIMI_DEV_PROXY_TARGET__`: the
-    // desktop renderer talks to the loopback server directly (same machine),
-    // not through the web dev proxy.
-    __KIMI_DESKTOP__: JSON.stringify(true),
+    // The renderer bundle is a copy of apps/web/src, which references three
+    // compile-time `__KIMI_*` defines (see apps/web/src/env.d.ts). Provide all
+    // three so the copy builds unchanged:
+    //   __KIMI_DEV_PROXY_TARGET__ — desktop talks to the loopback server
+    //     directly, never through the web dev proxy, so leave it empty.
+    //   __KIMI_WEB_VERSION__ — shown in the web UI; mirror the desktop version.
+    //   __KIMI_WEB_DESKTOP__ — enables desktop-only behaviour in the web copy
+    //     (theme IPC, openExternal, desktop flag), so force it true here.
+    __KIMI_DEV_PROXY_TARGET__: JSON.stringify(''),
+    __KIMI_WEB_VERSION__: JSON.stringify('0.1.1-internal.0'),
+    __KIMI_WEB_DESKTOP__: JSON.stringify(true),
   },
 });
 

@@ -216,6 +216,20 @@ function createWindow(): void {
   if (!app.isPackaged) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
+  win.webContents.on('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    const factor = win.webContents.getZoomFactor();
+    const level = win.webContents.getZoomLevel();
+    void win.webContents
+      .executeJavaScript('window.devicePixelRatio')
+      .then((dpr) => {
+        if (win.isDestroyed()) return;
+        process.stdout.write(
+          `[kimi-desktop diag] zoom factor=${factor} level=${level} devicePixelRatio=${dpr} url=${win.webContents.getURL()}\n`,
+        );
+      })
+      .catch(() => {});
+  });
   void connect(win);
 }
 

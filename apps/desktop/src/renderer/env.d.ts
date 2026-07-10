@@ -7,12 +7,17 @@ import '@moonshot-ai/vite-preset/icons';
 import '@moonshot-ai/vite-preset/worker';
 
 declare global {
-  // Injected by Vite `define` (see vite.renderer.config.ts): true for the
-  // desktop renderer bundle. Gates desktop-only branches. Note: the desktop
-  // config deliberately does NOT define `__KIMI_DEV_PROXY_TARGET__` — the
-  // desktop renderer talks to the loopback server directly, never via the web
-  // dev proxy.
-  const __KIMI_DESKTOP__: boolean;
+  // Injected by Vite `define` (see vite.config.ts): the dev proxy's upstream
+  // daemon target, so the UI can display which daemon it actually talks to.
+  // In production builds this is still defined but unused (same-origin daemon).
+  const __KIMI_DEV_PROXY_TARGET__: string;
+
+  // Injected by Vite `define` from apps/kimi-web/package.json.
+  const __KIMI_WEB_VERSION__: string;
+
+  // Injected by Vite `define`: true only in the web bundle embedded in the Kimi
+  // Desktop app. Gates the internal-build banner (see InternalBuildBanner.vue).
+  const __KIMI_WEB_DESKTOP__: boolean;
 }
 
 declare module '*.vue' {
