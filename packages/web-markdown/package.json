@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./lib/filePathLinks": "./src/lib/filePathLinks.ts"
   },
   "dependencies": {
     "@moonshot-ai/web-core": "workspace:*",

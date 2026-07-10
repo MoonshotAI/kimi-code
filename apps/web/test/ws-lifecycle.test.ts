@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DaemonEventSocket, type DaemonEventSocketHandlers } from '../src/api/daemon/ws';
+import { DaemonEventSocket, type DaemonEventSocketHandlers } from '@moonshot-ai/web-core/api';
 
 class FakeWebSocket {
   static readonly CONNECTING = 0;
@@ -85,7 +85,7 @@ describe('DaemonEventSocket reconnect + staleness', () => {
 
   it('reconnect() closes the old socket, detaches it, and opens a new one', () => {
     const handlers = makeHandlers();
-    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    const socket = new DaemonEventSocket({ wsUrl: WS_URL, clientId: CLIENT_ID, handlers });
     socket.connect();
     const first = FakeWebSocket.instances[0]!;
     first.emitMessage(SERVER_HELLO);
@@ -108,7 +108,7 @@ describe('DaemonEventSocket reconnect + staleness', () => {
 
   it('reconnect() is a no-op after close()', () => {
     const handlers = makeHandlers();
-    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    const socket = new DaemonEventSocket({ wsUrl: WS_URL, clientId: CLIENT_ID, handlers });
     socket.connect();
     socket.close();
     socket.reconnect();
@@ -118,7 +118,7 @@ describe('DaemonEventSocket reconnect + staleness', () => {
   it('health() flips stale after a long silence and clears on the next frame', () => {
     vi.useFakeTimers();
     const handlers = makeHandlers();
-    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    const socket = new DaemonEventSocket({ wsUrl: WS_URL, clientId: CLIENT_ID, handlers });
     socket.connect();
     const first = FakeWebSocket.instances[0]!;
     first.emitMessage(SERVER_HELLO);
@@ -136,7 +136,7 @@ describe('DaemonEventSocket reconnect + staleness', () => {
 
   it('health().open reflects the underlying readyState', () => {
     const handlers = makeHandlers();
-    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    const socket = new DaemonEventSocket({ wsUrl: WS_URL, clientId: CLIENT_ID, handlers });
     socket.connect();
     const first = FakeWebSocket.instances[0]!;
     expect(socket.health().open).toBe(true);

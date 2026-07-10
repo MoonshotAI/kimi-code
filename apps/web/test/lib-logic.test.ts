@@ -3,7 +3,7 @@ import {
   collectFilePathAliases,
   findFilePathLinks,
   parseFilePathLinkCandidate,
-} from '../src/lib/filePathLinks';
+} from '@moonshot-ai/web-markdown/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
 import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';

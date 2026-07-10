@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
+import { classifyFrame } from '@moonshot-ai/web-core/api';
+import { createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
 describe('subagentProgressText', () => {
   it('drops turn.step.started as noise', () => {
