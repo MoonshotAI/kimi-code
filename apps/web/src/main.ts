@@ -1,7 +1,9 @@
 import { createApp } from 'vue';
 import { IconResolverKey } from '@moonshot-ai/web-ui';
+import { KimiWebClientFacadeKey } from '@moonshot-ai/web-core';
 import App from './App.vue';
 import i18n from './i18n';
+import { useKimiWebClient } from './composables/useKimiWebClient';
 import { isDesktop } from './lib/desktopFlag';
 import { getIcon, type IconName } from './lib/icons';
 import { installClientErrorCapture } from './debug/trace';
@@ -20,6 +22,10 @@ const app = createApp(App).use(i18n);
 // component through lib/icons.ts (which owns the `~icons/*` collections). The
 // registry stays in apps/web; web-ui only defines the injection key.
 app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
+// Expose the web client singleton facade so (future) web-shell components can
+// `inject(KimiWebClientFacadeKey)` instead of importing the composable. Provided
+// before mount so the facade is ready when children inject during render.
+app.provide(KimiWebClientFacadeKey, useKimiWebClient());
 app.mount('#app');
 
 // In the desktop app, mirror <html data-color-scheme> to the host's nativeTheme
