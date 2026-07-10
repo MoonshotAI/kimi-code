@@ -1032,6 +1032,7 @@ describe('gateImageFormatParts', () => {
       'https://example.com/pic.heic?size=full',
       'https://example.com/scan.tiff#frame',
       'https://example.com/icon.ico',
+      'https://example.com/logo.svg',
     ]) {
       const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url: bad } }]);
       expect(out[0]).toMatchObject({ type: 'text' });
@@ -1068,6 +1069,10 @@ describe('unsupportedImageMimeFromUrl', () => {
     expect(unsupportedImageMimeFromUrl('https://example.com/photo.HEIC#frame')).toBe('image/heic');
     expect(unsupportedImageMimeFromUrl('https://example.com/scan.tiff')).toBe('image/tiff');
     expect(unsupportedImageMimeFromUrl('https://example.com/icon.ico')).toBe('image/x-icon');
+    // .svg is not in the shared suffix map (SVG is text for the file tools),
+    // but remote SVG images are accepted by no provider.
+    expect(unsupportedImageMimeFromUrl('https://example.com/logo.svg')).toBe('image/svg+xml');
+    expect(unsupportedImageMimeFromUrl('https://example.com/logo.svgz')).toBe('image/svg+xml');
   });
 
   it('returns null for accepted, extensionless, or unknown URLs', () => {

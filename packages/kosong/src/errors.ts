@@ -173,10 +173,8 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
 // propagates (the pre-recovery behavior). The entry-point format gate is the
 // structural defense; this recovery only backstops the residue.
 const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
-  // Unsupported format / type — Anthropic `media_type` & Gemini `mime_type`
-  // enum violations; OpenAI / Moonshot "unsupported image …".
+  // Unsupported format / type — OpenAI / Moonshot "unsupported image …".
   /unsupported (?:image|media) (?:url|format|type)/,
-  /(?:media|mime)_?type/,
   // Undecodable / corrupt image data.
   /does not represent a valid image/,
   /could not (?:process|decode) (?:the |input )?image/,
@@ -184,6 +182,15 @@ const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
   /failed to decode (?:the )?image/,
   /invalid (?:image|media)(?: data| type| format)?/,
 ] as const;
+
+// Anthropic `media_type` & Gemini `mime_type` enum violations name the field
+// — recoverable only when the message is about an IMAGE. A video/audio
+// `media_type` rejection must surface instead of being blindly
+// media-stripped: unlike images there is no conversion-guidance path for
+// video today, so dropping the user's video silently would hide the real
+// error. Every documented image media_type message also mentions "image",
+// so the anchor costs nothing on the known cases.
+const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
 
 /**
  * Whether the provider rejected an IMAGE in the request because of its
@@ -202,7 +209,10 @@ export function isImageFormatError(error: unknown): boolean {
     if (error instanceof APIRequestTooLargeError) return false;
     if (error.statusCode !== 400) return false;
     const lowerMessage = error.message.toLowerCase();
-    return IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+    return (
+      IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage)) ||
+      (MEDIA_TYPE_FIELD_PATTERN.test(lowerMessage) && lowerMessage.includes('image'))
+    );
   }
   if (error instanceof ChatProviderError) {
     const lowerMessage = error.message.toLowerCase();

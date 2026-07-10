@@ -129,7 +129,10 @@ export function unsupportedImageMimeFromUrl(url: string): string | null {
   const dot = path.lastIndexOf('.');
   if (dot === -1) return null;
   const ext = path.slice(dot).toLowerCase();
-  const mime = IMAGE_MIME_BY_SUFFIX[ext];
+  // `.svg` is deliberately absent from IMAGE_MIME_BY_SUFFIX — SVG files are
+  // text for the file tools — but as a remote image URL it is accepted by no
+  // provider, so flag it here without touching the shared suffix map.
+  const mime = ext === '.svg' ? 'image/svg+xml' : IMAGE_MIME_BY_SUFFIX[ext];
   if (mime === undefined || isModelAcceptedImageMime(mime)) return null;
   return mime;
 }

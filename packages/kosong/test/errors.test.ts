@@ -634,6 +634,17 @@ describe('isImageFormatError', () => {
     expect(
       isImageFormatError(new APIStatusError(400, "`inlineData` isn't supported by this model.")),
     ).toBe(false);
+    // Video/audio media_type errors are NOT image errors: they must surface
+    // (no conversion-guidance path exists for video) instead of triggering a
+    // blind media-stripped resend.
+    expect(
+      isImageFormatError(
+        new APIStatusError(
+          400,
+          "messages.0.content.1.video.source.base64.media_type: Input should be 'video/mp4'",
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('is excluded from the transient-retry fallback so dedicated recovery fires first', () => {
