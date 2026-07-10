@@ -1,4 +1,4 @@
-// apps/kimi-web/src/api/daemon/eventReducer.ts
+// web-core daemon event reducer.
 // Pure TypeScript state reducer for KimiClient.
 // Operates on plain TS state — no Vue reactivity here.
 // The reducer consumes AppEvent (camelCase), produced by toAppEvent() in mappers.ts.
@@ -22,7 +22,15 @@ import type {
   CompactionMarkerMetadata,
 } from '../types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../types';
-import { i18n } from '../../i18n';
+
+/** Translator injected by the consumer so the reducer stays free of any
+ *  concrete i18n instance. Defaults to the identity (returns the key), which
+ *  keeps pure/reducer tests independent of a host locale. */
+export interface ReduceContext {
+  t: (key: string, params?: Record<string, unknown>) => string;
+}
+
+const DEFAULT_REDUCE_CONTEXT: ReduceContext = { t: (key) => key };
 
 const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
 
@@ -236,6 +244,7 @@ export function reduceAppEvent(
   state: KimiClientState,
   event: AppEvent,
   meta: EventMeta,
+  ctx: ReduceContext = DEFAULT_REDUCE_CONTEXT,
 ): KimiClientState {
   const next = cloneState(state);
 
@@ -658,8 +667,8 @@ export function reduceAppEvent(
         // Surface the agent's real error/warning message (e.g. a 403 from the
         // model provider) instead of a useless "Unhandled event".
         const label = raw._agentError
-          ? i18n.global.t('warnings.errorLabel')
-          : i18n.global.t('warnings.noteLabel');
+          ? ctx.t('warnings.errorLabel')
+          : ctx.t('warnings.noteLabel');
         const msg = raw.message ?? raw.code ?? 'agent error';
         next.warnings = [...next.warnings, `${label}: ${msg}`];
       } else {

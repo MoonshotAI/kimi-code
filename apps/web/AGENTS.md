@@ -18,7 +18,7 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 ## Layout (`src/`)
 
 - `main.ts` — bootstrap (creates the app, installs i18n, mounts `#app`). `App.vue` — root component, holds most app state.
-- `api/` — server client. `index.ts` exposes the `getKimiWebApi()` singleton; `config.ts` builds REST/WS URLs; `daemon/` holds the wire client (`http.ts`, `ws.ts`, `wire.ts`, `mappers.ts`, `agentEventProjector.ts`, `eventReducer.ts`).
+- `api/` — server client. `index.ts` exposes the `getKimiWebApi()` singleton; `config.ts` builds REST/WS URLs; `daemon/` holds the wire client (`http.ts`, `ws.ts`, `wire.ts`, `mappers.ts`, `agentEventProjector.ts`). The session event reducer (`createInitialState` / `reduceAppEvent` / `KimiClientState`) lives in `@moonshot-ai/web-core/api` so web + desktop share one state machine.
 - `components/` — SFCs grouped by area: `chat/` (conversation/chat UI), `settings/` (settings & configuration), `dialogs/` (modal dialogs & sheets), `mobile/` (mobile-specific shell), plus shared layout components at the top level. The design-system primitives formerly under `components/ui/` now live in the `@moonshot-ai/web-ui` package (see "Design system" above).
 - `composables/` — reusable state logic, `useX` naming (`useKimiWebClient`, `useIsDark`, `usePaneLayout`, …).
 - `lib/` — pure helpers (`parseDiff`, `slashCommands`, `sessionRoute`, `toolMeta`, …).

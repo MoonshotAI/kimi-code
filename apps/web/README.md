@@ -46,7 +46,7 @@ server (REST + WS)
   └─ src/api/daemon/client.ts      REST adapter  (envelope → AppX types)
   └─ src/api/daemon/ws.ts          WS frames → classify → projector/reducer
        └─ agentEventProjector.ts   RAW agent-core events → AppEvent[]
-       └─ eventReducer.ts          AppEvent[] → state
+       └─ eventReducer.ts          AppEvent[] → state  (@moonshot-ai/web-core/api)
   └─ src/composables/useKimiWebClient.ts   the ONLY place that imports api + state;
                                            exposes computed view props + actions
   └─ src/components/*.vue          render props, emit intents (no api access)

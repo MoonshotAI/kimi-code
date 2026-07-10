@@ -2,7 +2,7 @@ import { computed, ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
-import { createInitialState } from '../src/api/daemon/eventReducer';
+import { createInitialState } from '@moonshot-ai/web-core/api';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';

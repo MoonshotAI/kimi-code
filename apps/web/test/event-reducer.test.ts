@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
+import { createInitialState, reduceAppEvent } from '@moonshot-ai/web-core/api';
 import type { AppMessage, AppSession, AppTask } from '../src/api/types';
 
 function makeSession(id: string, updatedAt: string): AppSession {

@@ -14,6 +14,14 @@ export type { DaemonEventSocketOptions } from './daemon/ws';
 export type { AgentProjector, ProjectMeta } from './daemon/projector';
 export { toAppEvent, toAppMessageContent } from './daemon/mappers';
 export type { WireMessageContent } from './daemon/wire';
+export {
+  createInitialState,
+  reduceAppEvent,
+  type CompactionStatus,
+  type EventMeta,
+  type KimiClientState,
+  type ReduceContext,
+} from './daemon/eventReducer';
 export { buildRestUrl, buildWsUrl } from './config';
 export {
   DaemonApiError,

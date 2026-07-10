@@ -61,8 +61,13 @@ import type {
   KimiEventConnection,
   ThinkingLevel,
 } from '../api/types';
-import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
-import { toAppEvent } from '@moonshot-ai/web-core/api';
+import {
+  createInitialState,
+  reduceAppEvent,
+  toAppEvent,
+  type CompactionStatus,
+  type KimiClientState,
+} from '@moonshot-ai/web-core/api';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
@@ -740,7 +745,9 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     config: rawState.config,
     warnings: rawState.warnings,
   };
-  const next = reduceAppEvent(snapshot, event, { sessionId, seq });
+  const next = reduceAppEvent(snapshot, event, { sessionId, seq }, {
+    t: (k, p) => (p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)),
+  });
   // Assign back to the reactive proxy
   setSessions(next.sessions);
   setActiveSessionId(next.activeSessionId);
