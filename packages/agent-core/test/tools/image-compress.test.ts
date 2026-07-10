@@ -957,6 +957,27 @@ describe('gateImageFormatParts', () => {
     });
   });
 
+  it('parses the base64 marker case-insensitively', () => {
+    // `;BASE64,` is a legal data URL (RFC 2045 encoding names are
+    // case-insensitive): an uppercase marker must not slip past the gate as
+    // if it were a remote URL, and the canonical rebuild lowercases it.
+    const base64 = Buffer.from([1, 2, 3]).toString('base64');
+
+    const accepted = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: `data:image/jpeg;BASE64,${base64}` } },
+    ]);
+    expect(accepted[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/jpeg;base64,${base64}` },
+    });
+
+    const unsupported = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: `data:image/avif;BASE64,${base64}` } },
+    ]);
+    expect(unsupported.some((p) => p.type === 'image_url')).toBe(false);
+    expect((unsupported[0] as { text: string }).text).toContain('image/avif');
+  });
+
   it('passes remote image URLs through (no bytes to inspect)', () => {
     const part = {
       type: 'image_url' as const,

@@ -74,11 +74,15 @@ export function normalizeImageMime(mimeType: string): string {
  * returned raw — callers decide via {@link isModelAcceptedImageMime} and
  * forward {@link normalizeImageMime}. MIME parameters are tolerated and
  * ignored (`data:image/avif;charset=utf-8;base64,…`), so a parameter-bearing
- * URL cannot slip past the format gate. Returns null for non-data URLs
- * (e.g. a remote http(s) image — see the scope note in the module header).
+ * URL cannot slip past the format gate. The scheme and `base64` marker are
+ * matched case-insensitively (RFC 2045 encoding names are case-insensitive),
+ * so an uppercase `;BASE64,` cannot slip past either — and since callers
+ * rebuild to the canonical URL, the marker comes back out lowercase.
+ * Returns null for non-data URLs (e.g. a remote http(s) image — see the
+ * scope note in the module header).
  */
 export function parseImageDataUrl(url: string): { mimeType: string; base64: string } | null {
-  const match = /^data:([^;,]+)(?:;[^;,]+)*?;base64,(.*)$/s.exec(url);
+  const match = /^data:([^;,]+)(?:;[^;,]+)*?;base64,(.*)$/si.exec(url);
   if (match === null) return null;
   return { mimeType: match[1]!, base64: match[2]! };
 }
