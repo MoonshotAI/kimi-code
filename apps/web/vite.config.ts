@@ -1,7 +1,5 @@
 import { defineConfig } from 'vite';
-import vue from '@vitejs/plugin-vue';
-import Icons from 'unplugin-icons/vite';
-import { FileSystemIconLoader } from 'unplugin-icons/loaders';
+import { kimiRendererViteConfig } from '@moonshot-ai/vite-preset';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -13,30 +11,32 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
   version: string;
 };
 
-export default defineConfig({
-  plugins: [
-    vue(),
-    Icons({
-      compiler: 'vue3',
-      // Local Kimi Design System icons (24×24 outlined, fill="currentColor"),
-      // copied from the design-system icon pack into src/icons/kimi/ and
-      // imported as `~icons/kimi/<file-name>` (plus `?raw`), same as the ri
-      // collection. Registered in src/lib/icons.ts only.
-      customCollections: {
-        kimi: FileSystemIconLoader(fileURLToPath(new URL('./src/icons/kimi', import.meta.url))),
-      },
-    }),
-  ],
+// Shared renderer config (Vue + unplugin-icons `kimi` collection, ES2022 target,
+// module workers, `__KIMI_*` defines) lives in `@moonshot-ai/vite-preset` so the
+// web and desktop renderers stay in lockstep. Web-only concerns (dev/preview
+// proxy, build output dir) are layered on top below.
+const preset = kimiRendererViteConfig({
+  root: fileURLToPath(new URL('.', import.meta.url)),
+  iconsDir: fileURLToPath(new URL('./src/icons/kimi', import.meta.url)),
   // Expose the dev proxy's upstream server target to the client so the UI can
   // show which server it is connected to (the browser otherwise only sees its
   // own same-origin URL). Unused by the same-origin production build.
-  define: {
+  defines: {
     __KIMI_DEV_PROXY_TARGET__: JSON.stringify(serverTarget),
     __KIMI_WEB_VERSION__: JSON.stringify(pkg.version),
     // True only for the web bundle embedded in the Kimi Desktop app (set by the
     // desktop-build workflow). Gates an "internal testing build" banner. When
     // false (default) the banner is tree-shaken out of the production bundle.
     __KIMI_WEB_DESKTOP__: JSON.stringify(process.env.KIMI_WEB_DESKTOP === '1'),
+  },
+});
+
+export default defineConfig({
+  ...preset,
+  build: {
+    ...preset.build,
+    outDir: 'dist',
+    emptyOutDir: true,
   },
   server: {
     port: webPort,
@@ -55,16 +55,5 @@ export default defineConfig({
     proxy: {
       '/api/v1': { target: serverTarget, changeOrigin: true, ws: true },
     },
-  },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-    target: 'es2022',
-  },
-  // Workers that import modules with code-splitting (e.g. mermaid's dynamic
-  // diagram imports) need ES format — IIFE cannot split chunks. The app
-  // already targets ES2022 so all supported browsers handle module workers.
-  worker: {
-    format: 'es',
   },
 });
