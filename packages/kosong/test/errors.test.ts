@@ -548,19 +548,36 @@ describe('isProviderRateLimitError', () => {
 });
 
 describe('isImageFormatError', () => {
-  it('matches a server 400 that mentions an image', () => {
+  it('matches documented provider image format/data rejections', () => {
+    // OpenAI
     expect(
       isImageFormatError(
         new APIStatusError(400, 'The image data you provided does not represent a valid image'),
       ),
     ).toBe(true);
-    expect(isImageFormatError(new APIStatusError(400, 'unsupported image format'))).toBe(true);
+    // Anthropic media_type enum violation
     expect(
       isImageFormatError(
         new APIStatusError(
           400,
           "messages.0.content.1.image.source.base64.media_type: Input should be 'image/jpeg'",
         ),
+      ),
+    ).toBe(true);
+    // Anthropic decode failure
+    expect(isImageFormatError(new APIStatusError(400, 'Could not process image'))).toBe(true);
+    // Moonshot/Kimi (from the Kimi Code error reference)
+    expect(
+      isImageFormatError(
+        new APIStatusError(400, 'Invalid request: unsupported image url: /tmp/photo.avif'),
+      ),
+    ).toBe(true);
+    expect(isImageFormatError(new APIStatusError(400, 'unsupported image format'))).toBe(true);
+    // Gemini
+    expect(isImageFormatError(new APIStatusError(400, 'Unable to process input image'))).toBe(true);
+    expect(
+      isImageFormatError(
+        new APIStatusError(400, 'The mime_type must accurately match the actual image format'),
       ),
     ).toBe(true);
   });
@@ -602,6 +619,21 @@ describe('isImageFormatError', () => {
       isImageFormatError(new APIStatusError(400, 'image input is disabled for this model')),
     ).toBe(false);
     expect(isImageFormatError(new APIStatusError(400, 'image_url is not allowed'))).toBe(false);
+    // Documented provider messages that are image-shaped but not
+    // format/data errors: Anthropic's per-image size cap, Moonshot's
+    // capability code, Gemini's unsupported-inlineData rejection.
+    expect(
+      isImageFormatError(
+        new APIStatusError(
+          400,
+          'messages.44.content.1.image.source.base64: image exceeds 5 MB maximum: 11641928 bytes > 5242880 bytes',
+        ),
+      ),
+    ).toBe(false);
+    expect(isImageFormatError(new APIStatusError(400, 'Image Input Not Supported'))).toBe(false);
+    expect(
+      isImageFormatError(new APIStatusError(400, "`inlineData` isn't supported by this model.")),
+    ).toBe(false);
   });
 
   it('is excluded from the transient-retry fallback so dedicated recovery fires first', () => {

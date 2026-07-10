@@ -161,17 +161,28 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
 
 // Server-side image rejections that are safe to recover by stripping media:
 // an unsupported/invalid media type or undecodable image data. These are
-// deliberately narrow — image COUNT/SIZE limits or image-input-disabled
-// errors also mention "image", but stripping media either over-recovers or
-// hides a real configuration problem the user should see; only format/data
-// rejections are guaranteed to be fixed by removing the offending image.
+// deliberately narrow and grounded in the documented messages of the major
+// providers (Anthropic, OpenAI, Moonshot/Kimi, Gemini) — image COUNT/SIZE
+// limits or image-input-disabled errors also mention "image", but stripping
+// media either over-recovers or hides a real configuration problem the user
+// should see; only format/data rejections are guaranteed to be fixed by
+// removing the offending image.
+//
+// Matching on provider message text is inherently best-effort: these strings
+// are not a stable contract, so a novel phrasing is missed and the error
+// propagates (the pre-recovery behavior). The entry-point format gate is the
+// structural defense; this recovery only backstops the residue.
 const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
-  /unsupported (?:image|media) (?:format|type)/,
-  /invalid (?:image|media)(?: data| type| format)?/,
+  // Unsupported format / type — Anthropic `media_type` & Gemini `mime_type`
+  // enum violations; OpenAI / Moonshot "unsupported image …".
+  /unsupported (?:image|media) (?:url|format|type)/,
+  /(?:media|mime)_?type/,
+  // Undecodable / corrupt image data.
   /does not represent a valid image/,
-  /could not (?:process|decode) (?:the )?image/,
+  /could not (?:process|decode) (?:the |input )?image/,
+  /unable to process (?:the |input )?image/,
   /failed to decode (?:the )?image/,
-  /media_type/,
+  /invalid (?:image|media)(?: data| type| format)?/,
 ] as const;
 
 /**
