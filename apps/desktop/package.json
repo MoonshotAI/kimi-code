@@ -13,7 +13,7 @@
     "build:renderer": "vite build --config vite.renderer.config.ts",
     "prebuild": "npm run build:renderer",
     "start": "electron .",
-    "dev": "tsdown && electron .",
+    "dev": "npm run build:renderer && tsdown && electron .",
     "typecheck": "tsc --noEmit && npm run typecheck:renderer",
     "typecheck:renderer": "vue-tsc --noEmit -p tsconfig.renderer.json",
     "test": "vitest run",
