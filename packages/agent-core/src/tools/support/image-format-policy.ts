@@ -28,7 +28,7 @@
  * server-side; those pass through unchanged.
  */
 
-import { sniffMediaFromMagic } from './file-type';
+import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
 
 /** Image MIME types every provider accepts. The closed set. */
 export const MODEL_ACCEPTED_IMAGE_MIMES: ReadonlySet<string> = new Set([
@@ -98,6 +98,32 @@ export function decodeBase64Prefix(base64: string): Buffer {
 export function resolveEffectiveImageMime(declaredMime: string, header: Uint8Array): string {
   const sniffed = sniffMediaFromMagic(header);
   return sniffed !== null ? sniffed.mimeType : declaredMime;
+}
+
+/**
+ * Whether a non-data image URL points at a format providers reject, judged
+ * by its path extension. A best-effort heuristic for the case where there
+ * are no bytes to sniff (a remote http(s) image): catches the common
+ * search-tool direct link ending in `.avif`. Query string and fragment are
+ * ignored; the match is case-insensitive. URLs without an extension, or
+ * whose extension lies, fall through to the provider — and to the 400
+ * recovery — unchanged.
+ *
+ * Returns the unsupported MIME when the extension is known and not in the
+ * accepted set (so the notice names the right format), else null.
+ */
+export function unsupportedImageMimeFromUrl(url: string): string | null {
+  let path = url;
+  const query = path.indexOf('?');
+  if (query !== -1) path = path.slice(0, query);
+  const hash = path.indexOf('#');
+  if (hash !== -1) path = path.slice(0, hash);
+  const dot = path.lastIndexOf('.');
+  if (dot === -1) return null;
+  const ext = path.slice(dot).toLowerCase();
+  const mime = IMAGE_MIME_BY_SUFFIX[ext];
+  if (mime === undefined || isModelAcceptedImageMime(mime)) return null;
+  return mime;
 }
 
 /**

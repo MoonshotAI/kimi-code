@@ -1020,12 +1020,29 @@ describe('gateImageFormatParts', () => {
     expect((unsupported[0] as { text: string }).text).toContain('image/avif');
   });
 
-  it('passes remote image URLs through (no bytes to inspect)', () => {
-    const part = {
-      type: 'image_url' as const,
-      imageUrl: { url: 'https://example.com/pic.avif' },
-    };
-    expect(gateImageFormatParts([part])).toEqual([part]);
+  it('drops remote image URLs whose extension is unsupported, passes others through', () => {
+    // No bytes to inspect, so the gate uses the path extension: a known-bad
+    // extension becomes a notice; extensionless / unknown / accepted
+    // extensions pass through to the provider (and the 400 recovery).
+    for (const bad of [
+      'https://example.com/pic.avif',
+      'https://example.com/pic.AVIF',
+      'https://example.com/pic.heic?size=full',
+      'https://example.com/scan.tiff#frame',
+      'https://example.com/icon.ico',
+    ]) {
+      const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url: bad } }]);
+      expect(out[0]).toMatchObject({ type: 'text' });
+    }
+    for (const ok of [
+      'https://example.com/pic.png',
+      'https://example.com/pic.jpg?size=full#frame',
+      'https://example.com/avatar',
+      'https://cdn.example.com/v2/image?id=123',
+    ]) {
+      const part = { type: 'image_url' as const, imageUrl: { url: ok } };
+      expect(gateImageFormatParts([part])).toEqual([part]);
+    }
   });
 });
 

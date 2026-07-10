@@ -80,6 +80,7 @@ export {
   normalizeImageMime,
   parseImageDataUrl,
   resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
 } from './tools/support/image-format-policy';
 export { ImageLimits } from './tools/support/image-limits';
 export type {

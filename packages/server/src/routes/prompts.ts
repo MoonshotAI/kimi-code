@@ -13,7 +13,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, buildUnsupportedImageNotice, compressImageForModel, compressBase64ForModel, decodeBase64Prefix, isModelAcceptedImageMime, normalizeImageMime, persistOriginalImage, resolveEffectiveImageMime, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, buildUnsupportedImageNotice, compressImageForModel, compressBase64ForModel, decodeBase64Prefix, isModelAcceptedImageMime, normalizeImageMime, persistOriginalImage, resolveEffectiveImageMime, sessionMediaOriginalsDir, unsupportedImageMimeFromUrl, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -370,6 +370,20 @@ async function resolvePromptMediaFiles(
       } else {
         content.push(part);
       }
+      continue;
+    }
+    // Remote image URL: no bytes to sniff, so reject when its path extension
+    // names a format providers reject (e.g. a link ending in `.avif`);
+    // extensionless / unknown URLs pass through to the provider and the 400
+    // recovery. Image+URL parts that pass are re-emitted unchanged.
+    if (part.type === 'image' && part.source.kind === 'url') {
+      const extMime = unsupportedImageMimeFromUrl(part.source.url);
+      if (extMime !== null) {
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime) });
+        changed = true;
+        continue;
+      }
+      content.push(part);
       continue;
     }
     if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {

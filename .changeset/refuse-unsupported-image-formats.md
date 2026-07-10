@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Stop unsupported image formats (AVIF, BMP, TIFF, ICO, …) from breaking sessions: they are now refused with conversion guidance or replaced with a text notice at every entry point, and MIME aliases like `image/jpg` are normalized to the exact canonical data URL providers require, so one such image can no longer make every later request fail.
+Stop unsupported image formats (AVIF, BMP, TIFF, ICO, …) from breaking sessions at every entry point — including remote image URLs and images mislabeled by a tool — and recover an already-stuck session by dropping the offending image and retrying, so one such image can no longer make every later request fail.

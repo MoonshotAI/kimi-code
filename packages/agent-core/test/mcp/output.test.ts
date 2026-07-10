@@ -345,9 +345,11 @@ describe('mcpResultToExecutableOutput', () => {
     });
   });
 
-  test('passes remote-URL images through (no bytes to gate on)', async () => {
-    // Scope pin: an MCP resource_link carries a URL, not bytes, so the format
-    // gate cannot inspect it — the provider fetches it server-side.
+  test('drops a remote image URL whose extension is unsupported, passes others through', async () => {
+    // An MCP resource_link carries a URL, not bytes, so the gate uses the
+    // path extension: a `.avif` link becomes a notice (the provider would
+    // fetch it server-side and 400), while an extensionless or `.png` link
+    // passes through.
     const out = await mcpResultToExecutableOutput(
       result([
         assertValidMcpBlock({
@@ -356,14 +358,24 @@ describe('mcpResultToExecutableOutput', () => {
           uri: 'https://example.com/pic.avif',
           mimeType: 'image/avif',
         }),
+        assertValidMcpBlock({
+          type: 'resource_link',
+          name: 'ok.png',
+          uri: 'https://example.com/ok.png?size=full#frame',
+          mimeType: 'image/png',
+        }),
       ]),
       'mcp__s__t',
     );
     const parts = out.output as ContentPart[];
     expect(parts).toContainEqual({
       type: 'image_url',
-      imageUrl: { url: 'https://example.com/pic.avif' },
+      imageUrl: { url: 'https://example.com/ok.png?size=full#frame' },
     });
+    expect(parts.some((p) => p.type === 'image_url' && p.imageUrl.url.includes('pic.avif'))).toBe(
+      false,
+    );
+    expect(parts.some((p) => p.type === 'text' && p.text.includes('image/avif'))).toBe(true);
   });
 
   test('does NOT wrap when a non-empty text part accompanies the media', async () => {

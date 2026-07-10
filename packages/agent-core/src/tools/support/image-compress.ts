@@ -44,6 +44,7 @@ import {
   normalizeImageMime,
   parseImageDataUrl,
   resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
 } from './image-format-policy';
 import { decodeWebp, isAnimatedWebp } from './webp-decode';
 
@@ -517,20 +518,31 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
   for (const part of parts) {
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
-      if (parsed !== null) {
-        const effectiveMime = resolveEffectiveImageMime(
-          parsed.mimeType,
-          decodeBase64Prefix(parsed.base64),
-        );
-        if (!isModelAcceptedImageMime(effectiveMime)) {
-          out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
+      if (parsed === null) {
+        // Remote image URL (no bytes to sniff): reject when its path
+        // extension names a format providers reject (e.g. a search-tool
+        // link ending in `.avif`); extensionless / unknown URLs pass
+        // through to the provider — and to the 400 recovery.
+        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
+        if (extMime !== null) {
+          out.push({ type: 'text', text: buildUnsupportedImageNotice(extMime) });
           continue;
         }
-        const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
-        if (part.imageUrl.url !== canonicalUrl) {
-          out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
-          continue;
-        }
+        out.push(part);
+        continue;
+      }
+      const effectiveMime = resolveEffectiveImageMime(
+        parsed.mimeType,
+        decodeBase64Prefix(parsed.base64),
+      );
+      if (!isModelAcceptedImageMime(effectiveMime)) {
+        out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
+        continue;
+      }
+      const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
+      if (part.imageUrl.url !== canonicalUrl) {
+        out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
+        continue;
       }
     }
     out.push(part);

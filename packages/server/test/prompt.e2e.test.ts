@@ -358,6 +358,49 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     ]);
   });
 
+  it('replaces a remote image URL whose extension is unsupported with a notice', async () => {
+    // No bytes to sniff, so the gate uses the path extension: a `.avif`
+    // link becomes a notice (the provider would fetch it server-side and
+    // 400); an extensionless or accepted-extension URL passes through.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'describe this' },
+          { type: 'image', source: { kind: 'url', url: 'https://example.com/pic.avif' } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content[0]).toEqual({ type: 'text', text: 'describe this' });
+    const notice = submitted?.content[1];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
   it('uploads a real PNG image file and resolves it before submitting the prompt', async () => {
     let submitted: PromptSubmission | undefined;
     const r = await bootDaemon([
