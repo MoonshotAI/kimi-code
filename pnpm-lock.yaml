@@ -495,9 +495,6 @@ importers:
       vue:
         specifier: ^3.5.35
         version: 3.5.39(typescript@6.0.2)
-      vue-i18n:
-        specifier: ^11.4.5
-        version: 11.4.6(vue@3.5.39(typescript@6.0.2))
       vue-tsc:
         specifier: ~3.2.0
         version: 3.2.9(typescript@6.0.2)

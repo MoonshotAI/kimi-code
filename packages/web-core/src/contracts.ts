@@ -63,5 +63,5 @@ export interface CredentialStore {
 }
 
 export interface ResolveImage {
-  (src: string): string;
+  (src: string): Promise<string>;
 }

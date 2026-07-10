@@ -13,6 +13,7 @@ import {
 } from 'markstream-vue';
 import type { MarkdownIt } from 'markstream-vue';
 import { useIsDark } from '@moonshot-ai/web-core';
+import type { ResolveImage } from '@moonshot-ai/web-core/contracts';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
 import { markdownRenderPlan } from './lib/markdownPerformance';
 import { copyTextToClipboard } from './lib/clipboard';
@@ -81,7 +82,7 @@ function disableInlineMath(md: MarkdownIt): MarkdownIt {
 
 const { t } = useI18n();
 
-const resolveImage = inject<(src: string) => Promise<string>>('resolveImage');
+const resolveImage = inject<ResolveImage>('resolveImage');
 const mdRef = ref<HTMLElement | null>(null);
 const props = withDefaults(
   defineProps<{
