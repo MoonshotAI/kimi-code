@@ -409,11 +409,11 @@ describe('Agent turn flow', () => {
 
     expect(records).toContainEqual({
       event: 'turn_started',
-      properties: { mode: 'agent' },
+      properties: { turn_id: 0, mode: 'agent' },
     });
     expect(records).toContainEqual({
       event: 'turn_interrupted',
-      properties: { mode: 'agent', at_step: 0, interrupt_reason: 'error' },
+      properties: { turn_id: 0, mode: 'agent', at_step: 0, interrupt_reason: 'error' },
     });
   });
 
