@@ -262,14 +262,14 @@ describe('messagesToTurns', () => {
     expect(merged[0]?.text).toContain('after');
   });
 
-  it('strips any `<system>` aside from a user bubble, not only image captions', () => {
-    // Stripping keys on the `<system>` tag rather than on caption wording, so
-    // any harness-injected aside in a user message is hidden even when its
-    // text differs from the image-compression caption.
+  it('preserves a literal `<system>` block the user typed themselves', () => {
+    // Only the image-compression caption is harness metadata. A `<system>` tag
+    // the user pasted on purpose (e.g. an XML / prompt example) is their own
+    // text, so it must reach the bubble and the edit/resend payload verbatim.
     const turns = messagesToTurns(
       [
         message('u1', 'user', [
-          { type: 'text', text: 'hi <system>some injected aside</system> there' },
+          { type: 'text', text: 'hi <system>some example markup</system> there' },
         ]),
       ],
       [],
@@ -277,10 +277,7 @@ describe('messagesToTurns', () => {
       false,
     );
 
-    expect(turns[0]?.text).not.toContain('<system>');
-    expect(turns[0]?.text).not.toContain('some injected aside');
-    expect(turns[0]?.text).toContain('hi');
-    expect(turns[0]?.text).toContain('there');
+    expect(turns[0]?.text).toBe('hi <system>some example markup</system> there');
   });
 
   it('leaves ordinary user text and stray angle brackets untouched', () => {
