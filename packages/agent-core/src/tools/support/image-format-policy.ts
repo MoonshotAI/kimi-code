@@ -156,6 +156,16 @@ export function parseImageDataUrl(url: string): { mimeType: string; base64: stri
 }
 
 /**
+ * Whether a URL claims to be a `data:` URL (the scheme is case-insensitive).
+ * Used to distinguish "failed to parse a data URL" (malformed — guaranteed
+ * to fail at the provider) from "not a data URL" (a remote http(s) image
+ * the provider fetches).
+ */
+export function isDataUrl(url: string): boolean {
+  return url.toLowerCase().startsWith('data:');
+}
+
+/**
  * Whether an image with this MIME may be sent to the model. Only the closed
  * accepted set passes; everything else must be refused at the entry point —
  * once an unsupported `image_url` lands in the session history, every later
@@ -241,5 +251,20 @@ export function buildUnsupportedImageNotice(mimeType: string, name?: string): st
   return (
     `[Image omitted: ${what}. Model providers accept only ${ACCEPTED_FORMATS_TEXT} — ` +
     'convert it to PNG or JPEG and try again.]'
+  );
+}
+
+/**
+ * Notice standing in for an image part whose `data:` URL could not be parsed
+ * at all (missing `;base64,` separator, empty MIME, …): the provider is
+ * guaranteed to reject it, so it is dropped at ingestion instead of being
+ * left to poison the session and trigger the media-stripped resend on every
+ * later turn. The URL is truncated — a malformed payload can be huge.
+ */
+export function buildMalformedImageNotice(url: string): string {
+  const shown = url.length > 80 ? `${url.slice(0, 80)}…` : url;
+  return (
+    `[Image omitted: "${shown}" is not a valid data URL (its header or payload ` +
+    'could not be parsed). Re-encode the image as PNG or JPEG and try again.]'
   );
 }

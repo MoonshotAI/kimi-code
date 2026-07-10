@@ -1049,6 +1049,33 @@ describe('gateImageFormatParts', () => {
       expect(gateImageFormatParts([part])).toEqual([part]);
     }
   });
+
+  it('drops a malformed data URL instead of letting it poison the session', () => {
+    // A `data:` URL parseImageDataUrl cannot parse is guaranteed to fail at
+    // the provider (Anthropic throws, OpenAI-compat 400s): dropping it at
+    // ingestion beats paying a rejected request + media strip every turn.
+    const cases = [
+      'data:image/avif',
+      'data:image/png;notbase64,QUJD',
+      'data:;base64,QUJD',
+      'data:image/png;base64',
+      'DATA:image/avif',
+    ];
+    for (const url of cases) {
+      const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url } }]);
+      expect(out.some((p) => p.type === 'image_url')).toBe(false);
+      expect(out[0]).toMatchObject({ type: 'text' });
+      expect((out[0] as { text: string }).text).toContain('not a valid data URL');
+    }
+  });
+
+  it('truncates a long malformed data URL in the notice', () => {
+    const url = `data:image/png${'x'.repeat(500)}`;
+    const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url } }]);
+    const notice = (out[0] as { text: string }).text;
+    expect(notice.length).toBeLessThan(250);
+    expect(notice).not.toContain(url);
+  });
 });
 
 describe('normalizeImageMime', () => {

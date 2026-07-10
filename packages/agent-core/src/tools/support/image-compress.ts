@@ -38,8 +38,10 @@ import type { TelemetryClient } from '#/telemetry';
 
 import { sniffImageDimensions } from './file-type';
 import {
+  buildMalformedImageNotice,
   buildUnsupportedImageNotice,
   decodeBase64Prefix,
+  isDataUrl,
   isModelAcceptedImageMime,
   normalizeImageMime,
   parseImageDataUrl,
@@ -519,6 +521,15 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed === null) {
+        // A `data:` URL that failed to parse (missing `;base64,` separator,
+        // empty MIME, …) is guaranteed to fail at the provider — Anthropic
+        // throws on it, OpenAI-compat servers 400. Drop it for a notice at
+        // ingestion instead of leaving it to poison the session and trigger
+        // the media-stripped resend on every later turn.
+        if (isDataUrl(part.imageUrl.url)) {
+          out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
+          continue;
+        }
         // Remote image URL (no bytes to sniff): reject when its path
         // extension names a format providers reject (e.g. a search-tool
         // link ending in `.avif`) — the notice keeps the URL so the model
