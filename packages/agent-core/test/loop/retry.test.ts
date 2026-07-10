@@ -143,7 +143,7 @@ describe('chatWithRetry: terminated stream drops', () => {
 });
 
 describe('retryBackoffDelays', () => {
-  it('matches claude-code: base 500ms, factor 2, cap 32s, up to +25% jitter', () => {
+  it('uses a 500ms base, factor-2 ramp, 32s cap, and up to +25% jitter', () => {
     const delays = retryBackoffDelays(10);
     expect(delays).toHaveLength(9);
     // Max possible delay is the capped base (32s) plus 25% jitter = 40s.

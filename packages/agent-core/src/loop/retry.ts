@@ -10,15 +10,14 @@ import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
 
 const BASE_DELAY_MS = 500;
-// Per-attempt backoff cap, mirroring claude-code's `getRetryDelay`
-// (maxDelayMs = 32000). With the default 3 attempts the ramp (0.5s, 1s) never
-// reaches the cap, so interactive runs are unaffected; it only matters for
-// high-attempt configs (e.g. eval harnesses with `max_retries_per_step = 10`),
-// where it lets retries ride out multi-minute provider overload instead of
-// giving up after a few seconds of backoff.
+// Per-attempt backoff cap (32s). With the default 3 attempts the ramp
+// (0.5s, 1s) never reaches the cap, so interactive runs are unaffected; it
+// only matters for high-attempt configs (e.g. eval harnesses with
+// `max_retries_per_step = 10`), where it lets retries ride out multi-minute
+// provider overload instead of giving up after a few seconds of backoff.
 const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
-// Claude-code adds up to 25% jitter on top of the exponential base.
+// Up to 25% jitter on top of the exponential base to avoid herd retries.
 const JITTER_FACTOR = 0.25;
 
 export interface ChatWithRetryInput {
@@ -57,8 +56,8 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
       }
 
       // A server `Retry-After` (carried on the error) overrides the computed
-      // backoff, mirroring claude-code. The chosen delay is what gets reported
-      // on the `step.retrying` event via `delayMs` either way.
+      // backoff. The chosen delay is what gets reported on the
+      // `step.retrying` event via `delayMs` either way.
       const delayMs = readRetryAfterMs(error) ?? delays[attempt - 1] ?? 0;
       input.params.signal.throwIfAborted();
       input.dispatchEvent({
@@ -114,9 +113,8 @@ function paramsForAttempt(
 }
 
 export function retryBackoffDelays(maxAttempts: number): number[] {
-  // Mirrors claude-code's getRetryDelay: for attempt (1-based) the base delay
-  // is min(500ms * 2^(attempt-1), 32s), plus up to 25% jitter. Index i here is
-  // 0-based, so attempt = i + 1.
+  // For attempt (1-based) the base delay is min(500ms * 2^(attempt-1), 32s),
+  // plus up to 25% jitter. Index i here is 0-based, so attempt = i + 1.
   const count = Math.max(maxAttempts - 1, 0);
   const delays: number[] = [];
   for (let i = 0; i < count; i += 1) {
@@ -129,8 +127,8 @@ export function retryBackoffDelays(maxAttempts: number): number[] {
 /**
  * Server-requested backoff carried on a kosong `APIStatusError` (parsed from
  * the `retry-after` response header). When present and positive it overrides
- * the computed backoff — matching claude-code, where a server `Retry-After`
- * directive takes precedence over the local exponential delay.
+ * the computed backoff — a server `Retry-After` directive takes precedence
+ * over the local exponential delay.
  */
 function readRetryAfterMs(error: unknown): number | null {
   if (typeof error !== 'object' || error === null) return null;

@@ -39,8 +39,8 @@ export class APIStatusError extends ChatProviderError {
   /**
    * Server-requested backoff from the `retry-after` response header, in
    * milliseconds. When present, the retry loop honors it instead of its own
-   * computed backoff — mirroring claude-code, where a server `Retry-After`
-   * directive overrides the local exponential delay.
+   * computed backoff — a server `Retry-After` directive overrides the local
+   * exponential delay.
    */
   readonly retryAfterMs: number | null;
 
@@ -132,7 +132,7 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
-    // Mirrors claude-code's retryable statuses: 408 (request timeout), 409
+    // Transient statuses worth retrying: 408 (request timeout), 409
     // (lock/conflict timeout), 429 (rate limit), 5xx (server errors) and 529
     // (provider overloaded — the "engine is currently overloaded" case).
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
@@ -245,11 +245,11 @@ export function normalizeAPIStatusError(
 }
 
 /**
- * Parse a `retry-after` response header into milliseconds. Mirrors
- * claude-code: only integer seconds is honored; an HTTP-date (or any
- * non-integer / missing value) returns null and the caller falls back to its
- * computed backoff. Shared by the provider error converters so every backend
- * honors the same server backoff directive.
+ * Parse a `retry-after` response header into milliseconds. Only integer
+ * seconds is honored; an HTTP-date (or any non-integer / missing value)
+ * returns null and the caller falls back to its computed backoff. Shared by
+ * the provider error converters so every backend honors the same server
+ * backoff directive.
  */
 export function parseRetryAfterMs(headers: unknown): number | null {
   const raw =
