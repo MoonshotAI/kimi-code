@@ -9,7 +9,7 @@ task's age in days, and a stale indicator.
 
 Each record carries:
 
-- `id` — the task id (a ULID, or legacy 8-hex). Pass this to `CronDelete` to remove the
+- `id` — the task id (a ULID). Pass this to `CronDelete` to remove the
   task, or quote it in user-facing messages when asking for
   confirmation.
 - `cron` — the verbatim 5-field cron expression as scheduled.
