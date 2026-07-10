@@ -10,15 +10,24 @@
   "main": "out/main.cjs",
   "scripts": {
     "build": "tsdown",
+    "prebuild": "node scripts/copy-web-dist.mjs",
     "start": "electron .",
     "dev": "tsdown && electron .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "postinstall": "electron-rebuild",
     "dist": "tsdown && electron-builder --config electron-builder.config.cjs"
   },
+  "dependencies": {
+    "@moonshot-ai/kimi-code-sdk": "workspace:^",
+    "@moonshot-ai/server": "workspace:^"
+  },
   "devDependencies": {
+    "@electron/rebuild": "3.7.1",
     "electron": "33.4.11",
     "electron-builder": "25.1.8",
     "tsdown": "0.22.0",
-    "typescript": "6.0.2"
+    "typescript": "6.0.2",
+    "vitest": "4.1.4"
   }
 }
