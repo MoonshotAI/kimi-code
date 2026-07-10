@@ -58,7 +58,7 @@ const ID_PATTERN = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 export const CronDeleteInputSchema = z.object({
   id: z
     .string()
-    .describe('The cron job id (ULID, or legacy 8-hex) returned by CronCreate / CronList.'),
+    .describe('The cron job id (ULID) returned by CronCreate / CronList.'),
 });
 export type CronDeleteInput = z.infer<typeof CronDeleteInputSchema>;
 
@@ -76,14 +76,13 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
   resolveExecution(args: CronDeleteInput): ToolExecution {
     // Format check up front. The store would reject the lookup anyway,
     // but the message is more actionable when it names the constraint
-    // ("ULID or 8 lowercase hex characters") rather than a generic
-    // "not found".
+    // ("ULID") rather than a generic "not found".
     if (!ID_PATTERN.test(args.id)) {
       return {
         isError: true,
         output: `Invalid cron job id ${JSON.stringify(
           args.id,
-        )} — must be a ULID or 8 lowercase hex characters.`,
+        )} — must be a ULID.`,
       };
     }
 

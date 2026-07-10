@@ -467,7 +467,7 @@ describe('CronDeleteTool', () => {
 
       const output = assertError(await runTool<CronDeleteInput>(tool, { id }));
 
-      expect(output).toContain('must be a ULID or 8 lowercase hex characters');
+      expect(output).toContain('must be a ULID');
       expect(harness.store.list()).toHaveLength(1);
       expect(harness.deleted).toEqual([]);
     },
