@@ -71,6 +71,22 @@ export async function startDesktopServer(
 ): Promise<DesktopServerHandle> {
   installGlobalProxyDispatcher();
 
+  // Allow the local `app://renderer` origin in the server's CORS allowlist so
+  // the renderer (served from app://renderer) can call the loopback HTTP API.
+  // The server only echoes CORS headers for origins in KIMI_CODE_CORS_ORIGINS
+  // (no wildcard); without this the browser blocks every /api/v1/* request.
+  {
+    const origin = 'app://renderer';
+    const entries = (process.env['KIMI_CODE_CORS_ORIGINS'] ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (!entries.includes(origin)) {
+      entries.push(origin);
+      process.env['KIMI_CODE_CORS_ORIGINS'] = entries.join(',');
+    }
+  }
+
   let handle: RunningServer | undefined;
   const shutdownOverride = {
     _serviceBrand: undefined,

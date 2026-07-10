@@ -192,6 +192,9 @@ function createWindow(): void {
       mainWindow = null;
     }
   });
+  if (!app.isPackaged) {
+    win.webContents.openDevTools({ mode: 'detach' });
+  }
   void connect(win);
 }
 
