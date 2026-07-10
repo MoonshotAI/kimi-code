@@ -504,6 +504,9 @@ importers:
 
   packages/web-markdown:
     dependencies:
+      '@moonshot-ai/web-core':
+        specifier: workspace:*
+        version: link:../web-core
       '@moonshot-ai/web-ui':
         specifier: workspace:*
         version: link:../web-ui

@@ -12,7 +12,7 @@ import {
   clearMermaidWorker,
 } from 'markstream-vue';
 import type { MarkdownIt } from 'markstream-vue';
-import { IsDarkKey } from './theme';
+import { useIsDark } from '@moonshot-ai/web-core';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
 import { markdownRenderPlan } from './lib/markdownPerformance';
 import { copyTextToClipboard } from './lib/clipboard';
@@ -114,10 +114,10 @@ const renderPlan = computed(() => {
   return markdownRenderPlan(props.text ?? '');
 });
 
-// Code blocks follow the app colour scheme (shiki re-renders on flip). The host
-// bridges its colour-scheme singleton in via provide(IsDarkKey, …); fall back to
-// light when the host does not provide it (e.g. isolated preview/test).
-const isDark = inject(IsDarkKey, ref(false));
+// Code blocks follow the app colour scheme (shiki re-renders on flip). Resolved
+// directly from web-core's colour-scheme singleton (no host provide/inject
+// bridge); falls back to light when the document carries no scheme.
+const isDark = useIsDark();
 
 // markstream's chat mode can batch nodes and defer offscreen nodes. Batching is
 // safe for settled history, but viewport deferral can leave individual code

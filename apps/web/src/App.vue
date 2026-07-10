@@ -33,9 +33,7 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
-import { useIsDark } from './composables/useIsDark';
 import { openDialogCount } from '@moonshot-ai/web-ui';
-import { IsDarkKey } from '@moonshot-ai/web-markdown';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './lib/serverAuth';
@@ -59,9 +57,6 @@ const showServerAuth = computed(
   () => !client.dangerousBypassAuth.value && authRequired.value,
 );
 provide('resolveImage', client.resolveImageUrl);
-// Bridge the app colour-scheme singleton into the Markdown renderer (lives in
-// @moonshot-ai/web-markdown, which can't import the app composable directly).
-provide(IsDarkKey, useIsDark());
 // Live swarm member roster for the inline AgentSwarm tool card. Sourced from the
 // AppTask store so the card shows each subagent's live phase; on refresh the
 // tasks are gone and the card falls back to the parsed tool result. Includes

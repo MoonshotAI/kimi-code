@@ -7,7 +7,6 @@ Source-only package: `exports` points at `./src/*`, so the **consumer's** bundle
 ## Exports
 
 - `Markdown` — the renderer component (default export of `./Markdown.vue`).
-- `IsDarkKey` — Vue `InjectionKey<Ref<boolean>>` the host uses to bridge its colour scheme in.
 
 ## Props
 
@@ -36,11 +35,6 @@ The host app must:
    ```
    Return a loadable URL (e.g. a data URL) for a local path, or the original `src` to leave it untouched. The component injects `'resolveImage'`; if absent, local images are left as-is.
 
-4. **Provide the colour scheme.** Bridge the host's dark-mode singleton so shiki/KaTeX/Mermaid theme correctly:
-   ```ts
-   import { IsDarkKey } from '@moonshot-ai/web-markdown';
-   app.provide(IsDarkKey, useIsDark()); // a reactive Ref<boolean>
-   ```
-   Falls back to light when not provided.
+4. **Colour scheme.** The renderer reads the host's dark mode directly from `@moonshot-ai/web-core`'s `useIsDark()` singleton (resolved against `<html data-color-scheme>`), so no `provide` bridge is required. It falls back to light when the document carries no scheme.
 
 5. **Load the design tokens.** Import `@moonshot-ai/web-ui/style.css` and set `<html data-color-scheme="light|dark|system">` — the skin reads `var(--color-*)`, `var(--font-*)`, `var(--radius-*)`, etc.

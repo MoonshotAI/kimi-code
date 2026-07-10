@@ -4,4 +4,3 @@
 // markstream-vue CSS are resolved by the consumer's Vite config.
 
 export { default as Markdown } from './Markdown.vue';
-export { IsDarkKey } from './theme';

@@ -1,10 +1,9 @@
-// apps/kimi-web/src/composables/useIsDark.ts
+// web-core — reactive "is the UI currently dark?".
 //
-// Reactive "is the UI currently dark?" — resolves the three-state
-// <html data-color-scheme> ('light' | 'dark' | 'system') against the OS
-// preference, and tracks BOTH the attribute (user toggles the setting) and
-// the media query (OS flips while in 'system'). Module-level singleton; the
-// observers live for the app lifetime.
+// Resolves the three-state <html data-color-scheme> ('light' | 'dark' |
+// 'system') against the OS preference, and tracks BOTH the attribute (user
+// toggles the setting) and the media query (OS flips while in 'system').
+// Module-level singleton; the observers live for the app lifetime.
 
 import { ref } from 'vue';
 import type { Ref } from 'vue';

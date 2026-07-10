@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
-import { useAppearance, type Accent, type ColorScheme } from '../../composables/client/useAppearance';
+import { useAppearance, type Accent, type ColorScheme } from '@moonshot-ai/web-core';
 import { Button, Dialog, SegmentedControl } from '@moonshot-ai/web-ui';
 
 const emit = defineEmits<{ complete: []; skip: [] }>();
