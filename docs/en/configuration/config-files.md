@@ -59,8 +59,13 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-# [experimental]
-# micro_compaction = false  # disabled: micro compaction has been removed
+[services.moonshot_search]
+base_url = "https://api.kimi.com/coding/v1/search"
+api_key = ""
+
+[services.moonshot_fetch]
+base_url = "https://api.kimi.com/coding/v1/fetch"
+api_key = ""
 
 [[permission.rules]]
 decision = "allow"
