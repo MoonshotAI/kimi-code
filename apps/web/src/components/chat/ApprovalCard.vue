@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
-import Markdown from './Markdown.vue';
+import { Markdown } from '@moonshot-ai/web-markdown';
 import { Badge, Button, Card, Icon, IconButton, Kbd, Tooltip } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{

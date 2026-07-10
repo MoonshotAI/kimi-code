@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/Markdown.vue -->
+<!-- @moonshot-ai/web-markdown — Markdown.vue -->
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -12,11 +12,18 @@ import {
   clearMermaidWorker,
 } from 'markstream-vue';
 import type { MarkdownIt } from 'markstream-vue';
-import { useIsDark } from '../../composables/useIsDark';
-import type { FilePreviewRequest } from '../../types';
-import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
-import { markdownRenderPlan } from '../../lib/markdownPerformance';
-import { copyTextToClipboard } from '../../lib/clipboard';
+import { IsDarkKey } from './theme';
+import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
+import { markdownRenderPlan } from './lib/markdownPerformance';
+import { copyTextToClipboard } from './lib/clipboard';
+
+// Shape of the `openFile` prop payload. Declared locally so the package has no
+// reverse dependency on the host app's types; structurally compatible with the
+// host's `FilePreviewRequest` (`{ path: string; line?: number }`).
+interface FilePreviewRequest {
+  path: string;
+  line?: number;
+}
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
 import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
 import { Icon, Tooltip } from '@moonshot-ai/web-ui';
@@ -107,8 +114,10 @@ const renderPlan = computed(() => {
   return markdownRenderPlan(props.text ?? '');
 });
 
-// Code blocks follow the app colour scheme (shiki re-renders on flip).
-const isDark = useIsDark();
+// Code blocks follow the app colour scheme (shiki re-renders on flip). The host
+// bridges its colour-scheme singleton in via provide(IsDarkKey, …); fall back to
+// light when the host does not provide it (e.g. isolated preview/test).
+const isDark = inject(IsDarkKey, ref(false));
 
 // markstream's chat mode can batch nodes and defer offscreen nodes. Batching is
 // safe for settled history, but viewport deferral can leave individual code

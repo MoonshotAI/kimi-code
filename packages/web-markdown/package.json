@@ -7,14 +7,18 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@moonshot-ai/web-ui": "workspace:*",
+    "katex": "^0.17.0",
     "markstream-vue": "^1.0.4",
     "stream-markdown": "^0.0.16"
   },
   "peerDependencies": {
-    "vue": "^3.5.35"
+    "vue": "^3.5.35",
+    "vue-i18n": "^11.4.5"
   },
   "devDependencies": {
     "vue": "^3.5.35",
+    "vue-i18n": "^11.4.5",
     "vue-tsc": "~3.2.0",
     "typescript": "6.0.2"
   }
