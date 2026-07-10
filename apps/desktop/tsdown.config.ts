@@ -10,7 +10,7 @@ import { rawTextPlugin } from './scripts/raw-text-plugin.mjs';
 // Note: `@mariozechner/clipboard` and `koffi` belong to the CLI / pi-tui, not to
 // the server/agent-core closure, so they are intentionally NOT listed here.
 export default defineConfig({
-  entry: { main: 'src/main/index.ts' },
+  entry: { main: 'src/main/index.ts', preload: 'src/main/preload.ts' },
   format: ['cjs'],
   platform: 'node',
   target: 'node20',
