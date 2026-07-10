@@ -495,17 +495,17 @@ describe('SubagentBatch scheduling contract', () => {
         reason: 'Subagent failed; requeued for automatic recovery.',
       }));
 
-      // 3 failed-resume retries (resumeCount 1→3). The first two requeue;
-      // the third exhausts failed-resume and truly fails.
-      for (let i = 0; i < 3; i += 1) {
+      // 5 failed-resume retries (resumeCount 1→5). The first four requeue;
+      // the fifth exhausts failed-resume and truly fails.
+      for (let i = 0; i < 5; i += 1) {
         await vi.advanceTimersByTimeAsync(60_000);
         const retryAttempt = attempts[attempts.length - 1]!;
         expect(retryAttempt.retryAgentId).toBe('agent-2');
         retryAttempt.outcome.resolve({ type: 'transient_error', agentId: 'agent-2' });
         await vi.advanceTimersByTimeAsync(0);
       }
-      // 11 + 2 = 13. The 3rd failed-resume attempt truly fails (no requeue).
-      expect(onSuspended).toHaveBeenCalledTimes(13);
+      // 11 + 4 = 15. The 5th failed-resume attempt truly fails (no requeue).
+      expect(onSuspended).toHaveBeenCalledTimes(15);
 
       // Complete the remaining tasks.
       attempts[0]!.outcome.resolve({
@@ -625,9 +625,9 @@ describe('SubagentBatch scheduling contract', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(onSuspended).toHaveBeenCalledTimes(1);
 
-      // 3 failed-resume retries, all failing. The first two requeue
-      // (resumeCount 1→2, 2→3); the third truly fails (resumeCount=3).
-      for (let i = 0; i < 3; i += 1) {
+      // 5 failed-resume retries, all failing. The first four requeue
+      // (resumeCount 1→2, 2→3, 3→4, 4→5); the fifth truly fails (resumeCount=5).
+      for (let i = 0; i < 5; i += 1) {
         await vi.advanceTimersByTimeAsync(60_000);
         const retryAttempt = attempts[attempts.length - 1]!;
         expect(retryAttempt.retryAgentId).toBe('agent-2');
@@ -639,8 +639,8 @@ describe('SubagentBatch scheduling contract', () => {
         });
         await vi.advanceTimersByTimeAsync(0);
       }
-      // 3 requeues total (initial + 2 retries). The 3rd retry truly fails.
-      expect(onSuspended).toHaveBeenCalledTimes(3);
+      // 5 requeues total (initial + 4 retries). The 5th retry truly fails.
+      expect(onSuspended).toHaveBeenCalledTimes(5);
 
       const results = await running;
       expect(results[0]!.status).toBe('completed');

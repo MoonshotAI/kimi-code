@@ -9,7 +9,7 @@ import type { LoopEventDispatcher } from './events';
 import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 
-export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
+export const DEFAULT_MAX_RETRY_ATTEMPTS = 5;
 
 const RETRY_MIN_TIMEOUT_MS = 300;
 const RETRY_MAX_TIMEOUT_MS = 5000;
@@ -29,11 +29,10 @@ const OVERLOAD_RETRY_MIN_TIMEOUT_MS = 5_000;
 const OVERLOAD_RETRY_MAX_TIMEOUT_MS = 30_000;
 const OVERLOAD_RETRY_FACTOR = 2;
 
-// ±25% jitter on rate-limit / overload backoff. Without it, concurrent turns
-// hitting the same 429/503 retry at identical timestamps and re-collide.
-// Mirrors the jitter applied in subagent-batch so the whole retry stack is
-// consistent.
-function applyJitter(delayMs: number): number {
+// ±25% jitter on all backoff paths. Without it, concurrent turns hitting the
+// same 429/503 retry at identical timestamps re-collide. Mirrors the jitter
+// applied in subagent-batch so the whole retry stack is consistent.
+export function applyJitter(delayMs: number): number {
   return Math.round(delayMs * (0.75 + Math.random() * 0.5));
 }
 
@@ -61,8 +60,6 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
     }
   }
 
-  const delays = retryBackoffDelays(maxAttempts);
-
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
@@ -76,7 +73,7 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
         ? rateLimitBackoffDelay(attempt)
         : isOverloadError(error)
           ? overloadBackoffDelay(attempt)
-          : (delays[attempt - 1] ?? 0);
+          : genericBackoffDelay(attempt);
       input.params.signal.throwIfAborted();
       input.dispatchEvent({
         type: 'step.retrying',
@@ -130,14 +127,24 @@ function paramsForAttempt(
   };
 }
 
+function genericBackoffDelay(attempt: number): number {
+  const base = retry.createTimeout(Math.max(0, attempt - 1), {
+    minTimeout: RETRY_MIN_TIMEOUT_MS,
+    maxTimeout: RETRY_MAX_TIMEOUT_MS,
+    factor: RETRY_FACTOR,
+    randomize: false,
+  });
+  return applyJitter(base);
+}
+
 export function retryBackoffDelays(maxAttempts: number): number[] {
   return retry.timeouts({
     retries: Math.max(maxAttempts - 1, 0),
     minTimeout: RETRY_MIN_TIMEOUT_MS,
     maxTimeout: RETRY_MAX_TIMEOUT_MS,
     factor: RETRY_FACTOR,
-    randomize: true,
-  });
+    randomize: false,
+  }).map(applyJitter);
 }
 
 function rateLimitBackoffDelay(attempt: number): number {

@@ -26,7 +26,7 @@ Rate-limit phase:
 
 Results and cancellation:
 - Completed, failed, aborted, and timed-out attempts occupy their input slots; when all slots have results, return the ordered list. A task timeout fails only that task and does not enter rate-limit phase or stop others.
-- A failed task with a known agent id is automatically requeued for recovery (up to 3 times, 60 s backoff with jitter) using launcher.retry() — the subagent resumes from its existing context without parent intervention.
+- A failed task with a known agent id is automatically requeued for recovery (up to 5 times, 60 s backoff with jitter) using launcher.retry() — the subagent resumes from its existing context without parent intervention.
 - The first task signal is the batch signal. User cancellation preserves existing results, marks ready or agent-known unfinished tasks aborted/started, and marks never-started tasks aborted/not_started. Non-user cancellation rejects.
 */
 
@@ -44,7 +44,7 @@ const TRANSIENT_MAX_RETRIES = 10;
 const TRANSIENT_BACKOFF_DELAYS_MS = [
   5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000,
 ];
-const FAILED_RESUME_MAX_RETRIES = 3;
+const FAILED_RESUME_MAX_RETRIES = 5;
 const FAILED_RESUME_RETRY_MS = 60_000;
 const FAILED_RESUME_SUSPENDED_REASON = 'Subagent failed; requeued for automatic recovery.';
 
@@ -496,7 +496,7 @@ export class SubagentBatch<T> {
     const retryDelay = applyJitter(
       retry.createTimeout(Math.max(0, state.retryCount - 1), {
         minTimeout: RATE_LIMIT_RETRY_BASE_MS,
-        maxTimeout: Number.POSITIVE_INFINITY,
+        maxTimeout: RATE_LIMIT_GLOBAL_RETRY_MAX_MS,
         factor: RATE_LIMIT_RETRY_FACTOR,
         randomize: false,
       }),

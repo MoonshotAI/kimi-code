@@ -52,7 +52,7 @@ describe('chatWithRetry: terminated stream drops', () => {
 
     expect(seenFields).toEqual([
       { projection: 'strict', turnStep: 't.1' },
-      { projection: 'strict', turnStep: 't.1', attempt: '2/3' },
+      { projection: 'strict', turnStep: 't.1', attempt: '2/5' },
     ]);
   });
 

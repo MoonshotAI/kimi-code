@@ -1713,7 +1713,7 @@ describe('Agent turn flow', () => {
     const payloads = requestLogs.map((entry) => entry.payload as Record<string, unknown>);
     expect(payloads[0]).toMatchObject({ turnStep: '0.1' });
     expect(payloads[0]).not.toHaveProperty('attempt');
-    expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/3' });
+    expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/5' });
   });
 
   it('force-refreshes OAuth credentials on video upload 401 and surfaces the provider auth error when replay 401', async () => {
