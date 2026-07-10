@@ -14,7 +14,8 @@
     "prebuild": "npm run build:renderer",
     "start": "electron .",
     "dev": "tsdown && electron .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck:renderer",
+    "typecheck:renderer": "vue-tsc --noEmit -p tsconfig.renderer.json",
     "test": "vitest run",
     "postinstall": "electron-rebuild",
     "dist": "npm run build:renderer && tsdown && electron-builder --config electron-builder.config.cjs"
