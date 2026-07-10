@@ -32,7 +32,7 @@ const ELLIPSIS = '…';
 // Official tab, even when the marketplace catalog is unavailable. Selecting it
 // opens the install page in the browser rather than installing from a source,
 // because Web Bridge is a browser extension + daemon, not a plugin package.
-const WEB_BRIDGE_URL = 'https://www.kimi.com/zh-cn/features/webbridge#local-agent';
+const WEB_BRIDGE_URL = 'https://www.kimi.com/features/webbridge#local-agent';
 const WEB_BRIDGE_ENTRY: PluginMarketplaceEntry = {
   id: 'kimi-webbridge',
   displayName: 'Kimi WebBridge',

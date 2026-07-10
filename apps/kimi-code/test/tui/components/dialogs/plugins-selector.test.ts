@@ -313,7 +313,7 @@ describe('plugins selector dialogs', () => {
     panel.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'open-url',
-      url: 'https://www.kimi.com/zh-cn/features/webbridge#local-agent',
+      url: 'https://www.kimi.com/features/webbridge#local-agent',
       label: 'Kimi WebBridge',
     });
   });
