@@ -358,6 +358,28 @@ describe('Agent turn flow', () => {
       expect(attempts).toBe(1);
     });
 
+    it('does NOT recover image count/size/support errors (no silent blind resend)', async () => {
+      // "too many images" mentions "image" but is not a format/data error:
+      // stripping media would let the turn complete with the model blind to
+      // the user's images, hiding the real problem. Surface it instead.
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        throw new APIStatusError(400, 'too many images in request');
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(1);
+    });
+
     it('surfaces the error when the strip resend also fails (no infinite loop)', async () => {
       let attempts = 0;
       const generate: GenerateFn = async () => {

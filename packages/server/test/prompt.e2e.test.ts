@@ -803,6 +803,51 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     ]);
   });
 
+  it('treats an inline base64 image with a parameterized media type like the bare form', async () => {
+    // `image/jpeg; charset=utf-8` is the same accepted image as `image/jpeg`:
+    // MIME parameters are stripped before the acceptance check, so it is
+    // forwarded (canonicalized), not dropped as if unsupported. Garbage
+    // bytes force the declared-MIME fallback path that exercises the strip.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const base64 = Buffer.from([1, 2, 3]).toString('base64');
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          {
+            type: 'image',
+            source: { kind: 'base64', media_type: 'image/jpeg; charset=utf-8', data: base64 },
+          },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content).toEqual([
+      { type: 'image', source: { kind: 'base64', media_type: 'image/jpeg', data: base64 } },
+    ]);
+  });
+
   it('replaces an uploaded image the provider cannot accept with a notice naming the file', async () => {
     let submitted: PromptSubmission | undefined;
     const r = await bootDaemon([

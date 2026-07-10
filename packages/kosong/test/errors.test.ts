@@ -590,6 +590,20 @@ describe('isImageFormatError', () => {
     expect(isImageFormatError(new Error('image is bad'))).toBe(false);
   });
 
+  it('does not match image count/size/support errors that stripping media cannot fix', () => {
+    // Stripping media to zero would let these requests "succeed" with the
+    // model blind to the user's images — hiding the real error. They must
+    // surface instead of triggering a media-stripped resend.
+    expect(isImageFormatError(new APIStatusError(400, 'too many images in request'))).toBe(false);
+    expect(
+      isImageFormatError(new APIStatusError(400, 'image dimension 5000 exceeds maximum 2048')),
+    ).toBe(false);
+    expect(
+      isImageFormatError(new APIStatusError(400, 'image input is disabled for this model')),
+    ).toBe(false);
+    expect(isImageFormatError(new APIStatusError(400, 'image_url is not allowed'))).toBe(false);
+  });
+
   it('is excluded from the transient-retry fallback so dedicated recovery fires first', () => {
     // A base ChatProviderError is normally retried as an unclassified
     // transient; image-format errors must not be, or the run would burn the

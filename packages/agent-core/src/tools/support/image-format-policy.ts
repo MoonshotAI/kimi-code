@@ -65,10 +65,18 @@ const UNSUPPORTED_IMAGE_FORMATS: Readonly<Record<string, UnsupportedImageFormatI
     'image/x-icon': {},
   });
 
-/** Lowercase + `image/jpg` alias normalization. */
+/**
+ * Lowercase, drop MIME parameters, and apply the `image/jpg` alias. Parameter
+ * stripping keeps a declared media type like `image/jpeg; charset=utf-8`
+ * consistent with a data-URL MIME token (which the parser already clips at
+ * the first `;`), so an accepted image with parameters is treated exactly
+ * like the bare form instead of being misread as unsupported.
+ */
 export function normalizeImageMime(mimeType: string): string {
   const lower = mimeType.trim().toLowerCase();
-  return lower === 'image/jpg' ? 'image/jpeg' : lower;
+  const semi = lower.indexOf(';');
+  const base = (semi === -1 ? lower : lower.slice(0, semi)).trim();
+  return base === 'image/jpg' ? 'image/jpeg' : base;
 }
 
 /**

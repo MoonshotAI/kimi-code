@@ -61,6 +61,8 @@ import { ImageLimits } from '../../src/tools/support/image-limits';
 // eslint-disable-next-line import/no-unresolved
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
 // eslint-disable-next-line import/no-unresolved
+import { normalizeImageMime, unsupportedImageMimeFromUrl } from '../../src/tools/support/image-format-policy';
+// eslint-disable-next-line import/no-unresolved
 import type { TelemetryClient, TelemetryProperties } from '../../src/telemetry';
 
 // ── fixtures ─────────────────────────────────────────────────────────
@@ -1043,6 +1045,37 @@ describe('gateImageFormatParts', () => {
       const part = { type: 'image_url' as const, imageUrl: { url: ok } };
       expect(gateImageFormatParts([part])).toEqual([part]);
     }
+  });
+});
+
+describe('normalizeImageMime', () => {
+  it('lowercases, strips MIME parameters, and applies the jpg alias', () => {
+    expect(normalizeImageMime('image/png')).toBe('image/png');
+    expect(normalizeImageMime('Image/JPEG')).toBe('image/jpeg');
+    expect(normalizeImageMime('image/jpg')).toBe('image/jpeg');
+    expect(normalizeImageMime(' image/webp ')).toBe('image/webp');
+    // Parameters (e.g. charset) are dropped so a declared media type stays
+    // consistent with a data-URL MIME token.
+    expect(normalizeImageMime('image/jpeg; charset=utf-8')).toBe('image/jpeg');
+    expect(normalizeImageMime('IMAGE/PNG;foo=bar')).toBe('image/png');
+  });
+});
+
+describe('unsupportedImageMimeFromUrl', () => {
+  it('flags known-unsupported extensions and ignores query/fragment/case', () => {
+    expect(unsupportedImageMimeFromUrl('https://example.com/pic.avif')).toBe('image/avif');
+    expect(unsupportedImageMimeFromUrl('https://example.com/pic.AVIF?x=1')).toBe('image/avif');
+    expect(unsupportedImageMimeFromUrl('https://example.com/photo.HEIC#frame')).toBe('image/heic');
+    expect(unsupportedImageMimeFromUrl('https://example.com/scan.tiff')).toBe('image/tiff');
+    expect(unsupportedImageMimeFromUrl('https://example.com/icon.ico')).toBe('image/x-icon');
+  });
+
+  it('returns null for accepted, extensionless, or unknown URLs', () => {
+    expect(unsupportedImageMimeFromUrl('https://example.com/pic.png')).toBeNull();
+    expect(unsupportedImageMimeFromUrl('https://example.com/pic.jpg')).toBeNull();
+    expect(unsupportedImageMimeFromUrl('https://example.com/avatar')).toBeNull();
+    expect(unsupportedImageMimeFromUrl('https://cdn.example.com/v2/image?id=123')).toBeNull();
+    expect(unsupportedImageMimeFromUrl('https://example.com/readme.json')).toBeNull();
   });
 });
 

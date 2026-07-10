@@ -159,27 +159,39 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
   /invalid data url for image/,
 ] as const;
 
-// Server-side image rejections phrase it many ways ("The image data you
-// provided does not represent a valid image", "unsupported image format",
-// media_type enum violations …); the one shared anchor is that a 400 about
-// the request's media mentions "image" at all.
-const IMAGE_FORMAT_STATUS_MESSAGE_PATTERN = /image/i;
+// Server-side image rejections that are safe to recover by stripping media:
+// an unsupported/invalid media type or undecodable image data. These are
+// deliberately narrow — image COUNT/SIZE limits or image-input-disabled
+// errors also mention "image", but stripping media either over-recovers or
+// hides a real configuration problem the user should see; only format/data
+// rejections are guaranteed to be fixed by removing the offending image.
+const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
+  /unsupported (?:image|media) (?:format|type)/,
+  /invalid (?:image|media)(?: data| type| format)?/,
+  /does not represent a valid image/,
+  /could not (?:process|decode) (?:the )?image/,
+  /failed to decode (?:the )?image/,
+  /media_type/,
+] as const;
 
 /**
- * Whether the provider rejected an IMAGE in the request — an unsupported
- * media type or undecodable image data. The rejection is deterministic for a
- * given history (the same image is re-sent on every request, so the session
- * would fail every turn), and the only recovery is to resend once with all
- * media stripped (see the media-stripped resend in the agent loop).
- * Body-size (413) and context-overflow rejections are excluded — they have
- * their own recoveries.
+ * Whether the provider rejected an IMAGE in the request because of its
+ * FORMAT or DATA — an unsupported media type or undecodable image bytes.
+ * The rejection is deterministic for a given history (the same image is
+ * re-sent on every request, so the session would fail every turn), and the
+ * only recovery is to resend once with all media stripped (see the
+ * media-stripped resend in the agent loop). Body-size (413), context
+ * overflow, image count/size limits, and image-input-disabled rejections
+ * are excluded — the first two have their own recoveries, and the rest are
+ * not fixed by stripping media.
  */
 export function isImageFormatError(error: unknown): boolean {
   if (error instanceof APIStatusError) {
     if (error instanceof APIContextOverflowError) return false;
     if (error instanceof APIRequestTooLargeError) return false;
     if (error.statusCode !== 400) return false;
-    return IMAGE_FORMAT_STATUS_MESSAGE_PATTERN.test(error.message.toLowerCase());
+    const lowerMessage = error.message.toLowerCase();
+    return IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
   }
   if (error instanceof ChatProviderError) {
     const lowerMessage = error.message.toLowerCase();
