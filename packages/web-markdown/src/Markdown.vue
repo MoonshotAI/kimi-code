@@ -1,7 +1,7 @@
 <!-- @moonshot-ai/web-markdown — Markdown.vue -->
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
+import { useKimiI18n } from '@moonshot-ai/web-i18n';
 import {
   MarkdownRender,
   enableKatex,
@@ -80,7 +80,7 @@ function disableInlineMath(md: MarkdownIt): MarkdownIt {
   return md;
 }
 
-const { t } = useI18n();
+const { t } = useKimiI18n();
 
 const resolveImage = inject<ResolveImage>('resolveImage');
 const mdRef = ref<HTMLElement | null>(null);

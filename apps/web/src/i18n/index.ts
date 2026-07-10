@@ -1,6 +1,5 @@
-import { createI18n } from 'vue-i18n';
-import { messages } from './locales';
-import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { createKimiI18n, detect } from '@moonshot-ai/web-i18n';
+import { safeSetString, STORAGE_KEYS } from '../lib/storage';
 
 export const availableLocales = [
   { code: 'en', label: 'English' },
@@ -9,18 +8,11 @@ export const availableLocales = [
 
 export type LocaleCode = (typeof availableLocales)[number]['code'];
 
-function detect(): LocaleCode {
-  const stored = safeGetString(STORAGE_KEYS.locale);
-  if (stored === 'en' || stored === 'zh') return stored;
-  return globalThis.navigator?.language?.toLowerCase().startsWith('zh') ? 'zh' : 'en';
-}
-
-export const i18n = createI18n({
-  legacy: false,
-  locale: detect(),
-  fallbackLocale: 'en',
-  messages,
-});
+// Single app-wide i18n instance, created through the shared web-i18n factory so
+// the locale/messages live in one place. Consumers (`useKimiWebClient`, tool
+// meta, event projectors, …) import this same instance, so `setLocale` mutates
+// the translator the whole tree reads from.
+export const i18n = createKimiI18n({ locale: detect() });
 
 export function setLocale(l: LocaleCode): void {
   i18n.global.locale.value = l;

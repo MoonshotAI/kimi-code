@@ -77,6 +77,9 @@ importers:
       '@moonshot-ai/web-core':
         specifier: workspace:*
         version: link:../../packages/web-core
+      '@moonshot-ai/web-i18n':
+        specifier: workspace:*
+        version: link:../../packages/web-i18n
       '@moonshot-ai/web-markdown':
         specifier: workspace:*
         version: link:../../packages/web-markdown
@@ -520,11 +523,33 @@ importers:
         specifier: ~3.2.0
         version: 3.2.9(typescript@6.0.2)
 
+  packages/web-i18n:
+    dependencies:
+      vue-i18n:
+        specifier: ^11.4.5
+        version: 11.4.6(vue@3.5.39(typescript@6.0.2))
+    devDependencies:
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      vitest:
+        specifier: 4.1.4
+        version: 4.1.4(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(tsx@4.23.0)(yaml@2.9.0))
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-tsc:
+        specifier: ~3.2.0
+        version: 3.2.9(typescript@6.0.2)
+
   packages/web-markdown:
     dependencies:
       '@moonshot-ai/web-core':
         specifier: workspace:*
         version: link:../web-core
+      '@moonshot-ai/web-i18n':
+        specifier: workspace:*
+        version: link:../web-i18n
       '@moonshot-ai/web-ui':
         specifier: workspace:*
         version: link:../web-ui

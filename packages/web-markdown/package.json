@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@moonshot-ai/web-core": "workspace:*",
+    "@moonshot-ai/web-i18n": "workspace:*",
     "@moonshot-ai/web-ui": "workspace:*",
     "katex": "^0.17.0",
     "markstream-vue": "^1.0.4",

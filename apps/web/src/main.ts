@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import { IconResolverKey } from '@moonshot-ai/web-ui';
 import { KimiWebClientFacadeKey } from '@moonshot-ai/web-core';
+import { KimiI18nKey, type KimiI18nApi } from '@moonshot-ai/web-i18n';
 import App from './App.vue';
 import i18n from './i18n';
 import { useKimiWebClient } from './composables/useKimiWebClient';
@@ -18,6 +19,13 @@ import './style.css';
 installClientErrorCapture();
 
 const app = createApp(App).use(i18n);
+// Hand packages (e.g. web-markdown) a translator without forcing them to import
+// the global vue-i18n. Wrap the composer as a minimal `KimiI18nApi` (its `locale`
+// is a Ref, not a string), so `inject(KimiI18nKey)` stays type-safe.
+const kimiI18n: KimiI18nApi = {
+  t: (key, params) => i18n.global.t(key, params as never),
+};
+app.provide(KimiI18nKey, kimiI18n);
 // Bridge web-ui's <Icon> to this app's icon registry: <Icon name> resolves its
 // component through lib/icons.ts (which owns the `~icons/*` collections). The
 // registry stays in apps/web; web-ui only defines the injection key.
