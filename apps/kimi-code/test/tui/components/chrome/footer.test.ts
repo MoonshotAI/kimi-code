@@ -205,6 +205,15 @@ describe('FooterComponent displayName override', () => {
 });
 
 describe('FooterComponent status line command', () => {
+  it('falls back when older app state fixtures omit statusLine', () => {
+    const { statusLine: _statusLine, ...legacyState } = appState;
+
+    const footer = new FooterComponent(legacyState as AppState);
+
+    expect(footer.render(120).join('\n')).toContain('context: 0.0%');
+    footer.dispose();
+  });
+
   it('uses the command output on the second line when configured', async () => {
     statusLineMocks.runStatusLineCommand.mockResolvedValue('model: kimi-k2 | dir: project');
     const onRefresh = vi.fn();
@@ -235,6 +244,28 @@ describe('FooterComponent status line command', () => {
       }),
     });
 
+    footer.dispose();
+  });
+
+  it('does not refresh the external command on unrelated state updates', async () => {
+    statusLineMocks.runStatusLineCommand.mockResolvedValue('model: kimi-k2 | dir: project');
+    const footer = new FooterComponent({
+      ...appState,
+      statusLine: { command: 'kimi-hud', timeoutMs: 250 },
+    });
+
+    await vi.waitFor(() => {
+      expect(statusLineMocks.runStatusLineCommand).toHaveBeenCalled();
+    });
+    statusLineMocks.runStatusLineCommand.mockClear();
+
+    footer.setState({
+      ...appState,
+      contextUsage: 0.5,
+      statusLine: { command: 'kimi-hud', timeoutMs: 250 },
+    });
+
+    expect(statusLineMocks.runStatusLineCommand).not.toHaveBeenCalled();
     footer.dispose();
   });
 

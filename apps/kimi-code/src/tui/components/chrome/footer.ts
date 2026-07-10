@@ -16,6 +16,7 @@ import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/danc
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
+import { DEFAULT_TUI_CONFIG, type StatusLineConfig } from '#/tui/config';
 import {
   runStatusLineCommand,
   type StatusLineCommandPayload,
@@ -219,7 +220,7 @@ export class FooterComponent implements Component {
     this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
-    this.syncStatusLineTimer(state.statusLine.command);
+    this.syncStatusLineTimer(statusLineConfig(state).command);
   }
 
   setState(state: AppState): void {
@@ -230,7 +231,7 @@ export class FooterComponent implements Component {
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.state = state;
-    this.syncStatusLineTimer(state.statusLine.command);
+    this.syncStatusLineTimer(statusLineConfig(state).command);
   }
 
   /**
@@ -398,6 +399,7 @@ export class FooterComponent implements Component {
   }
 
   private syncStatusLineTimer(command: string | null): void {
+    const commandChanged = command !== this.statusLineCommand;
     if (command !== this.statusLineCommand) {
       this.statusLineCommand = command;
       this.statusLineGeneration += 1;
@@ -405,13 +407,16 @@ export class FooterComponent implements Component {
     }
 
     if (command !== null) {
+      const timerCreated = this.statusLineTimer === null;
       if (this.statusLineTimer === null) {
         this.statusLineTimer = setInterval(() => {
           void this.refreshStatusLine();
         }, STATUS_LINE_REFRESH_INTERVAL_MS);
         this.statusLineTimer.unref?.();
       }
-      void this.refreshStatusLine();
+      if (commandChanged || timerCreated) {
+        void this.refreshStatusLine();
+      }
       return;
     }
 
@@ -422,7 +427,7 @@ export class FooterComponent implements Component {
   }
 
   private async refreshStatusLine(): Promise<void> {
-    const { command, timeoutMs } = this.state.statusLine;
+    const { command, timeoutMs } = statusLineConfig(this.state);
     if (command === null || this.statusLineInFlight) return;
     const generation = this.statusLineGeneration;
     this.statusLineInFlight = true;
@@ -442,9 +447,9 @@ export class FooterComponent implements Component {
     if (
       this.disposed ||
       generation !== this.statusLineGeneration ||
-      this.state.statusLine.command !== command
+      statusLineConfig(this.state).command !== command
     ) {
-      if (!this.disposed && this.state.statusLine.command !== null) {
+      if (!this.disposed && statusLineConfig(this.state).command !== null) {
         void this.refreshStatusLine();
       }
       return;
@@ -506,4 +511,8 @@ function goalSnapshotKey(goal: AppState['goal']): string | null {
     String(goal.budget.turnBudget),
     String(goal.budget.wallClockBudgetMs),
   ].join('\u0000');
+}
+
+function statusLineConfig(state: AppState): StatusLineConfig {
+  return (state as Partial<AppState>).statusLine ?? DEFAULT_TUI_CONFIG.statusLine;
 }
