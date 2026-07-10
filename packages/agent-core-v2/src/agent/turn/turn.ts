@@ -1,4 +1,4 @@
-import { createDecorator } from "#/_base/di/instantiation";
+import { createDecorator } from '#/_base/di/instantiation';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRunResult } from '#/agent/loop/loop';

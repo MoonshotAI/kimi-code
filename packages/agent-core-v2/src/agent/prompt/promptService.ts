@@ -174,7 +174,7 @@ export class AgentPromptService implements IAgentPromptService {
       if (this.observedTurn === turn) {
         this.observedTurn = undefined;
       }
-      if (result.reason !== 'completed') {
+      if (result.type !== 'completed') {
         this.discardQueuedSteers();
       }
     });

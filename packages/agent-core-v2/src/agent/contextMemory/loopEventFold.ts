@@ -34,6 +34,7 @@
  * concurrent replays of different agent scopes never share fold state.
  */
 
+import type { FinishReason } from '#/app/llmProtocol/finishReason';
 import { createToolMessage, type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 
@@ -63,7 +64,7 @@ export type LoopRecordedEvent =
       readonly llmServerDecodeMs?: number;
       readonly llmClientConsumeMs?: number;
       readonly messageId?: string;
-      readonly providerFinishReason?: string;
+      readonly providerFinishReason?: FinishReason;
       readonly rawFinishReason?: string;
     }
   | {

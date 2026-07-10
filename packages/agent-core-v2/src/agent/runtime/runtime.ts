@@ -11,7 +11,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { TurnEndReason } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent } from '@moonshot-ai/protocol';
 
 export type AgentPhase =
   | { readonly kind: 'idle' }
@@ -71,7 +71,7 @@ export type AgentPhase =
   | {
       readonly kind: 'ended';
       readonly turnId: number;
-      readonly reason: TurnEndReason;
+      readonly reason: TurnEndedEvent['reason'];
       readonly durationMs?: number;
       readonly at: number;
     };

@@ -50,7 +50,7 @@ function fakeTurn(): Turn {
     id: 1,
     signal: new AbortController().signal,
     ready: Promise.resolve(),
-    result: Promise.resolve({ reason: 'completed' }),
+    result: Promise.resolve({ type: 'completed', steps: 0, truncated: false }),
   };
 }
 

@@ -192,7 +192,7 @@ describe('AgentPromptLegacyService', () => {
     const { service, turns, settleActive } = createHarness();
     await service.submit(textBody('first'));
     const second = await service.submit(textBody('second'));
-    settleActive({ reason: 'completed' });
+    settleActive({ type: 'completed', steps: 0, truncated: false });
     await vi.waitFor(() => expect(turns).toHaveLength(2));
     expect(service.list().active?.prompt_id).toBe(second.prompt_id);
   });
@@ -203,7 +203,7 @@ describe('AgentPromptLegacyService', () => {
     const second = await service.submit(textBody('second'));
     const aborted = await service.abort(first.prompt_id);
     expect(aborted.aborted).toBe(true);
-    settleActive({ reason: 'cancelled' });
+    settleActive({ type: 'cancelled', steps: 0, reason: 'Aborted' });
     await vi.waitFor(() => expect(turns).toHaveLength(2));
     expect(service.list().active?.prompt_id).toBe(second.prompt_id);
   });
@@ -246,10 +246,10 @@ describe('AgentPromptLegacyService', () => {
     const { service, settleActive } = createHarness();
     const { submit, completion } = await service.submitAndSettle(textBody('hi'));
     expect(submit.status).toBe('running');
-    settleActive({ reason: 'completed' });
+    settleActive({ type: 'completed', steps: 0, truncated: false });
     await expect(completion).resolves.toMatchObject({
       promptId: submit.prompt_id,
-      result: { reason: 'completed' },
+      result: { type: 'completed' },
     });
   });
 
@@ -260,16 +260,16 @@ describe('AgentPromptLegacyService', () => {
     expect(second.submit.status).toBe('queued');
 
     // Settle the active (first) turn so the queued second prompt launches.
-    settleActive({ reason: 'completed' });
+    settleActive({ type: 'completed', steps: 0, truncated: false });
     await vi.waitFor(() =>
       expect(service.list().active?.prompt_id).toBe(second.submit.prompt_id),
     );
 
     // Settle the now-active second turn; its completion should resolve.
-    settleActive({ reason: 'completed' });
+    settleActive({ type: 'completed', steps: 0, truncated: false });
     await expect(second.completion).resolves.toMatchObject({
       promptId: second.submit.prompt_id,
-      result: { reason: 'completed' },
+      result: { type: 'completed' },
     });
   });
 

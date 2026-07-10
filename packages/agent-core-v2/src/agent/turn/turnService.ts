@@ -78,7 +78,11 @@ export class AgentTurnService implements IAgentTurnService {
       id: lease.turnId,
       signal: lease.signal,
       ready,
-      result: Promise.resolve({ reason: 'failed' }),
+      result: Promise.resolve({
+        type: 'failed',
+        steps: 0,
+        error: new Error('Turn result was not initialized'),
+      }),
     };
     void ready.catch(() => undefined);
     this.activeTurn = turn;
@@ -121,37 +125,38 @@ export class AgentTurnService implements IAgentTurnService {
       return result;
     } catch (error) {
       if (lease.signal.aborted) {
-        result = { reason: 'cancelled' };
+        result = {
+          type: 'cancelled',
+          steps: 0,
+          reason: lease.signal.reason ?? error,
+        };
         return result;
       }
-      result = { reason: 'failed', error };
+      result = { type: 'failed', error, steps: 0 };
       return result;
     } finally {
-      ready.reject(new Error('Turn ended before first step', { cause: result?.error }));
+      ready.reject(new Error('Turn ended before first step', {
+        cause: result?.type === 'failed' ? result.error : undefined,
+      }));
       if (this.activeTurn === turn) {
         this.activeTurn = undefined;
       }
-      const outcome: 'completed' | 'cancelled' | 'failed' =
-        result?.reason === 'completed'
-          ? 'completed'
-          : result?.reason === 'cancelled'
-            ? 'cancelled'
-            : 'failed';
-      lease.end(outcome, result?.error === undefined ? undefined : { error: result.error });
+      const outcome = result?.type ?? 'failed';
+      lease.end(outcome, result?.type === 'failed' ? { error: result.error } : undefined);
       if (result !== undefined) {
-        const error = result.error !== undefined ? toKimiErrorPayload(result.error) : undefined;
+        const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
         this.eventBus.publish({
           type: 'turn.ended',
           turnId: turn.id,
-          reason: result.reason,
+          reason: result.type,
           error,
           durationMs: Date.now() - startedAt,
         });
         if (error !== undefined) {
           this.eventBus.publish({ type: 'error', ...error });
         }
-        if (result.reason !== 'completed') {
-          turnTelemetry.track('turn_interrupted', { at_step: result.steps ?? null });
+        if (result.type !== 'completed') {
+          turnTelemetry.track('turn_interrupted', { at_step: result.steps });
         }
       }
       // `turn.ended` is published to `IEventBus` above; subscribers (swarm /

@@ -47,7 +47,7 @@ function makeTurn(id: number): Turn {
     id,
     signal: controller.signal,
     ready: Promise.resolve(),
-    result: Promise.resolve({ reason: 'completed' }),
+    result: Promise.resolve({ type: 'completed', steps: 0, truncated: false }),
   };
   turnControllers.set(turn, controller);
   return turn;
@@ -130,7 +130,7 @@ export function stubLoopWithHooks(): IAgentLoopService {
     hooks,
     run: async (options) => {
       options.onStarted?.(1);
-      return { reason: 'completed', steps: 0 };
+      return { type: 'completed', steps: 0, truncated: false };
     },
   };
 }

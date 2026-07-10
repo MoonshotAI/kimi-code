@@ -20,7 +20,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import type { PermissionApprovalRequestContext } from '#/agent/permissionGate/permissionGateService';
-import type { TurnEndReason } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent } from '@moonshot-ai/protocol';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
 import type {
@@ -237,7 +237,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
     this.publishSnapshot();
   }
 
-  private onTurnEnded(turnId: number, reason: TurnEndReason, durationMs: number | undefined): void {
+  private onTurnEnded(
+    turnId: number,
+    reason: TurnEndedEvent['reason'],
+    durationMs: number | undefined,
+  ): void {
     this.setPhase({ kind: 'ended', turnId, reason, durationMs, at: Date.now() });
     this.cursor = { turnId: -1, step: 0, stepId: '' };
     this.priorForApproval = undefined;

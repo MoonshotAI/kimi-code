@@ -2,7 +2,6 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { FinishReason } from '#/app/llmProtocol/finishReason';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 import type { Hooks } from '#/hooks';
-import type { TurnEndReason } from '@moonshot-ai/protocol';
 
 export interface BeforeStepContext {
   readonly turnId: number;
@@ -36,11 +35,22 @@ export interface LoopRunOptions {
   readonly onStarted?: (step: number) => void;
 }
 
-export interface LoopRunResult {
-  readonly reason: TurnEndReason;
-  readonly error?: unknown;
-  readonly steps?: number;
-}
+export type LoopRunResult =
+  | {
+      readonly type: 'completed';
+      readonly steps: number;
+      readonly truncated: boolean;
+    }
+  | {
+      readonly type: 'failed';
+      readonly steps: number;
+      readonly error: unknown;
+    }
+  | {
+      readonly type: 'cancelled';
+      readonly steps: number;
+      readonly reason: unknown;
+    };
 
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;

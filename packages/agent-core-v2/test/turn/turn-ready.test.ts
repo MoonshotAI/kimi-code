@@ -102,7 +102,7 @@ describe('AgentTurnService ready', () => {
       options.onStarted?.(1);
       await release;
       events.push('done');
-      return { reason: 'completed', steps: 1 };
+      return { type: 'completed', steps: 1, truncated: false };
     };
 
     const turn = ix.get(IAgentTurnService).launch();
@@ -125,13 +125,13 @@ describe('AgentTurnService ready', () => {
     expect(events).toEqual(['loop', 'before', 'after', 'response']);
 
     release.resolve();
-    await expect(turn.result).resolves.toMatchObject({ reason: 'completed', steps: 1 });
+    await expect(turn.result).resolves.toMatchObject({ type: 'completed', steps: 1 });
     expect(events).toEqual(['loop', 'before', 'after', 'response', 'done']);
   });
 
   it('rejects with an Error when the turn ends before the first step starts', async () => {
     const cause = new Error('loop failed before first step');
-    loop.run = async () => ({ reason: 'failed', error: cause, steps: 0 });
+    loop.run = async () => ({ type: 'failed', error: cause, steps: 0 });
 
     const turn = ix.get(IAgentTurnService).launch();
     let readyError: unknown;
@@ -142,14 +142,14 @@ describe('AgentTurnService ready', () => {
     expect(readyError).toBeInstanceOf(Error);
     expect((readyError as Error).message).toBe('Turn ended before first step');
     expect((readyError as Error).cause).toBe(cause);
-    await expect(turn.result).resolves.toMatchObject({ reason: 'failed', error: cause });
+    await expect(turn.result).resolves.toMatchObject({ type: 'failed', error: cause });
   });
 
   it('throws a KimiError when launching while a turn is active', async () => {
     const release = createControlledPromise<void>();
     loop.run = async () => {
       await release;
-      return { reason: 'completed', steps: 1 };
+      return { type: 'completed', steps: 1, truncated: false };
     };
 
     const turnService = ix.get(IAgentTurnService);
@@ -168,7 +168,7 @@ describe('AgentTurnService ready', () => {
       code: ErrorCodes.ACTIVITY_AGENT_BUSY,
       details: { turnId: turn.id },
     });
-    await expect(turn.result).resolves.toMatchObject({ reason: 'completed', steps: 1 });
+    await expect(turn.result).resolves.toMatchObject({ type: 'completed', steps: 1 });
   });
 
   it('records turn.cancel when cancelling the active turn', async () => {
@@ -182,7 +182,7 @@ describe('AgentTurnService ready', () => {
       await new Promise<void>((resolve) => {
         signal?.addEventListener('abort', () => resolve(), { once: true });
       });
-      return { reason: 'cancelled', steps: 0 };
+      return { type: 'cancelled', steps: 0, reason: 'Aborted' };
     };
 
     const turnService = ix.get(IAgentTurnService);
@@ -192,7 +192,11 @@ describe('AgentTurnService ready', () => {
     });
 
     expect(turnService.cancel(turn.id)).toBe(true);
-    await expect(turn.result).resolves.toMatchObject({ reason: 'cancelled', steps: 0 });
+    await expect(turn.result).resolves.toMatchObject({
+      type: 'cancelled',
+      steps: 0,
+      reason: 'Aborted',
+    });
     expect(records.map((record) => record.type)).toEqual(['turn.prompt', 'turn.cancel']);
     expect(records[1]).toEqual({ type: 'turn.cancel', turnId: turn.id, time: expect.any(Number) });
   });
@@ -289,7 +293,7 @@ describe('AgentLoopService onStarted', () => {
     expect(started).toBe(true);
 
     release.resolve();
-    await expect(result).resolves.toMatchObject({ reason: 'completed', steps: 1 });
+    await expect(result).resolves.toMatchObject({ type: 'completed', steps: 1 });
   });
 
   it('fires at step completion when no response event is streamed', async () => {
@@ -331,7 +335,7 @@ describe('AgentLoopService onStarted', () => {
     release.resolve();
     await stepStarted;
     expect(started).toBe(true);
-    await expect(result).resolves.toMatchObject({ reason: 'completed', steps: 1 });
+    await expect(result).resolves.toMatchObject({ type: 'completed', steps: 1 });
   });
 
   it('does not fire when the requester fails before the first response event', async () => {
@@ -352,7 +356,7 @@ describe('AgentLoopService onStarted', () => {
           started = true;
         },
       }),
-    ).resolves.toMatchObject({ reason: 'failed', error: cause, steps: 1 });
+    ).resolves.toMatchObject({ type: 'failed', error: cause, steps: 1 });
     expect(started).toBe(false);
   });
 });

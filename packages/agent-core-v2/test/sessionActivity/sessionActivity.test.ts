@@ -21,7 +21,7 @@ function makeTurn(id: number): Turn {
     id,
     signal: new AbortController().signal,
     ready: Promise.resolve(),
-    result: Promise.resolve({ reason: 'completed' }),
+    result: Promise.resolve({ type: 'completed', steps: 0, truncated: false }),
   };
 }
 

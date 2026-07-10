@@ -111,11 +111,11 @@ export class AgentLoopService implements IAgentLoopService {
           continue;
         }
 
-        return { reason: 'completed', steps };
+        return { type: 'completed', steps, truncated: stepResult.stopReason === 'truncated' };
       } catch (error) {
         if (isAbortError(error) || signal.aborted) {
           this.emitStepInterrupted(turnId, activeStep, 'aborted');
-          return { reason: 'cancelled', steps };
+          return { type: 'cancelled', reason: signal.reason ?? error, steps };
         }
 
         const reason: LoopInterruptReason = isMaxStepsExceededError(error) ? 'max_steps' : 'error';
@@ -125,13 +125,13 @@ export class AgentLoopService implements IAgentLoopService {
         try {
           await this.hooks.onError.run(context);
         } catch (hookError) {
-          return { reason: 'failed', error: hookError, steps };
+          return { type: 'failed', error: hookError, steps };
         }
         if (context.retry) {
           activeStep = undefined;
           continue;
         }
-        return { reason: 'failed', error, steps };
+        return { type: 'failed', error, steps };
       }
     }
   }
@@ -249,17 +249,13 @@ export class AgentLoopService implements IAgentLoopService {
 
     markStepStarted();
     const timing = response.timing;
-    const stepProviderFinishReason =
-      response.providerFinishReason !== undefined &&
-      response.providerFinishReason !== finishReason
-        ? response.providerFinishReason
-        : undefined;
+    const stepFinishReason = normalizeFinishReason(finishReason);
     this.context.appendLoopEvent({
       type: 'step.end',
       uuid: stepUuid,
       turnId: turnIdStr,
       step: currentStep,
-      finishReason: normalizeFinishReason(finishReason),
+      finishReason: stepFinishReason,
       usage,
       llmFirstTokenLatencyMs: timing?.firstTokenLatencyMs,
       llmStreamDurationMs: timing?.streamDurationMs,
@@ -268,14 +264,13 @@ export class AgentLoopService implements IAgentLoopService {
       llmServerDecodeMs: timing?.serverDecodeMs,
       llmClientConsumeMs: timing?.clientConsumeMs,
       messageId: response.providerMessageId,
-      providerFinishReason: stepProviderFinishReason,
-      rawFinishReason:
-        stepProviderFinishReason !== undefined ? response.rawFinishReason : undefined,
+      providerFinishReason,
+      rawFinishReason: response.rawFinishReason,
     });
     if (response.model !== undefined) {
       this.usage.record(response.model, usage, { type: 'turn', turnId, step: currentStep });
     }
-    this.emitStepCompleted(turnId, currentStep, stepUuid, usage, finishReason, response);
+    this.emitStepCompleted(turnId, currentStep, stepUuid, usage, stepFinishReason, response);
 
     const afterStepContext: AfterStepContext = {
       turnId,
@@ -306,11 +301,6 @@ export class AgentLoopService implements IAgentLoopService {
     finishReason: string,
     response: LLMRequestFinish,
   ): void {
-    const providerFinishReason =
-      response.providerFinishReason !== undefined &&
-        response.providerFinishReason !== finishReason
-        ? response.providerFinishReason
-        : undefined;
     this.eventBus.publish({
       type: 'turn.step.completed',
       turnId,
@@ -324,8 +314,8 @@ export class AgentLoopService implements IAgentLoopService {
       llmServerFirstTokenMs: response.timing?.serverFirstTokenMs,
       llmServerDecodeMs: response.timing?.serverDecodeMs,
       llmClientConsumeMs: response.timing?.clientConsumeMs,
-      providerFinishReason,
-      rawFinishReason: providerFinishReason !== undefined ? response.rawFinishReason : undefined,
+      providerFinishReason: response.providerFinishReason,
+      rawFinishReason: response.rawFinishReason,
     });
   }
 
@@ -408,9 +398,10 @@ export class AgentLoopService implements IAgentLoopService {
   }
 }
 
-function normalizeFinishReason(reason: string): string {
+function normalizeFinishReason(reason: FinishReason): string {
   if (reason === 'tool_calls') return 'tool_use';
   if (reason === 'completed') return 'end_turn';
+  if (reason === 'truncated') return 'max_tokens';
   return reason;
 }
 

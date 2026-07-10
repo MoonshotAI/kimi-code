@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { TurnEndedEvent } from '@moonshot-ai/protocol';
+
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { type AgentGoalService } from '#/agent/goal/goalService';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { IAgentTurnService, type Turn, type TurnResult } from '#/agent/turn/turn';
+import { IAgentTurnService, type Turn } from '#/agent/turn/turn';
 import type { PersistedWireRecord, WireRecord } from '#/agent/wireRecord/wireRecord';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
@@ -26,6 +28,10 @@ type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
 type GoalRecord = Extract<PersistedWireRecord, { type: `goal.${string}` }>;
 type AgentEvent = DomainEvent;
 type GoalUpdatedEvent = Extract<AgentEvent, { type: 'goal.updated' }>;
+type TurnEndedInput = {
+  readonly reason: TurnEndedEvent['reason'];
+  readonly error?: unknown;
+};
 
 const zeroUsage: TokenUsage = {
   inputCacheRead: 0,
@@ -52,7 +58,7 @@ function makeTurn(id: number): Turn {
     id,
     signal: new AbortController().signal,
     ready: Promise.resolve(),
-    result: Promise.resolve({ reason: 'completed' }),
+    result: Promise.resolve({ type: 'completed', steps: 0, truncated: false }),
   };
 }
 
@@ -96,7 +102,7 @@ async function runStepUsageHooks(
 function endTurn(
   eventBus: IEventBus,
   turn: Turn,
-  result: TurnResult = { reason: 'completed' },
+  result: TurnEndedInput = { reason: 'completed' },
 ): void {
   const error = result.error !== undefined ? toKimiErrorPayload(result.error) : undefined;
   eventBus.publish({

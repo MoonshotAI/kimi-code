@@ -88,7 +88,7 @@ describe('Cron — session E2E (P1.9)', () => {
           id: 1,
           signal: new AbortController().signal,
           ready: Promise.resolve(),
-          result: Promise.resolve({ reason: 'completed' as const }),
+          result: Promise.resolve({ type: 'completed' as const, steps: 0, truncated: false }),
         }),
       };
     });

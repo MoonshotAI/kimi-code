@@ -36,7 +36,7 @@ import {
   IAgentPromptService,
   type PromptSubmitContext,
 } from '#/agent/prompt/prompt';
-import type { HookResultEvent, TurnEndReason } from '@moonshot-ai/protocol';
+import type { HookResultEvent, TurnEndedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ExecutableToolResult } from '#/agent/tool/toolContract';
 import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool/toolHooks';
@@ -308,11 +308,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     return false;
   }
 
-  private notifyTurnEnded(event: {
-    turnId: number;
-    reason: TurnEndReason;
-    error?: unknown;
-  }): void {
+  private notifyTurnEnded(event: Pick<TurnEndedEvent, 'turnId' | 'reason' | 'error'>): void {
     this.stopHookContinuationUsed = false;
     if (event.reason === 'failed' && event.error !== undefined) {
       this.notifyStopFailure(event.error, new AbortController().signal);

@@ -56,7 +56,7 @@ function createSteerSpy(
     id: 1,
     signal: new AbortController().signal,
     ready: Promise.resolve(),
-    result: Promise.resolve({ reason: 'completed' as const }),
+    result: Promise.resolve({ type: 'completed' as const, steps: 0, truncated: false }),
   } : args[0];
   const calls: Array<{ content: readonly ContentPart[]; origin: PromptOrigin }> = [];
   vi.spyOn(prompt, 'steer').mockImplementation((message: ContextMessage) => {
@@ -152,7 +152,7 @@ describe('SessionCronService', () => {
         id: 7,
         signal: new AbortController().signal,
         ready: Promise.resolve(),
-        result: Promise.resolve({ reason: 'completed' as const }),
+        result: Promise.resolve({ type: 'completed' as const, steps: 0, truncated: false }),
       });
     });
 
@@ -468,7 +468,7 @@ describe('SessionCronService', () => {
             id: 1,
             signal: new AbortController().signal,
             ready: Promise.resolve(),
-            result: Promise.resolve({ reason: 'completed' as const }),
+            result: Promise.resolve({ type: 'completed' as const, steps: 0, truncated: false }),
           }
           : undefined;
       });
