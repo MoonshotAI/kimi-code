@@ -1225,9 +1225,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       });
 
       // Bind the real daemon prompt_id into the event projector so the upcoming
-      // turn.started uses it (instead of synthesizing a random one). This is what
-      // makes Stop work on the real daemon: session.currentPromptId then matches
-      // the prompt_id the REST :abort endpoint expects.
+      // turn.started stamps this turn's messages with it (instead of a synthetic
+      // pr_ id the daemon rejects on :abort). Stop's authoritative prompt_id
+      // comes from the submit response above and the daemon's
+      // event.session.status_changed — this binding is for transcript grouping.
       getEventConn()?.bindNextPromptId(sid, result.promptId);
 
       // NOTE: we no longer set a local auto-title here. The daemon generates a
