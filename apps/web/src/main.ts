@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 import i18n from './i18n';
+import { isDesktop } from './lib/desktopFlag';
 import { installClientErrorCapture } from './debug/trace';
 import '@fontsource-variable/inter/opsz.css';
 import '@fontsource-variable/inter/opsz-italic.css';
@@ -12,4 +13,22 @@ import './style.css';
 // a complete troubleshooting log, not just network traffic.
 installClientErrorCapture();
 
-createApp(App).use(i18n).mount('#app');
+const app = createApp(App).use(i18n);
+app.mount('#app');
+
+// In the desktop app, mirror <html data-color-scheme> to the host's nativeTheme
+// via the preload-exposed IPC (replaces the main process's console-message hack).
+if (isDesktop) {
+  const bridge = (window as unknown as { kimiDesktop?: { setTheme: (s: 'light' | 'dark' | 'system') => void } }).kimiDesktop;
+  if (bridge) {
+    const report = () => {
+      const v = document.documentElement.dataset.colorScheme;
+      bridge.setTheme(v === 'light' || v === 'dark' ? v : 'system');
+    };
+    new MutationObserver(report).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-color-scheme'],
+    });
+    report();
+  }
+}
