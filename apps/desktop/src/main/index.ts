@@ -11,12 +11,6 @@ import { registerRendererScheme, registerRendererProtocol, rendererUrl } from '.
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: DesktopServerHandle | null = null;
 
-function webAssetsDir(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'web-dist')
-    : join(app.getAppPath(), 'web-dist');
-}
-
 function webDistRoot(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'web-dist')
