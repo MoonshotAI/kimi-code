@@ -643,10 +643,11 @@ describe('ReadMediaFileTool', () => {
     );
   });
 
-  it('ships sniffed image formats to the provider without gating', async () => {
-    // A `.png` file that is actually a BMP is reported as `image/bmp`. The
-    // tool does not gate on image format — it ships the real bytes with the
-    // sniffed MIME, and the provider decides which formats it accepts.
+  it('refuses a sniffed-but-unsupported image format instead of shipping it to the provider', async () => {
+    // A `.png` file that is actually a BMP is sniffed as `image/bmp`. The tool
+    // must not ship the bytes: the provider rejects BMP, and once the
+    // image_url lands in the history every later request in the session fails.
+    // It refuses with conversion guidance instead.
     const data = Buffer.concat([Buffer.from('BM'), Buffer.from('bmpdata')]);
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
@@ -660,10 +661,10 @@ describe('ReadMediaFileTool', () => {
       signal,
     });
 
-    const parts = outputParts(result);
-    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
-      `data:image/bmp;base64,${data.toString('base64')}`,
-    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('image/bmp');
+    expect(result.output).toContain('Convert it to JPEG');
+    expect(result.output).toContain('/workspace/photo.jpg');
   });
 
   it('rejects a media-extension file whose bytes are not a supported image', async () => {
@@ -1019,7 +1020,7 @@ describe('ReadMediaFileTool', () => {
     });
   });
 
-  describe('provider-unsupported formats (HEIC/HEIF)', () => {
+  describe('provider-unsupported formats', () => {
     /** Minimal ISO-BMFF header: size + 'ftyp' + the given brand. */
     function ftypHeader(brand: string): Buffer {
       const bytes = Buffer.alloc(16);
@@ -1029,14 +1030,17 @@ describe('ReadMediaFileTool', () => {
       return bytes;
     }
 
-    function heicTool(osKind: string, brand = 'heic'): ReadMediaFileTool {
-      const data = ftypHeader(brand);
+    function unsupportedTool(osKind: string, data: Buffer): ReadMediaFileTool {
       const kaos = createFakeKaos({
         stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
         readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(data),
         osEnv: { ...FAKE_OS_ENV, osKind },
       });
       return new ReadMediaFileTool(kaos, PERMISSIVE_WORKSPACE, capabilities());
+    }
+
+    function heicTool(osKind: string, brand = 'heic'): ReadMediaFileTool {
+      return unsupportedTool(osKind, ftypHeader(brand));
     }
 
     it('refuses HEIC with sips guidance on macOS instead of sending it to the provider', async () => {
@@ -1094,6 +1098,52 @@ describe('ReadMediaFileTool', () => {
       });
       expect(region.isError).toBe(true);
       expect(region.output).toContain('sips');
+    });
+
+    it('refuses AVIF (still and animated brands) with conversion guidance', async () => {
+      for (const brand of ['avif', 'avis']) {
+        const result = await executeTool(unsupportedTool('macOS', ftypHeader(brand)), {
+          turnId: 't1',
+          toolCallId: `c_avif_${brand}`,
+          args: { path: '/workspace/photo.avif' },
+          signal,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.output).toContain('image/avif');
+        expect(result.output).toContain('sips -s format jpeg');
+        expect(result.output).toContain('/workspace/photo.jpg');
+      }
+    });
+
+    it('refuses AVIF on Linux with ImageMagick guidance (no heif-convert)', async () => {
+      const result = await executeTool(unsupportedTool('Linux', ftypHeader('avif')), {
+        turnId: 't1',
+        toolCallId: 'c_avif_linux',
+        args: { path: '/workspace/photo.avif' },
+        signal,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('magick');
+      expect(result.output).not.toContain('heif-convert');
+    });
+
+    it('refuses BMP, TIFF, and ICO with per-OS conversion guidance', async () => {
+      const cases: readonly { data: Buffer; mime: string; path: string }[] = [
+        { data: Buffer.concat([Buffer.from('BM'), Buffer.from('bmpdata')]), mime: 'image/bmp', path: '/workspace/photo.bmp' },
+        { data: Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x00]), mime: 'image/tiff', path: '/workspace/scan.tiff' },
+        { data: Buffer.from([0x00, 0x00, 0x01, 0x00, 0x00]), mime: 'image/x-icon', path: '/workspace/favicon.ico' },
+      ];
+      for (const c of cases) {
+        const result = await executeTool(unsupportedTool('macOS', c.data), {
+          turnId: 't1',
+          toolCallId: `c_${c.mime.replace('/', '_')}`,
+          args: { path: c.path },
+          signal,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.output).toContain(c.mime);
+        expect(result.output).toContain('sips');
+      }
     });
   });
 

@@ -565,6 +565,150 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     expect(persisted.equals(Buffer.from(base64, 'base64'))).toBe(true);
   });
 
+  it('replaces an inline base64 image the provider cannot accept with a notice', async () => {
+    // An AVIF inline image must never reach the session history — the
+    // provider rejects it and every later request would fail.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'what is this?' },
+          {
+            type: 'image',
+            source: {
+              kind: 'base64',
+              media_type: 'image/avif',
+              data: Buffer.from([1, 2, 3]).toString('base64'),
+            },
+          },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content[0]).toEqual({ type: 'text', text: 'what is this?' });
+    const notice = submitted?.content[1];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
+  it('forwards an inline base64 image with an aliased MIME in canonical form', async () => {
+    // Strict provider whitelists reject the raw `image/jpg` alias — the part
+    // must land in the session with the canonical MIME.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const base64 = Buffer.from([1, 2, 3]).toString('base64');
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'image', source: { kind: 'base64', media_type: 'image/jpg', data: base64 } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content).toEqual([
+      { type: 'image', source: { kind: 'base64', media_type: 'image/jpeg', data: base64 } },
+    ]);
+  });
+
+  it('replaces an uploaded image the provider cannot accept with a notice naming the file', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'photo.avif',
+        contentType: 'image/avif',
+        data: Buffer.from([1, 2, 3]),
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string; media_type: string }>(uploadRes.json());
+    expect(uploadEnv.code).toBe(0);
+    expect(uploadEnv.data?.media_type).toBe('image/avif');
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploadEnv.data!.id } }],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const notice = submitted?.content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(notice.text).toContain('photo.avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
   it('scopes prompt image compression telemetry to the session', async () => {
     // The agent-side image_compress sources inherit the session context from
     // their per-session telemetry client; the prompt-ingestion sources must

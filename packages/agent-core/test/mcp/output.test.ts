@@ -280,6 +280,75 @@ describe('mcpResultToExecutableOutput', () => {
     ]);
   });
 
+  test('replaces an image the provider cannot accept with a text notice (media-only)', async () => {
+    // An image search tool returning AVIF: forwarding the image_url would
+    // make every later request in the session fail. The media-only wrap is
+    // kept, with a notice standing in for the dropped image.
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: 'QUJD', mimeType: 'image/avif' }]),
+      'mcp__search__image',
+    );
+    expect(out.isError).toBe(false);
+    const parts = out.output as ContentPart[];
+    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__search__image">' });
+    expect(parts.some((p) => p.type === 'image_url')).toBe(false);
+    const notice = parts.find(
+      (p) => p.type === 'text' && p.text.includes('image/avif'),
+    );
+    expect(notice).toBeDefined();
+    expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+  });
+
+  test('drops an unsupported image but keeps the accompanying text', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'text', text: 'found an image' },
+        { type: 'image', data: 'QUJD', mimeType: 'image/heic' },
+      ]),
+      'mcp__search__image',
+    );
+    const parts = out.output as ContentPart[];
+    expect(parts.some((p) => p.type === 'image_url')).toBe(false);
+    expect(parts[0]).toEqual({ type: 'text', text: 'found an image' });
+    expect(parts.some((p) => p.type === 'text' && p.text.includes('image/heic'))).toBe(true);
+  });
+
+  test('forwards the image/jpg alias as canonical image/jpeg', async () => {
+    // Strict provider whitelists reject the raw `image/jpg` alias — the part
+    // must land in the session with the canonical MIME.
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: 'QUJD', mimeType: 'image/jpg' }]),
+      'mcp__s__t',
+    );
+    const parts = out.output as ContentPart[];
+    const image = parts.find((p) => p.type === 'image_url');
+    expect(image).toEqual({
+      type: 'image_url',
+      imageUrl: { url: 'data:image/jpeg;base64,QUJD' },
+    });
+  });
+
+  test('passes remote-URL images through (no bytes to gate on)', async () => {
+    // Scope pin: an MCP resource_link carries a URL, not bytes, so the format
+    // gate cannot inspect it — the provider fetches it server-side.
+    const out = await mcpResultToExecutableOutput(
+      result([
+        assertValidMcpBlock({
+          type: 'resource_link',
+          name: 'pic.avif',
+          uri: 'https://example.com/pic.avif',
+          mimeType: 'image/avif',
+        }),
+      ]),
+      'mcp__s__t',
+    );
+    const parts = out.output as ContentPart[];
+    expect(parts).toContainEqual({
+      type: 'image_url',
+      imageUrl: { url: 'https://example.com/pic.avif' },
+    });
+  });
+
   test('does NOT wrap when a non-empty text part accompanies the media', async () => {
     const out = await mcpResultToExecutableOutput(
       result([

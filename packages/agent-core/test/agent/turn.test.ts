@@ -132,6 +132,85 @@ describe('Agent turn flow', () => {
     ).toHaveLength(3);
   });
 
+  it('gates unsupported image formats at the prompt and steer entry so the session cannot be poisoned', async () => {
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      return {
+        id: 'mock-format-gate',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+      modelCapabilities: {
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 256_000,
+      },
+    });
+
+    // The SDK/RPC prompt path carries no upstream gate: the turn entry is
+    // the last funnel before parts land in the session history.
+    await ctx.rpc.prompt({
+      input: [
+        { type: 'text', text: 'what is in these images?' },
+        { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,QUJD' } },
+        { type: 'image_url', imageUrl: { url: 'data:image/jpg;base64,REVG' } },
+      ],
+    });
+    await ctx.untilTurnEnd();
+
+    // The AVIF image never reaches the model: a notice stands in, and the
+    // accepted image/jpg alias is forwarded as canonical image/jpeg.
+    const sentParts = histories[0]!.flatMap((message) => message.content);
+    const sentImages = sentParts.filter((part) => part.type === 'image_url');
+    expect(sentImages).toEqual([
+      { type: 'image_url', imageUrl: { url: 'data:image/jpeg;base64,REVG' } },
+    ]);
+    const sentText = sentParts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(sentText).toContain('image/avif');
+
+    // The history itself is clean — no image/avif part can re-poison later turns.
+    const historyParts = ctx.agent.context.history.flatMap((message) => message.content);
+    expect(
+      historyParts.some(
+        (part) => part.type === 'image_url' && part.imageUrl.url.includes('image/avif'),
+      ),
+    ).toBe(false);
+
+    // Steer input enters the history the same way and gets the same gate.
+    await ctx.rpc.steer({
+      input: [{ type: 'image_url', imageUrl: { url: 'data:image/heic;base64,QUJD' } }],
+    });
+    await ctx.untilTurnEnd();
+
+    // The steer turn's history also carries the first turn's (canonical)
+    // image; what must be gone is the HEIC one.
+    const steerParts = histories[1]!.flatMap((message) => message.content);
+    expect(
+      steerParts.some(
+        (part) => part.type === 'image_url' && part.imageUrl.url.includes('image/heic'),
+      ),
+    ).toBe(false);
+    expect(
+      steerParts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    ).toContain('image/heic');
+  });
+
   it('tracks turn_started and turn_interrupted telemetry', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({ telemetry: recordingTelemetry(records) });

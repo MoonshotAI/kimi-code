@@ -426,4 +426,32 @@ describe('compressPromptImageParts', () => {
     const compressed = await compressPromptImageParts(parts);
     expect(compressed).toEqual(parts);
   });
+
+  it('replaces an image the provider cannot accept with a text notice', async () => {
+    // An AVIF image must never reach the session history — the provider
+    // rejects it and every later request would fail. A notice stands in.
+    const parts = acpBlocksToPromptParts([
+      textBlock('look at this'),
+      imageBlock(Buffer.from([1, 2, 3]).toString('base64'), 'image/avif'),
+    ]);
+    const compressed = await compressPromptImageParts(parts);
+
+    expect(compressed).toHaveLength(2);
+    expect(compressed[0]).toEqual({ type: 'text', text: 'look at this' });
+    const notice = compressed[1];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+  });
+
+  it('forwards accepted MIME aliases in canonical form', async () => {
+    // Strict provider whitelists reject the raw `image/jpg` alias — the part
+    // must land in the session with the canonical MIME.
+    const base64 = Buffer.from([1, 2, 3]).toString('base64');
+    const parts = acpBlocksToPromptParts([imageBlock(base64, 'image/jpg')]);
+    const compressed = await compressPromptImageParts(parts);
+
+    expect(compressed).toEqual([
+      { type: 'image_url', imageUrl: { url: `data:image/jpeg;base64,${base64}` } },
+    ]);
+  });
 });

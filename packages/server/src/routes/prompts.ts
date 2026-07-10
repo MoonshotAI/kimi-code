@@ -13,7 +13,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, compressImageForModel, compressBase64ForModel, persistOriginalImage, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, buildUnsupportedImageNotice, compressImageForModel, compressBase64ForModel, isModelAcceptedImageMime, normalizeImageMime, persistOriginalImage, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -308,7 +308,16 @@ async function resolvePromptMediaFiles(
     // input-stage step as the file path below, for REST clients that submit an
     // image as `{ source: { kind: 'base64' } }` instead of uploading a file.
     if (part.type === 'image' && part.source.kind === 'base64') {
-      const compressed = await compressBase64ForModel(part.source.data, part.source.media_type, {
+      // Formats the provider cannot accept must never enter the session
+      // history — one unsupported image_url makes every later request fail.
+      // Drop the image; a notice stands in so the model knows what happened.
+      if (!isModelAcceptedImageMime(part.source.media_type)) {
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(part.source.media_type) });
+        changed = true;
+        continue;
+      }
+      const canonicalMime = normalizeImageMime(part.source.media_type);
+      const compressed = await compressBase64ForModel(part.source.data, canonicalMime, {
         maxEdge: options.maxImageEdgePx,
         telemetry: telemetryFor('prompt_inline'),
       });
@@ -346,6 +355,11 @@ async function resolvePromptMediaFiles(
           source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
         });
         changed = true;
+      } else if (canonicalMime !== part.source.media_type) {
+        // Accepted but aliased (image/jpg, case, whitespace): forward the
+        // canonical MIME — strict provider whitelists reject the raw alias.
+        content.push({ ...part, source: { ...part.source, media_type: canonicalMime } });
+        changed = true;
       } else {
         content.push(part);
       }
@@ -374,6 +388,16 @@ async function resolvePromptMediaFiles(
     let mediaType = file.meta.media_type;
     let bytes: Uint8Array = data;
     if (part.type === 'image') {
+      // Same format gate as the inline path above: an unsupported upload
+      // (e.g. an AVIF file) becomes a notice instead of an image part.
+      if (!isModelAcceptedImageMime(mediaType)) {
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(mediaType, file.meta.name) });
+        changed = true;
+        continue;
+      }
+      // Forward the canonical MIME (image/jpg → image/jpeg, case/whitespace)
+      // — strict provider whitelists reject the raw alias.
+      mediaType = normalizeImageMime(mediaType);
       const compressed = await compressImageForModel(data, mediaType, {
         maxEdge: options.maxImageEdgePx,
         telemetry: telemetryFor('prompt_file'),
