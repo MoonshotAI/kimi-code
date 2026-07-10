@@ -482,26 +482,46 @@ const MEDIA_DEGRADED_PLACEHOLDERS = {
     '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
 } as const;
 
+/**
+ * Markers for the media-stripped resend after the provider rejected an
+ * image's FORMAT (not its size): the image marker points the model at
+ * re-reading the file, whose refusal carries per-OS conversion instructions;
+ * audio/video are collateral of the full strip and say so.
+ */
+export const MEDIA_STRIPPED_PLACEHOLDERS = {
+  image_url:
+    '[image omitted: the provider rejected this image; re-read the file for conversion instructions]',
+  audio_url:
+    '[audio omitted: dropped along with a rejected image; re-read the file to hear it]',
+  video_url:
+    '[video omitted: dropped along with a rejected image; re-read the file to view it]',
+} as const;
+
+type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;
+
 function isDegradableMediaPart(
   part: ContentPart,
-): part is ContentPart & { type: keyof typeof MEDIA_DEGRADED_PLACEHOLDERS } {
+): part is ContentPart & { type: keyof MediaPlaceholderSet } {
   return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
 }
 
 /**
  * Replace all but the `keepRecent` most recent media parts with deterministic
  * text markers. This is the media-degraded projection used to resend a request
- * the provider rejected as too large (HTTP 413 on accumulated base64 media):
- * a purely read-side transform — the underlying history is left untouched —
- * that trades old pixels for bytes while the surrounding text (including
- * ReadMediaFile's `<image path="...">` wrapper) survives, so the model can
- * re-read any file it still needs. Untouched messages are returned by
- * reference, and when nothing needs degrading the input array itself is
- * returned.
+ * the provider rejected as too large (HTTP 413 on accumulated base64 media)
+ * and — with `keepRecent = 0` and `MEDIA_STRIPPED_PLACEHOLDERS` — the resend
+ * after an image-format rejection, where the poisoned image could be anywhere
+ * and only a full strip guarantees a clean request. A purely read-side
+ * transform — the underlying history is left untouched — that trades pixels
+ * for deliverability while the surrounding text (including ReadMediaFile's
+ * `<image path="...">` wrapper) survives, so the model can re-read any file
+ * it still needs. Untouched messages are returned by reference, and when
+ * nothing needs degrading the input array itself is returned.
  */
 export function degradeOlderMediaParts(
   messages: readonly Message[],
   keepRecent: number,
+  placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
 ): Message[] {
   const mediaCount = messages.reduce(
     (count, message) => count + message.content.filter(isDegradableMediaPart).length,
@@ -515,7 +535,7 @@ export function degradeOlderMediaParts(
     const content = message.content.map((part): ContentPart => {
       if (toDegrade === 0 || !isDegradableMediaPart(part)) return part;
       toDegrade -= 1;
-      return { type: 'text', text: MEDIA_DEGRADED_PLACEHOLDERS[part.type] };
+      return { type: 'text', text: placeholders[part.type] };
     });
     return { ...message, content };
   });

@@ -28,6 +28,8 @@
  * server-side; those pass through unchanged.
  */
 
+import { sniffMediaFromMagic } from './file-type';
+
 /** Image MIME types every provider accepts. The closed set. */
 export const MODEL_ACCEPTED_IMAGE_MIMES: ReadonlySet<string> = new Set([
   'image/png',
@@ -67,6 +69,35 @@ const UNSUPPORTED_IMAGE_FORMATS: Readonly<Record<string, UnsupportedImageFormatI
 export function normalizeImageMime(mimeType: string): string {
   const lower = mimeType.trim().toLowerCase();
   return lower === 'image/jpg' ? 'image/jpeg' : lower;
+}
+
+/**
+ * Base64 characters decoded for magic sniffing: 48 chars ≈ 36 bytes, which
+ * covers every signature the sniffer reads (RIFF chunk at offset 8, ftyp
+ * brand at offset 8-12, ASF at 16).
+ */
+const BASE64_SNIFF_CHARS = 48;
+
+/**
+ * Decode just the prefix of a base64 payload needed for magic-byte
+ * sniffing, without allocating the full image. `Buffer.from` never throws
+ * on malformed base64 — it decodes what it can.
+ */
+export function decodeBase64Prefix(base64: string): Buffer {
+  return Buffer.from(base64.slice(0, BASE64_SNIFF_CHARS), 'base64');
+}
+
+/**
+ * The MIME an image should be judged by: the sniffed bytes when the magic
+ * header is recognized (bytes are authoritative — a mislabeled image, e.g.
+ * AVIF bytes an MCP image search tool labels `image/png`, is gated on what
+ * it IS, because the provider decodes bytes not labels), else the declared
+ * MIME. A header recognized as a non-image container also wins, so a video
+ * file hiding in an image part is refused instead of trusted.
+ */
+export function resolveEffectiveImageMime(declaredMime: string, header: Uint8Array): string {
+  const sniffed = sniffMediaFromMagic(header);
+  return sniffed !== null ? sniffed.mimeType : declaredMime;
 }
 
 /**

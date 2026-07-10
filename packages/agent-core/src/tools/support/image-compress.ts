@@ -39,9 +39,11 @@ import type { TelemetryClient } from '#/telemetry';
 import { sniffImageDimensions } from './file-type';
 import {
   buildUnsupportedImageNotice,
+  decodeBase64Prefix,
   isModelAcceptedImageMime,
   normalizeImageMime,
   parseImageDataUrl,
+  resolveEffectiveImageMime,
 } from './image-format-policy';
 import { decodeWebp, isAnimatedWebp } from './webp-decode';
 
@@ -500,6 +502,13 @@ export interface CompressedContentParts {
  * (non-data) image URLs and non-image parts pass through — a URL carries no
  * bytes to inspect.
  *
+ * The BYTES are authoritative, not the declared MIME: the header of each
+ * inline image is sniffed, and a mismatch (e.g. AVIF bytes an MCP image
+ * search tool labels `image/png`) is gated on what the image IS — the
+ * provider decodes bytes, not labels. When the sniffer doesn't recognize
+ * the bytes (corrupt image, exotic container), the declared MIME stands
+ * and the 400-recovery path remains the backstop.
+ *
  * This is the format gate shared by every ingestion point; run it BEFORE
  * compression so unsupported bytes are never decoded.
  */
@@ -509,11 +518,15 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {
-        if (!isModelAcceptedImageMime(parsed.mimeType)) {
-          out.push({ type: 'text', text: buildUnsupportedImageNotice(parsed.mimeType) });
+        const effectiveMime = resolveEffectiveImageMime(
+          parsed.mimeType,
+          decodeBase64Prefix(parsed.base64),
+        );
+        if (!isModelAcceptedImageMime(effectiveMime)) {
+          out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
           continue;
         }
-        const canonicalUrl = `data:${normalizeImageMime(parsed.mimeType)};base64,${parsed.base64}`;
+        const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
         if (part.imageUrl.url !== canonicalUrl) {
           out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
           continue;

@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   APIRequestTooLargeError,
+  isImageFormatError,
   isRecoverableRequestStructureError,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
@@ -41,6 +42,8 @@ export interface ExecuteLoopStepDeps {
   readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
   /** See RunTurnInput.buildMessagesMediaDegraded. */
   readonly buildMessagesMediaDegraded?: LoopMessageBuilder | undefined;
+  /** See RunTurnInput.buildMessagesMediaStripped. */
+  readonly buildMessagesMediaStripped?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly llm: LLM;
   readonly tools?: readonly ExecutableTool[] | undefined;
@@ -70,6 +73,12 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
    * rejection on every step of the turn.
    */
   readonly mediaDegradedResendUsed?: boolean;
+  /**
+   * True when this step only succeeded after resending with every media
+   * part stripped (image-format rejection). The turn loop keeps later steps
+   * on the stripped projection for the same reason as above.
+   */
+  readonly mediaStrippedResendUsed?: boolean;
 }> {
   const {
     turnId,
@@ -77,6 +86,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     buildMessages,
     buildMessagesStrict,
     buildMessagesMediaDegraded,
+    buildMessagesMediaStripped,
     dispatchEvent,
     llm,
     tools,
@@ -155,6 +165,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   } as const;
   let response: LLMChatResponse;
   let mediaDegradedResendUsed = false;
+  let mediaStrippedResendUsed = false;
   try {
     response = await chatWithRetry({ ...retryInput, params: chatParams });
   } catch (error) {
@@ -193,6 +204,45 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       }
       mediaDegradedResendUsed = true;
       log?.info('recovered after media-degraded resend', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+      });
+    } else if (buildMessagesMediaStripped !== undefined && isImageFormatError(error)) {
+      // The provider rejected an IMAGE in the request (unsupported format or
+      // undecodable data). Unlike the 413 case — too MUCH media — the error
+      // never says WHICH image is poison, and the same history is re-sent
+      // every turn, so the session would stay stuck. Resend ONCE with every
+      // media part replaced by a text marker: the only projection guaranteed
+      // to carry no poison. Read-side only — the history keeps its media,
+      // and the `<image path="...">` wrappers survive so the model can
+      // re-read files (getting conversion guidance for refused formats). A
+      // rejection of that rebuild propagates unchanged.
+      signal.throwIfAborted();
+      log?.warn('provider rejected an image in the request; resending with all media stripped', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+        model: llm.modelName,
+      });
+      const strippedMessages = await buildMessagesMediaStripped();
+      signal.throwIfAborted();
+      try {
+        response = await chatWithRetry({
+          ...retryInput,
+          params: {
+            ...chatParams,
+            messages: strippedMessages,
+            requestLogFields: { projection: 'media-stripped' },
+          },
+        });
+      } catch (strippedError) {
+        log?.error('media-stripped resend still rejected by provider', {
+          turnStep: `${turnId}.${String(currentStep)}`,
+          model: llm.modelName,
+          originalError: errorMessage(error),
+          strippedError: errorMessage(strippedError),
+        });
+        throw strippedError;
+      }
+      mediaStrippedResendUsed = true;
+      log?.info('recovered after media-stripped resend', {
         turnStep: `${turnId}.${String(currentStep)}`,
       });
     } else if (buildMessagesStrict !== undefined && isRecoverableRequestStructureError(error)) {
@@ -300,6 +350,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     stopReason:
       stopTurnAfterStep && effectiveStopReason === 'tool_use' ? 'end_turn' : effectiveStopReason,
     mediaDegradedResendUsed,
+    mediaStrippedResendUsed,
   };
 }
 

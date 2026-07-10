@@ -614,6 +614,112 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
   });
 
+  it('gates an inline base64 image on its real bytes when the declared MIME lies', async () => {
+    // AVIF bytes declared image/png: the provider decodes bytes, not labels,
+    // so the sniffed format decides — the image must not reach the session.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          {
+            type: 'image',
+            source: { kind: 'base64', media_type: 'image/png', data: avif.toString('base64') },
+          },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const notice = submitted?.content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
+  it('gates an uploaded file on its real bytes when the Content-Type lies', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'photo.png',
+        contentType: 'image/png',
+        data: avif,
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string; media_type: string }>(uploadRes.json());
+    expect(uploadEnv.code).toBe(0);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploadEnv.data!.id } }],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const notice = submitted?.content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
   it('forwards an inline base64 image with an aliased MIME in canonical form', async () => {
     // Strict provider whitelists reject the raw `image/jpg` alias — the part
     // must land in the session with the canonical MIME.

@@ -34,9 +34,10 @@ export interface LLMRequestLogFields {
   /** Request purpose; absent means a regular loop step. */
   readonly kind?: 'loop' | 'compaction';
   /** Set when the messages are a fallback resend projection: the strict
-   * wire-compliant rebuild, or the media-degraded rebuild after a
-   * request-too-large rejection. */
-  readonly projection?: 'strict' | 'media-degraded';
+   * wire-compliant rebuild, the media-degraded rebuild after a
+   * request-too-large rejection, or the media-stripped rebuild after an
+   * image-format rejection. */
+  readonly projection?: 'strict' | 'media-degraded' | 'media-stripped';
   /** Compaction only: messages dropped so far by overflow/empty shrinking. */
   readonly droppedCount?: number;
 }

@@ -16,6 +16,7 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
   createUserMessage,
+  isImageFormatError,
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
@@ -468,16 +469,20 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          // A request-body-size rejection (HTTP 413) is first retried with
-          // media parts replaced by text markers: accumulated base64 payloads
-          // are the usual culprit, and a text summary does not need them —
-          // the conversation already narrates what was seen, and the
-          // ReadMediaFile `<image path="...">` text wrapper survives. Only
-          // the summarizer input copy is rewritten; the real history keeps
-          // its media. A 413 after the strip (or with no media to strip)
-          // falls through to the overflow shrink below — dropping oldest
-          // messages shrinks the body too.
-          if (error instanceof APIRequestTooLargeError && !mediaStripAttempted) {
+          // A request-body-size rejection (HTTP 413) or an image-format
+          // rejection is first retried with media parts replaced by text
+          // markers: accumulated base64 payloads are the usual 413 culprit,
+          // a poisoned image the format-rejection culprit, and a text summary
+          // needs neither — the conversation already narrates what was seen,
+          // and the ReadMediaFile `<image path="...">` text wrapper survives.
+          // Only the summarizer input copy is rewritten; the real history
+          // keeps its media. A rejection after the strip (or with no media to
+          // strip) falls through to the overflow shrink below for a 413, and
+          // propagates for a format error — dropping oldest messages cannot
+          // fix a poisoned image's format.
+          const mediaRejected =
+            error instanceof APIRequestTooLargeError || isImageFormatError(error);
+          if (mediaRejected && !mediaStripAttempted) {
             mediaStripAttempted = true;
             const stripped = replaceMediaPartsWithMarkers(historyForModel);
             if (stripped !== historyForModel) {

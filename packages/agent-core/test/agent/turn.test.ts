@@ -12,6 +12,7 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
+  ChatProviderError,
   type ChatProvider,
   type Message,
   type ModelCapability,
@@ -33,7 +34,12 @@ import type {
 } from '../../src/session/subagent-host';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
-import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
+import {
+  createCommandKaos,
+  testAgent,
+  type TestAgentContext,
+  type TestAgentOptions,
+} from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { agentTask } from './background/helpers';
 
@@ -209,6 +215,167 @@ describe('Agent turn flow', () => {
         .map((part) => part.text)
         .join('\n'),
     ).toContain('image/heic');
+
+    // A mislabeled image is gated on its real bytes: AVIF bytes labeled
+    // image/png never reach the model.
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+    await ctx.rpc.prompt({
+      input: [
+        {
+          type: 'image_url',
+          imageUrl: { url: `data:image/png;base64,${avif.toString('base64')}` },
+        },
+      ],
+    });
+    await ctx.untilTurnEnd();
+
+    // The third turn's history also carries the first turn's canonical
+    // image; what must be gone is the mislabeled AVIF payload.
+    const mislabeledParts = histories[2]!.flatMap((message) => message.content);
+    expect(
+      mislabeledParts.some(
+        (part) =>
+          part.type === 'image_url' && part.imageUrl.url.includes(avif.toString('base64')),
+      ),
+    ).toBe(false);
+    expect(
+      mislabeledParts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    ).toContain('image/avif');
+  });
+
+  describe('image-format recovery', () => {
+    const IMAGE_CAPABLE: ModelCapability = {
+      image_in: true,
+      video_in: false,
+      audio_in: false,
+      thinking: false,
+      tool_use: true,
+      max_context_tokens: 256_000,
+    };
+
+    // Simulate a legacy/pre-gate history that already carries a poisoned
+    // image. The turn.prompt gate only sanitizes NEW prompt input, not the
+    // pre-existing context, so this reaches the provider unmodified.
+    function plantPoisonedImage(ctx: TestAgentContext): void {
+      ctx.agent.context.appendUserMessage(
+        [
+          { type: 'text', text: '<image path="/workspace/old.avif">' },
+          { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,QUJD' } },
+          { type: 'text', text: '</image>' },
+        ],
+        { kind: 'user' },
+      );
+    }
+
+    function okResponse() {
+      return {
+        id: 'mock-recovery',
+        message: {
+          role: 'assistant' as const,
+          content: [{ type: 'text' as const, text: 'ok' }],
+          toolCalls: [],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed' as const,
+        rawFinishReason: 'stop',
+      };
+    }
+
+    it('strips all media and retries once on a server image-format 400', async () => {
+      let attempts = 0;
+      const histories: Message[][] = [];
+      const generate: GenerateFn = async (_p, _s, _t, history) => {
+        attempts += 1;
+        histories.push(structuredClone(history));
+        if (attempts === 1) throw new APIStatusError(400, 'unsupported image format');
+        return okResponse();
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(2);
+      expect(histories[0]!.flatMap((m) => m.content).some((p) => p.type === 'image_url')).toBe(true);
+      expect(histories[1]!.flatMap((m) => m.content).some((p) => p.type === 'image_url')).toBe(false);
+      // Read-side only: the real history keeps the poisoned image.
+      expect(
+        ctx.agent.context.history.flatMap((m) => m.content).some((p) => p.type === 'image_url'),
+      ).toBe(true);
+    });
+
+    it('strips all media and retries once on kosong client-side image error', async () => {
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new ChatProviderError('Unsupported media type for base64 image: image/avif');
+        }
+        return okResponse();
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      // isRetryableGenerateError excludes image-format errors, so no transient
+      // retries burn first — exactly one throw then one recovered resend.
+      expect(attempts).toBe(2);
+    });
+
+    it('does NOT recover a non-image 400 (no wasted resend)', async () => {
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        throw new APIStatusError(400, 'max_tokens must be positive');
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(1);
+    });
+
+    it('surfaces the error when the strip resend also fails (no infinite loop)', async () => {
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        throw new APIStatusError(400, 'unsupported image format');
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(2);
+    });
   });
 
   it('tracks turn_started and turn_interrupted telemetry', async () => {

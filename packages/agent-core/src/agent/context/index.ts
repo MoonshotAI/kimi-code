@@ -20,6 +20,7 @@ import {
 import {
   degradeOlderMediaParts,
   MEDIA_DEGRADE_KEEP_RECENT,
+  MEDIA_STRIPPED_PLACEHOLDERS,
   project,
   type ProjectionAnomaly,
   type ProjectOptions,
@@ -499,6 +500,16 @@ export class ContextMemory {
   // `turn-step`.
   get mediaDegradedMessages(): Message[] {
     return degradeOlderMediaParts(this.messages, MEDIA_DEGRADE_KEEP_RECENT);
+  }
+
+  // Fallback projection for the image-format resend: EVERY media part
+  // replaced by a text marker. Unlike the 413 case (too MUCH media), a
+  // format rejection means at least one image is poison and the error never
+  // says which — only a full strip guarantees the resend carries none.
+  // Purely read-side, and only used after the provider already rejected an
+  // image; see the image-format fallback in `turn-step`.
+  get mediaStrippedMessages(): Message[] {
+    return degradeOlderMediaParts(this.messages, 0, MEDIA_STRIPPED_PLACEHOLDERS);
   }
 
   useProjectedHistoryFrom(source: ContextMemory): void {

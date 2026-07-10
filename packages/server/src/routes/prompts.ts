@@ -13,7 +13,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, buildUnsupportedImageNotice, compressImageForModel, compressBase64ForModel, isModelAcceptedImageMime, normalizeImageMime, persistOriginalImage, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, buildUnsupportedImageNotice, compressImageForModel, compressBase64ForModel, decodeBase64Prefix, isModelAcceptedImageMime, normalizeImageMime, persistOriginalImage, resolveEffectiveImageMime, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -310,13 +310,19 @@ async function resolvePromptMediaFiles(
     if (part.type === 'image' && part.source.kind === 'base64') {
       // Formats the provider cannot accept must never enter the session
       // history — one unsupported image_url makes every later request fail.
-      // Drop the image; a notice stands in so the model knows what happened.
-      if (!isModelAcceptedImageMime(part.source.media_type)) {
-        content.push({ type: 'text', text: buildUnsupportedImageNotice(part.source.media_type) });
+      // The bytes are authoritative: an image labeled image/png that is
+      // actually AVIF is gated on the sniffed format, not the label. Drop
+      // the image; a notice stands in so the model knows what happened.
+      const effectiveMime = resolveEffectiveImageMime(
+        part.source.media_type,
+        decodeBase64Prefix(part.source.data),
+      );
+      if (!isModelAcceptedImageMime(effectiveMime)) {
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
         changed = true;
         continue;
       }
-      const canonicalMime = normalizeImageMime(part.source.media_type);
+      const canonicalMime = normalizeImageMime(effectiveMime);
       const compressed = await compressBase64ForModel(part.source.data, canonicalMime, {
         maxEdge: options.maxImageEdgePx,
         telemetry: telemetryFor('prompt_inline'),
@@ -356,8 +362,9 @@ async function resolvePromptMediaFiles(
         });
         changed = true;
       } else if (canonicalMime !== part.source.media_type) {
-        // Accepted but aliased (image/jpg, case, whitespace): forward the
-        // canonical MIME — strict provider whitelists reject the raw alias.
+        // Accepted but aliased (image/jpg, case/whitespace) or mislabeled
+        // (jpeg bytes declared png): forward the canonical MIME — strict
+        // provider whitelists reject anything else.
         content.push({ ...part, source: { ...part.source, media_type: canonicalMime } });
         changed = true;
       } else {
@@ -388,8 +395,10 @@ async function resolvePromptMediaFiles(
     let mediaType = file.meta.media_type;
     let bytes: Uint8Array = data;
     if (part.type === 'image') {
-      // Same format gate as the inline path above: an unsupported upload
-      // (e.g. an AVIF file) becomes a notice instead of an image part.
+      // Same format gate as the inline path above, and again the bytes are
+      // authoritative: an upload whose Content-Type lies (AVIF bytes sent
+      // as image/png) becomes a notice instead of an image part.
+      mediaType = resolveEffectiveImageMime(mediaType, data);
       if (!isModelAcceptedImageMime(mediaType)) {
         content.push({ type: 'text', text: buildUnsupportedImageNotice(mediaType, file.meta.name) });
         changed = true;

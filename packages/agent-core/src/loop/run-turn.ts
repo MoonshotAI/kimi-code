@@ -50,6 +50,15 @@ export interface RunTurnInput {
    * so each step does not pay a fresh rejection.
    */
   readonly buildMessagesMediaDegraded?: LoopMessageBuilder | undefined;
+  /**
+   * Optional media-stripped rebuild of the request messages: EVERY media
+   * part replaced by a text marker. Used to resend once after the provider
+   * rejects an image's format (see `executeLoopStep`); the poisoned image
+   * could be anywhere in the history, so only a full strip guarantees a
+   * clean request. After a successful stripped resend, later steps of the
+   * same turn build from this projection directly.
+   */
+  readonly buildMessagesMediaStripped?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly tools?: readonly ExecutableTool[] | undefined;
   /**
@@ -84,6 +93,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     buildMessages,
     buildMessagesStrict,
     buildMessagesMediaDegraded,
+    buildMessagesMediaStripped,
     dispatchEvent,
     tools,
     buildTools,
@@ -104,6 +114,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
   // history is deterministically over the provider's body-size limit, so
   // rebuilding it would pay a fresh rejection on every step.
   let mediaDegradedActive = false;
+  // Same for the media-stripped resend after an image-format rejection: the
+  // poison is still in the full history, so later steps stay stripped.
+  let mediaStrippedActive = false;
   const recordStepUsage = async (
     stepUsage: TokenUsage,
   ): Promise<RecordStepUsageResult | void> => {
@@ -125,11 +138,14 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         turnId,
         signal,
         buildMessages:
-          mediaDegradedActive && buildMessagesMediaDegraded !== undefined
-            ? buildMessagesMediaDegraded
-            : buildMessages,
+          mediaStrippedActive && buildMessagesMediaStripped !== undefined
+            ? buildMessagesMediaStripped
+            : mediaDegradedActive && buildMessagesMediaDegraded !== undefined
+              ? buildMessagesMediaDegraded
+              : buildMessages,
         buildMessagesStrict,
         buildMessagesMediaDegraded,
+        buildMessagesMediaStripped,
         dispatchEvent,
         llm,
         tools,
@@ -147,6 +163,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
       });
       activeStep = undefined;
       mediaDegradedActive = mediaDegradedActive || stepResult.mediaDegradedResendUsed === true;
+      mediaStrippedActive = mediaStrippedActive || stepResult.mediaStrippedResendUsed === true;
 
       if (stepResult.stopReason === 'tool_use') {
         continue;

@@ -957,6 +957,48 @@ describe('gateImageFormatParts', () => {
     });
   });
 
+  it('gates on the sniffed bytes, not the declared MIME', () => {
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+    const ftyp = (brand: string): Buffer => {
+      const buf = Buffer.alloc(16);
+      buf.writeUInt32BE(16, 0);
+      buf.write('ftyp', 4, 'latin1');
+      buf.write(brand, 8, 'latin1');
+      return buf;
+    };
+
+    // AVIF bytes labeled image/png (a mislabeling MCP image search tool):
+    // dropped as the AVIF it is — the provider decodes bytes, not labels.
+    const mislabeled = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: `data:image/png;base64,${ftyp('avif').toString('base64')}` } },
+    ]);
+    expect(mislabeled.some((p) => p.type === 'image_url')).toBe(false);
+    expect((mislabeled[0] as { text: string }).text).toContain('image/avif');
+
+    // A video container hiding in an image part is refused too.
+    const video = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: `data:image/png;base64,${ftyp('isom').toString('base64')}` } },
+    ]);
+    expect(video.some((p) => p.type === 'image_url')).toBe(false);
+    expect((video[0] as { text: string }).text).toContain('video/mp4');
+
+    // PNG bytes labeled image/avif: rescued — forwarded as the PNG it is.
+    const rescued = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: `data:image/avif;base64,${pngBytes.toString('base64')}` } },
+    ]);
+    expect(rescued[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/png;base64,${pngBytes.toString('base64')}` },
+    });
+
+    // Unrecognized bytes (corrupt image): the declared MIME stands; the
+    // 400-recovery path is the backstop for this case.
+    const garbage = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: `data:image/png;base64,${Buffer.from([1, 2, 3]).toString('base64')}` } },
+    ]);
+    expect(garbage[0]).toMatchObject({ type: 'image_url' });
+  });
+
   it('parses the base64 marker case-insensitively', () => {
     // `;BASE64,` is a legal data URL (RFC 2045 encoding names are
     // case-insensitive): an uppercase marker must not slip past the gate as

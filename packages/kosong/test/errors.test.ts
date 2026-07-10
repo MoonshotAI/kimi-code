@@ -7,6 +7,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  isImageFormatError,
   isProviderRateLimitError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
@@ -543,5 +544,64 @@ describe('isProviderRateLimitError', () => {
     expect(isProviderRateLimitError(new APIStatusError(401, 'unauthorized'))).toBe(false);
     expect(isProviderRateLimitError('APIStatusError: 401 unauthorized')).toBe(false);
     expect(isProviderRateLimitError(new Error('context length exceeded'))).toBe(false);
+  });
+});
+
+describe('isImageFormatError', () => {
+  it('matches a server 400 that mentions an image', () => {
+    expect(
+      isImageFormatError(
+        new APIStatusError(400, 'The image data you provided does not represent a valid image'),
+      ),
+    ).toBe(true);
+    expect(isImageFormatError(new APIStatusError(400, 'unsupported image format'))).toBe(true);
+    expect(
+      isImageFormatError(
+        new APIStatusError(
+          400,
+          "messages.0.content.1.image.source.base64.media_type: Input should be 'image/jpeg'",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches kosong client-side image whitelist throws', () => {
+    expect(
+      isImageFormatError(new ChatProviderError('Unsupported media type for base64 image: image/avif')),
+    ).toBe(true);
+    expect(
+      isImageFormatError(
+        new ChatProviderError('Invalid data URL for image: data:image/avif;BASE64,AAA'),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match a non-image 400, an unrelated status, or overflow/413 subclasses', () => {
+    expect(isImageFormatError(new APIStatusError(400, 'max_tokens must be positive'))).toBe(false);
+    expect(isImageFormatError(new APIStatusError(422, 'image is bad'))).toBe(false);
+    expect(isImageFormatError(new APIStatusError(401, 'invalid api key'))).toBe(false);
+    expect(
+      isImageFormatError(new APIContextOverflowError(400, 'context length exceeded for image model')),
+    ).toBe(false);
+    expect(
+      isImageFormatError(new APIRequestTooLargeError(413, 'image request too large')),
+    ).toBe(false);
+    expect(isImageFormatError(new ChatProviderError('connection reset'))).toBe(false);
+    expect(isImageFormatError(new Error('image is bad'))).toBe(false);
+  });
+
+  it('is excluded from the transient-retry fallback so dedicated recovery fires first', () => {
+    // A base ChatProviderError is normally retried as an unclassified
+    // transient; image-format errors must not be, or the run would burn the
+    // retry budget on an identical request before reaching the media strip.
+    expect(isRetryableGenerateError(new ChatProviderError('transient blip'))).toBe(true);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError('Unsupported media type for base64 image: image/avif'),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(new APIStatusError(400, 'unsupported image format')),
+    ).toBe(false);
   });
 });

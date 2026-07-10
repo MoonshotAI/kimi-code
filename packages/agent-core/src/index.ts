@@ -75,9 +75,11 @@ export {
   MODEL_ACCEPTED_IMAGE_MIMES,
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,
+  decodeBase64Prefix,
   isModelAcceptedImageMime,
   normalizeImageMime,
   parseImageDataUrl,
+  resolveEffectiveImageMime,
 } from './tools/support/image-format-policy';
 export { ImageLimits } from './tools/support/image-limits';
 export type {

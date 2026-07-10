@@ -313,6 +313,23 @@ describe('mcpResultToExecutableOutput', () => {
     expect(parts.some((p) => p.type === 'text' && p.text.includes('image/heic'))).toBe(true);
   });
 
+  test('gates a mislabeled image on its real bytes (image search tool)', async () => {
+    // An image search tool returning AVIF bytes labeled image/png: the
+    // bytes are authoritative — the image must not reach the session
+    // history, and the notice names the real format.
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: avif.toString('base64'), mimeType: 'image/png' }]),
+      'mcp__search__image',
+    );
+    const parts = out.output as ContentPart[];
+    expect(parts.some((p) => p.type === 'image_url')).toBe(false);
+    expect(parts.some((p) => p.type === 'text' && p.text.includes('image/avif'))).toBe(true);
+  });
+
   test('forwards the image/jpg alias as canonical image/jpeg', async () => {
     // Strict provider whitelists reject the raw `image/jpg` alias — the part
     // must land in the session with the canonical MIME.

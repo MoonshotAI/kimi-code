@@ -145,8 +145,47 @@ export function isRetryableGenerateError(error: unknown): boolean {
   // instances are deliberately excluded above: deterministic 4xx
   // (400/401/403/404/422) and the recovery-owned context-overflow /
   // request-too-large subclasses keep their dedicated handling instead of
-  // burning retries first.
-  return error instanceof ChatProviderError;
+  // burning retries first. Image-format rejections are likewise excluded:
+  // they are deterministic per history and recovered by the media-stripped
+  // resend (see isImageFormatError), so retrying the identical request first
+  // would only burn the retry budget.
+  return error instanceof ChatProviderError && !isImageFormatError(error);
+}
+
+// Client-side image rejections thrown before the request is sent (kosong's
+// own media whitelist in the Anthropic adapter).
+const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
+  /unsupported media type for base64 image/,
+  /invalid data url for image/,
+] as const;
+
+// Server-side image rejections phrase it many ways ("The image data you
+// provided does not represent a valid image", "unsupported image format",
+// media_type enum violations …); the one shared anchor is that a 400 about
+// the request's media mentions "image" at all.
+const IMAGE_FORMAT_STATUS_MESSAGE_PATTERN = /image/i;
+
+/**
+ * Whether the provider rejected an IMAGE in the request — an unsupported
+ * media type or undecodable image data. The rejection is deterministic for a
+ * given history (the same image is re-sent on every request, so the session
+ * would fail every turn), and the only recovery is to resend once with all
+ * media stripped (see the media-stripped resend in the agent loop).
+ * Body-size (413) and context-overflow rejections are excluded — they have
+ * their own recoveries.
+ */
+export function isImageFormatError(error: unknown): boolean {
+  if (error instanceof APIStatusError) {
+    if (error instanceof APIContextOverflowError) return false;
+    if (error instanceof APIRequestTooLargeError) return false;
+    if (error.statusCode !== 400) return false;
+    return IMAGE_FORMAT_STATUS_MESSAGE_PATTERN.test(error.message.toLowerCase());
+  }
+  if (error instanceof ChatProviderError) {
+    const lowerMessage = error.message.toLowerCase();
+    return IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+  }
+  return false;
 }
 
 // `terminated` is the undici signature for an SSE/HTTP body stream that is
