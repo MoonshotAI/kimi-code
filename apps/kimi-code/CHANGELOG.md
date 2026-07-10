@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code
 
+## 0.23.5
+
+### Patch Changes
+
+- [#1542](https://github.com/MoonshotAI/kimi-code/pull/1542) [`f80b2ea`](https://github.com/MoonshotAI/kimi-code/commit/f80b2eaf04925ce920f693fc8d4d81cb00e825d7) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix the "Turn finished" desktop notification and completion sound firing twice per turn.
+
+- [#1535](https://github.com/MoonshotAI/kimi-code/pull/1535) [`04041eb`](https://github.com/MoonshotAI/kimi-code/commit/04041eb998b6798898fa5df97f7587b3aa119b27) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Hide the internal image-compression note so it no longer renders as user message text.
+
+- [#1536](https://github.com/MoonshotAI/kimi-code/pull/1536) [`db61c9e`](https://github.com/MoonshotAI/kimi-code/commit/db61c9e2dddcb6c35b019ef7f374385248ece881) Thanks [@RealKai42](https://github.com/RealKai42)! - Stop unsupported image formats (AVIF, BMP, TIFF, ICO, …) from breaking sessions at every entry point — including remote image URLs and images mislabeled by a tool — and recover an already-stuck session by dropping the offending image and retrying, so one such image can no longer make every later request fail.
+
+- [#1530](https://github.com/MoonshotAI/kimi-code/pull/1530) [`9f66ec4`](https://github.com/MoonshotAI/kimi-code/commit/9f66ec416cc658842dc1414b79b6447d1b4cc7f9) Thanks [@sailist](https://github.com/sailist)! - Retry provider 429, overload, and other transient errors more reliably, honoring the server Retry-After delay, and surface retries in `-p --output-format stream-json`.
+
 ## 0.23.4
 
 ### Patch Changes
