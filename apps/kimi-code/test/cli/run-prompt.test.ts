@@ -666,6 +666,59 @@ describe('runPrompt', () => {
     );
   });
 
+  it('emits a stream-json meta line on retry and discards the failed attempt output', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 10, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'partial attempt' }));
+        handler(
+          mocks.mainEvent({
+            type: 'turn.step.retrying',
+            turnId: 10,
+            step: 1,
+            stepId: 'step-uuid',
+            failedAttempt: 1,
+            nextAttempt: 2,
+            maxAttempts: 3,
+            delayMs: 300,
+            errorName: 'APIProviderRateLimitError',
+            errorMessage: 'llmproxy/openai/responses/resp_abc.json status_code=429',
+            statusCode: 429,
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'final answer' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 10, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', { stdout, stderr });
+
+    const retryMeta = JSON.stringify({
+      role: 'meta',
+      type: 'turn.step.retrying',
+      failed_attempt: 1,
+      next_attempt: 2,
+      max_attempts: 3,
+      delay_ms: 300,
+      error_name: 'APIProviderRateLimitError',
+      error_message: 'llmproxy/openai/responses/resp_abc.json status_code=429',
+      status_code: 429,
+    });
+    expect(stdout.text()).toBe(
+      [
+        retryMeta,
+        '{"role":"assistant","content":"final answer"}',
+        '{"role":"meta","type":"session.resume_hint","session_id":"ses_prompt","command":"kimi -r ses_prompt","content":"To resume this session: kimi -r ses_prompt"}',
+        '',
+      ].join('\n'),
+    );
+    // The failed attempt's partial text must not leak as an assistant line.
+    expect(stdout.text()).not.toContain('partial attempt');
+    expect(stderr.text()).toBe('');
+  });
+
   it('flushes stream-json assistant output before waiting for background tasks', async () => {
     let releaseWait: () => void = () => {};
     const waitGate = new Promise<void>((resolve) => {

@@ -501,6 +501,7 @@ function runPromptTurn(
           return;
         case 'turn.step.retrying':
           outputWriter.discardAssistant();
+          outputWriter.writeRetrying(event);
           return;
         case 'assistant.delta':
           outputWriter.writeAssistantDelta(event.delta);
@@ -612,6 +613,7 @@ interface PromptTurnWriter {
     argumentsPart: string | undefined,
   ): void;
   writeToolResult(toolCallId: string, output: unknown): void;
+  writeRetrying(event: Extract<Event, { type: 'turn.step.retrying' }>): void;
   flushAssistant(): void;
   discardAssistant(): void;
   finish(): void;
@@ -647,6 +649,11 @@ class PromptTranscriptWriter implements PromptTurnWriter {
   writeToolCallDelta(): void {}
 
   writeToolResult(): void {}
+
+  // Text `-p` keeps retries silent: only the failed attempt's partial assistant
+  // text is discarded (handled by the caller). No human-readable retry line is
+  // emitted, matching the prior behavior.
+  writeRetrying(): void {}
 
   flushAssistant(): void {
     this.assistantWriter.finish();
@@ -687,6 +694,18 @@ interface PromptJsonResumeMetaMessage {
   session_id: string;
   command: string;
   content: string;
+}
+
+interface PromptJsonRetryMetaMessage {
+  role: 'meta';
+  type: 'turn.step.retrying';
+  failed_attempt: number;
+  next_attempt: number;
+  max_attempts: number;
+  delay_ms: number;
+  error_name: string;
+  error_message: string;
+  status_code?: number;
 }
 
 function writeResumeHint(
@@ -787,6 +806,24 @@ class PromptJsonWriter implements PromptTurnWriter {
     this.toolCalls.length = 0;
   }
 
+  writeRetrying(event: Extract<Event, { type: 'turn.step.retrying' }>): void {
+    // Emit a machine-readable meta line so stream-json consumers can observe
+    // provider retries. The failed attempt's partial assistant text was already
+    // discarded by the caller, so no half-formed assistant message leaks.
+    const message: PromptJsonRetryMetaMessage = {
+      role: 'meta',
+      type: 'turn.step.retrying',
+      failed_attempt: event.failedAttempt,
+      next_attempt: event.nextAttempt,
+      max_attempts: event.maxAttempts,
+      delay_ms: event.delayMs,
+      error_name: event.errorName,
+      error_message: event.errorMessage,
+      status_code: event.statusCode,
+    };
+    this.writeJsonLine(message);
+  }
+
   finish(): void {
     this.flushAssistant();
   }
@@ -806,7 +843,9 @@ class PromptJsonWriter implements PromptTurnWriter {
     return toolCall;
   }
 
-  private writeJsonLine(message: PromptJsonAssistantMessage | PromptJsonToolMessage): void {
+  private writeJsonLine(
+    message: PromptJsonAssistantMessage | PromptJsonToolMessage | PromptJsonRetryMetaMessage,
+  ): void {
     this.stdout.write(`${JSON.stringify(message)}\n`);
   }
 }

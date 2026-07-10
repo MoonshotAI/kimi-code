@@ -36,12 +36,25 @@ export class APITimeoutError extends ChatProviderError {
 export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
+  /**
+   * Server-requested backoff from the `retry-after` response header, in
+   * milliseconds. When present, the retry loop honors it instead of its own
+   * computed backoff — mirroring claude-code, where a server `Retry-After`
+   * directive overrides the local exponential delay.
+   */
+  readonly retryAfterMs: number | null;
 
-  constructor(statusCode: number, message: string, requestId?: string | null) {
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
     super(message);
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
+    this.retryAfterMs = retryAfterMs ?? null;
   }
 }
 
@@ -50,8 +63,13 @@ export class APIStatusError extends ChatProviderError {
  * context window.
  */
 export class APIContextOverflowError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIContextOverflowError';
   }
 }
@@ -63,8 +81,13 @@ export class APIContextOverflowError extends APIStatusError {
  * size rejection is not — it needs media to be dropped or shrunk.
  */
 export class APIRequestTooLargeError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -74,8 +97,8 @@ export class APIRequestTooLargeError extends APIStatusError {
  * request.
  */
 export class APIProviderRateLimitError extends APIStatusError {
-  constructor(message: string, requestId?: string | null) {
-    super(429, message, requestId);
+  constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
+    super(429, message, requestId, retryAfterMs);
     this.name = 'APIProviderRateLimitError';
   }
 }
@@ -108,7 +131,22 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIEmptyResponseError) {
     return true;
   }
-  return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
+  if (error instanceof APIStatusError) {
+    // Mirrors claude-code's retryable statuses: 408 (request timeout), 409
+    // (lock/conflict timeout), 429 (rate limit), 5xx (server errors) and 529
+    // (provider overloaded — the "engine is currently overloaded" case).
+    return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
+  }
+  // Fallback safety net: an unclassified provider failure — typically an
+  // upstream gateway that forwards the original error only as text, with no
+  // usable HTTP status (e.g. llmproxy embedding `status_code=429` in the
+  // message) — lands here as a base `ChatProviderError`. Retrying beats
+  // failing the run on the first transient blip. Typed `APIStatusError`
+  // instances are deliberately excluded above: deterministic 4xx
+  // (400/401/403/404/422) and the recovery-owned context-overflow /
+  // request-too-large subclasses keep their dedicated handling instead of
+  // burning retries first.
+  return error instanceof ChatProviderError;
 }
 
 // `terminated` is the undici signature for an SSE/HTTP body stream that is
@@ -190,19 +228,40 @@ export function normalizeAPIStatusError(
   statusCode: number,
   message: string,
   requestId?: string | null,
+  retryAfterMs?: number | null,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
   }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
   // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
   }
-  return new APIStatusError(statusCode, message, requestId);
+  return new APIStatusError(statusCode, message, requestId, retryAfterMs);
+}
+
+/**
+ * Parse a `retry-after` response header into milliseconds. Mirrors
+ * claude-code: only integer seconds is honored; an HTTP-date (or any
+ * non-integer / missing value) returns null and the caller falls back to its
+ * computed backoff. Shared by the provider error converters so every backend
+ * honors the same server backoff directive.
+ */
+export function parseRetryAfterMs(headers: unknown): number | null {
+  const raw =
+    headers !== null &&
+    typeof headers === 'object' &&
+    typeof (headers as { get?: unknown }).get === 'function'
+      ? (headers as { get(name: string): string | null }).get('retry-after')
+      : null;
+  if (raw === null || raw === undefined) return null;
+  const seconds = Number.parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return seconds * 1000;
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {

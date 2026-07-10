@@ -137,12 +137,27 @@ describe('isRetryableGenerateError', () => {
     expect(isRetryableGenerateError(new APIEmptyResponseError('empty'))).toBe(true);
   });
 
-  it.each([429, 500, 502, 503, 504])('treats HTTP %i as retryable', (statusCode) => {
+  it.each([408, 409, 429, 500, 502, 503, 504, 529])('treats HTTP %i as retryable', (statusCode) => {
     expect(isRetryableGenerateError(new APIStatusError(statusCode, 'retryable'))).toBe(true);
   });
 
   it.each([400, 401, 403, 404, 422])('treats HTTP %i as non-retryable', (statusCode) => {
     expect(isRetryableGenerateError(new APIStatusError(statusCode, 'non-retryable'))).toBe(false);
+  });
+
+  it('propagates retryAfterMs through normalizeAPIStatusError onto the typed error', () => {
+    const rateLimited = normalizeAPIStatusError(429, 'rate limited', 'req-1', 12_500);
+    expect(rateLimited).toBeInstanceOf(APIProviderRateLimitError);
+    expect(rateLimited.retryAfterMs).toBe(12_500);
+
+    const generic = normalizeAPIStatusError(503, 'bad gateway', null, 3_000);
+    expect(generic).toBeInstanceOf(APIStatusError);
+    expect(generic.retryAfterMs).toBe(3_000);
+  });
+
+  it('defaults retryAfterMs to null when no retry-after header is present', () => {
+    expect(new APIStatusError(429, 'x').retryAfterMs).toBeNull();
+    expect(normalizeAPIStatusError(429, 'x').retryAfterMs).toBeNull();
   });
 
   it('does not retry context overflow or unknown errors', () => {
@@ -151,6 +166,17 @@ describe('isRetryableGenerateError', () => {
     ).toBe(false);
     expect(isRetryableGenerateError(new Error('boom'))).toBe(false);
     expect(isRetryableGenerateError('boom')).toBe(false);
+  });
+
+  it('retries an unclassified base ChatProviderError as a transient fallback', () => {
+    // An upstream gateway that forwards the original failure only as text (no
+    // usable HTTP status) surfaces as a base ChatProviderError. It must be
+    // retried rather than failing the run on the first blip — while typed
+    // 4xx / context-overflow / request-too-large (all APIStatusError) stay
+    // non-retryable on their dedicated recovery paths.
+    expect(isRetryableGenerateError(new ChatProviderError('unclassified upstream failure'))).toBe(
+      true,
+    );
   });
 });
 
