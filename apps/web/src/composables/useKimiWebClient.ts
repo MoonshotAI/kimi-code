@@ -1,4 +1,3 @@
-// apps/kimi-web/src/composables/useKimiWebClient.ts
 // Vue state composable — the only place that imports both src/api/* and src/types.ts.
 // Components consume computed view props and call actions; they never touch the API or reducer.
 

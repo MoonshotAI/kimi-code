@@ -18,7 +18,15 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
+const REPO_ROOT = path.resolve(ROOT, '..', '..');
 const SRC = path.join(ROOT, 'src');
+// §06 guard also covers the design-system primitives that moved into web-ui.
+// Apps/web keys keep a '' label so the exemption sets below stay keyed to
+// apps/web-relative paths; web-ui files are reported under a 'web-ui/' prefix.
+const SCAN_ROOTS = [
+  { dir: SRC, label: '' },
+  { dir: path.join(REPO_ROOT, 'packages', 'web-ui', 'src'), label: 'web-ui/' },
+];
 const STRICT = process.argv.includes('--strict');
 
 const DOMAIN_HEX_EXEMPT = new Set([
@@ -34,10 +42,6 @@ const DOMAIN_HEX_EXEMPT = new Set([
 // primitive (components/ui/Icon.vue) itself renders no hand-written <svg>, so it
 // is not exempted here.
 const ICON_EXEMPT = new Set([
-  'components/ui/Spinner.vue',
-  'components/ui/MoonSpinner.vue',
-  'components/ui/ContextRing.vue',
-  'components/ui/AuthStateIcon.vue',
   'components/GlobalLoading.vue',
 ]);
 
@@ -69,6 +73,10 @@ function walk(dir, out = []) {
 }
 
 function rel(abs) {
+  for (const { dir, label } of SCAN_ROOTS) {
+    const r = path.relative(dir, abs);
+    if (!r.startsWith('..') && !path.isAbsolute(r)) return label + r.replaceAll(path.sep, '/');
+  }
   return path.relative(SRC, abs).replaceAll(path.sep, '/');
 }
 
@@ -203,7 +211,8 @@ function checkFile(abs) {
   }
 }
 
-const files = walk(SRC);
+const files = [];
+for (const { dir } of SCAN_ROOTS) walk(dir, files);
 for (const f of files) checkFile(f);
 
 // Report
