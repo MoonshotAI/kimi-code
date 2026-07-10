@@ -944,6 +944,19 @@ describe('gateImageFormatParts', () => {
     });
   });
 
+  it('rewrites an accepted MIME carrying parameters to the bare canonical form', () => {
+    // Strict provider whitelists exact-match the full data-URL header, so
+    // `image/jpeg;charset=utf-8` would be rejected just like an alias.
+    const base64 = Buffer.from([1, 2, 3]).toString('base64');
+    const out = gateImageFormatParts([
+      { type: 'image_url', imageUrl: { url: `data:image/jpeg;charset=utf-8;base64,${base64}` } },
+    ]);
+    expect(out[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: `data:image/jpeg;base64,${base64}` },
+    });
+  });
+
   it('passes remote image URLs through (no bytes to inspect)', () => {
     const part = {
       type: 'image_url' as const,

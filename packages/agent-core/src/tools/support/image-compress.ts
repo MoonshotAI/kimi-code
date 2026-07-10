@@ -492,9 +492,11 @@ export interface CompressedContentParts {
  * Enforce the provider-accepted image format set (see ./image-format-policy)
  * on a content-part list. Inline `data:` image parts whose MIME is outside
  * the accepted set are dropped and replaced with a text notice, so one
- * unsupported image cannot poison the session history; accepted MIME aliases
- * (`image/jpg`, case/whitespace variants) are rewritten to the canonical
- * MIME, because strict provider whitelists reject the raw alias. Remote
+ * unsupported image cannot poison the session history. Accepted images are
+ * forwarded only as the byte-exact canonical data URL: an alias
+ * (`image/jpg`), case/whitespace variants, or MIME parameters
+ * (`image/jpeg;charset=utf-8`) all rebuild to the bare canonical form,
+ * because strict provider whitelists exact-match the full header. Remote
  * (non-data) image URLs and non-image parts pass through — a URL carries no
  * bytes to inspect.
  *
@@ -511,12 +513,9 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
           out.push({ type: 'text', text: buildUnsupportedImageNotice(parsed.mimeType) });
           continue;
         }
-        const canonicalMime = normalizeImageMime(parsed.mimeType);
-        if (canonicalMime !== parsed.mimeType) {
-          out.push({
-            type: 'image_url',
-            imageUrl: { ...part.imageUrl, url: `data:${canonicalMime};base64,${parsed.base64}` },
-          });
+        const canonicalUrl = `data:${normalizeImageMime(parsed.mimeType)};base64,${parsed.base64}`;
+        if (part.imageUrl.url !== canonicalUrl) {
+          out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
           continue;
         }
       }
