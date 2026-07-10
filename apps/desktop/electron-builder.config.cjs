@@ -39,10 +39,16 @@ module.exports = {
     output: 'dist-app',
   },
 
-  // No native node modules in the Electron app itself; the backend is the
-  // prebuilt SEA staged by before-pack.cjs.
+  // Native `.node` modules (node-pty, clipboard, koffi) are rebuilt for the
+  // Electron ABI by `@electron/rebuild` (postinstall) and unpacked from the
+  // asar via `asarUnpack` so the in-process server can `dlopen` them at runtime.
   npmRebuild: false,
   asar: true,
+  asarUnpack: [
+    'node_modules/node-pty/**',
+    'node_modules/@mariozechner/clipboard*/**',
+    'node_modules/koffi/**',
+  ],
 
   files: ['out/**', 'package.json'],
 
