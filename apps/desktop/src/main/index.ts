@@ -1,16 +1,23 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow, Menu, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, Menu, nativeTheme, shell, ipcMain } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
+import { registerRendererScheme, registerRendererProtocol, rendererUrl } from './protocol';
 
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: DesktopServerHandle | null = null;
 
 function webAssetsDir(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'web-dist')
+    : join(app.getAppPath(), 'web-dist');
+}
+
+function webDistRoot(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'web-dist')
     : join(app.getAppPath(), 'web-dist');
@@ -113,16 +120,13 @@ async function connect(win: BrowserWindow): Promise<void> {
   try {
     serverHandle?.close().catch(() => {});
     serverHandle = await startDesktopServer({
-      webAssetsDir: webAssetsDir(),
+      webAssetsDir: webDistRoot(),
       identity: { userAgentProduct: 'kimi-desktop', version: app.getVersion() },
     });
     const { origin, token } = serverHandle;
     process.stdout.write(`[kimi-desktop] connected to ${origin}\n`);
     if (!win.isDestroyed()) {
-      const fragment = token === undefined ? '' : `#token=${encodeURIComponent(token)}`;
-      await win.loadURL(
-        `${origin}/?kimi_desktop=1&platform=${process.platform}${fragment}`,
-      );
+      await win.loadURL(rendererUrl(origin, token));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -150,8 +154,10 @@ function createWindow(): void {
     titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
     trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   mainWindow = win;
@@ -171,8 +177,9 @@ function createWindow(): void {
   //    AppKit, and the dimmed color follows the WINDOW appearance, not the
   //    page (electron#27295) — with the OS in dark mode but the web UI on a
   //    light theme, the light-gray dimmed dots become invisible against the
-  //    light sidebar. That is fixed by the theme sync below, which keeps the
-  //    window appearance aligned with the web UI's <html data-color-scheme>.
+  //    light sidebar. That is fixed by the theme sync over the preload IPC
+  //    channel (`kimi:theme`), which keeps the window appearance aligned with
+  //    the web UI's <html data-color-scheme>.
   if (process.platform === 'darwin') {
     const showTrafficLights = (): void => {
       if (win.isDestroyed()) return;
@@ -182,40 +189,6 @@ function createWindow(): void {
     win.on('enter-full-screen', showTrafficLights);
     win.on('leave-full-screen', showTrafficLights);
     win.on('focus', showTrafficLights);
-
-    // Theme sync: no preload/IPC channel exists, so inject a tiny observer
-    // that reports <html data-color-scheme> ('light' | 'dark' | 'system')
-    // through a tagged console message, and mirror it into
-    // nativeTheme.themeSource (same three states). The startup/error screens
-    // (data: URLs) have no such attribute and harmlessly report 'system'.
-    const THEME_TAG = '__kimi_desktop_theme__:';
-    win.webContents.on('console-message', (_event, _level, message) => {
-      if (!message.startsWith(THEME_TAG)) return;
-      const scheme = message.slice(THEME_TAG.length);
-      if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
-        nativeTheme.themeSource = scheme;
-      }
-    });
-    win.webContents.on('did-finish-load', () => {
-      win.webContents
-        .executeJavaScript(
-          `(() => {
-            const report = () => {
-              const v = document.documentElement.dataset.colorScheme;
-              console.info(${JSON.stringify(THEME_TAG)} + (v === 'light' || v === 'dark' ? v : 'system'));
-            };
-            new MutationObserver(report).observe(document.documentElement, {
-              attributes: true,
-              attributeFilter: ['data-color-scheme'],
-            });
-            report();
-          })();`,
-        )
-        .catch(() => {
-          // Navigation can tear the page down mid-injection; theme sync is
-          // cosmetic, so ignore.
-        });
-    });
   }
   win.on('close', () => {
     saveBounds(win);
@@ -283,6 +256,15 @@ function buildMenu(): void {
 // --- app lifecycle ------------------------------------------------------------
 
 function main(): void {
+  registerRendererScheme();
+
+  ipcMain.on('kimi:theme', (_event, scheme) => {
+    if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
+      nativeTheme.themeSource = scheme;
+    }
+  });
+  ipcMain.handle('kimi:open-external', (_event, url: string) => shell.openExternal(url));
+
   app.on('before-quit', () => {
     void serverHandle?.close();
   });
@@ -294,6 +276,7 @@ function main(): void {
   });
 
   void app.whenReady().then(() => {
+    registerRendererProtocol(webDistRoot);
     buildMenu();
     createWindow();
     app.on('activate', () => {

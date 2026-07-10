@@ -17,7 +17,7 @@ export interface KimiApiConfig {
 
 export function readKimiApiConfig(): KimiApiConfig {
   return {
-    serverHttpUrl: normalizeServerOrigin(import.meta.env.VITE_KIMI_SERVER_HTTP_URL),
+    serverHttpUrl: resolveServerOrigin(),
     clientId: getClientId(),
     clientName: WEB_CLIENT_NAME,
     clientVersion: webClientVersion(),
@@ -38,6 +38,26 @@ function defaultServerOrigin(): string {
     return window.location.origin;
   }
   return 'http://127.0.0.1:58627';
+}
+
+/**
+ * Resolve the server origin, with the desktop app taking precedence: when the
+ * desktop loads the renderer via `app://renderer/index.html?kimi_origin=<enc>`,
+ * that injected origin is the in-process server the renderer must talk to
+ * (cross-origin from `app://`, so CORS/WS behaviour is verified in Task 2.5).
+ * Falls back to the explicit env, then same-origin, then the loopback default.
+ *
+ * `URLSearchParams.get` already percent-decodes the value, so pass it straight
+ * to `normalizeServerOrigin` — do NOT `decodeURIComponent` again (double-decode).
+ */
+function resolveServerOrigin(): string {
+  if (typeof window !== 'undefined') {
+    const injected = new URLSearchParams(window.location.search).get('kimi_origin');
+    if (injected) {
+      return normalizeServerOrigin(injected);
+    }
+  }
+  return normalizeServerOrigin(import.meta.env.VITE_KIMI_SERVER_HTTP_URL);
 }
 
 export function normalizeServerOrigin(value: string | undefined): string {
@@ -70,6 +90,10 @@ export function serverEndpointLabel(): string {
     typeof __KIMI_DEV_PROXY_TARGET__ !== 'undefined' ? __KIMI_DEV_PROXY_TARGET__ : '';
   if (import.meta.env.DEV && proxy) return shortOrigin(proxy);
 
+  if (typeof window !== 'undefined') {
+    const injected = new URLSearchParams(window.location.search).get('kimi_origin');
+    if (injected) return shortOrigin(normalizeServerOrigin(injected));
+  }
   const origin =
     typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
   return shortOrigin(origin);
