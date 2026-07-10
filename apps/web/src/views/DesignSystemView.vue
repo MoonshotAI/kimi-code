@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
 import { ICON_GROUPS } from '../lib/icons';
-import Icon from '../components/ui/Icon.vue';
+import { Icon } from '@moonshot-ai/web-ui';
 
 const emit = defineEmits<{ close: [] }>();
 

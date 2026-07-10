@@ -5,15 +5,7 @@ import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
-import Dialog from '../ui/Dialog.vue';
-import Button from '../ui/Button.vue';
-import Badge from '../ui/Badge.vue';
-import Spinner from '../ui/Spinner.vue';
-import Field from '../ui/Field.vue';
-import Input from '../ui/Input.vue';
-import Select from '../ui/Select.vue';
-import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Badge, Button, Dialog, Field, Icon, Input, Select, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();

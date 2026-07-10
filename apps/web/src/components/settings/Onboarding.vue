@@ -7,9 +7,7 @@
 import { useI18n } from 'vue-i18n';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
 import { useAppearance, type Accent, type ColorScheme } from '../../composables/client/useAppearance';
-import Button from '../ui/Button.vue';
-import Dialog from '../ui/Dialog.vue';
-import SegmentedControl from '../ui/SegmentedControl.vue';
+import { Button, Dialog, SegmentedControl } from '@moonshot-ai/web-ui';
 
 const emit = defineEmits<{ complete: []; skip: [] }>();
 

@@ -8,15 +8,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FsBrowseEntry, FsBrowseResult } from '../../api/types';
-import Dialog from '../ui/Dialog.vue';
-import Button from '../ui/Button.vue';
-import IconButton from '../ui/IconButton.vue';
-import Input from '../ui/Input.vue';
-import Field from '../ui/Field.vue';
-import Spinner from '../ui/Spinner.vue';
-import Badge from '../ui/Badge.vue';
-import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Badge, Button, Dialog, Field, Icon, IconButton, Input, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

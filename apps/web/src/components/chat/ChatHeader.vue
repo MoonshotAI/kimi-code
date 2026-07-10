@@ -7,11 +7,7 @@ import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { isMacosDesktop } from '../../lib/desktopFlag';
-import Menu from '../ui/Menu.vue';
-import MenuItem from '../ui/MenuItem.vue';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();

@@ -8,8 +8,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AgentMember } from '../../types';
-import Badge from '../ui/Badge.vue';
-import PanelHeader from '../ui/PanelHeader.vue';
+import { Badge, PanelHeader } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{ member: AgentMember }>();
 

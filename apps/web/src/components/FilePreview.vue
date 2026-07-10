@@ -6,12 +6,7 @@ import { useI18n } from 'vue-i18n';
 import Markdown from './chat/Markdown.vue';
 import type { FileData, FilePreviewRequest } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
-import SegmentedControl from './ui/SegmentedControl.vue';
-import Button from './ui/Button.vue';
-import IconButton from './ui/IconButton.vue';
-import Icon from './ui/Icon.vue';
-import PanelHeader from './ui/PanelHeader.vue';
-import Tooltip from './ui/Tooltip.vue';
+import { Button, Icon, IconButton, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

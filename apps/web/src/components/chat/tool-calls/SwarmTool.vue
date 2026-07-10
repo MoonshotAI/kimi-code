@@ -16,9 +16,7 @@ import type { SwarmMember } from '../../../composables/swarmGroups';
 import { toolLabel } from '../../../lib/toolMeta';
 import { parseSwarmResult } from '../../../lib/parseSwarmResult';
 import { buildSwarmCardRows, type SwarmCardRow } from '../../../lib/swarmCardRows';
-import Icon from '../../ui/Icon.vue';
-import StatusDot from '../../ui/StatusDot.vue';
-import Tooltip from '../../ui/Tooltip.vue';
+import { Icon, StatusDot, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

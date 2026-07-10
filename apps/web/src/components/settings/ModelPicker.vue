@@ -5,13 +5,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
-import Dialog from '../ui/Dialog.vue';
-import Button from '../ui/Button.vue';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
-import Input from '../ui/Input.vue';
-import Badge from '../ui/Badge.vue';
-import Spinner from '../ui/Spinner.vue';
+import { Badge, Button, Dialog, Icon, IconButton, Input, Spinner } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Icon from '../ui/Icon.vue';
+import { Icon } from '@moonshot-ai/web-ui';
 import MessageTime from './MessageTime.vue';
 import { humanizeCron } from '../../lib/cronHumanize';
 import type { CronTurnData } from '../../types';

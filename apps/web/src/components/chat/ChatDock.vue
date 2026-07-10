@@ -14,8 +14,7 @@ import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
 import TodoCard from './TodoCard.vue';
-import Icon from '../ui/Icon.vue';
-import Pill from '../ui/Pill.vue';
+import { Icon, Pill } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
   sessionId?: string;

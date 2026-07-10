@@ -11,9 +11,7 @@ import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
-import Icon from '../ui/Icon.vue';
-import Spinner from '../ui/Spinner.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Icon, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 

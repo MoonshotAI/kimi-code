@@ -22,12 +22,7 @@ import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
 import { useAttachmentUpload } from '../../composables/useAttachmentUpload';
-import Spinner from '../ui/Spinner.vue';
-import Button from '../ui/Button.vue';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
-import ContextRing from '../ui/ContextRing.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Button, ContextRing, Icon, IconButton, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 
 // ---------------------------------------------------------------------------
 // Props & emits

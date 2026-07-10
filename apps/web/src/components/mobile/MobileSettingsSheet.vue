@@ -21,9 +21,7 @@ import {
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
-import Button from '../ui/Button.vue';
-import Input from '../ui/Input.vue';
-import SegmentedControl from '../ui/SegmentedControl.vue';
+import { Button, Input, SegmentedControl } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

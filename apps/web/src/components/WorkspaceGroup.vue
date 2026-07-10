@@ -9,9 +9,7 @@ import { computed, type ComponentPublicInstance, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
-import IconButton from './ui/IconButton.vue';
-import Icon from './ui/Icon.vue';
-import Tooltip from './ui/Tooltip.vue';
+import { Icon, IconButton, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

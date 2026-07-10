@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { copyTextToClipboard } from '../lib/clipboard';
-import Tooltip from '../components/ui/Tooltip.vue';
+import { Tooltip } from '@moonshot-ai/web-ui';
 import {
   clearTrace,
   downloadTraceLog,

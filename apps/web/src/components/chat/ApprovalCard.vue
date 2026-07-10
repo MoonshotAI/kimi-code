@@ -5,13 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
 import Markdown from './Markdown.vue';
-import Card from '../ui/Card.vue';
-import Badge from '../ui/Badge.vue';
-import Button from '../ui/Button.vue';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
-import Kbd from '../ui/Kbd.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Badge, Button, Card, Icon, IconButton, Kbd, Tooltip } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
   block: ApprovalBlock;

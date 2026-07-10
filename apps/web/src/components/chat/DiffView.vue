@@ -7,11 +7,7 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DiffViewLine } from '../../types';
 import DiffLines from './DiffLines.vue';
-import Button from '../ui/Button.vue';
-import PanelHeader from '../ui/PanelHeader.vue';
-import SegmentedControl from '../ui/SegmentedControl.vue';
-import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Button, Icon, PanelHeader, SegmentedControl, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

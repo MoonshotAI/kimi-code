@@ -19,8 +19,7 @@ import { markdownRenderPlan } from '../../lib/markdownPerformance';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import * as katexWorkerModule from 'markstream-vue/workers/katexRenderer.worker?worker&type=module';
 import * as mermaidWorkerModule from 'markstream-vue/workers/mermaidParser.worker?worker&type=module';
-import Tooltip from '../ui/Tooltip.vue';
-import Icon from '../ui/Icon.vue';
+import { Icon, Tooltip } from '@moonshot-ai/web-ui';
 // px-based CSS build (our app is px, not rem). Imported here so the styles
 // load wherever Markdown is used; scoped overrides below re-skin it to
 // Terminal Pro. Importing the same file from multiple components is a no-op

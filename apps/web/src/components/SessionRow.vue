@@ -6,14 +6,8 @@ import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
-import Spinner from './ui/Spinner.vue';
-import Badge from './ui/Badge.vue';
+import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
-import IconButton from './ui/IconButton.vue';
-import Menu from './ui/Menu.vue';
-import MenuItem from './ui/MenuItem.vue';
-import Icon from './ui/Icon.vue';
-import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
 const { confirm } = useConfirmDialog();

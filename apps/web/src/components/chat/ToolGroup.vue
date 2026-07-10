@@ -6,8 +6,7 @@ import ToolCall from './ToolCall.vue';
 import { toolStackKey, toolStackPosition } from '../chatTurnRendering';
 import type { ToolStackItem } from '../chatTurnRendering';
 import type { FilePreviewRequest, ToolMedia } from '../../types';
-import Icon from '../ui/Icon.vue';
-import StatusDot from '../ui/StatusDot.vue';
+import { Icon, StatusDot } from '@moonshot-ai/web-ui';
 
 const props = withDefaults(
   defineProps<{

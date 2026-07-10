@@ -5,11 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { UIQuestion } from '../../types';
 import type { QuestionAnswer, QuestionResponse } from '../../api/types';
 import Markdown from './Markdown.vue';
-import Card from '../ui/Card.vue';
-import Badge from '../ui/Badge.vue';
-import Button from '../ui/Button.vue';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
+import { Badge, Button, Card, Icon, IconButton } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
   question: UIQuestion;

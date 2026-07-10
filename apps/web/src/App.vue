@@ -33,16 +33,14 @@ import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
-import { openDialogCount } from './composables/dialogStack';
+import { openDialogCount } from '@moonshot-ai/web-ui';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { coerceThinkingForModel, commitLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
-import Button from './components/ui/Button.vue';
-import IconButton from './components/ui/IconButton.vue';
-import Icon from './components/ui/Icon.vue';
+import { Button, Icon, IconButton } from '@moonshot-ai/web-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
 import { isMacosDesktop } from './lib/desktopFlag';
 

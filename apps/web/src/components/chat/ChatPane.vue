@@ -11,10 +11,7 @@ import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
 import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
-import MoonSpinner from '../ui/MoonSpinner.vue';
-import Spinner from '../ui/Spinner.vue';
-import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Icon, MoonSpinner, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import {

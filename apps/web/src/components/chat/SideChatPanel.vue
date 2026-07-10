@@ -6,11 +6,8 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
-import MoonSpinner from '../ui/MoonSpinner.vue';
-import Icon from '../ui/Icon.vue';
+import { Icon, MoonSpinner, PanelHeader, Tooltip } from '@moonshot-ai/web-ui';
 import type { ChatTurn } from '../../types';
-import PanelHeader from '../ui/PanelHeader.vue';
-import Tooltip from '../ui/Tooltip.vue';
 
 const props = defineProps<{
   turns: ChatTurn[];

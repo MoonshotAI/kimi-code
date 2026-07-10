@@ -1,9 +1,7 @@
 <!-- apps/kimi-web/src/components/chat/ToolRow.vue -->
 <script setup lang="ts">
 import { inject, nextTick, ref } from 'vue';
-import Icon from '../ui/Icon.vue';
-import Tooltip from '../ui/Tooltip.vue';
-import StatusDot from '../ui/StatusDot.vue';
+import { Icon, StatusDot, Tooltip } from '@moonshot-ai/web-ui';
 
 withDefaults(
   defineProps<{

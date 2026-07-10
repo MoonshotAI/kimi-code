@@ -16,11 +16,7 @@ import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } fro
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
-import IconButton from './ui/IconButton.vue';
-import Icon from './ui/Icon.vue';
-import Kbd from './ui/Kbd.vue';
-import Menu from './ui/Menu.vue';
-import MenuItem from './ui/MenuItem.vue';
+import { Icon, IconButton, Kbd, Menu, MenuItem } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../composables/useConfirmDialog';
 
 const { t } = useI18n();

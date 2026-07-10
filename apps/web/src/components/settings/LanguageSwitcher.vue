@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
-import SegmentedControl from '../ui/SegmentedControl.vue';
+import { SegmentedControl } from '@moonshot-ai/web-ui';
 
 const { locale } = useI18n();
 

@@ -5,7 +5,7 @@
      (design-system §03/§06) — MoonSpinner is reserved for the chat "waiting
      for the agent's first response" state. -->
 <script setup lang="ts">
-import Spinner from '../ui/Spinner.vue';
+import { Spinner } from '@moonshot-ai/web-ui';
 
 defineProps<{
   label: string;

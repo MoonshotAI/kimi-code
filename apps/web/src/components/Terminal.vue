@@ -6,7 +6,7 @@ import type { Terminal as XTerm, ITheme } from '@xterm/xterm';
 import { computed, nextTick, onMounted, onUnmounted, ref, toRef, watch } from 'vue';
 import { useIsDark } from '../composables/useIsDark';
 import { useTerminal } from '../composables/useTerminal';
-import Button from './ui/Button.vue';
+import { Button } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{ sessionId: string }>();
 

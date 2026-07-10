@@ -1,7 +1,9 @@
 import { createApp } from 'vue';
+import { IconResolverKey } from '@moonshot-ai/web-ui';
 import App from './App.vue';
 import i18n from './i18n';
 import { isDesktop } from './lib/desktopFlag';
+import { getIcon, type IconName } from './lib/icons';
 import { installClientErrorCapture } from './debug/trace';
 import '@fontsource-variable/inter/opsz.css';
 import '@fontsource-variable/inter/opsz-italic.css';
@@ -14,6 +16,10 @@ import './style.css';
 installClientErrorCapture();
 
 const app = createApp(App).use(i18n);
+// Bridge web-ui's <Icon> to this app's icon registry: <Icon name> resolves its
+// component through lib/icons.ts (which owns the `~icons/*` collections). The
+// registry stays in apps/web; web-ui only defines the injection key.
+app.provide(IconResolverKey, (name) => getIcon(name as IconName)?.component);
 app.mount('#app');
 
 // In the desktop app, mirror <html data-color-scheme> to the host's nativeTheme

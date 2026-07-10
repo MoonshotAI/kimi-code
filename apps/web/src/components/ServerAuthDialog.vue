@@ -7,8 +7,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
 import { setCredential } from '../api/daemon/serverAuth';
-import Button from './ui/Button.vue';
-import Input from './ui/Input.vue';
+import { Button, Input } from '@moonshot-ai/web-ui';
 
 const credential = ref('');
 const inputRef = ref<InstanceType<typeof Input> | null>(null);

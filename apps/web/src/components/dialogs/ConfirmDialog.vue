@@ -5,8 +5,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Dialog from '../ui/Dialog.vue';
-import Button from '../ui/Button.vue';
+import { Button, Dialog } from '@moonshot-ai/web-ui';
 
 const confirmButtonRef = ref<InstanceType<typeof Button> | null>(null);
 

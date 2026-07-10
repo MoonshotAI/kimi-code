@@ -7,8 +7,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../../types';
 import { highlightHtml, snippet } from '../../lib/searchHighlight';
-import Dialog from '../ui/Dialog.vue';
-import Icon from '../ui/Icon.vue';
+import { Dialog, Icon } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

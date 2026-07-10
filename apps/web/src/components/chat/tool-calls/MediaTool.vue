@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { ToolCall, ToolMedia } from '../../../types';
-import Tooltip from '../../ui/Tooltip.vue';
+import { Tooltip } from '@moonshot-ai/web-ui';
 
 const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
 const emit = defineEmits<{ openMedia: [media: ToolMedia] }>();

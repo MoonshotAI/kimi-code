@@ -5,11 +5,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import Dialog from '../ui/Dialog.vue';
-import Button from '../ui/Button.vue';
-import Spinner from '../ui/Spinner.vue';
-import Icon from '../ui/Icon.vue';
-import AuthStateIcon from '../ui/AuthStateIcon.vue';
+import { AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

@@ -7,12 +7,7 @@ import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import Button from '../ui/Button.vue';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
-import Menu from '../ui/Menu.vue';
-import MenuItem from '../ui/MenuItem.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Button, Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

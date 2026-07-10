@@ -11,11 +11,7 @@ import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import BottomSheet from '../dialogs/BottomSheet.vue';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
-import Menu from '../ui/Menu.vue';
-import MenuItem from '../ui/MenuItem.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 const { confirm } = useConfirmDialog();

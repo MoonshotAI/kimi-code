@@ -8,8 +8,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '../../types';
-import IconButton from '../ui/IconButton.vue';
-import Icon from '../ui/Icon.vue';
+import { Icon, IconButton } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 

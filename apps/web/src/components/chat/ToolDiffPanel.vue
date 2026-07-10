@@ -6,7 +6,7 @@
 import { useI18n } from 'vue-i18n';
 import type { ToolDiffTarget } from '../../types';
 import DiffLines from './DiffLines.vue';
-import PanelHeader from '../ui/PanelHeader.vue';
+import { PanelHeader } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{ target: ToolDiffTarget }>();
 

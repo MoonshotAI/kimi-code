@@ -1,0 +1,411 @@
+:root {
+  --dim: #595959;
+  --muted: #8a8a8a;
+  --faint: #b5b5b5;
+  --line: #e9edf3;
+  --line2: #f1f4f8;
+  /* Soft neutral canvas the white cards/bubbles lift off, plus the soft
+     elevation shadows shared by the per-element card rules. */
+  --canvas: #f4f6fa;
+  --sh: 0 1px 3px rgba(28, 40, 66, 0.05), 0 6px 18px rgba(28, 40, 66, 0.06);
+  --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
+  --panel: #fafbfc;
+  --panel2: #f3f5f8;
+  --bg: #ffffff;
+  /* Brand blue = Kimi KMBlue (#1783ff), matched to kimi.com's palette.
+     --blue2 is a darker press/hover shade; --soft/--bd/--bluebg/--blueln are
+     the light-blue fills + borders derived from the same hue. */
+  --blue: #1783ff;
+  --blue2: #0f6fe0;
+  --soft: #e8f3ff;
+  --bd: #cfe6ff;
+  --logo: #1783ff;
+  /* Soft-blue bubble fill + border (mobile user message bubble). */
+  --bluebg: #e8f3ff;
+  --blueln: #cfe6ff;
+  --ok: #0e7a38;
+  /* Keep in sync with --color-warning / --color-danger in the v2 token layer
+     below (light values; dark overrides live in the data-color-scheme blocks). */
+  --warn: #a9610a;
+  --star: #eab308;
+  --err: #c0392b;
+  /* Subtle hover wash for icon buttons (toast close, etc.). */
+  --hover: rgba(0, 0, 0, 0.05);
+  /* Legacy radius aliases (kept for one version cycle, design-system §02).
+     Byte-for-byte identical to the old 6 / 8 / 12 / 16 scale, now expressed
+     against the canonical --radius-* scale below so the two cannot drift.
+     New work should reference --radius-* directly. */
+  --r-xs: var(--radius-sm);
+  --r-sm: var(--radius-md);
+  --r-md: var(--radius-lg);
+  --r-lg: var(--radius-xl);
+  --base-ui-font-size: 14px;
+  --ui-font-size: var(--base-ui-font-size);
+  --ui-font-size-sm: calc(var(--ui-font-size) - 1px);
+  --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
+  --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
+  --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
+  --content-font-size: calc(var(--base-ui-font-size) + 1px);
+  --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* Body/UI font follows the design-system canonical token. Mirrors --font-ui
+     so the legacy alias can never drift from the current text face. */
+  --sans: var(--font-ui);
+  color-scheme: light dark;
+}
+
+/* color-scheme drives UA-rendered parts (scrollbars, form controls, etc.).
+   An explicit choice must pin it to a single value — otherwise a dark-mode
+   user on a light OS gets light scrollbars floating on the dark UI. */
+html[data-color-scheme="light"] {
+  color-scheme: light;
+}
+html[data-color-scheme="system"] {
+  color-scheme: light dark;
+}
+
+/* Dark mode variables — applied when explicitly chosen or via system preference. */
+html[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --dim: #9aa0a8;
+  --muted: #727983;
+  --faint: #525960;
+  --line: #2d333b;
+  --line2: #22272e;
+  --panel: #1c2128;
+  --panel2: #161b22;
+  --bg: #0d1117;
+  --blue: #58a6ff;
+  --blue2: #79b8ff;
+  --soft: #1f2937;
+  --bd: #1f6feb;
+  --logo: #58a6ff;
+  --bluebg: #1c2a3a;
+  --blueln: #1f4f7a;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --star: #facc15;
+  --err: #f85149;
+  --hover: rgba(255, 255, 255, 0.07);
+  --canvas: #161b22;
+  --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+  --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --dim: #9aa0a8;
+    --muted: #727983;
+    --faint: #525960;
+    --line: #2d333b;
+    --line2: #22272e;
+    --panel: #1c2128;
+    --panel2: #161b22;
+    --bg: #0d1117;
+    --blue: #58a6ff;
+    --blue2: #79b8ff;
+    --soft: #1f2937;
+    --bd: #1f6feb;
+    --logo: #58a6ff;
+    --bluebg: #1c2a3a;
+    --blueln: #1f4f7a;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --star: #facc15;
+    --err: #f85149;
+    --hover: rgba(255, 255, 255, 0.07);
+    --canvas: #161b22;
+    --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+    --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* Accent: black/white (Vercel-style) — remaps the blue tokens to grayscale.
+   Orthogonal to the color scheme (only recolours the accent). */
+html[data-accent="mono"] {
+  --accent-primary: #171717;
+  --color-accent: #171717;
+  --color-accent-hover: #383838;
+  --color-accent-soft: #f1f1f2;
+  --color-accent-bd: #d4d4d8;
+  --blue: #171717;
+  --blue2: #383838;
+  --soft: #f1f1f2;
+  --bd: #d4d4d8;
+  --bluebg: #f4f4f5;
+  --blueln: #e4e4e7;
+  --logo: #171717;
+}
+
+/* mono accent × dark: the light grayscale above would win over the dark
+   variables (same specificity, later in source) — remap to dark grays.
+   Text/icons sitting ON the accent colour use var(--bg), so the near-white
+   accent stays readable here. */
+html[data-color-scheme="dark"][data-accent="mono"] {
+  --accent-primary: #e8eaed;
+  --color-accent: #e8eaed;
+  --color-accent-hover: #c9cdd4;
+  --color-accent-soft: #21262d;
+  --color-accent-bd: #444c56;
+  --blue: #e8eaed;
+  --blue2: #c9cdd4;
+  --soft: #21262d;
+  --bd: #444c56;
+  --bluebg: #21262d;
+  --blueln: #30363d;
+  --logo: #e8eaed;
+}
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"][data-accent="mono"] {
+    --accent-primary: #e8eaed;
+    --color-accent: #e8eaed;
+    --color-accent-hover: #c9cdd4;
+    --color-accent-soft: #21262d;
+    --color-accent-bd: #444c56;
+    --blue: #e8eaed;
+    --blue2: #c9cdd4;
+    --soft: #21262d;
+    --bd: #444c56;
+    --bluebg: #21262d;
+    --blueln: #30363d;
+    --logo: #e8eaed;
+  }
+}
+
+
+/* ===========================================================================
+   DESIGN TOKENS v2 (redesign.html §03)
+   Additive, scheme-aware token scales that sit alongside the legacy short
+   aliases (--bg / --ink / --blue / --r-* …) defined above. The legacy aliases
+   are kept byte-for-byte so existing components render identically (zero
+   regression); new and redesigned work references the semantic `--color-*`
+   layer plus the spacing / radius / elevation / motion / type scales below.
+
+   Light values live in `:root`; dark values are overridden in the two
+   `data-color-scheme` blocks that follow. Only 4 colour "seeds" are meant to
+   be customised — everything else is derived from / paired to them.
+   =========================================================================== */
+:root {
+  /* -- 4 colour seeds (the only knobs a theme customiser should need) ------ */
+  --accent-primary: #1783ff;
+  --accent-secondary: #6b7280;
+  --surface-light: #ffffff;
+  --surface-dark: #0d1117;
+
+  /* -- semantic colour layer (light) --------------------------------------- */
+  --color-bg: #ffffff;
+  --color-surface: #fafbfc;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunken: #f3f5f8;
+  /* Foreground text colours. `--color-text` is the default solid body / UI
+     colour (headings and emphasis share it); muted / faint step down for
+     secondary and tertiary copy; on-accent is text drawn on the accent fill. */
+  --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-muted: #6b7280;
+  --color-text-faint: #9aa3af;
+  --color-text-on-accent: #ffffff;
+  --color-line: #e7eaee;
+  --color-line-strong: #d4d9e0;
+  /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
+     accent-tinted, so selection reads as "where I am", not as an action. */
+  --color-selected: #00000014;
+  /* Row hover wash — lighter than the selected fill (hover < selected); both
+     are translucent black so they sit naturally on any light surface. */
+  --color-hover: #0000000d;
+  /* Sidebar surface — one step off --color-bg (warm off-white / near-black)
+     so the session column reads as its own plane. */
+  --color-sidebar-bg: #fbfaf9;
+  --color-accent: var(--accent-primary);
+  --color-accent-hover: #0f6fe0;
+  --color-accent-soft: #e8f3ff;
+  --color-accent-bd: #cfe6ff;
+  --color-success: #0e7a38;
+  --color-success-soft: #e7f6ee;
+  --color-success-bd: #bfe3cc;
+  --color-warning: #a9610a;
+  --color-warning-soft: #fbf1e0;
+  --color-warning-bd: #f0d9b8;
+  --color-danger: #c0392b;
+  --color-danger-soft: #fbeaea;
+  --color-danger-bd: #f0cccc;
+  /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+  --color-done: #8250df;
+  --color-done-soft: #f3e8ff;
+  --color-done-bd: #e0ccff;
+  --color-info: var(--accent-primary);
+  /* Dev-only brand tint: recolors the logo mark golden-yellow so a `pnpm dev:web`
+     tab is visually distinct from production. Referenced by Sidebar's
+     `.ch-logo.is-dev` override of `--logo`. Scheme-independent on purpose. */
+  --color-logo-dev: #f5b301;
+
+  /* -- spacing (4px grid) -------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* -- radius -------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 999px;
+
+  /* -- elevation / z-index ------------------------------------------------- */
+  --z-base: 0;
+  --z-sticky: 100;
+  --z-dropdown: 200;
+  --z-tooltip: 250;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-toast: 600;
+  --z-max: 9999;
+
+  /* -- shadows (light) ----------------------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
+  --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
+
+  /* -- motion -------------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 260ms;
+
+  /* -- type families ------------------------------------------------------- */
+  /* UI/body use self-hosted Inter first. CJK and platform system UI families
+     stay late in the fallback chain so Latin glyphs resolve to Inter while
+     Chinese text can still fall through to native CJK fonts. */
+  --font-ui: "Inter Variable", "Inter", "Helvetica Neue", Arial,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+    "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Ubuntu, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-display: var(--font-ui);
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* -- type scale (6 levels, design-system §03) --------------------------- */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 700;
+
+  /* -- focus ring (design-system §02) -------------------------------------- */
+  --p-focus-ring: 0 0 0 3px var(--color-accent-soft);
+  --p-focus-ring-strong: 0 0 0 3px var(--color-accent-soft), 0 0 0 1px var(--color-accent);
+
+  /* -- selection (design-system §02) --------------------------------------- */
+  --p-selection: rgba(23, 131, 255, 0.18);
+
+  /* -- icon sizes (design-system §02) -------------------------------------- */
+  --p-ic-sm: 14px;
+  --p-ic-md: 16px;
+  --p-ic-lg: 20px;
+
+  /* -- layout & breakpoints (design-system §02) ---------------------------- */
+  --p-sidebar-w: 264px;
+  --p-content-max: 760px;
+  --p-content-wide: 920px;
+  --p-bp-sm: 640px;
+  --p-bp-md: 980px;
+}
+
+/* Design tokens v2 — dark values (explicit choice). */
+html[data-color-scheme="dark"] {
+  --accent-primary: #58a6ff;
+  --color-bg: #0d1117;
+  --color-surface: #161b22;
+  --color-surface-raised: #1c2128;
+  --color-surface-sunken: #0d1117;
+  --color-text: #c9cdd4;
+  --color-text-muted: #9aa0a8;
+  --color-text-faint: #6b7280;
+  --color-line: #2d333b;
+  --color-line-strong: #3d444d;
+  --color-selected: #ffffff14;
+  --color-hover: #ffffff0d;
+  --color-sidebar-bg: #181817;
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79b8ff;
+  --color-accent-soft: rgba(88, 166, 255, 0.14);
+  --p-selection: rgba(88, 166, 255, 0.32);
+  --color-accent-bd: rgba(88, 166, 255, 0.28);
+  --color-success: #3fb950;
+  --color-success-soft: rgba(63, 185, 80, 0.14);
+  --color-success-bd: rgba(63, 185, 80, 0.28);
+  --color-warning: #d29922;
+  --color-warning-soft: rgba(210, 153, 34, 0.14);
+  --color-warning-bd: rgba(210, 153, 34, 0.28);
+  --color-danger: #f85149;
+  --color-danger-soft: rgba(248, 81, 73, 0.14);
+  --color-danger-bd: rgba(248, 81, 73, 0.28);
+  /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+  --color-done: #a371f7;
+  --color-done-soft: rgba(163, 113, 247, 0.14);
+  --color-done-bd: rgba(163, 113, 247, 0.28);
+  --color-info: #58a6ff;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+}
+
+/* Design tokens v2 — dark values (follow OS preference). */
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --accent-primary: #58a6ff;
+    --color-bg: #0d1117;
+    --color-surface: #161b22;
+    --color-surface-raised: #1c2128;
+    --color-surface-sunken: #0d1117;
+    --color-text: #c9cdd4;
+    --color-text-muted: #9aa0a8;
+    --color-text-faint: #6b7280;
+    --color-line: #2d333b;
+    --color-line-strong: #3d444d;
+    --color-selected: #ffffff14;
+    --color-hover: #ffffff0d;
+    --color-sidebar-bg: #181817;
+    --color-accent: #58a6ff;
+    --color-accent-hover: #79b8ff;
+    --color-accent-soft: rgba(88, 166, 255, 0.14);
+  --p-selection: rgba(88, 166, 255, 0.32);
+    --color-accent-bd: rgba(88, 166, 255, 0.28);
+    --color-success: #3fb950;
+    --color-success-soft: rgba(63, 185, 80, 0.14);
+    --color-success-bd: rgba(63, 185, 80, 0.28);
+    --color-warning: #d29922;
+    --color-warning-soft: rgba(210, 153, 34, 0.14);
+    --color-warning-bd: rgba(210, 153, 34, 0.28);
+    --color-danger: #f85149;
+    --color-danger-soft: rgba(248, 81, 73, 0.14);
+    --color-danger-bd: rgba(248, 81, 73, 0.28);
+    /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
+    --color-done: #a371f7;
+    --color-done-soft: rgba(163, 113, 247, 0.14);
+    --color-done-bd: rgba(163, 113, 247, 0.28);
+    --color-info: #58a6ff;
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+    --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+  }
+}

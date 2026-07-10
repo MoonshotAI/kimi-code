@@ -13,12 +13,7 @@ import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel } from '../../api/types';
-import Dialog from '../ui/Dialog.vue';
-import Switch from '../ui/Switch.vue';
-import Button from '../ui/Button.vue';
-import SegmentedControl from '../ui/SegmentedControl.vue';
-import Select from '../ui/Select.vue';
-import Tooltip from '../ui/Tooltip.vue';
+import { Button, Dialog, SegmentedControl, Select, Switch, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
