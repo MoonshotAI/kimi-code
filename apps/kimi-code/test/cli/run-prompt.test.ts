@@ -163,7 +163,7 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
 }));
 
 // The experimental v2 engine is loaded via a dynamic import from run-prompt.ts
-// when KIMI_CODE_EXPERIMENTAL_FLAG is set. Mock the native v2 runner so tests
+// when KIMI_MODEL_EXPERIMENT_FLAG is set. Mock the native v2 runner so tests
 // that flip that flag can exercise the dispatch without pulling in the real
 // agent-core-v2 graph.
 vi.mock('../../src/cli/v2/run-v2-print', () => ({
@@ -233,7 +233,7 @@ describe('runPrompt', () => {
     // Pin the experimental engine flag off so the default v1 path is
     // deterministic regardless of the host environment. Tests that exercise the
     // experimental path opt back in explicitly with `vi.stubEnv(..., '1')`.
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+    vi.stubEnv('KIMI_MODEL_EXPERIMENT_FLAG', '');
   });
 
   afterEach(() => {
@@ -1084,7 +1084,7 @@ describe('runPrompt', () => {
   });
 
   it('emits the version first in text mode when the experimental flag is enabled', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    vi.stubEnv('KIMI_MODEL_EXPERIMENT_FLAG', '1');
     const stdout = writer();
     const stderr = writer();
 
@@ -1100,7 +1100,7 @@ describe('runPrompt', () => {
   });
 
   it('emits the version first in stream-json mode when the experimental flag is enabled', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    vi.stubEnv('KIMI_MODEL_EXPERIMENT_FLAG', '1');
     const stdout = writer();
     const stderr = writer();
 
@@ -1119,7 +1119,7 @@ describe('runPrompt', () => {
   });
 
   it('does not emit the version when the experimental flag is disabled', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_MODEL_EXPERIMENT_FLAG', '0');
     const stdout = writer();
     const stderr = writer();
 
