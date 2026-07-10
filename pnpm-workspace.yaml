@@ -1,0 +1,20 @@
+packages:
+  - apps/*
+  - packages/*
+  - kimi-code/packages/*
+  # Do NOT add kimi-code/apps/kimi-code: the desktop only imports
+  # @moonshot-ai/server + @moonshot-ai/kimi-code-sdk (both under packages/*),
+  # whose dependency closure is self-contained within packages/*. Pulling in the
+  # CLI app drags @moonshot-ai/kimi-web and @moonshot-ai/vis-* (apps/*) into the
+  # workspace and breaks resolution (ERR_PNPM_WORKSPACE_PKG_NOT_FOUND).
+
+catalog:
+  zod: 4.3.6
+
+overrides:
+  "ssh2@1.17.0>cpu-features": "-"
+  "ssh2@1.17.0>nan": "-"
+
+# Allow Electron's postinstall to extract its prebuilt binary (apps/desktop).
+onlyBuiltDependencies:
+  - electron
