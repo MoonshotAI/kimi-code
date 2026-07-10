@@ -9,7 +9,7 @@
 //
 // Shell concerns (the `ExtendedState` add-ons, computed view props, actions,
 // notifications, snapshot/resync, URL routing, confirm dialogs) stay in the
-// consumer — they are apps/web (or desktop) UI, not the shared state machine.
+// consumer — they are the consumer (web or desktop) UI, not the shared state machine.
 // `install()` / `dispose()` are lifecycle hooks reserved for that wiring (the
 // transport subscription + cross-tab / visibility listeners are shell-driven,
 // since their handlers touch shell state); they are intentional no-ops here so
