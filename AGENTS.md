@@ -7,15 +7,15 @@
 `code-app` 是 Kimi Code 的**客户端仓**：桌面端（`apps/desktop`，Electron）+ Web（`apps/web`，Vue 3）+ 共享包（`packages/*`，阶段 3 引入）。核心仓 `kimi-code` 以 **git submodule** 引用；CLI / server / agent-core 都在 `kimi-code` 仓，不在本仓。
 
 - 设计文档：`docs/specs/2026-07-10-code-app-split-design.md`
-- 阶段实施计划：`docs/plans/2026-07-10-code-app-split-phase0.md`（阶段 0 已完成）
+- 阶段实施计划：`docs/plans/2026-07-10-code-app-split-phase0.md`（阶段 0 已完成）、`docs/plans/2026-07-10-code-app-split-phase1.md`（阶段 1 已完成）、`docs/plans/2026-07-10-code-app-split-phase2.md`（阶段 2 已完成）、`docs/plans/2026-07-10-code-app-split-phase3.md`（阶段 3 已完成）
 
 ## 硬约束
 
 - **依赖方向 `code-app → kimi-code` 单向**。desktop 只经 `@moonshot-ai/*` 包名 import kimi-code 的 packages 源码，**禁止**跨包相对路径 import（`apps/desktop/src/main/sea-path.ts` 与 `scripts/before-pack.cjs` 的运行时 SEA 路径拼接属例外）。`kimi-code` 不得 import `code-app`。
-- **web 零 `@moonshot-ai/*` 依赖**，wire 类型在 `apps/web/src/api/wire.ts` 本地重写。
+- apps/web 经 `@moonshot-ai/{web-ui,web-markdown,web-core}` 复用共享包；apps/web 不直接 import `kimi-code` 包（依赖方向 `code-app → kimi-code` 单向仍由 desktop 经 `@moonshot-ai/server` | `@moonshot-ai/kimi-code-sdk` 体现）。
 - **不改包名**：`@moonshot-ai/kimi-web`、`@moonshot-ai/kimi-desktop` 不改域。
 - **提交规范**：Conventional Commits（`chore:` / `feat:` / `fix:` / `docs:`）；**禁止**任何 `Co-Authored-By` 署名；commit message、PR、代码、文档**不得出现** agent / AI 工具的名称或身份信息。
-- **不改** `kimi-code` 的 `packages/server`、`packages/agent-core`、`apps/kimi-code/src/**`（核心逻辑在 kimi-code 仓）。
+- **不改** `kimi-code` 的 `packages/server`、`packages/agent-core`、`apps/kimi-code/src/**`（核心逻辑在 kimi-code 仓；已获用户逐项认可的拆仓必需改动除外，如阶段 2 server CORS `origin.ts`）。
 - Node `>=24.15.0`，pnpm `10.33.0`，`.npmrc` `engine-strict=true`（Node 不符装不上）。
 
 ## 工程化
@@ -28,8 +28,8 @@
 ## 目录地图
 
 - `apps/desktop`：Electron 壳（`@moonshot-ai/kimi-desktop`）。`src/main/` 主进程；阶段 0 仍 `execFile` 外部 SEA（`sea-path.ts` 解析，`KIMI_SEA_PATH` env 兜底），阶段 1 起改主进程 `import { startServer }`。`scripts/copy-web-dist.mjs` 构建期把 `apps/web/dist` 拷到 `apps/desktop/web-dist/`。
-- `apps/web`：浏览器 Web UI（`@moonshot-ai/kimi-web`，Vue 3 + Vite + vue-i18n）。`build → dist`。
-- `packages/*`：阶段 3 共享包（`web-ui` / `web-markdown` / `web-core`）；阶段 0/1 为空。
+- `apps/web`：浏览器 Web UI（`@moonshot-ai/kimi-web`，Vue 3 + Vite + vue-i18n）。`build → dist`。阶段 3 起聚合三包；`src/api` 仅留 `bootstrap`/`config`/`daemon/agentEventProjector`/`errors`/`index`/`types`（i18n/toolMeta 耦合留 web）。
+- `packages/*`：阶段 3 已就位：`@moonshot-ai/{web-ui,web-markdown,web-core}`（exports→src，被 apps/web 复用）。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 server/agent-core/node-sdk 等源码；`kimi-code/apps/kimi-code/dist-web/` 接收本仓 sync 的 web 快照供 SEA 内嵌。
 - `scripts/`：仓级脚本（`sync-web-to-kimi-code.mjs`）。
 - `docs/specs`、`docs/plans`：设计与阶段实施计划。
