@@ -62,7 +62,7 @@ pnpm typecheck     # desktop + web typecheck
 - **阶段 0 拆仓地基（已完成）**：本仓可 install/dev；kimi-code SEA 消费 dist-web 快照。
 - **阶段 1 server 内嵌**：desktop 主进程 `import { startServer }` 起桌面端**私有 server**（home 与 CLI 共享、lock/端口独立、`serviceOverrides` 中和 `process.exit`、异步启动不阻塞首屏、去 SEA 分发）。
 - **阶段 2 本地 renderer + IPC**：`loadFile` 本地壳 + `preload`/`contextBridge` 注入 serverInfo，替换 `console-message` 主题 hack。
-- **阶段 3 仓内抽共享包**：`packages/web-ui|web-markdown|web-core`（解 `useKimiWebClient` 单例为工厂），web/desktop 复用，全程不跨仓。
+- **阶段 3 仓内抽共享包**：`packages/web-ui|web-markdown|web-core`（api 层依赖注入；落地 `createKimiWebClientCore` 会话状态机地基，全量工厂化解 `useKimiWebClient` 单例**推迟**至桌面原生骨架阶段），web/desktop 复用，全程不跨仓。
 
 ## 开放点
 
