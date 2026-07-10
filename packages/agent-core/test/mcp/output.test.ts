@@ -180,6 +180,22 @@ describe('convertMCPContentBlock', () => {
     });
   });
 
+  test('replaces resource_link with an unsupported image mimeType with a notice', () => {
+    // A signed/extensionless URL gives the extension gate nothing to work
+    // with; the declared MIME is the only signal — an honestly-declared
+    // unsupported format must not become an image_url.
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'photo',
+      uri: 'https://cdn.example.com/v2/image?id=123',
+      mimeType: 'image/avif',
+    });
+    const part = convertMCPContentBlock(block);
+    if (part?.type !== 'text') throw new Error('expected a text notice');
+    expect(part.text).toContain('image/avif');
+    expect(part.text).toContain('https://cdn.example.com/v2/image?id=123');
+  });
+
   test('returns null for resource_link with unsupported mimeType', () => {
     const block = assertValidMcpBlock({
       type: 'resource_link',
@@ -345,18 +361,26 @@ describe('mcpResultToExecutableOutput', () => {
     });
   });
 
-  test('drops a remote image URL whose extension is unsupported, passes others through', async () => {
-    // An MCP resource_link carries a URL, not bytes, so the gate uses the
-    // path extension: a `.avif` link becomes a notice (the provider would
-    // fetch it server-side and 400), while an extensionless or `.png` link
+  test('drops remote images by declared MIME and by URL extension, passes accepted links through', async () => {
+    // An MCP resource_link carries no bytes, so the only format signals are
+    // the declared MIME and the URL extension: an honestly-declared AVIF
+    // becomes a notice even with an extensionless (signed) URL — the
+    // extension gate alone cannot see it; a server that declares PNG but
+    // links an `.avif` URL is caught by the extension; an accepted link
     // passes through.
     const out = await mcpResultToExecutableOutput(
       result([
         assertValidMcpBlock({
           type: 'resource_link',
+          name: 'photo',
+          uri: 'https://cdn.example.com/v2/image?id=123',
+          mimeType: 'image/avif',
+        }),
+        assertValidMcpBlock({
+          type: 'resource_link',
           name: 'pic.avif',
           uri: 'https://example.com/pic.avif',
-          mimeType: 'image/avif',
+          mimeType: 'image/png',
         }),
         assertValidMcpBlock({
           type: 'resource_link',
@@ -372,10 +396,19 @@ describe('mcpResultToExecutableOutput', () => {
       type: 'image_url',
       imageUrl: { url: 'https://example.com/ok.png?size=full#frame' },
     });
-    expect(parts.some((p) => p.type === 'image_url' && p.imageUrl.url.includes('pic.avif'))).toBe(
-      false,
-    );
-    expect(parts.some((p) => p.type === 'text' && p.text.includes('image/avif'))).toBe(true);
+    // Neither AVIF link survives as an image_url.
+    expect(
+      parts.some(
+        (p) =>
+          p.type === 'image_url' &&
+          (p.imageUrl.url.includes('cdn.example.com') || p.imageUrl.url.includes('pic.avif')),
+      ),
+    ).toBe(false);
+    const notices = parts
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { text: string }).text)
+      .join('\n');
+    expect(notices).toContain('image/avif');
   });
 
   test('does NOT wrap when a non-empty text part accompanies the media', async () => {
