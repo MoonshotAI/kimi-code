@@ -398,6 +398,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const notice = submitted?.content[1];
     if (notice?.type !== 'text') throw new Error('expected a text notice');
     expect(notice.text).toContain('image/avif');
+    expect(notice.text).toContain('https://example.com/pic.avif');
     expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
   });
 

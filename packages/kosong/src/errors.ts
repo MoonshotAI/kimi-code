@@ -172,15 +172,20 @@ const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
 // are not a stable contract, so a novel phrasing is missed and the error
 // propagates (the pre-recovery behavior). The entry-point format gate is the
 // structural defense; this recovery only backstops the residue.
+// Every pattern mentions "image" literally, and MEDIA_TYPE_FIELD_PATTERN is
+// separately gated on an "image" anchor — so audio/video media rejections
+// ("unsupported media type", "invalid media type") can never be classified
+// as image errors here. All documented provider image rejections mention
+// "image", so the restriction costs no known match.
 const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
-  // Unsupported format / type — OpenAI / Moonshot "unsupported image …".
-  /unsupported (?:image|media) (?:url|format|type)/,
+  // Unsupported format — OpenAI / Moonshot "unsupported image …".
+  /unsupported image (?:url|format|type)/,
   // Undecodable / corrupt image data.
   /does not represent a valid image/,
   /could not (?:process|decode) (?:the |input )?image/,
   /unable to process (?:the |input )?image/,
   /failed to decode (?:the )?image/,
-  /invalid (?:image|media)(?: data| type| format)?/,
+  /invalid image(?: data| type| format)?/,
 ] as const;
 
 // Anthropic `media_type` & Gemini `mime_type` enum violations name the field
@@ -199,9 +204,9 @@ const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
  * re-sent on every request, so the session would fail every turn), and the
  * only recovery is to resend once with all media stripped (see the
  * media-stripped resend in the agent loop). Body-size (413), context
- * overflow, image count/size limits, and image-input-disabled rejections
- * are excluded — the first two have their own recoveries, and the rest are
- * not fixed by stripping media.
+ * overflow, image count/size limits, image-input-disabled rejections, and
+ * non-image (audio/video) media rejections are excluded — the first two
+ * have their own recoveries, and the rest are not fixed by stripping media.
  */
 export function isImageFormatError(error: unknown): boolean {
   if (error instanceof APIStatusError) {

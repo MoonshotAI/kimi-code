@@ -409,6 +409,9 @@ describe('mcpResultToExecutableOutput', () => {
       .map((p) => (p as { text: string }).text)
       .join('\n');
     expect(notices).toContain('image/avif');
+    // Both notices keep their URL so the model can fetch and convert.
+    expect(notices).toContain('https://cdn.example.com/v2/image?id=123');
+    expect(notices).toContain('https://example.com/pic.avif');
   });
 
   test('does NOT wrap when a non-empty text part accompanies the media', async () => {

@@ -645,6 +645,11 @@ describe('isImageFormatError', () => {
         ),
       ),
     ).toBe(false);
+    // Bare "media type" phrasings for audio/video inputs likewise surface.
+    expect(
+      isImageFormatError(new APIStatusError(400, 'unsupported media type for audio input')),
+    ).toBe(false);
+    expect(isImageFormatError(new APIStatusError(400, 'invalid media type'))).toBe(false);
   });
 
   it('is excluded from the transient-retry fallback so dedicated recovery fires first', () => {

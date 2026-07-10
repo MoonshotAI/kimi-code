@@ -373,13 +373,14 @@ async function resolvePromptMediaFiles(
       continue;
     }
     // Remote image URL: no bytes to sniff, so reject when its path extension
-    // names a format providers reject (e.g. a link ending in `.avif`);
-    // extensionless / unknown URLs pass through to the provider and the 400
-    // recovery. Image+URL parts that pass are re-emitted unchanged.
+    // names a format providers reject (e.g. a link ending in `.avif`) — the
+    // notice keeps the URL so the model can still fetch and convert the
+    // image. Extensionless / unknown URLs pass through to the provider and
+    // the 400 recovery. Image+URL parts that pass are re-emitted unchanged.
     if (part.type === 'image' && part.source.kind === 'url') {
       const extMime = unsupportedImageMimeFromUrl(part.source.url);
       if (extMime !== null) {
-        content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime) });
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime, part.source.url) });
         changed = true;
         continue;
       }

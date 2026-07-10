@@ -521,11 +521,15 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
       if (parsed === null) {
         // Remote image URL (no bytes to sniff): reject when its path
         // extension names a format providers reject (e.g. a search-tool
-        // link ending in `.avif`); extensionless / unknown URLs pass
-        // through to the provider — and to the 400 recovery.
+        // link ending in `.avif`) — the notice keeps the URL so the model
+        // can still fetch and convert the image. Extensionless / unknown
+        // URLs pass through to the provider — and to the 400 recovery.
         const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
         if (extMime !== null) {
-          out.push({ type: 'text', text: buildUnsupportedImageNotice(extMime) });
+          out.push({
+            type: 'text',
+            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url),
+          });
           continue;
         }
         out.push(part);

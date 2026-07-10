@@ -1036,6 +1036,8 @@ describe('gateImageFormatParts', () => {
     ]) {
       const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url: bad } }]);
       expect(out[0]).toMatchObject({ type: 'text' });
+      // The notice keeps the URL so the model can fetch and convert the image.
+      expect((out[0] as { text: string }).text).toContain(bad);
     }
     for (const ok of [
       'https://example.com/pic.png',
