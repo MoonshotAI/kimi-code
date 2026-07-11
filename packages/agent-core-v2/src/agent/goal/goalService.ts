@@ -250,19 +250,19 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this._register(
-      loopService.hooks.beforeStep.register('goal-count-turn', async (ctx, next) => {
+      loopService.hooks.onWillBeginStep.register('goal-count-turn', async (ctx, next) => {
         await this.handleBeforeStep(ctx);
         await next();
       }),
     );
     this._register(
-      loopService.hooks.afterStep.register('goal-outcome-continuation', async (ctx, next) => {
+      loopService.hooks.onDidFinishStep.register('goal-outcome-continuation', async (ctx, next) => {
         this.handleAfterStep(ctx);
         await next();
       }),
     );
     this._register(
-      toolExecutor.hooks.onWillExecuteTool.register('goal-budget-reject', async (ctx, next) => {
+      toolExecutor.hooks.onBeforeExecuteTool.register('goal-budget-reject', async (ctx, next) => {
         // During a turn's budget-grace step the model was told to write a
         // final message without tools: answer every tool call with a soft
         // synthetic result instead of executing it.
@@ -495,7 +495,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     // goalDrivenTurns. The prompt then runs as a normal non-goal turn — no
     // turn counting, no goal_continued telemetry, no continuation — while the
     // blocked-goal note still reaches the model, because injection reads the
-    // goal status in the first beforeStep, after this subscriber ran.
+    // goal status in the first onWillBeginStep, after this subscriber ran.
     if (state?.status === 'active' && this.blockIfBudgetReached(state) === null) {
       this.goalDrivenTurns.add(turnId);
     }

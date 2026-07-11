@@ -29,7 +29,7 @@ import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
  * cleanly.
  */
 export function stubWireRecord(): IAgentWireRecordService {
-  const hooks = createHooks(['onRestoredRecord', 'onResumeEnded']) as IAgentWireRecordService['hooks'];
+  const hooks = createHooks(['onDidRestoreRecord', 'onDidFinishResume']) as IAgentWireRecordService['hooks'];
   return {
     _serviceBrand: undefined,
     restoring: null,

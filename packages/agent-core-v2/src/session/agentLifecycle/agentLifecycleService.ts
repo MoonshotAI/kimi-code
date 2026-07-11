@@ -286,7 +286,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // the loop — so it must be ignited before the first turn.
     handle.accessor.get(IAgentStepRetryService);
     // Loop-continuation aspect: enqueues the next step whenever a step ran
-    // tools. It only observes the loop's afterStep hook, so without ignition
+    // tools. It only observes the loop's onDidFinishStep hook, so without ignition
     // every tool-using turn would stop after a single step.
     handle.accessor.get(IAgentLoopContinuationService);
   }

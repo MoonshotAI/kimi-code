@@ -153,13 +153,13 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       this.eventBus.subscribe('turn.started', () => this.resetForTurn()),
     );
     this._register(
-      this.loopService.hooks.beforeStep.register('full-compaction', async (ctx, next) => {
+      this.loopService.hooks.onWillBeginStep.register('full-compaction', async (ctx, next) => {
         await this.beforeStep(ctx.signal, ctx.turnId);
         await next();
       }),
     );
     this._register(
-      this.loopService.hooks.afterStep.register('full-compaction', async (_ctx, next) => {
+      this.loopService.hooks.onDidFinishStep.register('full-compaction', async (_ctx, next) => {
         await this.afterStep();
         await next();
       }),
@@ -815,7 +815,7 @@ function compactionCancelledReason(active: ActiveCompaction | null): Error {
 }
 
 // Construct eagerly (not delayed): the service registers turn and loop hooks
-// (onLaunched / beforeStep / afterStep) plus a loop error handler that drive
+// (onLaunched / onWillBeginStep / onDidFinishStep) plus a loop error handler that drive
 // auto compaction. With delayed instantiation the eager `accessor.get(IAgentFullCompactionService)`
 // only realizes a proxy, so the hooks would not register until the first RPC —
 // after turns have already run without the auto-compaction gate.

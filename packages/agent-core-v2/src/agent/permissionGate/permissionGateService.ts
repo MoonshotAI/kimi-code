@@ -65,7 +65,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
-    toolExecutor.hooks.onWillExecuteTool.register('permission', async (ctx, next) => {
+    toolExecutor.hooks.onBeforeExecuteTool.register('permission', async (ctx, next) => {
       const result = await this.authorize(ctx);
       if (result !== undefined) {
         ctx.decision = result;

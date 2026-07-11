@@ -245,7 +245,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       ),
     );
     this._register(
-      wireRecord.hooks.onRestoredRecord.register(
+      wireRecord.hooks.onDidRestoreRecord.register(
         'task-delivered-notifications',
         async (ctx, next) => {
           this.markDeliveredNotificationsFromRecord(ctx.record);

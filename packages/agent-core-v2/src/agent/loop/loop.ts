@@ -206,8 +206,8 @@ export interface IAgentLoopService {
   ): IDisposable;
 
   readonly hooks: Hooks<{
-    beforeStep: BeforeStepContext;
-    afterStep: AfterStepContext;
+    onWillBeginStep: BeforeStepContext;
+    onDidFinishStep: AfterStepContext;
   }>;
 }
 

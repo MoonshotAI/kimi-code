@@ -14,7 +14,7 @@ export interface IAgentPermissionModeService {
   setMode(mode: PermissionMode): void;
 
   readonly hooks: Hooks<{
-    onChanged: PermissionModeChangedContext;
+    onDidChangeMode: PermissionModeChangedContext;
   }>;
 }
 

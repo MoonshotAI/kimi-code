@@ -157,7 +157,7 @@ describe('goal tools', () => {
   async function countGoalTurn(turnId: number): Promise<void> {
     const abortController = new AbortController();
     eventBus.publish({ type: 'turn.started', turnId, origin: USER_PROMPT_ORIGIN });
-    await loopService.hooks.beforeStep.run({
+    await loopService.hooks.onWillBeginStep.run({
       turnId,
       step: 1,
       signal: abortController.signal,

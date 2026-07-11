@@ -34,8 +34,8 @@ export class HostTerminalService extends Disposable implements IHostTerminalServ
       env: globalThis.process.env,
     });
     const terminalProcess: TerminalProcess = {
-      onData: (listener) => proc.onData(listener),
-      onExit: (listener) => proc.onExit((event) => listener({ exitCode: event.exitCode })),
+      onProcessData: (listener) => proc.onData(listener),
+      onProcessExit: (listener) => proc.onExit((event) => listener({ exitCode: event.exitCode })),
       write: (data) => proc.write(data),
       resize: (cols, rows) => proc.resize(cols, rows),
       kill: () => proc.kill(),

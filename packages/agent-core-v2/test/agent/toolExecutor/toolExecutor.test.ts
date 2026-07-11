@@ -311,10 +311,10 @@ describe('AgentToolExecutorService', () => {
     expect(toolCallEvent?.args).toEqual({ x: 1 });
   });
 
-  it('onWillExecuteTool block records an error result without invoking execute', async () => {
+  it('onBeforeExecuteTool block records an error result without invoking execute', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    executor.hooks.onWillExecuteTool.register('block', async (ctx) => {
+    executor.hooks.onBeforeExecuteTool.register('block', async (ctx) => {
       ctx.decision = { block: true, reason: 'forbidden' };
     });
 
@@ -329,12 +329,12 @@ describe('AgentToolExecutorService', () => {
     expect(tool.calls).toEqual([]);
   });
 
-  it('onWillExecuteTool syntheticResult bypasses execute', async () => {
+  it('onBeforeExecuteTool syntheticResult bypasses execute', async () => {
     const first = new TestTool('first');
     const second = new TestTool('second');
     registry.register(first);
     registry.register(second);
-    executor.hooks.onWillExecuteTool.register('synthetic', async (ctx) => {
+    executor.hooks.onBeforeExecuteTool.register('synthetic', async (ctx) => {
       if (ctx.toolCall.id !== 'call_first') return;
       ctx.decision = {
         syntheticResult: {

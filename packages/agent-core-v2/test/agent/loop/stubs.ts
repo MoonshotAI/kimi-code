@@ -43,7 +43,7 @@ function registry(): { handlers: LoopErrorHandler[]; register: IAgentLoopService
 }
 function materialize(request: StepRequest, context: { append(...messages: ContextMessage[]): void }): void { if (request.state !== 'pending') return; request.onWillMaterialize(); const messages = request.resolveContextMessages(); if (messages.length) context.append(...messages); request.markMaterialized(); }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
-  const hooks = createHooks(['beforeStep', 'afterStep']) as IAgentLoopService['hooks'];
+  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep']) as IAgentLoopService['hooks'];
   const queue = new StepRequestQueue(); const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   const startTurn = () => {
@@ -76,4 +76,4 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
 }
 export type StubWire = IWireService & { readonly ops: readonly Op[]; readonly steered: readonly { readonly input: readonly ContentPart[]; readonly origin?: PromptOrigin }[] };
 export function stubWire(): StubWire { const ops: Op[] = []; const steered: { input: readonly ContentPart[]; origin?: PromptOrigin }[] = []; return { _serviceBrand: undefined, ops, steered, dispatch: (...incoming: Op[]) => { for (const op of incoming) { ops.push(op); if (op.type === 'turn.steer') steered.push(op.payload as never); } }, replay: async () => {}, signal: () => {}, flush: async () => {}, attach: () => toDisposable(() => {}), getModel: () => ({}), subscribe: () => toDisposable(() => {}), onEmission: () => toDisposable(() => {}), onRestored: () => toDisposable(() => {}) } as unknown as StubWire; }
-export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, hooks: createHooks(['onWillExecuteTool', 'onDidExecuteTool']) as IAgentToolExecutorService['hooks'], registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }
+export function stubToolExecutor(): IAgentToolExecutorService { return { _serviceBrand: undefined, execute: async function* () {}, hooks: createHooks(['onBeforeExecuteTool', 'onDidExecuteTool']) as IAgentToolExecutorService['hooks'], registerUnavailableToolDescriber: () => ({ dispose() {} }), registerMissingToolDescriber: () => ({ dispose() {} }) }; }

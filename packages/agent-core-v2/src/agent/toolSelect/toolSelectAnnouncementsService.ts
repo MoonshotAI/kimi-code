@@ -37,7 +37,7 @@ export class AgentToolSelectAnnouncementsService extends Disposable implements I
       }),
     );
     this._register(
-      loopService.hooks.beforeStep.register('toolSelectAnnouncements', async (ctx, next) => {
+      loopService.hooks.onWillBeginStep.register('toolSelectAnnouncements', async (ctx, next) => {
         await next();
         if (ctx.step !== 1 && !this.needsBoundaryInjection) return;
         this.needsBoundaryInjection = false;

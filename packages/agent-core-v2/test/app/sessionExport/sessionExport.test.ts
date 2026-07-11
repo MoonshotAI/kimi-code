@@ -445,8 +445,8 @@ function stubAgentWire(flush: () => Promise<void> = async () => {}): IAgentWireR
     flush,
     close: async () => {},
     hooks: {
-      onRestoredRecord: { run: async () => {} },
-      onResumeEnded: { run: async () => {} },
+      onDidRestoreRecord: { run: async () => {} },
+      onDidFinishResume: { run: async () => {} },
     } as unknown as IAgentWireRecordService['hooks'],
   };
 }

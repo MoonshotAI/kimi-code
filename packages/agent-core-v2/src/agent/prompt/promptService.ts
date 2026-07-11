@@ -65,7 +65,7 @@ export class AgentPromptService implements IAgentPromptService {
   private readonly steered = new Map<string, Record[]>();
   private launching = false;
   private fullCompactionService: IAgentFullCompactionService | undefined;
-  readonly hooks = { onWillSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
+  readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -205,7 +205,7 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   private async blockedByHook(promptMessage: ContextMessage, isSteer: boolean): Promise<boolean> {
-    const ctx = { promptMessage, isSteer, block: false }; await this.hooks.onWillSubmitPrompt.run(ctx); return ctx.block;
+    const ctx = { promptMessage, isSteer, block: false }; await this.hooks.onBeforeSubmitPrompt.run(ctx); return ctx.block;
   }
   private get fullCompaction(): IAgentFullCompactionService {
     if (this.fullCompactionService === undefined) {

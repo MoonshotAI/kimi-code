@@ -57,7 +57,7 @@ export interface IAgentPromptService {
   retry(): Promise<Turn | undefined>;
   undo(count: number): number;
   clear(): void;
-  readonly hooks: Hooks<{ onWillSubmitPrompt: PromptSubmitContext }>;
+  readonly hooks: Hooks<{ onBeforeSubmitPrompt: PromptSubmitContext }>;
 }
 
 export const IAgentPromptService = createDecorator<IAgentPromptService>('agentPromptService');

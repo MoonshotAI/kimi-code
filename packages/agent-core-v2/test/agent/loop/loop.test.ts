@@ -344,7 +344,7 @@ describe('Agent loop', () => {
   it('lets non-external stop hooks continue a turn more than once', async () => {
     profile.update({ activeToolNames: [] });
     let continuations = 0;
-    loop.hooks.afterStep.register('test-repeat-stop-continuation', async (hookCtx, next) => {
+    loop.hooks.onDidFinishStep.register('test-repeat-stop-continuation', async (hookCtx, next) => {
       if (continuations < 2) {
         continuations += 1;
         loop.enqueue(
@@ -414,7 +414,7 @@ describe('Agent loop', () => {
     profile.update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
 
-    loop.hooks.afterStep.register('test-stop-turn', async (hookCtx, next) => {
+    loop.hooks.onDidFinishStep.register('test-stop-turn', async (hookCtx, next) => {
       hookCtx.stopTurn = true;
       await next();
     });
@@ -438,11 +438,11 @@ describe('Agent loop', () => {
   it('lets stopTurn take precedence over a queued continuation request', async () => {
     profile.update({ activeToolNames: [] });
 
-    loop.hooks.afterStep.register('test-continue-like-stop-hook', async (hookCtx, next) => {
+    loop.hooks.onDidFinishStep.register('test-continue-like-stop-hook', async (hookCtx, next) => {
       loop.enqueue(new ContinuationStepRequest());
       await next();
     });
-    loop.hooks.afterStep.register('test-hard-stop', async (hookCtx, next) => {
+    loop.hooks.onDidFinishStep.register('test-hard-stop', async (hookCtx, next) => {
       hookCtx.stopTurn = true;
       await next();
     });
@@ -501,7 +501,7 @@ describe('Agent loop', () => {
     const started = new Promise<void>((resolve) => {
       stepStarted = resolve;
     });
-    loop.hooks.beforeStep.register('test-running-step-cancel', async (hookCtx, next) => {
+    loop.hooks.onWillBeginStep.register('test-running-step-cancel', async (hookCtx, next) => {
       if (hookCtx.step === 2) {
         stepStarted();
         await Promise.race([
@@ -536,7 +536,7 @@ describe('Agent loop', () => {
     const started = new Promise<void>((resolve) => {
       stepStarted = resolve;
     });
-    loop.hooks.beforeStep.register('test-dispose-loop', async (hookCtx, next) => {
+    loop.hooks.onWillBeginStep.register('test-dispose-loop', async (hookCtx, next) => {
       stepStarted();
       await new Promise<void>((_, reject) => {
         hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), { once: true });

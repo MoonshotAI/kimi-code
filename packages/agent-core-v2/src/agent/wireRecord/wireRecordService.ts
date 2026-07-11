@@ -45,8 +45,8 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
   private _restoring: { time?: number } | null = null;
   private _postRestoring = false;
   readonly hooks = {
-    onRestoredRecord: new OrderedHookSlot<WireRecordRestoredContext>(),
-    onResumeEnded: new OrderedHookSlot<{}>(),
+    onDidRestoreRecord: new OrderedHookSlot<WireRecordRestoredContext>(),
+    onDidFinishResume: new OrderedHookSlot<{}>(),
   };
 
   constructor(
@@ -229,7 +229,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
         }
       }
       const context: WireRecordRestoredContext = { record, stop: false };
-      await this.hooks.onRestoredRecord.run(context);
+      await this.hooks.onDidRestoreRecord.run(context);
       return context.stop;
     } finally {
       this._restoring = null;
@@ -239,7 +239,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
   private async runResumeEndedHooks(): Promise<void> {
     this._postRestoring = true;
     try {
-      await this.hooks.onResumeEnded.run({});
+      await this.hooks.onDidFinishResume.run({});
     } finally {
       this._postRestoring = false;
     }

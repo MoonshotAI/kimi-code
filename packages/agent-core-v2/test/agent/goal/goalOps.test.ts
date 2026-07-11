@@ -38,7 +38,7 @@ function hookSlot(): { register: () => { dispose: () => void } } {
 function createLoopStub(): IAgentLoopService {
   return {
     _serviceBrand: undefined,
-    hooks: { beforeStep: hookSlot(), afterStep: hookSlot() },
+    hooks: { onWillBeginStep: hookSlot(), onDidFinishStep: hookSlot() },
   } as unknown as IAgentLoopService;
 }
 
@@ -74,7 +74,7 @@ function createTelemetryStub(): ITelemetryService {
 function createToolExecutorStub(): IAgentToolExecutorService {
   return {
     _serviceBrand: undefined,
-    hooks: { onWillExecuteTool: hookSlot(), onDidExecuteTool: hookSlot() },
+    hooks: { onBeforeExecuteTool: hookSlot(), onDidExecuteTool: hookSlot() },
   } as unknown as IAgentToolExecutorService;
 }
 

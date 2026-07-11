@@ -11,7 +11,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool/toolHooks';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
@@ -155,7 +155,7 @@ function beforeStep(
   step: number,
   signal = new AbortController().signal,
 ): Promise<void> {
-  return h.loop.hooks.beforeStep.run({ turnId, step, signal });
+  return h.loop.hooks.onWillBeginStep.run({ turnId, step, signal });
 }
 
 function afterStep(
@@ -164,7 +164,7 @@ function afterStep(
   step: number,
   signal = new AbortController().signal,
 ): Promise<void> {
-  return h.loop.hooks.afterStep.run({
+  return h.loop.hooks.onDidFinishStep.run({
     turnId,
     step,
     signal,
@@ -201,18 +201,18 @@ async function runStep(
   return results;
 }
 
-function dummyExecution(): ToolWillExecuteContext['execution'] {
+function dummyExecution(): ToolBeforeExecuteContext['execution'] {
   return { approvalRule: 'x', execute: async () => ({ output: '' }) };
 }
 
-/** Minimal `onWillExecuteTool` context — the dedupe handler reads only id/name/args. */
+/** Minimal `onBeforeExecuteTool` context — the dedupe handler reads only id/name/args. */
 function willCtx(
   id: string,
   name: string,
   args: unknown,
   turnId = 1,
   signal = new AbortController().signal,
-): ToolWillExecuteContext {
+): ToolBeforeExecuteContext {
   const tc = toolCall(id, name, args);
   return {
     turnId,
@@ -251,12 +251,12 @@ describe('AgentToolDedupeService', () => {
       await beforeStep(h, 1, 1);
 
       const w1 = willCtx('c1', 'Read', { path: '/a' });
-      await h.executor.hooks.onWillExecuteTool.run(w1);
+      await h.executor.hooks.onBeforeExecuteTool.run(w1);
       // First occurrence is the original — no synthetic decision.
       expect(w1.decision).toBeUndefined();
 
       const w2 = willCtx('c2', 'Read', { path: '/a' });
-      await h.executor.hooks.onWillExecuteTool.run(w2);
+      await h.executor.hooks.onBeforeExecuteTool.run(w2);
       // Same-step dup gets a synthetic placeholder (non-error, empty string).
       expect(w2.decision?.syntheticResult).toEqual({ output: '' });
 
@@ -276,9 +276,9 @@ describe('AgentToolDedupeService', () => {
       await beforeStep(h, 1, 1);
 
       const w1 = willCtx('c1', 'Bash', { cmd: 'x' });
-      await h.executor.hooks.onWillExecuteTool.run(w1);
+      await h.executor.hooks.onBeforeExecuteTool.run(w1);
       const w2 = willCtx('c2', 'Bash', { cmd: 'x' });
-      await h.executor.hooks.onWillExecuteTool.run(w2);
+      await h.executor.hooks.onBeforeExecuteTool.run(w2);
       expect(w2.decision?.syntheticResult).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Bash', { cmd: 'x' }, errResult('boom'));
@@ -526,11 +526,11 @@ describe('AgentToolDedupeService', () => {
       await beforeStep(h, 1, 1);
 
       const w1 = willCtx('c1', 'Read', { a: 1, b: 2 });
-      await h.executor.hooks.onWillExecuteTool.run(w1);
+      await h.executor.hooks.onBeforeExecuteTool.run(w1);
       expect(w1.decision).toBeUndefined();
 
       const w2 = willCtx('c2', 'Read', { b: 2, a: 1 });
-      await h.executor.hooks.onWillExecuteTool.run(w2);
+      await h.executor.hooks.onBeforeExecuteTool.run(w2);
       expect(w2.decision?.syntheticResult).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Read', { a: 1, b: 2 }, okResult('SAME'));
@@ -545,17 +545,17 @@ describe('AgentToolDedupeService', () => {
     it('resolves the dup deferred even when the original call args are rewritten before finalize', async () => {
       // Models the loop contract: prepareToolExecution may return
       // {updatedArgs}, in which case finalizeToolResult sees the rewritten
-      // args. The dedupe key is registered at onWillExecuteTool time under the
+      // args. The dedupe key is registered at onBeforeExecuteTool time under the
       // LLM-issued args (keyed by call id), so the deferred is resolved under
       // that same key regardless of the rewritten args seen at finalize time.
       const h = createHarness();
       await beforeStep(h, 1, 1);
 
       const w1 = willCtx('c1', 'Read', { path: '/a' });
-      await h.executor.hooks.onWillExecuteTool.run(w1);
+      await h.executor.hooks.onBeforeExecuteTool.run(w1);
       expect(w1.decision).toBeUndefined();
       const w2 = willCtx('c2', 'Read', { path: '/a' });
-      await h.executor.hooks.onWillExecuteTool.run(w2);
+      await h.executor.hooks.onBeforeExecuteTool.run(w2);
       expect(w2.decision?.syntheticResult).toEqual({ output: '' });
 
       // Original finalize is called with REWRITTEN args (simulates a hook
@@ -585,11 +585,11 @@ describe('AgentToolDedupeService', () => {
       await beforeStep(h, 1, 1);
       // Register an original but never finalize it (simulates abort mid-step).
       const w1 = willCtx('leaked', 'Read', { p: 1 });
-      await h.executor.hooks.onWillExecuteTool.run(w1);
+      await h.executor.hooks.onBeforeExecuteTool.run(w1);
       expect(w1.decision).toBeUndefined();
       // Register a dup that captures the leaked deferred.
       const w2 = willCtx('dup', 'Read', { p: 1 });
-      await h.executor.hooks.onWillExecuteTool.run(w2);
+      await h.executor.hooks.onBeforeExecuteTool.run(w2);
       const placeholder = w2.decision!.syntheticResult!;
       expect(placeholder).toEqual({ output: '' });
 

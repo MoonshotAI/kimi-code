@@ -8,7 +8,7 @@
  * The loop only learns that the error was caught; the retry rides the normal
  * step numbering and consumes `maxSteps` budget like any other step. Each
  * claimed failure publishes `turn.step.retrying`. Consecutive attempts are
- * counted per failed driver and reset when any step succeeds (`afterStep`)
+ * counted per failed driver and reset when any step succeeds (`onDidFinishStep`)
  * or a new turn starts. Bound at Agent scope; Eager so the handler registers
  * before the first turn runs (same rationale as `fullCompaction`).
  */
@@ -62,7 +62,7 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
       }),
     );
     this._register(
-      this.loopService.hooks.afterStep.register('step-retry', async (_ctx, next) => {
+      this.loopService.hooks.onDidFinishStep.register('step-retry', async (_ctx, next) => {
         this.resetAttempts();
         await next();
       }),

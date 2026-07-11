@@ -206,7 +206,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
       hooks: {
-        onWillExecuteTool: { register: () => ({ dispose: () => {} }) },
+        onBeforeExecuteTool: { register: () => ({ dispose: () => {} }) },
         onDidExecuteTool: { register: () => ({ dispose: () => {} }) },
       },
     } as unknown as IAgentToolExecutorService);
@@ -215,7 +215,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       mode: 'manual',
       setMode: permissionModeSetMode,
-      hooks: { onChanged: { register: () => ({ dispose: () => {} }) } },
+      hooks: { onDidChangeMode: { register: () => ({ dispose: () => {} }) } },
     } as unknown as IAgentPermissionModeService);
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });

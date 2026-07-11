@@ -93,8 +93,8 @@ export interface IAgentWireRecordService {
   close(): Promise<void>;
 
   readonly hooks: Hooks<{
-    onRestoredRecord: WireRecordRestoredContext;
-    onResumeEnded: {};
+    onDidRestoreRecord: WireRecordRestoredContext;
+    onDidFinishResume: {};
   }>;
 }
 

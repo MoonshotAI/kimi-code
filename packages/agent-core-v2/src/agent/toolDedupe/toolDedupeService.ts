@@ -1,8 +1,8 @@
 /**
  * `toolDedupe` domain (L4) — `IAgentToolDedupeService` implementation.
  *
- * Self-wiring plugin: its constructor registers `loop` beforeStep/afterStep
- * hooks and `toolExecutor` onWillExecuteTool/onDidExecuteTool hooks to drive
+ * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
+ * hooks and `toolExecutor` onBeforeExecuteTool/onDidExecuteTool hooks to drive
  * same-step suppression and cross-step repeat reminders, and reports repeat
  * telemetry through `telemetry`. Constructed eagerly at Agent scope so the
  * hooks are installed without any other service injecting it.
@@ -127,15 +127,15 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
-    loop.hooks.beforeStep.register('toolDedupe', async (ctx, next) => {
+    loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
       this.beginStep(ctx.turnId, ctx.step);
       await next();
     });
-    loop.hooks.afterStep.register('toolDedupe', async (_ctx, next) => {
+    loop.hooks.onDidFinishStep.register('toolDedupe', async (_ctx, next) => {
       this.endStep();
       await next();
     });
-    toolExecutor.hooks.onWillExecuteTool.register('toolDedupe', async (ctx, next) => {
+    toolExecutor.hooks.onBeforeExecuteTool.register('toolDedupe', async (ctx, next) => {
       const checked = this.checkToolCall(ctx.toolCall.id, ctx.toolCall.name, ctx.args);
       if (checked.syntheticResult !== null) {
         ctx.decision = { syntheticResult: checked.syntheticResult };

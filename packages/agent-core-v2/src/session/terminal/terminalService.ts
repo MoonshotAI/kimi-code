@@ -105,8 +105,8 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       closed: false,
     };
     record.disposables.push(
-      process.onData((data) => this.onData(record, data)),
-      process.onExit((event) => this.onExit(record, event.exitCode)),
+      process.onProcessData((data) => this.onData(record, data)),
+      process.onProcessExit((event) => this.onExit(record, event.exitCode)),
     );
     this.records.set(terminal.id, record);
     return { ...terminal };

@@ -1922,7 +1922,7 @@ function createPermissionModeService(initialMode: PermissionMode): IAgentPermiss
       mode = nextMode;
     },
     hooks: {
-      onChanged: emptyHook,
+      onDidChangeMode: emptyHook,
     } as unknown as IAgentPermissionModeService['hooks'],
   };
 }
@@ -1950,8 +1950,8 @@ function createHostTerminalService(): IHostTerminalService {
   return {
     _serviceBrand: undefined,
     spawn: async () => ({
-      onData: Event.None as Event<string>,
-      onExit: Event.None as Event<{ exitCode: number | null }>,
+      onProcessData: Event.None as Event<string>,
+      onProcessExit: Event.None as Event<{ exitCode: number | null }>,
       write: () => { },
       resize: () => { },
       kill: () => { },

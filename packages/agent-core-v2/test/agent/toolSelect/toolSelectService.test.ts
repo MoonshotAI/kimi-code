@@ -199,8 +199,8 @@ class FakeLoopService implements IAgentLoopService {
   readonly _serviceBrand = undefined;
 
   readonly hooks: IAgentLoopService['hooks'] = {
-    beforeStep: new OrderedHookSlot<BeforeStepContext>(),
-    afterStep: new OrderedHookSlot<AfterStepContext>(),
+    onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),
+    onDidFinishStep: new OrderedHookSlot<AfterStepContext>(),
   };
 
   enqueue(_request: StepRequest, _options?: StepEnqueueOptions): EnqueueReceipt {
@@ -370,7 +370,7 @@ function registerBuiltin(h: Harness, tool: EchoTool): void {
 
 async function announce(h: Harness, step = 1): Promise<string | undefined> {
   const before = h.contextMemory.appended.length;
-  await h.loop.hooks.beforeStep.run({
+  await h.loop.hooks.onWillBeginStep.run({
     turnId: 1,
     step,
     signal: new AbortController().signal,

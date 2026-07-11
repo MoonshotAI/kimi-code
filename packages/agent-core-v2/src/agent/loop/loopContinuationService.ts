@@ -2,7 +2,7 @@
  * `loop` domain (L4) — tool-step continuation aspect.
  *
  * A step that executed tools must drive one more step so the model consumes
- * the tool results: this service watches the loop's `afterStep` and enqueues
+ * the tool results: this service watches the loop's `onDidFinishStep` and enqueues
  * a `ContinuationStepRequest` whenever a step ends with `tool_calls` — which
  * is exactly when the step ran tools without a stopTurn tool result (the
  * loop maps that combination onto the `tool_calls` finish reason). The loop
@@ -30,7 +30,7 @@ export class AgentLoopContinuationService
   constructor(@IAgentLoopService loop: IAgentLoopService) {
     super();
     this._register(
-      loop.hooks.afterStep.register('loop-continuation', async (ctx, next) => {
+      loop.hooks.onDidFinishStep.register('loop-continuation', async (ctx, next) => {
         await next();
         if (ctx.stopTurn || ctx.finishReason !== 'tool_calls') return;
         loop.enqueue(new ContinuationStepRequest());

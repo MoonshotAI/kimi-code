@@ -10,8 +10,8 @@
  *
  * The run drains the queue one batch per step: each batch's driver request
  * (plus any mergeable requests folded into it) materializes its context
- * messages, then one LLM step runs (`beforeStep` → streamed request → content
- * parts → tool execution → `step.end` → `afterStep`). The loop itself never
+ * messages, then one LLM step runs (`onWillBeginStep` → streamed request → content
+ * parts → tool execution → `step.end` → `onDidFinishStep`). The loop itself never
  * enqueues — it only runs requests and dispatches errors. What drives the
  * next step lives entirely in the aspects: the `loopContinuation` aspect
  * enqueues a `ContinuationStepRequest` when a step executed tools (a plain
@@ -110,8 +110,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
   readonly hooks: IAgentLoopService['hooks'] = {
-    beforeStep: new OrderedHookSlot(),
-    afterStep: new OrderedHookSlot(),
+    onWillBeginStep: new OrderedHookSlot(),
+    onDidFinishStep: new OrderedHookSlot(),
   };
 
   private readonly standaloneStepQueue = new StepRequestQueue();
@@ -636,7 +636,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   /**
    * Append the batch's context messages (driver first, then merged requests)
-   * before `beforeStep` hooks run, so compaction / injection hooks observe the
+   * before `onWillBeginStep` hooks run, so compaction / injection hooks observe the
    * full step input. A materialized driver (a retried step) is skipped.
    */
   private materializeBatch(batch: StepRequestBatch): void {
@@ -663,7 +663,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     stepUuid: string,
     onStarted: ((step: number) => void) | undefined,
   ): Promise<StepExecutionResult> {
-    await this.hooks.beforeStep.run({ turnId, step: currentStep, signal });
+    await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
     const response = await this.llmRequester.request(
       { source: { type: 'turn', turnId, step: currentStep } },
@@ -830,7 +830,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       stopTurn: false,
     };
     try {
-      await this.hooks.afterStep.run(context);
+      await this.hooks.onDidFinishStep.run(context);
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
     }

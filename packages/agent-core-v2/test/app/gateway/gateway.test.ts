@@ -61,7 +61,7 @@ describe('RestGateway', () => {
       retry: () => Promise.resolve(undefined),
       undo: () => 0,
       clear: () => {},
-      hooks: createHooks(['onWillSubmitPrompt']) as IAgentPromptService['hooks'],
+      hooks: createHooks(['onBeforeSubmitPrompt']) as IAgentPromptService['hooks'],
     };
 
     const agentHandle: IAgentScopeHandle = {

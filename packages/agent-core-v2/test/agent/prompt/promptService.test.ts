@@ -100,7 +100,7 @@ describe('AgentPromptService', () => {
 
   it('settles blocked prompts', async () => {
     const { prompt } = harness();
-    prompt.hooks.onWillSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
+    prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
     const handle = await prompt.enqueue({ message: message('blocked') });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
   });

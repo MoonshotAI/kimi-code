@@ -9,7 +9,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ToolResult } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool/toolHooks';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { OrderedHookSlot } from '#/hooks';
 
@@ -40,7 +40,7 @@ export interface IAgentToolExecutorService {
   execute(calls: ToolCall[], options: ToolExecutorExecuteOptions): AsyncIterable<ToolExecutionResult>;
 
   readonly hooks: {
-    readonly onWillExecuteTool: OrderedHookSlot<ToolWillExecuteContext>;
+    readonly onBeforeExecuteTool: OrderedHookSlot<ToolBeforeExecuteContext>;
     readonly onDidExecuteTool: OrderedHookSlot<ToolDidExecuteContext>;
   };
 

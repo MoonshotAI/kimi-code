@@ -62,7 +62,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     super();
     this.attachMcpTools();
     this._register(
-      toolExecutor.hooks.onWillExecuteTool.register(
+      toolExecutor.hooks.onBeforeExecuteTool.register(
         'mcp-wait-for-initial-load',
         async (ctx, next) => {
           await this.waitForInitialLoad(ctx.signal);

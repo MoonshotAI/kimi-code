@@ -32,7 +32,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   ) {
     super();
     this._register(
-      loopService.hooks.beforeStep.register('context-injector', async (_ctx, next) => {
+      loopService.hooks.onWillBeginStep.register('context-injector', async (_ctx, next) => {
         await next();
         await this.inject();
       }),

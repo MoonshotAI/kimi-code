@@ -30,7 +30,7 @@ import { isAbortError } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import { ToolAccesses } from '#/agent/tool/tool-access';
 import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution, ToolExecution, ToolResult, ToolUpdate } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool/toolHooks';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
@@ -93,7 +93,7 @@ type ToolExecutionStreamEvent =
 export class AgentToolExecutorService implements IAgentToolExecutorService {
   declare readonly _serviceBrand: undefined;
   readonly hooks = {
-    onWillExecuteTool: new OrderedHookSlot<ToolWillExecuteContext>(),
+    onBeforeExecuteTool: new OrderedHookSlot<ToolBeforeExecuteContext>(),
     onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
   };
 
@@ -333,7 +333,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }
 
     const willCtx = buildWillExecuteContext(call, execution, allCalls, options);
-    await this.hooks.onWillExecuteTool.run(willCtx);
+    await this.hooks.onBeforeExecuteTool.run(willCtx);
 
     const decision = willCtx.decision;
     if (decision?.block === true) {
@@ -619,7 +619,7 @@ function buildWillExecuteContext(
   execution: RunnableToolExecution,
   allCalls: readonly ToolCall[],
   options: ToolExecutorExecuteOptions,
-): ToolWillExecuteContext {
+): ToolBeforeExecuteContext {
   return {
     turnId: options.turnId,
     signal: options.signal,

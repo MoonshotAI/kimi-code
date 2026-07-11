@@ -4,7 +4,7 @@
  * Holds the agent's permission mode (`manual` / `auto`) in the `wire`
  * `PermissionModeModel`, mutating it only through the `permission.set_mode` Op
  * (`wire.dispatch(setMode({ mode }))`) and reading it through `wire.getModel`.
- * The `onChanged` hook is driven by a `wire.subscribe` on that model (firing
+ * The `onDidChangeMode` hook is driven by a `wire.subscribe` on that model (firing
  * only on actual changes), and mode-aware reminders are registered through the
  * permission-mode injection helper. Bound at Agent scope.
  */
@@ -25,7 +25,7 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
   declare readonly _serviceBrand: undefined;
 
   readonly hooks = {
-    onChanged: new OrderedHookSlot<{
+    onDidChangeMode: new OrderedHookSlot<{
       mode: PermissionMode;
       previousMode: PermissionMode;
     }>(),
@@ -39,7 +39,7 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
     this._register(
       wire.subscribe(PermissionModeModel, (mode, previousMode) => {
         if (mode === previousMode) return;
-        void this.hooks.onChanged.run({ mode, previousMode });
+        void this.hooks.onDidChangeMode.run({ mode, previousMode });
       }),
     );
     this._register(instantiation.createInstance(PermissionModeInjection, this));

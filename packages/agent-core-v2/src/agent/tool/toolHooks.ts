@@ -2,7 +2,7 @@
  * `tool` domain (L3) — tool-execution hook contexts.
  *
  * Defines the context objects passed through `IAgentToolExecutorService`'s
- * `onWillExecuteTool` / `onDidExecuteTool` hooks and the decision results
+ * `onBeforeExecuteTool` / `onDidExecuteTool` hooks and the decision results
  * handlers may return. Owned by `tool` because they describe tool execution,
  * not the turn lifecycle or the loop: participants such as `permission`,
  * `toolDedupe`, and `externalHooks` consume them without reaching upward into
@@ -37,7 +37,7 @@ export interface PrepareToolExecutionResult extends AuthorizeToolExecutionResult
   readonly updatedArgs?: unknown;
 }
 
-export interface ToolWillExecuteContext extends ResolvedToolExecutionHookContext {
+export interface ToolBeforeExecuteContext extends ResolvedToolExecutionHookContext {
   decision?: AuthorizeToolExecutionResult;
 }
 

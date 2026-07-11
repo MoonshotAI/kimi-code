@@ -41,7 +41,7 @@ import {
 import type { HookResultEvent, TurnEndedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ExecutableToolResult } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolWillExecuteContext } from '#/agent/tool/toolHooks';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -125,7 +125,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
     this._register(
-      toolExecutor.hooks.onWillExecuteTool.register('externalHooks', async (ctx, next) => {
+      toolExecutor.hooks.onBeforeExecuteTool.register('externalHooks', async (ctx, next) => {
         const reason = await this.runPreToolUse(ctx);
         if (reason !== undefined) {
           ctx.decision = { block: true, reason };
@@ -159,7 +159,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
   private registerPromptHooks(prompt: IAgentPromptService): void {
     this._register(
-      prompt.hooks.onWillSubmitPrompt.register('externalHooks', async (ctx, next) => {
+      prompt.hooks.onBeforeSubmitPrompt.register('externalHooks', async (ctx, next) => {
         if (await this.runPromptSubmitHook(ctx)) {
           ctx.block = true;
           return;
@@ -177,7 +177,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
 
   private registerLoopHooks(loop: IAgentLoopService): void {
     this._register(
-      loop.hooks.afterStep.register('externalHooks', async (ctx, next) => {
+      loop.hooks.onDidFinishStep.register('externalHooks', async (ctx, next) => {
         await next();
         if (
           ctx.finishReason === 'tool_calls' ||
@@ -235,7 +235,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     );
   }
 
-  private async runPreToolUse(ctx: ToolWillExecuteContext): Promise<string | undefined> {
+  private async runPreToolUse(ctx: ToolBeforeExecuteContext): Promise<string | undefined> {
     ctx.signal.throwIfAborted();
     const toolInput = isPlainRecord(ctx.args) ? ctx.args : {};
     const block = await this.runner.triggerBlock('PreToolUse', {

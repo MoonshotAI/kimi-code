@@ -1219,7 +1219,7 @@ function agentHandle(
     _serviceBrand: undefined,
     mode: 'auto',
     setMode: () => {},
-    hooks: createHooks(['onChanged']),
+    hooks: createHooks(['onDidChangeMode']),
   } as IAgentPermissionModeService;
   return {
     id,

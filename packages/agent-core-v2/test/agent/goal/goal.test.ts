@@ -83,8 +83,8 @@ async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> 
     finishReason: 'completed' as const,
     stopTurn: false,
   };
-  await loopService.hooks.beforeStep.run(step);
-  await loopService.hooks.afterStep.run(afterStep);
+  await loopService.hooks.onWillBeginStep.run(step);
+  await loopService.hooks.onDidFinishStep.run(afterStep);
   // Hooks ask for another step by enqueueing a continuation request (the old
   // `afterStep.continue` flag); the loop pops it as the next step's driver.
   return loopService.queue.takeNextBatch() !== undefined;
@@ -777,11 +777,11 @@ describe('AgentGoalService core workflow hooks', () => {
       finishReason: 'completed' as const,
       stopTurn: false,
     };
-    await loopService.hooks.beforeStep.run(step);
+    await loopService.hooks.onWillBeginStep.run(step);
 
     await goals.markComplete({}, 'model');
     await runTerminalUpdateGoalResult(toolExecutor, turn, 'complete', 'outcome prompt');
-    await loopService.hooks.afterStep.run(afterStep);
+    await loopService.hooks.onDidFinishStep.run(afterStep);
 
     // The outcome continuation is a queued step request now, not a ctx flag.
     expect(loopService.hasPendingRequests()).toBe(true);
@@ -800,7 +800,7 @@ describe('AgentGoalService core workflow hooks', () => {
       finishReason: 'completed' as const,
       stopTurn: false,
     };
-    await loopService.hooks.afterStep.run(secondAfterStep);
+    await loopService.hooks.onDidFinishStep.run(secondAfterStep);
     endTurn(eventBus, turn);
     expect(loopService.hasPendingRequests()).toBe(false);
   });

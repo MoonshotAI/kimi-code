@@ -43,8 +43,8 @@ export interface TerminalSpawnOptions {
 }
 
 export interface TerminalProcess {
-  readonly onData: Event<string>;
-  readonly onExit: Event<{ exitCode: number | null }>;
+  readonly onProcessData: Event<string>;
+  readonly onProcessExit: Event<{ exitCode: number | null }>;
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;

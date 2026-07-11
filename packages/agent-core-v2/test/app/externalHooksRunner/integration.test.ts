@@ -286,7 +286,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, loop);
           reg.define(IEventBus, EventBusService);
           reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onWillSubmitPrompt']),
+            hooks: createHooks(['onBeforeSubmitPrompt']),
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
@@ -310,13 +310,13 @@ describe('IExternalHooksRunnerService integration', () => {
         ...makeAfterStep(signal),
         finishReason: 'filtered',
       };
-      await loop.hooks.afterStep.run(filtered);
+      await loop.hooks.onDidFinishStep.run(filtered);
       expect(loop.hasPendingRequests()).toBe(false);
       expect(stopInputs).toEqual([]);
       expect(context.messages).toEqual([]);
 
       const first = makeAfterStep(signal);
-      await loop.hooks.afterStep.run(first);
+      await loop.hooks.onDidFinishStep.run(first);
       expect(loop.hasPendingRequests()).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
@@ -329,7 +329,7 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(loop.drainNextBatch(context)).toBeDefined();
 
       const second = makeAfterStep(signal);
-      await loop.hooks.afterStep.run(second);
+      await loop.hooks.onDidFinishStep.run(second);
       expect(loop.hasPendingRequests()).toBe(false);
       expect(stopInputs).toEqual([{ stopHookActive: false }]);
 
@@ -341,7 +341,7 @@ describe('IExternalHooksRunnerService integration', () => {
       });
 
       const nextTurn = makeAfterStep(signal);
-      await loop.hooks.afterStep.run(nextTurn);
+      await loop.hooks.onDidFinishStep.run(nextTurn);
       expect(loop.hasPendingRequests()).toBe(true);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
@@ -393,7 +393,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           reg.define(IEventBus, EventBusService);
           reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onWillSubmitPrompt']),
+            hooks: createHooks(['onBeforeSubmitPrompt']),
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
@@ -599,7 +599,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(IAgentLoopService, loop);
           reg.define(IEventBus, EventBusService);
           reg.definePartialInstance(IAgentPromptService, {
-            hooks: createHooks(['onWillSubmitPrompt']),
+            hooks: createHooks(['onBeforeSubmitPrompt']),
           });
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
           reg.definePartialInstance(IAgentPermissionGate, {});
@@ -620,7 +620,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       const afterStep = makeAfterStep(new AbortController().signal);
       let completed = false;
-      const pending = loop.hooks.afterStep.run(afterStep).then(() => {
+      const pending = loop.hooks.onDidFinishStep.run(afterStep).then(() => {
         completed = true;
       });
       await flushMicrotasks();

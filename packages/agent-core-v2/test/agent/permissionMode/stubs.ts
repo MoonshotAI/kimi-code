@@ -21,8 +21,8 @@ export function stubPermissionModeService(
       return mode();
     },
     setMode: () => {},
-    hooks: createHooks(['onChanged']) as Hooks<{
-      onChanged: { mode: PermissionMode; previousMode: PermissionMode };
+    hooks: createHooks(['onDidChangeMode']) as Hooks<{
+      onDidChangeMode: { mode: PermissionMode; previousMode: PermissionMode };
     }>,
   };
 }
