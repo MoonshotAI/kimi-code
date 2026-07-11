@@ -184,9 +184,13 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
  * Build the protocol-shaped `Message.content[]` for one ContextMessage.
  *
  * Order:
- *   1. For `tool` role: emit a SINGLE `tool_result` part. The output is the
- *      flattened text of the kosong message's content parts (most tool
- *      messages emit a single text). `is_error` is taken from `ContextMessage.isError`.
+ *   1. For `tool` role: emit a SINGLE `tool_result` part. Plain-text results
+ *      keep the historical flattened-text output (most tool messages emit a
+ *      single text); a result that carries media parts (image/video/audio —
+ *      e.g. ReadMediaFile) passes the raw kosong content-part array through
+ *      instead, the same shape the live `tool.result` event stream carries,
+ *      so REST consumers can still render the media. `is_error` is taken
+ *      from `ContextMessage.isError`.
  *   2. For other roles: emit each content part mapped per `mapContentPart`,
  *      THEN append one `tool_use` part per `ToolCall` (assistant only).
  */
@@ -197,20 +201,23 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
       // fall back to text passthrough so we don't lose user-visible content.
       return msg.content.map((p) => mapContentPart(p));
     }
-    const flattenedOutput = msg.content
-      .map((p) => (p.type === 'text' ? p.text : ''))
-      .join('');
+    const hasMediaPart = msg.content.some(
+      (p) => p.type === 'image_url' || p.type === 'video_url' || p.type === 'audio_url',
+    );
+    const output: unknown = hasMediaPart
+      ? msg.content
+      : msg.content.map((p) => (p.type === 'text' ? p.text : '')).join('');
     const part: MessageContent = msg.isError === true
       ? {
           type: 'tool_result',
           tool_call_id: msg.toolCallId,
-          output: flattenedOutput,
+          output,
           is_error: true,
         }
       : {
           type: 'tool_result',
           tool_call_id: msg.toolCallId,
-          output: flattenedOutput,
+          output,
         };
     return [part];
   }
