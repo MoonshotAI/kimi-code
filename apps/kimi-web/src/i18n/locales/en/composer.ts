@@ -3,6 +3,7 @@ export default {
   send: 'Send ↵',
   queueLabel: 'Queue',
   placeholderRunning: 'Press Enter to queue · Ctrl+S to inject into the running turn',
+  starting: 'Sending…',
   queueAutoDrain: 'sends automatically when the current turn ends',
   queueNext: 'Up next',
   queueDragTitle: 'Drag to reorder',

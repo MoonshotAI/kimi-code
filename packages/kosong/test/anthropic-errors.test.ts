@@ -86,6 +86,30 @@ describe('convertAnthropicError', () => {
     expect((result as APIProviderRateLimitError).statusCode).toBe(429);
   });
 
+  it('reads an integer retry-after header (seconds) onto the rate-limit error', () => {
+    const err = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } },
+      'rate limited',
+      new Headers({ 'retry-after': '7' }),
+    );
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).retryAfterMs).toBe(7_000);
+  });
+
+  it('ignores a non-integer (HTTP-date) retry-after header, leaving retryAfterMs null', () => {
+    const err = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } },
+      'rate limited',
+      new Headers({ 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' }),
+    );
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).retryAfterMs).toBeNull();
+  });
+
   it('generic AnthropicError -> ChatProviderError', () => {
     const err = new AnthropicError('something went wrong');
     const result = convertAnthropicError(err);
@@ -120,11 +144,17 @@ describe('convertAnthropicError', () => {
     expect(isRetryableGenerateError(result)).toBe(true);
   });
 
-  it('still wraps an unrelated raw Error as a non-retryable ChatProviderError', () => {
+  it('still wraps an unrelated raw Error as a base ChatProviderError, now retryable via fallback', () => {
+    // An unrelated raw Error is NOT an Anthropic SDK error and carries no
+    // usable HTTP status, so convertAnthropicError wraps it as a base
+    // ChatProviderError (constructor check guards that typing). The fallback
+    // safety net in isRetryableGenerateError then treats such unclassified
+    // provider failures as transient — retry beats failing the run on the
+    // first blip.
     const result = convertAnthropicError(new Error('something completely unrelated'));
 
     expect(result.constructor).toBe(ChatProviderError);
-    expect(isRetryableGenerateError(result)).toBe(false);
+    expect(isRetryableGenerateError(result)).toBe(true);
   });
 });
 describe('non-stream error propagation', () => {

@@ -4,6 +4,7 @@ import {
   ChatProviderError,
   classifyBaseApiError,
   normalizeAPIStatusError,
+  parseRetryAfterMs,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { isToolDeclarationOnlyMessage } from '#/message';
@@ -693,7 +694,12 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
   // APIError with a status code => status error
   if (error instanceof AnthropicAPIError && typeof error.status === 'number') {
     const reqId = error.requestID ?? null;
-    return normalizeAPIStatusError(error.status, error.message, reqId);
+    return normalizeAPIStatusError(
+      error.status,
+      error.message,
+      reqId,
+      parseRetryAfterMs(error.headers),
+    );
   }
   if (error instanceof AnthropicError) {
     return new ChatProviderError(`Anthropic error: ${error.message}`);

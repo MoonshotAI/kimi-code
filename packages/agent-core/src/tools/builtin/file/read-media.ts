@@ -48,6 +48,11 @@ import {
   type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '../../support/image-compress';
+import {
+  buildImageConversionGuidance,
+  isModelAcceptedImageMime,
+} from '../../support/image-format-policy';
+import { ImageLimits } from '../../support/image-limits';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
@@ -218,12 +223,14 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
+  private readonly imageLimits: ImageLimits;
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader | undefined,
     telemetry?: TelemetryClient,
+    imageLimits?: ImageLimits,
   ) {
     if (!capabilities.image_in && !capabilities.video_in) {
       const skip = new Error('ReadMediaFile requires image_in or video_in capability');
@@ -233,6 +240,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     this.description = buildDescription(capabilities);
     this.compressTelemetry =
       telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
+    this.imageLimits = imageLimits ?? new ImageLimits();
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
@@ -293,6 +301,24 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             'Tell the user to use a model with image input capability.',
         };
       }
+      // Formats outside the provider-accepted set (AVIF, HEIC, BMP, TIFF,
+      // ICO, …) must never reach the model: once the image_url lands in the
+      // history every subsequent request in the session is rejected. Refuse
+      // with a conversion command for the execution environment instead —
+      // the model can run it through Bash (under the normal permission flow)
+      // and read the converted file. The accepted set and guidance live in
+      // support/image-format-policy, the single source of truth every
+      // ingestion point shares.
+      if (fileType.kind === 'image' && !isModelAcceptedImageMime(fileType.mimeType)) {
+        return {
+          isError: true,
+          output: buildImageConversionGuidance(
+            args.path,
+            fileType.mimeType,
+            this.kaos.osEnv.osKind,
+          ),
+        };
+      }
       if (fileType.kind === 'video' && !this.capabilities.video_in) {
         return {
           isError: true,
@@ -336,6 +362,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           // full fidelity, so a prior downsampled view can be zoomed into.
           const outcome = await cropImageForModel(data, fileType.mimeType, args.region, {
             skipResize: args.full_resolution === true,
+            maxEdge: this.imageLimits.maxEdgePx(),
             telemetry: this.compressTelemetry,
           });
           if (!outcome.ok) {
@@ -388,10 +415,15 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           };
         } else {
           // Shrink oversized images so a large screenshot neither wastes context
-          // tokens nor trips the provider's per-image byte ceiling. Best effort:
-          // on any failure compressImageForModel returns the original bytes, so
-          // the read still succeeds with the uncompressed image.
+          // tokens nor trips the provider's per-image byte ceiling. Model-read
+          // images get the much tighter read budget: they accumulate in the
+          // request body on every turn, and detail stays reachable through the
+          // region readback (which ignores the budget). Best effort: on any
+          // failure compressImageForModel returns the original bytes, so the
+          // read still succeeds with the uncompressed image.
           const compressed = await compressImageForModel(data, fileType.mimeType, {
+            maxEdge: this.imageLimits.maxEdgePx(),
+            byteBudget: this.imageLimits.readByteBudget(),
             telemetry: this.compressTelemetry,
           });
           const base64 = Buffer.from(compressed.data).toString('base64');

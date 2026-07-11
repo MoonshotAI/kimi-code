@@ -13,7 +13,7 @@ import {
   promptSteerResultSchema,
   type PromptSubmission,
 } from '@moonshot-ai/protocol';
-import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, compressImageForModel, compressBase64ForModel, persistOriginalImage, sessionMediaOriginalsDir, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
+import { IPromptService, AuthModelNotResolvedError, AuthProvisioningRequiredError, AuthTokenMissingError, AuthTokenUnauthorizedError, PromptAlreadyCompletedError, PromptNotFoundError, SessionBusyError, SessionNotFoundError, FileNotFoundError, ICoreProcessService, IEnvironmentService, IFileStore, buildImageCompressionCaption, buildUnsupportedImageNotice, compressImageForModel, compressBase64ForModel, decodeBase64Prefix, isModelAcceptedImageMime, normalizeImageMime, persistOriginalImage, resolveEffectiveImageMime, sessionMediaOriginalsDir, unsupportedImageMimeFromUrl, withTelemetryContext, type IInstantiationService, type GetResult, type ImageCompressionTelemetry, type TelemetryClient } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
 
@@ -140,6 +140,8 @@ export function registerPromptsRoutes(
                 : withTelemetryContext(core.telemetry, { sessionId: session_id }),
             // Resolved lazily — only when an inline base64 image actually
             // got compressed — so image-free prompts never pay the lookup.
+            // Resolved per request so a config reload applies immediately.
+            maxImageEdgePx: core.imageLimits?.maxEdgePx(),
             resolveOriginalsDir: async () => {
               const summaries = await core.rpc.listSessions({ sessionId: session_id });
               const sessionDir = summaries[0]?.sessionDir;
@@ -278,6 +280,8 @@ interface ResolvePromptMediaOptions {
   readonly resolveOriginalsDir?: () => Promise<string | undefined>;
   /** Report an `image_compress` event per compressed prompt image. */
   readonly telemetry?: TelemetryClient;
+  /** Owner-resolved longest-edge ceiling (px) from the core's [image] config. */
+  readonly maxImageEdgePx?: number;
 }
 
 async function resolvePromptMediaFiles(
@@ -304,7 +308,23 @@ async function resolvePromptMediaFiles(
     // input-stage step as the file path below, for REST clients that submit an
     // image as `{ source: { kind: 'base64' } }` instead of uploading a file.
     if (part.type === 'image' && part.source.kind === 'base64') {
-      const compressed = await compressBase64ForModel(part.source.data, part.source.media_type, {
+      // Formats the provider cannot accept must never enter the session
+      // history — one unsupported image_url makes every later request fail.
+      // The bytes are authoritative: an image labeled image/png that is
+      // actually AVIF is gated on the sniffed format, not the label. Drop
+      // the image; a notice stands in so the model knows what happened.
+      const effectiveMime = resolveEffectiveImageMime(
+        part.source.media_type,
+        decodeBase64Prefix(part.source.data),
+      );
+      if (!isModelAcceptedImageMime(effectiveMime)) {
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
+        changed = true;
+        continue;
+      }
+      const canonicalMime = normalizeImageMime(effectiveMime);
+      const compressed = await compressBase64ForModel(part.source.data, canonicalMime, {
+        maxEdge: options.maxImageEdgePx,
         telemetry: telemetryFor('prompt_inline'),
       });
       if (compressed.changed) {
@@ -341,9 +361,30 @@ async function resolvePromptMediaFiles(
           source: { kind: 'base64', media_type: compressed.mimeType, data: compressed.base64 },
         });
         changed = true;
+      } else if (canonicalMime !== part.source.media_type) {
+        // Accepted but aliased (image/jpg, case/whitespace) or mislabeled
+        // (jpeg bytes declared png): forward the canonical MIME — strict
+        // provider whitelists reject anything else.
+        content.push({ ...part, source: { ...part.source, media_type: canonicalMime } });
+        changed = true;
       } else {
         content.push(part);
       }
+      continue;
+    }
+    // Remote image URL: no bytes to sniff, so reject when its path extension
+    // names a format providers reject (e.g. a link ending in `.avif`) — the
+    // notice keeps the URL so the model can still fetch and convert the
+    // image. Extensionless / unknown URLs pass through to the provider and
+    // the 400 recovery. Image+URL parts that pass are re-emitted unchanged.
+    if (part.type === 'image' && part.source.kind === 'url') {
+      const extMime = unsupportedImageMimeFromUrl(part.source.url);
+      if (extMime !== null) {
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(extMime, part.source.url) });
+        changed = true;
+        continue;
+      }
+      content.push(part);
       continue;
     }
     if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
@@ -369,7 +410,20 @@ async function resolvePromptMediaFiles(
     let mediaType = file.meta.media_type;
     let bytes: Uint8Array = data;
     if (part.type === 'image') {
+      // Same format gate as the inline path above, and again the bytes are
+      // authoritative: an upload whose Content-Type lies (AVIF bytes sent
+      // as image/png) becomes a notice instead of an image part.
+      mediaType = resolveEffectiveImageMime(mediaType, data);
+      if (!isModelAcceptedImageMime(mediaType)) {
+        content.push({ type: 'text', text: buildUnsupportedImageNotice(mediaType, file.meta.name) });
+        changed = true;
+        continue;
+      }
+      // Forward the canonical MIME (image/jpg → image/jpeg, case/whitespace)
+      // — strict provider whitelists reject the raw alias.
+      mediaType = normalizeImageMime(mediaType);
       const compressed = await compressImageForModel(data, mediaType, {
+        maxEdge: options.maxImageEdgePx,
         telemetry: telemetryFor('prompt_file'),
       });
       if (compressed.changed) {

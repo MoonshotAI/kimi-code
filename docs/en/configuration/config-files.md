@@ -38,6 +38,13 @@ api_key = ""
 provider = "managed:kimi-code"
 model = "kimi-for-coding"
 max_context_size = 262144
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+
+[models."kimi-code/kimi-for-coding-highspeed"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding-highspeed"
+max_context_size = 262144
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
 
 [thinking]
 enabled = true
@@ -52,8 +59,13 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-# [experimental]
-# micro_compaction = false  # disabled: micro compaction has been removed
+[services.moonshot_search]
+base_url = "https://api.kimi.com/coding/v1/search"
+api_key = ""
+
+[services.moonshot_fetch]
+base_url = "https://api.kimi.com/coding/v1/fetch"
+api_key = ""
 
 [[permission.rules]]
 decision = "allow"
@@ -87,11 +99,12 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
+| `image` | `table` | — | Image compression parameters → [`image`](#image) |
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
 
-The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `services`, and `permission`.
+The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `image`, `services`, and `permission`.
 
 ## `providers`
 
@@ -126,7 +139,7 @@ Each entry in the `models` table defines a model alias (the name used in `defaul
 | `model` | `string` | Yes | Model identifier sent to the server when calling the API |
 | `max_context_size` | `integer` | Yes | Maximum context length in tokens; must be at least 1 |
 | `max_output_size` | `integer` | No | Per-request output token cap (maps to `max_tokens`). Currently only the `anthropic` provider honors it. When set for a Claude model, this explicit value overrides the built-in server-side maximum |
-| `capabilities` | `array<string>` | No | Capability tags to add explicitly: `thinking`, `image_in`, `video_in`, `audio_in`, `tool_use`. Unioned with the capabilities auto-detected by the provider — entries can only be added, never removed |
+| `capabilities` | `array<string>` | No | Capability tags to add explicitly: `thinking`, `always_thinking`, `image_in`, `video_in`, `audio_in`, `tool_use`. Unioned with the capabilities auto-detected by the provider — entries can only be added, never removed |
 | `support_efforts` | `array<string>` | No | Thinking effort levels declared by the model catalog. Managed and open-platform refreshes may rewrite this field; to pin it manually, set `[models."<alias>".overrides] support_efforts` instead |
 | `default_effort` | `string` | No | Default thinking effort for the model. Managed and open-platform refreshes may rewrite this field; to pin it manually, set `[models."<alias>".overrides] default_effort` instead |
 | `display_name` | `string` | No | Name shown in the UI; falls back to `model` when unset |
@@ -201,6 +214,17 @@ You can also switch models temporarily without touching the config file — by s
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
 
 In print mode (`kimi -p "<prompt>"`), Kimi Code runs a single non-interactive turn and exits as soon as the main agent finishes. If you launch background tasks (for example, concurrent subagents via `Agent(run_in_background=true)`) and need them to run to completion, set `keep_alive_on_exit = true`: the process then waits for every background task to reach a terminal state before exiting, bounded by `print_wait_ceiling_s`. Without it, the single turn ending tears background tasks down with the process.
+
+## `image`
+
+`image` controls how images are compressed before being sent to the model, across every ingestion point (pasted images, `ReadMediaFile` reads, images in MCP tool results, and so on).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max_edge_px` | `integer` | `2000` | Longest-edge ceiling in pixels. Larger images are scaled down proportionally to fit; raising it preserves more detail at the cost of larger request bodies |
+| `read_byte_budget` | `integer` | `262144` (256 KB) | Per-image byte budget for images the model reads for itself (`ReadMediaFile` default reads). It bounds the accumulated request-body size when the model keeps screenshotting and reading images; fine detail stays reachable through the `region` parameter, which reads a crop back at full fidelity (`region` and `full_resolution` are not subject to this budget) |
+
+`max_edge_px` can be overridden by the `KIMI_IMAGE_MAX_EDGE_PX` environment variable and `read_byte_budget` by `KIMI_IMAGE_READ_BYTE_BUDGET`; both take higher priority than `config.toml`.
 
 <!--
 ## `experimental`

@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.13.2
+
+### Patch Changes
+
+- [#1501](https://github.com/MoonshotAI/kimi-code/pull/1501) [`b91099e`](https://github.com/MoonshotAI/kimi-code/commit/b91099ed7a2590d1afa4d6e3675671da52b7661c) Thanks [@liruifengv](https://github.com/liruifengv)! - Display Extra Usage (fuel pack) balance in `/usage` and `/status` commands.
+
 ## 0.13.1
 
 ### Patch Changes

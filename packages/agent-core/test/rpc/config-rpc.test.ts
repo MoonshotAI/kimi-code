@@ -108,3 +108,66 @@ max_steps_per_turn = "nope"
     await expect(core.getConfigDiagnostics({})).resolves.toEqual({ warnings: [] });
   });
 });
+
+describe('KimiCore imageLimits scoping', () => {
+  it('two cores keep independent [image] limits and only follow their own reloads', async () => {
+    const homeA = await makeHome(`${VALID_TOML}
+[image]
+max_edge_px = 800
+read_byte_budget = 65536
+`);
+    const homeB = await makeHome(`${VALID_TOML}
+[image]
+max_edge_px = 1600
+`);
+    const coreA = makeCore(homeA);
+    const coreB = makeCore(homeB);
+
+    // Baseline: each core resolves its own [image] section.
+    expect(coreA.imageLimits.maxEdgePx()).toBe(800);
+    expect(coreA.imageLimits.readByteBudget()).toBe(65536);
+    expect(coreB.imageLimits.maxEdgePx()).toBe(1600);
+    expect(coreB.imageLimits.readByteBudget()).toBe(256 * 1024);
+
+    // Reloading B must not restamp A (the module-global regression).
+    await writeFile(
+      path.join(homeB, 'config.toml'),
+      `${VALID_TOML}
+[image]
+max_edge_px = 1000
+read_byte_budget = 32768
+`,
+      'utf-8',
+    );
+    await coreB.getKimiConfig({ reload: true });
+    expect(coreB.imageLimits.maxEdgePx()).toBe(1000);
+    expect(coreB.imageLimits.readByteBudget()).toBe(32768);
+    expect(coreA.imageLimits.maxEdgePx()).toBe(800);
+    expect(coreA.imageLimits.readByteBudget()).toBe(65536);
+  });
+
+  it('reloading [image] takes effect on the core instance immediately', async () => {
+    const home = await makeHome(VALID_TOML);
+    const core = makeCore(home);
+    expect(core.imageLimits.maxEdgePx()).toBe(2000);
+
+    await writeFile(
+      path.join(home, 'config.toml'),
+      `${VALID_TOML}
+[image]
+max_edge_px = 1400
+read_byte_budget = 131072
+`,
+      'utf-8',
+    );
+    await core.getKimiConfig({ reload: true });
+    expect(core.imageLimits.maxEdgePx()).toBe(1400);
+    expect(core.imageLimits.readByteBudget()).toBe(131072);
+
+    // Removing the section clears back to built-ins.
+    await writeFile(path.join(home, 'config.toml'), VALID_TOML, 'utf-8');
+    await core.getKimiConfig({ reload: true });
+    expect(core.imageLimits.maxEdgePx()).toBe(2000);
+    expect(core.imageLimits.readByteBudget()).toBe(256 * 1024);
+  });
+});

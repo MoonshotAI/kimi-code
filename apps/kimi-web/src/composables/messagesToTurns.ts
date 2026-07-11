@@ -25,6 +25,24 @@ const USER_MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">(?:<\/\1>
 const SYSTEM_MIME_RE = /Mime type:\s*([^.\s]+)/i;
 const SYSTEM_SIZE_RE = /Size:\s*(\d+)\s*bytes/i;
 const SYSTEM_DIMENSIONS_RE = /Original dimensions:\s*(\d+)x(\d+)\s*pixels/i;
+// agent-core inlines a single model-facing `<system>` caption next to a
+// compressed image upload (buildImageCompressionCaption), which rides along as
+// a text part of the persisted user message. That one caption is harness
+// metadata, not something the user typed, and its raw markup must never reach
+// the bubble (or the edit/preview text derived from `turn.text`). The TUI and
+// agent-core strip ONLY that caption — anchored on its fixed opening
+// `<system>Image compressed to fit model limits:` (see
+// extractImageCompressionCaptions in agent-core) — and reroute it through the
+// hidden system-reminder injection. Mirror that narrow targeting here: a
+// literal `<system>…</system>` the user pasted themselves (e.g. an XML / prompt
+// example) is their own text, not harness metadata, so it survives untouched.
+const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
+const CAPTION_PATTERN = /<system>Image compressed to fit model limits:[\s\S]*?<\/system>/g;
+
+function stripImageCompressionCaptions(text: string): string {
+  if (!text.includes(CAPTION_OPENING)) return text;
+  return text.replace(CAPTION_PATTERN, '');
+}
 
 function unescapeAttr(value: string): string {
   // &amp; last so a doubly-escaped value isn't decoded twice.
@@ -698,7 +716,9 @@ export function messagesToTurns(
                 continue;
               }
             }
-            textParts.push(c.text);
+            const stripped = stripImageCompressionCaptions(c.text);
+            if (stripped !== c.text && stripped.trim().length === 0) continue;
+            textParts.push(stripped);
           }
         }
         const media = resolveMediaUrl(c);

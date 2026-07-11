@@ -18,6 +18,9 @@ import {
   type CompactionResult,
 } from '../compaction';
 import {
+  degradeOlderMediaParts,
+  MEDIA_DEGRADE_KEEP_RECENT,
+  MEDIA_STRIPPED_PLACEHOLDERS,
   project,
   type ProjectionAnomaly,
   type ProjectOptions,
@@ -376,11 +379,12 @@ export class ContextMemory {
 
   project(messages: readonly ContextMessage[], options?: ProjectOptions): Message[] {
     // Shape for the current model BEFORE projecting: a model without the
-    // select_tools capability must not see dynamic-tool schema messages or
-    // loadable-tools announcements (the canonical history keeps them; only
-    // this outgoing view is shaped). Must run pre-projection — project()
-    // strips `origin`, the only anchor for the announcements. setModel never
-    // rewrites history, so a mid-session switch degrades/upgrades losslessly.
+    // dynamically-loaded-tools capability must not see dynamic-tool schema
+    // messages or loadable-tools announcements (the canonical history keeps
+    // them; only this outgoing view is shaped). Must run pre-projection —
+    // project() strips `origin`, the only anchor for the announcements.
+    // setModel never rewrites history, so a mid-session switch
+    // degrades/upgrades losslessly.
     const shaped = this.agent.toolSelectEnabled ? messages : stripDynamicToolContext(messages);
     const anomalies: ProjectionAnomaly[] = [];
     const result = project(this.agent.microCompaction.compact(shaped), {
@@ -486,6 +490,27 @@ export class ContextMemory {
       dropLeadingNonUser: true,
       mergeConsecutiveAssistants: true,
     });
+  }
+
+  // Fallback projection for the post-413 media-degraded resend: the normal
+  // wire projection with all but the most recent media parts replaced by text
+  // markers, so a request body bloated by accumulated base64 media fits the
+  // provider's size limit. Purely read-side — the history keeps its media —
+  // and only used when the provider has already rejected the normal
+  // projection as too large; see the request-too-large fallback in
+  // `turn-step`.
+  get mediaDegradedMessages(): Message[] {
+    return degradeOlderMediaParts(this.messages, MEDIA_DEGRADE_KEEP_RECENT);
+  }
+
+  // Fallback projection for the image-format resend: EVERY media part
+  // replaced by a text marker. Unlike the 413 case (too MUCH media), a
+  // format rejection means at least one image is poison and the error never
+  // says which — only a full strip guarantees the resend carries none.
+  // Purely read-side, and only used after the provider already rejected an
+  // image; see the image-format fallback in `turn-step`.
+  get mediaStrippedMessages(): Message[] {
+    return degradeOlderMediaParts(this.messages, 0, MEDIA_STRIPPED_PLACEHOLDERS);
   }
 
   useProjectedHistoryFrom(source: ContextMemory): void {

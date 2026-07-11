@@ -38,6 +38,13 @@ api_key = ""
 provider = "managed:kimi-code"
 model = "kimi-for-coding"
 max_context_size = 262144
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+
+[models."kimi-code/kimi-for-coding-highspeed"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding-highspeed"
+max_context_size = 262144
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
 
 [thinking]
 enabled = true
@@ -52,8 +59,13 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-# [experimental]
-# micro_compaction = false  # disabled: micro compaction has been removed
+[services.moonshot_search]
+base_url = "https://api.kimi.com/coding/v1/search"
+api_key = ""
+
+[services.moonshot_fetch]
+base_url = "https://api.kimi.com/coding/v1/fetch"
+api_key = ""
 
 [[permission.rules]]
 decision = "allow"
@@ -87,11 +99,12 @@ timeout = 5
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
+| `image` | `table` | — | 图片压缩参数 → [`image`](#image) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
 
-以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`services`、`permission` 等嵌套表逐一展开。
+以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission` 等嵌套表逐一展开。
 
 ## `providers`
 
@@ -126,7 +139,7 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `model` | `string` | 是 | 调用 API 时实际传给服务端的模型 ID |
 | `max_context_size` | `integer` | 是 | 最大上下文长度（token 数），必须 ≥ 1 |
 | `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens`）。目前仅 `anthropic` 供应商读取。为 Claude 模型设置后，这个显式值会覆盖内置的服务端最大值 |
-| `capabilities` | `array<string>` | 否 | 显式追加的能力标签：`thinking`、`image_in`、`video_in`、`audio_in`、`tool_use`。与供应商自动识别的能力取并集，只能追加不能移除 |
+| `capabilities` | `array<string>` | 否 | 显式追加的能力标签：`thinking`、`always_thinking`、`image_in`、`video_in`、`audio_in`、`tool_use`。与供应商自动识别的能力取并集，只能追加不能移除 |
 | `support_efforts` | `array<string>` | 否 | 模型目录声明的 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
 | `default_effort` | `string` | 否 | 模型的默认 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] default_effort` |
 | `display_name` | `string` | 否 | UI 中显示的名称，未设时回退到 `model` |
@@ -201,6 +214,17 @@ display_name = "Kimi for Coding (custom)"
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
 
 在 print 模式（`kimi -p "<prompt>"`）下，Kimi Code 只跑一个非交互的单轮 turn，主 agent 一结束就退出。如果你启动了后台任务（例如通过 `Agent(run_in_background=true)` 并发子代理）并希望它们跑完，请设置 `keep_alive_on_exit = true`：进程会在退出前等待所有后台任务进入终态，最长不超过 `print_wait_ceiling_s`。否则，单轮 turn 结束时后台任务会随进程一起被清理。
+
+## `image`
+
+`image` 控制图片发送给模型前的压缩行为，对所有图片入口生效（粘贴图片、`ReadMediaFile` 读图、MCP 工具结果里的图片等）。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `max_edge_px` | `integer` | `2000` | 图片最长边上限（像素）。超过时按比例缩小到该值以内；调大可保留更多细节，代价是更大的请求体积 |
+| `read_byte_budget` | `integer` | `262144`（256 KB） | 模型自行读取的图片（`ReadMediaFile` 默认读取）的单图字节预算。会话中模型反复截图、读图时，累计请求体大小由它控制；细节可通过 `region` 参数按原图坐标全保真回读（`region` 与 `full_resolution` 不受此预算限制） |
+
+`max_edge_px` 可被环境变量 `KIMI_IMAGE_MAX_EDGE_PX` 覆盖，`read_byte_budget` 可被 `KIMI_IMAGE_READ_BYTE_BUDGET` 覆盖，优先级均高于配置文件。
 
 <!--
 ## `experimental`

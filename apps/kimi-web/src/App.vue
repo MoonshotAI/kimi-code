@@ -43,6 +43,8 @@ import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
 import Icon from './components/ui/Icon.vue';
+import InternalBuildBanner from './components/InternalBuildBanner.vue';
+import { isMacosDesktop } from './lib/desktopFlag';
 
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -213,6 +215,7 @@ const {
   sidebarMax,
   sessionColWidth,
   sidebarCollapsed,
+  sidebarDragging,
   sideWidth,
   loadSidebarCollapsed,
   toggleSidebarCollapse,
@@ -645,13 +648,18 @@ function openPr(url: string): void {
     <div
       v-else
       class="app"
-      :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile }"
-      :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewPanelWidth + 'px' }"
+      :class="{
+        mobile: isMobile,
+        'sidebar-collapsed': sidebarCollapsed && !isMobile,
+        'macos-desktop': isMacosDesktop,
+      }"
+      :style="{ '--preview-w': previewPanelWidth + 'px' }"
     >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
-        v-show="!sidebarCollapsed"
+        :collapsed="sidebarCollapsed"
+        :dragging="sidebarDragging"
         :col-width="sideWidth"
         :active-workspace="client.visibleWorkspace.value"
         :active-workspace-id="client.activeWorkspaceId.value"
@@ -681,21 +689,14 @@ function openPr(url: string): void {
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
+        class="side-handle"
         :storage-key="SIDEBAR_WIDTH_KEY"
         :default-width="SIDEBAR_DEFAULT"
         :min="SIDEBAR_MIN"
         :max="sidebarMax"
         @update:width="sessionColWidth = $event"
+        @update:dragging="sidebarDragging = $event"
       />
-      <div v-if="sidebarCollapsed" class="sidebar-rail">
-        <IconButton
-          size="sm"
-          :label="t('sidebar.expandSidebar')"
-          @click="toggleSidebarCollapse"
-        >
-          <Icon name="panel-expand" size="sm" />
-        </IconButton>
-      </div>
     </template>
 
     <!-- Mobile navigation: slim top bar (switcher + settings sheets). -->
@@ -738,6 +739,7 @@ function openPr(url: string): void {
       :search-files="client.searchFiles"
       :upload-image="client.uploadImage"
       :sending="client.isSending.value"
+      :starting="client.isStartingFirstPrompt.value"
       :fast-moon="client.fastMoon.value"
       :file-reload-key="client.activeSessionId.value"
       :session-loading="client.sessionLoading.value"
@@ -792,8 +794,29 @@ function openPr(url: string): void {
       @edit-message="handleEditMessage"
     />
 
+    <!-- Sidebar toggle — floating only when the in-header control can't serve:
+         on macOS desktop it's RESIDENT (always rendered beside the traffic
+         lights, the sidebar slides underneath and only the glyph swaps, so it
+         never moves or flashes); on Windows/web the collapse button lives
+         inside the sidebar header, so this floating button only appears while
+         COLLAPSED (to re-expand the sidebar). It must come AFTER
+         ConversationPane in the DOM: Electron computes the window-drag region
+         in tree order (drag rects union, no-drag rects subtract), so a no-drag
+         element placed before the ChatHeader drag region would have its hole
+         painted back over — making the button an inert drag area. -->
+    <IconButton
+      v-if="!isMobile && (isMacosDesktop || sidebarCollapsed)"
+      class="sidebar-toggle-btn"
+      size="sm"
+      :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
+      @click="toggleSidebarCollapse"
+    >
+      <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
+    </IconButton>
+
     <ResizeHandle
       v-if="sidePanelVisible && !isMobile"
+      class="preview-handle"
       :storage-key="PREVIEW_WIDTH_KEY"
       :default-width="previewDefaultWidth"
       :min="PREVIEW_MIN"
@@ -874,6 +897,11 @@ function openPr(url: string): void {
         @reveal="revealPreviewFile"
       />
     </aside>
+
+    <!-- Internal-build tag — pinned to the app's bottom-right corner, above
+         whatever pane happens to be there. Purely informational: pointer
+         events pass through so it never blocks clicks. -->
+    <InternalBuildBanner class="internal-build-fab" />
 
     <!-- Model Picker overlay -->
     <ModelPicker
@@ -1101,18 +1129,20 @@ function openPr(url: string): void {
   color: var(--dim);
 }
 .app {
-  --side-w: 248px;
   --preview-w: 460px;
   flex: 1;
   min-height: 0;
+  position: relative;
   display: grid;
-  /* sidebar (rail + resizable session column) | 0-width handle | conversation.
-     The 4px ResizeHandle overflows its zero-width track via negative margins so
-     the whole strip is grabbable without consuming layout space. */
-  /* The right-panel track is PERMANENT (auto = follows the aside's width, 0
-     when closed) — opening animates the aside's width, so the conversation
-     column is squeezed over smoothly instead of snapping to a new template. */
-  grid-template-columns: var(--side-w) 0 minmax(0, 1fr) 0 auto;
+  /* sidebar | 0-width handle | conversation | 0-width handle | right panel.
+     The 4px ResizeHandles overflow their zero-width tracks via negative margins
+     so the whole strip is grabbable without consuming layout space. */
+  /* Both side tracks are PERMANENT (auto = follows the aside's width, 0 when
+     closed/collapsed) — opening or collapsing animates the aside's width, so
+     the conversation column is squeezed over smoothly instead of snapping to a
+     new template. Every column is pinned explicitly (grid-column 1–5) so a
+     display:none handle can't shift auto-placement. */
+  grid-template-columns: auto 0 minmax(0, 1fr) 0 auto;
   background: var(--bg);
   color: var(--color-text);
   overflow: hidden;
@@ -1126,20 +1156,50 @@ function openPr(url: string): void {
   min-width: 0;
 }
 
-/* Collapsed sidebar rail: keeps a slim, dedicated grid track so the expand
-   button never overlaps the conversation header or squeezes the main pane. */
-.sidebar-rail {
-  grid-column: 1;
-  display: flex;
-  justify-content: center;
-  padding-top: 8px;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+/* Pin every desktop grid child to its track so auto-placement can never
+   reshuffle columns when a handle is display:none (v-show/v-if). */
+.app > .side { grid-column: 1; }
+.side-handle { grid-column: 2; }
+.app:not(.mobile) > .con { grid-column: 3; }
+.preview-handle { grid-column: 4; }
+
+/* Sidebar toggle — floating button pinned to the top-left corner. On macOS
+   desktop it is resident (rendered in both states beside the traffic lights);
+   on Windows/web it only appears while the sidebar is collapsed (the collapse
+   button lives inside the sidebar header). While collapsed the conversation
+   header pads left so its content clears the button (global block below). */
+.sidebar-toggle-btn {
+  position: absolute;
+  /* Vertically centered in the 48px conversation header. */
+  top: 11px;
+  left: 16px;
+  z-index: var(--z-sticky);
+  /* Fade in on appearance (Windows/web: only rendered while collapsed, so
+     this plays as the sidebar finishes sliding away). macOS disables it. */
+  animation: sidebar-toggle-btn-in 0.18s var(--ease-out) 0.12s backwards;
+  /* Floats over the macOS-desktop window-drag header; keep it clickable. */
+  -webkit-app-region: no-drag;
 }
-/* The collapsed rail occupies track 1; keep the main pane pinned to the
-   conversation track even though the sidebar/handle are display:none. */
-.app.sidebar-collapsed > .con {
-  grid-column: 3;
+/* macOS desktop (hidden title bar): resident beside the floating traffic
+   lights (green light's right edge ≈ 68px; 72 keeps a gap that matches the
+   lights' own 8px rhythm); no entrance animation since it never appears. */
+.app.macos-desktop .sidebar-toggle-btn {
+  left: 72px;
+  animation: none;
+}
+@keyframes sidebar-toggle-btn-in {
+  from { opacity: 0; }
+}
+
+/* Internal-build tag pinned to the app's bottom-right corner (desktop app
+   only — the component renders nothing elsewhere). Informational: never
+   intercepts pointer input. */
+.internal-build-fab {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: var(--z-sticky);
+  pointer-events: none;
 }
 
 /* Mobile single-column shell: slim top bar (auto) over the full-width
@@ -1207,5 +1267,20 @@ function openPr(url: string): void {
      share the same 48px height as the conversation header so the hairline reads as
      one continuous line across the layout. */
   --panel-head-h: 48px;
+}
+
+/* Sidebar collapsed (desktop): the conversation header pads left so its
+   content clears the floating sidebar toggle (.sidebar-toggle-btn) — and the
+   macOS traffic lights on desktop builds. Animated in step with the sidebar
+   width transition. Cross-component rule (ChatHeader renders the header), so
+   it lives in this global block. */
+.app:not(.mobile) .chat-header {
+  transition: padding-left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.app.sidebar-collapsed .chat-header {
+  padding-left: 52px;
+}
+.app.sidebar-collapsed.macos-desktop .chat-header {
+  padding-left: 108px;
 }
 </style>

@@ -34,6 +34,7 @@ import {
 } from '../../loop/index';
 import type { AgentEvent, TurnEndedEvent, TurnEndReason } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
+import { gateImageFormatParts } from '../../tools/support/image-compress';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
@@ -134,20 +135,27 @@ export class TurnFlow {
 
   // Returns the new turnId, or null if the turn was marked as resuming.
   prompt(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
+    // The last funnel before a prompt lands in the session history: images
+    // in formats providers reject (AVIF, HEIC, …) become text notices here,
+    // so no caller — the SDK/RPC prompt path included — can poison the
+    // session. Upstream ingestion points already gate; this is the backstop.
+    const gated = gateImageFormatParts(input);
     this.agent.records.logRecord({
       type: 'turn.prompt',
-      input,
+      input: gated,
       origin,
     });
-    return this.launch(input, origin);
+    return this.launch(gated, origin);
   }
 
   // Returns the new turnId, or null if the input was buffered as a steer
   // message or the turn was marked as resuming.
   steer(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
+    // Same format gate as prompt() — steer input enters the history too.
+    const gated = gateImageFormatParts(input);
     this.agent.records.logRecord({
       type: 'turn.steer',
-      input,
+      input: gated,
       origin,
     });
     // Buffer while a turn is active OR a manual compaction holds the context;
@@ -155,10 +163,10 @@ export class TurnFlow {
     // (summary + reinjection) is done. Returning null means "buffered" — which is
     // exactly what fire-and-forget callers (background notifications, cron) assume.
     if (this.activeTurn || this.agent.fullCompaction.isCompacting) {
-      this.steerBuffer.push({ input, origin });
+      this.steerBuffer.push({ input: gated, origin });
       return null;
     }
-    return this.launch(input, origin);
+    return this.launch(gated, origin);
   }
 
   retry(trigger?: string): number | null {
@@ -724,6 +732,8 @@ export class TurnFlow {
           llm: this.agent.llm,
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
+          buildMessagesMediaDegraded: () => this.agent.context.mediaDegradedMessages,
+          buildMessagesMediaStripped: () => this.agent.context.mediaStrippedMessages,
           dispatchEvent: this.buildDispatchEvent(turnId),
           // Re-read per step (not snapshotted per turn) so a select_tools load
           // is dispatchable on the very next step of the same turn.

@@ -1,7 +1,11 @@
 import type { ContentPart, Message, ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { project, type ProjectionAnomaly } from '../../../src/agent/context/projector';
+import {
+  degradeOlderMediaParts,
+  project,
+  type ProjectionAnomaly,
+} from '../../../src/agent/context/projector';
 import type { ContextMessage } from '../../../src/agent/context/types';
 
 // ---------------------------------------------------------------------------
@@ -768,3 +772,63 @@ function shuffle<T>(items: T[], rng: Rng): void {
     [items[i], items[j]] = [items[j]!, items[i]!];
   }
 }
+
+describe('degradeOlderMediaParts', () => {
+  function imageMessage(name: string): Message {
+    return {
+      role: 'user',
+      content: [
+        { type: 'text', text: `<image path="/ws/${name}.png">` },
+        { type: 'image_url', imageUrl: { url: `data:image/png;base64,${name}` } },
+        { type: 'text', text: '</image>' },
+      ],
+      toolCalls: [],
+    };
+  }
+
+  it('replaces all but the most recent N media parts with placeholder text', () => {
+    const messages: Message[] = [
+      imageMessage('old'),
+      {
+        role: 'user',
+        content: [
+          { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,VVVV' } },
+          { type: 'audio_url', audioUrl: { url: 'data:audio/mp3;base64,SSSS' } },
+        ],
+        toolCalls: [],
+      },
+      imageMessage('recent'),
+    ];
+
+    const degraded = degradeOlderMediaParts(messages, 2);
+
+    const parts = degraded.flatMap((message) => message.content);
+    // The two most recent media parts survive; older ones become text.
+    expect(parts.filter((part) => part.type === 'audio_url')).toHaveLength(1);
+    expect(parts.filter((part) => part.type === 'image_url')).toHaveLength(1);
+    expect(parts.filter((part) => part.type === 'video_url')).toHaveLength(0);
+    const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
+    expect(texts.some((text) => text.startsWith('[image omitted:'))).toBe(true);
+    expect(texts.some((text) => text.startsWith('[video omitted:'))).toBe(true);
+    // The path wrapper of the degraded image survives for readback.
+    expect(texts).toContain('<image path="/ws/old.png">');
+    // The surviving image is the most recent one.
+    const survivor = parts.find((part) => part.type === 'image_url');
+    expect(survivor?.type === 'image_url' && survivor.imageUrl.url).toContain('recent');
+  });
+
+  it('returns the input array by reference when nothing needs degrading', () => {
+    const messages: Message[] = [imageMessage('a'), imageMessage('b')];
+    expect(degradeOlderMediaParts(messages, 2)).toBe(messages);
+  });
+
+  it('keeps untouched messages by reference and does not mutate degraded ones', () => {
+    const messages: Message[] = [imageMessage('old'), imageMessage('mid'), imageMessage('new')];
+    const degraded = degradeOlderMediaParts(messages, 2);
+    expect(degraded).not.toBe(messages);
+    expect(degraded[1]).toBe(messages[1]);
+    expect(degraded[2]).toBe(messages[2]);
+    // The input's first message still carries its image part.
+    expect(messages[0]!.content.some((part) => part.type === 'image_url')).toBe(true);
+  });
+});

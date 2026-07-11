@@ -82,6 +82,17 @@ const pendingQuestionActions = reactive<Record<string, 'answer' | 'dismiss'>>({}
 const pendingApprovalActions = reactive<Record<string, true>>({});
 /** Task ids with an in-flight cancel, keyed by taskId. */
 const pendingTaskCancellations = reactive<Record<string, true>>({});
+/**
+ * Workspace ids whose empty-session first prompt is currently being created +
+ * submitted. The empty-composer path (`startSessionAndSendPrompt`) awaits
+ * `createDraftSession` (addWorkspace + createSession + selectSession) before
+ * the session id exists, so the per-session `inFlightPromptSessions` guard
+ * cannot cover that window — a second Enter / send-button click during it
+ * would otherwise fire a second concurrent POST and trip the daemon's
+ * `turn.agent_busy` race. Module-level singleton — matches the other
+ * `pending*Actions` guards above.
+ */
+const startingFirstPromptWorkspaces = reactive(new Set<string>());
 
 type SyncSessionResult = 'ok' | 'not-found' | 'failed';
 
@@ -815,12 +826,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     text: string,
     attachments?: PromptAttachment[],
   ): Promise<void> {
+    // Guard the whole "create draft session + submit first prompt" flow: the
+    // session id doesn't exist until `createDraftSession` resolves, so the
+    // per-session `inFlightPromptSessions` guard can't cover this window. A
+    // second Enter / send-button click in that window would otherwise fire a
+    // concurrent first POST for the same new session and trip the daemon's
+    // `turn.agent_busy` race.
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    startingFirstPromptWorkspaces.add(workspaceId);
     try {
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
       await submitPromptInternal(sid, text, attachments);
     } catch (err) {
       pushOperationFailure('startSessionAndSendPrompt', err);
+    } finally {
+      startingFirstPromptWorkspaces.delete(workspaceId);
     }
   }
 
@@ -837,6 +858,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     skillName: string,
     args?: string,
   ): Promise<void> {
+    // Same reentry window as startSessionAndSendPrompt (see the guard there):
+    // draft-session creation selects the new session before the activation,
+    // so concurrent first actions must be dropped here.
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    startingFirstPromptWorkspaces.add(workspaceId);
     try {
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
@@ -862,6 +888,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           : rawState.defaultModel) ?? undefined;
       await persistSessionProfile(
         {
+          model,
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
@@ -872,6 +899,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       await modelProvider.activateSkill(skillName, args, sid);
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
+    } finally {
+      startingFirstPromptWorkspaces.delete(workspaceId);
     }
   }
 
@@ -888,12 +917,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     workspaceId: string,
     prompt?: string,
   ): Promise<void> {
+    // Same reentry window as startSessionAndSendPrompt (see the guard there).
+    if (startingFirstPromptWorkspaces.has(workspaceId)) return;
+    startingFirstPromptWorkspaces.add(workspaceId);
     try {
       const sid = await createDraftSession(workspaceId);
       if (!sid) return;
       await sideChat.openSideChatOn(sid, prompt);
     } catch (err) {
       pushOperationFailure('startSessionAndOpenSideChat', err);
+    } finally {
+      startingFirstPromptWorkspaces.delete(workspaceId);
     }
   }
 
@@ -1191,9 +1225,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       });
 
       // Bind the real daemon prompt_id into the event projector so the upcoming
-      // turn.started uses it (instead of synthesizing a random one). This is what
-      // makes Stop work on the real daemon: session.currentPromptId then matches
-      // the prompt_id the REST :abort endpoint expects.
+      // turn.started stamps this turn's messages with it (instead of a synthetic
+      // pr_ id the daemon rejects on :abort). Stop's authoritative prompt_id
+      // comes from the submit response above and the daemon's
+      // event.session.status_changed — this binding is for transcript grouping.
       getEventConn()?.bindNextPromptId(sid, result.promptId);
 
       // NOTE: we no longer set a local auto-title here. The daemon generates a
@@ -2186,6 +2221,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     searchFiles,
     loadOlderMessages,
     refreshSessionSidecars,
+    /** True while any empty-composer first prompt is being created + submitted
+     *  (the window covered by startingFirstPromptWorkspaces). Drives the
+     *  empty-session "starting conversation…" loading state. Intentionally
+     *  keyed by the lock set itself rather than the current activeWorkspaceId:
+     *  createDraftSession can swap activeWorkspaceId to a registered id
+     *  mid-flight, and a workspace-keyed read would prematurely re-enable the
+     *  composer and reopen the duplicate first-submit race. */
+    isStartingFirstPrompt: () => startingFirstPromptWorkspaces.size > 0,
   };
 }
 

@@ -32,6 +32,10 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import type { TelemetryClient } from '#/telemetry';
 
 import { compressImageContentParts } from '../tools/support/image-compress';
+import {
+  buildUnsupportedImageNotice,
+  isModelAcceptedImageMime,
+} from '../tools/support/image-format-policy';
 import { persistOriginalImage } from '../tools/support/image-originals';
 import type { MCPContentBlock, MCPToolResult } from './types';
 
@@ -44,6 +48,8 @@ export interface McpOutputOptions {
   readonly originalsDir?: string | undefined;
   /** Report an `image_compress` event per compressed tool-result image. */
   readonly telemetry?: TelemetryClient | undefined;
+  /** Owner-resolved longest-edge ceiling (px) for tool-result images. */
+  readonly maxImageEdgePx?: number | undefined;
 }
 
 // MCP servers can produce arbitrarily large outputs; cap what we feed back to
@@ -131,6 +137,15 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
     const mimeType = block.mimeType ?? 'application/octet-stream';
     if (mimeType.startsWith('image/')) {
+      // The declared MIME is the only format signal for a remote image: an
+      // extensionless or signed URL gives the extension gate nothing to work
+      // with, and the provider fetches it server-side. When the server
+      // honestly declares a format providers reject (e.g. an image search
+      // tool returning AVIF links), drop the image for a notice that keeps
+      // the URL — the model can still fetch and convert it.
+      if (!isModelAcceptedImageMime(mimeType)) {
+        return { type: 'text', text: buildUnsupportedImageNotice(mimeType, block.uri) };
+      }
       return { type: 'image_url', imageUrl: { url: block.uri } };
     }
     if (mimeType.startsWith('audio/')) {
@@ -188,6 +203,7 @@ export async function mcpResultToExecutableOutput(
   // DATA (never inserted into the parts), so tool output that merely quotes
   // a caption can never be mistaken for a generated one.
   const compressed = await compressImageContentParts(budgeted.parts, {
+    maxEdge: options.maxImageEdgePx,
     telemetry:
       options.telemetry === undefined
         ? undefined

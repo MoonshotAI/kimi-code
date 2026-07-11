@@ -35,6 +35,9 @@ import Tooltip from '../ui/Tooltip.vue';
 
 const props = withDefaults(defineProps<{
   running?: boolean;
+  /** True while the empty-composer first prompt is being created + submitted.
+   *  Disables the textarea and swaps the send button for a spinner. */
+  starting?: boolean;
   /** Active session id — scopes the persisted unsent draft (per session). */
   sessionId?: string;
   queued?: QueuedPromptView[];
@@ -59,6 +62,7 @@ const props = withDefaults(defineProps<{
   hideContext?: boolean;
 }>(), {
   running: false,
+  starting: false,
   queued: () => [],
   searchFiles: undefined,
   uploadImage: undefined,
@@ -68,11 +72,13 @@ const props = withDefaults(defineProps<{
 });
 
 const placeholder = computed(() =>
-  props.running
-    ? t('composer.placeholderRunning')
-    : props.goalMode
-      ? t('status.goalPlaceholder')
-      : t('composer.placeholder')
+  props.starting
+    ? t('composer.starting')
+    : props.running
+      ? t('composer.placeholderRunning')
+      : props.goalMode
+        ? t('status.goalPlaceholder')
+        : t('composer.placeholder')
 );
 
 const emit = defineEmits<{
@@ -913,6 +919,7 @@ function selectModel(modelId: string): void {
             v-model="text"
             class="ph"
             :placeholder="placeholder"
+            :disabled="starting"
             rows="1"
             @keydown="handleKeydown"
             @compositionstart="handleCompositionStart"
@@ -1131,10 +1138,13 @@ function selectModel(modelId: string): void {
           </Tooltip>
           <button
             class="send"
+            :class="{ 'is-starting': starting }"
             :aria-label="sendLabel"
+            :disabled="starting"
             @click="handleSubmit()"
           >
-            <Icon name="send" size="sm" />
+            <Spinner v-if="starting" size="sm" />
+            <Icon v-else name="send" size="sm" />
           </button>
         </div>
 
@@ -1518,6 +1528,25 @@ function selectModel(modelId: string): void {
 
 .send:active {
   transform: scale(0.92);
+}
+
+.send:disabled {
+  cursor: not-allowed;
+  opacity: 0.88;
+}
+
+.send:disabled:active {
+  transform: none;
+}
+
+/* Spinner-on-accent: recolor the ring so the arc reads on the accent fill.
+   Spinner.vue styles are scoped, so pierce them with :deep(). */
+.send.is-starting :deep(.ui-spinner) {
+  color: var(--color-text-on-accent);
+}
+
+.send.is-starting :deep(.ui-spinner__track) {
+  stroke: rgba(255, 255, 255, 0.32);
 }
 
 .send svg {

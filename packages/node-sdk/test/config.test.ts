@@ -338,7 +338,7 @@ describe('KimiHarness config API', () => {
         id: 'tool-select',
         title: 'Tool select (progressive tool disclosure)',
         description:
-          'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares select_tools.',
+          'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares dynamically loaded tools.',
         surface: 'core',
         env: 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT',
         defaultEnabled: false,

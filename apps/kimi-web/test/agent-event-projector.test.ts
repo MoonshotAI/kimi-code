@@ -134,3 +134,48 @@ describe('classifyFrame cron.fired', () => {
     expect(classifyFrame('event.cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
   });
 });
+
+// Session status has a single source: the daemon's event.session.status_changed
+// (mapped by toAppEvent). The raw turn stream must NOT project a second
+// sessionStatusChanged per transition — when it did, every turn end fired
+// turn-end consumers (completion notification, sound) twice.
+describe('session status single-sourcing', () => {
+  it('turn.started projects no sessionStatusChanged', () => {
+    const projector = createAgentProjector();
+    const events = projector.project('turn.started', { turnId: 1 }, 's1');
+    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+  });
+
+  it('turn.ended finalizes the message and usage but projects no sessionStatusChanged', () => {
+    const projector = createAgentProjector();
+    projector.project('turn.started', { turnId: 1 }, 's1');
+    projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
+    const events = projector.project(
+      'turn.ended',
+      { turnId: 1, reason: 'completed', durationMs: 123 },
+      's1',
+    );
+    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'messageUpdated', status: 'completed', durationMs: 123 }),
+    );
+    expect(events).toContainEqual(expect.objectContaining({ type: 'sessionUsageUpdated' }));
+  });
+
+  it('seedInFlight returns only the seeded message — status comes from the snapshot', () => {
+    const projector = createAgentProjector();
+    const events = projector.seedInFlight('s1', {
+      turnId: 1,
+      assistantText: 'partial',
+      thinkingText: '',
+      runningTools: [],
+    });
+    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'messageCreated',
+        message: expect.objectContaining({ role: 'assistant' }),
+      }),
+    );
+  });
+});

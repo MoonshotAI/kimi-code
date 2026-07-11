@@ -2,7 +2,7 @@
  * select_tools progressive disclosure — end-to-end agent tests.
  *
  * Uses the scripted-generate harness: real ToolManager/turn loop/context, fake
- * LLM. The three-condition gate (model capability.select_tools ×
+ * LLM. The three-condition gate (model capability.dynamically_loaded_tools ×
  * capability.tool_use × `tool-select` flag) is driven through the alias
  * capability declarations and an injected FlagResolver.
  *
@@ -34,7 +34,7 @@ const DISCLOSURE_CAPABILITIES = {
   thinking: false,
   tool_use: true,
   max_context_tokens: 256_000,
-  select_tools: true,
+  dynamically_loaded_tools: true,
 } as const;
 
 const INLINE_PROVIDER = { type: 'kimi', apiKey: 'test-key', model: 'inline-model' } as const;

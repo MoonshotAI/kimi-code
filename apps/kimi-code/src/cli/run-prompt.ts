@@ -234,7 +234,7 @@ async function runHeadlessGoal(
   try {
     // The objective is sent as the normal prompt; goal continuation keeps the
     // turn alive until a terminal state is reached.
-    await runPromptTurn(session, goal.objective, outputFormat, stdout, stderr);
+    await runPromptTurn(session, goal.objective, outputFormat, stdout, stderr, true);
   } finally {
     unsubscribeGoalEvents();
     const snapshot = completedSnapshot ?? (await session.getGoal()).goal;
@@ -432,9 +432,11 @@ function runPromptTurn(
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
+  waitForGoalTerminal = false,
 ): Promise<void> {
   let activeTurnId: number | undefined;
   let activeAgentId: string | undefined;
+  let latestStartedTurnId: number | undefined;
   const outputWriter =
     outputFormat === 'stream-json'
       ? new PromptJsonWriter(stdout)
@@ -469,6 +471,18 @@ function runPromptTurn(
         }
         activeTurnId = event.turnId;
         activeAgentId = event.agentId;
+        latestStartedTurnId = event.turnId;
+        return;
+      }
+      if (
+        waitForGoalTerminal &&
+        event.type === 'goal.updated' &&
+        event.agentId === PROMPT_MAIN_AGENT_ID &&
+        activeTurnId === undefined &&
+        event.snapshot !== null &&
+        event.snapshot.status !== 'active'
+      ) {
+        void finishCompletedTurn();
         return;
       }
       if (
@@ -487,6 +501,7 @@ function runPromptTurn(
           return;
         case 'turn.step.retrying':
           outputWriter.discardAssistant();
+          outputWriter.writeRetrying(event);
           return;
         case 'assistant.delta':
           outputWriter.writeAssistantDelta(event.delta);
@@ -515,19 +530,29 @@ function runPromptTurn(
           return;
         case 'turn.ended':
           if (event.reason === 'completed') {
-            void (async () => {
-              // Flush the buffered assistant message before draining background
-              // tasks: in stream-json mode the final message is only emitted by
-              // finish(), so a long background wait would otherwise withhold the
-              // main turn's result until the drain settles.
-              outputWriter.flushAssistant();
-              try {
-                await session.waitForBackgroundTasksOnPrint();
-              } catch (error) {
-                log.warn('waitForBackgroundTasksOnPrint failed', { error });
-              }
-              finish();
-            })();
+            outputWriter.flushAssistant();
+            if (waitForGoalTerminal) {
+              const completedTurnId = event.turnId;
+              activeTurnId = undefined;
+              activeAgentId = undefined;
+              void (async () => {
+                try {
+                  const { goal } = await session.getGoal();
+                  if (
+                    activeTurnId !== undefined ||
+                    latestStartedTurnId !== completedTurnId
+                  ) {
+                    return;
+                  }
+                  if (goal?.status === 'active') return;
+                  await finishCompletedTurn();
+                } catch (error) {
+                  finish(error instanceof Error ? error : new Error(String(error)));
+                }
+              })();
+              return;
+            }
+            void finishCompletedTurn();
             return;
           }
           finish(new Error(formatTurnEndedFailure(event)));
@@ -560,6 +585,20 @@ function runPromptTurn(
     session.prompt(prompt).catch((error: unknown) => {
       finish(error instanceof Error ? error : new Error(String(error)));
     });
+
+    async function finishCompletedTurn(): Promise<void> {
+      // Flush the buffered assistant message before draining background tasks:
+      // in stream-json mode the final message is only emitted by finish(), so a
+      // long background wait would otherwise withhold the main turn's result
+      // until the drain settles.
+      outputWriter.flushAssistant();
+      try {
+        await session.waitForBackgroundTasksOnPrint();
+      } catch (error) {
+        log.warn('waitForBackgroundTasksOnPrint failed', { error });
+      }
+      finish();
+    }
   });
 }
 
@@ -574,6 +613,7 @@ interface PromptTurnWriter {
     argumentsPart: string | undefined,
   ): void;
   writeToolResult(toolCallId: string, output: unknown): void;
+  writeRetrying(event: Extract<Event, { type: 'turn.step.retrying' }>): void;
   flushAssistant(): void;
   discardAssistant(): void;
   finish(): void;
@@ -610,7 +650,14 @@ class PromptTranscriptWriter implements PromptTurnWriter {
 
   writeToolResult(): void {}
 
-  flushAssistant(): void {}
+  // Text `-p` keeps retries silent: only the failed attempt's partial assistant
+  // text is discarded (handled by the caller). No human-readable retry line is
+  // emitted, matching the prior behavior.
+  writeRetrying(): void {}
+
+  flushAssistant(): void {
+    this.assistantWriter.finish();
+  }
 
   discardAssistant(): void {}
 
@@ -647,6 +694,18 @@ interface PromptJsonResumeMetaMessage {
   session_id: string;
   command: string;
   content: string;
+}
+
+interface PromptJsonRetryMetaMessage {
+  role: 'meta';
+  type: 'turn.step.retrying';
+  failed_attempt: number;
+  next_attempt: number;
+  max_attempts: number;
+  delay_ms: number;
+  error_name: string;
+  error_message: string;
+  status_code?: number;
 }
 
 function writeResumeHint(
@@ -747,6 +806,24 @@ class PromptJsonWriter implements PromptTurnWriter {
     this.toolCalls.length = 0;
   }
 
+  writeRetrying(event: Extract<Event, { type: 'turn.step.retrying' }>): void {
+    // Emit a machine-readable meta line so stream-json consumers can observe
+    // provider retries. The failed attempt's partial assistant text was already
+    // discarded by the caller, so no half-formed assistant message leaks.
+    const message: PromptJsonRetryMetaMessage = {
+      role: 'meta',
+      type: 'turn.step.retrying',
+      failed_attempt: event.failedAttempt,
+      next_attempt: event.nextAttempt,
+      max_attempts: event.maxAttempts,
+      delay_ms: event.delayMs,
+      error_name: event.errorName,
+      error_message: event.errorMessage,
+      status_code: event.statusCode,
+    };
+    this.writeJsonLine(message);
+  }
+
   finish(): void {
     this.flushAssistant();
   }
@@ -766,7 +843,9 @@ class PromptJsonWriter implements PromptTurnWriter {
     return toolCall;
   }
 
-  private writeJsonLine(message: PromptJsonAssistantMessage | PromptJsonToolMessage): void {
+  private writeJsonLine(
+    message: PromptJsonAssistantMessage | PromptJsonToolMessage | PromptJsonRetryMetaMessage,
+  ): void {
     this.stdout.write(`${JSON.stringify(message)}\n`);
   }
 }

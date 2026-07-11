@@ -27,8 +27,6 @@ const props = defineProps<{
   wsMenuOpenId: string | null;
   /** True while this group is the active drag source (drag-to-reorder). */
   dragging: boolean;
-  /** When true, render the workspace root path as a stable subtitle line. */
-  showPath: boolean;
   isCollapsed: (id: string) => boolean;
   /** When true, render all loaded sessions; otherwise only the first page
    *  (`group.initialCount`). Drives the in-group show-more / show-less toggle. */
@@ -109,7 +107,7 @@ function onHeaderDragStart(event: DragEvent): void {
   <div class="group" :class="{ dragging }">
     <div
       class="gh"
-      :class="{ on: group.workspace.id === activeWorkspaceId, collapsed: isCollapsed(group.workspace.id), 'show-path': showPath }"
+      :class="{ on: group.workspace.id === activeWorkspaceId, collapsed: isCollapsed(group.workspace.id) }"
       draggable="true"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
       @contextmenu="emit('groupContextmenu', group.workspace, $event)"
@@ -118,14 +116,13 @@ function onHeaderDragStart(event: DragEvent): void {
     >
       <div class="gh-top">
         <!-- Folder icon -->
-        <Icon v-if="isCollapsed(group.workspace.id)" class="gh-folder" name="folder-closed" size="sm" />
-        <Icon v-else class="gh-folder" name="folder" size="sm" />
+        <Icon v-if="isCollapsed(group.workspace.id)" class="gh-folder" name="folder-closed" />
+        <Icon v-else class="gh-folder" name="folder" />
 
-        <!-- Workspace name -->
-        <span
-          v-if="renamingId !== group.workspace.id"
-          class="gh-name"
-        >{{ group.workspace.name }}</span>
+        <!-- Workspace name — hover reveals the full root path -->
+        <Tooltip v-if="renamingId !== group.workspace.id" :text="group.workspace.root">
+          <span class="gh-name">{{ group.workspace.name }}</span>
+        </Tooltip>
         <input
           v-else
           :ref="setRenameInputRef"
@@ -138,31 +135,36 @@ function onHeaderDragStart(event: DragEvent): void {
           @click.stop
         />
 
-        <IconButton
-          class="gh-more"
+        <!-- Hover actions — float over the row's right edge (no reserved
+             layout space, the name gets the full row width when idle). Hidden
+             while renaming so the floating buttons can't cover the input. -->
+        <div
+          v-if="renamingId !== group.workspace.id"
+          class="gh-actions"
           :class="{ open: wsMenuOpenId === group.workspace.id }"
-          size="sm"
-          :label="t('sidebar.options')"
-          aria-haspopup="menu"
-          :aria-expanded="wsMenuOpenId === group.workspace.id"
-          @click.stop="emit('toggleWsMenu', group.workspace, $event)"
         >
-          <Icon name="dots-horizontal" size="sm" />
-        </IconButton>
+          <IconButton
+            class="gh-more"
+            :class="{ open: wsMenuOpenId === group.workspace.id }"
+            size="sm"
+            :label="t('sidebar.options')"
+            aria-haspopup="menu"
+            :aria-expanded="wsMenuOpenId === group.workspace.id"
+            @click.stop="emit('toggleWsMenu', group.workspace, $event)"
+          >
+            <Icon name="dots-horizontal" />
+          </IconButton>
 
-        <IconButton
-          class="gh-add"
-          size="sm"
-          :label="t('workspace.newInGroup')"
-          @click.stop="emit('createInWorkspace', group.workspace.id)"
-        >
-          <Icon name="chat-new" />
-        </IconButton>
+          <IconButton
+            class="gh-add"
+            size="sm"
+            :label="t('workspace.newInGroup')"
+            @click.stop="emit('createInWorkspace', group.workspace.id)"
+          >
+            <Icon name="chat-new" />
+          </IconButton>
+        </div>
       </div>
-
-      <Tooltip :text="group.workspace.root">
-        <div class="gh-path">{{ group.workspace.shortPath || group.workspace.root }}</div>
-      </Tooltip>
     </div>
     <div
       class="group-sessions"
@@ -212,8 +214,8 @@ function onHeaderDragStart(event: DragEvent): void {
 
 <style scoped>
 /* Workspace group. The --sb-* custom properties are inherited from .side in
-   Sidebar.vue, so they don't need to be redeclared here. */
-.group { padding-bottom: var(--space-2); }
+   Sidebar.vue, so they don't need to be redeclared here. Groups stack flush —
+   no bottom gap. */
 .group.dragging { opacity: 0.45; }
 
 /* Session list: collapses/expands via a height transition. `interpolate-size:
@@ -230,15 +232,14 @@ function onHeaderDragStart(event: DragEvent): void {
 }
 
 /* Workspace header — an inset rounded row that mirrors the session-row inset
-   (6px margin + 10px padding), so the folder icon lands at --sb-pad-x and the
-   name lines up with the session titles below. Hover washes the whole header
-   (name row + path) in the sunken surface. */
+   (container --sb-inset + row padding), so the folder icon lands at --sb-pad-x
+   and the name lines up with the session titles below. Hover washes the whole
+   header in the row hover fill. */
 .gh {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   margin: 0;
-  padding: var(--space-1) var(--space-2);
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border-radius: var(--radius-sm);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
@@ -249,24 +250,28 @@ function onHeaderDragStart(event: DragEvent): void {
   cursor: grab;
 }
 .gh:active { cursor: grabbing; }
-.gh:hover { background: var(--color-surface-sunken); }
+.gh:hover { background: var(--sb-hover, var(--color-surface-sunken)); }
 .gh-top {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
+  /* Header height is font-driven: name line-height (13×1.25≈16px) + 2×5px
+     .gh padding ≈ 26px. The floating .gh-actions never contribute to height. */
 }
 
 .gh-folder {
   flex: none;
   color: var(--color-text-muted);
-  /* 14px icon + margin fills the --sb-gutter icon slot */
-  margin-right: calc(var(--sb-gutter) - 14px);
 }
 
+/* Group title — quiet by design: regular weight (no bold), muted color (one
+   step lighter than the session titles), so group heads read as grouping
+   labels rather than list content. */
 .gh-name {
-  font-size: var(--ui-font-size-lg);
-  font-weight: 550;
-  color: var(--color-text);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+  color: var(--color-text-muted);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -274,51 +279,59 @@ function onHeaderDragStart(event: DragEvent): void {
   white-space: nowrap;
   cursor: pointer;
 }
-.gh-path {
-  color: var(--color-text-faint);
-  font-weight: 425;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding-left: calc(var(--sb-gutter) + var(--sb-gap));
-  font-size: var(--ui-font-size-xs);
-  max-height: 0;
-  opacity: 0;
-  transition: max-height var(--duration-base) var(--ease-out),
-    opacity var(--duration-base) var(--ease-out);
-}
-/* Path subtitle — revealed only when the section-header "show paths" toggle is
-   on (`.show-path`) or the group is collapsed. Driven by explicit toggle state
-   rather than hover/focus, so the header height never shifts under the pointer
-   (a11y: stable layout) and the path stays reachable for touch/keyboard users. */
-.gh.show-path .gh-path,
-.gh.collapsed .gh-path {
-  max-height: 1.4em;
-  opacity: 1;
-}
 
-/* More + add buttons — hidden until hover (or while the more menu is open /
-   focused). `.gh .gh-more` / `.gh .gh-add` out-specificity IconButton's display
-   so the hidden default wins. */
-.gh .gh-more,
-.gh .gh-add {
+/* More + add buttons — float over the row's right edge instead of reserving
+   layout space, so the name can use the full row width when idle (no
+   truncation caused by invisible buttons). Revealed on hover / keyboard focus
+   / while the more menu is open; the backing stacks the row hover wash on the
+   sidebar surface so the overlapped title tail doesn't bleed through. */
+.gh-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-left: var(--space-1);
+  border-radius: var(--radius-sm);
+  isolation: isolate;
+  /* Opaque sidebar surface — hides the overlapped name tail. The ::after
+     hover wash sits above this (still behind the buttons) so the layer reads
+     seamless with the row. */
+  background: var(--color-sidebar-bg);
   opacity: 0;
   pointer-events: none;
 }
-.gh:hover .gh-more,
-.gh:hover .gh-add,
-.gh:focus-within .gh-more,
-.gh:focus-within .gh-add,
-.gh-more.open,
-.gh-more:focus-visible,
-.gh-add:focus-visible {
+/* Row hover wash — only while the row is actually hovered. Painted above the
+   element background (z-index 0) but below the buttons (z-index 1). */
+.gh-actions::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+.gh:hover .gh-actions::after {
+  background: var(--sb-hover, var(--color-surface-sunken));
+}
+.gh-actions > * {
+  position: relative;
+  z-index: 1;
+}
+.gh:hover .gh-actions,
+.gh:focus-within .gh-actions,
+.gh-actions.open {
   opacity: 1;
   pointer-events: auto;
 }
 .gh-more.open { color: var(--color-text); background: var(--color-line); }
 
 .group-empty {
-  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) - var(--space-2) + var(--sb-gutter) + var(--sb-gap));
+  /* Left padding lands the text at the same x as session titles / the
+     show-more label: (pad-x − inset) row padding + gutter + gap. */
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--sb-pad-x) - var(--sb-inset) + var(--sb-gutter) + var(--sb-gap));
   font-size: var(--text-xs);
   color: var(--color-text-faint);
   font-family: var(--font-ui);
@@ -326,26 +339,26 @@ function onHeaderDragStart(event: DragEvent): void {
 /* Show-more / show-less — a session-row-shaped compact list control (§07). The
    empty lead slot mirrors a session row's status gutter, so the label text lands
    at the exact same x as the session titles (--sb-pad-x + --sb-gutter + --sb-gap
-   from the sidebar edge). Hover washes the row in the sunken surface, matching
-   New chat / session rows; no text recolor. */
+   from the sidebar edge). Hover washes the row in the shared row hover fill,
+   matching New chat / session rows; no text recolor. */
 .show-more {
   display: flex;
   align-items: center;
   gap: var(--sb-gap);
   width: 100%;
-  min-height: 26px;
   margin: 0;
-  padding: var(--space-1) calc(var(--sb-pad-x) - var(--space-2));
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
+  line-height: var(--leading-tight);
   text-align: left;
   cursor: pointer;
 }
-.show-more:hover { background: var(--color-surface-sunken); }
+.show-more:hover { background: var(--sb-hover, var(--color-surface-sunken)); }
 .show-more:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .show-more-lead { width: var(--sb-gutter); flex: none; }
 .show-more-label {

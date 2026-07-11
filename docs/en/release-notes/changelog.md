@@ -6,6 +6,38 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.5 (2026-07-10)
+
+### Polish
+
+- Retry provider 429, overload, and other transient errors more reliably, honoring the server Retry-After delay, and surface retries in `-p --output-format stream-json`.
+
+### Bug Fixes
+
+- Stop unsupported image formats (AVIF, BMP, TIFF, ICO, …) from breaking sessions at every entry point — including remote image URLs and images mislabeled by a tool — and recover an already-stuck session by dropping the offending image and retrying, so one such image can no longer make every later request fail.
+- web: Fix the "Turn finished" desktop notification and completion sound firing twice per turn.
+- web: Hide the internal image-compression note so it no longer renders as user message text.
+
+## 0.23.4 (2026-07-10)
+
+### Features
+
+- web: Add notifications when a tool needs approval, and improve notification reliability.
+
+### Polish
+
+- web: Polish the chat UI with Inter typography, localized labels, and tighter composer and menu styling.
+- web: Polish the session sidebar layout, colors, icons, and typography.
+- Display the Extra Usage (fuel pack) balance in the `/usage` and `/status` commands.
+- Add a Kimi WebBridge entry to the Official tab of the `/plugins` panel that opens the WebBridge install page in your browser.
+
+### Bug Fixes
+
+- Keep image-heavy sessions within provider request-size limits: oversized images (model-read and pasted, including WebP) are downscaled and compressed, HEIC/HEIF reads are refused with a platform-matched conversion command instead of poisoning the session, and an HTTP 413 request-too-large now recovers automatically — the request and `/compact` retry with older media replaced by text markers. The limits are configurable via `[image]` in `config.toml` (or `KIMI_IMAGE_*` env vars), and each core keeps its own settings so reloading one client's config no longer changes another client's compression.
+- Fix resuming sessions whose original working directory no longer exists.
+- Fix prompt-mode goals so they run until completion and report invalid goal commands before sending prompts.
+- web: Fix an occasional "another turn is active" error when sending the first message of a new conversation, and show a starting state while it is being sent.
+
 ## 0.23.3 (2026-07-08)
 
 ### Bug Fixes

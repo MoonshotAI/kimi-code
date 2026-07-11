@@ -12,6 +12,7 @@ import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import Icon from '../ui/Icon.vue';
+import Spinner from '../ui/Spinner.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
@@ -48,6 +49,9 @@ const props = defineProps<{
   /** Cache-buster that remounts the chat pane when the active session changes. */
   fileReloadKey?: string | number;
   sending?: boolean;
+  /** True while the empty-composer first prompt is being created + submitted.
+   *  Drives the empty-session "starting conversation…" loading state. */
+  starting?: boolean;
   fastMoon?: boolean;
   /** Mobile shell: compact chrome. */
   mobile?: boolean;
@@ -1134,10 +1138,14 @@ defineExpose({ loadComposerForEdit, focusComposer });
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
             <div class="empty-hint">
-              <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
-              <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
-              <!-- Workspace picker: choose where this new conversation starts. -->
-              <div v-if="hasWorkspaces" class="ws-pick" :style="wsPickStyle">
+              <span class="empty-hint-title" :class="{ 'is-starting': starting }">
+                <Spinner v-if="starting" size="sm" />
+                <span>{{ starting ? t('conversation.starting') : t('composer.emptyConversationTitle') }}</span>
+              </span>
+              <span v-if="!starting" class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
+              <!-- Workspace picker: choose where this new conversation starts.
+                   Hidden while starting — a workspace is already committed. -->
+              <div v-if="hasWorkspaces && !starting" class="ws-pick" :style="wsPickStyle">
                 <div ref="wsPickMeasureRef" class="ws-pick-measure" aria-hidden="true">
                   <button type="button" class="ws-pick-btn" tabindex="-1">
                     <Icon name="folder" size="sm" />
@@ -1198,7 +1206,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
                 </div>
               </div>
               <button
-                v-else
+                v-else-if="!starting"
                 type="button"
                 class="empty-add-workspace"
                 @click="emit('addWorkspace')"
@@ -1225,6 +1233,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :models="models"
               :starred-ids="starredIds"
               :skills="skills"
+              :starting="starting"
               hide-context
               @submit="handleComposerSubmit"
               @steer="emit('steer', $event)"
@@ -1286,6 +1295,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :style="chatDockStyle"
         :session-id="sessionId"
         :running="running"
+        :starting="starting"
         :queued="queued"
         :search-files="searchFiles"
         :upload-image="uploadImage"
@@ -1448,6 +1458,13 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-size: calc(var(--ui-font-size) + 16px);
   font-optical-sizing: auto;
   font-weight: 600;
+}
+.empty-hint-title.is-starting {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--dim);
+  font-weight: 400;
 }
 .empty-hint-text {
   display: inline-block;
