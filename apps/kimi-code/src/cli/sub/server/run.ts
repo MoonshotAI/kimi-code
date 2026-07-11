@@ -264,7 +264,7 @@ function formatReadyLine(
   const notice = dangerousBypassAuth
     ? `${formatDangerNoticeLines().join('\n')}\n`
     : '';
-  return `${notice}Kimi server: ${buildOpenableUrl(origin, token)}\n`;
+  return `${notice}${t('tui.statusMessages.serverUrl', { url: buildOpenableUrl(origin, token) })}\n`;
 }
 
 /**
@@ -276,9 +276,9 @@ function formatDangerNoticeLines(): string[] {
   const danger = (text: string): string => chalk.hex(darkColors.error)(text);
   const dangerBold = (text: string): string => chalk.bold.hex(darkColors.error)(text);
   return [
-    `  ${dangerBold('⚠ DANGER: authentication is DISABLED (--dangerous-bypass-auth).')}`,
-    `  ${danger('Anyone who can reach this port gets full access. Only continue if you understand the risk.')}`,
-    `  ${danger(`If you are unsure, run `)}${dangerBold('kimi server kill')}${danger(' now to stop this process.')}`,
+    `  ${dangerBold(t('tui.statusMessages.serverDangerAuthDisabled'))}`,
+    `  ${danger(t('tui.statusMessages.serverDangerAnyoneAccess'))}`,
+    `  ${danger(t('tui.statusMessages.serverDangerUnsure'))}${dangerBold(t('tui.statusMessages.serverDangerUnsureCmd'))}${danger(t('tui.statusMessages.serverDangerUnsureSuffix'))}`,
   ];
 }
 
@@ -506,8 +506,8 @@ function formatReadyBanner(
   const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
   const lines: string[] = [
     '',
-    `  ${primary(logo[0])}  ${title('Kimi server ready')}  ${dim(getVersion())}`,
-    `  ${primary(logo[1])}  ${dim('Local web UI is available from this machine.')}`,
+    `  ${primary(logo[0])}  ${title(t('tui.statusMessages.serverReadyBanner'))}  ${dim(getVersion())}`,
+    `  ${primary(logo[1])}  ${dim(t('tui.statusMessages.serverReadyLocalUi'))}`,
     '',
   ];
 

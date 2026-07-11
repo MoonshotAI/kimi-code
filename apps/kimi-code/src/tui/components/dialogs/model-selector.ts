@@ -16,7 +16,8 @@ import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
 
-type ThinkingAvailability = 'toggle' | 'always-on' | 'unsupported';
+type ThinkingAvailabilityKind = 'toggle' | 'always-on' | 'unsupported';
+type ThinkingAvailability = string;
 
 interface ModelChoice {
   readonly alias: string;
@@ -90,11 +91,23 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
   });
 }
 
-export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
+export function thinkingAvailabilityKind(model: ModelAlias): ThinkingAvailabilityKind {
   const caps = model.capabilities ?? [];
   if (caps.includes('always_thinking')) return 'always-on';
   if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
+}
+
+export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
+  const kind = thinkingAvailabilityKind(model);
+  switch (kind) {
+    case 'always-on':
+      return t('tui.dialogs.modelSelector.thinkingAlwaysOn');
+    case 'toggle':
+      return t('tui.dialogs.modelSelector.thinkingToggle');
+    case 'unsupported':
+      return t('tui.dialogs.modelSelector.thinkingUnsupported');
+  }
 }
 
 export function effortsOf(model: ModelAlias): readonly string[] {
@@ -109,7 +122,7 @@ export function effortsOf(model: ModelAlias): readonly string[] {
  */
 export function segmentsFor(model: ModelAlias): readonly string[] {
   const efforts = effortsOf(model);
-  const availability = thinkingAvailability(model);
+  const availability = thinkingAvailabilityKind(model);
   if (efforts.length > 0) {
     return availability === 'always-on' ? efforts : ['off', ...efforts];
   }
@@ -129,7 +142,7 @@ export function effortLabel(effort: string): string {
  * thinking is unsupported.
  */
 function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
-  if (thinkingAvailability(model) === 'unsupported') return 'off';
+  if (thinkingAvailabilityKind(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
     return model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
@@ -195,7 +208,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (def !== undefined && efforts.includes(def)) return def;
       return efforts[0]!;
     }
-    return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';
+    return thinkingAvailabilityKind(choice.model) !== 'unsupported' ? 'on' : 'off';
   }
 
   /** Draft coerced onto the model's segment list so rendering/selection never
@@ -375,7 +388,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     // Non-effort always-on / unsupported models keep the original On/Off layout
     // so the control never shifts while moving across legacy models.
     const efforts = effortsOf(choice.model);
-    const availability = thinkingAvailability(choice.model);
+    const availability = thinkingAvailabilityKind(choice.model);
     if (efforts.length === 0 && availability === 'always-on') {
       return `  ${segment(t('tui.dialogs.modelSelector.on'), true)} ${unavailable(t('tui.dialogs.modelSelector.off'))}`;
     }

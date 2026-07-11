@@ -42,7 +42,7 @@ function formatMs(ms: number): string {
   <Card class="goal-strip" :class="{ expanded }">
     <template #head>
       <button class="goal-row" type="button" @click="expanded = !expanded">
-        <span class="goal-kicker">Goal</span>
+        <span class="goal-kicker">{{ t('app.goalKicker') }}</span>
         <span class="goal-objective" :class="{ 'expanded-hidden': expanded }">{{ goal.objective }}</span>
         <Badge
           :variant="goal.status === 'active' ? 'success' : goal.status === 'blocked' ? 'danger' : goal.status === 'paused' ? 'warning' : 'neutral'"
@@ -59,14 +59,14 @@ function formatMs(ms: number): string {
     <template v-if="expanded" #default>
       <div class="goal-full">{{ goal.objective }}</div>
       <div v-if="goal.completionCriterion" class="goal-criterion">
-        <span>Done when</span>
+        <span>{{ t('app.goalDoneWhen') }}</span>
         <p>{{ goal.completionCriterion }}</p>
       </div>
       <div class="goal-stats">
-        <Badge variant="neutral" size="sm">{{ goal.turnsUsed }} turns</Badge>
-        <Badge variant="neutral" size="sm">{{ goal.tokensUsed.toLocaleString() }} tokens</Badge>
+        <Badge variant="neutral" size="sm">{{ t('app.goalTurns', { count: goal.turnsUsed }) }}</Badge>
+        <Badge variant="neutral" size="sm">{{ t('app.goalTokens', { count: goal.tokensUsed.toLocaleString() }) }}</Badge>
         <Badge variant="neutral" size="sm">{{ formatMs(goal.wallClockMs) }}</Badge>
-        <Badge v-if="goal.budget.tokenBudget !== null" variant="neutral" size="sm">{{ tokenPct }}% token budget</Badge>
+        <Badge v-if="goal.budget.tokenBudget !== null" variant="neutral" size="sm">{{ t('app.goalTokenBudget', { pct: tokenPct }) }}</Badge>
       </div>
     </template>
 

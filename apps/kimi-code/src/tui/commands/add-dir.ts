@@ -1,3 +1,4 @@
+import { t } from '#/i18n';
 import { getNoActiveSessionMessage } from '../constant/kimi-tui';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import type { SlashCommandHost } from './dispatch';
@@ -11,7 +12,7 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
   if (input.length === 0 || input.toLowerCase() === 'list') {
     const additionalDirs = session?.summary?.additionalDirs ?? [];
     if (additionalDirs.length === 0) {
-      host.showStatus('No additional directories configured.');
+      host.showStatus(t('tui.statusMessages.addDirNoAdditionalDirs'));
       return;
     }
     host.showStatus(formatAdditionalDirsStatus(additionalDirs));
@@ -25,20 +26,20 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
 
   host.mountEditorReplacement(
     new ChoicePickerComponent({
-      title: `Add directory to workspace: ${input}`,
-      hint: '↑↓ navigate · Enter confirm · Esc cancel',
+      title: t('tui.statusMessages.addDirTitle', { path: input }),
+      hint: t('tui.statusMessages.addDirHint'),
       options: [
         {
           value: 'session',
-          label: 'Yes, for this session',
+          label: t('tui.statusMessages.addDirYesSession'),
         },
         {
           value: 'remember',
-          label: 'Yes, and remember this directory',
+          label: t('tui.statusMessages.addDirYesRemember'),
         },
         {
           value: 'cancel',
-          label: 'No',
+          label: t('tui.statusMessages.addDirNo'),
         },
       ],
       onSelect: (value) => {
@@ -46,14 +47,14 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
       },
       onCancel: () => {
         host.restoreEditor();
-        host.showStatus(`Did not add ${input} as a working directory.`);
+        host.showStatus(t('tui.statusMessages.addDirDidNotAdd', { path: input }));
       },
     }),
   );
 }
 
 function formatAdditionalDirsStatus(additionalDirs: readonly string[]): string {
-  return ['Additional directories:', ...additionalDirs.map((dir) => `  ${dir}`)].join('\n');
+  return [t('tui.statusMessages.addDirListHeader'), ...additionalDirs.map((dir) => `  ${dir}`)].join('\n');
 }
 
 async function handleAddDirChoice(
@@ -65,7 +66,7 @@ async function handleAddDirChoice(
   host.restoreEditor();
 
   if (choice === 'cancel') {
-    host.showStatus(`Did not add ${path} as a working directory.`);
+    host.showStatus(t('tui.statusMessages.addDirDidNotAdd', { path }));
     return;
   }
 
@@ -81,8 +82,8 @@ async function handleAddDirChoice(
     host.refreshSlashCommandAutocomplete();
     host.showStatus(
       choice === 'remember'
-        ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${result.configPath}`
-        : `Added workspace directory:\n  ${path}\n  For this session only`,
+        ? t('tui.statusMessages.addDirSuccessPersist', { path, configPath: result.configPath })
+        : t('tui.statusMessages.addDirSuccessSession', { path }),
       'success',
     );
   } catch (error) {

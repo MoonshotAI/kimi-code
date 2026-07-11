@@ -2177,6 +2177,11 @@ export class ToolCallComponent extends Container {
       return;
     }
 
+    if (this.toolCall.name === 'SwarmDiscussion') {
+      this.buildDiscussionResultSummary(result);
+      return;
+    }
+
     if (!result.output) return;
 
     if (this.isSingleSubagentView()) {
@@ -2238,6 +2243,43 @@ export class ToolCallComponent extends Container {
     });
     for (const component of components) {
       this.addChild(component);
+    }
+  }
+
+  private buildDiscussionResultSummary(result: ToolResultBlockData): void {
+    const dim = (s: string): string => currentTheme.fg('textDim', s);
+    const accent = (s: string): string => currentTheme.fg('primary', s);
+
+    // Parse <discussion_result> XML
+    const summaryMatch = result.output.match(/<summary>([^<]+)<\/summary>/);
+    const transcriptMatch = result.output.match(/<transcript>([\s\S]*?)<\/transcript>/);
+    const summaryTextMatch = result.output.match(/<final_summary>([\s\S]*?)<\/final_summary>/);
+
+    const speechCount = result.is_error === true ? 0 : (transcriptMatch?.[1]?.split('\n\n').filter(l => l.trim().startsWith('[')).length ?? 0);
+
+    const segments: string[] = [];
+    if (speechCount > 0) {
+      segments.push(`${String(speechCount)} speeches`);
+    }
+
+    if (result.is_error === true) {
+      segments.push(`${FAILURE_MARK.trimEnd()} ${t('tui.messages.toolCall.failedPeriod')}`);
+    } else {
+      segments.push(`${SUCCESS_MARK.trimEnd()} ${t('tui.messages.toolCall.completedPeriod')}`);
+    }
+
+    this.addChild(new Text(
+      `${dim(t('tui.messages.toolCall.discussionLabel'))}${segments.join(dim(' · '))}`,
+      2, 0,
+    ));
+
+    const summaryText = summaryTextMatch?.[1];
+    if (summaryText != null && summaryText.trim().length > 0) {
+      this.addChild(new Text('', 2, 0));
+      this.addChild(new Text(accent(t('tui.messages.toolCall.discussionSummary')), 2, 0));
+      for (const line of summaryText.trim().split('\n')) {
+        this.addChild(new Text(line, 4, 0));
+      }
     }
   }
 

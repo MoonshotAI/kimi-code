@@ -78,14 +78,14 @@ export async function handleProviderAdd(
   const apiKey = resolveApiKey(opts.apiKey, deps.env);
   if (apiKey === undefined) {
     deps.stderr.write(
-      'Missing API key. Pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
+      t('tui.statusMessages.providerMissingApiKey') + '\n',
     );
     deps.exit(1);
   }
 
   const trimmedUrl = url.trim();
   if (trimmedUrl.length === 0) {
-    deps.stderr.write('Registry URL is required.\n');
+    deps.stderr.write(t('tui.statusMessages.providerUrlRequired') + '\n');
     deps.exit(1);
   }
 
@@ -103,13 +103,13 @@ export async function handleProviderAdd(
     entries = await fetchCustomRegistry(source);
   } catch (error) {
     const suffix = error instanceof CustomRegistryApiError ? ` (HTTP ${String(error.status)})` : '';
-    deps.stderr.write(`Failed to fetch registry${suffix}: ${errorMessage(error)}\n`);
+    deps.stderr.write(t('tui.statusMessages.providerFetchFailed', { suffix, error: errorMessage(error) }) + '\n');
     deps.exit(1);
   }
 
   const entryList = Object.values(entries);
   if (entryList.length === 0) {
-    deps.stderr.write(`Registry at ${trimmedUrl} contained no usable providers.\n`);
+    deps.stderr.write(t('tui.statusMessages.providerNoUsable', { url: trimmedUrl }) + '\n');
     deps.exit(1);
   }
 
@@ -156,11 +156,11 @@ export async function handleProviderRemove(
   await harness.ensureConfigFile();
   const config = await harness.getConfig();
   if (config.providers[providerId] === undefined) {
-    deps.stderr.write(`Provider "${providerId}" not found.\n`);
+    deps.stderr.write(t('tui.statusMessages.providerNotFound', { id: providerId }) + '\n');
     deps.exit(1);
   }
   await harness.removeProvider(providerId);
-  deps.stdout.write(`Removed provider "${providerId}".\n`);
+  deps.stdout.write(t('tui.statusMessages.providerRemoved', { id: providerId }) + '\n');
 }
 
 export async function handleProviderList(
@@ -187,7 +187,7 @@ export async function handleProviderList(
 
   const providerIds = Object.keys(config.providers).toSorted();
   if (providerIds.length === 0) {
-    deps.stdout.write('No providers configured.\n');
+    deps.stdout.write(t('tui.statusMessages.providerNoneConfigured') + '\n');
     return;
   }
 
@@ -200,7 +200,7 @@ export async function handleProviderList(
     );
   }
   if (config.defaultModel !== undefined) {
-    deps.stdout.write(`\nDefault model: ${config.defaultModel}\n`);
+    deps.stdout.write('\n' + t('tui.statusMessages.providerDefaultModel', { model: config.defaultModel }) + '\n');
   }
 }
 
@@ -220,7 +220,7 @@ export async function handleCatalogList(
   if (providerId !== undefined) {
     const entry = catalog[providerId];
     if (entry === undefined) {
-      deps.stderr.write(`Provider "${providerId}" not found in catalog at ${url}.\n`);
+      deps.stderr.write(t('tui.statusMessages.providerCatalogNotFound', { id: providerId, url }) + '\n');
       deps.exit(1);
     }
     const models = catalogProviderModels(entry);
@@ -231,7 +231,7 @@ export async function handleCatalogList(
       return;
     }
     if (models.length === 0) {
-      deps.stdout.write(`Provider "${providerId}" lists no usable models in this catalog.\n`);
+      deps.stdout.write(t('tui.statusMessages.providerCatalogNoModels', { id: providerId }) + '\n');
       return;
     }
     deps.stdout.write(`${entry.name ?? providerId} (${providerId})\n`);
@@ -268,9 +268,9 @@ export async function handleCatalogList(
 
   if (entries.length === 0) {
     if (filter !== undefined) {
-      deps.stdout.write(`No providers in catalog match "${filter}".\n`);
+      deps.stdout.write(t('tui.statusMessages.providerCatalogNoMatch', { filter }) + '\n');
     } else {
-      deps.stdout.write('Catalog is empty.\n');
+      deps.stdout.write(t('tui.statusMessages.providerCatalogEmpty') + '\n');
     }
     return;
   }
@@ -297,7 +297,7 @@ export async function handleCatalogAdd(
   const apiKey = resolveApiKey(opts.apiKey, deps.env);
   if (apiKey === undefined) {
     deps.stderr.write(
-      'Missing API key. Pass --api-key <key> or set KIMI_REGISTRY_API_KEY.\n',
+      t('tui.statusMessages.providerMissingApiKey') + '\n',
     );
     deps.exit(1);
   }
@@ -307,25 +307,25 @@ export async function handleCatalogAdd(
 
   const entry = catalog[providerId];
   if (entry === undefined) {
-    deps.stderr.write(`Provider "${providerId}" not found in catalog at ${url}.\n`);
+    deps.stderr.write(t('tui.statusMessages.providerCatalogNotFound', { id: providerId, url }) + '\n');
     deps.exit(1);
   }
 
   const wire = inferWireType(entry);
   if (wire === undefined) {
-    deps.stderr.write(`Provider "${providerId}" has an unsupported wire type in the catalog.\n`);
+    deps.stderr.write(t('tui.statusMessages.providerCatalogUnsupported', { id: providerId }) + '\n');
     deps.exit(1);
   }
 
   const models = catalogProviderModels(entry);
   if (models.length === 0) {
-    deps.stderr.write(`Provider "${providerId}" lists no usable models in this catalog.\n`);
+    deps.stderr.write(t('tui.statusMessages.providerCatalogNoModels', { id: providerId }) + '\n');
     deps.exit(1);
   }
 
   if (opts.defaultModel !== undefined && !models.some((m) => m.id === opts.defaultModel)) {
     deps.stderr.write(
-      `Model "${opts.defaultModel}" is not in provider "${providerId}". Run "kimi provider catalog list ${providerId}" to see available ids.\n`,
+      t('tui.statusMessages.providerCatalogModelNotInProvider', { model: opts.defaultModel, id: providerId }) + '\n',
     );
     deps.exit(1);
   }
@@ -390,10 +390,10 @@ export async function handleCatalogAdd(
 
   const displayName = entry.name ?? providerId;
   deps.stdout.write(
-    `Imported ${displayName} (${providerId}) with ${String(models.length)} model${models.length === 1 ? '' : 's'} from ${url}.\n`,
+    t('tui.statusMessages.providerImported', { name: displayName, id: providerId, count: String(models.length) }) + '\n',
   );
   if (opts.defaultModel !== undefined) {
-    deps.stdout.write(`Default model set to ${providerId}/${opts.defaultModel}.\n`);
+    deps.stdout.write(t('tui.statusMessages.providerDefaultSet', { id: providerId, model: opts.defaultModel }) + '\n');
   }
 }
 
@@ -402,7 +402,7 @@ async function loadCatalogOrExit(deps: ProviderDeps, url: string): Promise<Catal
     return await fetchCatalog(url);
   } catch (error) {
     const suffix = error instanceof CatalogFetchError ? ` (HTTP ${String(error.status)})` : '';
-    deps.stderr.write(`Failed to fetch catalog from ${url}${suffix}: ${errorMessage(error)}\n`);
+    deps.stderr.write(t('tui.statusMessages.providerCatalogFetchFailed', { url, suffix, error: errorMessage(error) }) + '\n');
     deps.exit(1);
   }
 }

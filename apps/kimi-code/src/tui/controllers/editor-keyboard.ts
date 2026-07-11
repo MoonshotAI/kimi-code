@@ -1,6 +1,7 @@
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
@@ -378,7 +379,7 @@ export class EditorKeyboardController {
     if (session === undefined) return;
     void session.cancelCompaction().catch((error: unknown) => {
       const message = formatErrorMessage(error);
-      this.host.showError(`Failed to cancel compaction: ${message}`);
+      this.host.showError(t('tui.statusMessages.compactionCancelFailed', { message }));
     });
   }
 
@@ -466,7 +467,7 @@ export class EditorKeyboardController {
     if (state.externalEditorRunning) return;
     const cmd = resolveEditorCommand(state.appState.editorCommand);
     if (cmd === undefined) {
-      this.host.showError('No editor configured. Set $VISUAL / $EDITOR, or run /editor <command>.');
+      this.host.showError(t('tui.statusMessages.noEditorConfigured'));
       return;
     }
     this.host.setExternalEditorRunning(true);
@@ -482,7 +483,7 @@ export class EditorKeyboardController {
       }
     } catch (error) {
       const msg = formatErrorMessage(error);
-      this.host.showError(`External editor failed: ${msg}`);
+      this.host.showError(t('tui.messages.editorExternalFailed', { msg }));
     } finally {
       if (typeof process.stdin.pause === 'function') {
         process.stdin.pause();

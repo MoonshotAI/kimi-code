@@ -24,6 +24,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { DEFAULT_LOCK_DIR, getLiveLock, type LockContents } from '@moonshot-ai/server';
 
+import { t } from '#/i18n';
+
 import {
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
@@ -377,7 +379,7 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   }
 
   throw new Error(
-    `Kimi server daemon failed to start within ${String(SPAWN_TIMEOUT_MS)}ms.\n\n` +
+    t('tui.statusMessages.serverDaemonTimeout', { ms: String(SPAWN_TIMEOUT_MS) }) + '\n\n' +
       formatLogTail(daemonLogPath()),
   );
 }
@@ -390,15 +392,15 @@ function formatDaemonBootFailure(
     exit.signal === null
       ? `exited with code ${String(exit.code)}`
       : `was terminated by signal ${exit.signal}`;
-  return `Kimi server daemon ${reason} during startup.\n\n${formatLogTail(logPath)}`;
+  return t('tui.statusMessages.serverDaemonFailed', { reason }) + '\n\n' + formatLogTail(logPath);
 }
 
 function formatLogTail(logPath: string): string {
   const tail = tailFile(logPath, 30);
   if (tail.length === 0) {
-    return `Check the log for details: ${logPath}`;
+    return t('tui.statusMessages.serverDaemonCheckLog', { path: logPath });
   }
-  return `Last log lines (${logPath}):\n${tail}`;
+  return t('tui.statusMessages.serverDaemonLogTail', { path: logPath }) + '\n' + tail;
 }
 
 function tailFile(filePath: string, maxLines: number): string {

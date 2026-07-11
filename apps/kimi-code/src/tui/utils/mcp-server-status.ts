@@ -1,5 +1,7 @@
 import type { McpServerInfo, McpServerStatusEvent } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
+
 export type McpServerStatusSnapshot = McpServerInfo | McpServerStatusEvent['server'];
 
 export const MCP_STARTUP_STATUS_ROW_LIMIT = 4;
@@ -57,11 +59,11 @@ export function formatMcpStartupStatusSummary(
   }
 
   const parts: string[] = [];
-  if (failed > 0) parts.push(`${failed} failed`);
-  if (needsAuth > 0) parts.push(`${needsAuth} need auth`);
-  if (connecting > 0) parts.push(`${connecting} connecting`);
-  if (connected > 0) parts.push(`${connected} connected`);
-  if (disabled > 0) parts.push(`${disabled} disabled`);
+  if (failed > 0) parts.push(t('tui.messages.mcpStatusFailed', { count: failed }));
+  if (needsAuth > 0) parts.push(t('tui.messages.mcpStatusNeedsAuth', { count: needsAuth }));
+  if (connecting > 0) parts.push(t('tui.messages.mcpStatusConnecting', { count: connecting }));
+  if (connected > 0) parts.push(t('tui.messages.mcpStatusConnected', { count: connected }));
+  if (disabled > 0) parts.push(t('tui.messages.mcpStatusDisabled', { count: disabled }));
   return parts.join(', ');
 }
 

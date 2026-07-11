@@ -1,6 +1,6 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
 import { t } from '#/i18n';
-import { registerMigrateCommand } from '#/migration';
+import { registerMigrateCommand } from '#/migration/index';
 import { Command, Option } from 'commander';
 
 import type { CLIOptions } from './options';

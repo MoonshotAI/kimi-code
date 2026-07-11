@@ -20,6 +20,7 @@ import {
 import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
+import { t } from '#/i18n';
 
 import type { CLIOptions, PromptOutputFormat } from './options';
 import {
@@ -160,7 +161,7 @@ export async function runPrompt(
     await harness.ensureConfigFile();
     const config = await harness.getConfig();
     for (const warning of (await harness.getConfigDiagnostics()).warnings) {
-      stderr.write(`Warning: ${warning}\n`);
+      stderr.write(`${t('tui.statusMessages.promptWarning', { warning })}\n`);
     }
     const { session, restorePermission, telemetryModel, goalModel } =
       await resolvePromptSession(
@@ -333,7 +334,7 @@ async function resolvePromptSession(
         goalModel: configuredModel(opts.model, status.model),
       };
     }
-    stderr.write(`No sessions to continue under "${workDir}"; starting a fresh session.\n`);
+    stderr.write(`${t('tui.statusMessages.noSessionsToContinue', { workDir })}\n`);
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
@@ -714,7 +715,7 @@ function writeResumeHint(
   stderr: PromptOutput,
 ): void {
   const command = `kimi -r ${sessionId}`;
-  const content = `To resume this session: ${command}`;
+  const content = t('tui.statusMessages.shellResumeHint', { sessionId });
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {
       role: 'meta',
@@ -930,7 +931,7 @@ function hasTurnId(event: Event): event is Event & { readonly turnId: number } {
 function formatTurnEndedFailure(event: Extract<Event, { type: 'turn.ended' }>): string {
   if (event.error !== undefined) return `${event.error.code}: ${event.error.message}`;
   if (event.reason === 'filtered') {
-    return 'Provider safety policy blocked the response.';
+    return t('tui.statusMessages.policyBlocked');
   }
-  return `Prompt turn ended with reason: ${event.reason}`;
+  return t('tui.statusMessages.promptTurnEnded', { reason: event.reason });
 }

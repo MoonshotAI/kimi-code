@@ -106,7 +106,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
       lines.push(
         currentTheme.fg(
           'textMuted',
-          ` ▼ ${String(view.items.length - view.page.end)} more`,
+          ` ${t('tui.dialogs.experimentsSelector.more', { count: view.items.length - view.page.end })}`,
         ),
       );
     }
@@ -198,22 +198,23 @@ function isLocked(feature: ExperimentalFeatureState): boolean {
 
 function featureDetail(feature: ExperimentalFeatureState): string {
   const source = sourceLabel(feature);
+  const idPart = t('tui.dialogs.experimentsSelector.featureId', { id: feature.id });
   if (feature.source === 'env' || feature.source === 'master-env') {
-    return `id ${feature.id} · ${source}`;
+    return `${idPart} · ${source}`;
   }
-  return `id ${feature.id} · ${source} · ${feature.env}`;
+  return `${idPart} · ${source} · ${feature.env}`;
 }
 
 function sourceLabel(feature: ExperimentalFeatureState): string {
   switch (feature.source) {
     case 'master-env':
-      return 'locked by KIMI_CODE_EXPERIMENTAL_FLAG';
+      return t('tui.dialogs.experimentsSelector.lockedByMasterEnv');
     case 'env':
-      return `locked by ${feature.env}`;
+      return t('tui.dialogs.experimentsSelector.lockedBy', { env: feature.env });
     case 'config':
-      return 'config';
+      return t('tui.dialogs.experimentsSelector.sourceConfig');
     case 'default':
-      return 'default';
+      return t('tui.dialogs.experimentsSelector.sourceDefault');
   }
 }
 

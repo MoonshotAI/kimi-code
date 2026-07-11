@@ -531,7 +531,7 @@ export class SessionEventHandler {
       turnId,
     };
     streamingUI.registerToolCall(toolCall);
-    if (event.name === 'AgentSwarm') {
+    if (event.name === 'AgentSwarm' || event.name === 'SwarmDiscussion') {
       this.subAgentEventHandler.handleAgentSwarmToolCallStarted(event.toolCallId, toolCall.args);
     }
     this.host.patchLivePane({
@@ -548,7 +548,7 @@ export class SessionEventHandler {
     const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
     if (
       preview !== undefined &&
-      (preview.name === 'AgentSwarm' || this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId))
+      (preview.name === 'AgentSwarm' || preview.name === 'SwarmDiscussion' || this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId))
     ) {
       this.subAgentEventHandler.handleAgentSwarmToolCallDelta(event.toolCallId, preview.args, {
         streamingArguments: preview.argumentsText,
@@ -768,7 +768,7 @@ export class SessionEventHandler {
     try {
       queue = await readGoalQueue(session);
     } catch (error) {
-      host.showError(`Failed to read upcoming goals: ${formatErrorMessage(error)}`);
+      host.showError(t('tui.statusMessages.failedToReadUpcomingGoals', { error: formatErrorMessage(error) }));
       return false;
     }
     if (host.session !== session || host.aborted) return true;
@@ -792,7 +792,7 @@ export class SessionEventHandler {
             await removeGoalQueueItem(session, { goalId: next.id });
           } catch (error) {
             host.showError(
-              `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
+              t('tui.statusMessages.queuedGoalRemoveFailed', { error: formatErrorMessage(error) }),
             );
             await this.cancelStartedQueuedGoal(session);
             return false;
@@ -818,7 +818,7 @@ export class SessionEventHandler {
     try {
       await restoreGoalQueueItem(session, goal);
     } catch (error) {
-      this.host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
+      this.host.showError(t('tui.statusMessages.queuedGoalRestoreFailed', { error: formatErrorMessage(error) }));
     }
     await this.cancelStartedQueuedGoal(session);
   }
@@ -827,7 +827,7 @@ export class SessionEventHandler {
     try {
       await session.cancelGoal();
     } catch (error) {
-      this.host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
+      this.host.showError(t('tui.statusMessages.queuedGoalCancelFailed', { error: formatErrorMessage(error) }));
     }
   }
 

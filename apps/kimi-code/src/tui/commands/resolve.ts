@@ -1,3 +1,4 @@
+import { t } from '#/i18n';
 import {
   findBuiltInSlashCommand,
   resolveSlashCommandAvailability,
@@ -145,7 +146,7 @@ export function slashBusyMessage(
   reason: SlashCommandBusyReason,
 ): string {
   if (reason === 'streaming') {
-    return `Cannot /${commandName} while streaming — press Esc or Ctrl-C first.`;
+    return t('tui.messages.resolveCannotWhileStreaming', { name: commandName });
   }
-  return `Cannot /${commandName} while compacting — wait for compaction to finish first.`;
+  return t('tui.messages.resolveCannotWhileCompacting', { name: commandName });
 }

@@ -25,9 +25,9 @@ import {
 } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
 
-import { SELECT_POINTER } from '@/tui/constant/symbols';
+import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
-import { printableChar } from '@/tui/utils/printable-key';
+import { printableChar } from '#/tui/utils/printable-key';
 
 const ELLIPSIS = '…';
 

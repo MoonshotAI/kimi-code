@@ -1,5 +1,7 @@
 import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
+
 interface GoalCompletionStats {
   readonly terminalReason?: string | undefined;
   readonly turnsUsed: number;
@@ -17,9 +19,9 @@ export function buildGoalCompletionMessage(goal: GoalSnapshot): string {
 }
 
 export function buildGoalCompletionMessageFromStats(goal: GoalCompletionStats): string {
-  const head = `✓ Goal complete${goal.terminalReason ? ` — ${goal.terminalReason}` : ''}.`;
-  const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;
-  const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.tokensUsed)} tokens.`;
+  const head = t('tui.messages.goalComplete', { reason: goal.terminalReason ? ` — ${goal.terminalReason}` : '' });
+  const turns = t('tui.messages.goalCompleteTurns', { count: goal.turnsUsed, plural: goal.turnsUsed === 1 ? '' : 's' });
+  const stats = t('tui.messages.goalCompleteSummary', { turns, elapsed: formatElapsed(goal.wallClockMs), tokens: formatTokens(goal.tokensUsed) });
   return `${head}\n${stats}`;
 }
 

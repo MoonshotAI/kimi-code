@@ -8,6 +8,7 @@
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { createKimiCodeHostIdentity } from '#/cli/version';
+import { t } from '#/i18n';
 import { openUrl } from '#/utils/open-url';
 
 export async function runLoginFlow(): Promise<never> {
@@ -31,12 +32,12 @@ export async function runLoginFlow(): Promise<never> {
         process.stderr.write(
           [
             '',
-            `Opening browser for Kimi device login: ${url}`,
-            `If the browser did not open, paste the URL above and enter code: ${data.userCode}`,
+            t('tui.statusMessages.loginOpeningBrowser', { url }),
+            t('tui.statusMessages.loginPasteUrl', { code: data.userCode }),
             data.expiresIn !== null && data.expiresIn !== undefined
-              ? `Code expires in ${data.expiresIn}s.`
+              ? t('tui.statusMessages.loginCodeExpires', { seconds: data.expiresIn })
               : undefined,
-            'Waiting for authorization to complete...',
+            t('tui.statusMessages.loginWaiting'),
             '',
           ]
             .filter((line): line is string => line !== undefined)
@@ -49,14 +50,14 @@ export async function runLoginFlow(): Promise<never> {
         }
       },
     });
-    process.stderr.write(`Logged in to ${result.providerName}.\n`);
+    process.stderr.write(t('tui.statusMessages.loginSuccess', { provider: result.providerName }) + '\n');
     process.exit(0);
   } catch (error) {
     if (controller.signal.aborted) {
-      process.stderr.write('Login cancelled.\n');
+      process.stderr.write(t('tui.statusMessages.loginCancelled') + '\n');
     } else {
       const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`Login failed: ${message}\n`);
+      process.stderr.write(t('tui.statusMessages.loginFailedMsg', { message }) + '\n');
     }
     process.exit(1);
   }

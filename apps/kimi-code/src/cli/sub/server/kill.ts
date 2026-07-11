@@ -62,7 +62,7 @@ export function registerKillCommand(server: Command): void {
 export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
   const lock = deps.getLiveLock();
   if (!lock) {
-    deps.stdout.write('No running Kimi server.\n');
+    deps.stdout.write(t('tui.statusMessages.serverKillNoRunning') + '\n');
     return;
   }
 
@@ -81,19 +81,19 @@ export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
   deps.signalPid(pid, 'SIGTERM');
 
   if (await waitForExit(pid, TERM_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) stopped.\n`);
+    deps.stdout.write(t('tui.statusMessages.serverKillStopped', { pid: String(pid) }) + '\n');
     return;
   }
 
   deps.signalPid(pid, 'SIGKILL');
 
   if (await waitForExit(pid, KILL_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) killed.\n`);
+    deps.stdout.write(t('tui.statusMessages.serverKillKilled', { pid: String(pid) }) + '\n');
     return;
   }
 
   throw new Error(
-    `Failed to stop Kimi server (pid ${String(pid)}); insufficient permissions?`,
+    t('tui.statusMessages.serverKillFailedPermissions', { pid: String(pid) }),
   );
 }
 

@@ -61,7 +61,7 @@ export async function handleMainCommand(
     validated = validateOptions(opts);
   } catch (error) {
     if (error instanceof OptionConflictError) {
-      process.stderr.write(`error: ${error.message}\n`);
+      process.stderr.write(t('tui.statusMessages.mainError', { message: error.message }) + '\n');
       process.exit(1);
     }
     throw error;
@@ -213,7 +213,7 @@ export function main(): void {
     (entry, args) => {
       void runPluginNodeEntry(entry, args).catch(async (error: unknown) => {
         await logStartupFailure(t('startup.operations.runPluginNodeEntry'), error);
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.stderr.write(t('tui.statusMessages.mainError', { message: error instanceof Error ? error.message : String(error) }) + '\n');
         process.exit(1);
       });
     },

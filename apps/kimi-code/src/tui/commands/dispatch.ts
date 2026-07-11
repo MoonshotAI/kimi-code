@@ -4,6 +4,7 @@ import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
 
+import { t } from '#/i18n';
 import { getLlmNotSetMessage } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
@@ -52,6 +53,7 @@ import {
   handleTitleCommand,
 } from './session';
 import { handleSwarmCommand } from './swarm';
+import { handleDiscussCommand } from './discuss';
 import { handleUndoCommand } from './undo';
 import { handleWebCommand } from './web';
 
@@ -77,6 +79,7 @@ export {
   showSettingsSelector,
 } from './config';
 export { handleSwarmCommand } from './swarm';
+export { handleDiscussCommand } from './discuss';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
@@ -190,7 +193,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
         reason: intent.reason,
         command: intent.commandName,
       });
-      host.showError(`Invalid slash command: /${intent.commandName}`);
+      host.showError(t('tui.messages.configInvalidSlashCommand', { name: intent.commandName }));
       return;
     case 'skill': {
       const session = host.session;
@@ -255,7 +258,7 @@ async function handleBuiltInSlashCommand(
       host.showHelpPanel();
       return;
     case 'version':
-      host.showStatus(`Kimi Code v${host.state.appState.version}`);
+      host.showStatus(t('tui.messages.configVersionDisplay', { version: host.state.appState.version }));
       return;
     case 'new':
       await host.createNewSession();
@@ -333,6 +336,9 @@ async function handleBuiltInSlashCommand(
     case 'swarm':
       await handleSwarmCommand(host, args);
       return;
+    case 'discuss':
+      await handleDiscussCommand(host, args);
+      return;
     case 'compact':
       await handleCompactCommand(host, args);
       return;
@@ -364,7 +370,7 @@ async function handleBuiltInSlashCommand(
       await handleWebCommand(host);
       return;
     default:
-      host.showError(`Unknown slash command: /${String(name)}`);
+      host.showError(t('tui.messages.configUnknownSlashCommand', { name: String(name) }));
       return;
   }
 }

@@ -1,5 +1,6 @@
 import { Text } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
@@ -100,10 +101,10 @@ function renderGoalSnapshot(
 
   const muted = (s: string) => currentTheme.dimFg('textDim', s);
   const value = (s: string) => currentTheme.fg('text', s);
-  if (goal === null) return [new Text(muted('  No current goal.'), 0, 0)];
+  if (goal === null) return [new Text(muted(t('tui.messages.goalToolNoGoal')), 0, 0)];
 
   const lines = [
-    `  ${value(`Goal ${goal.status}: ${truncateOneLine(goal.objective, 96)}`)}`,
+    `  ${value(t('tui.messages.goalToolStatus', { status: goal.status, objective: truncateOneLine(goal.objective, 96) }))}`,
     `    ${muted(formatGoalStats(goal))}`,
   ];
   if (goal.terminalReason !== undefined && goal.terminalReason.length > 0) {
@@ -121,23 +122,23 @@ function goalToolLabel(
   const finished = result !== undefined;
   switch (toolName) {
     case 'CreateGoal':
-      return failed ? 'Could not start goal' : finished ? 'Started goal' : 'Starting goal';
+      return failed ? t('tui.messages.goalToolCouldNotStart') : finished ? t('tui.messages.goalToolStarted') : t('tui.messages.goalToolStarting');
     case 'GetGoal':
-      return failed ? 'Could not check goal' : finished ? 'Checked goal' : 'Checking goal';
+      return failed ? t('tui.messages.goalToolCouldNotCheck') : finished ? t('tui.messages.goalToolChecked') : t('tui.messages.goalToolChecking');
     case 'SetGoalBudget':
       return failed
-        ? 'Could not set goal budget'
+        ? t('tui.messages.goalToolCouldNotSetBudget')
         : finished
-          ? 'Set goal budget'
-          : 'Setting goal budget';
+          ? t('tui.messages.goalToolSetBudget')
+          : t('tui.messages.goalToolSettingBudget');
     case 'UpdateGoal': {
       const status = stringArg(args, 'status');
       const suffix = status ?? 'status';
       return failed
-        ? `Could not report goal ${suffix}`
+        ? t('tui.messages.goalToolCouldNotReport', { suffix })
         : finished
-          ? `Reported goal ${suffix}`
-          : `Reporting goal ${suffix}`;
+          ? t('tui.messages.goalToolReported', { suffix })
+          : t('tui.messages.goalToolReporting', { suffix });
     }
   }
 }

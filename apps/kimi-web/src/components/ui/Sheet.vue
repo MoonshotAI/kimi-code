@@ -2,9 +2,11 @@
 <!-- Design-system §03 Sheet / BottomSheet: mobile bottom panel (≤640px dialogs
      anchor here). Top radius xl + drag handle + xl shadow. -->
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
 
+const { t } = useI18n();
 defineProps<{ open: boolean; title?: string }>();
 
 const emit = defineEmits<{ 'update:open': [value: boolean]; close: [] }>();
@@ -22,7 +24,7 @@ function close() {
         <div class="ui-sheet__handle" aria-hidden="true" />
         <div v-if="title" class="ui-sheet__head">
           <span class="ui-sheet__title">{{ title }}</span>
-          <IconButton size="sm" label="Close" @click="close">
+          <IconButton size="sm" :label="t('app.close')" @click="close">
             <Icon name="close" size="md" />
           </IconButton>
         </div>

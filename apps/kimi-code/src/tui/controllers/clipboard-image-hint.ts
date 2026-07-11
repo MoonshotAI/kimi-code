@@ -1,5 +1,6 @@
 import type { TUI } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { clipboardHasImage } from '#/utils/clipboard/clipboard-has-image';
 
 import { FOCUS_DEBOUNCE_MS, HINT_DISPLAY_MS } from '../constant/clipboard-image-hint';
@@ -153,7 +154,7 @@ export class ClipboardImageHintController {
     // Same image we already notified about — stay quiet until it changes.
     if (!this.armed) return;
 
-    const hintText = `Image in clipboard · ${getPasteImageShortcut()} to paste`;
+    const hintText = t('tui.messages.clipboardImageHint', { shortcut: getPasteImageShortcut() });
     this.clearClearHintTimer();
     this.lastHintText = hintText;
     this.armed = false;

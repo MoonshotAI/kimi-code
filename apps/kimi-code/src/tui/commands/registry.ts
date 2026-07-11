@@ -11,25 +11,29 @@ import type { KimiSlashCommand, SlashCommandAvailability } from './types';
 
 /** Subcommands offered when autocompleting `/goal <…>`. */
 const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
-  { value: 'status', description: 'Show the current goal' },
-  { value: 'pause', description: 'Pause the active goal' },
-  { value: 'resume', description: 'Resume a paused goal' },
-  { value: 'cancel', description: 'Cancel and remove the current goal' },
-  { value: 'replace', description: 'Replace the current goal with a new objective' },
-  { value: 'next', description: 'Queue an upcoming goal' },
+  { value: 'status', description: t('tui.messages.registryGoalShow') },
+  { value: 'pause', description: t('tui.messages.registryGoalPause') },
+  { value: 'resume', description: t('tui.messages.registryGoalResume') },
+  { value: 'cancel', description: t('tui.messages.registryGoalCancel') },
+  { value: 'replace', description: t('tui.messages.registryGoalReplace') },
+  { value: 'next', description: t('tui.messages.registryGoalNext') },
 ];
 
 const GOAL_NEXT_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
-  { value: 'manage', description: 'Manage upcoming goals' },
+  { value: 'manage', description: t('tui.messages.registryGoalManage') },
 ];
 
 const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
-  { value: 'on', description: 'Turn swarm mode on' },
-  { value: 'off', description: 'Turn swarm mode off' },
+  { value: 'on', description: t('tui.messages.registrySwarmOn') },
+  { value: 'off', description: t('tui.messages.registrySwarmOff') },
+];
+
+const DISCUSS_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'with', description: t('tui.messages.registryDiscussRoles') },
 ];
 
 const ADD_DIR_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
-  { value: 'list', description: 'Show configured additional workspace directories' },
+  { value: 'list', description: t('tui.messages.registryAddDirShow') },
 ];
 
 /** Argument autocompletion for the `/goal` command (subcommands). */
@@ -178,6 +182,14 @@ export function getBuiltinSlashCommands(): readonly KimiSlashCommand[] {
       priority: 100,
       argumentHint: '[on|off] | <task>',
       completeArgs: swarmArgumentCompletions,
+      availability: 'idle-only',
+    },
+    {
+      name: 'discuss',
+      aliases: [],
+      description: t('tui.slashCommands.discuss'),
+      priority: 90,
+      argumentHint: '<topic> with <role1>,<role2>,...',
       availability: 'idle-only',
     },
     {

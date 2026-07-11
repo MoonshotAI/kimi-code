@@ -22,7 +22,7 @@ import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi
 
 import { t } from '#/i18n';
 import { currentTheme } from '#/tui/theme';
-import { printableChar } from '@/tui/utils/printable-key';
+import { printableChar } from '#/tui/utils/printable-key';
 
 const ELLIPSIS = '…';
 

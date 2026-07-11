@@ -4,9 +4,12 @@
      Includes focus trap, Esc-to-close, and optional overlay-click-to-close. -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { openDialogCount } from '../../composables/dialogStack';
 import IconButton from './IconButton.vue';
 import Icon from './Icon.vue';
+
+const { t } = useI18n();
 
 const props = withDefaults(defineProps<{
   open: boolean;
@@ -149,7 +152,7 @@ onBeforeUnmount(() => {
               <div v-if="description" class="ui-dialog__desc">{{ description }}</div>
             </div>
           </slot>
-          <IconButton class="ui-dialog__close" size="sm" label="Close" @click="close">
+          <IconButton class="ui-dialog__close" size="sm" :label="t('app.close')" @click="close">
             <Icon name="close" size="md" />
           </IconButton>
         </div>

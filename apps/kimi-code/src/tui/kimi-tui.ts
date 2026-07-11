@@ -2161,7 +2161,7 @@ export class KimiTUI {
   }
 
   showError(message: string): void {
-    this.showStatus(`Error: ${message}`, 'error');
+    this.showStatus(t('tui.messages.kimiTuiError', { message }), 'error');
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
@@ -2827,7 +2827,7 @@ export class KimiTUI {
   private showApprovalPanel(payload: ApprovalPanelData): void {
     this.patchLivePane({ pendingApproval: { data: payload } });
     notifyTerminalOnce(this.state, `approval:${payload.id}`, {
-      title: 'Kimi Code approval required',
+      title: t('tui.messages.kimiTuiApprovalRequired'),
       body: payload.tool_name,
     });
     const panel = new ApprovalPanelComponent(
@@ -2894,7 +2894,7 @@ export class KimiTUI {
   private showQuestionDialog(payload: QuestionPanelData): void {
     this.patchLivePane({ pendingQuestion: { data: payload } });
     notifyTerminalOnce(this.state, `question:${payload.id}`, {
-      title: 'Kimi Code needs your answer',
+      title: t('tui.messages.kimiTuiNeedsAnswer'),
       body: payload.questions[0]?.question,
     });
     const dialog = new QuestionDialogComponent(

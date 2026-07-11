@@ -1,3 +1,4 @@
+import { t } from '#/i18n';
 import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -36,7 +37,7 @@ export async function handleSwarmCommand(host: SlashCommandHost, args: string): 
   }
 
   if (host.state.appState.permissionMode === 'manual') {
-    showSwarmStartPermissionPrompt(host, `/swarm ${prompt}`, 'Swarm task not started.', (choice) =>
+    showSwarmStartPermissionPrompt(host, `/swarm ${prompt}`, t('tui.statusMessages.swarmTaskNotStarted'), (choice) =>
       startSwarmWithPermission(host, prompt, choice),
     );
     return;
@@ -81,7 +82,7 @@ async function setPermissionForSwarm(host: SlashCommandHost, mode: PermissionMod
   try {
     await host.requireSession().setPermission(mode);
   } catch (error) {
-    host.showError(`Failed to set permission mode: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.messages.swarmPermissionFailed', { error: formatErrorMessage(error) }));
     return false;
   }
   host.setAppState({ permissionMode: mode });
@@ -102,15 +103,15 @@ async function applySwarmMode(
   commandText: string,
 ): Promise<void> {
   if (enabled && host.state.appState.swarmMode) {
-    host.showStatus('Swarm mode is already on.');
+    host.showStatus(t('tui.statusMessages.swarmModeAlreadyOn'));
     return;
   }
   if (!enabled && !host.state.appState.swarmMode) {
-    host.showStatus('Swarm mode is already off.');
+    host.showStatus(t('tui.statusMessages.swarmModeAlreadyOff'));
     return;
   }
   if (enabled && host.state.appState.permissionMode === 'manual') {
-    showSwarmStartPermissionPrompt(host, commandText, 'Swarm mode not enabled.', async (choice) => {
+    showSwarmStartPermissionPrompt(host, commandText, t('tui.statusMessages.swarmModeNotEnabled'), async (choice) => {
       if ((choice === 'auto' || choice === 'yolo') && !(await setPermissionForSwarm(host, choice))) {
         return;
       }
@@ -132,7 +133,7 @@ async function setSwarmMode(
     await host.requireSession().setSwarmMode(enabled, trigger);
   } catch (error) {
     host.showError(
-      `Failed to ${enabled ? 'enable' : 'disable'} swarm mode: ${formatErrorMessage(error)}`,
+      t('tui.messages.swarmToggleFailed', { action: enabled ? t('tui.messages.swarmEnable') : t('tui.messages.swarmDisable'), error: formatErrorMessage(error) }),
     );
     return false;
   }

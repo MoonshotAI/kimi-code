@@ -1,3 +1,4 @@
+import { t } from '#/i18n';
 import { Spacer } from '@moonshot-ai/pi-tui';
 import type {
   Event,
@@ -173,7 +174,7 @@ export class BtwPanelController {
       return;
     }
     void this.withInteractiveAgent(agentId, () => session.prompt(prompt)).catch((error: unknown) => {
-      panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
+      panel.markFailed(t('tui.messages.btwSendFailed', { error: formatErrorMessage(error) }));
       this.host.state.ui.requestRender();
     });
   }
@@ -182,7 +183,7 @@ export class BtwPanelController {
     const session = this.host.session;
     if (session === undefined) return;
     await this.withInteractiveAgent(agentId, () => session.cancel()).catch((error: unknown) => {
-      this.host.showError(`Failed to cancel /btw: ${formatErrorMessage(error)}`);
+      this.host.showError(t('tui.messages.btwCancelFailed', { error: formatErrorMessage(error) }));
     });
   }
 

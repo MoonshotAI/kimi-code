@@ -7,6 +7,7 @@ import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
 } from '#/tui/constant/streaming';
+import { t } from '#/i18n';
 
 export function appendStreamingArgsPreview(
   current: string | undefined,
@@ -120,7 +121,7 @@ function formatProviderFilteredMessage(
 
   const normalizedFinishReason = finishReason ?? 'filtered';
   const raw = rawFinishReason === undefined ? '' : `, rawFinishReason=${rawFinishReason}`;
-  return `Provider filtered the response before visible output (finishReason=${normalizedFinishReason}${raw}).`;
+  return t('tui.messages.eventFilteredResponse', { reason: normalizedFinishReason, raw });
 }
 
 function stringDetail(

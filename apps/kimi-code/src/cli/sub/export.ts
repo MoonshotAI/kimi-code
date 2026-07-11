@@ -74,14 +74,14 @@ export async function handleExport(
     resolvedId = requestedId;
   } else {
     if (previousSummary === undefined) {
-      deps.stderr.write('No previous session found to export.\n');
+      deps.stderr.write(t('tui.statusMessages.exportNoSession') + '\n');
       deps.exit(1);
     }
     resolvedId = previousSummary.id;
     if (!opts.yes) {
       const confirmed = await deps.confirmPreviousSession(toPreviousSessionSummary(previousSummary));
       if (!confirmed) {
-        deps.stdout.write('Export cancelled.\n');
+        deps.stdout.write(t('tui.statusMessages.exportCancelled') + '\n');
         return;
       }
     }
@@ -226,7 +226,7 @@ async function confirmPreviousSession(summary: PreviousSessionSummary): Promise<
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const title = summary.title === undefined ? summary.sessionId : `${summary.title} (${summary.sessionId})`;
-    const answer = await rl.question(`Export previous session "${title}"? [Y/n] `);
+    const answer = await rl.question(t('tui.statusMessages.exportConfirmPrompt', { title }));
     const trimmed = answer.trim().toLowerCase();
     return trimmed === '' || trimmed === 'y' || trimmed === 'yes';
   } finally {

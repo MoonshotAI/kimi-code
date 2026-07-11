@@ -29,8 +29,6 @@ import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
-const RESUME_GOAL_INPUT = t('tui.statusMessages.resumeGoalInput');
-const START_NEXT_GOAL_NOW_MESSAGE = t('tui.statusMessages.startingNow');
 
 type GoalCommandHost = Pick<
   SlashCommandHost,
@@ -188,7 +186,7 @@ async function queueNextGoal(
   }
 
   if (!hasCurrentGoal && !isBusy(host)) {
-    host.showStatus(START_NEXT_GOAL_NOW_MESSAGE);
+    host.showStatus(t('tui.statusMessages.startingNow'));
     await createGoal(
       host,
       { kind: 'create', objective: parsed.objective, replace: false },
@@ -465,7 +463,7 @@ async function resumeGoal(host: SlashCommandHost): Promise<void> {
     return;
   }
   host.track('goal_resume');
-  host.sendNormalUserInput(RESUME_GOAL_INPUT);
+  host.sendNormalUserInput(t('tui.statusMessages.resumeGoalInput'));
 }
 
 async function cancelGoal(host: SlashCommandHost): Promise<void> {

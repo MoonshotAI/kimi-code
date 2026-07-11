@@ -77,7 +77,7 @@ export async function handleVis(deps: VisDeps, opts: VisOptions): Promise<void> 
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    deps.stderr.write(`Failed to start kimi vis: ${msg}\n`);
+    deps.stderr.write(t('tui.statusMessages.visStartFailed', { message: msg }) + '\n');
     return deps.exit(1);
   }
 
@@ -86,14 +86,14 @@ export async function handleVis(deps: VisDeps, opts: VisOptions): Promise<void> 
       ? server.url
       : `${server.url}sessions/${encodeURIComponent(opts.sessionId)}`;
 
-  deps.stdout.write(`kimi vis is running at ${server.url}\n`);
-  deps.stdout.write('Press Ctrl-C to stop.\n');
+  deps.stdout.write(t('tui.statusMessages.visRunning', { url: server.url }) + '\n');
+  deps.stdout.write(t('tui.statusMessages.visStopHint') + '\n');
 
   if (opts.open) {
     try {
       await deps.openUrl(target);
     } catch {
-      deps.stderr.write(`Could not open a browser; visit ${target} manually.\n`);
+      deps.stderr.write(t('tui.statusMessages.visBrowserFailed', { url: target }) + '\n');
     }
   }
 

@@ -63,7 +63,7 @@ async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
 
   const origin = serverOrigin(lockConnectHost(lock), lock.port);
   if (!(await isServerHealthy(origin, HEALTH_TIMEOUT_MS))) {
-    throw new Error(`Kimi server at ${origin} is not responding.`);
+    throw new Error(t('tui.statusMessages.serverPsNotResponding', { origin }));
   }
 
   // The `/api/v1/connections` route is gated by bearer auth (M5.1). Read the
@@ -90,16 +90,16 @@ async function fetchConnections(origin: string, token: string): Promise<Connecti
       signal: controller.signal,
     });
     if (!res.ok) {
-      throw new Error(`Failed to list clients: HTTP ${String(res.status)} from ${origin}.`);
+      throw new Error(t('tui.statusMessages.serverPsFailedHttp', { status: String(res.status), origin }));
     }
     const body = (await res.json()) as ConnectionsEnvelope;
     if (body.code !== 0) {
-      throw new Error(`Failed to list clients: ${body.msg}`);
+      throw new Error(t('tui.statusMessages.serverPsFailedMsg', { msg: body.msg }));
     }
     return body.data?.connections ?? [];
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Timed out listing clients from ${origin}.`);
+      throw new Error(t('tui.statusMessages.serverPsTimeout', { origin }));
     }
     throw error;
   } finally {

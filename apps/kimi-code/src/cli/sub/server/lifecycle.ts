@@ -20,6 +20,7 @@ import {
 } from '@moonshot-ai/server';
 
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
+import { t } from '#/i18n';
 
 import {
   DEFAULT_LOG_LEVEL,
@@ -62,16 +63,16 @@ const DEFAULT_DEPS: LifecycleCommandDeps = {
 export function addLifecycleCommands(parent: Command, deps: LifecycleCommandDeps = DEFAULT_DEPS): void {
   parent
     .command('install')
-    .description('Install the Kimi server as an OS-managed service (launchd/systemd/schtasks).')
-    .option('--port <port>', `Bind port (default ${DEFAULT_SERVER_PORT})`, String(DEFAULT_SERVER_PORT))
+    .description(t('tui.statusMessages.serverInstallDesc'))
+    .option('--port <port>', t('tui.statusMessages.serverPortOption', { port: DEFAULT_SERVER_PORT }), String(DEFAULT_SERVER_PORT))
     .option(
       '--log-level <level>',
-      `Log level: ${VALID_LOG_LEVELS.join('|')} (default ${DEFAULT_LOG_LEVEL})`,
+      t('tui.statusMessages.serverLogLevelOption', { levels: VALID_LOG_LEVELS.join('|'), default: DEFAULT_LOG_LEVEL }),
       DEFAULT_LOG_LEVEL,
     )
-    .option('--force', 'Reinstall and overwrite if already installed', false)
-    .option('--no-open', 'Do not open the web UI after install.', true)
-    .option('--json', 'Output JSON', false)
+    .option('--force', t('tui.statusMessages.serverReinstallOption'), false)
+    .option('--no-open', t('tui.statusMessages.serverNoOpenOption'), true)
+    .option('--json', t('tui.statusMessages.serverOutputJson'), false)
     .action(async (opts: InstallCliOptions) => {
       await runLifecycle(deps, opts.json === true, async (mgr) => {
         const args: InstallArgs = {
@@ -100,8 +101,8 @@ export function addLifecycleCommands(parent: Command, deps: LifecycleCommandDeps
 
   parent
     .command('uninstall')
-    .description('Uninstall the Kimi server service.')
-    .option('--json', 'Output JSON', false)
+    .description(t('tui.statusMessages.serverUninstallDesc'))
+    .option('--json', t('tui.statusMessages.serverOutputJson'), false)
     .action(async (opts: JsonCliOptions) => {
       await runLifecycle(deps, opts.json === true, async (mgr) => {
         const result = await mgr.uninstall();
@@ -111,8 +112,8 @@ export function addLifecycleCommands(parent: Command, deps: LifecycleCommandDeps
 
   parent
     .command('start')
-    .description('Start the Kimi server service.')
-    .option('--json', 'Output JSON', false)
+    .description(t('tui.statusMessages.serverStartDesc'))
+    .option('--json', t('tui.statusMessages.serverOutputJson'), false)
     .action(async (opts: JsonCliOptions) => {
       await runLifecycle(deps, opts.json === true, async (mgr) => {
         const result = await mgr.start();
@@ -123,8 +124,8 @@ export function addLifecycleCommands(parent: Command, deps: LifecycleCommandDeps
 
   parent
     .command('stop')
-    .description('Stop the Kimi server service.')
-    .option('--json', 'Output JSON', false)
+    .description(t('tui.statusMessages.serverStopDesc'))
+    .option('--json', t('tui.statusMessages.serverOutputJson'), false)
     .action(async (opts: JsonCliOptions) => {
       await runLifecycle(deps, opts.json === true, async (mgr) => {
         const result = await mgr.stop();
@@ -134,8 +135,8 @@ export function addLifecycleCommands(parent: Command, deps: LifecycleCommandDeps
 
   parent
     .command('restart')
-    .description('Restart the Kimi server service.')
-    .option('--json', 'Output JSON', false)
+    .description(t('tui.statusMessages.serverRestartDesc'))
+    .option('--json', t('tui.statusMessages.serverOutputJson'), false)
     .action(async (opts: JsonCliOptions) => {
       await runLifecycle(deps, opts.json === true, async (mgr) => {
         const result = await mgr.restart();
@@ -146,8 +147,8 @@ export function addLifecycleCommands(parent: Command, deps: LifecycleCommandDeps
 
   parent
     .command('status')
-    .description('Show Kimi server service status and connectivity.')
-    .option('--json', 'Output JSON', false)
+    .description(t('tui.statusMessages.serverStatusDesc'))
+    .option('--json', t('tui.statusMessages.serverOutputJson'), false)
     .action(async (opts: JsonCliOptions) => {
       await runLifecycle(deps, opts.json === true, async (mgr) => {
         const status: ServiceStatus = await mgr.status();
@@ -204,18 +205,18 @@ function formatHuman(result: Record<string, unknown>): string {
   const lines = [`${action}${message}`];
 
   const url = result['url'];
-  if (typeof url === 'string') lines.push(`URL: ${url}`);
+  if (typeof url === 'string') lines.push(t('tui.statusMessages.serverStatusUrl', { url }));
 
   const running = result['running'];
-  if (typeof running === 'boolean') lines.push(`Status: ${running ? 'running' : 'not running'}`);
+  if (typeof running === 'boolean') lines.push(t('tui.statusMessages.serverStatusState', { state: running ? t('tui.statusMessages.serverStatusRunning') : t('tui.statusMessages.serverStatusNotRunning') }));
 
   const logPath = result['logPath'];
-  if (typeof logPath === 'string') lines.push(`Log: ${logPath}`);
+  if (typeof logPath === 'string') lines.push(t('tui.statusMessages.serverStatusLog', { path: logPath }));
 
   const notes = result['notes'];
   if (Array.isArray(notes)) {
     for (const note of notes) {
-      if (typeof note === 'string' && note.length > 0) lines.push(`Note: ${note}`);
+      if (typeof note === 'string' && note.length > 0) lines.push(t('tui.statusMessages.serverStatusNote', { note }));
     }
   }
 

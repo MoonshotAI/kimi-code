@@ -13,6 +13,8 @@ import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi
 
 import type { BackgroundAgentStatusData, BackgroundAgentStatusPhase } from '@/tui/types';
 
+import { t } from '#/i18n';
+
 const MAX_DETAIL_LENGTH = 240;
 
 function truncate(value: string | undefined): string | undefined {
@@ -40,26 +42,26 @@ function phaseFromStatus(status: BackgroundTaskStatus): BackgroundAgentStatusPha
 }
 
 function subjectFor(info: BackgroundTaskInfo): string {
-  if (info.kind === 'agent') return 'agent task';
-  if (info.kind === 'question') return 'question task';
-  return 'bash task';
+  if (info.kind === 'agent') return t('tui.messages.bgTaskAgent');
+  if (info.kind === 'question') return t('tui.messages.bgTaskQuestion');
+  return t('tui.messages.bgTaskBash');
 }
 
 function headlineFor(info: BackgroundTaskInfo): string {
   const subject = subjectFor(info);
   switch (info.status) {
     case 'running':
-      return `${subject} started in background`;
+      return t('tui.messages.bgTaskStarted', { subject });
     case 'completed':
-      return `${subject} completed in background`;
+      return t('tui.messages.bgTaskCompleted', { subject });
     case 'failed':
-      return `${subject} failed in background`;
+      return t('tui.messages.bgTaskFailed', { subject });
     case 'timed_out':
-      return `${subject} timed out`;
+      return t('tui.messages.bgTaskTimedOut', { subject });
     case 'killed':
-      return `${subject} stopped`;
+      return t('tui.messages.bgTaskStopped', { subject });
     case 'lost':
-      return `${subject} lost`;
+      return t('tui.messages.bgTaskLost', { subject });
   }
 }
 
@@ -75,7 +77,7 @@ function detailFor(info: BackgroundTaskInfo): string | undefined {
   }
   if (info.status === 'killed') {
     const reason = truncate(info.stopReason);
-    parts.push(reason !== undefined ? `stopped — ${reason}` : 'stopped');
+    parts.push(reason !== undefined ? t('tui.messages.bgTaskStoppedReason', { reason }) : t('tui.messages.bgTaskStopped', { subject: '' }));
   }
   if (info.status === 'failed') {
     const reason = truncate(info.stopReason);

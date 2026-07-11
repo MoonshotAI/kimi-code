@@ -6,10 +6,12 @@
      the unified v2 dialog look. -->
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { setCredential } from '../api/daemon/serverAuth';
 import Button from './ui/Button.vue';
 import Input from './ui/Input.vue';
 
+const { t } = useI18n();
 const credential = ref('');
 const inputRef = ref<InstanceType<typeof Input> | null>(null);
 const submitting = ref(false);
@@ -39,10 +41,9 @@ function onKeydown(e: KeyboardEvent): void {
   <div class="server-auth-overlay" role="dialog" aria-modal="true" aria-labelledby="server-auth-title">
     <div class="server-auth-card">
       <div class="server-auth-head">
-        <h1 id="server-auth-title" class="server-auth-title">Server token required</h1>
+        <h1 id="server-auth-title" class="server-auth-title">{{ t('app.serverAuthTitle') }}</h1>
         <p class="server-auth-hint">
-          This server is protected. Enter the bearer token printed when the server
-          started (or the password set via <code>KIMI_CODE_PASSWORD</code>).
+          {{ t('app.serverAuthHint') }}
         </p>
       </div>
       <div class="server-auth-body">
@@ -51,7 +52,7 @@ function onKeydown(e: KeyboardEvent): void {
           v-model="credential"
           type="password"
           autocomplete="current-password"
-          placeholder="Token"
+          :placeholder="t('app.serverAuthPlaceholder')"
           :disabled="submitting"
           @keydown="onKeydown"
         />
@@ -63,7 +64,7 @@ function onKeydown(e: KeyboardEvent): void {
           :loading="submitting"
           @click="submit"
         >
-          {{ submitting ? 'Connecting…' : 'Connect' }}
+          {{ submitting ? t('app.connecting') : t('app.serverAuthConnect') }}
         </Button>
       </div>
     </div>
