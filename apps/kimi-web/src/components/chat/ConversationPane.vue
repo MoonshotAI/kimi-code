@@ -578,20 +578,27 @@ function scrollToBottom(smooth = false): void {
   lastScrollTop = el.scrollTop;
 }
 
-type ScrollAnchor = { id: string; top: number };
+type ScrollAnchor = { kind: 'turn' | 'tool'; id: string; top: number };
 
 function findTopAnchors(
   container: HTMLElement,
   scrollTop: number,
 ): ScrollAnchor[] {
-  const anchors = Array.from(container.querySelectorAll<HTMLElement>('.turn-anchor'));
-  const firstAfterTop = anchors.findIndex((anchor) => anchor.offsetTop >= scrollTop);
+  const containerTop = container.getBoundingClientRect().top;
+  const anchors = Array.from(
+    container.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id], [data-scroll-anchor-id]'),
+  ).map((node) => ({
+    node,
+    top: node.getBoundingClientRect().top - containerTop + scrollTop,
+  }));
+  const firstAfterTop = anchors.findIndex((anchor) => anchor.top >= scrollTop);
   const start = firstAfterTop < 0 ? Math.max(0, anchors.length - 1) : firstAfterTop;
   // The first id can be rebuilt when a page boundary splits an assistant turn;
-  // the next turn is enough to retain a stable fallback.
+  // a nearby turn or tool call retains a stable fallback.
   return anchors.slice(start, start + 2).flatMap((anchor) => {
-    const id = anchor.dataset.turnId;
-    return id ? [{ id, top: anchor.offsetTop }] : [];
+    const toolId = anchor.node.dataset.scrollAnchorId;
+    const id = toolId ?? anchor.node.dataset.turnId;
+    return id ? [{ kind: toolId ? 'tool' : 'turn', id, top: anchor.top }] : [];
   });
 }
 
@@ -604,10 +611,17 @@ const pendingHistoryRestoreBySession = new Map<string, HistoryScrollSnapshot>();
 
 function historyScrollDelta(container: HTMLElement, snapshot: HistoryScrollSnapshot): number {
   for (const anchor of snapshot.anchors) {
+    const attr = anchor.kind === 'tool' ? 'data-scroll-anchor-id' : 'data-turn-id';
     const newAnchor = container.querySelector<HTMLElement>(
-      `.turn-anchor[data-turn-id="${attrEscape(anchor.id)}"]`,
+      `[${attr}="${attrEscape(anchor.id)}"]`,
     );
-    if (newAnchor) return newAnchor.offsetTop - anchor.top;
+    if (newAnchor) {
+      const newTop =
+        newAnchor.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop;
+      return newTop - anchor.top;
+    }
   }
   // If the page boundary split an assistant/tool turn, messagesToTurns may
   // rebuild that turn with a new id. Fall back to the overall height delta.
