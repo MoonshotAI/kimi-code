@@ -17,9 +17,28 @@ const OSC_PATTERN = /\u001B\][\s\S]*?(?:\u0007|\u001B\\)/g;
 // save/restore cursor (ESC 7 / ESC 8), full reset (ESC c), etc. Runs after the
 // CSI/OSC patterns, so it only catches sequences they didn't already consume.
 const ESC_SINGLE_PATTERN = /\u001B(?:[ -/][0-~]|[0-~])/g;
-// C0 control characters except \n (0x0A) and \t (0x09): NUL, BEL, \b, \r, …
-// plus a lone ESC (0x1B) that wasn't part of a sequence recognised above.
-const C0_CONTROL_PATTERN = /[\u0000-\u0008\u000B-\u001B\u001C-\u001F]/g;
+// C0 control characters except \n (0x0A), \t (0x09), and \r (0x0D): NUL,
+// BEL, \b, … plus a lone ESC (0x1B) that wasn't part of a sequence recognised
+// above. Carriage returns are resolved separately because command progress
+// redraws use them to overwrite the current line.
+const C0_CONTROL_PATTERN = /[\u0000-\u0008\u000B-\u000C\u000E-\u001B\u001C-\u001F]/g;
+
+function resolveCarriageReturns(text: string): string {
+  if (!text.includes('\r')) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!line.includes('\r')) return line;
+      const parts = line.split('\r');
+      let out = parts[0] ?? '';
+      for (let i = 1; i < parts.length; i++) {
+        const over = parts[i] ?? '';
+        out = over.length >= out.length ? over : over + out.slice(over.length);
+      }
+      return out;
+    })
+    .join('\n');
+}
 
 /**
  * Strip every terminal control sequence from captured command output so it is
@@ -32,13 +51,13 @@ export function sanitizeShellOutput(text: string): string {
   if (typeof text !== 'string') return '';
   if (text.length === 0) return text;
   try {
-    return text
+    const withoutEscapes = text
       .replace(OSC_PATTERN, '')
       .replace(CSI_PATTERN, '')
-      .replace(ESC_SINGLE_PATTERN, '')
-      .replace(C0_CONTROL_PATTERN, '');
+      .replace(ESC_SINGLE_PATTERN, '');
+    return resolveCarriageReturns(withoutEscapes).replace(C0_CONTROL_PATTERN, '');
   } catch {
-    return text.replace(C0_CONTROL_PATTERN, '');
+    return resolveCarriageReturns(text).replace(C0_CONTROL_PATTERN, '');
   }
 }
 

@@ -38,8 +38,9 @@ describe('sanitizeShellOutput', () => {
     expect(sanitizeShellOutput(link)).toBe('click here');
   });
 
-  it('strips carriage returns (spinner redraw)', () => {
-    expect(sanitizeShellOutput('frame1\rframe2\rframe3')).toBe('frame1frame2frame3');
+  it('resolves carriage-return redraws before rendering', () => {
+    expect(sanitizeShellOutput('frame1\rframe2\rframe3')).toBe('frame3');
+    expect(sanitizeShellOutput('Hello World\rHi')).toBe('Hillo World');
     expect(sanitizeShellOutput('line\r\nnext')).toBe('line\nnext');
   });
 
