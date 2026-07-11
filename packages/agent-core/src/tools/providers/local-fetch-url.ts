@@ -172,6 +172,22 @@ export class LocalFetchURLProvider implements UrlFetcher {
       }
     }
 
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
+    if (contentType.startsWith('image/')) {
+      // Image response: read as binary, convert to base64, return as image data.
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const actualBytes = buffer.length;
+      if (actualBytes > this.maxBytes) {
+        throw new Error(
+          `Response body too large: ${String(actualBytes)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+        );
+      }
+      const base64 = buffer.toString('base64');
+      return { content: '', kind: 'image', imageData: { mimeType: contentType, base64 } };
+    }
+
     const body = await response.text();
 
     // Servers may omit content-length — measure again defensively.
@@ -182,7 +198,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
-    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
       return { content: body, kind: 'passthrough' };
     }
