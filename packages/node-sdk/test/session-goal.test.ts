@@ -10,6 +10,7 @@ function makeSession() {
     pauseGoal: vi.fn(async () => ({ goalId: 'g1' })),
     resumeGoal: vi.fn(async () => ({ goalId: 'g1' })),
     cancelGoal: vi.fn(async () => ({ goalId: 'g1' })),
+    getCronTasks: vi.fn(async () => ({ tasks: [] })),
     clearSessionHandlers: vi.fn(),
   } as unknown as SDKRpcClientBase;
   const session = new Session({ id: 'ses_goal', workDir: '/tmp/work', rpc });
@@ -52,6 +53,13 @@ describe('Session goal methods', () => {
     const { session, rpc } = makeSession();
     await session.cancelGoal();
     expect(rpc.cancelGoal).toHaveBeenCalledWith({ sessionId: 'ses_goal' });
+  });
+
+  it('getCronTasks forwards sessionId and returns the task list', async () => {
+    const { session, rpc } = makeSession();
+    const result = await session.getCronTasks();
+    expect(rpc.getCronTasks).toHaveBeenCalledWith({ sessionId: 'ses_goal' });
+    expect(result).toEqual({ tasks: [] });
   });
 
   it('does not expose a public clearGoal or updateGoal method', () => {

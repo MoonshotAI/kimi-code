@@ -45,6 +45,7 @@ export type {
   ProcessBackgroundTaskInfo,
   QuestionBackgroundTaskInfo,
 } from './agent/background';
+export type { CronTaskSnapshot } from './agent/cron';
 export type { ToolServices } from './tools/support/services';
 
 // Image compression — prompt-ingestion sites (CLI paste, server upload

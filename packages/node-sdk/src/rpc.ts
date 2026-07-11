@@ -9,6 +9,7 @@ import {
   type CoreAPI,
   type Event,
   type ExperimentalFeatureState,
+  type GetCronTasksResult,
   type QuestionRequest,
   type QuestionResult,
   type RPCMethods,
@@ -584,6 +585,11 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });
+  }
+
+  async getCronTasks(input: SessionIdRpcInput): Promise<GetCronTasksResult> {
+    const rpc = await this.getRpc();
+    return rpc.getCronTasks({ sessionId: input.sessionId, agentId: this.interactiveAgentId });
   }
 
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {

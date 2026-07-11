@@ -255,6 +255,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return (await this.getAgent(agentId)).cancelGoal(payload);
   }
 
+  async getCronTasks({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getCronTasks(payload);
+  }
+
   async getBackgroundOutput({
     agentId,
     ...payload

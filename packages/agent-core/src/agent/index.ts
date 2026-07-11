@@ -530,6 +530,9 @@ export class Agent {
       pauseGoal: () => this.goal.pauseGoal(),
       resumeGoal: () => this.goal.resumeGoal(),
       cancelGoal: () => this.goal.cancelGoal(),
+      // `cron` is null for subagents, which never schedule; report an empty
+      // list rather than failing the RPC so callers can poll uniformly.
+      getCronTasks: () => ({ tasks: this.cron?.listTaskSnapshots() ?? [] }),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),

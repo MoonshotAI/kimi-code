@@ -14,6 +14,7 @@ import type {
   BackgroundTaskInfo,
   CompactOptions,
   CreateGoalInput,
+  GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
   McpServerInfo,
@@ -418,6 +419,16 @@ export class Session {
   async cancelGoal(): Promise<GoalSnapshot> {
     this.ensureOpen();
     return this.rpc.cancelGoal({ sessionId: this.id });
+  }
+
+  /**
+   * Enumerate the cron tasks scheduled in this session. Hosts running a
+   * bounded session lifetime (e.g. `kimi -p`) poll this to decide whether
+   * pending scheduled work still needs the process alive.
+   */
+  async getCronTasks(): Promise<GetCronTasksResult> {
+    this.ensureOpen();
+    return this.rpc.getCronTasks({ sessionId: this.id });
   }
 
   async listMcpServers(): Promise<readonly McpServerInfo[]> {

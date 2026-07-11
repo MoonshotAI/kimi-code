@@ -75,6 +75,22 @@ import type { SessionCronTaskInit } from '../../tools/cron/session-store';
  */
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Point-in-time view of a scheduled cron task, exposed over RPC so host
+ * applications (e.g. the `kimi -p` flow deciding whether pending work
+ * remains before exit) can enumerate scheduled tasks without going
+ * through the model-facing CronList tool.
+ */
+export interface CronTaskSnapshot {
+  readonly id: string;
+  readonly cron: string;
+  readonly recurring: boolean;
+  readonly createdAt: number;
+  readonly lastFiredAt: number | undefined;
+  /** Post-jitter next fire (epoch ms), or null when no future fire exists. */
+  readonly nextFireAt: number | null;
+}
+
 export interface CronManagerOptions {
   /**
    * Override for tests / bench. Defaults to
@@ -358,6 +374,22 @@ export class CronManager {
    */
   getNextFireForTask(taskId: string): number | null {
     return this.scheduler.getNextFireForTask(taskId);
+  }
+
+  /**
+   * Enumerate every scheduled task with its post-jitter next fire time.
+   * Unlike the CronList tool (which renders for the model), this returns
+   * structured data for host applications polling for pending work.
+   */
+  listTaskSnapshots(): readonly CronTaskSnapshot[] {
+    return this.store.list().map((task) => ({
+      id: task.id,
+      cron: task.cron,
+      recurring: task.recurring !== false,
+      createdAt: task.createdAt,
+      lastFiredAt: task.lastFiredAt,
+      nextFireAt: this.scheduler.getNextFireForTask(task.id),
+    }));
   }
 
   /**
