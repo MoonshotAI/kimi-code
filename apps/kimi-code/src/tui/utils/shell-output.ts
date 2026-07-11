@@ -11,6 +11,8 @@ import { currentTheme } from '#/tui/theme';
 // ESC [ <params> <intermediates> <final> — colours, cursor moves, clear, and
 // private modes such as ESC[?1049h (alt screen) / ESC[?25l (hide cursor).
 const CSI_PATTERN = /\u001B\[[0-9:;<=>?]*[ -/]*[@-~]/g;
+const ERASE_IN_LINE_PATTERN = /\u001B\[[0-9:;<=>?]*[ -/]*K/g;
+const ERASE_IN_LINE_MARKER = '\uE000';
 // ESC ] … <BEL>  or  ESC ] … ESC \ — window titles and OSC 8 hyperlinks.
 const OSC_PATTERN = /\u001B\][\s\S]*?(?:\u0007|\u001B\\)/g;
 // ESC <char> (and ESC <intermediate> <char>) — charset/keypad selection,
@@ -24,20 +26,42 @@ const ESC_SINGLE_PATTERN = /\u001B(?:[ -/][0-~]|[0-~])/g;
 const C0_CONTROL_PATTERN = /[\u0000-\u0008\u000B-\u000C\u000E-\u001B\u001C-\u001F]/g;
 
 function resolveCarriageReturns(text: string): string {
-  if (!text.includes('\r')) return text;
+  if (!text.includes('\r') && !text.includes(ERASE_IN_LINE_MARKER)) return text;
   return text
     .split('\n')
     .map((line) => {
-      if (!line.includes('\r')) return line;
-      const parts = line.split('\r');
-      let out = parts[0] ?? '';
-      for (let i = 1; i < parts.length; i++) {
-        const over = parts[i] ?? '';
-        out = over.length >= out.length ? over : over + out.slice(over.length);
+      if (!line.includes('\r') && !line.includes(ERASE_IN_LINE_MARKER)) return line;
+      let out = '';
+      let cursor = 0;
+      for (let i = 0; i < line.length;) {
+        const char = line[i];
+        if (char === '\r') {
+          cursor = 0;
+          i++;
+          continue;
+        }
+        if (char === ERASE_IN_LINE_MARKER) {
+          out = out.slice(0, cursor);
+          i++;
+          continue;
+        }
+        const nextControl = nextControlIndex(line, i);
+        const chunk = line.slice(i, nextControl);
+        out = out.slice(0, cursor) + chunk + out.slice(cursor + chunk.length);
+        cursor += chunk.length;
+        i = nextControl;
       }
       return out;
     })
     .join('\n');
+}
+
+function nextControlIndex(line: string, start: number): number {
+  let index = start;
+  while (index < line.length && line[index] !== '\r' && line[index] !== ERASE_IN_LINE_MARKER) {
+    index++;
+  }
+  return index;
 }
 
 /**
@@ -53,11 +77,14 @@ export function sanitizeShellOutput(text: string): string {
   try {
     const withoutEscapes = text
       .replace(OSC_PATTERN, '')
+      .replace(ERASE_IN_LINE_PATTERN, ERASE_IN_LINE_MARKER)
       .replace(CSI_PATTERN, '')
       .replace(ESC_SINGLE_PATTERN, '');
-    return resolveCarriageReturns(withoutEscapes).replace(C0_CONTROL_PATTERN, '');
+    return resolveCarriageReturns(withoutEscapes)
+      .replace(C0_CONTROL_PATTERN, '')
+      .replaceAll(ERASE_IN_LINE_MARKER, '');
   } catch {
-    return resolveCarriageReturns(text).replace(C0_CONTROL_PATTERN, '');
+    return resolveCarriageReturns(text).replace(C0_CONTROL_PATTERN, '').replaceAll(ERASE_IN_LINE_MARKER, '');
   }
 }
 
