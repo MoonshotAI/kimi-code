@@ -16,6 +16,18 @@ const PROJECT_GENERIC_DIRS = ['.agents/skills'] as const;
 // loop forever. Real skill trees are 1-3 levels deep.
 const MAX_SKILL_SCAN_DEPTH = 8;
 
+// Plugin packages commonly keep release and repository documentation next to
+// their skill entrypoints. These files are not skills, even though legacy flat
+// skill discovery accepts arbitrary top-level Markdown files without
+// frontmatter.
+const PLUGIN_DOCUMENT_FILENAMES = new Set([
+  'changelog.md',
+  'code_of_conduct.md',
+  'contributing.md',
+  'license.md',
+  'readme.md',
+]);
+
 export interface SkillPathContext {
   readonly userHomeDir: string;
   /**
@@ -215,6 +227,9 @@ export async function discoverSkills(
       for (const entry of entries) {
         if (!entry.endsWith('.md')) continue;
         if (entry === 'SKILL.md') continue;
+        if (root.plugin !== undefined && PLUGIN_DOCUMENT_FILENAMES.has(entry.toLowerCase())) {
+          continue;
+        }
         const skillName = entry.slice(0, -'.md'.length);
         if (directorySkills.has(skillName)) {
           warn(

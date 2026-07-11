@@ -130,6 +130,24 @@ describe('skill discovery', () => {
     expect(warnings.some((message) => message.includes('Ignoring flat skill'))).toBe(true);
   });
 
+  it('does not register conventional plugin documentation as flat skills', async () => {
+    const { repoDir } = await makeWorkspace();
+    const pluginRoot = path.join(repoDir, 'plugin-skills');
+    await mkdir(pluginRoot, { recursive: true });
+    await writeFile(path.join(pluginRoot, 'CHANGELOG.md'), '# Changelog');
+    await writeFile(path.join(pluginRoot, 'README.md'), '# Plugin readme');
+    await writeFile(
+      path.join(pluginRoot, 'release-notes.md'),
+      ['---', 'name: release-notes', 'description: Release notes skill', '---'].join('\n'),
+    );
+
+    const skills = await discoverSkills({
+      roots: [{ path: pluginRoot, source: 'extra', plugin: { id: 'example-plugin' } }],
+    });
+
+    expect(skills.map((skill) => skill.name)).toEqual(['release-notes']);
+  });
+
   it('keeps flow skills user-visible while excluding them from model invocation', async () => {
     const { repoDir } = await makeWorkspace();
     const projectRoot = path.join(repoDir, '.kimi-code', 'skills');
