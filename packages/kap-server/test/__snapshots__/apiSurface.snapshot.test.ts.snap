@@ -182,6 +182,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v2/channels",
+    ],
+    [
+      "GET",
       "/api/v2/session/{session_id}/{service}/{method}",
     ],
     [

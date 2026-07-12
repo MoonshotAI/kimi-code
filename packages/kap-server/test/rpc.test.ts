@@ -136,6 +136,34 @@ describe('server-v2 /api/v2 RPC', () => {
 
   // --- Core scope -----------------------------------------------------------
 
+  it('describes all channels via GET /api/v2/channels', async () => {
+    const { status, body } = await call<
+      readonly {
+        name: string;
+        scope: 'app' | 'session' | 'agent';
+        methods: readonly { name: string; kind: 'method' | 'property'; arity: number }[];
+      }[]
+    >('GET', '/api/v2/channels');
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+
+    const byName = new Map(body.data.map((c) => [c.name, c]));
+    expect(byName.get('sessionIndex')?.scope).toBe('app');
+    expect(byName.get('sessionMetadata')?.scope).toBe('session');
+    expect(byName.get('agentRPCService')?.scope).toBe('agent');
+
+    const meta = byName.get('sessionMetadata');
+    expect(meta?.methods.map((m) => m.name)).toEqual(
+      expect.arrayContaining(['read', 'setTitle', 'setArchived']),
+    );
+    expect(meta?.methods.find((m) => m.name === 'read')).toMatchObject({
+      kind: 'method',
+      arity: 0,
+    });
+    // Framework plumbing stays out of the listing.
+    expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');
+  });
+
   it('lists sessions via GET', async () => {
     const { body } = await call<{ items: unknown[]; has_more: boolean }>(
       'GET',

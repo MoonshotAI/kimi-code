@@ -13,9 +13,11 @@
  * for runtime import by a wire-only client.
  */
 export {
+  describeChannels,
   hasChannel,
   registerChannel,
   registeredChannelNames,
   resolveChannel,
 } from './transport/channelRegistry';
+export type { ChannelDescriptor, ChannelMethodDescriptor } from './transport/channelRegistry';
 export type { IChannel, ScopeKind } from './transport/channel';

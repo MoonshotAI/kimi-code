@@ -13,6 +13,8 @@
  */
 
 import {
+  Disposable,
+  getScopedServiceDescriptors,
   IAgentContextMemoryService,
   IAgentContextSizeService,
   IAgentGoalService,
@@ -46,9 +48,10 @@ import {
   ISessionWorkspaceCommandService,
   ISessionWorkspaceContext,
   IWorkspaceRegistry,
+  LifecycleScope,
 } from '@moonshot-ai/agent-core-v2';
 
-import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
+import type { ScopedEntry, ServiceIdentifier } from '@moonshot-ai/agent-core-v2';
 
 const channels = new Map<string, ServiceIdentifier<unknown>>();
 
@@ -70,6 +73,91 @@ export function hasChannel(name: string): boolean {
 /** All registered channel names (decorator ids), sorted — for introspection. */
 export function registeredChannelNames(): readonly string[] {
   return Array.from(channels.keys()).toSorted();
+}
+
+export interface ChannelMethodDescriptor {
+  readonly name: string;
+  /** `method` is a callable; `property` is a getter readable with no args. */
+  readonly kind: 'method' | 'property';
+  /** Declared parameter count (`Function.length`) — a UI hint, not a schema. */
+  readonly arity: number;
+}
+
+export interface ChannelDescriptor {
+  /** Decorator id / wire channel name, e.g. `sessionMetadata`. */
+  readonly name: string;
+  /**
+   * Registration scope — the minimal scope at which the channel resolves.
+   * Derived from the scoped DI registry (the `EXPOSED_SERVICES` comment
+   * grouping is informational and may drift).
+   */
+  readonly scope: 'app' | 'session' | 'agent';
+  /** Domain tag recorded at `registerScopedService`. */
+  readonly domain: string;
+  /** Public prototype members, sorted — events are instance properties and never appear. */
+  readonly methods: readonly ChannelMethodDescriptor[];
+}
+
+const SCOPE_NAME: Record<LifecycleScope, ChannelDescriptor['scope']> = {
+  [LifecycleScope.App]: 'app',
+  [LifecycleScope.Session]: 'session',
+  [LifecycleScope.Agent]: 'agent',
+};
+
+let entryIndex: Map<ServiceIdentifier<unknown>, ScopedEntry> | undefined;
+
+function scopedEntryIndex(): Map<ServiceIdentifier<unknown>, ScopedEntry> {
+  entryIndex ??= new Map(
+    [LifecycleScope.App, LifecycleScope.Session, LifecycleScope.Agent]
+      .flatMap((scope) => getScopedServiceDescriptors(scope))
+      .map((entry) => [entry.id, entry] as const),
+  );
+  return entryIndex;
+}
+
+/** Enumerate public methods/getters by walking the ctor prototype chain. */
+function describeMethods(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctor: new (...args: any[]) => unknown,
+): readonly ChannelMethodDescriptor[] {
+  const methods = new Map<string, ChannelMethodDescriptor>();
+  let proto: object | null = ctor.prototype;
+  // Stop at framework plumbing: `Disposable` (`dispose`, `_register`) and `Object`.
+  while (proto !== null && proto !== Object.prototype && proto !== Disposable.prototype) {
+    for (const name of Object.getOwnPropertyNames(proto)) {
+      if (name === 'constructor' || name.startsWith('_') || methods.has(name)) continue;
+      const desc = Object.getOwnPropertyDescriptor(proto, name);
+      if (desc === undefined) continue;
+      if (typeof desc.get === 'function') {
+        methods.set(name, { name, kind: 'property', arity: 0 });
+      } else if (typeof desc.value === 'function') {
+        methods.set(name, { name, kind: 'method', arity: desc.value.length as number });
+      }
+    }
+    proto = Object.getPrototypeOf(proto) as object | null;
+  }
+  return [...methods.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Describe every registered channel: name, registration scope, and public
+ * methods. Served by `GET /api/v2/channels` so clients (kimi-inspect) can
+ * render a dynamic service browser without handwritten method lists.
+ */
+export function describeChannels(): readonly ChannelDescriptor[] {
+  return registeredChannelNames().map((name) => {
+    const id = resolveChannel(name);
+    const entry = id === undefined ? undefined : scopedEntryIndex().get(id);
+    if (entry === undefined) {
+      return { name, scope: 'app', domain: 'unknown', methods: [] };
+    }
+    return {
+      name,
+      scope: SCOPE_NAME[entry.scope],
+      domain: entry.domain,
+      methods: describeMethods(entry.descriptor.ctor),
+    };
+  });
 }
 
 // The exposed Services. Adding a method to any of these makes it callable over

@@ -18,6 +18,7 @@ import type { Scope } from '@moonshot-ai/agent-core-v2';
 import { okEnvelope } from '@moonshot-ai/protocol';
 
 import type { ScopeKind } from './channel';
+import { describeChannels } from './channelRegistry';
 import { dispatch } from './dispatcher';
 import { mapError, validationEnvelope, withTimeout } from './errors';
 
@@ -68,6 +69,12 @@ export function registerRpcRoutes(
     app.get(path, handler);
     app.post(path, handler);
   }
+
+  // Introspection: the dynamic service browser (kimi-inspect) reads this once
+  // per connection. Single segment, so it cannot collide with `:service/:method`.
+  app.get('/api/v2/channels', async (req, reply) =>
+    reply.send(okEnvelope(describeChannels(), req.id)),
+  );
 }
 
 function makeHandler(
