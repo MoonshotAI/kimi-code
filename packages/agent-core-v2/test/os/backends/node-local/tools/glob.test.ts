@@ -857,7 +857,7 @@ describe('GlobTool integration (real ripgrep)', () => {
       );
       const probeProcessService = new HostProcessService();
       const resolution = await actual.ensureRgPath(createRealRgProbe(probeProcessService), {
-        allowCachedFallback: true,
+        allowCachedFallback: false,
       });
       vi.mocked(ensureRgPath).mockResolvedValue(resolution);
       runRealRg = true;
