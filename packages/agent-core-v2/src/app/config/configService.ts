@@ -236,6 +236,20 @@ export class ConfigService extends Disposable implements IConfigService {
   readonly onDidSectionChange: Event<ConfigSectionChangedEvent> = this._onDidSectionChange.event;
   readonly ready: Promise<void>;
 
+  /**
+   * Serializes config state transitions (User-target writes and reloads).
+   *
+   * A User-target `set`/`replace` mutates `raw`/`rawSnake`, awaits `persist()`,
+   * and only then rebuilds `effective`; a `load()` replaces all three wholesale
+   * from the on-disk document. Without serialization, a reload whose file read
+   * resolves inside a write's persist window (the atomic rename has not landed
+   * yet) restores the stale pre-write state, and the write's post-persist
+   * `rebuildEffective` then drops the just-written domain from `effective` —
+   * observable e.g. as a `POST /config` response missing the field it just
+   * wrote when the startup model-catalog refresh's `reload()` races the write.
+   */
+  private stateChain: Promise<unknown> = Promise.resolve();
+
   private rawSnake: ResolvedConfig = {};
   private raw: ResolvedConfig = {};
   private effective: ResolvedConfig = {};
@@ -336,17 +350,19 @@ export class ConfigService extends Disposable implements IConfigService {
       this.commit('set', [domain]);
       return;
     }
-    const base = this.raw[domain];
-    const next = this.registry.merge(domain, base, patch);
-    const validated = this.registry.validate(domain, next);
-    const stripped = this.stripEnv(domain, validated);
-    if (stripped === undefined) {
-      delete this.raw[domain];
-    } else {
-      this.raw[domain] = stripped;
-    }
-    await this.persist(domain);
-    this.rebuildEffective('set', [domain]);
+    await this.enqueueStateTransition(async () => {
+      const base = this.raw[domain];
+      const next = this.registry.merge(domain, base, patch);
+      const validated = this.registry.validate(domain, next);
+      const stripped = this.stripEnv(domain, validated);
+      if (stripped === undefined) {
+        delete this.raw[domain];
+      } else {
+        this.raw[domain] = stripped;
+      }
+      await this.persist(domain);
+      this.rebuildEffective('set', [domain]);
+    });
   }
 
   async replace(
@@ -364,14 +380,16 @@ export class ConfigService extends Disposable implements IConfigService {
       this.commit('set', [domain]);
       return;
     }
-    const stripped = this.stripEnv(domain, value);
-    if (stripped === undefined) {
-      delete this.raw[domain];
-    } else {
-      this.raw[domain] = this.registry.validate(domain, stripped);
-    }
-    await this.persist(domain);
-    this.rebuildEffective('set', [domain]);
+    await this.enqueueStateTransition(async () => {
+      const stripped = this.stripEnv(domain, value);
+      if (stripped === undefined) {
+        delete this.raw[domain];
+      } else {
+        this.raw[domain] = this.registry.validate(domain, stripped);
+      }
+      await this.persist(domain);
+      this.rebuildEffective('set', [domain]);
+    });
   }
 
   private stripEnv(domain: string, value: unknown): unknown {
@@ -391,7 +409,22 @@ export class ConfigService extends Disposable implements IConfigService {
 
   async reload(): Promise<void> {
     await this.ready;
-    await this.load('reload');
+    await this.enqueueStateTransition(() => this.load('reload'));
+  }
+
+  /**
+   * Run `fn` after every previously enqueued state transition settles, so
+   * User-target writes and reloads can never interleave (see `stateChain`).
+   * The chain itself never rejects: a failed transition propagates to its own
+   * caller but does not poison later transitions.
+   */
+  private enqueueStateTransition<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.stateChain.then(() => fn());
+    this.stateChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async load(source: ConfigChangeSource): Promise<void> {
