@@ -986,21 +986,28 @@ describe('useWorkspaceState — first-load auth gate', () => {
       state.authReady = false;
       apiMock.getAuth
         .mockRejectedValueOnce(new Error('connection refused'))
+        .mockRejectedValueOnce(new Error('connection refused'))
         .mockResolvedValue({ ready: true, defaultModel: 'kimi-code', managedProvider: null });
       const ws = useWorkspaceState(state, createLoadDeps(initialized, connectIssue));
 
       const pending = ws.load();
       await vi.advanceTimersByTimeAsync(0);
       // First /auth failed: NOT treated as "not signed in" — no initialization.
+      // The first failure stays silent so a single blip flashes no error.
       expect(initialized.value).toBe(false);
       expect(apiMock.getAuth).toHaveBeenCalledTimes(1);
-      // The failure reason is surfaced for the connecting splash.
+      expect(connectIssue.value).toBeNull();
+
+      // From the 2nd failed attempt the reason is surfaced for the splash.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(apiMock.getAuth).toHaveBeenCalledTimes(2);
+      expect(initialized.value).toBe(false);
       expect(connectIssue.value).toBe('connection refused');
 
-      // The 2s retry re-checks /auth; once it answers, load completes.
+      // The retry re-checks /auth; once it answers, load completes.
       await vi.advanceTimersByTimeAsync(2000);
       await pending;
-      expect(apiMock.getAuth).toHaveBeenCalledTimes(2);
+      expect(apiMock.getAuth).toHaveBeenCalledTimes(3);
       expect(initialized.value).toBe(true);
       expect(state.authReady).toBe(true);
       expect(connectIssue.value).toBeNull();

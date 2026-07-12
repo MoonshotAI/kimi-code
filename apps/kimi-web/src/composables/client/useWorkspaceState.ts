@@ -357,9 +357,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  FIRST_LOAD_AUTH_RETRY_MS between transient failures. Never resolves with
    *  'retry'. Used only by the first load. */
   async function waitForFirstAuth(): Promise<AuthCheckResult> {
+    let firstRetry = true;
     for (;;) {
       const result = await checkAuth();
       if (result !== 'retry') return result;
+      // Keep the first quick failure silent — a single blip right after page
+      // load shouldn't flash an error. Surface it from the 2nd failed attempt
+      // (~2s in) onward, so a genuinely stuck connection stays diagnosable.
+      if (firstRetry) {
+        connectIssue.value = null;
+        firstRetry = false;
+      }
       await new Promise((resolve) => {
         setTimeout(resolve, FIRST_LOAD_AUTH_RETRY_MS);
       });
