@@ -150,7 +150,14 @@ class HostProcess implements IHostProcess {
         }
         return;
       }
-      throw error;
+      throw new HostProcessError(
+        HostProcessErrorCode.KillFailed,
+        `Failed to kill process ${this.pid}: ${err.message}`,
+        {
+          details: { pid: this.pid, signal: signal ?? 'SIGTERM', errno: err.code },
+          cause: error,
+        },
+      );
     }
   }
 
@@ -182,6 +189,10 @@ export class HostProcessService implements IHostProcessService {
       throw new HostProcessError(
         HostProcessErrorCode.SpawnFailed,
         `Failed to spawn "${command}": ${err.message}`,
+        {
+          details: { command, args: [...args], cwd: options.cwd, errno: err.code },
+          cause: error,
+        },
       );
     }
     return new HostProcess(child, options.mergeStderr ?? false);

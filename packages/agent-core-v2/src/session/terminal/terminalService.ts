@@ -24,7 +24,7 @@ import type {
   TerminalProcess,
 } from '#/os/interface/terminal';
 import { IHostTerminalService } from '#/os/interface/terminal';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -184,7 +184,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   private requireRecord(terminalId: string): TerminalRecord {
     const record = this.records.get(terminalId);
     if (record === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.TERMINAL_NOT_FOUND,
         `terminal ${terminalId} does not exist in session ${this.sessionContext.sessionId}`,
       );

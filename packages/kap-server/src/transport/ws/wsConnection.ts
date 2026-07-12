@@ -15,7 +15,7 @@
  * can list live clients in the v1 wire shape.
  */
 
-import { ErrorCodes, KimiError, type IDisposable, type Scope } from '@moonshot-ai/agent-core-v2';
+import { ErrorCodes, Error2, type IDisposable, type Scope } from '@moonshot-ai/agent-core-v2';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
@@ -239,7 +239,7 @@ export class WsConnection {
         );
         const event = (service as Record<string, unknown>)[msg.event];
         if (typeof event !== 'function' || !/^on[A-Z]/.test(msg.event)) {
-          throw new KimiError(
+          throw new Error2(
             ErrorCodes.REQUEST_INVALID,
             `event not found: ${msg.service}.${msg.event}`,
           );
@@ -251,11 +251,11 @@ export class WsConnection {
       } else {
         const source = resolveEventSource(msg.scope as ScopeKind, msg.event);
         if (source === undefined) {
-          throw new KimiError(ErrorCodes.REQUEST_INVALID, `unknown event: ${msg.event}`);
+          throw new Error2(ErrorCodes.REQUEST_INVALID, `unknown event: ${msg.event}`);
         }
         const scope = await resolveScope(this.core, msg.scope as ScopeKind, scopeParams(msg));
         if (scope === undefined) {
-          throw new KimiError(
+          throw new Error2(
             ErrorCodes.SESSION_NOT_FOUND,
             `session ${msg.sessionId ?? ''} not found`,
           );
@@ -435,7 +435,7 @@ async function withTimeoutWs<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(
-      () => reject(new KimiError(ErrorCodes.INTERNAL, `call timed out after ${ms}ms`)),
+      () => reject(new Error2(ErrorCodes.INTERNAL, `call timed out after ${ms}ms`)),
       ms,
     );
     timer.unref?.();

@@ -3,7 +3,7 @@
  * envelope, guard serialization, time-box calls, and gate access.
  */
 
-import { ErrorCodes, KimiError } from '@moonshot-ai/agent-core-v2';
+import { ErrorCodes, Error2 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode, errEnvelope } from '@moonshot-ai/protocol';
 
 /** Thrown by {@link withTimeout} when a call exceeds its deadline. */
@@ -45,12 +45,12 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
 };
 
 /**
- * Map an internal error to the project envelope. `KimiError` keeps its coded
+ * Map an internal error to the project envelope. `Error2` keeps its coded
  * mapping; everything else becomes `50001`. Stack traces are intentionally not
  * surfaced.
  */
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {
-  if (err instanceof KimiError) {
+  if (err instanceof Error2) {
     const code = KIMI_TO_PROTOCOL[err.code] ?? ErrorCode.INTERNAL_ERROR;
     return errEnvelope(code, err.message, requestId, err.stack);
   }
@@ -94,7 +94,7 @@ export function validationEnvelope(
 
 /**
  * Ensure a value survives a JSON round-trip (catches circular refs, `BigInt`,
- * functions). Returns the value unchanged; throws `KimiError` on failure so the
+ * functions). Returns the value unchanged; throws `Error2` on failure so the
  * caller maps it to `50001` with a clear message.
  */
 export function assertSerializable(value: unknown): unknown {
@@ -102,7 +102,7 @@ export function assertSerializable(value: unknown): unknown {
   try {
     JSON.stringify(value);
   } catch (error) {
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.INTERNAL,
       `result not serializable: ${error instanceof Error ? error.message : String(error)}`,
     );

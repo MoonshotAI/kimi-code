@@ -25,7 +25,7 @@ import type { ToolDidExecuteContext } from '#/agent/tool/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { IEventBus } from '#/app/event/eventBus';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
@@ -114,11 +114,11 @@ export class AgentPromptService implements IAgentPromptService {
   }
 
   async steer(promptIds: readonly string[]): Promise<readonly PromptHandle[]> {
-    if (promptIds.length === 0) throw new KimiError(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
-    if (this.active === undefined) throw new KimiError(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
+    if (promptIds.length === 0) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
+    if (this.active === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
     const ids = new Set(promptIds);
     if (ids.size !== promptIds.length || this.pending.filter((item) => ids.has(item.id)).length !== ids.size) {
-      throw new KimiError(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const selected = this.pending.filter((item) => ids.has(item.id));
     for (const item of selected) this.pending.splice(this.pending.indexOf(item), 1);
@@ -130,7 +130,7 @@ export class AgentPromptService implements IAgentPromptService {
       this.wire.dispatch(steerTurn({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }));
     }, () => {});
     const turn = (await this.loop.enqueue(request).assigned).turn;
-    if (turn === undefined) throw new KimiError(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
+    if (turn === undefined) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active turn to steer into');
     for (const item of selected) { item.state = 'steered'; item.launchedDeferred.resolve(turn); }
     this.steered.set(this.active.id, [...(this.steered.get(this.active.id) ?? []), ...selected]);
     this.eventBus.publish({ type: 'prompt.steered', activePromptId: this.active.id, promptIds: selected.map((x) => x.id), content: rerouted.content as ContentPart[], steeredAt: new Date().toISOString() });
@@ -140,7 +140,7 @@ export class AgentPromptService implements IAgentPromptService {
   abort(promptId: string, reason: Error = userCancellationReason()): boolean {
     if (this.active?.id === promptId) { this.loop.cancel(this.active.turn.id, reason); return true; }
     const index = this.pending.findIndex((item) => item.id === promptId);
-    if (index < 0) throw new KimiError(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
+    if (index < 0) throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${promptId} not found`);
     const [item] = this.pending.splice(index, 1) as [Record];
     item.state = 'cancelled'; item.launchedDeferred.resolve(undefined);
     item.completionDeferred.resolve({ promptId, result: undefined, state: 'cancelled' });
@@ -161,7 +161,7 @@ export class AgentPromptService implements IAgentPromptService {
   undo(count: number): number {
     if (count <= 0) return 0;
     const check = precheckUndo(this.context.get(), count);
-    if (!check.ok) throw new KimiError(ErrorCodes.SESSION_UNDO_UNAVAILABLE, formatUndoUnavailableMessage(check), { details: { reason: check.reason, requestedCount: count, undoableCount: check.undoable } });
+    if (!check.ok) throw new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, formatUndoUnavailableMessage(check), { details: { reason: check.reason, requestedCount: count, undoableCount: check.undoable } });
     return this.context.undo(count).removedCount;
   }
 

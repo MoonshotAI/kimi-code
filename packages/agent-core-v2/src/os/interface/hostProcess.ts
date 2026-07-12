@@ -11,8 +11,8 @@
 
 import type { Readable, Writable } from 'node:stream';
 
-import type { ErrorCode } from '#/_base/errors/codes';
-import { KimiError } from '#/_base/errors/errors';
+import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
+import { Error2, type Error2Options } from '#/_base/errors/errors';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface HostProcessOptions {
@@ -72,13 +72,38 @@ export interface IHostProcessService {
 export const IHostProcessService: ServiceIdentifier<IHostProcessService> =
   createDecorator<IHostProcessService>('hostProcessService');
 
+export const OsProcessErrors = {
+  codes: {
+    OS_PROCESS_SPAWN_FAILED: 'os.process.spawn_failed',
+    OS_PROCESS_KILL_FAILED: 'os.process.kill_failed',
+  },
+  info: {
+    'os.process.spawn_failed': {
+      title: 'Failed to spawn process',
+      retryable: false,
+      public: true,
+      action: 'Check that the command exists and is executable.',
+    },
+    'os.process.kill_failed': {
+      title: 'Failed to kill process',
+      retryable: false,
+      public: true,
+    },
+  },
+} as const satisfies ErrorDomain;
+
+registerErrorDomain(OsProcessErrors);
+
 export const HostProcessErrorCode = {
-  SpawnFailed: 'process.spawn_failed' as ErrorCode,
+  SpawnFailed: OsProcessErrors.codes.OS_PROCESS_SPAWN_FAILED,
+  KillFailed: OsProcessErrors.codes.OS_PROCESS_KILL_FAILED,
 } as const;
 
-export class HostProcessError extends KimiError {
-  constructor(code: (typeof HostProcessErrorCode)[keyof typeof HostProcessErrorCode], message: string) {
-    super(code, message);
+export type HostProcessErrorCode = (typeof HostProcessErrorCode)[keyof typeof HostProcessErrorCode];
+
+export class HostProcessError extends Error2 {
+  constructor(code: HostProcessErrorCode, message: string, options?: Error2Options) {
+    super(code, message, options);
     this.name = 'HostProcessError';
   }
 }

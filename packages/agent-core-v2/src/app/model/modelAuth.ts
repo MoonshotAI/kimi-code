@@ -6,7 +6,7 @@
  * supply the Platform lookup so this file stays outside the service graph.
  */
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { type PlatformConfig, UNKNOWN_PLATFORM_KEY } from '#/app/platform/platform';
 import type { OAuthRef, ProviderConfig } from '#/app/provider/provider';
 import type { Protocol } from '#/app/protocol/protocol';
@@ -123,8 +123,8 @@ function providerApiKeyEnvFallback(
   }
 }
 
-function authConflictError(kind: string, name: string): KimiError {
-  return new KimiError(
+function authConflictError(kind: string, name: string): Error2 {
+  return new Error2(
     ErrorCodes.CONFIG_INVALID,
     `${kind} "${name}" has both apiKey and oauth set in config.toml - they are mutually exclusive. Remove one.`,
   );

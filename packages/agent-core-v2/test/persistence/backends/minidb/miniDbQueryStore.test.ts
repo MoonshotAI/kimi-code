@@ -132,23 +132,35 @@ describe('MiniDbQueryStore', () => {
     expect(await store.getCheckpoint('wire:abc')).toEqual({ seq: 42 });
   });
 
-  it('degrades gracefully when the database lock is held by another process', async () => {
+  it('throws storage.locked when the database lock is held by another process', async () => {
     // Simulate another kimi process holding the single-writer lock on the
     // shared query-store directory.
     const storeDir = join(homeDir, 'cache', 'query-store');
     const lockHolder = await MiniDb.open({ dir: storeDir, valueCodec: 'json' });
     try {
       const store = build();
-      // Writes must not throw: the read model is a rebuildable cache, so lock
-      // contention degrades to a no-op rather than crashing the host.
-      await expect(store.put(COLLECTION, 'a', { id: 'a' })).resolves.toBeUndefined();
-      await expect(store.batch([{ kind: 'put', collection: COLLECTION, key: 'b', value: { id: 'b' } }])).resolves.toBeUndefined();
-      await expect(store.ensureIndex(COLLECTION, { kind: 'value', name: 'byId', field: 'id' })).resolves.toBeUndefined();
-      // Reads fall back to empty so consumers (e.g. session index) take their
-      // legacy path.
-      expect(await store.get(COLLECTION, 'a')).toBeUndefined();
-      expect(await store.getCheckpoint('wire:abc')).toBeUndefined();
-      expect(await store.query(COLLECTION).execute()).toEqual({ items: [] });
+      // Open failure surfaces as a coded `storage.locked` (memoized), never as
+      // a silent no-op — consumers decide how to fall back.
+      await expect(store.put(COLLECTION, 'a', { id: 'a' })).rejects.toMatchObject({
+        code: 'storage.locked',
+      });
+      await expect(
+        store.batch([{ kind: 'put', collection: COLLECTION, key: 'b', value: { id: 'b' } }]),
+      ).rejects.toMatchObject({ code: 'storage.locked' });
+      await expect(
+        store.ensureIndex(COLLECTION, { kind: 'value', name: 'byId', field: 'id' }),
+      ).rejects.toMatchObject({ code: 'storage.locked' });
+      await expect(store.get(COLLECTION, 'a')).rejects.toMatchObject({
+        code: 'storage.locked',
+      });
+      await expect(store.getCheckpoint('wire:abc')).rejects.toMatchObject({
+        code: 'storage.locked',
+      });
+      await expect(store.query(COLLECTION).execute()).rejects.toMatchObject({
+        code: 'storage.locked',
+      });
+      // A locked (failed) open must not make close/dispose throw.
+      await expect(store.close()).resolves.toBeUndefined();
     } finally {
       await lockHolder.close();
     }

@@ -401,7 +401,7 @@ describe('ModelResolverService', () => {
       });
       // No OAuth material on the model, so there is no force-refresh/replay:
       // the raw status error crosses the model boundary once, translated into
-      // a coded KimiError with the HTTP fields in `details` and the raw error
+      // a coded Error2 with the HTTP fields in `details` and the raw error
       // preserved as `cause`.
       await expect(async () => {
         for await (const _event of events) {

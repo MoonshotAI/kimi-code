@@ -17,6 +17,13 @@
  * tests that share a home dir and never read or write the read model. Only a
  * real `put`/`get`/`query`/... opens the database.
  *
+ * An open failure — typically another kimi process holding the single-writer
+ * lock on `<cacheDir>/query-store` — throws `StorageError(storage.locked)`
+ * instead of silently degrading to a no-op. The failure is memoized (the
+ * rejected open promise is cached), so the error is stable for the process
+ * lifetime and consumers can catch it once and fall back to their
+ * non-read-model paths.
+ *
  * A `collection` is encoded as a key prefix (`<collection>\u0000<key>`); indexes
  * are global to the `MiniDb` instance, so index names are prefixed with the
  * collection to keep them isolated, and value indexes are created `sparse` so
@@ -44,6 +51,7 @@ import {
   type SortDir,
   type WriteOp,
 } from '#/persistence/interface/queryStore';
+import { StorageError, StorageErrors } from '#/persistence/interface/storage';
 
 const SEP = String.fromCodePoint(0);
 const CHECKPOINT_COLLECTION = '__checkpoint__';
@@ -61,7 +69,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
   declare readonly _serviceBrand: undefined;
 
   private readonly dir: string;
-  private dbPromise: Promise<MiniDb | undefined> | undefined;
+  private dbPromise: Promise<MiniDb> | undefined;
   private readonly ensuredIndexes = new Set<string>();
 
   constructor(
@@ -75,7 +83,7 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     }));
   }
 
-  private openDb(): Promise<MiniDb | undefined> {
+  private openDb(): Promise<MiniDb> {
     if (this.dbPromise !== undefined) return this.dbPromise;
     this.dbPromise = MiniDb.openOrRebuild(
       {
@@ -92,33 +100,31 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
           });
         },
       },
-    ).catch((err) => {
+    ).catch((error) => {
       // The query store is a rebuildable derived read model; authoritative data
-      // lives in the append-log / atomic-document stores. If it cannot be opened
-      // — typically because another kimi process holds the single-writer lock on
-      // `<cacheDir>/query-store` — degrade to a no-op store instead of crashing
-      // the host. Consumers then fall back to their non-read-model paths. The
-      // degraded state is memoized for the process lifetime so the warning is
-      // emitted once and we do not hammer a contended lock.
-      this.log.warn('minidb query-store unavailable; disabling read model', {
-        dir: this.dir,
-        error: String(err),
-      });
-      return undefined;
+      // lives in the append-log / atomic-document stores. `openOrRebuild`
+      // already turns on-disk corruption into a clean rebuild, so an open
+      // failure here is almost always another kimi process holding the
+      // single-writer lock on `<cacheDir>/query-store`. Surface it as
+      // `storage.locked` (memoized via the cached rejected promise) and let
+      // each consumer decide how to fall back — no silent no-op degradation.
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_LOCKED,
+        'minidb query-store is locked by another process',
+        { details: { dir: this.dir }, cause: error },
+      );
     });
     return this.dbPromise;
   }
 
   async put<T>(collection: string, key: string, value: T): Promise<void> {
     const db = await this.openDb();
-    if (db === undefined) return;
     await db.set(physicalKey(collection, key), value);
   }
 
   async batch(ops: readonly WriteOp[]): Promise<void> {
     if (ops.length === 0) return;
     const db = await this.openDb();
-    if (db === undefined) return;
     await db.batch(
       ops.map((op) =>
         op.kind === 'put'
@@ -130,13 +136,11 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   async delete(collection: string, key: string): Promise<void> {
     const db = await this.openDb();
-    if (db === undefined) return;
     await db.del(physicalKey(collection, key));
   }
 
   async get<T>(collection: string, key: string): Promise<T | undefined> {
     const db = await this.openDb();
-    if (db === undefined) return undefined;
     return db.get(physicalKey(collection, key)) as T | undefined;
   }
 
@@ -148,7 +152,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     const guard = `${collection}:${def.kind}:${def.name}`;
     if (this.ensuredIndexes.has(guard)) return;
     const db = await this.openDb();
-    if (db === undefined) return;
     const name = indexName(collection, def.name);
     if (def.kind === 'value') {
       if (!db.listIndexes().some((i) => i.name === name)) {
@@ -161,6 +164,8 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
     } else {
       // A text index that already exists (rebuilt from persisted definitions on
       // reopen) makes `createTextIndex` throw; treat that as already-ensured.
+      // TODO: minidb throws a bare `Error` here — switch to a structured error
+      // type if minidb ever exports one (do not parse messages long-term).
       try {
         await db.createTextIndex(name, { fields: def.fields });
       } catch (error) {
@@ -180,7 +185,8 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   async close(): Promise<void> {
     if (this.dbPromise === undefined) return;
-    const db = await this.dbPromise;
+    // A failed (locked) open must not make disposal throw.
+    const db = await this.dbPromise.catch(() => undefined);
     await db?.close();
   }
 }
@@ -193,7 +199,7 @@ class MiniDbQuery<T> implements IQuery<T> {
   private skip = 0;
 
   constructor(
-    private readonly openDb: () => Promise<MiniDb | undefined>,
+    private readonly openDb: () => Promise<MiniDb>,
     private readonly collection: string,
   ) {}
 
@@ -220,7 +226,6 @@ class MiniDbQuery<T> implements IQuery<T> {
 
   async execute(): Promise<Page<T>> {
     const db = await this.openDb();
-    if (db === undefined) return { items: [] };
     const prefix = `${this.collection}${SEP}`;
     const q: QueryOptions = { key: { prefix } };
     if (Object.keys(this.filter).length > 0) q.filter = this.filter as Record<string, unknown>;

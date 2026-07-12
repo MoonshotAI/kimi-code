@@ -16,7 +16,7 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
-import { isKimiError } from '#/errors';
+import { isError2 } from '#/errors';
 import { IEventService } from '#/app/event/event';
 import { MODEL_CATALOG_SECTION } from '#/app/modelCatalog/configSection';
 import { IModelCatalogService } from '#/app/modelCatalog/modelCatalog';
@@ -189,7 +189,7 @@ describe('ModelCatalogService', () => {
         throw new Error('expected rejection');
       },
       (err) => {
-        expect(isKimiError(err)).toBe(true);
+        expect(isError2(err)).toBe(true);
         expect((err as { code: string }).code).toBe('provider.not_found');
       },
     );
@@ -214,7 +214,7 @@ describe('ModelCatalogService', () => {
         throw new Error('expected rejection');
       },
       (err) => {
-        expect(isKimiError(err)).toBe(true);
+        expect(isError2(err)).toBe(true);
         expect((err as { code: string }).code).toBe('model.not_found');
       },
     );
@@ -254,7 +254,7 @@ describe('ModelCatalogService', () => {
           throw new Error('expected rejection');
         },
         (err) => {
-          expect(isKimiError(err)).toBe(true);
+          expect(isError2(err)).toBe(true);
           expect((err as { code: string }).code).toBe('provider.not_found');
         },
       );

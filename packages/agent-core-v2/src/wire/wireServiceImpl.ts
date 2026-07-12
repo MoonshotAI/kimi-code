@@ -14,8 +14,9 @@
  * unknown record types, then `onRestored`). A reentrancy guard (`dispatching` +
  * `queue` + `drain`, capped by `MAX_DRAIN = 100`) lets onChange handlers enqueue
  * further ops without reentering `execute`; a cascade past the cap throws
- * `CycleError` (`code = 'ERR_WIRE_CYCLE'`), co-located here like
- * `DuplicateOpError` rather than the central `ErrorCodes` registry. After every
+ * `CycleError` (`wire.cycle`), co-located here like `DuplicateOpError`
+ * (`wire.duplicate_op` in `op.ts`) — both extend `WireError` from
+ * `wire/errors.ts`. After every
  * `apply` the new state is `Object.freeze`d — the runtime half of the
  * immutability guarantee whose compile-time half is `DeepReadonly`. Internally
  * each per-model instance is erased to `any` (the same localized erasure as
@@ -59,6 +60,7 @@ import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 
+import { WireError, WireErrors } from './errors';
 import type { DeepReadonly, DerivedModelDef, ModelDef, PartsTransformer } from './model';
 import { MODEL_CROSS_REDUCERS } from './model';
 import type { Op } from './op';
@@ -68,16 +70,22 @@ import type {
   ModelChange,
   OpGroup,
   PersistedRecord,
+  ReplayResult,
   WireEmission,
 } from './wireService';
 
 const MAX_DRAIN = 100;
 
-export class CycleError extends Error {
-  readonly code = 'ERR_WIRE_CYCLE' as const;
-
-  constructor(readonly depth: number) {
-    super(`Wire dispatch cascade exceeded MAX_DRAIN (${depth}); possible op cycle`);
+export class CycleError extends WireError {
+  constructor(readonly depth: number, readonly opTypes: readonly string[]) {
+    super(
+      WireErrors.codes.WIRE_CYCLE,
+      `Wire dispatch cascade exceeded MAX_DRAIN (${depth}); possible op cycle`,
+      {
+        // Cap the sample so `details` stays small and JSON-serializable.
+        details: { depth, opTypes: opTypes.slice(0, 20) },
+      },
+    );
     this.name = 'CycleError';
   }
 }
@@ -201,7 +209,7 @@ export class WireService extends Disposable implements IWireService {
       this.execute({ ops, silent: false });
       while (this.queue.length > 0) {
         if (++this.drainDepth > MAX_DRAIN) {
-          throw new CycleError(this.drainDepth);
+          throw new CycleError(this.drainDepth, this.queue.map((op) => op.type));
         }
         this.execute({ ops: this.queue.splice(0), silent: false });
       }
@@ -212,16 +220,32 @@ export class WireService extends Disposable implements IWireService {
     }
   }
 
-  async replay(...records: PersistedRecord[]): Promise<void> {
+  async replay(...records: PersistedRecord[]): Promise<ReplayResult> {
     const ops: Op[] = [];
-    for (const record of records) {
+    let unknownRecords = 0;
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index]!;
       const descriptor = OP_REGISTRY.get(record.type);
-      if (descriptor === undefined) continue;
+      if (descriptor === undefined) {
+        // Unknown record types (written by a newer version, or by a retired op)
+        // are skipped for compatibility, but never silently: report each skip
+        // and return the count so the caller knows the replay was lossy.
+        unknownRecords++;
+        onUnexpectedError(
+          new WireError(
+            WireErrors.codes.WIRE_UNKNOWN_RECORD,
+            `Unknown wire record type '${record.type}' skipped during replay`,
+            { details: { type: record.type, index } },
+          ),
+        );
+        continue;
+      }
       ops.push({ type: record.type, payload: recordToPayload(record), descriptor });
     }
     this.execute({ ops, silent: true });
     await this.rehydrateModels();
     await this.fireRestored();
+    return { unknownRecords };
   }
 
   async flush(): Promise<void> {

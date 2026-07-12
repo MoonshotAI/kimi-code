@@ -9,7 +9,7 @@ import {
   ErrorCodes,
   IAgentLifecycleService,
   ISessionLifecycleService,
-  KimiError,
+  Error2,
   type IScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -47,7 +47,7 @@ export async function resolveScope(
 }
 
 /**
- * Dispatch one call. Throws `KimiError` for expected failures (unknown service,
+ * Dispatch one call. Throws `Error2` for expected failures (unknown service,
  * scope not found, service not in scope, method missing); the route maps them
  * to the envelope. Unexpected errors propagate and become `50001`.
  */
@@ -59,19 +59,19 @@ export async function resolveService(
 ): Promise<object> {
   const scope = await resolveScope(core, scopeKind, params);
   if (scope === undefined) {
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.SESSION_NOT_FOUND,
       `session ${params['session_id'] ?? ''} not found`,
     );
   }
   const id = resolveChannel(serviceName);
   if (id === undefined) {
-    throw new KimiError(ErrorCodes.REQUEST_INVALID, `unknown service: ${serviceName}`);
+    throw new Error2(ErrorCodes.REQUEST_INVALID, `unknown service: ${serviceName}`);
   }
   try {
     return scope.accessor.get(id) as object;
   } catch {
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.REQUEST_INVALID,
       `service not available in ${scopeKind} scope: ${serviceName}`,
     );
@@ -89,7 +89,7 @@ export async function dispatch(
   const service = await resolveService(core, scopeKind, params, serviceName);
   const member = (service as Record<string, unknown>)[method];
   if (member === undefined) {
-    throw new KimiError(ErrorCodes.REQUEST_INVALID, `method not found: ${serviceName}.${method}`);
+    throw new Error2(ErrorCodes.REQUEST_INVALID, `method not found: ${serviceName}.${method}`);
   }
 
   // Property read (e.g. `mode`, `rules`, `isActive`) — return as-is.

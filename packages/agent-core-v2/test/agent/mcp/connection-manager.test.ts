@@ -17,7 +17,7 @@ import type {
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 
-import { KimiError } from '#/errors';
+import { Error2 } from '#/errors';
 import { McpConnectionManager, type McpServerEntry } from '#/agent/mcp/connection-manager';
 import { McpOAuthService } from '#/agent/mcp/oauth/service';
 
@@ -226,10 +226,10 @@ describe('McpConnectionManager', () => {
     }
   }, 7000);
 
-  it('reconnect throws a coded KimiError when the server name is unknown', async () => {
+  it('reconnect throws a coded Error2 when the server name is unknown', async () => {
     const cm = new McpConnectionManager();
     try {
-      await expect(cm.reconnect('nope')).rejects.toBeInstanceOf(KimiError);
+      await expect(cm.reconnect('nope')).rejects.toBeInstanceOf(Error2);
       await expect(cm.reconnect('nope')).rejects.toMatchObject({ code: 'mcp.server_not_found' });
     } finally {
       await cm.shutdown();
@@ -243,7 +243,7 @@ describe('McpConnectionManager', () => {
         off: { ...stdioConfig(), enabled: false },
       });
 
-      await expect(cm.reconnect('off')).rejects.toBeInstanceOf(KimiError);
+      await expect(cm.reconnect('off')).rejects.toBeInstanceOf(Error2);
       await expect(cm.reconnect('off')).rejects.toMatchObject({ code: 'mcp.server_disabled' });
       expect(cm.get('off')).toMatchObject({
         status: 'disabled',

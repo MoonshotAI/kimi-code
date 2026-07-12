@@ -1,5 +1,5 @@
 /**
- * Base error classes shared by every domain — `KimiError` and related
+ * Base error classes shared by every domain — `Error2` and related
  * control-flow errors.
  */
 
@@ -34,43 +34,43 @@ export class BugIndicatingError extends Error {
   }
 }
 
-export interface KimiErrorOptions {
+export interface Error2Options {
   readonly details?: Readonly<Record<string, unknown>>;
   readonly cause?: unknown;
   readonly name?: string;
 }
 
-export class KimiError extends Error {
+export class Error2 extends Error {
   readonly code: ErrorCode;
   readonly details?: Readonly<Record<string, unknown>>;
 
-  constructor(code: ErrorCode, message: string, options?: KimiErrorOptions) {
+  constructor(code: ErrorCode, message: string, options?: Error2Options) {
     super(message, options?.cause === undefined ? undefined : { cause: options.cause });
-    this.name = options?.name ?? 'KimiError';
+    this.name = options?.name ?? 'Error2';
     this.code = code;
     this.details = options?.details;
   }
 }
 
-export function isKimiError(error: unknown): error is KimiError {
-  return error instanceof KimiError;
+export function isError2(error: unknown): error is Error2 {
+  return error instanceof Error2;
 }
 
 /**
- * Follow `cause` links out of `KimiError` wrappers down to the underlying raw
+ * Follow `cause` links out of `Error2` wrappers down to the underlying raw
  * error. Boundary-translated errors carry the original provider/fs error as
  * `cause`, so predicates that classify raw error shapes (retryability,
  * status codes) test the unwrapped value.
  */
 export function unwrapErrorCause(error: unknown): unknown {
   let current = error;
-  while (current instanceof KimiError && current.cause !== undefined) {
+  while (current instanceof Error2 && current.cause !== undefined) {
     current = current.cause;
   }
   return current;
 }
 
-export class NotImplementedError extends KimiError {
+export class NotImplementedError extends Error2 {
   constructor(feature?: string) {
     super(
       CoreErrors.codes.NOT_IMPLEMENTED,

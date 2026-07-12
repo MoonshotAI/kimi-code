@@ -17,7 +17,7 @@
  *   - invalid query     → `40001` (validation.failed, via defineRoute)
  */
 
-import { IMessageLegacyService, isKimiError, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IMessageLegacyService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
   ErrorCode,
   getMessageResponseSchema,
@@ -145,7 +145,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
 }
 
 /**
- * Map a thrown `KimiError` to the right envelope:
+ * Map a thrown `Error2` to the right envelope:
  *   - `session.not_found` → `code: 40401`
  *   - `message.not_found` → `code: 40403`
  *   - anything else → `code: 50001`.
@@ -155,7 +155,7 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
-  if (isKimiError(err)) {
+  if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));

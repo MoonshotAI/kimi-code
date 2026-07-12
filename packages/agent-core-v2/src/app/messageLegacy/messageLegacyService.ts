@@ -35,7 +35,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import type { PersistedRecord } from '#/wire/wireService';
 
@@ -93,7 +93,7 @@ export class MessageLegacyService implements IMessageLegacyService {
     const all = await this.loadMessages(sessionId);
     const entry = all.find((m) => m.id === messageId);
     if (entry === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.MESSAGE_NOT_FOUND,
         `message ${messageId} does not exist in session ${sessionId}`,
       );
@@ -110,7 +110,7 @@ export class MessageLegacyService implements IMessageLegacyService {
   private async loadMessages(sessionId: string): Promise<Message[]> {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
 
     const session = await this.lifecycle.resume(sessionId);

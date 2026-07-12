@@ -1,6 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
-import { KimiError, isKimiError, type KimiErrorOptions } from '#/_base/errors/errors';
+import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { FinishReason } from '#/app/llmProtocol/finishReason';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 import type { Hooks } from '#/hooks';
@@ -9,8 +9,8 @@ import type { StepRequest } from './stepRequest';
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
 
-export class LoopError extends KimiError {
-  constructor(code: LoopErrorCode, message: string, options?: KimiErrorOptions) {
+export class LoopError extends Error2 {
+  constructor(code: LoopErrorCode, message: string, options?: Error2Options) {
     super(code, message, options);
     this.name = 'LoopError';
   }
@@ -26,7 +26,7 @@ export function createMaxStepsExceededError(maxSteps: number, message?: string):
 }
 
 export function isMaxStepsExceededError(error: unknown): boolean {
-  return isKimiError(error) && error.code === LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED;
+  return isError2(error) && error.code === LoopErrors.codes.LOOP_MAX_STEPS_EXCEEDED;
 }
 
 export interface BeforeStepContext {

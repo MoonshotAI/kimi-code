@@ -2,14 +2,14 @@
  * `protocol` domain error codes — LLM wire API failures raised while driving
  * a Model's `request(...)` through the protocol adapter registry — plus
  * `translateProviderError`, the boundary translation that converts raw
- * `llmProtocol` provider errors into coded `KimiError`s.
+ * `llmProtocol` provider errors into coded `Error2`s.
  *
  * Registered at module load. Historical name `ChatProviderErrors` is retained
  * as a re-exported alias so existing call sites don't have to migrate.
  */
 
 import { CoreErrors, registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
-import { KimiError, isKimiError } from '#/_base/errors/errors';
+import { Error2, isError2 } from '#/_base/errors/errors';
 import {
   APIConnectionError,
   APIContextOverflowError,
@@ -77,14 +77,14 @@ registerErrorDomain(ProtocolErrors);
 
 /**
  * Boundary translation from raw `llmProtocol` provider errors into coded
- * `KimiError`s. Idempotent: a `KimiError` passes through untouched. The raw
+ * `Error2`s. Idempotent: a `Error2` passes through untouched. The raw
  * error is preserved as `cause` and HTTP fields ride in `details`, so
  * up-stack consumers branch on `code` + `details` (or unwrap `cause`)
  * instead of importing provider classes. Abort-shaped errors are control
  * flow, not provider failures — callers must branch on them before calling.
  */
-export function translateProviderError(error: unknown): KimiError {
-  if (isKimiError(error)) {
+export function translateProviderError(error: unknown): Error2 {
+  if (isError2(error)) {
     return error;
   }
   if (error instanceof APIStatusError) {
@@ -98,14 +98,14 @@ export function translateProviderError(error: unknown): KimiError {
             : error.statusCode === 401 || error.statusCode === 403
               ? ProtocolErrors.codes.PROVIDER_AUTH_ERROR
               : ProtocolErrors.codes.PROVIDER_API_ERROR;
-    return new KimiError(code, sanitizeStatusErrorMessage(error.message), {
+    return new Error2(code, sanitizeStatusErrorMessage(error.message), {
       name: error.name,
       cause: error,
       details: { statusCode: error.statusCode, requestId: error.requestId },
     });
   }
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
-    return new KimiError(ProtocolErrors.codes.PROVIDER_CONNECTION_ERROR, error.message, {
+    return new Error2(ProtocolErrors.codes.PROVIDER_CONNECTION_ERROR, error.message, {
       name: error.name,
       cause: error,
     });
@@ -115,7 +115,7 @@ export function translateProviderError(error: unknown): KimiError {
       error.finishReason === 'filtered'
         ? ProtocolErrors.codes.PROVIDER_FILTERED
         : ProtocolErrors.codes.PROVIDER_API_ERROR;
-    return new KimiError(code, error.message, {
+    return new Error2(code, error.message, {
       name: error.name,
       cause: error,
       details: {
@@ -125,18 +125,18 @@ export function translateProviderError(error: unknown): KimiError {
     });
   }
   if (error instanceof ChatProviderError) {
-    return new KimiError(ProtocolErrors.codes.PROVIDER_API_ERROR, error.message, {
+    return new Error2(ProtocolErrors.codes.PROVIDER_API_ERROR, error.message, {
       name: error.name,
       cause: error,
     });
   }
   if (error instanceof Error) {
-    return new KimiError(CoreErrors.codes.INTERNAL, error.message, {
+    return new Error2(CoreErrors.codes.INTERNAL, error.message, {
       name: error.name,
       cause: error,
     });
   }
-  return new KimiError(CoreErrors.codes.INTERNAL, String(error), { cause: error });
+  return new Error2(CoreErrors.codes.INTERNAL, String(error), { cause: error });
 }
 
 function sanitizeStatusErrorMessage(message: string): string {

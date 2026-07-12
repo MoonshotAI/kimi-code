@@ -14,14 +14,24 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
 
-export class AppendLogCorruptedError extends Error {
-  constructor(
-    readonly scope: string,
-    readonly key: string,
-    readonly lineNumber: number,
-    cause: unknown,
-  ) {
-    super(`append-log ${scope}/${key}: corrupted line ${lineNumber}: ${String(cause)}`);
+import { StorageError, StorageErrors } from '#/persistence/interface/storage';
+
+/**
+ * A non-final line of an append log failed to parse — real corruption (a torn
+ * final line is dropped silently instead). Carries `storage.corrupted`; the
+ * scope/key/lineNumber coordinates live in `details` and the underlying parse
+ * error is preserved as `cause`.
+ */
+export class AppendLogCorruptedError extends StorageError {
+  constructor(scope: string, key: string, lineNumber: number, cause: unknown) {
+    super(
+      StorageErrors.codes.STORAGE_CORRUPTED,
+      `append-log ${scope}/${key}: corrupted line ${lineNumber}`,
+      {
+        details: { scope, key, lineNumber },
+        cause,
+      },
+    );
     this.name = 'AppendLogCorruptedError';
   }
 }

@@ -18,8 +18,9 @@ import {
   IWorkspaceLocalConfigService,
   type WorkspaceAdditionalDirsLoadResult,
 } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
 
 const WorkspaceLocalTomlSchema = z.object({
   workspace: z
@@ -84,8 +85,12 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
     workspace['additional_dir'] = [...fileExistingDirs, additionalDir];
     file.raw['workspace'] = workspace;
 
-    await this.fs.mkdir(dirname(configPath), { recursive: true });
-    await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+    try {
+      await this.fs.mkdir(dirname(configPath), { recursive: true });
+      await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+    } catch (error: unknown) {
+      throw toStorageIoError(error, { path: configPath, op: 'write' });
+    }
 
     return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
   }
@@ -114,11 +119,7 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
       text = await this.fs.readText(configPath);
     } catch (error: unknown) {
       if (isPathMissing(error)) return undefined;
-      throw new KimiError(
-        ErrorCodes.CONFIG_INVALID,
-        `Failed to read ${configPath}: ${describeError(error)}`,
-        { cause: error },
-      );
+      throw toStorageIoError(error, { path: configPath, op: 'read' });
     }
 
     if (text.trim().length === 0) return { raw: {}, parsed: {} };
@@ -127,15 +128,18 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
     try {
       raw = parseToml(text);
     } catch (error: unknown) {
-      throw new KimiError(
-        ErrorCodes.CONFIG_INVALID,
-        `Invalid TOML in ${configPath}: ${describeError(error)}`,
-        { cause: error },
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_DECODE_FAILED,
+        `Invalid TOML in ${configPath}`,
+        {
+          details: { path: configPath, format: 'toml' },
+          cause: error,
+        },
       );
     }
 
     if (!isPlainObject(raw)) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Invalid workspace local config in ${configPath}`,
       );
@@ -206,20 +210,16 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
       stat = await this.fs.stat(filePath);
     } catch (error: unknown) {
       if (isPathMissing(error)) {
-        throw new KimiError(
+        throw new Error2(
           ErrorCodes.CONFIG_INVALID,
           'workspace.additional_dir must exist and be a directory',
         );
       }
-      throw new KimiError(
-        ErrorCodes.CONFIG_INVALID,
-        `Failed to stat ${filePath}: ${describeError(error)}`,
-        { cause: error },
-      );
+      throw toStorageIoError(error, { path: filePath, op: 'stat' });
     }
 
     if (!stat.isDirectory) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         'workspace.additional_dir must exist and be a directory',
       );
@@ -252,14 +252,14 @@ function normalizeAdditionalDirs(additionalDirs: readonly string[]): string[] {
 
 function normalizeAdditionalDirInput(additionalDir: string): string {
   if (typeof additionalDir !== 'string') {
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.CONFIG_INVALID,
       'workspace.additional_dir must be an array of strings',
     );
   }
   const trimmed = additionalDir.trim();
   if (trimmed.length === 0) {
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.CONFIG_INVALID,
       'workspace.additional_dir must exist and be a directory',
     );
@@ -272,7 +272,7 @@ function parseWorkspaceLocalToml(raw: Record<string, unknown>): WorkspaceLocalTo
     return WorkspaceLocalTomlSchema.parse(raw);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
-      throw new KimiError(ErrorCodes.CONFIG_INVALID, describeWorkspaceLocalValidationError(error), {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, describeWorkspaceLocalValidationError(error), {
         cause: error,
       });
     }
@@ -299,17 +299,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isPathMissing(error: unknown): boolean {
-  const code = getErrorCode(error);
+  // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
+  const code = getErrorCode(unwrapErrorCause(error));
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 function getErrorCode(error: unknown): unknown {
   if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
   return (error as { code: unknown }).code;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 registerScopedService(

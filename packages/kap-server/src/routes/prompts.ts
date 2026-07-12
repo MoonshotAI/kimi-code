@@ -31,8 +31,8 @@ import {
   buildImageCompressionCaption,
   compressBase64ForModel,
   compressImageForModel,
-  isKimiError,
-  KimiError,
+  isError2,
+  Error2,
   persistOriginalImage,
   sessionMediaOriginalsDir,
   type GetResult,
@@ -99,7 +99,7 @@ async function resolveSession(core: Scope, sessionId: string): Promise<ISessionS
   // `undefined` only when the session is unknown or its workspace is gone.
   const session = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
   if (session === undefined) {
-    throw new KimiError('session.not_found', `session ${sessionId} does not exist`);
+    throw new Error2('session.not_found', `session ${sessionId} does not exist`);
   }
   return session;
 }
@@ -118,7 +118,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
       ? await ensureMainAgent(session)
       : session.accessor.get(IAgentLifecycleService).getHandle(agentId);
   if (agent === undefined) {
-    throw new KimiError('agent.not_found', `agent ${agentId} does not exist`);
+    throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
     prompt: agent.accessor.get(IAgentPromptService),
@@ -496,7 +496,7 @@ async function readFileOrStream(file: GetResult): Promise<Buffer> {
 function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
   const prefix = expected === 'video' ? 'video/' : 'image/';
   if (file.meta.media_type.toLowerCase().startsWith(prefix)) return;
-  throw new KimiError(
+  throw new Error2(
     'validation.failed',
     `file ${file.meta.id} is ${file.meta.media_type}, not ${expected === 'video' ? 'a video' : 'an image'}`,
   );
@@ -515,7 +515,7 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
-  if (isKimiError(err)) {
+  if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
       case 'agent.not_found':
@@ -619,13 +619,13 @@ function sendMappedError(
   );
 }
 
-function authProviderDetails(err: KimiError): { provider_id: string } | undefined {
+function authProviderDetails(err: Error2): { provider_id: string } | undefined {
   const providerId = err.details?.['provider_id'];
   if (typeof providerId !== 'string') return undefined;
   return { provider_id: providerId };
 }
 
-function authModelDetails(err: KimiError): { model_id?: string; provider_id?: string } | null {
+function authModelDetails(err: Error2): { model_id?: string; provider_id?: string } | null {
   const details: { model_id?: string; provider_id?: string } = {};
   const modelId = err.details?.['model_id'];
   const providerId = err.details?.['provider_id'];

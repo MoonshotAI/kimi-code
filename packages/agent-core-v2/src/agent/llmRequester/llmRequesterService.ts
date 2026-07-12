@@ -494,7 +494,7 @@ function fingerprint(content: string): string {
 }
 
 function apiErrorType(error: unknown): string {
-  // Errors crossing the model boundary are coded `KimiError`s with the raw
+  // Errors crossing the model boundary are coded `Error2`s with the raw
   // provider error as `cause`; classify on the raw shape when available.
   const raw = unwrapErrorCause(error);
   if (raw instanceof APIContextOverflowError) return 'context_overflow';

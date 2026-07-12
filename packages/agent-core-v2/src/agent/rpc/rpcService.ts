@@ -10,7 +10,7 @@ import { IAgentGoalService } from '#/agent/goal/goal';
 import type { PluginCommandActivatedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -252,7 +252,7 @@ export class AgentRPCService implements IAgentRPCService {
       (command) => command.pluginId === payload.pluginId && command.name === payload.commandName,
     );
     if (def === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.REQUEST_INVALID,
         `Plugin command "${payload.pluginId}:${payload.commandName}" was not found`,
       );

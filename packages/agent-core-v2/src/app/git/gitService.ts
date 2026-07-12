@@ -14,7 +14,7 @@ import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from '@moonsh
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
@@ -121,7 +121,7 @@ export class GitService implements IGitService {
           () => false,
         );
         if (!exists) {
-          throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${relPath}`, {
+          throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${relPath}`, {
             details: { path: relPath },
           });
         }
@@ -217,8 +217,8 @@ export class GitService implements IGitService {
     }
   }
 
-  private gitUnavailable(cwd: string, detail: string): KimiError {
-    return new KimiError(ErrorCodes.FS_GIT_UNAVAILABLE, `git unavailable at ${cwd}: ${detail}`, {
+  private gitUnavailable(cwd: string, detail: string): Error2 {
+    return new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git unavailable at ${cwd}: ${detail}`, {
       details: { cwd, detail },
     });
   }

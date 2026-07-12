@@ -29,6 +29,7 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   resolvePathAccessPath,
@@ -467,8 +468,11 @@ function formatSpawnError(error: unknown): string {
 }
 
 function errorCode(error: unknown): string | undefined {
-  if (error !== null && typeof error === 'object' && 'code' in error) {
-    const code = (error as { code?: unknown }).code;
+  // hostFs / hostProcess translate raw errnos into coded errors; classify the
+  // unwrapped cause so boundary translation stays invisible here.
+  const unwrapped = unwrapErrorCause(error);
+  if (unwrapped !== null && typeof unwrapped === 'object' && 'code' in unwrapped) {
+    const code = (unwrapped as { code?: unknown }).code;
     return typeof code === 'string' ? code : undefined;
   }
   return undefined;

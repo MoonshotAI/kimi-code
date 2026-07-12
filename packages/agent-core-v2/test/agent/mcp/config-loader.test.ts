@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { loadMcpServers, resolveMcpJsonPaths } from '#/agent/mcp/config-loader';
 
 const tempDirs: string[] = [];
@@ -179,17 +179,17 @@ describe('loadMcpServers', () => {
     });
   });
 
-  it('throws KimiError(config.invalid) on invalid JSON', async () => {
+  it('throws Error2(config.invalid) on invalid JSON', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();
     await writeFile(join(home, 'mcp.json'), '{not json}', 'utf-8');
-    await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toBeInstanceOf(KimiError);
+    await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toBeInstanceOf(Error2);
     await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,
     });
   });
 
-  it('throws KimiError(config.invalid) on schema violation with unknown transport', async () => {
+  it('throws Error2(config.invalid) on schema violation with unknown transport', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();
     await writeJson(join(home, 'mcp.json'), {
@@ -200,7 +200,7 @@ describe('loadMcpServers', () => {
     });
   });
 
-  it('throws KimiError(config.invalid) on schema violation with missing required field', async () => {
+  it('throws Error2(config.invalid) on schema violation with missing required field', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();
     await writeJson(join(home, 'mcp.json'), {

@@ -32,7 +32,7 @@ import { type KimiModelOverrides } from '#/app/model/modelOverrides';
 import { IModelResolver } from '#/app/model/modelResolver';
 import picomatch from 'picomatch';
 
-import { ErrorCodes, KimiError } from "#/errors";
+import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { resolveThinkingEffort, resolveThinkingKeep } from './thinking';
@@ -283,7 +283,7 @@ export class AgentProfileService implements IAgentProfileService {
   getProvider(): Model {
     const model = this.resolveModel();
     if (model === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     }
     return model;
   }
@@ -448,7 +448,7 @@ export class AgentProfileService implements IAgentProfileService {
   private get model(): string {
     const modelAlias = this.modelAlias;
     if (modelAlias === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     }
     return modelAlias;
   }

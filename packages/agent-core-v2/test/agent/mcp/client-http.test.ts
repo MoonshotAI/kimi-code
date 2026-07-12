@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { buildMcpHttpHeaders, HttpMcpClient, isTerminalTransportError } from '#/agent/mcp/client-http';
 
 import { startInProcessHttpMcpServer } from './stubs';
@@ -17,8 +17,8 @@ function expectConfigInvalid(fn: () => unknown): void {
   try {
     fn();
   } catch (error) {
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect(error).toBeInstanceOf(Error2);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     return;
   }
   throw new Error('expected function to throw');
@@ -49,7 +49,7 @@ describe('buildMcpHttpHeaders', () => {
     ).toEqual({ Authorization: 'Bearer secret' });
   });
 
-  it('throws KimiError(config.invalid) when a configured bearer token env var is empty or missing', () => {
+  it('throws Error2(config.invalid) when a configured bearer token env var is empty or missing', () => {
     expectConfigInvalid(() =>
       buildMcpHttpHeaders(
         { transport: 'http', url: 'https://x.example.com', bearerTokenEnvVar: 'MISSING' },

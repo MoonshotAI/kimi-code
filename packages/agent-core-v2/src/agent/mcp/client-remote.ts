@@ -1,5 +1,5 @@
 import type { McpRemoteServerConfig, McpServerConfig } from './config-schema';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 
 export function buildMcpRemoteHeaders(
   config: McpRemoteServerConfig,
@@ -9,7 +9,7 @@ export function buildMcpRemoteHeaders(
   if (config.bearerTokenEnvVar !== undefined) {
     const token = envLookup(config.bearerTokenEnvVar);
     if (token === undefined || token.length === 0) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `MCP ${config.transport.toUpperCase()} bearer token env var "${config.bearerTokenEnvVar}" is not set or is empty`,
       );

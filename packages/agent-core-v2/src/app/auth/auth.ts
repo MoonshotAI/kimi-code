@@ -26,7 +26,7 @@ import type {
 } from '@moonshot-ai/protocol';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import { KimiError } from '#/_base/errors/errors';
+import { Error2 } from '#/_base/errors/errors';
 
 import type { OAuthRef } from '#/app/provider/provider';
 
@@ -78,7 +78,7 @@ export interface IAuthSummaryService {
 export const IAuthSummaryService: ServiceIdentifier<IAuthSummaryService> =
   createDecorator<IAuthSummaryService>('authSummaryService');
 
-export class AuthProvisioningRequiredError extends KimiError {
+export class AuthProvisioningRequiredError extends Error2 {
   constructor() {
     super(
       AuthErrors.codes.AUTH_PROVISIONING_REQUIRED,
@@ -88,7 +88,7 @@ export class AuthProvisioningRequiredError extends KimiError {
   }
 }
 
-export class AuthTokenMissingError extends KimiError {
+export class AuthTokenMissingError extends Error2 {
   readonly providerId: string;
 
   constructor(providerId: string) {
@@ -101,7 +101,7 @@ export class AuthTokenMissingError extends KimiError {
   }
 }
 
-export class AuthModelNotResolvedError extends KimiError {
+export class AuthModelNotResolvedError extends Error2 {
   readonly modelId: string | undefined;
   readonly providerId: string | undefined;
 

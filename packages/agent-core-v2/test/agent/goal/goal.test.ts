@@ -15,7 +15,7 @@ import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
-import { ErrorCodes, KimiError, errorInfo, toKimiErrorPayload } from '#/errors';
+import { ErrorCodes, Error2, errorInfo, toKimiErrorPayload } from '#/errors';
 
 import {
   InMemoryWireRecordPersistence,
@@ -975,7 +975,7 @@ describe('goal pause classification on provider errors', () => {
 
   it('pauses the goal on model configuration errors', async () => {
     const goal = await goalAfterFailedTurn(async () => {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     });
 
     expect(goal).toMatchObject({

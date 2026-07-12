@@ -21,7 +21,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { type ModelCapability } from '#/app/llmProtocol/capability';
 import { type ProviderRequestAuth } from '#/app/llmProtocol/request';
 import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
@@ -77,7 +77,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
   resolve(id: string): Model {
     const configuredModel = this.models.get(id);
     if (configuredModel === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Model "${id}" is not configured in config.toml.`,
       );
@@ -102,13 +102,13 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       model.protocol === 'anthropic' ? stripTrailingV1(rawBaseUrl) : rawBaseUrl;
     const wireName = model.name ?? model.model;
     if (wireName === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Model "${id}" must define a wire-facing name in config.toml.`,
       );
     }
     if (model.maxContextSize === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Model "${id}" must define a positive max_context_size in config.toml.`,
       );
@@ -220,7 +220,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     if (providerId !== undefined) {
       const providerConfig = this.providers.get(providerId);
       if (providerConfig === undefined) {
-        throw new KimiError(
+        throw new Error2(
           ErrorCodes.CONFIG_INVALID,
           `Provider "${providerId}" referenced by model "${id}" is not configured.`,
         );
@@ -233,7 +233,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
           providerConfig.env,
         );
       if (baseUrl === undefined || baseUrl.length === 0) {
-        throw new KimiError(
+        throw new Error2(
           ErrorCodes.CONFIG_INVALID,
           `Model "${id}" (via provider "${providerId}") is missing a base URL.`,
         );
@@ -245,7 +245,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     // from the URL's origin so two flat Models on the same host converge.
     const modelBaseUrl = nonEmpty(model.baseUrl);
     if (modelBaseUrl === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Model "${id}" must set either providerId or baseUrl in config.toml.`,
       );
@@ -265,7 +265,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
   ): Protocol {
     const explicit = model.protocol ?? provider?.type;
     if (explicit === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `Model "${id}" must declare a wire protocol (config: models.<id>.protocol).`,
       );
@@ -281,8 +281,8 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       const oauthRef = auth.oauth;
       const providerKey = auth.oauthProviderKey ?? providerName;
       const oauthService = this.oauth;
-      const loginRequired = (cause?: unknown): KimiError =>
-        new KimiError(
+      const loginRequired = (cause?: unknown): Error2 =>
+        new Error2(
           ErrorCodes.AUTH_LOGIN_REQUIRED,
           `OAuth provider "${providerKey}" requires login before it can be used.`,
           cause === undefined ? undefined : { cause },

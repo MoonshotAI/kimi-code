@@ -10,7 +10,7 @@
 
 import { CoreErrors, errorInfo, isErrorCode } from './codes';
 import type { ErrorCode } from './codes';
-import { KimiError } from './errors';
+import { Error2 } from './errors';
 
 export interface ErrorPayload {
   readonly code: ErrorCode;
@@ -99,8 +99,8 @@ function readErrorCause(error: unknown): unknown {
 
 export const toKimiErrorPayload = toErrorPayload;
 
-export function fromErrorPayload(payload: ErrorPayload): KimiError {
-  return new KimiError(payload.code, payload.message, {
+export function fromErrorPayload(payload: ErrorPayload): Error2 {
+  return new Error2(payload.code, payload.message, {
     name: payload.name,
     details: payload.details,
     cause: payload.cause === undefined ? undefined : fromErrorPayload(payload.cause),

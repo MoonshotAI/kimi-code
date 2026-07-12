@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
-import { KimiError } from '#/errors';
+import { Error2 } from '#/errors';
 import { mergeStdioEnv, StdioMcpClient } from '#/agent/mcp/client-stdio';
 
 import {
@@ -24,7 +24,7 @@ describe('StdioMcpClient', () => {
           executor: 'kaos',
         }),
     ).toThrow(
-      expect.objectContaining({ name: 'KimiError', code: 'not_implemented' }) as unknown as Error,
+      expect.objectContaining({ name: 'Error2', code: 'not_implemented' }) as unknown as Error,
     );
 
     let thrown: unknown;
@@ -34,7 +34,7 @@ describe('StdioMcpClient', () => {
     } catch (error) {
       thrown = error;
     }
-    expect(thrown).toBeInstanceOf(KimiError);
+    expect(thrown).toBeInstanceOf(Error2);
   });
 
   it('uses defaultCwd when config.cwd is omitted', async () => {

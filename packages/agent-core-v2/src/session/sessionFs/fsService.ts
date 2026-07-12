@@ -46,7 +46,7 @@ import ignore, { type Ignore } from 'ignore';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IGitService } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
@@ -116,7 +116,7 @@ export class SessionFsService implements ISessionFsService {
       throw mapFsError(err, req.path);
     }
     if (!topStat.isDirectory) {
-      throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${req.path}`, {
+      throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${req.path}`, {
         details: { path: req.path },
       });
     }
@@ -208,12 +208,12 @@ export class SessionFsService implements ISessionFsService {
       throw mapFsError(err, req.path);
     }
     if (st.isDirectory) {
-      throw new KimiError(ErrorCodes.FS_IS_DIRECTORY, `path is a directory: ${req.path}`, {
+      throw new Error2(ErrorCodes.FS_IS_DIRECTORY, `path is a directory: ${req.path}`, {
         details: { path: req.path },
       });
     }
     if (st.size > FS_READ_MAX_BYTES) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.FS_TOO_LARGE,
         `file too large: ${req.path} (${st.size} bytes > ${FS_READ_MAX_BYTES})`,
         { details: { path: req.path, size: st.size } },
@@ -226,7 +226,7 @@ export class SessionFsService implements ISessionFsService {
     const isBinary = detectBinary(sample);
 
     if (isBinary && req.encoding === 'utf-8') {
-      throw new KimiError(ErrorCodes.FS_IS_BINARY, `file is binary: ${req.path}`, {
+      throw new Error2(ErrorCodes.FS_IS_BINARY, `file is binary: ${req.path}`, {
         details: { path: req.path },
       });
     }
@@ -285,7 +285,7 @@ export class SessionFsService implements ISessionFsService {
           results[p] = sub.items;
           if (sub.truncated) truncatedPaths.push(p);
         } catch (err) {
-          if (err instanceof KimiError && err.code === ErrorCodes.FS_PATH_ESCAPES) throw err;
+          if (err instanceof Error2 && err.code === ErrorCodes.FS_PATH_ESCAPES) throw err;
           partialErrors[p] = toWireError(err);
         }
       }),
@@ -339,12 +339,12 @@ export class SessionFsService implements ISessionFsService {
     } catch (err) {
       const code = errnoCode(err);
       if (code === 'EEXIST') {
-        throw new KimiError(ErrorCodes.FS_ALREADY_EXISTS, `path already exists: ${req.path}`, {
+        throw new Error2(ErrorCodes.FS_ALREADY_EXISTS, `path already exists: ${req.path}`, {
           details: { path: req.path },
         });
       }
       if (code === 'ENOENT' || code === 'ENOTDIR') {
-        throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `parent not found: ${req.path}`, {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `parent not found: ${req.path}`, {
           details: { path: req.path },
         });
       }
@@ -376,7 +376,7 @@ export class SessionFsService implements ISessionFsService {
       throw mapFsError(err, relPath);
     }
     if (st.isDirectory) {
-      throw new KimiError(ErrorCodes.FS_IS_DIRECTORY, `path is a directory: ${relPath}`, {
+      throw new Error2(ErrorCodes.FS_IS_DIRECTORY, `path is a directory: ${relPath}`, {
         details: { path: relPath },
       });
     }
@@ -571,7 +571,7 @@ export class SessionFsService implements ISessionFsService {
     for (const rel of filePaths) {
       if (signal.aborted) {
         if (totalMatches === 0 && filesScanned === 0) {
-          throw new KimiError(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
+          throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
         }
         truncated = true;
         break;
@@ -699,24 +699,24 @@ export class SessionFsService implements ISessionFsService {
 
   private resolveWithin(inputPath: string): string {
     if (inputPath === '' || inputPath === '/') {
-      throw new KimiError(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
         details: { path: inputPath, reason: 'empty' },
       });
     }
     if (isAbsolute(inputPath)) {
-      throw new KimiError(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (absolute)`, {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (absolute)`, {
         details: { path: inputPath, reason: 'absolute' },
       });
     }
     const segments = inputPath.split(/[/\\]+/);
     if (segments.some((s) => s === '..')) {
-      throw new KimiError(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (dotdot segment)`, {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (dotdot segment)`, {
         details: { path: inputPath, reason: 'dotdot_segment' },
       });
     }
     const abs = this.workspace.resolve(inputPath);
     if (!this.workspace.isWithin(abs)) {
-      throw new KimiError(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
     }
@@ -817,7 +817,7 @@ class RgJsonAccumulator {
     let truncated = this.truncated;
     if (aborted) {
       if (this.totalMatches === 0 && this.filesScanned === 0) {
-        throw new KimiError(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${elapsedMs}ms`);
+        throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${elapsedMs}ms`);
       }
       truncated = true;
     }
@@ -938,8 +938,10 @@ function countLines(text: string): number {
 }
 
 function errnoCode(err: unknown): string | undefined {
-  if (typeof err === 'object' && err !== null && 'code' in err) {
-    const c = (err as { code: unknown }).code;
+  // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
+  const unwrapped = unwrapErrorCause(err);
+  if (typeof unwrapped === 'object' && unwrapped !== null && 'code' in unwrapped) {
+    const c = (unwrapped as { code: unknown }).code;
     return typeof c === 'string' ? c : undefined;
   }
   return undefined;
@@ -948,7 +950,7 @@ function errnoCode(err: unknown): string | undefined {
 function mapFsError(err: unknown, inputPath: string): Error {
   const code = errnoCode(err);
   if (code === 'ENOENT' || code === 'ENOTDIR') {
-    return new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${inputPath}`, {
+    return new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${inputPath}`, {
       details: { path: inputPath },
     });
   }
@@ -956,7 +958,7 @@ function mapFsError(err: unknown, inputPath: string): Error {
 }
 
 function toWireError(err: unknown): { code: number; msg: string } {
-  if (err instanceof KimiError) {
+  if (err instanceof Error2) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_NOT_FOUND:
         return { code: ErrorCode.FS_PATH_NOT_FOUND, msg: err.message };

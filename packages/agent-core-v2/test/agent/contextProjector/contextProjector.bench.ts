@@ -20,7 +20,7 @@ import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message, TextPart, ToolCall } from '#/app/llmProtocol/message';
 
 const noopLogger: ILogger = {
@@ -67,7 +67,7 @@ function projectLegacy(history: readonly ContextMessage[]): Message[] {
       ? source.content.filter((part) => !isBlankText(part))
       : source.content;
     if (source.role === 'tool' && content.length === 0) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.REQUEST_INVALID,
         'Tool result message content cannot be empty after removing empty text blocks.',
         { details: { toolCallId: source.toolCallId } },

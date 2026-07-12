@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -171,6 +172,38 @@ describe('WireService', () => {
     disposables.add(wire.subscribe(OtherModel, () => wire.dispatch(counterAdd({ by: 1 }))));
 
     expect(() => wire.dispatch(counterAdd({ by: 1 }))).toThrow(CycleError);
+    try {
+      wire.dispatch(counterAdd({ by: 1 }));
+      expect.unreachable('dispatch should have thrown');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'wire.cycle',
+        details: { depth: expect.any(Number), opTypes: expect.any(Array) },
+      });
+    }
+  });
+
+  it('reports and counts unknown record types during replay, skipping them', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      const result = await wire.replay(
+        { type: 'store.counter.add', by: 2 },
+        { type: 'no.such.op', foo: 1 },
+        { type: 'store.counter.add', by: 3 },
+      );
+
+      // Known records apply; the unknown one is skipped but observable.
+      expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
+      expect(result).toEqual({ unknownRecords: 1 });
+      expect(unexpected).toHaveLength(1);
+      expect(unexpected[0]).toMatchObject({
+        code: 'wire.unknown_record',
+        details: { type: 'no.such.op', index: 1 },
+      });
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 
   it('freezes state: getModel is frozen and mutation throws in strict mode', () => {

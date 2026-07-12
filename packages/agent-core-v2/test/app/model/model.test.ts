@@ -9,7 +9,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { kimiModelEnvOverlay, ENV_MODEL_ALIAS_KEY } from '#/app/model/envOverlay';
 import {
   IModelService,
@@ -177,8 +177,8 @@ function expectConfigInvalid(fn: () => unknown): void {
   try {
     fn();
   } catch (error) {
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(ErrorCodes.CONFIG_INVALID);
+    expect(error).toBeInstanceOf(Error2);
+    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     return;
   }
   throw new Error('expected config.invalid');

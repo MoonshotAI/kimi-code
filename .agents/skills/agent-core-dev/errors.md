@@ -1,66 +1,40 @@
 # Topic — Errors
 
-Error infrastructure for agent-core-v2: base classes, the public code registry, wire serialization, and the conventions domains follow when raising errors.
+Error infrastructure for agent-core-v2: base classes, the per-domain code contract, wire serialization, and the conventions domains follow when raising errors. The package-level reference is `packages/agent-core-v2/docs/errors.md`; this topic summarizes the hot-path rules.
 
-The mechanism is **centralized** in `_base/errors`; error **classes** are **decentralized** (co-located per domain); error **codes** are decentralized too but aggregated into one central **code registry** with metadata for the RPC/SDK boundary.
+Base classes and serialization are **centralized** in `_base/errors`; error **codes** are **decentralized** — each domain owns an `errors.ts` that self-registers its codes and metadata, and the `src/errors.ts` facade aggregates them into the unified `ErrorCodes` const.
 
 ## Where things live
 
-- `src/_base/errors/errors.ts`: base classes — `KimiError`, `CancellationError`, `ExpectedError`, `ErrorNoTelemetry`, `BugIndicatingError`, `NotImplementedError`.
-- `src/_base/errors/codes.ts`: `ErrorCodes` registry, `ErrorCode` type, `ERROR_INFO` metadata (`title` / `retryable` / `public` / `action`), `errorInfo(code)`.
-- `src/_base/errors/serialize.ts`: `ErrorPayload`, `isCodedError`, `toErrorPayload`, `fromErrorPayload`, `makeErrorPayload`.
-- `src/_base/errors/errorMessage.ts`: `toErrorMessage(error, verbose?)` for logs/CLI.
-- `src/_base/errors/unexpectedError.ts`: `onUnexpectedError` / `setUnexpectedErrorHandler` / `safelyCallListener` (global handler).
-- `src/_base/di/errors.ts`: DI-only `CyclicDependencyError` (kept separate; the DI layer exposes no general error taxonomy).
+- `src/_base/errors/errors.ts`: base classes — `Error2`, `ExpectedError`, `ErrorNoTelemetry`, `BugIndicatingError`, `NotImplementedError`, plus `isError2` and `unwrapErrorCause`.
+- `src/_base/errors/codes.ts`: the `ErrorDomain` contract, the `ErrorCode` type (aliased to the protocol's `KimiErrorCode`), the registry (`registerErrorDomain` / `errorInfo` / `isErrorCode`), and `CoreErrors` (`internal`, `not_implemented`).
+- `src/_base/errors/serialize.ts`: `ErrorPayload`, `isCodedError`, `toErrorPayload`, `fromErrorPayload`. Wire-facing names (`KimiErrorPayload`, `toKimiErrorPayload`) mirror the protocol and are kept as-is.
+- `src/_base/errors/unexpectedError.ts`: `onUnexpectedError` / `setUnexpectedErrorHandler` (global handler).
+- `src/<domain>/errors.ts`: the domain's `XxxErrors` descriptor (codes + retryable list + per-code info overrides), self-registered on import.
+- `src/errors.ts`: the **facade** — imports every domain's `errors.ts`, builds `ErrorCodes`, re-exports the primitives. Throw sites import from here.
 
 ## Conventions (hard rules)
 
-- **Throw a coded error, not a bare string.** Define a domain error that `extends KimiError` and carries a `code`. `throw new Error('x')` only for unreachable guards; use `NotImplementedError('feature')` for stubs.
-- **Co-locate the error class with the domain's interfaces.** `ToolError` lives in `tool/tool.ts` next to `IToolService`, not in a separate `*Errors.ts` and not in `_base/errors`.
-- **One `code` per failure mode.** Codes read `domain.reason` (e.g. `tool.unknown_tool`). Adding a code is minor; renaming/removing one is a major (breaks SDK clients).
-- **Register codes centrally.** After defining a domain's `XxxErrorCode` const, spread it into `ErrorCodes` in `codes.ts` and add an `ERROR_INFO` entry per code.
-- **Translate foreign errors at the boundary.** Provider/HTTP, fs, MCP errors are caught at the domain boundary and re-thrown as the domain's coded error. `_base/errors` never imports a business domain.
-- **Branch on `code`, never `instanceof`, across the wire.** Class identity does not survive serialization. In-process, `instanceof KimiError` / `isCodedError` are fine.
+- **Throw a coded error, not a bare string.** `throw new Error2(ErrorCodes.X, …)`. Bare `new Error` only for unreachable guards; `BugIndicatingError` for caller bugs; `NotImplementedError('feature')` for stubs.
+- **Define codes in the owning domain**, in `<domain>/errors.ts` as an `XxxErrors` descriptor (`satisfies ErrorDomain` + `registerErrorDomain`), then wire it into the facade. Never add domain codes to `_base/errors`.
+- **One `code` per failure mode.** Codes read `domain.reason`. The valid code strings are fixed by the protocol (`KimiErrorCode` in `packages/protocol/src/events.ts`): **add new codes to the protocol first**. Renaming/removing a code is a major.
+- **Translate foreign errors at the boundary.** Provider/HTTP, fs, MCP errors are re-thrown as the owning domain's coded error. `_base/errors` never imports a business domain.
+- **Translation is idempotent and cause-preserving.** Translators (`toHostFsError`, `toStorageIoError`) pass through an already-translated error and always keep the original as `cause`.
+- **`details` is structured and JSON-serializable; `message` is a short human sentence.** Paths/errnos/scope/key go into `details`, not the message.
+- **Cancellation passes through untranslated** (`UserCancellationError` from `_base/utils/abort`) — apply only at boundaries that can actually see cancellation; do not sprinkle the check everywhere.
+- **Classify wrapped errors via `unwrapErrorCause`** — errno/status predicates test the unwrapped cause, not the coded wrapper.
+- **Branch on `code`, never `instanceof`, across the wire.** In-process, `instanceof Error2` / `isCodedError` are fine.
 
-## Adding a domain error (recipe)
+## Reference tiers
 
-In `<domain>/<domain>.ts`:
-
-```ts
-import { KimiError, type ErrorCode } from '#/_base/errors';
-
-export const ToolErrorCode = {
-  UnknownTool: 'tool.unknown_tool',
-  ExecutionFailed: 'tool.execution_failed',
-} as const;
-export type ToolErrorCode = (typeof ToolErrorCode)[keyof typeof ToolErrorCode];
-
-export class ToolError extends KimiError {
-  constructor(code: ToolErrorCode, message: string, details?: Record<string, unknown>) {
-    super(code as ErrorCode, message, { details });
-    this.name = 'ToolError';
-  }
-}
-```
-
-Then in `src/_base/errors/codes.ts`, spread `...ToolErrorCode` into `ErrorCodes` and add an `ERROR_INFO` entry for `tool.unknown_tool` and `tool.execution_failed`.
-
-## Serialization & boundary translation
-
-- `toErrorPayload(error)`: `CancellationError` → `canceled`; any coded error (incl. deserialized shapes) → its code + `retryable` from `ERROR_INFO`; anything else → `internal`.
-- `fromErrorPayload(payload)`: rehydrates a `KimiError` for in-process `instanceof` / `isCodedError` use at the SDK/RPC boundary.
-- `isCodedError(error)`: structural guard (checks `code` against `ERROR_INFO`), so it works for both `KimiError` instances and plain objects revived from a payload.
-- Foreign-error mapping lives in the domain that owns the foreign dependency, e.g. kosong maps `APIStatusError` (429/401/…) → `KosongError` codes at its client boundary. A `registerErrorNormalizer` escape hatch is intentionally **not** provided until a second use case appears.
-
-## Deliberately omitted
-
-- No `IErrorWithActions` / action buttons — there is no notification surface in agent-core; add when one exists.
-- No class registry / revival — payloads carry `code` + data only; rehydration always yields a base `KimiError`.
-- No `IllegalArgumentError` / `NotSupportedError` yet — add a base class when a second throw site needs it.
+- `os.fs` — `HostFsError` via `toHostFsError` (`os/interface/hostFsErrors.ts`): errno → `os.fs.*`, details `{ path, op, errno?, syscall? }`.
+- `os.process` — `HostProcessError`: `spawn_failed` / `kill_failed`, raw error as `cause`.
+- `storage` — `StorageError` (`persistence/interface/storage.ts`): `not_found` / `decode_failed` / `corrupted` / `io_failed` (retryable) / `locked` (retryable). ENOENT keeps absence semantics, never an error. A locked query store throws `storage.locked`; consumers catch it explicitly and fall back — no silent no-op degradation.
+- `wire` — `WireError` (`wire/errors.ts`): `DuplicateOpError`, `CycleError`, and `wire.unknown_record` (replay skips unknown records, reports via `onUnexpectedError`, returns `{ unknownRecords }`).
 
 ## Red lines (this topic)
 
-- Throw a coded error with a `code`, not a bare string (except unreachable guards / `NotImplementedError`).
-- Co-locate the error class with the domain's interfaces; register every code centrally with `ERROR_INFO`.
-- Translate foreign errors at the owning domain's boundary; `_base/errors` never imports a business domain.
+- Throw a coded error with a `code`, not a bare string (except unreachable guards / `BugIndicatingError` / `NotImplementedError`).
+- Codes live in the owning domain's `errors.ts` and self-register; new codes land in the protocol first.
+- Translate foreign errors at the owning domain's boundary, idempotently, with `cause` and structured `details`; `_base/errors` never imports a business domain.
 - Branch on `code` across the wire, never `instanceof`.

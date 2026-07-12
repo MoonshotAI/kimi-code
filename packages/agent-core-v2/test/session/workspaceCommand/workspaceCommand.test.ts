@@ -10,7 +10,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import {
   type HostDirEntry,
   type HostFileStat,
@@ -42,6 +42,7 @@ class MemoryHostFs implements IHostFileSystem {
   readonly files = new Map<string, string>();
   readonly dirs = new Set<string>();
   readonly statErrors = new Map<string, NodeJS.ErrnoException>();
+  readonly readErrors = new Map<string, NodeJS.ErrnoException>();
   readonly readsDuringPausedWrite: string[] = [];
   private pausedWrites = 0;
   private nextWritePause:
@@ -57,6 +58,8 @@ class MemoryHostFs implements IHostFileSystem {
 
   async readText(path: string): Promise<string> {
     if (this.pausedWrites > 0) this.readsDuringPausedWrite.push(path);
+    const error = this.readErrors.get(path);
+    if (error !== undefined) throw error;
     const text = this.files.get(path);
     if (text === undefined) throw enoent(path);
     return text;
@@ -410,7 +413,27 @@ describe('SessionWorkspaceCommandService', () => {
     const { svc } = build([], true);
 
     await expect(svc.addAdditionalDir({ path: 'missing', persist: true })).rejects.toSatisfy(
-      (error) => error instanceof KimiError && error.code === ErrorCodes.CONFIG_INVALID,
+      (error) => error instanceof Error2 && error.code === ErrorCodes.CONFIG_INVALID,
     );
+  });
+
+  it('surfaces a config read IO failure as storage.io_failed', async () => {
+    const { svc, fs } = build([EXTRA_DIR], true);
+    const error = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+    error.code = 'EACCES';
+    fs.readErrors.set(`${WORK_DIR}/.kimi-code/local.toml`, error);
+
+    await expect(svc.addAdditionalDir({ path: 'extra', persist: true })).rejects.toMatchObject({
+      code: 'storage.io_failed',
+    });
+  });
+
+  it('surfaces invalid TOML in the config as storage.decode_failed', async () => {
+    const { svc, fs } = build([EXTRA_DIR], true);
+    fs.files.set(`${WORK_DIR}/.kimi-code/local.toml`, 'not [valid toml');
+
+    await expect(svc.addAdditionalDir({ path: 'extra', persist: true })).rejects.toMatchObject({
+      code: 'storage.decode_failed',
+    });
   });
 });

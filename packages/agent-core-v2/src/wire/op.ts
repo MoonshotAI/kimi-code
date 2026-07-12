@@ -22,12 +22,13 @@
  */
 
 import type { ModelDef } from './model';
+import { WireError, WireErrors } from './errors';
 
-export class DuplicateOpError extends Error {
-  readonly code = 'ERR_DUPLICATE_OP' as const;
-
+export class DuplicateOpError extends WireError {
   constructor(readonly type: string) {
-    super(`Duplicate Op type registered: '${type}'`);
+    super(WireErrors.codes.WIRE_DUPLICATE_OP, `Duplicate Op type registered: '${type}'`, {
+      details: { type },
+    });
     this.name = 'DuplicateOpError';
   }
 }

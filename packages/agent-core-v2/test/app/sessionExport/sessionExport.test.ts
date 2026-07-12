@@ -26,7 +26,7 @@ import {
   type SessionLifecycleHooks,
 } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
-import { KimiError } from '#/errors';
+import { Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import {
   type AgentTaskHooks,
@@ -150,10 +150,10 @@ describe('sessionExport', () => {
         version: '1.0.0-test',
       }),
     ).rejects.toMatchObject({
-      name: 'KimiError',
+      name: 'Error2',
       code: 'session.not_found',
       details: { sessionId: 'ses_missing' },
-    } satisfies Partial<KimiError>);
+    } satisfies Partial<Error2>);
   });
 
   it('flushes live session and agent state before packaging', async () => {

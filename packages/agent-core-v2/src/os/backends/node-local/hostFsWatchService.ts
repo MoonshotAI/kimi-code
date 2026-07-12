@@ -11,6 +11,7 @@ import { FSWatcher } from 'chokidar';
 import { Emitter, type Event } from '#/_base/event';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 
 import {
   type HostFsChange,
@@ -45,9 +46,10 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       const mapped = mapChokidarEvent(eventName, absPath);
       if (mapped !== undefined) this.emitter.fire(mapped);
     });
-    this.watcher.on('error', () => {
+    this.watcher.on('error', (error: unknown) => {
       // Best-effort: a watcher error must not crash the host. Higher layers
       // can always re-subscribe if events stop arriving.
+      onUnexpectedError(error);
     });
     this.watcher.add(path);
   }

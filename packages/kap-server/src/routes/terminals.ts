@@ -24,8 +24,8 @@ import {
   ErrorCodes,
   ISessionLifecycleService,
   ISessionTerminalService,
-  isKimiError,
-  KimiError,
+  isError2,
+  Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -85,7 +85,7 @@ const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }
 async function resolveTerminal(core: Scope, sessionId: string): Promise<ISessionTerminalService> {
   const session = await core.accessor.get(ISessionLifecycleService).resume(sessionId);
   if (session === undefined) {
-    throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
   return session.accessor.get(ISessionTerminalService);
 }
@@ -229,7 +229,7 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
-  if (isKimiError(err)) {
+  if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
@@ -242,7 +242,7 @@ function sendMappedError(
   // `ISessionWorkspaceContext.assertAllowed` throws a plain (uncoded) Error when a cwd
   // escapes the workspace — map it to the same wire code v1 uses for path
   // escapes. TODO: push a coded error into `assertAllowed` so this branch can
-  // be folded into the `isKimiError` switch above.
+  // be folded into the `isError2` switch above.
   if (err instanceof Error && err.message.startsWith('Path outside workspace')) {
     reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));
     return;

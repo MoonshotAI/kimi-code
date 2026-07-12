@@ -19,7 +19,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -52,7 +52,7 @@ export class SessionExportService implements ISessionExportService {
 
   async export(input: ExportSessionPayload): Promise<ExportSessionResult> {
     if (input.version.trim().length === 0) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.SESSION_EXPORT_MISSING_VERSION,
         'Session export requires a host version.',
         { details: { sessionId: input.sessionId } },
@@ -61,7 +61,7 @@ export class SessionExportService implements ISessionExportService {
 
     const summary = await this.index.get(input.sessionId);
     if (summary === undefined) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.SESSION_NOT_FOUND,
         `Session "${input.sessionId}" does not exist`,
         { details: { sessionId: input.sessionId } },
@@ -153,7 +153,7 @@ export async function exportSessionDirectory(input: {
   const sessionDir = input.summary.sessionDir;
   const sessionFiles = await collectFilesRecursive(sessionDir);
   if (sessionFiles.length === 0) {
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.SESSION_EXPORT_NOT_FOUND,
       `Session "${input.summary.id}" has no exportable directory at "${sessionDir}"`,
       { details: { sessionId: input.summary.id, sessionDir } },

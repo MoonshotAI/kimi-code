@@ -28,7 +28,7 @@ import { loadAgentsMd } from '#/agent/profile/context';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/agentLifecycle/mirrorAgentRun';
@@ -53,13 +53,13 @@ export class SessionInitService implements ISessionInitService {
   async generateAgentsMd(): Promise<void> {
     const main = this.lifecycle.getHandle(MAIN_AGENT_ID);
     if (main === undefined) {
-      throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
 
     try {
       const own = main.accessor.get(IAgentProfileService).data();
       if (own.modelAlias === undefined) {
-        throw new KimiError(ErrorCodes.SESSION_INIT_FAILED, 'Main agent has no model bound');
+        throw new Error2(ErrorCodes.SESSION_INIT_FAILED, 'Main agent has no model bound');
       }
       const permissionMode = main.accessor.get(IAgentPermissionModeService).mode;
       const controller = new AbortController();
@@ -106,10 +106,10 @@ export class SessionInitService implements ISessionInitService {
         });
       await main.accessor.get(IAgentWireRecordService).flush();
     } catch (error) {
-      if (error instanceof KimiError && error.code === ErrorCodes.SESSION_INIT_FAILED) {
+      if (error instanceof Error2 && error.code === ErrorCodes.SESSION_INIT_FAILED) {
         throw error;
       }
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.SESSION_INIT_FAILED,
         error instanceof Error ? error.message : 'Init failed',
         { cause: error },

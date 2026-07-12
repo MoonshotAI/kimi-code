@@ -12,6 +12,7 @@ import { dirname, join } from 'pathe';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -144,8 +145,10 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 }
 
 function isMissingFileError(error: unknown): boolean {
-  if (error === null || typeof error !== 'object') return false;
-  const code = (error as { readonly code?: unknown }).code;
+  // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
+  const unwrapped = unwrapErrorCause(error);
+  if (unwrapped === null || typeof unwrapped !== 'object') return false;
+  const code = (unwrapped as { readonly code?: unknown }).code;
   return code === 'ENOENT';
 }
 

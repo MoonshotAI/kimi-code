@@ -49,7 +49,7 @@ import {
   ISessionIndex,
   ISessionLifecycleService,
   IAgentToolRegistryService,
-  KimiError,
+  Error2,
   type Scope,
   type ToolInfo,
   type ToolSource,
@@ -312,7 +312,7 @@ function mcpServerNotFound(serverId: string, requestId: string): unknown {
 
 /**
  * Map a thrown error to the right envelope. `reconnect` surfaces an unknown
- * server as a coded `KimiError`; everything else propagates to the global
+ * server as a coded `Error2`; everything else propagates to the global
  * `installErrorHandler` (→ 50001). See module header for the table.
  */
 function sendMappedError(
@@ -320,7 +320,7 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
-  if (err instanceof KimiError && err.code === ErrorCodes.MCP_SERVER_NOT_FOUND) {
+  if (err instanceof Error2 && err.code === ErrorCodes.MCP_SERVER_NOT_FOUND) {
     reply.send(errEnvelope(ErrorCode.MCP_SERVER_NOT_FOUND, err.message, requestId, err.stack));
     return;
   }

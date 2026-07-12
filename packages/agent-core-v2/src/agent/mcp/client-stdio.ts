@@ -1,4 +1,4 @@
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerStdioConfig } from './config-schema';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -57,7 +57,7 @@ export class StdioMcpClient implements MCPClient {
 
   constructor(config: McpServerStdioConfig, options: StdioMcpClientOptions = {}) {
     if (config.executor !== undefined && config.executor !== 'local') {
-      throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
+      throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
     }
     this.transport = new StdioClientTransport({
       command: config.command,

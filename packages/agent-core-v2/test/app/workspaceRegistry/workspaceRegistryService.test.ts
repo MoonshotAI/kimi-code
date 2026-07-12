@@ -12,7 +12,7 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';

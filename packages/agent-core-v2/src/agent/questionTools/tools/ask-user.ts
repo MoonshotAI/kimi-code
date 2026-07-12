@@ -10,7 +10,7 @@
 import { z } from 'zod';
 
 import { CoreErrors } from '#/_base/errors/codes';
-import { KimiError } from '#/_base/errors/errors';
+import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -270,7 +270,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
 
-      if (error instanceof KimiError && error.code === CoreErrors.codes.NOT_IMPLEMENTED) {
+      if (error instanceof Error2 && error.code === CoreErrors.codes.NOT_IMPLEMENTED) {
         return {
           isError: true,
           output: QUESTION_UNSUPPORTED_FAILURE_MESSAGE,

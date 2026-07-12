@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { MiniDb } from '@moonshot-ai/minidb';
+
 import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
@@ -66,6 +68,7 @@ describe('FileSessionIndex (legacy)', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IQueryStore, stubQueryStore()),
       stubPair(IFlagService, stubFlag(false)),
+      stubPair(ILogService, stubLog()),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -325,5 +328,39 @@ describe('FileSessionIndex (read model)', () => {
     // Archive `a` through the read model (as SessionMetadata would).
     await queryStore.put(SESSION_COLLECTION, 'a', summary('a', { archived: true }));
     expect(await store.countActive(workspaceId)).toBe(0);
+  });
+
+  it('falls back to the legacy disk path when the query store is locked', async () => {
+    await seedSession('active', { title: 'from disk', createdAt: 1, updatedAt: 2 });
+
+    // Another process holds the single-writer lock on the query-store dir.
+    const lockHolder = await MiniDb.open({
+      dir: join(homeDir, 'cache', 'query-store'),
+      valueCodec: 'json',
+    });
+    const warnings: string[] = [];
+    const log = { ...stubLog(), warn: (msg: string) => { warnings.push(msg); } };
+    try {
+      const fileStorage = new FileStorageService(homeDir);
+      const host = createScopedTestHost([
+        stubPair(IFileSystemStorageService, fileStorage),
+        stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+        stubPair(IBootstrapService, stubBootstrap(homeDir)),
+        stubPair(ILogService, log),
+        stubPair(IFlagService, stubFlag(true)),
+      ]);
+      disposeHost = () => { host.dispose(); };
+      const store = host.app.accessor.get(ISessionIndex);
+      // The read model throws storage.locked; the index serves from disk.
+      const page = await store.list({ workspaceId });
+      expect(page.items.map((s) => s.id)).toEqual(['active']);
+      expect(page.items[0]?.title).toBe('from disk');
+      expect(await store.get('active')).toMatchObject({ id: 'active', title: 'from disk' });
+      expect(await store.countActive(workspaceId)).toBe(1);
+      // The lock is warned about once, then the read model stays disabled.
+      expect(warnings).toEqual(['query-store locked by another process; disabling read model']);
+    } finally {
+      await lockHolder.close();
+    }
   });
 });

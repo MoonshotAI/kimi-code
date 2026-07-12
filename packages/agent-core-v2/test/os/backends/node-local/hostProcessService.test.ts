@@ -59,7 +59,14 @@ describe('HostProcessService', () => {
     const svc = ix.get(IHostProcessService);
     await expect(svc.spawn('definitely-not-a-real-command-42')).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(HostProcessError);
-      expect((err as HostProcessError).code).toBe(HostProcessErrorCode.SpawnFailed);
+      const error = err as HostProcessError;
+      expect(error.code).toBe(HostProcessErrorCode.SpawnFailed);
+      expect(error.code).toBe('os.process.spawn_failed');
+      expect(error.details).toMatchObject({
+        command: 'definitely-not-a-real-command-42',
+        errno: 'ENOENT',
+      });
+      expect(error.cause).toBeInstanceOf(Error);
       return true;
     });
   });

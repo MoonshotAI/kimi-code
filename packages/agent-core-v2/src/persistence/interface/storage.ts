@@ -28,6 +28,87 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
+import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
+import { Error2, type Error2Options } from '#/_base/errors/errors';
+
+export const StorageErrors = {
+  codes: {
+    STORAGE_NOT_FOUND: 'storage.not_found',
+    STORAGE_DECODE_FAILED: 'storage.decode_failed',
+    STORAGE_CORRUPTED: 'storage.corrupted',
+    STORAGE_IO_FAILED: 'storage.io_failed',
+    STORAGE_LOCKED: 'storage.locked',
+  },
+  retryable: ['storage.io_failed', 'storage.locked'],
+  info: {
+    'storage.not_found': {
+      title: 'Stored value not found',
+      retryable: false,
+      public: true,
+    },
+    'storage.decode_failed': {
+      title: 'Stored value could not be decoded',
+      retryable: false,
+      public: true,
+      action: 'Inspect the stored document; it is not valid for its declared format.',
+    },
+    'storage.corrupted': {
+      title: 'Stored data is corrupted',
+      retryable: false,
+      public: true,
+      action: 'Inspect the backing store; the corrupted entry must be repaired or dropped.',
+    },
+    'storage.io_failed': {
+      title: 'Storage I/O failed',
+      retryable: true,
+      public: true,
+    },
+    'storage.locked': {
+      title: 'Storage is locked',
+      retryable: true,
+      public: true,
+      action: 'Another process holds the store; close it or retry later.',
+    },
+  },
+} as const satisfies ErrorDomain;
+
+registerErrorDomain(StorageErrors);
+
+export type StorageErrorCode = (typeof StorageErrors.codes)[keyof typeof StorageErrors.codes];
+
+export class StorageError extends Error2 {
+  constructor(code: StorageErrorCode, message: string, options?: Error2Options) {
+    super(code, message, options);
+    this.name = 'StorageError';
+  }
+}
+
+export function isStorageError(error: unknown, code: StorageErrorCode): boolean {
+  return error instanceof StorageError && error.code === code;
+}
+
+function readErrno(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object' || !('code' in error)) return undefined;
+  const code = (error as { code: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/**
+ * Translate a raw backend I/O failure into `StorageError(storage.io_failed)`.
+ * Idempotent: an existing `StorageError` passes through unchanged. The original
+ * error is preserved as `cause`; path/op/errno live in `details`.
+ */
+export function toStorageIoError(error: unknown, ctx: { path: string; op: string }): StorageError {
+  if (error instanceof StorageError) return error;
+  return new StorageError(
+    StorageErrors.codes.STORAGE_IO_FAILED,
+    `storage ${ctx.op} failed`,
+    {
+      details: { path: ctx.path, op: ctx.op, errno: readErrno(error) },
+      cause: error,
+    },
+  );
+}
 
 export interface StorageWriteOptions {
   readonly atomic?: boolean;

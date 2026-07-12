@@ -12,6 +12,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { decodeTextWithErrors, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { toHostFsError } from '#/os/interface/hostFsErrors';
 
 const READ_CHUNK_SIZE = 64 * 1024;
 
@@ -40,55 +41,79 @@ export class HostFileSystem implements IHostFileSystem {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string> {
-    if (options === undefined) {
-      return readFile(path, 'utf8');
+    try {
+      if (options === undefined) {
+        return await readFile(path, 'utf8');
+      }
+      const encoding = options.encoding ?? 'utf-8';
+      const errors = options.errors ?? 'strict';
+      return decodeTextWithErrors(await readFile(path), encoding, errors);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'read' });
     }
-    const encoding = options.encoding ?? 'utf-8';
-    const errors = options.errors ?? 'strict';
-    return decodeTextWithErrors(await readFile(path), encoding, errors);
   }
 
   async writeText(path: string, data: string): Promise<void> {
-    await writeFile(path, data, 'utf8');
+    try {
+      await writeFile(path, data, 'utf8');
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'write' });
+    }
   }
 
   async appendText(path: string, data: string): Promise<void> {
-    await appendFile(path, data, 'utf8');
+    try {
+      await appendFile(path, data, 'utf8');
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'append' });
+    }
   }
 
   async readBytes(path: string, n?: number): Promise<Uint8Array> {
-    if (n === undefined) {
-      const buf = await readFile(path);
-      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-    }
-    const fh = await open(path, 'r');
     try {
-      const buf = Buffer.alloc(n);
-      const { bytesRead } = await fh.read(buf, 0, n, 0);
-      return buf.subarray(0, bytesRead);
-    } finally {
-      await fh.close();
+      if (n === undefined) {
+        const buf = await readFile(path);
+        return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      }
+      const fh = await open(path, 'r');
+      try {
+        const buf = Buffer.alloc(n);
+        const { bytesRead } = await fh.read(buf, 0, n, 0);
+        return buf.subarray(0, bytesRead);
+      } finally {
+        await fh.close();
+      }
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'read' });
     }
   }
 
   async writeBytes(path: string, data: Uint8Array): Promise<void> {
-    await writeFile(path, data);
+    try {
+      await writeFile(path, data);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'write' });
+    }
   }
 
   async *readLines(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): AsyncGenerator<string> {
-    const encoding = options?.encoding ?? 'utf-8';
-    const errors = options?.errors ?? 'strict';
+    try {
+      const encoding = options?.encoding ?? 'utf-8';
+      const errors = options?.errors ?? 'strict';
 
-    if (!isUtf8Encoding(encoding)) {
-      const content = decodeTextWithErrors(await readFile(path), encoding, errors);
-      yield* splitLinesKeepingTerminator(content);
-      return;
+      if (!isUtf8Encoding(encoding)) {
+        const content = decodeTextWithErrors(await readFile(path), encoding, errors);
+        yield* splitLinesKeepingTerminator(content);
+        return;
+      }
+
+      yield* this._readUtf8Lines(path, errors);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'read' });
     }
-
-    yield* this._readUtf8Lines(path, errors);
   }
 
   private async *_readUtf8Lines(
@@ -147,43 +172,61 @@ export class HostFileSystem implements IHostFileSystem {
       }
       return true;
     } catch (error) {
+      // EEXIST keeps its boolean semantics: callers treat a collision as
+      // "the same bytes are already present", not as a failure.
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      throw error;
+      throw toHostFsError(error, { path, op: 'create' });
     }
   }
 
   async stat(path: string): Promise<HostFileStat> {
-    // Non-following `lstat` so a symbolic link is reported as itself
-    // (`isSymbolicLink: true`) rather than transparently resolved to its
-    // target. Callers that confine paths lexically rely on this to avoid
-    // escaping the workspace through a symlinked directory.
-    const s = await lstat(path);
-    return {
-      isFile: s.isFile(),
-      isDirectory: s.isDirectory(),
-      isSymbolicLink: s.isSymbolicLink(),
-      size: s.size,
-      mtimeMs: s.mtimeMs,
-      ino: s.ino,
-    };
+    try {
+      // Non-following `lstat` so a symbolic link is reported as itself
+      // (`isSymbolicLink: true`) rather than transparently resolved to its
+      // target. Callers that confine paths lexically rely on this to avoid
+      // escaping the workspace through a symlinked directory.
+      const s = await lstat(path);
+      return {
+        isFile: s.isFile(),
+        isDirectory: s.isDirectory(),
+        isSymbolicLink: s.isSymbolicLink(),
+        size: s.size,
+        mtimeMs: s.mtimeMs,
+        ino: s.ino,
+      };
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'stat' });
+    }
   }
 
   async readdir(path: string): Promise<readonly HostDirEntry[]> {
-    const entries = await readdir(path, { withFileTypes: true });
-    return entries.map((d) => ({
-      name: d.name,
-      isFile: d.isFile(),
-      isDirectory: d.isDirectory(),
-      isSymbolicLink: d.isSymbolicLink(),
-    }));
+    try {
+      const entries = await readdir(path, { withFileTypes: true });
+      return entries.map((d) => ({
+        name: d.name,
+        isFile: d.isFile(),
+        isDirectory: d.isDirectory(),
+        isSymbolicLink: d.isSymbolicLink(),
+      }));
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'readdir' });
+    }
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {
-    await mkdir(path, { recursive: options?.recursive ?? false });
+    try {
+      await mkdir(path, { recursive: options?.recursive ?? false });
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'mkdir' });
+    }
   }
 
   async remove(path: string): Promise<void> {
-    await rm(path, { recursive: true, force: true });
+    try {
+      await rm(path, { recursive: true, force: true });
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'remove' });
+    }
   }
 }
 

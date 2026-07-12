@@ -11,7 +11,7 @@
 
 import type { KimiErrorCode } from '@moonshot-ai/protocol';
 
-/** Wire-stable code carried by every `KimiError`. Sourced from the protocol. */
+/** Wire-stable code carried by every `Error2`. Sourced from the protocol. */
 export type ErrorCode = KimiErrorCode;
 
 export interface ErrorInfo {

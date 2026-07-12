@@ -382,7 +382,7 @@ describe('server-v2 /api/v1/sessions', () => {
     // (40911), not the pre-fix "session does not exist" (40401).
     expect(res.body.code).toBe(40911);
     expect(res.body.msg).toMatch(/nothing to undo/i);
-    // The thrown KimiError's stack is surfaced so operators can locate the
+    // The thrown Error2's stack is surfaced so operators can locate the
     // source — the precheck/throw now lives in the native prompt service.
     expect(res.body.stack).toEqual(expect.stringContaining('promptService'));
   });

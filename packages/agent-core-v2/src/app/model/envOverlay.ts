@@ -16,7 +16,7 @@
 import { parseBooleanEnv } from '#/_base/utils/env';
 import type { ConfigEffectiveOverlay } from '#/app/config/config';
 import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
 
 /** Reserved key for the env-driven synthetic model alias. */
@@ -41,7 +41,7 @@ function trimmed(value: string | undefined): string | undefined {
 }
 
 function fail(message: string): never {
-  throw new KimiError(ErrorCodes.CONFIG_INVALID, message);
+  throw new Error2(ErrorCodes.CONFIG_INVALID, message);
 }
 
 function parsePositiveInt(raw: string, varName: string): number {

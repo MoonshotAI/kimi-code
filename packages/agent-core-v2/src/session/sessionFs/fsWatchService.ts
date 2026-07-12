@@ -18,7 +18,7 @@ import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   type HostFsChange,
@@ -163,18 +163,18 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
 
   private resolveWithin(inputPath: string): string {
     if (inputPath === '' || inputPath === '/') {
-      throw new KimiError(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
         details: { path: inputPath, reason: 'empty' },
       });
     }
     if (isAbsolute(inputPath)) {
-      throw new KimiError(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (absolute)`, {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (absolute)`, {
         details: { path: inputPath, reason: 'absolute' },
       });
     }
     const segments = inputPath.split(/[/\\]+/);
     if (segments.some((s) => s === '..')) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.FS_PATH_ESCAPES,
         `path "${inputPath}" rejected (dotdot segment)`,
         { details: { path: inputPath, reason: 'dotdot_segment' } },
@@ -182,7 +182,7 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     }
     const abs = this.workspace.resolve(inputPath);
     if (!this.workspace.isWithin(abs)) {
-      throw new KimiError(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
     }

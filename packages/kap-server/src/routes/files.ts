@@ -17,7 +17,7 @@ import {
   DEFAULT_MAX_UPLOAD_BYTES,
   ErrorCodes,
   IFileService,
-  KimiError,
+  Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -129,7 +129,7 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
             } catch {
               // best-effort cleanup of the truncated blob
             }
-            sendMappedError(reply as unknown as FilesReply, req.id, new KimiError(
+            sendMappedError(reply as unknown as FilesReply, req.id, new Error2(
               ErrorCodes.FILE_TOO_LARGE,
               `upload size exceeds limit ${DEFAULT_MAX_UPLOAD_BYTES} bytes`,
             ));
@@ -233,11 +233,11 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
 }
 
 function sendMappedError(reply: FilesReply, requestId: string, err: unknown): void {
-  if (err instanceof KimiError && err.code === ErrorCodes.FILE_NOT_FOUND) {
+  if (err instanceof Error2 && err.code === ErrorCodes.FILE_NOT_FOUND) {
     reply.code(404).send(errEnvelope(ErrorCode.FILE_NOT_FOUND, 'file not found', requestId));
     return;
   }
-  if (err instanceof KimiError && err.code === ErrorCodes.FILE_TOO_LARGE) {
+  if (err instanceof Error2 && err.code === ErrorCodes.FILE_TOO_LARGE) {
     reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, 'upload too large (>50MB)', requestId));
     return;
   }

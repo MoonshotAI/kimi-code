@@ -18,7 +18,7 @@
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 
 import type {
   ActivityLease,
@@ -59,7 +59,7 @@ export class SessionActivityKernel extends Disposable implements ISessionActivit
 
   admitTurn(agentId: string, lease: ActivityLease): IDisposable {
     if (this._lane !== 'active') {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.ACTIVITY_SESSION_REJECTED,
         `Session is ${this._lane}; turn begin rejected`,
         { details: { lane: this._lane, agentId } },
@@ -78,7 +78,7 @@ export class SessionActivityKernel extends Disposable implements ISessionActivit
   quiesce(reason: string): Promise<SessionQuiesceLease> {
     if (this._lane !== 'active') {
       return Promise.reject(
-        new KimiError(
+        new Error2(
           ErrorCodes.ACTIVITY_SESSION_REJECTED,
           `Cannot quiesce while ${this._lane}`,
           { details: { lane: this._lane } },

@@ -90,6 +90,18 @@ describe('JsonAtomicDocumentStore', () => {
     await config.set<State>('session', 'state.json', { title: 'x' });
     await expect(fired).resolves.toBeUndefined();
   });
+
+  it('throws storage.decode_failed when the stored bytes are not valid JSON', async () => {
+    await storage.append('session', 'bad.json', new TextEncoder().encode('{ not json'));
+    await expect(config.get('session', 'bad.json')).rejects.toSatisfy((error: unknown) => {
+      expect(error).toMatchObject({
+        code: 'storage.decode_failed',
+        details: { scope: 'session', key: 'bad.json', format: 'json' },
+      });
+      expect((error as { cause?: unknown }).cause).toBeInstanceOf(SyntaxError);
+      return true;
+    });
+  });
 });
 
 describe('TomlAtomicDocumentStore', () => {
@@ -140,5 +152,13 @@ describe('TomlAtomicDocumentStore', () => {
     });
     await config.set<State>('session', 'config.toml', { title: 'x' });
     await expect(fired).resolves.toBeUndefined();
+  });
+
+  it('throws storage.decode_failed when the stored bytes are not valid TOML', async () => {
+    await storage.append('session', 'bad.toml', new TextEncoder().encode('key = [unclosed'));
+    await expect(config.get('session', 'bad.toml')).rejects.toMatchObject({
+      code: 'storage.decode_failed',
+      details: { scope: 'session', key: 'bad.toml', format: 'toml' },
+    });
   });
 });

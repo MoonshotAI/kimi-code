@@ -30,7 +30,7 @@ import type { Protocol, ProtocolProviderOptions } from '#/app/protocol/protocol'
 import { generate, type GenerateResult } from '#/app/llmProtocol/generate';
 import { translateProviderError } from '#/app/protocol/errors';
 import { type ProtocolAdapterRegistry } from '#/app/protocol/protocolAdapterRegistry';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 
 import type { AuthProvider, LLMEvent, LLMRequestInput, Model } from './modelInstance';
 
@@ -277,7 +277,7 @@ export class ModelImpl implements Model {
     } catch (error) {
       // Cancellation is control flow, not a provider failure — abort shapes
       // pass through untouched. Everything else crosses the provider boundary
-      // here, so it is translated into a coded `KimiError` exactly once.
+      // here, so it is translated into a coded `Error2` exactly once.
       if (isAbortError(error) || signal?.aborted === true) throw error;
       throw translateProviderError(error);
     }
@@ -347,8 +347,8 @@ function isUnauthorizedStatusError(error: unknown): error is APIStatusError {
   return error instanceof APIStatusError && error.statusCode === 401;
 }
 
-function toLoginRequiredError(error: APIStatusError): KimiError {
-  return new KimiError(
+function toLoginRequiredError(error: APIStatusError): Error2 {
+  return new Error2(
     ErrorCodes.AUTH_LOGIN_REQUIRED,
     'OAuth provider credentials were rejected. Send /login to login.',
     {

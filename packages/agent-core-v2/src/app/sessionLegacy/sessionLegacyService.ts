@@ -26,7 +26,7 @@ import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';
 import { IModelResolver } from '#/app/model/modelResolver';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -45,7 +45,7 @@ export class SessionLegacyService implements ISessionLegacyService {
   ): Promise<SessionWireFields> {
     const session = await this.lifecycle.resume(sessionId);
     if (session === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
     const metadata = session.accessor.get(ISessionMetadata);
 
@@ -159,7 +159,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     // gone, so a genuinely missing session still 404s.
     const session = await this.lifecycle.resume(sessionId);
     if (session === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
     return ensureMainAgent(session);
   }

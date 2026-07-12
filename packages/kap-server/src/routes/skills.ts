@@ -80,7 +80,7 @@ import {
   ISkillDiscovery,
   IWorkspaceRegistry,
   InMemorySkillCatalog,
-  isKimiError,
+  isError2,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   configuredRoots,
@@ -395,7 +395,7 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): void {
-  if (isKimiError(err)) {
+  if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.SKILL_NOT_FOUND:
       case ErrorCodes.SKILL_NAME_EMPTY:

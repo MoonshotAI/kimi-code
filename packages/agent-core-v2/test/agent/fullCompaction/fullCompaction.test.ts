@@ -1021,7 +1021,7 @@ describe('FullCompaction', () => {
           code: 'compaction.failed',
           message:
             'CompactionTruncatedError: Compaction response was truncated before producing a complete summary.',
-          name: 'KimiError',
+          name: 'Error2',
         }),
       }),
     );

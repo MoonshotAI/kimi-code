@@ -13,7 +13,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionInitService } from '#/session/sessionInit/sessionInit';
 import { SessionInitService } from '#/session/sessionInit/sessionInitService';
@@ -166,9 +166,9 @@ describe('SessionInitService', () => {
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(ErrorCodes.SESSION_INIT_FAILED);
-    expect((error as KimiError).message).toContain('coder exploded');
+    expect(error).toBeInstanceOf(Error2);
+    expect((error as Error2).code).toBe(ErrorCodes.SESSION_INIT_FAILED);
+    expect((error as Error2).message).toContain('coder exploded');
   });
 
   it('throws AGENT_NOT_FOUND when the main agent is missing', async () => {
@@ -179,7 +179,7 @@ describe('SessionInitService', () => {
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(ErrorCodes.AGENT_NOT_FOUND);
+    expect(error).toBeInstanceOf(Error2);
+    expect((error as Error2).code).toBe(ErrorCodes.AGENT_NOT_FOUND);
   });
 });

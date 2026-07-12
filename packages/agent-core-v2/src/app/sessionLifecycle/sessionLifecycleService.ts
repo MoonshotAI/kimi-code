@@ -45,7 +45,7 @@ import {
 } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
 import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -319,7 +319,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const sourceHandle = this.sessions.get(sourceId);
     const indexSummary = await this.index.get(sourceId);
     if (sourceHandle === undefined && indexSummary === undefined) {
-      throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
     }
     const workspaceId =
       sourceHandle !== undefined
@@ -338,7 +338,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       // 3. Resolve the work dir the fork inherits (same workspace as the source).
       const workspace = await this.workspaceRegistry.get(workspaceId);
       if (workspace === undefined) {
-        throw new KimiError('workspace.not_found', `workspace ${workspaceId} does not exist`);
+        throw new Error2('workspace.not_found', `workspace ${workspaceId} does not exist`);
       }
 
       // 4. Read the source metadata (live handle or disk).
@@ -350,7 +350,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       // 5. Mint the target id and reject collisions.
       const targetId = opts.newSessionId ?? createSessionId();
       if (this.sessions.has(targetId) || (await this.index.get(targetId)) !== undefined) {
-        throw new KimiError(
+        throw new Error2(
           ErrorCodes.SESSION_ALREADY_EXISTS,
           `Session "${targetId}" already exists`,
         );

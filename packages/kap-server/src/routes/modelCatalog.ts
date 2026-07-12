@@ -18,7 +18,7 @@
  * numeric `ErrorCode` envelope verbatim, so the response shape and error codes
  * (`40412` provider-not-found, `40413` model-not-found, `40001` validation) are
  * byte-for-byte compatible with v1's `routes/modelCatalog.ts`. The v2 domain
- * throws coded `KimiError`s (`provider.not_found` / `model.not_found`); this
+ * throws coded `Error2`s (`provider.not_found` / `model.not_found`); this
  * edge maps them to the numeric protocol codes by `code` (never `instanceof`).
  */
 
@@ -27,7 +27,7 @@ import {
   ILogService,
   IModelCatalogService,
   IOAuthService,
-  isKimiError,
+  isError2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -304,7 +304,7 @@ function sendMappedError(
   requestId: string,
   err: unknown,
 ): boolean {
-  if (!isKimiError(err)) return false;
+  if (!isError2(err)) return false;
   if (err.code === 'provider.not_found') {
     reply.send(errEnvelope(ErrorCode.PROVIDER_NOT_FOUND, err.message, requestId, err.stack));
     return true;

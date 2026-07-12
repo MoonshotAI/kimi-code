@@ -11,7 +11,7 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionFsService } from '#/session/sessionFs/fs';
 import { SessionFsService } from '#/session/sessionFs/fsService';
@@ -349,7 +349,7 @@ describe('SessionFsService.gitStatus', () => {
     const git: IGitService = {
       _serviceBrand: undefined,
       status: async () => {
-        throw new KimiError(ErrorCodes.FS_GIT_UNAVAILABLE, 'git unavailable at /repo: not a repo');
+        throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'git unavailable at /repo: not a repo');
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
     };

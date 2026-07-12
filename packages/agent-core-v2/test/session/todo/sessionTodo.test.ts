@@ -107,6 +107,7 @@ function makeFakeAgent(agentId: string): FakeAgent {
       }
       // Replay is silent: subscribers are NOT notified. onRestored fires after.
       for (const h of restoredHandlers) h();
+      return { unknownRecords: 0 };
     },
     signal: () => {},
     flush: async () => {},
@@ -152,7 +153,9 @@ function makeFakeAgent(agentId: string): FakeAgent {
     registeredVariants,
     appended,
     subscribed: () => subscribedCount,
-    replay: (records) => wireStub.replay(...records),
+    replay: async (records) => {
+      await wireStub.replay(...records);
+    },
   };
 }
 

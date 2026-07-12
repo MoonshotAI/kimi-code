@@ -14,7 +14,7 @@ import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
 
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import {
   IAtomicDocumentStore,
   IAtomicTomlDocumentStore,
@@ -25,6 +25,7 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export const jsonDocumentCodec: DocumentCodec = {
+  format: 'json',
   encode(value: unknown): Uint8Array {
     return textEncoder.encode(JSON.stringify(value));
   },
@@ -34,6 +35,7 @@ export const jsonDocumentCodec: DocumentCodec = {
 };
 
 export const tomlDocumentCodec: DocumentCodec = {
+  format: 'toml',
   encode(value: unknown): Uint8Array {
     return textEncoder.encode(`${stringifyToml(value as Record<string, unknown>)}\n`);
   },
@@ -54,7 +56,19 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
 
   async get<T>(scope: string, key: string): Promise<T | undefined> {
     const bytes = await this.storage.read(scope, key);
-    return bytes === undefined ? undefined : (this.codec.decode(bytes) as T);
+    if (bytes === undefined) return undefined;
+    try {
+      return this.codec.decode(bytes) as T;
+    } catch (error) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_DECODE_FAILED,
+        `failed to decode ${scope}/${key} as ${this.codec.format}`,
+        {
+          details: { scope, key, format: this.codec.format },
+          cause: error,
+        },
+      );
+    }
   }
 
   async set<T>(scope: string, key: string, value: T): Promise<void> {

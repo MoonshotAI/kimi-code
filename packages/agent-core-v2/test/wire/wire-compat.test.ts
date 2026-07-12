@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -105,9 +106,19 @@ describe('wire.jsonl round-trip', () => {
       ...records,
       { type: 'compat.unknown.nope', foo: 1 },
     ];
-    await replayTarget.wire.replay(...withUnknown);
+    // Swallow the onUnexpectedError report for the injected unknown record;
+    // the dedicated unknown-record test asserts that reporting path.
+    setUnexpectedErrorHandler(() => {});
+    let replayResult;
+    try {
+      replayResult = await replayTarget.wire.replay(...withUnknown);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
 
-    // Rebuilt state equals the live state; the unknown record was skipped.
+    // Rebuilt state equals the live state; the unknown record was skipped and
+    // counted so the caller knows the replay was lossy.
+    expect(replayResult.unknownRecords).toBe(1);
     expect(replayTarget.wire.getModel(CounterModel)).toEqual(
       live.wire.getModel(CounterModel),
     );

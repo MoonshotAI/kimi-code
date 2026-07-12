@@ -28,7 +28,7 @@ import {
 } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
-import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
+import { ErrorCodes, Error2, makeErrorPayload } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -216,7 +216,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private assertCanCreate(): void {
     if (!this.activityKernel.canAccept('agent.create')) {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.ACTIVITY_SESSION_REJECTED,
         `Session is ${this.activityKernel.lane()}; agent creation rejected`,
         { details: { lane: this.activityKernel.lane() } },

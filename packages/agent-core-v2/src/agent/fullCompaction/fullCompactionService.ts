@@ -38,7 +38,7 @@ import { type TokenUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ErrorCodes, KimiError, isCodedError, isKimiError, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
+import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
@@ -289,10 +289,10 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private validateCompactionStart(source: CompactionBeginData['source']): number {
     const history = this.context.get();
     if (history.length === 0) {
-      throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
+      throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
     if (source === 'manual' && this.activity.lane() !== 'idle') {
-      throw new KimiError(
+      throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
       );
@@ -380,7 +380,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     this.consecutiveOverflowCompactions += 1;
     const maxAttempts = this.strategy.maxOverflowCompactionAttempts;
     if (this.consecutiveOverflowCompactions <= maxAttempts) return;
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.CONTEXT_OVERFLOW,
       `Compaction failed to bring the context under the model window after ${String(maxAttempts)} attempts.`,
       { cause: error instanceof Error ? error : undefined },
@@ -432,7 +432,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     const maxCompactions = this.strategy.maxCompactionPerTurn;
     if (this.compactionCountInTurn >= maxCompactions) {
       if (throwOnLimit) {
-        throw new KimiError(ErrorCodes.CONTEXT_OVERFLOW, `Compaction limit exceeded (${String(maxCompactions)})`, {
+        throw new Error2(ErrorCodes.CONTEXT_OVERFLOW, `Compaction limit exceeded (${String(maxCompactions)})`, {
           details: { maxCompactions },
         });
       }
@@ -684,8 +684,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         thinking_effort: this.profile.data().thinkingLevel,
         error_type: error instanceof Error ? error.name : 'Unknown',
       });
-      if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
-      throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
+      if (isError2(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
+      throw new Error2(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
     }
   }
 

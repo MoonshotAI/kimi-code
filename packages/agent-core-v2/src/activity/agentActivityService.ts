@@ -19,7 +19,7 @@ import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -116,21 +116,21 @@ export class AgentActivityService extends Disposable implements IAgentActivitySe
 
   begin(kind: 'turn', opts?: BeginOptions): ActivityLease {
     if (kind !== 'turn') {
-      throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, `Unsupported activity kind: ${String(kind)}`);
+      throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `Unsupported activity kind: ${String(kind)}`);
     }
     switch (this._lane) {
       case 'turn':
-        throw new KimiError(
+        throw new Error2(
           ErrorCodes.ACTIVITY_AGENT_BUSY,
           `Cannot begin a new turn while turn ${this.activeLease?.turnId ?? '?'} is active`,
           { details: { turnId: this.activeLease?.turnId } },
         );
       case 'disposing':
-        throw new KimiError(ErrorCodes.ACTIVITY_DISPOSING, 'Agent is disposing');
+        throw new Error2(ErrorCodes.ACTIVITY_DISPOSING, 'Agent is disposing');
       case 'disposed':
-        throw new KimiError(ErrorCodes.ACTIVITY_DISPOSED, 'Agent is disposed');
+        throw new Error2(ErrorCodes.ACTIVITY_DISPOSED, 'Agent is disposed');
       case 'initializing':
-        throw new KimiError(ErrorCodes.ACTIVITY_INITIALIZING, 'Agent is still restoring');
+        throw new Error2(ErrorCodes.ACTIVITY_INITIALIZING, 'Agent is still restoring');
       case 'idle':
         break;
     }
@@ -152,7 +152,7 @@ export class AgentActivityService extends Disposable implements IAgentActivitySe
     try {
       return this.begin(kind, opts);
     } catch (error) {
-      if (error instanceof KimiError) return undefined;
+      if (error instanceof Error2) return undefined;
       throw error;
     }
   }

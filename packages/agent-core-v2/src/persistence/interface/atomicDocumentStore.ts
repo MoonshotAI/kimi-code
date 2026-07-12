@@ -14,6 +14,8 @@ import { type IDisposable } from '#/_base/di/lifecycle';
 import { type Event } from '#/_base/event';
 
 export interface DocumentCodec {
+  /** Wire format name (`'json'` / `'toml'`), surfaced in decode-error details. */
+  readonly format: string;
   encode(value: unknown): Uint8Array;
   decode(bytes: Uint8Array): unknown;
 }

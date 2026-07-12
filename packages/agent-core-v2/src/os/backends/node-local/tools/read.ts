@@ -27,6 +27,7 @@ import { z } from 'zod';
 
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ToolAccesses } from '#/agent/tool/tool-access';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
@@ -191,17 +192,21 @@ function renderEntries(
 }
 
 function isFileNotFoundError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const code = (error as { code?: unknown })['code'];
+  // hostFs translates raw errnos into `HostFsError`; classify the unwrapped
+  // cause so boundary translation stays invisible to these predicates.
+  const unwrapped = unwrapErrorCause(error);
+  if (typeof unwrapped !== 'object' || unwrapped === null) return false;
+  const code = (unwrapped as { code?: unknown })['code'];
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 function isTextDecodeError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const code = (error as { code?: unknown })['code'];
+  const unwrapped = unwrapErrorCause(error);
+  if (typeof unwrapped !== 'object' || unwrapped === null) return false;
+  const code = (unwrapped as { code?: unknown })['code'];
   if (code === 'ERR_ENCODING_INVALID_ENCODED_DATA') return true;
-  if (!(error instanceof Error)) return false;
-  return /encoded data was not valid|invalid.*encoding|invalid.*utf-?8/i.test(error.message);
+  if (!(unwrapped instanceof Error)) return false;
+  return /encoded data was not valid|invalid.*encoding|invalid.*utf-?8/i.test(unwrapped.message);
 }
 
 function containsNulByte(text: string): boolean {

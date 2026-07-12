@@ -29,7 +29,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import { IEventService } from '#/app/event/event';
 import { IModelService, MODELS_SECTION, type ModelAlias } from '#/app/model/model';
 import {
@@ -87,7 +87,7 @@ export class ModelCatalogService implements IModelCatalogService {
   async getProvider(providerId: string): Promise<ProviderCatalogItem> {
     const provider = this.providerService.get(providerId);
     if (provider === undefined) {
-      throw new KimiError(ErrorCodes.PROVIDER_NOT_FOUND, `provider ${providerId} does not exist`);
+      throw new Error2(ErrorCodes.PROVIDER_NOT_FOUND, `provider ${providerId} does not exist`);
     }
     const models = this.modelService.list();
     const globalDefaultModel = this.config.get<string>(DEFAULT_MODEL_SECTION);
@@ -97,7 +97,7 @@ export class ModelCatalogService implements IModelCatalogService {
   async setDefaultModel(modelId: string): Promise<SetDefaultModelResponse> {
     const alias = this.modelService.get(modelId);
     if (alias === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_FOUND, `model ${modelId} does not exist`);
+      throw new Error2(ErrorCodes.MODEL_NOT_FOUND, `model ${modelId} does not exist`);
     }
     await this.config.set(DEFAULT_MODEL_SECTION, modelId);
     const updatedAlias = this.modelService.get(modelId) ?? alias;
@@ -125,7 +125,7 @@ export class ModelCatalogService implements IModelCatalogService {
     if (options.providerId !== undefined) {
       const provider = this.providerService.get(options.providerId);
       if (provider === undefined) {
-        throw new KimiError(
+        throw new Error2(
           ErrorCodes.PROVIDER_NOT_FOUND,
           `provider ${options.providerId} does not exist`,
         );

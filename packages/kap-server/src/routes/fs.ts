@@ -14,8 +14,8 @@ import {
   ErrorCodes,
   ISessionFsService,
   ISessionLifecycleService,
-  isKimiError,
-  KimiError,
+  isError2,
+  Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -97,7 +97,7 @@ const FS_TAIL_PREFIX = 'fs:';
 function resolveFs(core: Scope, sessionId: string): ISessionFsService {
   const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
   if (session === undefined) {
-    throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
   return session.accessor.get(ISessionFsService);
 }
@@ -476,11 +476,11 @@ async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Rep
 }
 
 // ---------------------------------------------------------------------------
-// Error mapping — domain KimiError codes → protocol wire codes.
+// Error mapping — domain Error2 codes → protocol wire codes.
 // ---------------------------------------------------------------------------
 
 function sendMappedError(reply: Reply, requestId: string, err: unknown): void {
-  if (isKimiError(err)) {
+  if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:
         reply.send(errEnvelope(ErrorCode.FS_PATH_ESCAPES_SESSION, err.message, requestId, err.stack));

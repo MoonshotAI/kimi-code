@@ -16,7 +16,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message } from '#/app/llmProtocol/message';
 import { IAgentContextProjectorService } from './contextProjector';
 
@@ -414,7 +414,7 @@ function cleanContent(
     content = filtered;
   }
   if (source.role === 'tool' && content.length === 0) {
-    throw new KimiError(
+    throw new Error2(
       ErrorCodes.REQUEST_INVALID,
       'Tool result message content cannot be empty after removing empty text blocks.',
       { details: { toolCallId: source.toolCallId } },

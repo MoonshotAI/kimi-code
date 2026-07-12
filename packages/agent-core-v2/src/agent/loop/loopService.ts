@@ -53,7 +53,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { type FinishReason } from '#/app/llmProtocol/finishReason';
 import { type StreamedMessagePart } from '#/app/llmProtocol/message';
 import { type TokenUsage } from '#/app/llmProtocol/usage';
-import { BugIndicatingError, ErrorCodes, KimiError, toKimiErrorPayload } from '#/errors';
+import { BugIndicatingError, ErrorCodes, Error2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 
 import type { ActivityLease } from '#/activity/activity';
@@ -411,7 +411,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     } else if (result?.type === 'cancelled') {
       ready.reject(result.reason instanceof Error ? result.reason : abortError('Turn cancelled'));
     } else {
-      ready.reject(new KimiError(ErrorCodes.INTERNAL, 'Turn ended before first step'));
+      ready.reject(new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step'));
     }
   }
 
@@ -550,7 +550,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     runtime.current = undefined;
     runtime.lastStopReason = result.stopReason;
     if (result.stopReason === 'filtered') {
-      throw new KimiError(ErrorCodes.PROVIDER_FILTERED, 'Provider safety policy blocked the response.', {
+      throw new Error2(ErrorCodes.PROVIDER_FILTERED, 'Provider safety policy blocked the response.', {
         name: 'ProviderFilteredError',
         details: { finishReason: 'filtered' },
       });

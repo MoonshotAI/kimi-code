@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { KimiError } from '#/_base/errors/errors';
+import { Error2 } from '#/_base/errors/errors';
 import {
   APIConnectionError,
   APIContextOverflowError,
@@ -18,15 +18,15 @@ const NGINX_413_HTML =
   '<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n';
 
 describe('translateProviderError', () => {
-  it('passes a KimiError through untouched (idempotent)', () => {
-    const coded = new KimiError('auth.login_required', 'login required');
+  it('passes a Error2 through untouched (idempotent)', () => {
+    const coded = new Error2('auth.login_required', 'login required');
     expect(translateProviderError(coded)).toBe(coded);
   });
 
   it('maps 429 to provider.rate_limit, keeping the raw error as cause and status in details', () => {
     const raw = new APIStatusError(429, 'Too Many Requests', 'req-1');
     const error = translateProviderError(raw);
-    expect(error).toBeInstanceOf(KimiError);
+    expect(error).toBeInstanceOf(Error2);
     expect(error.code).toBe('provider.rate_limit');
     expect(error.cause).toBe(raw);
     expect(error.name).toBe('APIStatusError');

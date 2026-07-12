@@ -112,7 +112,14 @@ describe('AppendLogStore', () => {
     const raw = `${JSON.stringify({ n: 1 })}\nGARBAGE\n${JSON.stringify({ n: 3 })}\n`;
     await storage.append(SCOPE, KEY, enc.encode(raw));
 
-    await expect(collect<Rec>(SCOPE, KEY)).rejects.toBeInstanceOf(AppendLogCorruptedError);
+    await expect(collect<Rec>(SCOPE, KEY)).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(AppendLogCorruptedError);
+      const corrupted = error as AppendLogCorruptedError;
+      expect(corrupted.code).toBe('storage.corrupted');
+      expect(corrupted.details).toEqual({ scope: SCOPE, key: KEY, lineNumber: 2 });
+      expect(corrupted.cause).toBeInstanceOf(SyntaxError);
+      return true;
+    });
   });
 
   it('reads across chunk boundaries (stream read splits lines)', async () => {

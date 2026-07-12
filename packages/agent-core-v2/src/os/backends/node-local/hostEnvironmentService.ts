@@ -10,6 +10,7 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { BugIndicatingError } from '#/_base/errors/errors';
 import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
 import { applyLoginShellPathFromNode } from '#/_base/execEnv/loginShellPath';
 
@@ -44,7 +45,7 @@ export class HostEnvironmentService implements IHostEnvironment {
 
   private require(field: keyof HostEnvironmentInfo): never | HostEnvironmentInfo[typeof field] {
     if (this._info === undefined) {
-      throw new Error(
+      throw new BugIndicatingError(
         `IHostEnvironment.${field} accessed before ready — await IHostEnvironment.ready first (composition root should do so before creating a Session scope).`,
       );
     }

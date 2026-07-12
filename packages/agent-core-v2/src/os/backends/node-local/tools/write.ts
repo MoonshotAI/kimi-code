@@ -22,6 +22,7 @@ import { z } from 'zod';
 
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ToolAccesses } from '#/agent/tool/tool-access';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
@@ -119,7 +120,8 @@ export class WriteTool implements BuiltinTool<WriteInput> {
         output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
       };
     } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
+      // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
+      const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'ENOENT') {
         return {
           isError: true,
@@ -155,7 +157,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
     try {
       stat = await this.fs.stat(parent);
     } catch (error) {
-      if ((error as { code?: unknown } | null)?.code === 'ENOENT') {
+      if ((unwrapErrorCause(error) as { code?: unknown } | null)?.code === 'ENOENT') {
         try {
           await this.fs.mkdir(parent, { recursive: true });
           return undefined;

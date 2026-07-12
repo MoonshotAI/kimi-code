@@ -22,7 +22,7 @@ import { basename, isAbsolute } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
-import { ErrorCodes, KimiError } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -79,14 +79,15 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
       try {
         stat = await this.hostFs.stat(root);
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
+        // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
+        const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
         if (code === 'ENOENT' || code === 'ENOTDIR') {
-          throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} does not exist`);
+          throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} does not exist`);
         }
         throw error;
       }
       if (!stat.isDirectory) {
-        throw new KimiError(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);
       }
       const id = encodeWorkDirKey(root);
       const existing = cache.get(id);
