@@ -12,6 +12,12 @@ import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
+  currentValidatedWorkspacePath,
+  isWorkspacePathInput,
+  joinWorkspacePathCandidate,
+  parseWorkspacePathInput,
+} from '../src/lib/workspacePathInput';
+import {
   coerceThinkingForModel,
   commitLevel,
   defaultThinkingLevelFor,
@@ -25,6 +31,66 @@ import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
 import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
 import type { ToolCall } from '../src/types';
+
+describe('workspace path input', () => {
+  it('recognizes the supported absolute path forms', () => {
+    expect(isWorkspacePathInput('/tmp/project')).toBe(true);
+    expect(isWorkspacePathInput('~/project')).toBe(true);
+    expect(isWorkspacePathInput('C:\\project')).toBe(true);
+    expect(isWorkspacePathInput('C:/project')).toBe(true);
+    expect(isWorkspacePathInput('\\\\server\\share')).toBe(true);
+    expect(isWorkspacePathInput('project')).toBe(false);
+  });
+
+  it('normalizes separators without changing UNC roots or POSIX backslashes', () => {
+    expect(parseWorkspacePathInput('/tmp//project/', '').target).toBe('/tmp/project');
+    expect(parseWorkspacePathInput('//server//share/project/', '').target).toBe('//server/share/project');
+    expect(parseWorkspacePathInput('///tmp//project/', '').target).toBe('/tmp/project');
+    expect(parseWorkspacePathInput('/tmp/project\\', '').target).toBe('/tmp/project\\');
+    expect(parseWorkspacePathInput('~/project', '/home/alice').target).toBe('/home/alice/project');
+  });
+
+  it('preserves Windows root separators in parent paths', () => {
+    expect(parseWorkspacePathInput('C:\\Use', '')).toMatchObject({
+      parent: 'C:\\',
+      base: 'Use',
+      separator: '\\',
+    });
+    expect(parseWorkspacePathInput('C:/Use', '')).toMatchObject({
+      parent: 'C:/',
+      base: 'Use',
+      separator: '/',
+    });
+    expect(parseWorkspacePathInput('\\\\server\\share\\pro', '')).toMatchObject({
+      parent: '\\\\server\\share',
+      base: 'pro',
+      separator: '\\',
+    });
+    expect(parseWorkspacePathInput('//server/share/pro', '')).toMatchObject({
+      parent: '//server/share',
+      base: 'pro',
+      separator: '/',
+    });
+  });
+
+  it('treats backslashes as literal characters in POSIX paths', () => {
+    expect(parseWorkspacePathInput('/tmp/foo\\bar', '')).toMatchObject({
+      parent: '/tmp',
+      base: 'foo\\bar',
+      separator: '/',
+    });
+  });
+
+  it('builds completion paths from the lexical parent', () => {
+    const parsed = parseWorkspacePathInput('/tmp/link/proje', '');
+    expect(joinWorkspacePathCandidate(parsed.parent, 'project', parsed.separator)).toBe('/tmp/link/project');
+  });
+
+  it('only returns a validated path while it still matches the current input', () => {
+    expect(currentValidatedWorkspacePath('/var', '', '/tmp')).toBeNull();
+    expect(currentValidatedWorkspacePath('/tmp/', '', '/tmp')).toBe('/tmp');
+  });
+});
 
 describe('parseDiff', () => {
   it('parses multiple files and keeps hunk line numbers', () => {

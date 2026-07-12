@@ -11,6 +11,13 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FsBrowseEntry, FsBrowseResult } from '../../api/types';
+import {
+  currentValidatedWorkspacePath,
+  isWorkspacePathInput,
+  joinWorkspacePathCandidate,
+  parseWorkspacePathInput,
+  type WorkspacePathSeparator,
+} from '../../lib/workspacePathInput';
 import Dialog from '../ui/Dialog.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
@@ -66,11 +73,11 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null;
 // drive ("C:\x" / "C:/x") and UNC ("\\srv\x"). A valid path live-follows (the
 // browser jumps to it, so "Open this folder" submits it); an invalid one
 // shows a specific error plus prefix-matched candidates in the list.
-const PATH_LIKE = /^(?:\/|~(?:\/|$)|[A-Za-z]:[\\/]|\\\\)/;
-const isPathMode = computed(() => PATH_LIKE.test(filter.value.trim()));
+const isPathMode = computed(() => isWorkspacePathInput(filter.value));
 type PathState = 'idle' | 'checking' | 'valid' | 'not-found' | 'bad-parent';
 const pathState = ref<PathState>('idle');
 const pathParent = ref('');
+const pathSeparator = ref<WorkspacePathSeparator>('/');
 const pathCandidates = ref<FsBrowseEntry[]>([]);
 /** $HOME for expanding "~" — fetched eagerly on mount. */
 const homePath = ref('');
@@ -80,6 +87,10 @@ const filterEl = ref<HTMLInputElement | null>(null);
  *  the lexical root, so a typed symlink path must not be submitted as its
  *  resolved target. Null outside path mode or when the input isn't valid. */
 const typedAddPath = ref<string | null>(null);
+const validatedAddPath = computed(() => {
+  if (pathState.value !== 'valid') return null;
+  return currentValidatedWorkspacePath(filter.value, homePath.value, typedAddPath.value);
+});
 let pathToken = 0;
 let pathTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -139,52 +150,33 @@ async function runSearch(query: string): Promise<void> {
 watch(filter, (q) => {
   if (searchTimer) clearTimeout(searchTimer);
   if (pathTimer) clearTimeout(pathTimer);
+  // Invalidate the previous path immediately, before the next debounced check.
+  // This also makes any in-flight response stale and prevents Enter/Open from
+  // submitting the last valid path while the input already shows a new one.
+  pathToken++;
+  pathState.value = 'idle';
+  pathCandidates.value = [];
+  typedAddPath.value = null;
   const t = q.trim();
   if (t === '') {
     searchToken++; // cancel any in-flight walk
-    pathToken++;
     searchResults.value = [];
     searching.value = false;
-    pathState.value = 'idle';
-    pathCandidates.value = [];
-    typedAddPath.value = null;
     return;
   }
-  if (PATH_LIKE.test(t)) {
+  if (isWorkspacePathInput(t)) {
     // Path mode — fuzzy search is off; validate unless browsing is down (then
     // the box is format-only and Enter adds directly).
     searchToken++;
     searchResults.value = [];
     searching.value = false;
-    if (browseFailed.value) {
-      pathToken++;
-      pathState.value = 'idle';
-      return;
-    }
+    if (browseFailed.value) return;
+    pathState.value = 'checking';
     pathTimer = setTimeout(() => void validatePathInput(t), 150);
     return;
   }
-  pathToken++;
-  pathState.value = 'idle';
-  pathCandidates.value = [];
-  typedAddPath.value = null;
   searchTimer = setTimeout(() => void runSearch(q), 220);
 });
-
-function expandTilde(p: string): string {
-  if (p === '~') return homePath.value || p;
-  if (p.startsWith('~/')) return (homePath.value || '~') + p.slice(1);
-  return p;
-}
-
-/** Normalise typed input: expand ~, collapse slashes, drop trailing
- *  separator (never the root itself: "/" or a drive root like "C:\"). */
-function normalizeTypedPath(raw: string): string {
-  let p = expandTilde(raw.trim());
-  p = p.replaceAll(/\/{2,}/g, '/');
-  if (p.length > 1 && /[\\/]$/.test(p) && !/^[A-Za-z]:[\\/]$/.test(p)) p = p.slice(0, -1);
-  return p;
-}
 
 /**
  * Debounced validation for path-mode input. `browseFs` defensively returns an
@@ -195,7 +187,8 @@ async function validatePathInput(raw: string): Promise<void> {
   const token = ++pathToken;
   pathState.value = 'checking';
   typedAddPath.value = null;
-  const target = normalizeTypedPath(raw);
+  const parsed = parseWorkspacePathInput(raw, homePath.value);
+  const { target } = parsed;
   try {
     const res = await props.browseFs(target);
     if (token !== pathToken) return;
@@ -214,13 +207,11 @@ async function validatePathInput(raw: string): Promise<void> {
     // fall through to the not-found handling below
   }
   if (token !== pathToken) return;
-  // Split on whichever separator the path uses (Windows paths use "\").
-  const lastSep = Math.max(target.lastIndexOf('/'), target.lastIndexOf('\\'));
-  const parent = (lastSep > 0 ? target.slice(0, lastSep) : '') || '/';
-  const base = target.slice(lastSep + 1).toLowerCase();
-  pathParent.value = parent;
+  const base = parsed.base.toLowerCase();
+  pathParent.value = parsed.parent;
+  pathSeparator.value = parsed.separator;
   try {
-    const res = await props.browseFs(parent);
+    const res = await props.browseFs(parsed.parent);
     if (token !== pathToken) return;
     if (res.path) {
       pathCandidates.value = res.entries.filter(
@@ -237,9 +228,9 @@ async function validatePathInput(raw: string): Promise<void> {
   pathState.value = 'bad-parent';
 }
 
-/** Accept a completion candidate: put it in the box; the watcher re-validates. */
-function pickCandidate(path: string): void {
-  filter.value = path;
+/** Accept a completion candidate while preserving the lexical parent path. */
+function pickCandidate(name: string): void {
+  filter.value = joinWorkspacePathCandidate(pathParent.value, name, pathSeparator.value);
   filterEl.value?.focus();
 }
 
@@ -262,16 +253,16 @@ function handleFilterKeydown(event: KeyboardEvent): void {
   }
   if (event.key !== 'Enter') return;
   const text = filter.value.trim();
-  if (!PATH_LIKE.test(text)) return; // fuzzy search: Enter keeps doing nothing
+  if (!isWorkspacePathInput(text)) return; // fuzzy search: Enter keeps doing nothing
   event.preventDefault();
   if (browseFailed.value) {
-    const expanded = normalizeTypedPath(text);
-    if (expanded) emit('add', expanded);
+    const { target } = parseWorkspacePathInput(text, homePath.value);
+    if (target) emit('add', target);
     return;
   }
   if (pathState.value === 'valid') openThisFolder();
   else if (pathState.value === 'not-found' && pathCandidates.value[0]) {
-    pickCandidate(pathCandidates.value[0].path);
+    pickCandidate(pathCandidates.value[0].name);
   }
 }
 
@@ -293,7 +284,7 @@ const canOpen = computed(() => {
   if (currentPath.value.length === 0) return false;
   // In path mode only a validated target may be opened — otherwise the button
   // would submit the stale prefix the browser last followed to.
-  if (isPathMode.value && pathState.value !== 'valid') return false;
+  if (isPathMode.value && validatedAddPath.value === null) return false;
   return true;
 });
 
@@ -333,7 +324,7 @@ function openThisFolder(): void {
   if (!canOpen.value) return;
   // Path mode submits the typed lexical root; browsing submits the (canonical)
   // folder the browser sits in — matching the removed paste field's semantics.
-  emit('add', (isPathMode.value && typedAddPath.value) || currentPath.value);
+  emit('add', validatedAddPath.value ?? currentPath.value);
 }
 
 onMounted(async () => {
@@ -424,7 +415,7 @@ onUnmounted(() => {
               v-for="c in pathCandidates"
               :key="c.path"
               class="folder-row"
-              @click="pickCandidate(c.path)"
+              @click="pickCandidate(c.name)"
             >
               <Icon class="dir-icon" name="folder-closed" size="sm" />
               <span class="folder-name">{{ c.name }}</span>
