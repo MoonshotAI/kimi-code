@@ -10,7 +10,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Store } from './store.js';
-import type { StoreRecord, ValueLoc, ValueRef } from './store.js';
+import type { StoreRecord, ValueLoc } from './store.js';
 import { WAL } from './wal.js';
 import { ValueReader } from './value-reader.js';
 import { recover } from './recovery.js';
@@ -180,7 +180,6 @@ interface PreparedOp<V> {
   dtNorm: Record<string, number> | null;
   pk: string;
   valueDecoded: V | undefined;
-  loc?: ValueLoc;
 }
 
 export class MiniDb<V = unknown> {
@@ -585,6 +584,29 @@ export class MiniDb<V = unknown> {
     return { key: fromKStr(this.pk(key)), value: this.decode(value)!, dt: r?.dt ?? undefined };
   }
 
+  /** Swap a record this op just wrote over to its disk-backed WAL pointer.
+   *  Must only run after the WAL frame's `done` resolved: appendLoc's offset
+   *  is a prediction and the bytes are not in db.wal until the queued writev
+   *  lands, so publishing the pointer earlier let synchronous disk readers
+   *  (compaction's snapshot phase, get) read past the end of the file.
+   *  Skipped when the WAL was rotated by a compaction meanwhile (the pointer
+   *  would reference the old file's offsets) or when the record was
+   *  overwritten/deleted since; the record then keeps its in-memory ref —
+   *  correct, just held in RAM until the next snapshot. */
+  private publishWalRef(
+    pk: string,
+    wal: WAL,
+    seq: number | undefined,
+    loc: ValueLoc,
+    expireAt: number,
+    dt: Record<string, number> | null,
+  ): void {
+    if (this.wal !== wal || seq === undefined) return;
+    const cur = this.store.map.get(pk);
+    if (!cur || cur.seq !== seq) return;
+    this.store.setRef(pk, { kind: 'disk', loc }, expireAt, dt);
+  }
+
   async set(key: string | Buffer, value: V, { ttl, dt }: SetOptions = {}): Promise<void> {
     this.ensureOpen();
     this.ensureWritable();
@@ -596,20 +618,34 @@ export class MiniDb<V = unknown> {
     const commit = async (): Promise<void> => {
       if (this.indexes.indexes.size && this.indexable(value)) this.indexes.checkUnique(op.pk, value);
       const frame = encodeFrame({ type: TYPE_SET, key: op.key, value: op.value, meta: op.meta, expireAt: op.expireAt });
-      const appended = this.wal.appendLoc(frame);
-      if (this.valueMode === 'disk') {
-        op.loc = { file: 'wal', off: appended.offset + HEADER_SIZE + op.key.length, len: op.value!.length };
-      }
+      const wal = this.wal;
+      const appended = wal.appendLoc(frame);
       // Apply in the SAME synchronous tick as the WAL append, so a concurrent
-      // compaction always snapshots the post-write state. If the WAL write
-      // ultimately fails, roll the store + derived indexes back to the pre-op
-      // record so in-memory state never diverges from what is durable.
+      // compaction always snapshots the post-write state. In valueMode 'disk'
+      // the record first holds an in-memory ref: the frame's bytes are not in
+      // db.wal yet (appendLoc's offset is only a prediction), so a disk
+      // pointer published now could point past the end of the file. The
+      // pointer is published once `done` resolves (see publishWalRef). If the
+      // WAL write ultimately fails, roll the store + derived indexes back to
+      // the pre-op record so in-memory state never diverges from what is
+      // durable.
       const prev = this.applyOp(op);
+      const seq = this.store.map.get(op.pk)?.seq;
       try {
         await appended.done;
       } catch (e) {
         this.restoreKey(op.pk, prev);
         throw e;
+      }
+      if (this.valueMode === 'disk') {
+        this.publishWalRef(
+          op.pk,
+          wal,
+          seq,
+          { file: 'wal', off: appended.offset + HEADER_SIZE + op.key.length, len: op.value!.length },
+          op.expireAt,
+          op.dtNorm,
+        );
       }
       this.maybeAutoCompact();
     };
@@ -661,16 +697,8 @@ export class MiniDb<V = unknown> {
         prepared.map<EncodedBatchOp>((op) => ({ type: op.type, key: op.key, value: op.value, meta: op.meta, expireAt: op.expireAt })),
       );
       const frame = encodeFrame({ type: TYPE_BATCH, key: Buffer.alloc(0), value: body });
-      const appended = this.wal.appendLoc(frame);
-      if (this.valueMode === 'disk') {
-        const bodyOff = appended.offset + HEADER_SIZE;
-        const opRefs = scanBatchOpRefs(body, 0);
-        for (let i = 0; i < prepared.length; i++) {
-          const op = prepared[i]!;
-          const ref = opRefs[i];
-          if (op.type === TYPE_SET && ref) op.loc = { file: 'wal', off: bodyOff + ref.valueOff, len: ref.valLen };
-        }
-      }
+      const wal = this.wal;
+      const appended = wal.appendLoc(frame);
       // Capture each key's pre-batch record (first applyOp per key) so the whole
       // batch can be rolled back if the WAL write fails, preserving atomicity.
       const prevs = new Map<string, StoreRecord | undefined>();
@@ -678,11 +706,31 @@ export class MiniDb<V = unknown> {
         const prev = this.applyOp(op);
         if (!prevs.has(op.pk)) prevs.set(op.pk, prev);
       }
+      // In valueMode 'disk' the applied records hold in-memory refs for now
+      // (see set()); their WAL pointers are published after `done` resolves.
+      // Only the LAST set per key may publish — an earlier op's frame range
+      // holds a superseded value.
+      const lastSet = new Map<string, { op: PreparedOp<V>; loc: ValueLoc; seq: number | undefined }>();
+      if (this.valueMode === 'disk') {
+        const bodyOff = appended.offset + HEADER_SIZE;
+        const opRefs = scanBatchOpRefs(body, 0);
+        for (let i = 0; i < prepared.length; i++) {
+          const op = prepared[i]!;
+          const ref = opRefs[i];
+          if (op.type === TYPE_SET && ref) {
+            lastSet.set(op.pk, { op, loc: { file: 'wal', off: bodyOff + ref.valueOff, len: ref.valLen }, seq: undefined });
+          }
+        }
+        for (const [pk, e] of lastSet) e.seq = this.store.map.get(pk)?.seq;
+      }
       try {
         await appended.done;
       } catch (e) {
         for (const [pk, prev] of prevs) this.restoreKey(pk, prev);
         throw e;
+      }
+      for (const [pk, { op, loc, seq }] of lastSet) {
+        this.publishWalRef(pk, wal, seq, loc, op.expireAt, op.dtNorm);
       }
       this.maybeAutoCompact();
     };
@@ -725,12 +773,10 @@ export class MiniDb<V = unknown> {
     const prev = oldBuf !== undefined ? this.store.map.get(op.pk) : undefined;
     const oldDoc = oldBuf !== undefined ? this.decode(oldBuf) : undefined;
     if (op.type === TYPE_SET) {
-      if (this.valueMode === 'disk' && op.loc) {
-        const ref: ValueRef = { kind: 'disk', loc: op.loc };
-        this.store.setRef(op.key, ref, op.expireAt, op.dtNorm);
-      } else {
-        this.store.set(op.key, op.value!, op.expireAt, op.dtNorm);
-      }
+      // Always applied as an in-memory ref; in valueMode 'disk' the caller
+      // swaps in the WAL pointer via publishWalRef() once the frame's bytes
+      // are durably in db.wal.
+      this.store.set(op.key, op.value!, op.expireAt, op.dtNorm);
       this.dt.set(op.pk, op.dtNorm);
       this.compound.add(op.pk, op.valueDecoded, op.dtNorm);
       if (this.indexes.indexes.size) {
@@ -809,13 +855,12 @@ export class MiniDb<V = unknown> {
     const meta = cur.dt ? Buffer.from(JSON.stringify({ dt: cur.dt })) : null;
     const keyBuf = toBuf(key);
     const frame = encodeFrame({ type: TYPE_SET, key: keyBuf, value: curValue, meta, expireAt });
-    const appended = this.wal.appendLoc(frame);
-    if (this.valueMode === 'disk') {
-      const ref: ValueRef = { kind: 'disk', loc: { file: 'wal', off: appended.offset + HEADER_SIZE + keyBuf.length, len: curValue.length } };
-      this.store.setRef(k, ref, expireAt, cur.dt);
-    } else {
-      this.store.set(k, curValue, expireAt, cur.dt);
-    }
+    const wal = this.wal;
+    const appended = wal.appendLoc(frame);
+    // In-memory ref first (see set()); the disk pointer is published once the
+    // frame's bytes are durably in db.wal.
+    this.store.set(k, curValue, expireAt, cur.dt);
+    const seq = this.store.map.get(k)?.seq;
     try {
       await appended.done;
     } catch (e) {
@@ -823,6 +868,16 @@ export class MiniDb<V = unknown> {
       // record is enough; derived indexes were never touched.
       this.store.setRef(k, cur.ref, cur.expireAt, cur.dt);
       throw e;
+    }
+    if (this.valueMode === 'disk') {
+      this.publishWalRef(
+        k,
+        wal,
+        seq,
+        { file: 'wal', off: appended.offset + HEADER_SIZE + keyBuf.length, len: curValue.length },
+        expireAt,
+        cur.dt,
+      );
     }
     this.maybeAutoCompact();
     return true;

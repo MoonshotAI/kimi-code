@@ -73,8 +73,11 @@ export class WAL {
   }
 
   /** Append one frame and return its predicted absolute file offset. The offset
-   *  is known synchronously because frames are flushed strictly in append order;
-   *  callers may use it immediately as a value pointer before `done` resolves. */
+   *  is known synchronously because frames are flushed strictly in append order.
+   *  NOTE: the frame's bytes are NOT in the file yet — they sit in the in-memory
+   *  queue until a later writev lands — so the offset must not be published as a
+   *  disk value pointer before `done` resolves: a synchronous positioned read in
+   *  that window would hit a short read past the current end of the file. */
   appendLoc(frame: Buffer): { offset: number; done: Promise<void> } {
     if (this.closed) return { offset: -1, done: Promise.reject(new Error('WAL is closed')) };
     if (!Buffer.isBuffer(frame)) return { offset: -1, done: Promise.reject(new TypeError('frame must be a Buffer')) };
