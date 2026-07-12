@@ -18,7 +18,7 @@ import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
 
-import { isPrintV2Enabled } from './experimental-v2';
+import { isKimiV2Enabled } from './experimental-v2';
 import { resolveOutputFormat } from './options';
 import type { CLIOptions, PromptOutputFormat } from './options';
 import {
@@ -99,7 +99,7 @@ export async function runPrompt(
   version: string,
   io: PromptRunIO = {},
 ): Promise<void> {
-  if (isPrintV2Enabled()) {
+  if (isKimiV2Enabled()) {
     // The experimental agent-core-v2 engine runs on its own native DI service
     // runtime (see v2/run-v2-print.ts); it does not share the v1 PromptHarness
     // path below. Loaded lazily so the v2 module graph stays off the default
@@ -220,7 +220,7 @@ async function createPromptHarness(
   options: Parameters<typeof createKimiHarness>[0],
 ): Promise<PromptHarness> {
   // The v2 engine is dispatched earlier in `runPrompt` (see the
-  // `isPrintV2Enabled()` branch) and never reaches here; this is the v1 path.
+  // `isKimiV2Enabled()` branch) and never reaches here; this is the v1 path.
   return createKimiHarness(options);
 }
 

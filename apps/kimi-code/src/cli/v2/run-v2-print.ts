@@ -12,7 +12,7 @@
  *     `Turn.result` for authoritative completion,
  *   - drains background tasks (config-driven) before exiting.
  *
- * Selected by `runPrompt` when `KIMI_MODEL_EXPERIMENT_FLAG` is set.
+ * Selected by `runPrompt` when `KIMI_CODE_EXPERIMENTAL_FLAG` is set.
  */
 
 import {
