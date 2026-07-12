@@ -14,6 +14,7 @@ import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { DEFAULT_AGENT_PROFILES } from '../../profile';
+import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
@@ -316,6 +317,9 @@ export class ToolManager {
               );
               return mcpResultToExecutableOutput(result, qualified, {
                 originalsDir: this.agent.mediaOriginalsDir,
+                telemetry: this.agent.telemetry,
+                // Resolved per call so a config reload applies immediately.
+                maxImageEdgePx: this.agent.imageLimits?.maxEdgePx(),
               });
             },
           };
@@ -554,8 +558,8 @@ export class ToolManager {
    * defer-window pending set. History is the single source of truth, so the
    * ledger survives resume (records replay rebuilds the history), keeps its
    * state across undo (schema messages have `injection` origin and are not
-   * undone), and self-heals after compaction (the rebuild message re-carries
-   * the schemas).
+   * undone), and empties at compaction (schema messages are discarded with
+   * the folded history — the model re-selects what it still needs).
    */
   loadedDynamicToolNames(): ReadonlySet<string> {
     const names = collectLoadedDynamicToolNames(this.agent.context.history);
@@ -579,12 +583,11 @@ export class ToolManager {
   }
 
   /**
-   * Compaction rebuilt the history: from here on the keep-all rebuild message
-   * (which may have trimmed or skipped schemas — budget guard, disconnected
-   * servers) is the sole truth about what is still loaded. A pending entry
-   * surviving past this boundary would report a schema the context no longer
-   * carries as loaded, and re-selecting it would wrongly answer
-   * "Already available" instead of injecting.
+   * Compaction rebuilt the history and discarded every loaded schema with it
+   * — the loaded set is empty from here on. A pending entry surviving past
+   * this boundary would report a schema the context no longer carries as
+   * loaded, and re-selecting it would wrongly answer "Already available"
+   * instead of injecting.
    */
   onContextCompacted(): void {
     this.pendingLoadedDynamicTools.clear();
@@ -700,7 +703,14 @@ export class ToolManager {
           allowBackground,
         }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
-          new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
+          new b.ReadMediaFileTool(
+            kaos,
+            workspace,
+            modelCapabilities,
+            videoUploader,
+            this.agent.telemetry,
+            this.agent.imageLimits,
+          ),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
         // Registered unconditionally: the tool-select flag can flip at runtime
@@ -733,10 +743,15 @@ export class ToolManager {
             {
               allowBackground,
               log: this.agent.log,
+              subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
             },
           ),
         this.agent.subagentHost &&
-          new b.AgentSwarmTool(this.agent.subagentHost, this.agent.swarmMode),
+          new b.AgentSwarmTool(
+            this.agent.subagentHost,
+            this.agent.swarmMode,
+            resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+          ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]

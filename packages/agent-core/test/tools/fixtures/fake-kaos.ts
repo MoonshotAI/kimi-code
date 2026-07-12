@@ -32,9 +32,9 @@ export function createFakeKaos(
   overrides?: Partial<Kaos>,
   envLayers: readonly Record<string, string>[] = [],
 ): Kaos {
-  // Hold cwd in a closure so `chdir` (which `config.update({cwd})` now
-  // routes through) can mutate it and later `getcwd()` calls see the
-  // update — mirroring real-kaos semantics without needing a backing fs.
+  // Hold cwd in a closure so tests that call `chdir` directly can mutate it
+  // and later `getcwd()` calls see the update — mirroring real-kaos semantics
+  // without needing a backing fs.
   let cwd = overrides?.getcwd?.() ?? '/workspace';
   const base: Kaos = {
     name: 'fake',

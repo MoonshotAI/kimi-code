@@ -229,8 +229,7 @@ export interface CronTurnData {
 export type TurnBlock =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; thinking: string }
-  | { kind: 'tool'; tool: ToolCall }
-  | { kind: 'cron'; text: string; cron: CronTurnData };
+  | { kind: 'tool'; tool: ToolCall };
 
 export interface ChatTurn {
   id: string;

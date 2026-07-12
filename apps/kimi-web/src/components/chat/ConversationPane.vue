@@ -1,5 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ConversationPane.vue -->
 <script setup lang="ts">
+import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
@@ -11,9 +12,12 @@ import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import Icon from '../ui/Icon.vue';
+import Spinner from '../ui/Spinner.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
+
+const { t, locale } = useI18n();
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -45,6 +49,9 @@ const props = defineProps<{
   /** Cache-buster that remounts the chat pane when the active session changes. */
   fileReloadKey?: string | number;
   sending?: boolean;
+  /** True while the empty-composer first prompt is being created + submitted.
+   *  Drives the empty-session "starting conversation…" loading state. */
+  starting?: boolean;
   fastMoon?: boolean;
   /** Mobile shell: compact chrome. */
   mobile?: boolean;
@@ -134,6 +141,13 @@ const emit = defineEmits<{
 // Empty-composer workspace picker.
 const wsPickOpen = ref(false);
 const wsPickExpanded = ref(false);
+const contentWrapRef = ref<HTMLElement | null>(null);
+const wsPickMeasureRef = ref<HTMLElement | null>(null);
+const wsPickMenuWidth = ref<string>('');
+const wsPickStyle = computed<Record<string, string> | undefined>(() =>
+  wsPickMenuWidth.value ? { '--ws-pick-menu-width': wsPickMenuWidth.value } : undefined,
+);
+let wsPickMeasureFrame: number | null = null;
 
 const activeWorkspaceLabel = computed(() => {
   const w = props.workspaces?.find((ws) => ws.id === props.activeWorkspaceId);
@@ -161,7 +175,81 @@ function pickWorkspace(id: string): void {
   if (id !== props.activeWorkspaceId) emit('selectWorkspace', id);
 }
 
-const { t } = useI18n();
+function cssPx(value: string): number {
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function canvasFont(style: CSSStyleDeclaration): string {
+  return `${style.fontStyle || 'normal'} ${style.fontWeight || '400'} ${style.fontSize} ${style.fontFamily}`;
+}
+
+function letterSpacingPx(style: CSSStyleDeclaration): number {
+  return style.letterSpacing === 'normal' ? 0 : cssPx(style.letterSpacing);
+}
+
+function measureText(text: string, style: CSSStyleDeclaration): number {
+  if (!text) return 0;
+  const prepared = prepareWithSegments(text, canvasFont(style), { letterSpacing: letterSpacingPx(style) });
+  return measureNaturalWidth(prepared);
+}
+
+function workspacePickerMaxWidth(): number {
+  const containerWidth = contentWrapRef.value?.getBoundingClientRect().width ?? window.innerWidth;
+  return Math.max(0, containerWidth * 0.75);
+}
+
+function updateWorkspacePickerWidth(): void {
+  const probe = wsPickMeasureRef.value;
+  if (!probe) return;
+
+  const itemPath = probe.querySelector<HTMLElement>('.ws-pick-item-path');
+  if (!itemPath) return;
+
+  const itemPathStyle = getComputedStyle(itemPath);
+
+  const measuredPathWidth = (props.workspaces ?? []).reduce(
+    (max, workspace) => Math.max(max, measureText(workspace.shortPath, itemPathStyle)),
+    0,
+  );
+  wsPickMenuWidth.value = measuredPathWidth
+    ? `${Math.ceil(Math.min(measuredPathWidth, workspacePickerMaxWidth()))}px`
+    : '';
+}
+
+function scheduleWorkspacePickerMeasure(): void {
+  if (typeof window === 'undefined') return;
+  void nextTick(() => {
+    if (wsPickMeasureFrame !== null) window.cancelAnimationFrame(wsPickMeasureFrame);
+    wsPickMeasureFrame = window.requestAnimationFrame(() => {
+      wsPickMeasureFrame = null;
+      updateWorkspacePickerWidth();
+    });
+  });
+}
+
+watch(
+  () => [
+    props.activeWorkspaceId,
+    props.workspaceName,
+    props.workspaces?.map((w) => `${w.id}\u0000${w.name}\u0000${w.shortPath}`).join('\u0001') ?? '',
+    hiddenWorkspaceCount.value,
+    locale.value,
+  ],
+  scheduleWorkspacePickerMeasure,
+  { immediate: true },
+);
+
+onMounted(() => {
+  scheduleWorkspacePickerMeasure();
+  window.addEventListener('resize', scheduleWorkspacePickerMeasure);
+  void document.fonts?.ready.then(scheduleWorkspacePickerMeasure);
+});
+
+onUnmounted(() => {
+  if (wsPickMeasureFrame !== null) window.cancelAnimationFrame(wsPickMeasureFrame);
+  window.removeEventListener('resize', scheduleWorkspacePickerMeasure);
+});
 
 // The align toggle was removed with its UI (6e50cb7) — reading layout is
 // always centered now. Drop the old persisted preference so users who once
@@ -490,18 +578,67 @@ function scrollToBottom(smooth = false): void {
   lastScrollTop = el.scrollTop;
 }
 
-function findTopAnchor(
+type ScrollAnchor = { kind: 'turn' | 'tool'; id: string; top: number };
+
+function scrollAnchorTop(container: HTMLElement, node: HTMLElement): number {
+  // Tool calls inside a collapsed group still exist under an inert, clipped
+  // body. Anchor them to the visible group row so hidden content cannot create
+  // a fake layout delta while the stable tool id remains usable.
+  const inert = node.closest<HTMLElement>('[inert]');
+  const positionNode = inert?.closest<HTMLElement>('.tool-group') ?? node;
+  return (
+    positionNode.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop
+  );
+}
+
+function findTopAnchors(
   container: HTMLElement,
   scrollTop: number,
-): { id: string; top: number } | null {
-  const anchors = container.querySelectorAll<HTMLElement>('.turn-anchor');
-  for (const anchor of anchors) {
-    if (anchor.offsetTop >= scrollTop) {
-      const id = anchor.dataset.turnId;
-      if (id) return { id, top: anchor.offsetTop };
-    }
+): ScrollAnchor[] {
+  const anchors = Array.from(
+    container.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id], [data-scroll-anchor-id]'),
+  ).map((node) => ({ node, top: scrollAnchorTop(container, node) }));
+  const firstAfterTop = anchors.findIndex((anchor) => anchor.top >= scrollTop);
+  const start = firstAfterTop < 0 ? Math.max(0, anchors.length - 1) : firstAfterTop;
+  // The first id can be rebuilt when a page boundary splits an assistant turn;
+  // a nearby turn or tool call retains a stable fallback.
+  return anchors.slice(start, start + 2).flatMap((anchor) => {
+    const toolId = anchor.node.dataset.scrollAnchorId;
+    const id = toolId ?? anchor.node.dataset.turnId;
+    return id ? [{ kind: toolId ? 'tool' : 'turn', id, top: anchor.top }] : [];
+  });
+}
+
+type HistoryScrollSnapshot = {
+  anchors: ScrollAnchor[];
+  oldHeight: number;
+};
+
+const pendingHistoryRestoreBySession = new Map<string, HistoryScrollSnapshot>();
+
+function historyScrollDelta(container: HTMLElement, snapshot: HistoryScrollSnapshot): number {
+  for (const anchor of snapshot.anchors) {
+    const attr = anchor.kind === 'tool' ? 'data-scroll-anchor-id' : 'data-turn-id';
+    const newAnchor = container.querySelector<HTMLElement>(
+      `[${attr}="${attrEscape(anchor.id)}"]`,
+    );
+    if (newAnchor) return scrollAnchorTop(container, newAnchor) - anchor.top;
   }
-  return null;
+  // If the page boundary split an assistant/tool turn, messagesToTurns may
+  // rebuild that turn with a new id. Fall back to the overall height delta.
+  return container.scrollHeight - snapshot.oldHeight;
+}
+
+function restoreHistoryScroll(
+  container: HTMLElement,
+  snapshot: HistoryScrollSnapshot,
+  currentTop = container.scrollTop,
+): number {
+  container.scrollTop = currentTop + historyScrollDelta(container, snapshot);
+  lastScrollTop = container.scrollTop;
+  return container.scrollTop;
 }
 
 async function handleLoadOlderMessages(): Promise<void> {
@@ -509,6 +646,7 @@ async function handleLoadOlderMessages(): Promise<void> {
     !props.sessionId ||
     !props.loadOlderMessages ||
     props.loadingMore ||
+    historyLoadInProgress.value ||
     !props.hasMoreMessages
   ) {
     return;
@@ -516,41 +654,43 @@ async function handleLoadOlderMessages(): Promise<void> {
   const requestedSessionId = props.sessionId;
   const el = panesRef.value;
   const oldTop = el?.scrollTop ?? 0;
-  const oldHeight = el?.scrollHeight ?? 0;
-  const oldAnchor = el ? findTopAnchor(el, oldTop) : null;
+  const snapshot: HistoryScrollSnapshot = {
+    anchors: el ? findTopAnchors(el, oldTop) : [],
+    oldHeight: el?.scrollHeight ?? 0,
+  };
 
-  historyLoadInProgress.value = true;
+  setHistoryLoadInProgress(requestedSessionId, true);
+  cancelScheduledFollow();
   try {
+    // Flush the class that disables native scroll anchoring before Vue prepends
+    // history. The explicit delta restoration below owns this one mutation;
+    // native anchoring resumes afterwards for late Markdown/media layout shifts.
+    await nextTick();
     await props.loadOlderMessages(requestedSessionId);
     await nextTick();
-  } finally {
-    historyLoadInProgress.value = false;
-  }
 
-  // If the user switched sessions while the request was in flight, do not
-  // restore scroll position on the newly selected session's pane.
-  if (props.sessionId !== requestedSessionId) return;
-
-  const el2 = panesRef.value;
-  if (!el2) return;
-
-  // Restore scroll position using a stable anchor near the old viewport top.
-  // This isolates height inserted above the anchor and ignores any new bottom
-  // content (e.g. streaming assistant turns) that arrived during the request.
-  let delta = 0;
-  if (oldAnchor) {
-    const newAnchor = el2.querySelector<HTMLElement>(
-      `.turn-anchor[data-turn-id="${attrEscape(oldAnchor.id)}"]`,
-    );
-    if (newAnchor) {
-      delta = newAnchor.offsetTop - oldAnchor.top;
+    // If the user switched sessions while the request was in flight, do not
+    // restore the newly selected pane. Save the original anchor so the deferred
+    // per-session scroll state can be adjusted when this session mounts again.
+    if (props.sessionId !== requestedSessionId) {
+      pendingHistoryRestoreBySession.set(requestedSessionId, snapshot);
+      return;
     }
+
+    const el2 = panesRef.value;
+    if (!el2) return;
+
+    // Restore scroll position using a stable anchor near the old viewport top.
+    // This isolates height inserted above the anchor and ignores any new bottom
+    // content (e.g. streaming assistant turns) that arrived during the request.
+    // Apply the delta to the CURRENT scrollTop, not the pre-fetch oldTop: the
+    // user may have kept scrolling (e.g. trackpad momentum) while the request
+    // was in flight, and snapping back to oldTop would yank the viewport down.
+    restoreHistoryScroll(el2, snapshot);
+    pendingHistoryRestoreBySession.delete(requestedSessionId);
+  } finally {
+    setHistoryLoadInProgress(requestedSessionId, false);
   }
-  // If the page boundary split an assistant/tool turn, messagesToTurns may
-  // rebuild that turn with a new id. Fall back to the overall height delta so
-  // the viewport does not jump into the inserted history.
-  if (delta === 0) delta = el2.scrollHeight - oldHeight;
-  el2.scrollTop = oldTop + delta;
 }
 
 function attrEscape(value: string): string {
@@ -563,6 +703,7 @@ function scrollToTurn(turnId: string): void {
   if (!el) return;
   const target = el.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
   if (!target) return;
+  cancelActiveScrollWrites();
   following.value = false;
   showPill.value = distanceFromBottom() > BOTTOM_THRESHOLD;
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -740,13 +881,20 @@ watch(
     if (oldKey && el) {
       scrollStateBySession.set(String(oldKey), { top: el.scrollTop, following: following.value });
     }
+    cancelActiveScrollWrites();
     await nextTick();
     const el2 = panesRef.value;
     const saved = newKey ? scrollStateBySession.get(String(newKey)) : undefined;
     if (saved && el2) {
+      const pendingRestore = pendingHistoryRestoreBySession.get(String(newKey));
+      const top = pendingRestore
+        ? restoreHistoryScroll(el2, pendingRestore, saved.top)
+        : saved.top;
+      if (pendingRestore) pendingHistoryRestoreBySession.delete(String(newKey));
       following.value = saved.following;
-      el2.scrollTop = saved.top;
-      lastScrollTop = saved.top;
+      el2.scrollTop = top;
+      lastScrollTop = el2.scrollTop;
+      showPill.value = !saved.following && distanceFromBottom() > 1;
       if (saved.following) {
         scheduleStableFollow();
       }
@@ -848,24 +996,128 @@ let observedDock: HTMLElement | null = null;
 let lastObservedScrollHeight = 0;
 let lastObservedClientHeight = 0;
 let scrollRaf = 0;
-let pillEligible = false;
-const historyLoadInProgress = ref(false);
+const historyLoadingSessions = ref<ReadonlySet<string>>(new Set());
+const historyLoadInProgress = computed(
+  () => !!props.sessionId && historyLoadingSessions.value.has(props.sessionId),
+);
 
-function scheduleFollow(allowPill: boolean): void {
-  // Prepending older history changes turns.length but is not new bottom content;
-  // suppress the "new messages" pill until the scroll position is restored.
+function setHistoryLoadInProgress(sessionId: string, inProgress: boolean): void {
+  const next = new Set(historyLoadingSessions.value);
+  if (inProgress) next.add(sessionId);
+  else next.delete(sessionId);
+  historyLoadingSessions.value = next;
+}
+
+function scheduleFollow(): void {
   if (historyLoadInProgress.value) return;
-  pillEligible = pillEligible || allowPill;
   if (scrollRaf) return;
-  const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
-  scrollRaf = schedule(() => {
+  scrollRaf = raf(() => {
     scrollRaf = 0;
-    const wantPill = pillEligible;
-    pillEligible = false;
+    if (historyLoadInProgress.value) return;
     if (isPinned()) return;
     if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
-    else if (wantPill) showPill.value = true;
-  }) as unknown as number;
+  });
+}
+
+function cancelScheduledFollow(): void {
+  stableFollowToken++;
+  if (stableFollowRaf) {
+    cancelRaf(stableFollowRaf);
+    stableFollowRaf = 0;
+  }
+  if (scrollRaf) {
+    cancelRaf(scrollRaf);
+    scrollRaf = 0;
+  }
+}
+
+function cancelActiveScrollWrites(): void {
+  const el = panesRef.value;
+
+  userActionFollowUntil = 0;
+  cancelScheduledFollow();
+  pinUntil = 0;
+  pinEl = null;
+
+  if (el) {
+    const top = el.scrollTop;
+    if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'auto' });
+    else el.scrollTop = top;
+  }
+  smoothScrollUntil = 0;
+  lastSmoothScroll = Number.NEGATIVE_INFINITY;
+  if (el) lastScrollTop = el.scrollTop;
+}
+
+// Wheel, touch, and scrollbar input arrive before the browser dispatches
+// `scroll`. Stop queued writers before they can overwrite the user's movement.
+function stopFollowingForUserIntent(): void {
+  const el = panesRef.value;
+  if (!el || (el.scrollHeight - el.clientHeight <= 1 && !props.hasMoreMessages)) return;
+
+  following.value = false;
+  cancelActiveScrollWrites();
+  if (el.scrollHeight - el.clientHeight > 1) showPill.value = true;
+}
+
+function nestedScrollerCanMoveUp(event: Event): boolean {
+  const pane = panesRef.value;
+  if (!pane) return false;
+  for (const target of event.composedPath()) {
+    if (target === pane) return false;
+    if (
+      target instanceof HTMLElement &&
+      target.scrollHeight > target.clientHeight + 1 &&
+      target.scrollTop > 1
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function onPanesWheel(event: WheelEvent): void {
+  if (
+    event.defaultPrevented ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.deltaY >= 0 ||
+    nestedScrollerCanMoveUp(event)
+  ) {
+    return;
+  }
+  stopFollowingForUserIntent();
+}
+
+function onPanesPointerDown(event: PointerEvent): void {
+  const el = panesRef.value;
+  if (!el || event.defaultPrevented || event.button !== 0 || event.pointerType === 'touch') return;
+  const rect = el.getBoundingClientRect();
+  const gutterWidth = el.offsetWidth - el.clientWidth;
+  const hitWidth = gutterWidth > 0 ? gutterWidth : 12;
+  if (event.target === el && event.clientX >= rect.right - hitWidth) {
+    stopFollowingForUserIntent();
+  }
+}
+
+let lastTouchY: number | null = null;
+
+function onPanesTouchStart(event: TouchEvent): void {
+  lastTouchY = event.touches.length === 1 ? event.touches[0]!.clientY : null;
+}
+
+function onPanesTouchMove(event: TouchEvent): void {
+  const y = event.touches.length === 1 ? event.touches[0]!.clientY : null;
+  // The finger moving down means the scroll container is moving up.
+  if (
+    y !== null &&
+    lastTouchY !== null &&
+    y > lastTouchY + 2 &&
+    !nestedScrollerCanMoveUp(event)
+  ) {
+    stopFollowingForUserIntent();
+  }
+  lastTouchY = y;
 }
 
 function ensureContentObserved(): void {
@@ -907,7 +1159,7 @@ function rebindScrollObservers(): void {
 
 function onContentMutated(): void {
   ensureContentObserved();
-  scheduleFollow(true);
+  scheduleFollow();
 }
 
 function onVisibilityChange(): void {
@@ -964,7 +1216,7 @@ onMounted(() => {
         // viewport (composer dock growing and hiding the last message). While a tool
         // row/group is being toggled (the pinned window) suppress follow entirely,
         // so the row opens downward / collapses upward without moving the viewport.
-        if (!isPinned() && (grew || viewportShrank)) scheduleFollow(false);
+        if (!isPinned() && (grew || viewportShrank)) scheduleFollow();
       });
     }
     rebindScrollObservers();
@@ -980,7 +1232,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (contentObserver) contentObserver.disconnect();
   if (resizeObserver) resizeObserver.disconnect();
-  if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf);
+  if (scrollRaf) cancelRaf(scrollRaf);
   if (stableFollowRaf) cancelRaf(stableFollowRaf);
   if (pinRaf) cancelRaf(pinRaf);
   if (abortToastTimer !== null) clearTimeout(abortToastTimer);
@@ -1043,17 +1295,49 @@ defineExpose({ loadComposerForEdit, focusComposer });
       <div
         :ref="bindChatPane"
         class="panes chat-scroll"
+        :class="{
+          'is-following': following,
+          'history-prepending': historyLoadInProgress,
+        }"
         @scroll.passive="onPanesScroll"
+        @wheel.passive="onPanesWheel"
+        @pointerdown.passive="onPanesPointerDown"
+        @touchstart.passive="onPanesTouchStart"
+        @touchmove.passive="onPanesTouchMove"
       >
-        <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
+        <div ref="contentWrapRef" class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
           <template v-if="turns.length === 0 && !sessionLoading">
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
             <div class="empty-hint">
-              <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
-              <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
-              <!-- Workspace picker: choose where this new conversation starts. -->
-              <div v-if="hasWorkspaces" class="ws-pick">
+              <span class="empty-hint-title" :class="{ 'is-starting': starting }">
+                <Spinner v-if="starting" size="sm" />
+                <span>{{ starting ? t('conversation.starting') : t('composer.emptyConversationTitle') }}</span>
+              </span>
+              <span v-if="!starting" class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
+              <!-- Workspace picker: choose where this new conversation starts.
+                   Hidden while starting — a workspace is already committed. -->
+              <div v-if="hasWorkspaces && !starting" class="ws-pick" :style="wsPickStyle">
+                <div ref="wsPickMeasureRef" class="ws-pick-measure" aria-hidden="true">
+                  <button type="button" class="ws-pick-btn" tabindex="-1">
+                    <Icon name="folder" size="sm" />
+                    <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
+                    <Icon class="ws-pick-chev" name="chevron-down" size="sm" />
+                  </button>
+                  <div class="ws-pick-menu">
+                    <button type="button" class="ws-pick-item" tabindex="-1">
+                      <span class="ws-pick-item-name" />
+                      <span class="ws-pick-item-path" />
+                    </button>
+                    <button type="button" class="ws-pick-item ws-pick-more" tabindex="-1">
+                      <span>{{ t('conversation.moreWorkspaces', { count: hiddenWorkspaceCount }) }}</span>
+                    </button>
+                    <button type="button" class="ws-pick-action" tabindex="-1">
+                      <Icon name="plus" size="sm" />
+                      <span>{{ t('conversation.addWorkspace') }}</span>
+                    </button>
+                  </div>
+                </div>
                 <Tooltip :text="t('conversation.switchWorkspace')">
                   <button type="button" class="ws-pick-btn" @click.stop="wsPickOpen = !wsPickOpen">
                     <Icon name="folder" size="sm" />
@@ -1094,7 +1378,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
                 </div>
               </div>
               <button
-                v-else
+                v-else-if="!starting"
                 type="button"
                 class="empty-add-workspace"
                 @click="emit('addWorkspace')"
@@ -1116,10 +1400,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :plan-mode="planMode"
               :swarm-mode="swarmMode"
               :goal-mode="goalMode"
+              :goal="goal"
               :activation-badges="activationBadges"
               :models="models"
               :starred-ids="starredIds"
               :skills="skills"
+              :starting="starting"
               hide-context
               @submit="handleComposerSubmit"
               @steer="emit('steer', $event)"
@@ -1181,6 +1467,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :style="chatDockStyle"
         :session-id="sessionId"
         :running="running"
+        :starting="starting"
         :queued="queued"
         :search-files="searchFiles"
         :upload-image="uploadImage"
@@ -1277,8 +1564,15 @@ defineExpose({ loadComposerForEdit, focusComposer });
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overflow-anchor: none;
+  /* Keep the visible message stable while the user browses history. Bottom
+     following and history prepend use explicit scroll writes, so they opt out. */
+  overflow-anchor: auto;
   scrollbar-gutter: stable;
+}
+
+.panes.is-following,
+.panes.history-prepending {
+  overflow-anchor: none;
 }
 
 /* Chat tab layout: the message list scrolls, while the dock stays as the
@@ -1337,11 +1631,19 @@ defineExpose({ loadComposerForEdit, focusComposer });
   text-align: center;
   padding: 0 16px 16px;
   color: var(--color-text);
-  font-family: var(--sans);
+  font-family: var(--font-ui);
 }
 .empty-hint-title {
   font-size: calc(var(--ui-font-size) + 16px);
-  font-weight: 500;
+  font-optical-sizing: auto;
+  font-weight: 600;
+}
+.empty-hint-title.is-starting {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--dim);
+  font-weight: 400;
 }
 .empty-hint-text {
   display: inline-block;
@@ -1382,13 +1684,31 @@ defineExpose({ loadComposerForEdit, focusComposer });
 /* Empty-composer workspace picker */
 .ws-pick {
   position: relative;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
+}
+.ws-pick-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  width: max-content;
+  height: 0;
+  overflow: hidden;
+}
+.ws-pick-measure .ws-pick-menu {
+  position: static;
+  transform: none;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
 }
 .ws-pick-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: 320px;
+  width: max-content;
+  max-width: min(100%, calc(100vw - var(--space-8)));
   padding: 5px 10px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1399,7 +1719,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   cursor: pointer;
 }
 .ws-pick-btn:hover { border-color: var(--color-accent-bd); color: var(--color-text); }
-.ws-pick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-pick-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
 .ws-pick-chev.open { transform: rotate(180deg); }
 .ws-pick-backdrop {
@@ -1413,8 +1733,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
   transform: translateX(-50%);
   top: calc(100% + 6px);
   z-index: var(--z-dropdown);
-  min-width: 220px;
-  max-width: min(86vw, 340px);
+  width: var(--ws-pick-menu-width, max-content);
+  min-width: var(--ws-pick-menu-width, max-content);
+  max-width: calc(100vw - var(--space-8));
   max-height: 50vh;
   overflow-y: auto;
   background: var(--color-surface-raised);
@@ -1435,16 +1756,23 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 6px;
   padding: 6px 10px;
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
 }
 .ws-pick-item:hover { background: var(--panel2); }
 .ws-pick-item.on { background: var(--color-accent-soft); }
-.ws-pick-item-name { font-size: var(--ui-font-size-sm); color: var(--color-text); }
-.ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); font-weight: 500; }
-.ws-pick-item-path { font-size: var(--text-base); color: var(--muted); }
+.ws-pick-item-name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+.ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); }
+.ws-pick-item-path { font-size: var(--text-xs); font-weight: 475; color: var(--muted); }
 .ws-pick-item.ws-pick-more {
   flex-direction: row;
-  justify-content: center;
+  align-items: center;
+  justify-content: flex-start;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   color: var(--dim);
 }
 .ws-pick-item.ws-pick-more:hover { color: var(--color-text); }
@@ -1464,8 +1792,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 6px;
   padding: 7px 10px;
   cursor: pointer;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   color: var(--dim);
 }
 .ws-pick-action:hover { background: var(--panel2); color: var(--color-text); }
@@ -1500,7 +1829,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  z-index: var(--z-sticky);
+  /* Positioned after the message flow, so base z-index is enough to float above
+     content while staying below composer dropdowns. */
+  z-index: var(--z-base);
 }
 .newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {

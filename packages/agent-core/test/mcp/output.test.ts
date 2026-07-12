@@ -8,6 +8,7 @@ import { describe, expect, test } from 'vitest';
 
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '../../src/mcp/output';
 import type { MCPContentBlock, MCPToolResult } from '../../src/mcp/types';
+import type { TelemetryClient } from '../../src/telemetry';
 import { sniffImageDimensions } from '../../src/tools/support/file-type';
 
 const MCP_OUTPUT_TRUNCATED_TEXT =
@@ -179,6 +180,22 @@ describe('convertMCPContentBlock', () => {
     });
   });
 
+  test('replaces resource_link with an unsupported image mimeType with a notice', () => {
+    // A signed/extensionless URL gives the extension gate nothing to work
+    // with; the declared MIME is the only signal — an honestly-declared
+    // unsupported format must not become an image_url.
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'photo',
+      uri: 'https://cdn.example.com/v2/image?id=123',
+      mimeType: 'image/avif',
+    });
+    const part = convertMCPContentBlock(block);
+    if (part?.type !== 'text') throw new Error('expected a text notice');
+    expect(part.text).toContain('image/avif');
+    expect(part.text).toContain('https://cdn.example.com/v2/image?id=123');
+  });
+
   test('returns null for resource_link with unsupported mimeType', () => {
     const block = assertValidMcpBlock({
       type: 'resource_link',
@@ -209,6 +226,27 @@ describe('mcpResultToExecutableOutput', () => {
   function result(content: MCPContentBlock[], isError = false): MCPToolResult {
     return { content, isError };
   }
+
+  test('emits image_compress telemetry tagged mcp_tool_result', async () => {
+    const events: { event: string; props: Record<string, unknown> }[] = [];
+    const telemetry: TelemetryClient = {
+      track: (event, props) => events.push({ event, props: props ?? {} }),
+    };
+    const big = Buffer.from(
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+
+    await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: big, mimeType: 'image/png' }]),
+      'mcp__s__shot',
+      { telemetry },
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.event).toBe('image_compress');
+    expect(events[0]!.props['source']).toBe('mcp_tool_result');
+    expect(events[0]!.props['outcome']).toBe('compressed');
+  });
 
   test('collapses a single text part into a plain string', async () => {
     const out = await mcpResultToExecutableOutput(
@@ -256,6 +294,124 @@ describe('mcpResultToExecutableOutput', () => {
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
       { type: 'text', text: '</mcp_tool_result>' },
     ]);
+  });
+
+  test('replaces an image the provider cannot accept with a text notice (media-only)', async () => {
+    // An image search tool returning AVIF: forwarding the image_url would
+    // make every later request in the session fail. The media-only wrap is
+    // kept, with a notice standing in for the dropped image.
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: 'QUJD', mimeType: 'image/avif' }]),
+      'mcp__search__image',
+    );
+    expect(out.isError).toBe(false);
+    const parts = out.output as ContentPart[];
+    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__search__image">' });
+    expect(parts.some((p) => p.type === 'image_url')).toBe(false);
+    const notice = parts.find(
+      (p) => p.type === 'text' && p.text.includes('image/avif'),
+    );
+    expect(notice).toBeDefined();
+    expect(parts.at(-1)).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+  });
+
+  test('drops an unsupported image but keeps the accompanying text', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'text', text: 'found an image' },
+        { type: 'image', data: 'QUJD', mimeType: 'image/heic' },
+      ]),
+      'mcp__search__image',
+    );
+    const parts = out.output as ContentPart[];
+    expect(parts.some((p) => p.type === 'image_url')).toBe(false);
+    expect(parts[0]).toEqual({ type: 'text', text: 'found an image' });
+    expect(parts.some((p) => p.type === 'text' && p.text.includes('image/heic'))).toBe(true);
+  });
+
+  test('gates a mislabeled image on its real bytes (image search tool)', async () => {
+    // An image search tool returning AVIF bytes labeled image/png: the
+    // bytes are authoritative — the image must not reach the session
+    // history, and the notice names the real format.
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: avif.toString('base64'), mimeType: 'image/png' }]),
+      'mcp__search__image',
+    );
+    const parts = out.output as ContentPart[];
+    expect(parts.some((p) => p.type === 'image_url')).toBe(false);
+    expect(parts.some((p) => p.type === 'text' && p.text.includes('image/avif'))).toBe(true);
+  });
+
+  test('forwards the image/jpg alias as canonical image/jpeg', async () => {
+    // Strict provider whitelists reject the raw `image/jpg` alias — the part
+    // must land in the session with the canonical MIME.
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'image', data: 'QUJD', mimeType: 'image/jpg' }]),
+      'mcp__s__t',
+    );
+    const parts = out.output as ContentPart[];
+    const image = parts.find((p) => p.type === 'image_url');
+    expect(image).toEqual({
+      type: 'image_url',
+      imageUrl: { url: 'data:image/jpeg;base64,QUJD' },
+    });
+  });
+
+  test('drops remote images by declared MIME and by URL extension, passes accepted links through', async () => {
+    // An MCP resource_link carries no bytes, so the only format signals are
+    // the declared MIME and the URL extension: an honestly-declared AVIF
+    // becomes a notice even with an extensionless (signed) URL — the
+    // extension gate alone cannot see it; a server that declares PNG but
+    // links an `.avif` URL is caught by the extension; an accepted link
+    // passes through.
+    const out = await mcpResultToExecutableOutput(
+      result([
+        assertValidMcpBlock({
+          type: 'resource_link',
+          name: 'photo',
+          uri: 'https://cdn.example.com/v2/image?id=123',
+          mimeType: 'image/avif',
+        }),
+        assertValidMcpBlock({
+          type: 'resource_link',
+          name: 'pic.avif',
+          uri: 'https://example.com/pic.avif',
+          mimeType: 'image/png',
+        }),
+        assertValidMcpBlock({
+          type: 'resource_link',
+          name: 'ok.png',
+          uri: 'https://example.com/ok.png?size=full#frame',
+          mimeType: 'image/png',
+        }),
+      ]),
+      'mcp__s__t',
+    );
+    const parts = out.output as ContentPart[];
+    expect(parts).toContainEqual({
+      type: 'image_url',
+      imageUrl: { url: 'https://example.com/ok.png?size=full#frame' },
+    });
+    // Neither AVIF link survives as an image_url.
+    expect(
+      parts.some(
+        (p) =>
+          p.type === 'image_url' &&
+          (p.imageUrl.url.includes('cdn.example.com') || p.imageUrl.url.includes('pic.avif')),
+      ),
+    ).toBe(false);
+    const notices = parts
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { text: string }).text)
+      .join('\n');
+    expect(notices).toContain('image/avif');
+    // Both notices keep their URL so the model can fetch and convert.
+    expect(notices).toContain('https://cdn.example.com/v2/image?id=123');
+    expect(notices).toContain('https://example.com/pic.avif');
   });
 
   test('does NOT wrap when a non-empty text part accompanies the media', async () => {
@@ -337,7 +493,7 @@ describe('mcpResultToExecutableOutput', () => {
 
   test('downsamples an oversized real image instead of leaving it full-size', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(
@@ -353,7 +509,7 @@ describe('mcpResultToExecutableOutput', () => {
     );
     expect(match).not.toBeNull();
     const dims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
-    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(3000);
     // The image was compressed and kept, not dropped to a notice.
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('image_url dropped');
@@ -361,7 +517,7 @@ describe('mcpResultToExecutableOutput', () => {
 
   test('annotates a downsampled image with a caption note and a readable original', async () => {
     const bigBytes = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );
 
     const out = await mcpResultToExecutableOutput(
@@ -372,7 +528,7 @@ describe('mcpResultToExecutableOutput', () => {
     // The caption rides the `note` side channel (model-only), keeping its
     // `<system>` wrapping; the output itself carries only the media.
     expect(out.note).toContain('Image compressed');
-    expect(out.note).toContain('2600x2600');
+    expect(out.note).toContain('3600x1800');
     const parts = out.output as ContentPart[];
     expect(parts.some((p) => p.type === 'text' && p.text.includes('Image compressed'))).toBe(
       false,
@@ -407,7 +563,7 @@ describe('mcpResultToExecutableOutput', () => {
   test('persists originals into the provided session originals dir', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const bigBytes = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );
 
     const out = await mcpResultToExecutableOutput(
@@ -432,7 +588,7 @@ describe('mcpResultToExecutableOutput', () => {
     // to prevent — and orphaning the persisted original.
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(
@@ -491,7 +647,7 @@ describe('mcpResultToExecutableOutput', () => {
       'sent 50x50 image/jpeg (100 KB). Fine detail may be lost. ' +
       'The uncompressed original was not preserved.</system>';
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(
@@ -502,9 +658,9 @@ describe('mcpResultToExecutableOutput', () => {
       'mcp__s__t',
     );
 
-    // The real caption (2600x2600) rides the note; the quoted one (100x100)
+    // The real caption (3600x1800) rides the note; the quoted one (100x100)
     // is tool output and stays where the tool put it.
-    expect(out.note).toContain('2600x2600');
+    expect(out.note).toContain('3600x1800');
     expect(out.note).not.toContain('100x100');
     const parts = out.output as ContentPart[];
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
@@ -517,7 +673,7 @@ describe('mcpResultToExecutableOutput', () => {
     // into an unclosed <system> fragment.
     const dir = await mkdtemp(join(tmpdir(), 'mcp-originals-'));
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const out = await mcpResultToExecutableOutput(

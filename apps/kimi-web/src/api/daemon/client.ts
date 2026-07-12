@@ -1355,11 +1355,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
       seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void {
         // Rebuild the projector's mid-turn state from the snapshot. The
-        // resulting AppEvents (running status + partially-streamed assistant
-        // message) flow through the SAME onEvent path as live events, so the
-        // rendering layer needs no special handling. When there is no
-        // in-flight turn we only reset, so stale turn state can't leak into
-        // the freshly-loaded message list.
+        // resulting AppEvent (the partially-streamed assistant message) flows
+        // through the SAME onEvent path as live events, so the rendering layer
+        // needs no special handling; session status comes from the snapshot's
+        // authoritative session record. When there is no in-flight turn we
+        // only reset, so stale turn state can't leak into the freshly-loaded
+        // message list.
         if (snapshot.inFlightTurn === null) {
           projector.reset(sessionId);
           return;

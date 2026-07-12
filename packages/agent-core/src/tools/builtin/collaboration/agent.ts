@@ -24,8 +24,8 @@ import { isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type { ResolvedAgentProfile } from '../../../profile';
 import {
-  DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION,
   DEFAULT_SUBAGENT_TIMEOUT_MS,
+  formatSubagentTimeoutDescription,
   type SessionSubagentHost,
   type SubagentHandle,
 } from '../../../session/subagent-host';
@@ -115,10 +115,12 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     options?: {
       log?: Logger;
       allowBackground?: boolean | undefined;
+      subagentTimeoutMs?: number | undefined;
     },
   ) {
     const log = options?.log;
     this.allowBackground = options?.allowBackground ?? true;
+    this.subagentTimeoutMs = options?.subagentTimeoutMs;
     const typeLines = buildSubagentDescriptions(subagents);
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${
       this.allowBackground ? AGENT_BACKGROUND_DESCRIPTION : AGENT_BACKGROUND_DISABLED_DESCRIPTION
@@ -131,6 +133,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
 
   private readonly log?: Logger;
   private readonly allowBackground: boolean;
+  private readonly subagentTimeoutMs?: number;
 
   async resolveExecution(args: AgentToolInput): Promise<ToolExecution> {
     let profileName = args.subagent_type?.length ? args.subagent_type : 'coder';
@@ -228,7 +231,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           new AgentBackgroundTask(handle, args.description, this.subagentHost, controller),
           {
             detached: runInBackground,
-            timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+            timeoutMs: this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
             signal: runInBackground ? undefined : signal,
           },
         );
@@ -293,7 +296,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     const timedOut = info?.status === 'timed_out';
     const message =
       timedOut
-        ? `Agent timed out after ${DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION}.`
+        ? `Agent timed out after ${formatSubagentTimeoutDescription(this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS)}.`
         : info?.stopReason === 'Interrupted by user'
           ? USER_INTERRUPTED_SUBAGENT_MESSAGE
           : info?.stopReason !== undefined

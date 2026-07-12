@@ -295,6 +295,125 @@ describe('Session lifecycle hooks', () => {
     await session.close();
   });
 
+  it('handlePrintMainTurnCompleted returns finish by default (exit mode)', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-mode-exit',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    await session.createMain();
+
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('finish');
+    await session.close();
+  });
+
+  it('handlePrintMainTurnCompleted drains when printBackgroundMode is drain without keepAliveOnExit', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-mode-drain',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { printBackgroundMode: 'drain' },
+    });
+    const agent = await session.createMain();
+    const { proc } = pendingProcess(0);
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'drain me'),
+    );
+
+    let settled = false;
+    const promise = session.handlePrintMainTurnCompleted().then((action) => {
+      settled = true;
+      return action;
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    await proc.kill('SIGTERM');
+    await expect(promise).resolves.toBe('finish');
+    expect(agent.background.getTask(taskId)?.status).toBe('completed');
+    await session.close();
+  });
+
+  it('explicit printBackgroundMode exit overrides keepAliveOnExit (no drain)', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-mode-exit-override',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: true, printBackgroundMode: 'exit' },
+    });
+    const agent = await session.createMain();
+    const { proc, killSpy } = pendingProcess();
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'no drain'),
+    );
+
+    await session.waitForBackgroundTasksOnPrint();
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('finish');
+
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(agent.background.getTask(taskId)?.status).toBe('running');
+    await proc.kill('SIGTERM').catch(() => undefined);
+    await session.close();
+  });
+
+  it('handlePrintMainTurnCompleted returns continue in steer mode while a task is pending, then finish once quiescent', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-mode-steer',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { printBackgroundMode: 'steer' },
+    });
+    const agent = await session.createMain();
+    const { proc } = pendingProcess();
+    agent.background.registerTask(new ProcessBackgroundTask(proc, 'sleep 60', 'steer me'));
+
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('continue');
+
+    await proc.kill('SIGTERM');
+    // Let the background manager observe the terminal status.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('finish');
+    await session.close();
+  });
+
+  it('handlePrintMainTurnCompleted finishes in steer mode once printMaxTurns is reached', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-mode-steer-cap',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { printBackgroundMode: 'steer', printMaxTurns: 1 },
+    });
+    const agent = await session.createMain();
+    const { proc } = pendingProcess();
+    agent.background.registerTask(new ProcessBackgroundTask(proc, 'sleep 60', 'cap me'));
+
+    // First call: printSteerTurns becomes 1 (not over cap), task pending ⇒ continue.
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('continue');
+    // Second call: printSteerTurns becomes 2 (> printMaxTurns=1) ⇒ finish even though
+    // the task is still running.
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('finish');
+
+    await proc.kill('SIGTERM').catch(() => undefined);
+    await session.close();
+  });
+
   it('waitForBackgroundTasksOnPrint waits for tasks spawned after the first enumeration', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({

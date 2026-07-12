@@ -130,9 +130,36 @@ export const BackgroundConfigSchema = z.object({
   keepAliveOnExit: z.boolean().optional(),
   killGracePeriodMs: z.number().int().min(0).optional(),
   printWaitCeilingS: z.number().int().min(1).optional(),
+  printBackgroundMode: z.enum(['exit', 'drain', 'steer']).optional(),
+  printMaxTurns: z.number().int().min(1).optional(),
 });
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
+
+export const SubagentConfigSchema = z.object({
+  timeoutMs: z.number().int().min(1).optional(),
+});
+
+export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
+
+export const ImageConfigSchema = z.object({
+  /**
+   * Longest-edge ceiling (px) applied when compressing images for the model.
+   * Overrides the built-in default; the KIMI_IMAGE_MAX_EDGE_PX env var wins
+   * over this value.
+   */
+  maxEdgePx: z.number().int().min(1).optional(),
+  /**
+   * Raw-byte budget for images the model reads for itself (ReadMediaFile's
+   * default path). Overrides the built-in default; the
+   * KIMI_IMAGE_READ_BYTE_BUDGET env var wins over this value. Explicit
+   * region / full_resolution reads use the provider-scale per-image limit
+   * instead.
+   */
+  readByteBudget: z.number().int().min(1).optional(),
+});
+
+export type ImageConfig = z.infer<typeof ImageConfigSchema>;
 
 export const ModelCatalogConfigSchema = z.object({
   /** Interval (ms) between automatic provider-model refreshes. `0` disables. */
@@ -256,6 +283,8 @@ export const KimiConfigSchema = z.object({
   extraSkillDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
+  subagent: SubagentConfigSchema.optional(),
+  image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
@@ -270,6 +299,8 @@ const ThinkingConfigPatchSchema = ThinkingConfigSchema.partial();
 const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
+const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
+const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
@@ -296,6 +327,8 @@ export const KimiConfigPatchSchema = z
     extraSkillDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
+    subagent: SubagentConfigPatchSchema.optional(),
+    image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
     telemetry: z.boolean().optional(),

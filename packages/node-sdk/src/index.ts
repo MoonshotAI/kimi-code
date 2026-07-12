@@ -75,18 +75,25 @@ export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
 // pre-compression bytes readable (ReadMediaFile + region) for detail.
 export {
   buildImageCompressionCaption,
+  buildUnsupportedImageNotice,
   compressImageForModel,
   compressBase64ForModel,
+  gateImageFormatParts,
+  isModelAcceptedImageMime,
+  normalizeImageMime,
+  parseImageDataUrl,
   persistOriginalImage,
   sessionMediaOriginalsDir,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
 } from '@moonshot-ai/agent-core';
+export { ImageLimits } from '@moonshot-ai/agent-core';
 export type {
   CompressImageOptions,
   CompressImageResult,
   CompressBase64Result,
   ImageCompressionCaptionInput,
+  ImageCompressionTelemetry,
 } from '@moonshot-ai/agent-core';
 
 // Experimental feature flags — types only. Resolved values come from

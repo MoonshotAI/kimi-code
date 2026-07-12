@@ -30,7 +30,7 @@ import {
 } from '../lib/storage';
 import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
-import { useNotification } from './client/useNotification';
+import { useNotification, shouldNotifyCompletion } from './client/useNotification';
 import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
@@ -860,6 +860,11 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
   if (appEvent.type === 'questionRequested') {
     onQuestionRequested(appEvent.sessionId, appEvent.question);
   }
+
+  // The agent needs approval for a tool call — surface it so the user comes back.
+  if (appEvent.type === 'approvalRequested') {
+    onApprovalRequested(appEvent.sessionId, appEvent.approval);
+  }
 }
 
 const enqueueEvent = createEventBatcher<PendingEvent>(
@@ -929,6 +934,12 @@ function connectEventsIfNeeded(): void {
     onConnectionChange(connected: boolean) {
       rawState.connected = connected;
       rawState.connection = connected ? 'connected' : 'disconnected';
+      // The data channel is healthy again (server_hello received). Clear any
+      // stale "Realtime connection error" toast instead of relying on its
+      // auto-dismiss timer: iOS Safari freezes timers while a tab is
+      // backgrounded, so the toast would otherwise linger until a manual
+      // refresh even though the reconnect already succeeded.
+      if (connected) dismissWsError();
     },
   });
 }
@@ -1093,6 +1104,19 @@ function operationFailureNotice(
 
 function pushWarning(warning: AppWarning): void {
   rawState.warnings = [...rawState.warnings, warning];
+}
+
+// Drop every "Realtime connection error" notice pushed by the WS onError
+// handler. Matched by severity + the localized wsTitle (the same i18n instance
+// used to push it), so other errors are left untouched.
+function dismissWsError(): void {
+  const title = i18n.global.t('warnings.wsTitle');
+  const next = rawState.warnings.filter(
+    (w) => !(typeof w === 'object' && w !== null && w.severity === 'error' && w.title === title),
+  );
+  if (next.length !== rawState.warnings.length) {
+    rawState.warnings = next;
+  }
 }
 
 function pushOperationFailure(
@@ -1323,10 +1347,10 @@ async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
     running task is its BTW side-channel agent should not look busy. When tasks
     have not been loaded yet — e.g. right after a page refresh — we trust the
     daemon-reported `running` status rather than hiding the spinner. */
-function isSessionEffectivelyRunning(sessionId: string): boolean {
-  const session = rawState.sessions.find((s) => s.id === sessionId);
+function isSessionEffectivelyRunning(session: AppSession | undefined): boolean {
   if (!session) return false;
   if (session.status !== 'running') return false;
+  const sessionId = session.id;
   const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
   const tasks = rawState.tasksBySession[sessionId] ?? [];
   const runningTasks = tasks.filter((t) => t.status === 'running');
@@ -1356,7 +1380,7 @@ function formatTime(iso: string, _status: string): string {
     const diffD = diffMs / 86400000;
     if (diffD < 7) return `${Math.round(diffD)}d`;
     if (diffD < 30) return `${Math.round(diffD / 7)}w`;
-    if (diffD < 365) return `${Math.round(diffD / 30)}m`;
+    if (diffD < 365) return `${Math.round(diffD / 30)}mo`;
     return `${Math.round(diffD / 365)}y`;
   } catch {
     return iso;
@@ -1640,7 +1664,7 @@ const sessions = computed<Session[]>(() => {
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
       status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
+      busy: isSessionEffectivelyRunning(s),
     }));
 });
 
@@ -1660,6 +1684,11 @@ const isSending = computed<boolean>(() => {
   if (!sid) return false;
   return rawState.sendingBySession[sid] ?? false;
 });
+
+// True while the empty-composer first prompt for the active workspace is being
+// created + submitted (before the session id exists). Drives the empty-session
+// "starting conversation…" loading state in ConversationPane / Composer.
+const isStartingFirstPrompt = computed<boolean>(() => workspaceState.isStartingFirstPrompt());
 
 const sideChat = useSideChat(rawState, {
   pushOperationFailure,
@@ -1846,7 +1875,8 @@ const activity = computed<ActivityState>(() => {
   const questionList = rawState.questionsBySession[sid] ?? [];
   if (questionList.length > 0) return 'awaiting-question';
 
-  if (isSessionEffectivelyRunning(sid)) {
+  const activeSession = rawState.sessions.find((s) => s.id === sid);
+  if (isSessionEffectivelyRunning(activeSession)) {
     return 'running';
   }
 
@@ -1920,7 +1950,11 @@ const status = computed<ConversationStatus>(() => {
 
   // Use the friendly displayName from the models list; fall back to stripping
   // the provider prefix (e.g. "moonshot/moonshot-v1-128k" → "moonshot-v1-128k").
-  const matched = modelProvider.models.value.find((m) => m.id === rawModel || m.model === rawModel);
+  // Prefer the exact id — model names can collide across providers, so a
+  // name-only match may resolve to the wrong provider's entry.
+  const matched =
+    modelProvider.models.value.find((m) => m.id === rawModel) ??
+    modelProvider.models.value.find((m) => m.model === rawModel);
   const displayModel =
     matched?.displayName ||
     matched?.model ||
@@ -2119,7 +2153,7 @@ const sessionsForView = computed<Session[]>(() => {
         title: s.title,
         time: formatTime(s.updatedAt, s.status),
         status: s.status,
-        busy: isSessionEffectivelyRunning(s.id),
+        busy: isSessionEffectivelyRunning(s),
         lastPrompt: s.lastPrompt,
         workspaceId,
         workspaceName: nameByWorkspaceId.get(workspaceId),
@@ -2141,7 +2175,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
       status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
+      busy: isSessionEffectivelyRunning(s),
       updatedAt: s.updatedAt,
     };
     const list = byId.get(wid) ?? [];
@@ -2296,10 +2330,27 @@ const workspaceState = useWorkspaceState(rawState, {
   fileDiffLoading,
 });
 
+/** True when the user is actually watching this session: it is the active
+    session, the page is visible, and the window has focus. Focus matters on
+    top of visibility: a window that lost focus to another app often stays
+    (partially) visible on screen, but the user is working elsewhere and would
+    miss the moment without a notification. */
+function isUserWatching(sid: string): boolean {
+  return (
+    sid === rawState.activeSessionId &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'visible' &&
+    document.hasFocus()
+  );
+}
+
 function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
   // The turn finished — this session no longer has a prompt in flight.
   inFlightPromptSessions.delete(sid);
   rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+  // Capture before the cleanup below drops it — it keys the completion
+  // notification's dedup tag so each finished turn alerts once.
+  const finishedPromptId = rawState.promptIdBySession[sid];
   // Drop any cached prompt_id so a later skill activation (which has no
   // prompt_id) doesn't accidentally reuse this stale id for :abort.
   if (rawState.promptIdBySession[sid] !== undefined) {
@@ -2324,16 +2375,20 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
   }
 
   // Browser notification when the user isn't watching this session.
-  notification.maybeNotifyCompletion(sid, {
-    isActiveAndVisible:
-      sid === rawState.activeSessionId &&
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'visible',
-    sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
-    onClick: () => {
-      void workspaceState.selectSession(sid);
-    },
-  });
+  // Only real completions notify; aborted turns and turns that ended up
+  // blocked on approval/question do not fire the generic "Turn finished" alert.
+  const hasPendingApproval = (rawState.approvalsBySession[sid] ?? []).length > 0;
+  const hasPendingQuestion = (rawState.questionsBySession[sid] ?? []).length > 0;
+  if (shouldNotifyCompletion(status, hasPendingApproval, hasPendingQuestion)) {
+    notification.maybeNotifyCompletion(sid, {
+      isUserWatching: isUserWatching(sid),
+      sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+      promptId: finishedPromptId,
+      onClick: () => {
+        void workspaceState.selectSession(sid);
+      },
+    });
+  }
 
   // Completion sound — only for real completions (aborted/cancelled turns stay
   // silent). Plays regardless of visibility so it also reaches a backgrounded tab.
@@ -2372,13 +2427,11 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
     header && questionText ? `${header}: ${questionText}` : questionText || header;
 
   // Browser notification when the user isn't watching this session.
-  notification.maybeNotifyQuestion(sid, {
-    isActiveAndVisible:
-      sid === rawState.activeSessionId &&
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'visible',
+  notification.maybeNotifyQuestion({
+    isUserWatching: isUserWatching(sid),
     sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
     questionPreview: preview,
+    questionId: question.questionId,
     onClick: () => {
       void workspaceState.selectSession(sid);
     },
@@ -2387,6 +2440,23 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
   // Attention sound — plays regardless of visibility so it also reaches a
   // backgrounded tab (same as the completion sound).
   sound.maybePlayQuestionSound();
+}
+
+function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
+  // Browser notification when the user isn't watching this session.
+  notification.maybeNotifyApproval({
+    isUserWatching: isUserWatching(sid),
+    sessionTitle: rawState.sessions.find((s) => s.id === sid)?.title ?? '',
+    toolName: approval.toolName,
+    approvalId: approval.approvalId,
+    onClick: () => {
+      void workspaceState.selectSession(sid);
+    },
+  });
+
+  // Attention sound — plays regardless of visibility so it also reaches a
+  // backgrounded tab (same as the completion sound).
+  sound.maybePlayApprovalSound();
 }
 
 // ---------------------------------------------------------------------------
@@ -2460,6 +2530,7 @@ export function useKimiWebClient() {
     questions,
     activity,
     isSending,
+    isStartingFirstPrompt,
     fastMoon: appearance.fastMoon,
 
     // Model + Provider reactive state
@@ -2482,9 +2553,11 @@ export function useKimiWebClient() {
     setAccent: appearance.setAccent,
     notifyOnComplete: notification.notifyOnComplete,
     notifyOnQuestion: notification.notifyOnQuestion,
+    notifyOnApproval: notification.notifyOnApproval,
     notifyPermission: notification.notifyPermission,
     setNotifyOnComplete: notification.setNotifyOnComplete,
     setNotifyOnQuestion: notification.setNotifyOnQuestion,
+    setNotifyOnApproval: notification.setNotifyOnApproval,
     soundOnComplete: sound.soundOnComplete,
     setSoundOnComplete: sound.setSoundOnComplete,
     onboarded,

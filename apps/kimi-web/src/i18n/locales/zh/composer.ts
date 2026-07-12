@@ -3,6 +3,7 @@ export default {
   send: '发送 ↵',
   queueLabel: '队列',
   placeholderRunning: '输入会加入队列 · Ctrl+S 立即插入运行中的回合',
+  starting: '正在发送…',
   queueAutoDrain: '当前回合结束后自动逐条发送',
   queueNext: '下一条',
   queueDragTitle: '拖拽排序',
@@ -22,7 +23,7 @@ export default {
   emptyConversationTitle: 'Kimi Code',
   emptyConversation: '还没有消息 —— 在下方输入开始对话',
   quickStartPlaceholder: '输入消息开始新对话…',
-  thinkingSuffix: ' · thinking',
-  thinkingSuffixEffort: ' · thinking: {level}',
+  thinkingSuffix: ' · 思考',
+  thinkingSuffixEffort: ' · 思考: {level}',
 
 } as const;

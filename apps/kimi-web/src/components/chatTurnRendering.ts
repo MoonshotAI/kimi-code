@@ -2,7 +2,7 @@
 // Pure turn-rendering helpers: pure functions of their arguments (no Vue
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
-import type { ChatTurn, CronTurnData, TurnBlock } from '../types';
+import type { ChatTurn, TurnBlock } from '../types';
 
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -41,8 +41,7 @@ export type AssistantRenderBlock =
   | { kind: 'thinking'; thinking: string; sourceIndex: number }
   | { kind: 'text'; text: string; sourceIndex: number }
   | { kind: 'tool'; tool: ToolStackItem['tool']; sourceIndex: number }
-  | { kind: 'tool-stack'; tools: ToolStackItem[] }
-  | { kind: 'cron'; text: string; cron: CronTurnData; sourceIndex: number };
+  | { kind: 'tool-stack'; tools: ToolStackItem[] };
 
 export function rendersToolCard(block: Extract<TurnBlock, { kind: 'tool' }>): boolean {
   return !(block.tool.status === 'ok' && block.tool.media);
@@ -86,8 +85,6 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
       rendered.push({ kind: 'thinking', thinking: block.thinking, sourceIndex });
     } else if (block.kind === 'text') {
       rendered.push({ kind: 'text', text: block.text, sourceIndex });
-    } else if (block.kind === 'cron') {
-      rendered.push({ kind: 'cron', text: block.text, cron: block.cron, sourceIndex });
     }
   });
 

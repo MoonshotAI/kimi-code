@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { ToolAccesses } from '../../src/loop';
 import type { Logger, LogPayload } from '../../src/logging';
 import type { ResolvedAgentProfile } from '../../src/profile';
-import type { SessionSubagentHost } from '../../src/session/subagent-host';
+import {
+  DEFAULT_SUBAGENT_TIMEOUT_MS,
+  formatSubagentTimeoutDescription,
+  type SessionSubagentHost,
+} from '../../src/session/subagent-host';
 import { AgentTool, AgentToolInputSchema } from '../../src/tools/builtin/collaboration/agent';
 import { userCancellationReason } from '../../src/utils/abort';
 import { agentTask, createBackgroundManager } from '../agent/background/helpers';
@@ -467,7 +471,7 @@ describe('AgentTool', () => {
     expect(background.getTask(taskId!)).toMatchObject({
       status: 'running',
       description: 'Find cause',
-      timeoutMs: 30 * 60 * 1000,
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
     });
   });
 
@@ -873,14 +877,16 @@ describe('AgentTool', () => {
           description: 'Find cause',
         }),
       );
-      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      await vi.advanceTimersByTimeAsync(DEFAULT_SUBAGENT_TIMEOUT_MS);
       const result = await resultPromise;
 
       expect(result).toMatchObject({ isError: true });
       expect(result.output).toContain('agent_id: agent-child');
       expect(result.output).toContain('actual_subagent_type: coder');
       expect(result.output).toContain('status: failed');
-      expect(result.output).toContain('subagent error: Agent timed out after 30 minutes.');
+      expect(result.output).toContain(
+        `subagent error: Agent timed out after ${formatSubagentTimeoutDescription(DEFAULT_SUBAGENT_TIMEOUT_MS)}.`,
+      );
       expect(result.output).toContain('resume_hint:');
       expect(result.output).toContain('Agent(resume="agent-child", prompt="continue")');
       expect(result.output).toContain('do not set subagent_type');

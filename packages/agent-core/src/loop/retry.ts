@@ -1,5 +1,4 @@
 import { sleep } from '@antfu/utils';
-import * as retry from 'retry';
 
 import type { Logger } from '#/logging/types';
 
@@ -10,9 +9,16 @@ import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
 
-const RETRY_MIN_TIMEOUT_MS = 300;
-const RETRY_MAX_TIMEOUT_MS = 5000;
+const BASE_DELAY_MS = 500;
+// Per-attempt backoff cap (32s). With the default 3 attempts the ramp
+// (0.5s, 1s) never reaches the cap, so interactive runs are unaffected; it
+// only matters for high-attempt configs (e.g. eval harnesses with
+// `max_retries_per_step = 10`), where it lets retries ride out multi-minute
+// provider overload instead of giving up after a few seconds of backoff.
+const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
+// Up to 25% jitter on top of the exponential base to avoid herd retries.
+const JITTER_FACTOR = 0.25;
 
 export interface ChatWithRetryInput {
   readonly llm: LLM;
@@ -49,7 +55,10 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
         throw error;
       }
 
-      const delayMs = delays[attempt - 1] ?? 0;
+      // A server `Retry-After` (carried on the error) overrides the computed
+      // backoff. The chosen delay is what gets reported on the
+      // `step.retrying` event via `delayMs` either way.
+      const delayMs = readRetryAfterMs(error) ?? delays[attempt - 1] ?? 0;
       input.params.signal.throwIfAborted();
       input.dispatchEvent({
         type: 'step.retrying',
@@ -104,13 +113,27 @@ function paramsForAttempt(
 }
 
 export function retryBackoffDelays(maxAttempts: number): number[] {
-  return retry.timeouts({
-    retries: Math.max(maxAttempts - 1, 0),
-    minTimeout: RETRY_MIN_TIMEOUT_MS,
-    maxTimeout: RETRY_MAX_TIMEOUT_MS,
-    factor: RETRY_FACTOR,
-    randomize: true,
-  });
+  // For attempt (1-based) the base delay is min(500ms * 2^(attempt-1), 32s),
+  // plus up to 25% jitter. Index i here is 0-based, so attempt = i + 1.
+  const count = Math.max(maxAttempts - 1, 0);
+  const delays: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const base = Math.min(BASE_DELAY_MS * Math.pow(RETRY_FACTOR, i), MAX_DELAY_MS);
+    delays.push(base + Math.random() * JITTER_FACTOR * base);
+  }
+  return delays;
+}
+
+/**
+ * Server-requested backoff carried on a kosong `APIStatusError` (parsed from
+ * the `retry-after` response header). When present and positive it overrides
+ * the computed backoff — a server `Retry-After` directive takes precedence
+ * over the local exponential delay.
+ */
+function readRetryAfterMs(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const value = (error as { retryAfterMs?: unknown }).retryAfterMs;
+  return typeof value === 'number' && value > 0 ? value : null;
 }
 
 export async function sleepForRetry(delayMs: number, signal: AbortSignal): Promise<void> {

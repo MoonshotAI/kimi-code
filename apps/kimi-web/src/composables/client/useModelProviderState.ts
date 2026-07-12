@@ -102,7 +102,11 @@ export function useModelProviderState(
 
   function modelById(modelId: string | null | undefined): AppModel | undefined {
     if (modelId === undefined || modelId === null || modelId.length === 0) return undefined;
-    return models.value.find((m) => m.id === modelId || m.model === modelId);
+    // Prefer the exact id — model names can collide across providers.
+    return (
+      models.value.find((m) => m.id === modelId) ??
+      models.value.find((m) => m.model === modelId)
+    );
   }
 
   function activeThinkingModel(): AppModel | undefined {
@@ -181,8 +185,12 @@ export function useModelProviderState(
    * can return model '', so the authoritative current model comes from
    * GET /sessions/{id}/status, which we re-read right after. Optimistically show
    * the chosen id meanwhile. Never crashes.
+   *
+   * Returns whether the switch was accepted (true for the draft path too), so
+   * callers can gate follow-up persistence (e.g. bumping the global default) on
+   * a confirmed switch — errors are surfaced here, not thrown.
    */
-  async function setModel(modelId: string): Promise<void> {
+  async function setModel(modelId: string): Promise<boolean> {
     const sid = rawState.activeSessionId;
     const targetModel = modelById(modelId);
     const prevThinking = rawState.thinking;
@@ -194,7 +202,7 @@ export function useModelProviderState(
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
       draftModel.value = modelId;
       applyThinkingLevel(nextThinking);
-      return;
+      return true;
     }
     // Optimistic: show the chosen model immediately, but remember the previous
     // one so we can roll back if the switch never reaches the daemon.
@@ -219,12 +227,13 @@ export function useModelProviderState(
         saveThinkingToStorage(prevThinking);
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
-      return;
+      return false;
     }
     // refreshSessionStatus folds the authoritative current model from /status
     // back into the session (the profile echo can return ''). Best-effort: a
     // failure here does not mean the switch failed, so it must not roll back.
     await refreshSessionStatus(sid);
+    return true;
   }
 
   /** Toggle whether a model is starred (favorited) in the model picker. */

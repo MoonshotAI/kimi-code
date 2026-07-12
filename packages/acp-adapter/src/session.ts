@@ -737,9 +737,18 @@ export class AcpSession {
     let parts: readonly PromptPart[];
     try {
       const sessionDir = this.session.summary?.sessionDir;
+      const track = this.track;
       parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks), {
         originalsDir:
           sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
+        maxImageEdgePx: this.harness?.imageLimits?.maxEdgePx(),
+        telemetry:
+          track === undefined
+            ? undefined
+            : {
+                track: (event, properties) =>
+                  track(event, properties === undefined ? undefined : { ...properties }),
+              },
       });
     } finally {
       this.pendingPromptAborts.delete(pending);

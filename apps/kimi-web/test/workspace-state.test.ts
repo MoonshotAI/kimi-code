@@ -638,7 +638,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // Activation must NOT have started while /profile is still pending.
     await new Promise((r) => setTimeout(r, 0));
     expect(persistSessionProfile).toHaveBeenCalledWith(
-      { planMode: true, swarmMode: true, permissionMode: 'auto', thinking: 'high' },
+      { model: undefined, planMode: true, swarmMode: true, permissionMode: 'auto', thinking: 'high' },
       'sess_new',
     );
     expect(activateSkill).not.toHaveBeenCalled();
