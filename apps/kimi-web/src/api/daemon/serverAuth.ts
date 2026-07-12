@@ -9,10 +9,12 @@
 //      does not linger in history or screenshots.
 //   2. From a token the user types into the ServerAuthDialog modal.
 //
-// The credential is held in memory and mirrored to sessionStorage so a page
-// refresh keeps working without re-prompting (sessionStorage is tab-scoped and
-// cleared when the tab closes — we deliberately do NOT use localStorage, since
-// the credential authenticates as the server).
+// The credential is held in memory and mirrored to localStorage so it survives
+// tab close and browser restarts — entering it once per device is enough. The
+// token is already persisted server-side at <KIMI_CODE_HOME>/server.token and
+// handed to the browser in the launch URL, so keeping it in the browser profile
+// does not materially widen exposure for this local tool. `kimi server
+// rotate-token` invalidates a stale copy, and the next 401 clears it here.
 
 const STORAGE_KEY = 'kimi-web.server-credential';
 const FRAGMENT_PARAM = 'token';
@@ -43,7 +45,18 @@ function readFragmentToken(): string | undefined {
 
 function loadStored(): string | undefined {
   try {
-    return globalThis.sessionStorage?.getItem(STORAGE_KEY) ?? undefined;
+    const stored = globalThis.localStorage?.getItem(STORAGE_KEY);
+    if (stored) return stored;
+    // One-time upgrade: older builds kept the credential in sessionStorage
+    // (tab-scoped). Adopt it into localStorage so the update itself does not
+    // force the re-entry this change is meant to eliminate.
+    const legacy = globalThis.sessionStorage?.getItem(STORAGE_KEY);
+    if (legacy) {
+      globalThis.localStorage?.setItem(STORAGE_KEY, legacy);
+      globalThis.sessionStorage?.removeItem(STORAGE_KEY);
+      return legacy;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -69,20 +82,23 @@ export function getCredential(): string | undefined {
   return memory;
 }
 
-/** Store a credential (memory + sessionStorage) for subsequent requests. */
+/** Store a credential (memory + localStorage) for subsequent requests. */
 export function setCredential(value: string): void {
   memory = value;
   try {
-    globalThis.sessionStorage?.setItem(STORAGE_KEY, value);
+    globalThis.localStorage?.setItem(STORAGE_KEY, value);
+    // Drop any legacy sessionStorage copy so the two stores cannot diverge.
+    globalThis.sessionStorage?.removeItem(STORAGE_KEY);
   } catch {
-    // sessionStorage may be unavailable (private mode) — memory still works.
+    // Storage may be unavailable (private mode) — memory still works.
   }
 }
 
-/** Drop the credential (memory + sessionStorage). */
+/** Drop the credential (memory + localStorage). */
 export function clearCredential(): void {
   memory = undefined;
   try {
+    globalThis.localStorage?.removeItem(STORAGE_KEY);
     globalThis.sessionStorage?.removeItem(STORAGE_KEY);
   } catch {
     // ignore

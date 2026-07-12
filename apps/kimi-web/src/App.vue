@@ -46,7 +46,7 @@ import Icon from './components/ui/Icon.vue';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
 import { isMacosDesktop } from './lib/desktopFlag';
 
-// Hydrate the server-transport credential (fragment token or sessionStorage)
+// Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
 const hasServerCredential = initServerAuth();
 const authRequired = ref(!hasServerCredential);
