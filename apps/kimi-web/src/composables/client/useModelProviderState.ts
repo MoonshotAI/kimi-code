@@ -9,7 +9,8 @@ import { ref, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
 import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, ThinkingLevel } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
-import { coerceThinkingForModel } from '../../lib/modelThinking';
+import { coerceThinkingForModel, thinkingLevelForModelSwitch } from '../../lib/modelThinking';
+import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
 import type { ActivityState } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
 
@@ -109,11 +110,19 @@ export function useModelProviderState(
     );
   }
 
-  function activeThinkingModel(): AppModel | undefined {
+  function currentModelId(): string | undefined {
     const activeSession = rawState.activeSessionId
       ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
       : undefined;
-    return modelById(activeSession?.model ?? draftModel.value ?? rawState.defaultModel);
+    const rawModel =
+      activeSession === undefined
+        ? draftModel.value ?? rawState.defaultModel
+        : activeSession.model || rawState.defaultModel;
+    return modelById(rawModel)?.id ?? rawModel ?? undefined;
+  }
+
+  function activeThinkingModel(): AppModel | undefined {
+    return modelById(currentModelId());
   }
 
   function applyThinkingLevel(level: ThinkingLevel): ThinkingLevel {
@@ -192,8 +201,13 @@ export function useModelProviderState(
    */
   async function setModel(modelId: string): Promise<boolean> {
     const sid = rawState.activeSessionId;
-    const nextThinking = coerceThinkingForModel(modelById(modelId), rawState.thinking);
+    const targetModel = modelById(modelId);
     const prevThinking = rawState.thinking;
+    const prevSessionModel = sid
+      ? rawState.sessions.find((s) => s.id === sid)?.model
+      : undefined;
+    const isSwitch = currentModelId() !== (targetModel?.id ?? modelId);
+    const nextThinking = thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch);
     if (!sid) {
       // New-session draft (onboarding composer): no backend session to update.
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
@@ -203,7 +217,6 @@ export function useModelProviderState(
     }
     // Optimistic: show the chosen model immediately, but remember the previous
     // one so we can roll back if the switch never reaches the daemon.
-    const prevModel = rawState.sessions.find((s) => s.id === sid)?.model;
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     if (nextThinking !== prevThinking) {
       rawState.thinking = nextThinking;
@@ -219,7 +232,7 @@ export function useModelProviderState(
       // not fail it — but when the daemon is unreachable the request throws here.
       // Roll the picker back to the real model so the UI can't keep showing the
       // new one as if the switch succeeded, then surface the failure.
-      updateSession(sid, (s) => ({ ...s, model: prevModel ?? s.model }));
+      updateSession(sid, (s) => ({ ...s, model: prevSessionModel ?? s.model }));
       if (nextThinking !== prevThinking) {
         rawState.thinking = prevThinking;
         saveThinkingToStorage(prevThinking);
@@ -261,7 +274,10 @@ export function useModelProviderState(
     const guarded = activity.value === 'idle' && !inFlightPromptSessions.has(sid);
     const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
 
+    const localTurnToken = guarded ? beginLocalTurn(sid) : undefined;
     if (guarded) {
+      // Share the local-turn-start lifecycle with prompt submits: a racing
+      // terminal snapshot must not clear this skill's turn either.
       inFlightPromptSessions.add(sid);
       rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
       const optimisticMsg: AppMessage = {
@@ -292,6 +308,10 @@ export function useModelProviderState(
         updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       }
       pushOperationFailure('activateSkill', err, { sessionId: sid });
+    } finally {
+      // The daemon answered the activation (accepted or rejected) — the
+      // pending window in which a snapshot can't reflect this turn is over.
+      if (localTurnToken !== undefined) settleLocalTurn(sid, localTurnToken);
     }
   }
 
