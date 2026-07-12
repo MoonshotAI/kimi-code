@@ -6,6 +6,34 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.6 (2026-07-12)
+
+### Polish
+
+- web: Let wide Markdown tables grow beyond the reading column up to 1040px, scrolling horizontally inside the table when wider.
+- web: Keep the server access token for up to 7 days across tab close and browser restarts, instead of asking for it again with every new tab.
+- web: Add workspaces by typing an absolute path directly in the workspace picker's search box, with live validation and completion suggestions.
+- web: Auto-enable the default thinking effort when switching to a model that supports effort levels in the web UI.
+- Recognize the `support_efforts` and `default_effort` fields when importing a custom registry, so thinking effort levels are available for those models.
+- Update the WebBridge install page link opened from the `/plugins` panel.
+- Add a `subagent.timeout_ms` config option (or the `KIMI_SUBAGENT_TIMEOUT_MS` env var) to control how long a single subagent may run before timing out; the default is raised from 30 minutes to 2 hours.
+- Add a print-mode background policy: set `[background].print_background_mode = "steer"` to keep `kimi -p` alive across background-task completions, so the main agent can be steered into follow-up turns.
+
+### Bug Fixes
+
+- web: Fix sessions getting stuck in a sending state after a reconnect; turns that finish while the connection is down now stop the spinner and let the next message send normally.
+- web: Fix the first visit after starting or updating the web UI bouncing to the login page when the initial auth check fails; the connecting screen now stays up, shows the connection error, and retries.
+- Keep `kimi -p` runs alive after a turn ends while a goal is still active or a cron task is pending, so goal continuations and cron fires run their turns instead of being cut off when the main turn finishes.
+- Treat a dismissed question prompt as the user choosing not to answer, instead of implicitly selecting the recommended option.
+- web: Fix ReadMediaFile results rendering as plain tool cards instead of images after resuming or reloading a session.
+- web: Fix the chat view jumping downward while scrolling through conversation history.
+- web: Fix the model dropdown showing checkmarks on same-named models from other providers; the current model is now matched by its unique model id.
+- web: Fix sidebar lag with many sessions by removing repeated session list scans during rendering.
+
+### Refactors
+
+- Rename the dynamic tool loading model capability from `select_tools` to `dynamically_loaded_tools`.
+
 ## 0.23.5 (2026-07-10)
 
 ### Polish
@@ -169,7 +197,6 @@ This page documents the changes in each Kimi Code CLI release.
 - Add a TUI preference to keep rapid multi-line pastes from submitting line by line when bracketed paste is unavailable. Set `disable_paste_burst = true` in `tui.toml` to turn it off.
 - Keep subagent cards at a stable height and show a live status spinner with a compact two-row activity window.
 - In `kimi -p` runs, wait for background subagents to finish before exiting when `background.keep_alive_on_exit` is enabled. Set `keep_alive_on_exit = true` to let concurrent background subagents complete.
-- Add `background.print_background_mode` (`exit`/`drain`/`steer`) for `kimi -p`: in `steer` mode, a completing background task (including `Bash(run_in_background=true)`) behaves like a background subagent — it injects a synthetic user message that steers the main agent into a new turn so it can act on the result. Bounded by `print_wait_ceiling_s` and the new `print_max_turns`.
 
 ### Refactors
 
