@@ -1,0 +1,26 @@
+{
+  "name": "@moonshot-ai/acp-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent Client Protocol (ACP) host backed directly by the DI × Scope agent engine (agent-core-v2)",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.23.0",
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/protocol": "workspace:^"
+  }
+}
