@@ -104,6 +104,9 @@ keep_alive_on_exit = false
 kill_grace_period_ms = 2000
 print_wait_ceiling_s = 3600
 
+[subagent]
+timeout_ms = 600000
+
 [image]
 max_edge_px = 1500
 read_byte_budget = 131072
@@ -185,6 +188,7 @@ describe('harness config TOML loader', () => {
       killGracePeriodMs: 2000,
       printWaitCeilingS: 3600,
     });
+    expect(config.subagent).toMatchObject({ timeoutMs: 600000 });
     expect(config.image).toEqual({ maxEdgePx: 1500, readByteBudget: 131072 });
     expect(config.hooks).toEqual([
       {

@@ -13,7 +13,10 @@ import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
 import {
+  DEFAULT_SUBAGENT_TIMEOUT_MS,
   SessionSubagentHost,
+  formatSubagentTimeoutDescription,
+  resolveSubagentTimeoutMs,
   type QueuedSubagentTask,
 } from '../../src/session/subagent-host';
 import { abortError, userCancellationReason } from '../../src/utils/abort';
@@ -36,6 +39,50 @@ afterEach(async () => {
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
+
+describe('resolveSubagentTimeoutMs', () => {
+  const saved: { value: string | undefined } = { value: process.env[SUBAGENT_TIMEOUT_ENV] };
+  afterEach(() => {
+    if (saved.value === undefined) {
+      delete process.env[SUBAGENT_TIMEOUT_ENV];
+    } else {
+      process.env[SUBAGENT_TIMEOUT_ENV] = saved.value;
+    }
+  });
+
+  it('returns the default when nothing is set', () => {
+    delete process.env[SUBAGENT_TIMEOUT_ENV];
+    expect(resolveSubagentTimeoutMs()).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+  });
+
+  it('uses the config value when set', () => {
+    delete process.env[SUBAGENT_TIMEOUT_ENV];
+    expect(resolveSubagentTimeoutMs(600000)).toBe(600000);
+  });
+
+  it('lets the env override the config value', () => {
+    process.env[SUBAGENT_TIMEOUT_ENV] = '120000';
+    expect(resolveSubagentTimeoutMs(600000)).toBe(120000);
+  });
+
+  it('ignores an invalid env and falls back to config/default', () => {
+    process.env[SUBAGENT_TIMEOUT_ENV] = 'not-a-number';
+    expect(resolveSubagentTimeoutMs(600000)).toBe(600000);
+    process.env[SUBAGENT_TIMEOUT_ENV] = '-5';
+    expect(resolveSubagentTimeoutMs()).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+  });
+});
+
+describe('formatSubagentTimeoutDescription', () => {
+  it('formats hours, minutes, seconds and milliseconds', () => {
+    expect(formatSubagentTimeoutDescription(30 * 60 * 1000)).toBe('30 minutes');
+    expect(formatSubagentTimeoutDescription(2 * 60 * 60 * 1000)).toBe('2 hours');
+    expect(formatSubagentTimeoutDescription(45 * 1000)).toBe('45 seconds');
+    expect(formatSubagentTimeoutDescription(1500)).toBe('1500 ms');
+  });
 });
 
 describe('SessionSubagentHost', () => {

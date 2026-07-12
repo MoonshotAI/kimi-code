@@ -578,18 +578,67 @@ function scrollToBottom(smooth = false): void {
   lastScrollTop = el.scrollTop;
 }
 
-function findTopAnchor(
+type ScrollAnchor = { kind: 'turn' | 'tool'; id: string; top: number };
+
+function scrollAnchorTop(container: HTMLElement, node: HTMLElement): number {
+  // Tool calls inside a collapsed group still exist under an inert, clipped
+  // body. Anchor them to the visible group row so hidden content cannot create
+  // a fake layout delta while the stable tool id remains usable.
+  const inert = node.closest<HTMLElement>('[inert]');
+  const positionNode = inert?.closest<HTMLElement>('.tool-group') ?? node;
+  return (
+    positionNode.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop
+  );
+}
+
+function findTopAnchors(
   container: HTMLElement,
   scrollTop: number,
-): { id: string; top: number } | null {
-  const anchors = container.querySelectorAll<HTMLElement>('.turn-anchor');
-  for (const anchor of anchors) {
-    if (anchor.offsetTop >= scrollTop) {
-      const id = anchor.dataset.turnId;
-      if (id) return { id, top: anchor.offsetTop };
-    }
+): ScrollAnchor[] {
+  const anchors = Array.from(
+    container.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id], [data-scroll-anchor-id]'),
+  ).map((node) => ({ node, top: scrollAnchorTop(container, node) }));
+  const firstAfterTop = anchors.findIndex((anchor) => anchor.top >= scrollTop);
+  const start = firstAfterTop < 0 ? Math.max(0, anchors.length - 1) : firstAfterTop;
+  // The first id can be rebuilt when a page boundary splits an assistant turn;
+  // a nearby turn or tool call retains a stable fallback.
+  return anchors.slice(start, start + 2).flatMap((anchor) => {
+    const toolId = anchor.node.dataset.scrollAnchorId;
+    const id = toolId ?? anchor.node.dataset.turnId;
+    return id ? [{ kind: toolId ? 'tool' : 'turn', id, top: anchor.top }] : [];
+  });
+}
+
+type HistoryScrollSnapshot = {
+  anchors: ScrollAnchor[];
+  oldHeight: number;
+};
+
+const pendingHistoryRestoreBySession = new Map<string, HistoryScrollSnapshot>();
+
+function historyScrollDelta(container: HTMLElement, snapshot: HistoryScrollSnapshot): number {
+  for (const anchor of snapshot.anchors) {
+    const attr = anchor.kind === 'tool' ? 'data-scroll-anchor-id' : 'data-turn-id';
+    const newAnchor = container.querySelector<HTMLElement>(
+      `[${attr}="${attrEscape(anchor.id)}"]`,
+    );
+    if (newAnchor) return scrollAnchorTop(container, newAnchor) - anchor.top;
   }
-  return null;
+  // If the page boundary split an assistant/tool turn, messagesToTurns may
+  // rebuild that turn with a new id. Fall back to the overall height delta.
+  return container.scrollHeight - snapshot.oldHeight;
+}
+
+function restoreHistoryScroll(
+  container: HTMLElement,
+  snapshot: HistoryScrollSnapshot,
+  currentTop = container.scrollTop,
+): number {
+  container.scrollTop = currentTop + historyScrollDelta(container, snapshot);
+  lastScrollTop = container.scrollTop;
+  return container.scrollTop;
 }
 
 async function handleLoadOlderMessages(): Promise<void> {
@@ -597,6 +646,7 @@ async function handleLoadOlderMessages(): Promise<void> {
     !props.sessionId ||
     !props.loadOlderMessages ||
     props.loadingMore ||
+    historyLoadInProgress.value ||
     !props.hasMoreMessages
   ) {
     return;
@@ -604,41 +654,43 @@ async function handleLoadOlderMessages(): Promise<void> {
   const requestedSessionId = props.sessionId;
   const el = panesRef.value;
   const oldTop = el?.scrollTop ?? 0;
-  const oldHeight = el?.scrollHeight ?? 0;
-  const oldAnchor = el ? findTopAnchor(el, oldTop) : null;
+  const snapshot: HistoryScrollSnapshot = {
+    anchors: el ? findTopAnchors(el, oldTop) : [],
+    oldHeight: el?.scrollHeight ?? 0,
+  };
 
-  historyLoadInProgress.value = true;
+  setHistoryLoadInProgress(requestedSessionId, true);
+  cancelScheduledFollow();
   try {
+    // Flush the class that disables native scroll anchoring before Vue prepends
+    // history. The explicit delta restoration below owns this one mutation;
+    // native anchoring resumes afterwards for late Markdown/media layout shifts.
+    await nextTick();
     await props.loadOlderMessages(requestedSessionId);
     await nextTick();
-  } finally {
-    historyLoadInProgress.value = false;
-  }
 
-  // If the user switched sessions while the request was in flight, do not
-  // restore scroll position on the newly selected session's pane.
-  if (props.sessionId !== requestedSessionId) return;
-
-  const el2 = panesRef.value;
-  if (!el2) return;
-
-  // Restore scroll position using a stable anchor near the old viewport top.
-  // This isolates height inserted above the anchor and ignores any new bottom
-  // content (e.g. streaming assistant turns) that arrived during the request.
-  let delta = 0;
-  if (oldAnchor) {
-    const newAnchor = el2.querySelector<HTMLElement>(
-      `.turn-anchor[data-turn-id="${attrEscape(oldAnchor.id)}"]`,
-    );
-    if (newAnchor) {
-      delta = newAnchor.offsetTop - oldAnchor.top;
+    // If the user switched sessions while the request was in flight, do not
+    // restore the newly selected pane. Save the original anchor so the deferred
+    // per-session scroll state can be adjusted when this session mounts again.
+    if (props.sessionId !== requestedSessionId) {
+      pendingHistoryRestoreBySession.set(requestedSessionId, snapshot);
+      return;
     }
+
+    const el2 = panesRef.value;
+    if (!el2) return;
+
+    // Restore scroll position using a stable anchor near the old viewport top.
+    // This isolates height inserted above the anchor and ignores any new bottom
+    // content (e.g. streaming assistant turns) that arrived during the request.
+    // Apply the delta to the CURRENT scrollTop, not the pre-fetch oldTop: the
+    // user may have kept scrolling (e.g. trackpad momentum) while the request
+    // was in flight, and snapping back to oldTop would yank the viewport down.
+    restoreHistoryScroll(el2, snapshot);
+    pendingHistoryRestoreBySession.delete(requestedSessionId);
+  } finally {
+    setHistoryLoadInProgress(requestedSessionId, false);
   }
-  // If the page boundary split an assistant/tool turn, messagesToTurns may
-  // rebuild that turn with a new id. Fall back to the overall height delta so
-  // the viewport does not jump into the inserted history.
-  if (delta === 0) delta = el2.scrollHeight - oldHeight;
-  el2.scrollTop = oldTop + delta;
 }
 
 function attrEscape(value: string): string {
@@ -651,6 +703,7 @@ function scrollToTurn(turnId: string): void {
   if (!el) return;
   const target = el.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
   if (!target) return;
+  cancelActiveScrollWrites();
   following.value = false;
   showPill.value = distanceFromBottom() > BOTTOM_THRESHOLD;
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -828,13 +881,20 @@ watch(
     if (oldKey && el) {
       scrollStateBySession.set(String(oldKey), { top: el.scrollTop, following: following.value });
     }
+    cancelActiveScrollWrites();
     await nextTick();
     const el2 = panesRef.value;
     const saved = newKey ? scrollStateBySession.get(String(newKey)) : undefined;
     if (saved && el2) {
+      const pendingRestore = pendingHistoryRestoreBySession.get(String(newKey));
+      const top = pendingRestore
+        ? restoreHistoryScroll(el2, pendingRestore, saved.top)
+        : saved.top;
+      if (pendingRestore) pendingHistoryRestoreBySession.delete(String(newKey));
       following.value = saved.following;
-      el2.scrollTop = saved.top;
-      lastScrollTop = saved.top;
+      el2.scrollTop = top;
+      lastScrollTop = el2.scrollTop;
+      showPill.value = !saved.following && distanceFromBottom() > 1;
       if (saved.following) {
         scheduleStableFollow();
       }
@@ -936,24 +996,128 @@ let observedDock: HTMLElement | null = null;
 let lastObservedScrollHeight = 0;
 let lastObservedClientHeight = 0;
 let scrollRaf = 0;
-let pillEligible = false;
-const historyLoadInProgress = ref(false);
+const historyLoadingSessions = ref<ReadonlySet<string>>(new Set());
+const historyLoadInProgress = computed(
+  () => !!props.sessionId && historyLoadingSessions.value.has(props.sessionId),
+);
 
-function scheduleFollow(allowPill: boolean): void {
-  // Prepending older history changes turns.length but is not new bottom content;
-  // suppress the "new messages" pill until the scroll position is restored.
+function setHistoryLoadInProgress(sessionId: string, inProgress: boolean): void {
+  const next = new Set(historyLoadingSessions.value);
+  if (inProgress) next.add(sessionId);
+  else next.delete(sessionId);
+  historyLoadingSessions.value = next;
+}
+
+function scheduleFollow(): void {
   if (historyLoadInProgress.value) return;
-  pillEligible = pillEligible || allowPill;
   if (scrollRaf) return;
-  const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
-  scrollRaf = schedule(() => {
+  scrollRaf = raf(() => {
     scrollRaf = 0;
-    const wantPill = pillEligible;
-    pillEligible = false;
+    if (historyLoadInProgress.value) return;
     if (isPinned()) return;
     if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
-    else if (wantPill) showPill.value = true;
-  }) as unknown as number;
+  });
+}
+
+function cancelScheduledFollow(): void {
+  stableFollowToken++;
+  if (stableFollowRaf) {
+    cancelRaf(stableFollowRaf);
+    stableFollowRaf = 0;
+  }
+  if (scrollRaf) {
+    cancelRaf(scrollRaf);
+    scrollRaf = 0;
+  }
+}
+
+function cancelActiveScrollWrites(): void {
+  const el = panesRef.value;
+
+  userActionFollowUntil = 0;
+  cancelScheduledFollow();
+  pinUntil = 0;
+  pinEl = null;
+
+  if (el) {
+    const top = el.scrollTop;
+    if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'auto' });
+    else el.scrollTop = top;
+  }
+  smoothScrollUntil = 0;
+  lastSmoothScroll = Number.NEGATIVE_INFINITY;
+  if (el) lastScrollTop = el.scrollTop;
+}
+
+// Wheel, touch, and scrollbar input arrive before the browser dispatches
+// `scroll`. Stop queued writers before they can overwrite the user's movement.
+function stopFollowingForUserIntent(): void {
+  const el = panesRef.value;
+  if (!el || (el.scrollHeight - el.clientHeight <= 1 && !props.hasMoreMessages)) return;
+
+  following.value = false;
+  cancelActiveScrollWrites();
+  if (el.scrollHeight - el.clientHeight > 1) showPill.value = true;
+}
+
+function nestedScrollerCanMoveUp(event: Event): boolean {
+  const pane = panesRef.value;
+  if (!pane) return false;
+  for (const target of event.composedPath()) {
+    if (target === pane) return false;
+    if (
+      target instanceof HTMLElement &&
+      target.scrollHeight > target.clientHeight + 1 &&
+      target.scrollTop > 1
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function onPanesWheel(event: WheelEvent): void {
+  if (
+    event.defaultPrevented ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.deltaY >= 0 ||
+    nestedScrollerCanMoveUp(event)
+  ) {
+    return;
+  }
+  stopFollowingForUserIntent();
+}
+
+function onPanesPointerDown(event: PointerEvent): void {
+  const el = panesRef.value;
+  if (!el || event.defaultPrevented || event.button !== 0 || event.pointerType === 'touch') return;
+  const rect = el.getBoundingClientRect();
+  const gutterWidth = el.offsetWidth - el.clientWidth;
+  const hitWidth = gutterWidth > 0 ? gutterWidth : 12;
+  if (event.target === el && event.clientX >= rect.right - hitWidth) {
+    stopFollowingForUserIntent();
+  }
+}
+
+let lastTouchY: number | null = null;
+
+function onPanesTouchStart(event: TouchEvent): void {
+  lastTouchY = event.touches.length === 1 ? event.touches[0]!.clientY : null;
+}
+
+function onPanesTouchMove(event: TouchEvent): void {
+  const y = event.touches.length === 1 ? event.touches[0]!.clientY : null;
+  // The finger moving down means the scroll container is moving up.
+  if (
+    y !== null &&
+    lastTouchY !== null &&
+    y > lastTouchY + 2 &&
+    !nestedScrollerCanMoveUp(event)
+  ) {
+    stopFollowingForUserIntent();
+  }
+  lastTouchY = y;
 }
 
 function ensureContentObserved(): void {
@@ -995,7 +1159,7 @@ function rebindScrollObservers(): void {
 
 function onContentMutated(): void {
   ensureContentObserved();
-  scheduleFollow(true);
+  scheduleFollow();
 }
 
 function onVisibilityChange(): void {
@@ -1052,7 +1216,7 @@ onMounted(() => {
         // viewport (composer dock growing and hiding the last message). While a tool
         // row/group is being toggled (the pinned window) suppress follow entirely,
         // so the row opens downward / collapses upward without moving the viewport.
-        if (!isPinned() && (grew || viewportShrank)) scheduleFollow(false);
+        if (!isPinned() && (grew || viewportShrank)) scheduleFollow();
       });
     }
     rebindScrollObservers();
@@ -1068,7 +1232,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (contentObserver) contentObserver.disconnect();
   if (resizeObserver) resizeObserver.disconnect();
-  if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf);
+  if (scrollRaf) cancelRaf(scrollRaf);
   if (stableFollowRaf) cancelRaf(stableFollowRaf);
   if (pinRaf) cancelRaf(pinRaf);
   if (abortToastTimer !== null) clearTimeout(abortToastTimer);
@@ -1131,7 +1295,15 @@ defineExpose({ loadComposerForEdit, focusComposer });
       <div
         :ref="bindChatPane"
         class="panes chat-scroll"
+        :class="{
+          'is-following': following,
+          'history-prepending': historyLoadInProgress,
+        }"
         @scroll.passive="onPanesScroll"
+        @wheel.passive="onPanesWheel"
+        @pointerdown.passive="onPanesPointerDown"
+        @touchstart.passive="onPanesTouchStart"
+        @touchmove.passive="onPanesTouchMove"
       >
         <div ref="contentWrapRef" class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
           <template v-if="turns.length === 0 && !sessionLoading">
@@ -1392,8 +1564,15 @@ defineExpose({ loadComposerForEdit, focusComposer });
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overflow-anchor: none;
+  /* Keep the visible message stable while the user browses history. Bottom
+     following and history prepend use explicit scroll writes, so they opt out. */
+  overflow-anchor: auto;
   scrollbar-gutter: stable;
+}
+
+.panes.is-following,
+.panes.history-prepending {
+  overflow-anchor: none;
 }
 
 /* Chat tab layout: the message list scrolls, while the dock stays as the

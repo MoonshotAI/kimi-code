@@ -30,8 +30,46 @@ import {
 } from './subagent-batch';
 import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md?raw';
 
-export const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
-export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '30 minutes';
+export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '2 hours';
+
+const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
+
+/**
+ * Resolve the effective subagent per-task timeout. Precedence:
+ * `KIMI_SUBAGENT_TIMEOUT_MS` (positive integer ms) → `configMs` →
+ * `DEFAULT_SUBAGENT_TIMEOUT_MS` (30 min). Set a large value to effectively
+ * disable the cap. The value feeds the background-task manager's per-task
+ * timeout, so it governs foreground and background subagents (and AgentSwarm).
+ */
+export function resolveSubagentTimeoutMs(configMs?: number): number {
+  const raw = process.env[SUBAGENT_TIMEOUT_ENV];
+  if (raw !== undefined && raw.trim().length > 0) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed >= 1) return parsed;
+  }
+  if (configMs !== undefined && Number.isInteger(configMs) && configMs >= 1) {
+    return configMs;
+  }
+  return DEFAULT_SUBAGENT_TIMEOUT_MS;
+}
+
+/** Human-readable duration for the subagent timeout message. */
+export function formatSubagentTimeoutDescription(ms: number): string {
+  if (ms % (60 * 60 * 1000) === 0) {
+    const h = ms / (60 * 60 * 1000);
+    return `${h} hour${h === 1 ? '' : 's'}`;
+  }
+  if (ms % (60 * 1000) === 0) {
+    const m = ms / (60 * 1000);
+    return `${m} minute${m === 1 ? '' : 's'}`;
+  }
+  if (ms % 1000 === 0) {
+    const s = ms / 1000;
+    return `${s} second${s === 1 ? '' : 's'}`;
+  }
+  return `${ms} ms`;
+}
 
 export type {
   SubagentResult as QueuedSubagentRunResult,

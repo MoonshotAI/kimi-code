@@ -40,6 +40,9 @@ const mocks = vi.hoisted(() => {
       }
     }),
     waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
+    getGoal: vi.fn(async () => ({ goal: null })),
+    getCronTasks: vi.fn(async () => ({ tasks: [] })),
+    handlePrintMainTurnCompleted: vi.fn(async (): Promise<'finish' | 'continue'> => 'finish'),
   };
 
   return {
@@ -750,6 +753,56 @@ describe('runPrompt', () => {
     await runPromise;
   });
 
+  it('follows a background-steered second main turn before finishing in steer mode', async () => {
+    // First end-of-turn: stay alive (a background task is still pending).
+    // Second end-of-turn: finish.
+    mocks.session.handlePrintMainTurnCompleted
+      .mockResolvedValueOnce('continue')
+      .mockResolvedValueOnce('finish');
+
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 10, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'first' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 10, reason: 'completed' }));
+      }
+    });
+
+    const stdout = writer();
+    const stderr = writer();
+    const runPromise = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    // The first turn's assistant message must be flushed and the end-of-turn
+    // policy consulted, while the run stays alive (action === 'continue').
+    await waitForAssertion(() => {
+      expect(mocks.session.handlePrintMainTurnCompleted).toHaveBeenCalledTimes(1);
+      expect(stdout.text()).toContain('{"role":"assistant","content":"first"}');
+    });
+
+    // Simulate a background-task completion steering the main agent into a new
+    // turn (the runtime does this via turn.steer; here we drive the events
+    // directly to verify the driver follows and finishes only after it).
+    for (const handler of mocks.eventHandlers) {
+      handler(
+        mocks.mainEvent({
+          type: 'turn.started',
+          turnId: 11,
+          origin: { kind: 'background_task' },
+        }),
+      );
+      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 11, delta: 'second' }));
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 11, reason: 'completed' }));
+    }
+
+    await runPromise;
+
+    expect(mocks.session.handlePrintMainTurnCompleted).toHaveBeenCalledTimes(2);
+    expect(stdout.text()).toContain('{"role":"assistant","content":"second"}');
+  });
+
   it('resumes a concrete session without a configured default model', async () => {
     mocks.harnessGetConfig.mockResolvedValueOnce({ providers: {}, telemetry: true });
     mocks.session.getStatus.mockResolvedValueOnce({ permission: 'manual', model: 'saved-model' });
@@ -1076,5 +1129,167 @@ describe('runPrompt', () => {
 
     const handler = mocks.session.setQuestionHandler.mock.calls[0]![0] as () => unknown;
     expect(handler()).toBeNull();
+  });
+
+  it('does not settle on end_turn while a goal is still active', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'created a goal' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      }
+    });
+    // First evaluation (after turn 1) sees an active goal; the continuation
+    // turn's evaluation sees the goal gone (completed → record cleared).
+    mocks.session.getGoal.mockResolvedValueOnce({ goal: { status: 'active' } } as never);
+
+    const stdout = writer();
+    const stderr = writer();
+    let settled = false;
+    const run = runPrompt(opts(), '1.2.3-test', { stdout, stderr }).then(() => {
+      settled = true;
+    });
+
+    await waitForAssertion(() => {
+      expect(mocks.session.getGoal).toHaveBeenCalledTimes(1);
+    });
+    expect(settled).toBe(false);
+
+    // The goal driver launches the continuation turn on its own; the run
+    // streams it and settles only once no goal is active anymore.
+    for (const handler of mocks.eventHandlers) {
+      handler(
+        mocks.mainEvent({
+          type: 'turn.started',
+          turnId: 2,
+          origin: { kind: 'system_trigger' },
+        }),
+      );
+      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 2, delta: 'goal work' }));
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    }
+
+    await run;
+    expect(settled).toBe(true);
+    expect(stdout.text()).toContain('goal work');
+  });
+
+  it('settles when the goal reaches a terminal state between turns with no trailing turn.ended', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'working' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      }
+    });
+    // Turn 1's evaluation sees the goal still active; the terminal
+    // goal.updated (e.g. the driver blocked it on a hard budget) arrives with
+    // no further turn.ended and must settle the run itself.
+    mocks.session.getGoal
+      .mockResolvedValueOnce({ goal: { status: 'active' } } as never)
+      .mockResolvedValue({ goal: { status: 'blocked' } } as never);
+
+    const stdout = writer();
+    const stderr = writer();
+    let settled = false;
+    const run = runPrompt(opts(), '1.2.3-test', { stdout, stderr }).then(() => {
+      settled = true;
+    });
+
+    await waitForAssertion(() => {
+      expect(mocks.session.getGoal).toHaveBeenCalledTimes(1);
+    });
+    expect(settled).toBe(false);
+
+    for (const handler of mocks.eventHandlers) {
+      handler(
+        mocks.mainEvent({
+          type: 'goal.updated',
+          snapshot: { status: 'blocked' },
+          change: { kind: 'blocked' },
+        }),
+      );
+    }
+
+    await run;
+    expect(settled).toBe(true);
+  });
+
+  it('does not settle on end_turn while a cron task is pending, then lets the fire drive a turn', async () => {
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: 'scheduled a reminder' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      }
+    });
+    // Turn 1 leaves a pending one-shot cron task; its fire steers turn 2, and
+    // by turn 2's evaluation the task has fired and been removed.
+    mocks.session.getCronTasks
+      .mockResolvedValueOnce({
+        tasks: [
+          {
+            id: '3f9a1c2e',
+            cron: '*/5 * * * *',
+            recurring: false,
+            createdAt: 1,
+            lastFiredAt: undefined,
+            nextFireAt: Date.now() + 60_000,
+          },
+        ],
+      } as never)
+      .mockResolvedValue({ tasks: [] } as never);
+
+    const stdout = writer();
+    const stderr = writer();
+    let settled = false;
+    const run = runPrompt(opts(), '1.2.3-test', { stdout, stderr }).then(() => {
+      settled = true;
+    });
+
+    await waitForAssertion(() => {
+      expect(mocks.session.getCronTasks).toHaveBeenCalledTimes(1);
+    });
+    expect(settled).toBe(false);
+
+    // The cron fire steers a fresh turn; the run streams it and settles once
+    // no pending tasks remain.
+    for (const handler of mocks.eventHandlers) {
+      handler(
+        mocks.mainEvent({
+          type: 'turn.started',
+          turnId: 2,
+          origin: { kind: 'cron_job' },
+        }),
+      );
+      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 2, delta: 'cron ran' }));
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    }
+
+    await run;
+    expect(settled).toBe(true);
+    expect(stdout.text()).toContain('cron ran');
+  });
+
+  it('does not wait for cron tasks whose expression has no future fire', async () => {
+    mocks.session.getCronTasks.mockResolvedValue({
+      tasks: [
+        {
+          id: '3f9a1c2e',
+          cron: '0 0 31 2 *',
+          recurring: true,
+          createdAt: 1,
+          lastFiredAt: undefined,
+          nextFireAt: null,
+        },
+      ],
+    } as never);
+
+    const stdout = writer();
+    const stderr = writer();
+    await runPrompt(opts(), '1.2.3-test', { stdout, stderr });
+
+    expect(stdout.text()).toBe('• hello world\n\n');
+    expect(mocks.harnessClose).toHaveBeenCalled();
   });
 });

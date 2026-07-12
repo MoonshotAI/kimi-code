@@ -89,6 +89,29 @@ describe('fetchCustomRegistry', () => {
     );
   });
 
+  it('parses support_efforts and default_effort from model entries', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions']!.models['gpt-5.5'] = {
+      id: 'gpt-5.5',
+      name: 'GPT 5.5',
+      support_efforts: ['low', 'high', 'max'],
+      default_effort: 'high',
+    };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      fetchMock as unknown as typeof fetch,
+    );
+
+    expect(result['registry_chat-completions']?.models['gpt-5.5']).toEqual({
+      id: 'gpt-5.5',
+      name: 'GPT 5.5',
+      support_efforts: ['low', 'high', 'max'],
+      default_effort: 'high',
+    });
+  });
+
   it('omits the Authorization header when the apiKey is empty', async () => {
     const fetchMock = vi.fn(async () => makeJsonResponse(makeKokubResponseBody()));
 
@@ -328,6 +351,96 @@ describe('applyCustomRegistryProvider', () => {
           provider: 'registry_chat-completions',
           model: 'gpt-5.5',
           maxContextSize: 131072,
+          betaApi: true,
+        } as Record<string, unknown>,
+      },
+    };
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        id: 'registry_chat-completions',
+        name: 'Sample Registry (chat completions)',
+        api: 'https://registry.example.test/v1',
+        type: 'openai',
+        models: {
+          'gpt-5.5': { id: 'gpt-5.5', name: 'GPT 5.5' },
+        },
+      },
+      KOKUB_SOURCE,
+    );
+
+    const alias = config.models?.['registry_chat-completions/gpt-5.5'];
+    expect(alias?.['betaApi']).toBe(true);
+    // Upstream-owned fields are still refreshed.
+    expect(alias?.['displayName']).toBe('GPT 5.5');
+  });
+
+  it('maps support_efforts / default_effort onto the model alias', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'rich',
+      name: 'Rich Provider',
+      api: 'https://rich.example/v1',
+      type: 'openai',
+      models: {
+        'rich-thinker': {
+          id: 'rich-thinker',
+          name: 'Rich Thinker',
+          reasoning: true,
+          support_efforts: ['low', 'high', 'max'],
+          default_effort: 'high',
+        },
+      },
+    };
+
+    applyCustomRegistryProvider(config, entry, {
+      kind: 'apiJson',
+      url: 'https://rich.example/api.json',
+      apiKey: 'sk-rich',
+    });
+
+    const alias = config.models?.['rich/rich-thinker'] as Record<string, unknown>;
+    expect(alias['supportEfforts']).toEqual(['low', 'high', 'max']);
+    expect(alias['defaultEffort']).toBe('high');
+  });
+
+  it('treats support_efforts as a thinking capability hint without reasoning: true', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'rich',
+      name: 'Rich Provider',
+      api: 'https://rich.example/v1',
+      type: 'openai',
+      models: {
+        'rich-effort-only': {
+          id: 'rich-effort-only',
+          name: 'Rich Effort Only',
+          support_efforts: ['low', 'high', 'max'],
+          default_effort: 'high',
+        },
+      },
+    };
+
+    applyCustomRegistryProvider(config, entry, {
+      kind: 'apiJson',
+      url: 'https://rich.example/api.json',
+      apiKey: 'sk-rich',
+    });
+
+    const alias = config.models?.['rich/rich-effort-only'] as Record<string, unknown>;
+    expect(alias['capabilities']).toContain('thinking');
+    expect(alias['supportEfforts']).toEqual(['low', 'high', 'max']);
+  });
+
+  it('drops stale effort fields when a refresh no longer declares them', () => {
+    const config: ManagedKimiConfigShape = {
+      providers: {},
+      models: {
+        'registry_chat-completions/gpt-5.5': {
+          provider: 'registry_chat-completions',
+          model: 'gpt-5.5',
+          maxContextSize: 131072,
           supportEfforts: ['low', 'high', 'max'],
           defaultEffort: 'high',
         } as Record<string, unknown>,
@@ -349,10 +462,8 @@ describe('applyCustomRegistryProvider', () => {
     );
 
     const alias = config.models?.['registry_chat-completions/gpt-5.5'];
-    expect(alias?.['supportEfforts']).toEqual(['low', 'high', 'max']);
-    expect(alias?.['defaultEffort']).toBe('high');
-    // Upstream-owned fields are still refreshed.
-    expect(alias?.['displayName']).toBe('GPT 5.5');
+    expect(alias?.['supportEfforts']).toBeUndefined();
+    expect(alias?.['defaultEffort']).toBeUndefined();
   });
 });
 

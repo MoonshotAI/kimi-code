@@ -111,6 +111,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.waitForBackgroundTasksOnPrint();
   }
 
+  handlePrintMainTurnCompleted(_payload: EmptyPayload): Promise<'finish' | 'continue'> {
+    return this.session.handlePrintMainTurnCompleted();
+  }
+
   addAdditionalDir(payload: AddAdditionalDirPayload): Promise<AddAdditionalDirResult> {
     return this.session.addAdditionalDir(payload.path, payload.persist);
   }
@@ -253,6 +257,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async cancelGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).cancelGoal(payload);
+  }
+
+  async getCronTasks({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getCronTasks(payload);
   }
 
   async getBackgroundOutput({

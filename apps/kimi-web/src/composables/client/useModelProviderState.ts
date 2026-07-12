@@ -102,7 +102,11 @@ export function useModelProviderState(
 
   function modelById(modelId: string | null | undefined): AppModel | undefined {
     if (modelId === undefined || modelId === null || modelId.length === 0) return undefined;
-    return models.value.find((m) => m.id === modelId || m.model === modelId);
+    // Prefer the exact id — model names can collide across providers.
+    return (
+      models.value.find((m) => m.id === modelId) ??
+      models.value.find((m) => m.model === modelId)
+    );
   }
 
   function activeThinkingModel(): AppModel | undefined {

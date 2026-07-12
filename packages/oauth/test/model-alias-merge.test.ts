@@ -48,7 +48,7 @@ describe('mergeRefreshedModelAlias', () => {
     expect(merged.supportEfforts).toBeUndefined();
   });
 
-  it('keeps custom-registry supportEfforts as user data', () => {
+  it('refreshes custom-registry supportEfforts from upstream', () => {
     const merged = mergeRefreshedModelAlias(
       {
         provider: 'registry',
@@ -60,10 +60,34 @@ describe('mergeRefreshedModelAlias', () => {
         provider: 'registry',
         model: 'gpt-5.5',
         maxContextSize: 131072,
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
       },
       CUSTOM_REGISTRY_MODEL_FIELDS,
     );
 
-    expect(merged.supportEfforts).toEqual(['low', 'high']);
+    expect(merged.supportEfforts).toEqual(['low', 'high', 'max']);
+    expect(merged.defaultEffort).toBe('high');
+  });
+
+  it('drops custom-registry effort fields when upstream stops declaring them', () => {
+    const merged = mergeRefreshedModelAlias(
+      {
+        provider: 'registry',
+        model: 'gpt-5.5',
+        maxContextSize: 131072,
+        supportEfforts: ['low', 'high'],
+        defaultEffort: 'high',
+      },
+      {
+        provider: 'registry',
+        model: 'gpt-5.5',
+        maxContextSize: 131072,
+      },
+      CUSTOM_REGISTRY_MODEL_FIELDS,
+    );
+
+    expect(merged.supportEfforts).toBeUndefined();
+    expect(merged.defaultEffort).toBeUndefined();
   });
 });

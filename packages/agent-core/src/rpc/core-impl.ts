@@ -83,6 +83,7 @@ import type {
   ForkSessionPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  GetCronTasksResult,
   GetKimiConfigPayload,
   GetPluginInfoPayload,
   InstallPluginPayload,
@@ -841,6 +842,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).waitForBackgroundTasksOnPrint(payload);
   }
 
+  handlePrintMainTurnCompleted({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<'finish' | 'continue'> {
+    return this.sessionApi(sessionId).handlePrintMainTurnCompleted(payload);
+  }
+
   addAdditionalDir({
     sessionId,
     ...payload
@@ -882,6 +887,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionAgentPayload<EmptyPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).cancelGoal(payload));
+  }
+
+  getCronTasks({
+    sessionId,
+    ...payload
+  }: SessionAgentPayload<EmptyPayload>): Promise<GetCronTasksResult> {
+    return Promise.resolve(this.sessionApi(sessionId).getCronTasks(payload));
   }
 
   async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {
