@@ -756,6 +756,12 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.table-node td) {
   text-align: left;
   vertical-align: top;
+  /* Cap runaway columns: a single cell with long prose no longer stretches
+     its column past --p-table-cell-max — the text wraps inside the cell
+     instead (markstream cells are already white-space:normal +
+     overflow-wrap:break-word, so no wrap override is needed here). Wider
+     tables made of many columns still scroll inside the wrapper. */
+  max-width: var(--p-table-cell-max);
 }
 
 /* Drop markstream-vue's default table-row hover background — the conversation
