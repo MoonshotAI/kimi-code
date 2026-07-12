@@ -387,8 +387,11 @@ describe('AgentLifecycleService', () => {
     resolvePluginServers?.({
       delayed: { transport: 'stdio', command: process.execPath },
     });
-    await tick();
-    expect(connectAll).toHaveBeenCalledTimes(1);
+    // `connectAll` is gated on `Promise.all([resolveSessionMcpConfig(...),
+    // enabledMcpServers()])`; the session-config side walks the real filesystem
+    // (project-root search + mcp.json reads), which does not settle within a
+    // single macrotask under CI load. Wait for the call instead of a fixed tick.
+    await vi.waitFor(() => expect(connectAll).toHaveBeenCalledTimes(1));
     expect(settled).toBe(false);
 
     resolveConnect?.();
