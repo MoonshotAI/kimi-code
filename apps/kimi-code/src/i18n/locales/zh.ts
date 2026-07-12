@@ -1160,6 +1160,7 @@ export default {
       // run-prompt.ts
       promptWarning: '警告：{{warning}}',
       promptTurnEnded: '提示轮次以原因结束：{{reason}}',
+      promptBlocked: '提示词钩子拦截了请求。',
       // run-shell.ts
       shellNothingToMigrate: '  没有需要从 ~/.kimi/ 迁移的内容。',
       shellBye: '再见！',

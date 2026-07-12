@@ -10,6 +10,7 @@
  */
 
 import type { PromptOutputFormat } from './options';
+import { t } from '#/i18n';
 
 /**
  * Structural hook-result shape the renderer reads. Both the v1 SDK
@@ -393,7 +394,7 @@ export function writeResumeHint(
   stderr: PromptOutput,
 ): void {
   const command = `kimi -r ${sessionId}`;
-  const content = `To resume this session: ${command}`;
+  const content = t('tui.statusMessages.shellResumeHint', { sessionId });
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {
       role: 'meta',

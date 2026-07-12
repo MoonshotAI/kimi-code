@@ -1165,6 +1165,7 @@ export default {
       // run-prompt.ts
       promptWarning: 'Warning: {{warning}}',
       promptTurnEnded: 'Prompt turn ended with reason: {{reason}}',
+      promptBlocked: 'Prompt hook blocked the request.',
       // run-shell.ts
       shellNothingToMigrate: '  Nothing to migrate from ~/.kimi/.',
       shellBye: 'Bye!',
