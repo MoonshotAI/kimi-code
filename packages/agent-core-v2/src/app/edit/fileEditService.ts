@@ -10,6 +10,7 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import { EditService } from './editService';
@@ -44,7 +45,9 @@ export class FileEditService implements IFileEditService {
       await this.fs.writeText(input.path, result.rawContent);
       return { ok: true, count: result.count };
     } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
+      // hostFs translates raw errnos into `HostFsError` at its boundary, so the
+      // errno lives on the unwrapped cause, not on the thrown error itself.
+      const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'EISDIR') {
         return { ok: false, error: `${input.displayPath} is not a file.` };
       }

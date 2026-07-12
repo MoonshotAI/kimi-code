@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -126,6 +126,21 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     const id = await createSession();
     const body = await postFs<null>(id, 'read', { path: '.' });
     expect(body.code).toBe(ErrorCode.FS_IS_DIRECTORY);
+  });
+
+  it('fs:read maps a permission-denied host error to FS_PERMISSION_DENIED', async () => {
+    // Root bypasses permission checks, so EACCES never triggers there.
+    if (process.getuid?.() === 0) return;
+    const file = join(work!, 'locked.txt');
+    await writeFile(file, 'secret');
+    await chmod(file, 0o000);
+    try {
+      const id = await createSession();
+      const body = await postFs<null>(id, 'read', { path: 'locked.txt' });
+      expect(body.code).toBe(ErrorCode.FS_PERMISSION_DENIED);
+    } finally {
+      await chmod(file, 0o644);
+    }
   });
 
   it('fs:list returns items', async () => {

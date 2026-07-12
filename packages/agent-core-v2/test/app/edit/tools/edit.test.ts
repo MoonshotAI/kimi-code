@@ -24,6 +24,7 @@ import { IFileEditService } from '#/app/edit/fileEdit';
 import { FileEditService } from '#/app/edit/fileEditService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
@@ -487,6 +488,31 @@ describe('EditTool', () => {
       readText: vi.fn().mockRejectedValue(
         Object.assign(new Error('EISDIR: illegal operation on a directory'), {
           code: 'EISDIR',
+        }),
+      ),
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/dir',
+      old_string: 'old',
+      new_string: 'new',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('is not a file');
+  });
+
+  it('maps a HostFsError-wrapped EISDIR to the is-not-a-file phrasing', async () => {
+    // The real hostFs backend throws `HostFsError(os.fs.is_directory)` with the
+    // raw errno on the cause; the friendly branch must see through the wrapper.
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockRejectedValue(
+        new HostFsError(OsFsErrors.codes.OS_FS_IS_DIRECTORY, 'read failed: path is a directory', {
+          details: { path: '/tmp/dir', op: 'read', errno: 'EISDIR' },
+          cause: Object.assign(new Error('EISDIR: illegal operation on a directory'), {
+            code: 'EISDIR',
+          }),
         }),
       ),
     });
