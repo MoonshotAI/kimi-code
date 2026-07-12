@@ -391,12 +391,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /** Fetch auth readiness from GET /api/v1/auth. Defensive — never throws.
-   *  - 'proceed'              — definitive outcome: either a response (rawState
-   *                             reflects it, ready or not) or a deterministic
-   *                             4xx that retrying can never fix (e.g. 404 from
-   *                             an older daemon without this endpoint) — the
-   *                             caller proceeds with the defaults, exactly like
-   *                             the pre-gate fallback did
+   *  The web bundle always ships paired with its daemon, so this endpoint is
+   *  guaranteed to exist — every failure is either a credential rejection or
+   *  a transient error worth retrying:
+   *  - 'proceed'              — response received; rawState reflects it (ready
+   *                             or not)
    *  - 'server-auth-required' — the daemon rejected our server credential
    *                             (401/40101); the ServerAuthDialog owns recovery
    *                             (it reloads once the token is entered)
@@ -413,16 +412,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       connectIssue.value = null;
       return 'proceed';
     } catch (err) {
-      if (isDaemonApiError(err)) {
-        if (err.code === 401 || err.code === SERVER_AUTH_UNAUTHORIZED_CODE) {
-          // The ServerAuthDialog explains this one — nothing to surface.
-          connectIssue.value = null;
-          return 'server-auth-required';
-        }
-        if (err.code >= 400 && err.code < 500) {
-          connectIssue.value = null;
-          return 'proceed';
-        }
+      if (
+        isDaemonApiError(err) &&
+        (err.code === 401 || err.code === SERVER_AUTH_UNAUTHORIZED_CODE)
+      ) {
+        // The ServerAuthDialog explains this one — nothing to surface.
+        connectIssue.value = null;
+        return 'server-auth-required';
       }
       // Surface the reason on the splash so "cannot connect" is diagnosable
       // instead of an unexplained spinner.

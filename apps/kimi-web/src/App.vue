@@ -993,9 +993,11 @@ function openPr(url: string): void {
       <GlobalLoading v-if="!client.initialized.value" :issue="client.connectIssue.value" />
     </Transition>
 
-    <!-- First-run onboarding overlay (language + welcome greeting) -->
+    <!-- First-run onboarding overlay (language + welcome greeting). Held back
+         until the first load settled so it can't cover the connecting splash
+         (it teleports to <body> and would float above the retry error). -->
     <Onboarding
-      v-if="showOnboarding && !showAuthGate"
+      v-if="client.initialized.value && showOnboarding && !showAuthGate"
       @complete="completeOnboarding"
       @skip="completeOnboarding"
     />
