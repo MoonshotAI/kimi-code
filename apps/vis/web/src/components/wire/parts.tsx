@@ -10,6 +10,7 @@
 
 import type { ReactNode } from 'react';
 
+import { t } from '../../i18n';
 import type { ContentPart, ContextMessage, LoopRecordedEvent, ToolCall } from '../../types';
 import { ImagePreview } from '../shared/ImagePreview';
 import { JsonViewer } from '../shared/JsonViewer';
@@ -32,7 +33,7 @@ export function truncate(s: unknown, n: number): string {
     try {
       str = JSON.stringify(s);
     } catch {
-      return '[unserializable]';
+      return t('wirePart.unserializable');
     }
   }
   if (str.length <= n) return str;
@@ -44,7 +45,7 @@ export function firstText(parts: readonly ContentPart[]): string {
   for (const p of parts) {
     if (p.type === 'text' && typeof p.text === 'string') return p.text;
   }
-  return '(non-text)';
+  return t('wirePart.nonText');
 }
 
 /** One-line description of the embedded LoopRecordedEvent. */
@@ -116,14 +117,14 @@ export function ContentPartView({ part }: { part: ContentPart }) {
     case 'text':
       return (
         <div className="border border-border bg-surface-0 p-2">
-          <div className="mb-1 text-fg-3">text · {part.text.length}b</div>
+          <div className="mb-1 text-fg-3">{t('wirePart.textBytes', { count: part.text.length })}</div>
           <pre className="whitespace-pre-wrap break-words text-fg-1">{part.text}</pre>
         </div>
       );
     case 'think':
       return (
         <div className="border border-[var(--color-cat-config)]/40 bg-surface-0 p-2">
-          <div className="mb-1 text-[var(--color-cat-config)]">think · {part.think.length}b</div>
+          <div className="mb-1 text-[var(--color-cat-config)]">{t('wirePart.thinkBytes', { count: part.think.length })}</div>
           <pre className="whitespace-pre-wrap break-words text-fg-1">{part.think}</pre>
         </div>
       );
@@ -206,7 +207,7 @@ export function MessageDetail({ message }: { message: ContextMessage }) {
 
       {message.content.length > 0 ? (
         <div>
-          <div className="mb-1 text-fg-2">content ({message.content.length} part{message.content.length === 1 ? '' : 's'})</div>
+          <div className="mb-1 text-fg-2">{t('wirePart.contentParts', { count: message.content.length })}</div>
           <div className="space-y-1">
             {message.content.map((part, i) => (
               <ContentPartView key={i} part={part} />
@@ -218,7 +219,7 @@ export function MessageDetail({ message }: { message: ContextMessage }) {
       {message.toolCalls.length > 0 ? (
         <div>
           <div className="mb-1 text-fg-2">
-            toolCalls ({message.toolCalls.length})
+            {t('wirePart.toolCalls', { count: message.toolCalls.length })}
           </div>
           <div className="space-y-1">
             {message.toolCalls.map((tc) => (
@@ -302,7 +303,7 @@ export function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
             {event.result.truncated === true ? (
               <FieldRow label="truncated">
                 <span className="text-[var(--color-sev-warning)]">
-                  true · output was paged or dropped before the model saw it
+                  {t('wirePart.truncatedHint')}
                 </span>
               </FieldRow>
             ) : null}

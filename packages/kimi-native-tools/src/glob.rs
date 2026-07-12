@@ -389,9 +389,13 @@ mod tests {
 
     #[test]
     fn test_glob_nonexistent_path() {
+        // Create and immediately drop a temp dir so the path no longer exists.
+        let temp_dir = TempDir::new().unwrap();
+        let nonexistent = temp_dir.path().join("subdir");
+        drop(temp_dir);
         let result = glob_search(&GlobConfig {
             pattern: "*.ts".to_string(),
-            path: Some("/nonexistent/path".to_string()),
+            path: Some(nonexistent.to_string_lossy().to_string()),
             ..Default::default()
         });
         assert!(result.error.is_some());

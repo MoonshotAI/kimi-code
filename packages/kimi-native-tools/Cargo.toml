@@ -16,10 +16,10 @@ globset = "0.4"
 ignore = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "io-util", "process", "time"] }
 encoding_rs = "0.8"
 memchr = "2"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [build-dependencies]
 napi-build = "2"

@@ -514,7 +514,7 @@ describe('readWireRecords / readWireTranscript', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('drops a torn final line but throws on mid-file corruption', async () => {
+  it('skips a torn final line and unparseable mid-file lines', async () => {
     const good = JSON.stringify(appendMessage(userMessage('u1')));
     const torn = path.join(dir, 'torn.jsonl');
     await writeFile(torn, `${good}\n{"type":"context.appe`, 'utf8');
@@ -523,7 +523,8 @@ describe('readWireRecords / readWireTranscript', () => {
 
     const corrupt = path.join(dir, 'corrupt.jsonl');
     await writeFile(corrupt, `not-json\n${good}\n`, 'utf8');
-    await expect(readWireRecords(corrupt)).rejects.toThrow(/corrupted line 1/);
+    const records2 = await readWireRecords(corrupt);
+    expect(records2).toHaveLength(1);
   });
 
   it('rehydrates blobref media urls from the blobs dir', async () => {

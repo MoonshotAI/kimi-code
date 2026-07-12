@@ -8,6 +8,7 @@
 
 import type { ReactNode } from 'react';
 
+import { t } from '../../i18n';
 import type { AgentRecord, AgentRecordOf } from '../../types';
 import type { PillTone } from '../shared/Pill';
 import { Pill } from '../shared/Pill';
@@ -60,7 +61,7 @@ export const WIRE_RENDERERS: RendererMap = {
   forked: {
     tone: 'lifecycle',
     label: 'fork',
-    headline: () => ({ main: <Dim>session forked</Dim> }),
+    headline: () => ({ main: <Dim>{t('wireRenderer.sessionForked')}</Dim> }),
   },
 
   'config.update': {
@@ -76,7 +77,7 @@ export const WIRE_RENDERERS: RendererMap = {
       return {
         main: (
           <span className="truncate text-fg-0">
-            {parts.length === 0 ? <Dim>(no fields)</Dim> : parts.join(' · ')}
+            {parts.length === 0 ? <Dim>{t('wireRenderer.noFields')}</Dim> : parts.join(' · ')}
           </span>
         ),
       };
@@ -108,7 +109,7 @@ export const WIRE_RENDERERS: RendererMap = {
         </div>
         <div>
           <div className="mb-1 text-fg-2">
-            input ({r.input.length} part{r.input.length === 1 ? '' : 's'})
+            {t('wireRenderer.inputParts', { count: r.input.length })}
           </div>
           <div className="space-y-1">
             {r.input.map((part, i) => (
@@ -145,7 +146,7 @@ export const WIRE_RENDERERS: RendererMap = {
         </div>
         <div>
           <div className="mb-1 text-fg-2">
-            input ({r.input.length} part{r.input.length === 1 ? '' : 's'})
+            {t('wireRenderer.inputParts', { count: r.input.length })}
           </div>
           <div className="space-y-1">
             {r.input.map((part, i) => (
@@ -161,7 +162,7 @@ export const WIRE_RENDERERS: RendererMap = {
     tone: 'warning',
     label: 'cancel',
     headline: (r) => ({
-      main: <Mono>{r.turnId !== undefined ? `turn ${r.turnId}` : '(latest)'}</Mono>,
+      main: <Mono>{r.turnId !== undefined ? t('wireRenderer.turnId', { id: r.turnId }) : t('wireRenderer.latest')}</Mono>,
     }),
   },
 
@@ -170,7 +171,7 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'message',
     headline: (r) => {
       const m = r.message;
-      const tc = m.toolCalls.length > 0 ? `${m.toolCalls.length} tool_call(s)` : '';
+      const tc = m.toolCalls.length > 0 ? t('wireRenderer.toolCallsCount', { count: m.toolCalls.length }) : '';
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
@@ -188,14 +189,14 @@ export const WIRE_RENDERERS: RendererMap = {
             >
               {m.role}
             </Pill>
-            <Dim>({m.content.length} part{m.content.length === 1 ? '' : 's'})</Dim>
+            <Dim>{t('wireRenderer.partsCount', { count: m.content.length })}</Dim>
             {tc ? <Dim>· {tc}</Dim> : null}
             {m.origin?.kind ? <Dim>· origin={m.origin.kind}</Dim> : null}
           </span>
         ),
         right: m.isError === true ? (
           <Pill tone="error" variant="solid">
-            error
+            {t('wireRenderer.error')}
           </Pill>
         ) : undefined,
       };
@@ -220,7 +221,7 @@ export const WIRE_RENDERERS: RendererMap = {
   'context.clear': {
     tone: 'warning',
     label: 'clear',
-    headline: () => ({ main: <Dim>context cleared</Dim> }),
+    headline: () => ({ main: <Dim>{t('wireRenderer.contextCleared')}</Dim> }),
   },
 
   'context.apply_compaction': {
@@ -230,7 +231,7 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2 min-w-0">
           <Pill tone="compaction" variant="soft">
-            compacted
+            {t('wireRenderer.compacted')}
           </Pill>
           <Dim>
             summary {r.summary.length}b · {r.tokensBefore}→{r.tokensAfter} tok · {r.compactedCount}{' '}
@@ -305,7 +306,7 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'tools',
     headline: (r) => {
       const head = r.names.slice(0, 3).join(', ');
-      const rest = r.names.length > 3 ? ` +${r.names.length - 3} more` : '';
+      const rest = r.names.length > 3 ? ` ${t('wireRenderer.more', { count: r.names.length - 3 })}` : '';
       return {
         main: (
           <Mono className="truncate">
@@ -313,7 +314,7 @@ export const WIRE_RENDERERS: RendererMap = {
             {rest}
           </Mono>
         ),
-        right: <Dim>{r.names.length} tools</Dim>,
+        right: <Dim>{t('wireRenderer.toolsCount', { count: r.names.length })}</Dim>,
       };
     },
   },
@@ -458,7 +459,7 @@ export const WIRE_RENDERERS: RendererMap = {
   'full_compaction.cancel': {
     tone: 'warning',
     label: 'compact×',
-    headline: () => ({ main: <Dim>cancelled</Dim> }),
+    headline: () => ({ main: <Dim>{t('wireRenderer.cancelled')}</Dim> }),
   },
 
   // `full_compaction.complete` has an EMPTY payload (`{}`). The previous code
@@ -469,7 +470,7 @@ export const WIRE_RENDERERS: RendererMap = {
   'full_compaction.complete': {
     tone: 'success',
     label: 'compact✓',
-    headline: () => ({ main: <Dim>compaction complete</Dim> }),
+    headline: () => ({ main: <Dim>{t('wireRenderer.compactionComplete')}</Dim> }),
   },
 
   'micro_compaction.apply': {
@@ -479,7 +480,7 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2 min-w-0">
           <Pill tone="compaction" variant="soft">
-            micro
+            {t('wireRenderer.micro')}
           </Pill>
           <Dim>cutoff {r.cutoff}</Dim>
         </span>
@@ -494,7 +495,7 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2">
           <Pill tone="lifecycle" variant="soft">
-            enter
+            {t('wireRenderer.enter')}
           </Pill>
           <Mono>{r.id}</Mono>
         </span>
@@ -509,9 +510,9 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2">
           <Pill tone="warning" variant="soft">
-            cancel
+            {t('wireRenderer.cancel')}
           </Pill>
-          <Mono>{r.id ?? '(latest)'}</Mono>
+          <Mono>{r.id ?? t('wireRenderer.latest')}</Mono>
         </span>
       ),
     }),
@@ -524,9 +525,9 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2">
           <Pill tone="success" variant="soft">
-            exit
+            {t('wireRenderer.exit')}
           </Pill>
-          <Mono>{r.id ?? '(latest)'}</Mono>
+          <Mono>{r.id ?? t('wireRenderer.latest')}</Mono>
         </span>
       ),
     }),
@@ -539,7 +540,7 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2">
           <Pill tone="subagent" variant="soft">
-            enter
+            {t('wireRenderer.enter')}
           </Pill>
           <Mono>{r.trigger}</Mono>
         </span>
@@ -550,7 +551,7 @@ export const WIRE_RENDERERS: RendererMap = {
   'swarm_mode.exit': {
     tone: 'subagent',
     label: 'swarm✓',
-    headline: () => ({ main: <Dim>swarm mode exited</Dim> }),
+    headline: () => ({ main: <Dim>{t('wireRenderer.swarmExited')}</Dim> }),
   },
 
   'goal.create': {
@@ -560,7 +561,7 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2 min-w-0">
           <Pill tone="lifecycle" variant="soft">
-            goal
+            {t('wireRenderer.goal')}
           </Pill>
           <span className="truncate text-fg-1">{r.objective}</span>
         </span>
@@ -580,7 +581,7 @@ export const WIRE_RENDERERS: RendererMap = {
       return {
         main: (
           <span className="truncate text-fg-1">
-            {parts.length === 0 ? <Dim>(no change)</Dim> : parts.join(' · ')}
+            {parts.length === 0 ? <Dim>{t('wireRenderer.noChange')}</Dim> : parts.join(' · ')}
           </span>
         ),
       };
@@ -590,7 +591,7 @@ export const WIRE_RENDERERS: RendererMap = {
   'goal.clear': {
     tone: 'warning',
     label: 'goal×',
-    headline: () => ({ main: <Dim>goal cleared</Dim> }),
+    headline: () => ({ main: <Dim>{t('wireRenderer.goalCleared')}</Dim> }),
   },
 
   // Observability records — the request trace (see agent-core records/types.ts).
@@ -602,14 +603,14 @@ export const WIRE_RENDERERS: RendererMap = {
       main: (
         <span className="flex items-center gap-2 min-w-0">
           <Mono>
-            {r.tools.length} tool{r.tools.length === 1 ? '' : 's'}
+            {t('wireRenderer.toolsCount', { count: r.tools.length })}
           </Mono>
           <Dim className="truncate">
             {r.tools
               .slice(0, 4)
               .map((tool) => tool.name)
               .join(', ')}
-            {r.tools.length > 4 ? ` +${r.tools.length - 4} more` : ''}
+            {r.tools.length > 4 ? ` ${t('wireRenderer.more', { count: r.tools.length - 4 })}` : ''}
           </Dim>
         </span>
       ),
@@ -724,15 +725,15 @@ export const WIRE_RENDERERS: RendererMap = {
         <span className="flex items-center gap-2 min-w-0">
           <Mono>{r.serverName}</Mono>
           <Dim>
-            {r.tools.length} tool{r.tools.length === 1 ? '' : 's'} · {r.enabledNames.length}{' '}
-            enabled
+            {t('wireRenderer.toolsCount', { count: r.tools.length })} · {r.enabledNames.length}{' '}
+            {t('wireRenderer.enabled')}
           </Dim>
         </span>
       ),
       right:
         r.collisions !== undefined && r.collisions.length > 0 ? (
           <Pill tone="warning" variant="soft">
-            {r.collisions.length} collision{r.collisions.length === 1 ? '' : 's'}
+            {t('wireRenderer.collisions', { count: r.collisions.length })}
           </Pill>
         ) : (
           <Mono>#{r.hash.slice(0, 8)}</Mono>

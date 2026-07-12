@@ -7,6 +7,7 @@ import { computeIssues, topSeverity } from '../../lib/issues';
 import type { AgentRecord, WireEntry } from '../../types';
 import { IssuesDrawer } from './IssuesDrawer';
 import { WireRow, type PairHint } from './WireRow';
+import { t } from '../../i18n';
 
 interface PairRecord {
   callLineNo: number | null;
@@ -174,7 +175,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
       {/* Toolbar */}
       <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface-1 px-3 py-2">
         <label className="flex items-center gap-2 font-mono text-[11px] text-fg-2">
-          <span className="text-fg-3">agent</span>
+          <span className="text-fg-3">{t('wire.agent')}</span>
           <select
             value={agentId}
             onChange={(e) => {
@@ -193,7 +194,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
         </label>
         <input
           type="text"
-          placeholder="search records (substring)"
+          placeholder={t('wire.searchPlaceholder')}
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -202,14 +203,14 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
         />
         <div className="ml-auto flex items-center gap-3 font-mono text-[11px] text-fg-2">
           <span className="tabular">
-            {filtered.length} / {entries.length} ev
+            {filtered.length} / {entries.length} {t('wire.events')}
           </span>
           {issues.length > 0 && issuesSeverity !== null ? (
             <button
               onClick={() => {
                 setDrawerOpen(true);
               }}
-              title={`${issues.length} issue${issues.length > 1 ? 's' : ''} — click to inspect`}
+              title={t(issues.length > 1 ? 'wire.issuesTitle' : 'wire.issueTitle', { count: issues.length })}
               className="flex items-center gap-1 border px-2 py-0.5"
               style={{
                 borderColor: `var(--color-sev-${issuesSeverity})`,
@@ -227,25 +228,25 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
             onClick={expandAll}
             className="border border-border px-2 py-0.5 text-fg-2 hover:border-border-strong hover:text-fg-0"
           >
-            expand all
+            {t('wire.expandAll')}
           </button>
           <button
             onClick={collapseAll}
             className="border border-border px-2 py-0.5 text-fg-2 hover:border-border-strong hover:text-fg-0"
           >
-            collapse
+            {t('wire.collapse')}
           </button>
         </div>
       </div>
 
       {warnings.length > 0 ? (
         <div className="shrink-0 border-b border-[var(--color-sev-warning)] bg-[color-mix(in_oklab,var(--color-sev-warning)_8%,transparent)] px-3 py-1 font-mono text-[11px] text-[var(--color-sev-warning)]">
-          {warnings.length} warning{warnings.length > 1 ? 's' : ''} · first: {warnings[0]}
+          {t(warnings.length > 1 ? 'wire.warnings' : 'wire.warning', { count: warnings.length, first: warnings[0] ?? '' })}
         </div>
       ) : null}
 
       {isLoading ? (
-        <div className="p-6 font-mono text-[12px] text-fg-3">loading wire…</div>
+        <div className="p-6 font-mono text-[12px] text-fg-3">{t('wire.loading')}</div>
       ) : error ? (
         <div className="p-6 font-mono text-[12px] text-[var(--color-sev-error)]">
           {(error as Error).message}
@@ -254,7 +255,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
         <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
             <div className="p-6 font-mono text-[12px] text-fg-3">
-              no records match the current filter
+              {t('wire.noMatch')}
             </div>
           ) : (
             <div

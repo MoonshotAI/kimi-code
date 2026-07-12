@@ -716,7 +716,17 @@ export class Session {
 
   async readMetadata() {
     const text = await this.persistenceKaos.readText(this.metadataPath);
-    this.metadata = JSON.parse(text);
+    try {
+      this.metadata = JSON.parse(text);
+    } catch (error) {
+      // state.json may be temporarily truncated if a concurrent write
+      // (writeMetadata) is in progress. Keep the existing in-memory
+      // metadata rather than crashing the caller.
+      this.log.warn(
+        'session.state_json_parse_failed',
+        { path: this.metadataPath, err: String(error) },
+      );
+    }
     return this.metadata;
   }
 

@@ -5,6 +5,7 @@ import { useLogs } from '../../hooks/useTasks';
 import type { LogLine } from '../../types';
 import { formatWallClock } from '../../util/time';
 import { Pill, type PillTone } from '../shared/Pill';
+import { t } from '../../i18n';
 
 interface LogsTabProps {
   sessionId: string;
@@ -74,14 +75,14 @@ export function LogsTab({ sessionId }: LogsTabProps) {
       <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border bg-surface-1 px-3 py-2">
         <div className="flex items-center gap-1 font-mono text-[11px]">
           <SegBtn active={which === 'session'} onClick={() => { setWhich('session'); }} disabled={!available.session && !isLoading}>
-            session
+            {t('logs.session')}
           </SegBtn>
           <SegBtn active={which === 'global'} onClick={() => { setWhich('global'); }} disabled={!available.global}>
-            global
+            {t('logs.global')}
           </SegBtn>
         </div>
         <label className="flex items-center gap-1.5 font-mono text-[11px] text-fg-2">
-          <span className="text-fg-3">level</span>
+          <span className="text-fg-3">{t('logs.level')}</span>
           <select
             value={level}
             onChange={(e) => { setLevel(e.target.value as LevelFilter); }}
@@ -94,32 +95,32 @@ export function LogsTab({ sessionId }: LogsTabProps) {
         </label>
         <input
           type="text"
-          placeholder="search log (substring)"
+          placeholder={t('logs.searchPlaceholder')}
           value={search}
           onChange={(e) => { setSearch(e.target.value); }}
           className="w-64 border border-border bg-surface-0 px-2 py-1 font-mono text-[12px] text-fg-0 placeholder:text-fg-3 focus:border-border-strong focus:outline-none"
         />
         <span className="ml-auto font-mono text-[11px] text-fg-3 tabular">
           {filtered.length} / {lines.length}
-          {data?.truncated ? ' · tail' : ''}
+          {data?.truncated ? ` · ${t('logs.tail')}` : ''}
         </span>
       </div>
 
       {isLoading ? (
-        <div className="p-6 font-mono text-[12px] text-fg-3">loading log…</div>
+        <div className="p-6 font-mono text-[12px] text-fg-3">{t('logs.loading')}</div>
       ) : error ? (
         <div className="p-6 font-mono text-[12px] text-[var(--color-sev-error)]">{error.message}</div>
       ) : lines.length === 0 ? (
         <div className="p-6 font-mono text-[12px] text-fg-3">
           {which === 'global' && !available.global
-            ? 'no global log in this bundle (export without --include-global-log)'
-            : 'no log available for this session'}
+            ? t('logs.noGlobalLog')
+            : t('logs.noSessionLog')}
         </div>
       ) : (
         <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto">
           {data?.truncated ? (
             <div className="border-b border-[var(--color-sev-warning)] bg-[color-mix(in_oklab,var(--color-sev-warning)_8%,transparent)] px-3 py-1 font-mono text-[10px] text-[var(--color-sev-warning)]">
-              log is large — showing the most recent {lines.length} lines
+              {t('logs.truncated', { count: lines.length })}
             </div>
           ) : null}
           <div style={{ height: virt.getTotalSize(), position: 'relative' }}>

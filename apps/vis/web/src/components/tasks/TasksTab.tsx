@@ -9,6 +9,7 @@ import { CopyButton } from '../shared/CopyButton';
 import { JsonViewer } from '../shared/JsonViewer';
 import { formatBytes } from '../shared/SizePreview';
 import { Pill, type PillTone } from '../shared/Pill';
+import { t } from '../../i18n';
 
 interface TasksTabProps {
   sessionId: string;
@@ -37,7 +38,7 @@ export function TasksTab({ sessionId }: TasksTabProps) {
   const { data, isLoading, error } = useTasks(sessionId);
 
   if (isLoading) {
-    return <div className="p-6 font-mono text-[12px] text-fg-3">loading tasks…</div>;
+    return <div className="p-6 font-mono text-[12px] text-fg-3">{t('tasks.loading')}</div>;
   }
   if (error) {
     return (
@@ -50,11 +51,11 @@ export function TasksTab({ sessionId }: TasksTabProps) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
       <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
-        background tasks{tasks.length > 0 ? ` · ${tasks.length}` : ''}
+        {t('tasks.backgroundTasks')}{tasks.length > 0 ? ` · ${tasks.length}` : ''}
       </div>
       {tasks.length === 0 ? (
         <div className="mt-3 border border-border bg-surface-0 px-3 py-6 text-center font-mono text-[12px] text-fg-3">
-          no background tasks were persisted for this session
+          {t('tasks.noTasksForSession')}
         </div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">
@@ -86,64 +87,64 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
         <span className="font-mono text-[12px] text-fg-0">{task.taskId}</span>
         <CopyButton value={task.taskId} />
         {entry.agentId !== 'main' ? (
-          <Pill tone="subagent" variant="outline" title="the agent that spawned this task">
+          <Pill tone="subagent" variant="outline" title={t('tasks.spawnedBy')}>
             {entry.agentId}
           </Pill>
         ) : null}
         {task.detached === false ? (
-          <Pill tone="warning" variant="outline">foreground</Pill>
+          <Pill tone="warning" variant="outline">{t('tasks.foreground')}</Pill>
         ) : null}
         <span className="ml-auto font-mono text-[11px] text-fg-3 tabular" title={formatAbsoluteTime(task.startedAt)}>
-          started {formatRelativeTime(task.startedAt)}
+          {t('tasks.started')} {formatRelativeTime(task.startedAt)}
         </span>
       </div>
 
       {/* Body fields */}
       <div className="grid grid-cols-1 gap-x-6 gap-y-1 px-3 py-2 md:grid-cols-2">
-        <Field label="description">{task.description || <Dim>(none)</Dim>}</Field>
+        <Field label={t('tasks.description')}>{task.description || <Dim>{t('tasks.none')}</Dim>}</Field>
         {task.kind === 'process' ? (
           <>
-            <Field label="command"><code className="break-all">{task.command}</code></Field>
-            <Field label="pid">{task.pid}</Field>
-            <Field label="exitCode">
-              {task.exitCode ?? <Dim>(running)</Dim>}
+            <Field label={t('tasks.command')}><code className="break-all">{task.command}</code></Field>
+            <Field label={t('tasks.pid')}>{task.pid}</Field>
+            <Field label={t('tasks.exitCode')}>
+              {task.exitCode ?? <Dim>{t('tasks.running')}</Dim>}
             </Field>
           </>
         ) : null}
         {task.kind === 'agent' ? (
           <>
-            <Field label="agentId">
+            <Field label={t('tasks.agentId')}>
               {task.agentId ? (
                 <Link
                   to={`/sessions/${sessionId}/agents/${task.agentId}`}
                   className="text-[var(--color-cat-subagent)] underline-offset-2 hover:underline"
-                  title="open this subagent's wire"
+                  title={t('tasks.openSubagentWire')}
                 >
                   {task.agentId} →
                 </Link>
               ) : (
-                <Dim>(none)</Dim>
+                <Dim>{t('tasks.none')}</Dim>
               )}
             </Field>
-            <Field label="subagentType">{task.subagentType ?? <Dim>(none)</Dim>}</Field>
+            <Field label={t('tasks.subagentType')}>{task.subagentType ?? <Dim>{t('tasks.none')}</Dim>}</Field>
           </>
         ) : null}
         {task.kind === 'question' ? (
           <>
-            <Field label="questionCount">{task.questionCount}</Field>
-            <Field label="toolCallId">{task.toolCallId ?? <Dim>(none)</Dim>}</Field>
+            <Field label={t('tasks.questionCount')}>{task.questionCount}</Field>
+            <Field label={t('tasks.toolCallId')}>{task.toolCallId ?? <Dim>{t('tasks.none')}</Dim>}</Field>
           </>
         ) : null}
-        <Field label="duration">
-          {duration === null ? <Dim>(unfinished)</Dim> : `${duration} ms`}
+        <Field label={t('tasks.duration')}>
+          {duration === null ? <Dim>{t('tasks.unfinished')}</Dim> : `${duration} ms`}
         </Field>
         {task.timeoutMs !== undefined ? (
-          <Field label="timeoutMs">{task.timeoutMs}</Field>
+          <Field label={t('tasks.timeoutMs')}>{task.timeoutMs}</Field>
         ) : null}
-        {task.stopReason ? <Field label="stopReason">{task.stopReason}</Field> : null}
-        <Field label="endedAt">
+        {task.stopReason ? <Field label={t('tasks.stopReason')}>{task.stopReason}</Field> : null}
+        <Field label={t('tasks.endedAt')}>
           {task.endedAt === null || task.endedAt === undefined ? (
-            <Dim>(running)</Dim>
+            <Dim>{t('tasks.running')}</Dim>
           ) : (
             <span title={formatAbsoluteTime(task.endedAt)}>{formatRelativeTime(task.endedAt)}</span>
           )}
@@ -157,11 +158,11 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
           onClick={() => { setShowLog((v) => !v); }}
           className="font-mono text-[11px] text-fg-2 hover:text-fg-0"
           disabled={!entry.outputExists}
-          title={entry.outputExists ? 'view output.log' : 'no output.log for this task'}
+          title={entry.outputExists ? t('tasks.viewOutput') : t('tasks.noOutput')}
         >
-          {showLog ? '▾' : '▸'} output.log{' '}
+          {showLog ? '▾' : '▸'} {t('tasks.outputLog')}{' '}
           <span className="text-fg-3">
-            {entry.outputExists ? formatBytes(entry.outputSizeBytes) : '(none)'}
+            {entry.outputExists ? formatBytes(entry.outputSizeBytes) : t('tasks.none')}
           </span>
         </button>
         <button
@@ -169,7 +170,7 @@ function TaskCard({ sessionId, entry }: { sessionId: string; entry: BackgroundTa
           onClick={() => { setShowRaw((v) => !v); }}
           className="ml-auto font-mono text-[11px] text-fg-3 hover:text-fg-1"
         >
-          {showRaw ? 'hide raw' : 'raw json'}
+          {showRaw ? t('tasks.hideRaw') : t('tasks.rawJson')}
         </button>
       </div>
 
@@ -225,14 +226,14 @@ function TaskOutput({ sessionId, taskId }: { sessionId: string; taskId: string }
   return (
     <div className="border-t border-border bg-[var(--color-surface-0)]">
       <div className="flex items-center gap-2 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-fg-3">
-        <span>output.log</span>
+        <span>{t('tasks.outputLog')}</span>
         <span className="tabular">
           {formatBytes(Math.min(cursor, size))} / {formatBytes(size)}
         </span>
         {!eof && cursor > 0 ? (
-          <span className="text-[var(--color-sev-warning)]">· more below</span>
+          <span className="text-[var(--color-sev-warning)]">{t('tasks.moreBelow')}</span>
         ) : null}
-        <span className="ml-auto"><CopyButton value={content} label="copy" /></span>
+        <span className="ml-auto"><CopyButton value={content} label={t('shared.copy')} /></span>
       </div>
       {err !== null ? (
         <div className="border-t border-border px-3 py-2 font-mono text-[11px] text-[var(--color-sev-error)]">
@@ -240,7 +241,7 @@ function TaskOutput({ sessionId, taskId }: { sessionId: string; taskId: string }
         </div>
       ) : null}
       <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap break-words border-t border-border px-3 py-2 font-mono text-[11px] leading-[1.5] text-fg-1">
-        {content || (loading ? 'loading log…' : '(empty)')}
+        {content || (loading ? t('tasks.loadingLog') : t('tasks.empty'))}
       </pre>
       {!eof && cursor > 0 ? (
         <button
@@ -249,7 +250,7 @@ function TaskOutput({ sessionId, taskId }: { sessionId: string; taskId: string }
           disabled={loading}
           className="w-full border-t border-border px-3 py-1.5 font-mono text-[11px] text-fg-2 hover:bg-surface-2 hover:text-fg-0 disabled:opacity-50"
         >
-          {loading ? 'loading…' : `load more (${formatBytes(size - cursor)} remaining)`}
+          {loading ? t('tasks.loading') : t('tasks.loadMore', { remaining: formatBytes(size - cursor) })}
         </button>
       ) : null}
     </div>

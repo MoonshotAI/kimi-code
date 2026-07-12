@@ -129,16 +129,25 @@ struct EncodedImage {
 /// Returns `None` on decode/encode failure (caller passes through original).
 /// Returns `Some` with `changed: false` when the re-encode didn't help.
 /// Returns `Some` with `changed: true` when the result is smaller.
+///
+/// Animated WebP is passed through unchanged (returned as `None`).
 pub fn compress_image(
     bytes: &[u8],
     mime_type: &str,
     config: &CompressConfig,
 ) -> Option<CompressResult> {
     let normalized = normalize_mime(mime_type);
-    let source_is_png = normalized == "image/png";
+    let source_is_png_like = normalized == "image/png" || normalized == "image/webp";
     let format = match normalized.as_str() {
         "image/png" => ImageFormat::Png,
         "image/jpeg" => ImageFormat::Jpeg,
+        "image/webp" => {
+            // Animated WebP — pass through unchanged; decoding would flatten.
+            if is_animated_webp(bytes) {
+                return None;
+            }
+            ImageFormat::WebP
+        }
         _ => return None,
     };
 
@@ -150,7 +159,7 @@ pub fn compress_image(
 
     let encoded = encode_within_budget(
         &mut img,
-        source_is_png,
+        source_is_png_like,
         config.byte_budget,
         &config.fallback_edges,
         &config.jpeg_quality_steps,
@@ -192,10 +201,17 @@ pub fn crop_image(
         return Err(CropError::Empty);
     }
     let normalized = normalize_mime(mime_type);
-    let source_is_png = normalized == "image/png";
+    let source_is_png_like = normalized == "image/png" || normalized == "image/webp";
     let format = match normalized.as_str() {
         "image/png" => ImageFormat::Png,
         "image/jpeg" => ImageFormat::Jpeg,
+        "image/webp" => {
+            // Animated WebP cannot be cropped sensibly.
+            if is_animated_webp(bytes) {
+                return Err(CropError::UnsupportedFormat);
+            }
+            ImageFormat::WebP
+        }
         _ => return Err(CropError::UnsupportedFormat),
     };
     if ![region_x, region_y, region_width, region_height]
@@ -230,7 +246,7 @@ pub fn crop_image(
     let cropped = img.crop_imm(x as u32, y as u32, w, h);
 
     if config.skip_resize {
-        let (data, mime) = if source_is_png {
+        let (data, mime) = if source_is_png_like {
             (encode_png(&cropped).map_err(|e| CropError::DecodeFailed(e.to_string()))?, "image/png")
         } else {
             (encode_jpeg(&cropped, 90).map_err(|e| CropError::DecodeFailed(e.to_string()))?, "image/jpeg")
@@ -263,7 +279,7 @@ pub fn crop_image(
     fit_within_edge(&mut fitted, config.max_edge);
     let encoded = encode_within_budget(
         &mut fitted,
-        source_is_png,
+        source_is_png_like,
         config.byte_budget,
         &config.fallback_edges,
         &config.jpeg_quality_steps,
@@ -358,26 +374,31 @@ fn fit_within_edge(img: &mut DynamicImage, edge: u32) -> bool {
     true
 }
 
+/// PNG rescales stop at this edge; below it the ladder goes lossy instead.
+/// Mirrors the TS constant in image-compress.ts.
+const PNG_RESCALE_FLOOR_PX: u32 = 1000;
+
 /// Encode `img` under the byte budget, trying progressively smaller sizes
 /// and lower quality levels. Mirrors `encodeWithinBudget` in `image-compress.ts`.
 ///
 /// Strategy:
-/// - PNG source: lossless PNG at fitted size → smaller PNGs at fallback edges
-///   → lossy JPEG quality ladder (drops transparency).
+/// - Lossless source (PNG/WebP): lossless PNG at fitted size → smaller PNGs at
+///   fallback edges down to PNG_RESCALE_FLOOR_PX → lossy JPEG quality ladder
+///   (drops transparency) at floored size → JPEG ladder again at each sub-floor edge.
 /// - JPEG source: quality ladder at fitted size → full ladder at each
 ///   fallback edge.
 ///
 /// Always returns the smallest encoding produced, even if none met the budget.
 fn encode_within_budget(
     img: &mut DynamicImage,
-    source_is_png: bool,
+    source_is_lossless: bool,
     byte_budget: usize,
     fallback_edges: &[u32],
     jpeg_quality_steps: &[u8],
 ) -> Option<EncodedImage> {
     let mut smallest: Option<EncodedImage> = None;
 
-    if source_is_png {
+    if source_is_lossless {
         if let Ok(png) = encode_png(img) {
             let len = png.len();
             track_smallest(&mut smallest, png, "image/png", img.width(), img.height());
@@ -386,7 +407,11 @@ fn encode_within_budget(
             }
         }
 
+        // Progressively smaller PNGs down to the floor.
         for &edge in fallback_edges {
+            if edge < PNG_RESCALE_FLOOR_PX {
+                break;
+            }
             if !fit_within_edge(img, edge) {
                 continue;
             }
@@ -405,6 +430,7 @@ fn encode_within_budget(
             }
         }
 
+        // Lossy JPEG ladder at the floored size.
         for &quality in jpeg_quality_steps {
             if let Ok(jpeg) = encode_jpeg(img, quality) {
                 let len = jpeg.len();
@@ -417,6 +443,31 @@ fn encode_within_budget(
                 );
                 if len <= byte_budget {
                     return smallest;
+                }
+            }
+        }
+
+        // JPEG ladder at each sub-floor edge.
+        for &edge in fallback_edges {
+            if edge >= PNG_RESCALE_FLOOR_PX {
+                continue;
+            }
+            if !fit_within_edge(img, edge) {
+                continue;
+            }
+            for &quality in jpeg_quality_steps {
+                if let Ok(jpeg) = encode_jpeg(img, quality) {
+                    let len = jpeg.len();
+                    track_smallest(
+                        &mut smallest,
+                        jpeg,
+                        "image/jpeg",
+                        img.width(),
+                        img.height(),
+                    );
+                    if len <= byte_budget {
+                        return smallest;
+                    }
                 }
             }
         }
@@ -505,6 +556,27 @@ fn encode_jpeg(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, image::ImageE
         encoder.write_image(&rgb, img.width(), img.height(), image::ExtendedColorType::Rgb8)?;
     }
     Ok(buf)
+}
+
+/// Check whether a WebP byte slice is animated (VP8X with ANIM flag).
+/// Mirrors `isAnimatedWebp` in `webp-decode.ts`. Returns true when the bytes
+/// look like an animated WebP; returns false for still WebP, other formats, or
+/// truncated headers.
+fn is_animated_webp(bytes: &[u8]) -> bool {
+    // RIFF header: "RIFF" + 4 bytes size + "WEBP"
+    if bytes.len() < 30 {
+        return false;
+    }
+    if &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return false;
+    }
+    let chunk_type = &bytes[12..16];
+    if chunk_type != b"VP8X" {
+        return false;
+    }
+    // VP8X flags at bytes[20..24]; bit 1 is the animation flag.
+    // The flags field is 4 bytes: [bitfield byte] [0] [0] [0]
+    bytes[20] & 0x02 != 0
 }
 
 fn normalize_mime(mime_type: &str) -> String {
@@ -848,6 +920,101 @@ mod tests {
         assert!(!r.data.is_empty());
     }
 
+    // ── is_animated_webp ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_animated_webp_empty() {
+        assert!(!is_animated_webp(b""));
+    }
+
+    #[test]
+    fn test_is_animated_webp_too_short() {
+        assert!(!is_animated_webp(b"RIFF"));
+    }
+
+    #[test]
+    fn test_is_animated_webp_not_riff() {
+        let mut buf = vec![0u8; 30];
+        buf[0..4].copy_from_slice(b"FOOO");
+        assert!(!is_animated_webp(&buf));
+    }
+
+    #[test]
+    fn test_is_animated_webp_not_webp() {
+        let mut buf = vec![0u8; 30];
+        buf[0..4].copy_from_slice(b"RIFF");
+        buf[8..12].copy_from_slice(b"XXXX");
+        assert!(!is_animated_webp(&buf));
+    }
+
+    #[test]
+    fn test_is_animated_webp_still() {
+        // Minimum valid WebP with VP8X but no ANIM flag.
+        let mut buf = vec![0u8; 30];
+        buf[0..4].copy_from_slice(b"RIFF");
+        buf[8..12].copy_from_slice(b"WEBP");
+        buf[12..16].copy_from_slice(b"VP8X");
+        // flags[20] = 0 (no ANIM)
+        assert!(!is_animated_webp(&buf));
+    }
+
+    #[test]
+    fn test_is_animated_webp_animated() {
+        // Minimum valid WebP with VP8X and ANIM flag set (bit 1).
+        let mut buf = vec![0u8; 30];
+        buf[0..4].copy_from_slice(b"RIFF");
+        buf[8..12].copy_from_slice(b"WEBP");
+        buf[12..16].copy_from_slice(b"VP8X");
+        buf[20] = 0x02; // ANIM flag
+        assert!(is_animated_webp(&buf));
+    }
+
+    // ── WebP compress / crop ──────────────────────────────────────────────
+
+    /// Build a tiny valid WebP image (lossless). The `image` crate's webp
+    /// encoder produces a valid still WebP.
+    fn make_still_webp_bytes() -> Vec<u8> {
+        let img = image::DynamicImage::ImageRgba8(
+            image::ImageBuffer::from_fn(32, 32, |x, y| {
+                image::Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255])
+            }),
+        );
+        let mut buf = Vec::new();
+        let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut buf);
+        encoder
+            .encode(&img.to_rgba8(), 32, 32, image::ExtendedColorType::Rgba8)
+            .expect("lossless WebP encode should not fail");
+        buf
+    }
+
+    #[test]
+    fn test_compress_webp_downscale() {
+        let bytes = make_still_webp_bytes();
+        let config = CompressConfig {
+            max_edge: 16,
+            byte_budget: 3_75_000,
+            fallback_edges: vec![16],
+            jpeg_quality_steps: vec![80, 60, 40, 20],
+        };
+        let result = compress_image(&bytes, "image/webp", &config);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(r.changed);
+        assert!(r.width <= 16);
+        assert!(r.height <= 16);
+    }
+
+    #[test]
+    fn test_crop_webp_success() {
+        let bytes = make_still_webp_bytes();
+        let config = default_crop_config(3_75_000);
+        let result = crop_image(&bytes, "image/webp", 0.0, 0.0, 16.0, 16.0, &config);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert_eq!(r.region_width, 16);
+        assert_eq!(r.region_height, 16);
+    }
+
     // ── normalize_mime ──────────────────────────────────────────────────
 
     #[test]
@@ -855,6 +1022,7 @@ mod tests {
         assert_eq!(normalize_mime("image/png"), "image/png");
         assert_eq!(normalize_mime("image/jpeg"), "image/jpeg");
         assert_eq!(normalize_mime("image/jpg"), "image/jpeg");
+        assert_eq!(normalize_mime("image/webp"), "image/webp");
         assert_eq!(normalize_mime("  IMAGE/PNG  "), "image/png");
     }
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useImportZip } from '../../hooks/useSession';
+import { t } from '../../i18n';
 
 /** True for the file-like drag payloads we care about; filters out text /
  *  link drags so the overlay doesn't hijack ordinary in-page drags. */
@@ -44,7 +45,7 @@ export function ZipDropOverlay() {
         void navigate(`/sessions/${result.sessionId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        window.alert(`Import failed: ${message}`);
+        window.alert(t('zipDrop.importFailed', { message }));
       }
     }
 
@@ -77,7 +78,7 @@ export function ZipDropOverlay() {
       const file = e.dataTransfer?.files[0];
       if (file === undefined) return;
       if (!isZipFile(file)) {
-        window.alert('Please drop a .zip bundle exported from kimi-code (/export-debug-zip).');
+        window.alert(t('zipDrop.notZip'));
         return;
       }
       void importFile(file);
@@ -101,10 +102,10 @@ export function ZipDropOverlay() {
     <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="border-2 border-dashed border-border-strong bg-surface-1 px-10 py-8 text-center">
         <div className="font-mono text-[13px] text-fg-0">
-          {importing ? 'importing debug zip…' : 'drop debug zip to import'}
+          {importing ? t('zipDrop.subtitle') : t('zipDrop.title')}
         </div>
         <div className="mt-2 font-mono text-[11px] text-fg-3">
-          from kimi-code /export-debug-zip
+          {t('zipDrop.source')}
         </div>
       </div>
     </div>

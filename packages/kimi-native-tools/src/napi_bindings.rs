@@ -289,9 +289,11 @@ pub async fn native_bash(
     let env_pairs = env.map(|pairs| {
         pairs
             .into_iter()
-            .filter_map(|pair| {
+            .filter_map(|mut pair| {
                 if pair.len() >= 2 {
-                    Some((pair[0].clone(), pair[1].clone()))
+                    let val = pair.remove(1);
+                    let key = pair.remove(0);
+                    Some((key, val))
                 } else {
                     None
                 }
@@ -895,7 +897,7 @@ pub struct NativeMcpStdioSpawnConfig {
 /// Result of `nativeMcpStdioSpawn`.
 #[napi(object)]
 pub struct NativeMcpStdioSpawnResult {
-    pub handle: u64,
+    pub handle: i64,
     pub pid: u32,
 }
 
@@ -921,19 +923,19 @@ pub async fn native_mcp_stdio_spawn(
         .await
         .map_err(|e| napi::Error::from_reason(e))?;
     Ok(NativeMcpStdioSpawnResult {
-        handle: result.handle,
+        handle: result.handle as i64,
         pid: result.pid,
     })
 }
 
 #[napi]
 pub async fn native_mcp_stdio_initialize(
-    handle: u64,
+    handle: i64,
     client_name: String,
     client_version: String,
     timeout_ms: Option<u32>,
 ) -> Result<String, napi::Error> {
-    let result = mcp::stdio_initialize(handle, &client_name, &client_version, timeout_ms)
+    let result = mcp::stdio_initialize(handle as u64, &client_name, &client_version, timeout_ms)
         .await
         .map_err(|e| napi::Error::from_reason(e))?;
     serde_json::to_string(&result)
@@ -942,9 +944,9 @@ pub async fn native_mcp_stdio_initialize(
 
 #[napi]
 pub async fn native_mcp_stdio_list_tools(
-    handle: u64,
+    handle: i64,
 ) -> Result<Vec<NativeMcpToolDef>, napi::Error> {
-    let tools = mcp::stdio_list_tools(handle)
+    let tools = mcp::stdio_list_tools(handle as u64)
         .await
         .map_err(|e| napi::Error::from_reason(e))?;
     Ok(tools
@@ -959,14 +961,14 @@ pub async fn native_mcp_stdio_list_tools(
 
 #[napi]
 pub async fn native_mcp_stdio_call_tool(
-    handle: u64,
+    handle: i64,
     name: String,
     args_json: String,
     timeout_ms: Option<u32>,
 ) -> Result<String, napi::Error> {
     let args: serde_json::Value = serde_json::from_str(&args_json)
         .map_err(|e| napi::Error::from_reason(format!("Invalid args JSON: {}", e)))?;
-    let result = mcp::stdio_call_tool(handle, &name, &args, timeout_ms)
+    let result = mcp::stdio_call_tool(handle as u64, &name, &args, timeout_ms)
         .await
         .map_err(|e| napi::Error::from_reason(e))?;
     serde_json::to_string(&result)
@@ -974,20 +976,20 @@ pub async fn native_mcp_stdio_call_tool(
 }
 
 #[napi]
-pub async fn native_mcp_stdio_close(handle: u64) -> Result<(), napi::Error> {
-    mcp::stdio_close(handle)
+pub async fn native_mcp_stdio_close(handle: i64) -> Result<(), napi::Error> {
+    mcp::stdio_close(handle as u64)
         .await
         .map_err(|e| napi::Error::from_reason(e))
 }
 
 #[napi]
-pub async fn native_mcp_stdio_stderr_snapshot(handle: u64) -> String {
-    mcp::stdio_stderr_snapshot(handle).await
+pub async fn native_mcp_stdio_stderr_snapshot(handle: i64) -> String {
+    mcp::stdio_stderr_snapshot(handle as u64).await
 }
 
 #[napi]
-pub async fn native_mcp_stdio_is_alive(handle: u64) -> bool {
-    mcp::stdio_is_alive(handle).await
+pub async fn native_mcp_stdio_is_alive(handle: i64) -> bool {
+    mcp::stdio_is_alive(handle as u64).await
 }
 
 // ============================================================================

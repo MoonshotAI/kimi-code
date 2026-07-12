@@ -102,6 +102,25 @@ export function registerSnapshotRoutes(
           reply.send(errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, req.id));
           return;
         }
+        // Catch JSON parse errors (e.g. from a transient state.json race)
+        // and return a structured error instead of letting them bubble up
+        // as a generic 50001 with the raw SyntaxError message.
+        if (err instanceof SyntaxError) {
+          ix.invokeFunction((a) => {
+            a.get(ILogService).warn(
+              { sid: session_id, err: String(err) },
+              'snapshot.json_parse_error',
+            );
+          });
+          reply.send(
+            errEnvelope(
+              ErrorCode.INTERNAL_ERROR,
+              `Failed to parse session data for "${session_id}". The session state may be temporarily unavailable — please retry.`,
+              req.id,
+            ),
+          );
+          return;
+        }
         throw err;
       }
     },

@@ -16,6 +16,7 @@ import { Pill } from '../components/shared/Pill';
 import { useSession } from '../hooks/useSession';
 import { useCron, useTasks } from '../hooks/useTasks';
 import { formatAbsoluteTime, formatRelativeTime } from '../util/time';
+import { t } from '../i18n';
 
 type TabId = 'wire' | 'timeline' | 'context' | 'agents' | 'tasks' | 'cron' | 'logs' | 'state';
 
@@ -26,9 +27,9 @@ export function SessionDetailPage() {
   const { data: tasksData } = useTasks(sessionId);
   const { data: cronData } = useCron(sessionId);
 
-  if (!sessionId) return <div className="p-6 text-fg-3">(no session id)</div>;
+  if (!sessionId) return <div className="p-6 text-fg-3">{t('sessionDetail.noSessionId')}</div>;
   if (isLoading) {
-    return <div className="p-6 font-mono text-[12px] text-fg-3">loading session…</div>;
+    return <div className="p-6 font-mono text-[12px] text-fg-3">{t('sessionDetail.loadingSession')}</div>;
   }
   if (error) {
     return (
@@ -57,14 +58,14 @@ export function SessionDetailPage() {
           <span className="font-mono text-[14px] text-fg-0">{session.sessionId}</span>
           <CopyButton value={session.sessionId} />
           {session.imported ? (
-            <Pill tone="subagent" variant="outline">imported</Pill>
+            <Pill tone="subagent" variant="outline">{t('sessionDetail.imported')}</Pill>
           ) : null}
           {state?.title ? (
             <span className="font-mono text-[12px] text-fg-1">"{state.title}"</span>
           ) : null}
           <span className="ml-auto flex items-center gap-2">
             <RevealButton sessionId={sessionId} />
-            <CopyButton value={session.sessionDir} label="copy path" />
+            <CopyButton value={session.sessionDir} label={t('sessionDetail.copyPath')} />
           </span>
         </div>
         {session.imported && session.importMeta ? (
@@ -74,7 +75,7 @@ export function SessionDetailPage() {
             ) : null}
             {session.importMeta.manifest?.os ? <span>· {session.importMeta.manifest.os}</span> : null}
             {session.importMeta.manifest?.exportedAt ? (
-              <span>· exported {formatRelativeTime(Date.parse(session.importMeta.manifest.exportedAt))}</span>
+              <span>· {t('sessionDetail.exported')} {formatRelativeTime(Date.parse(session.importMeta.manifest.exportedAt))}</span>
             ) : null}
             {session.importMeta.originalName ? <span>· {session.importMeta.originalName}</span> : null}
           </div>
@@ -82,7 +83,7 @@ export function SessionDetailPage() {
         <div className="mt-1 flex items-center gap-3 font-mono text-[11px] text-fg-2">
           {state?.updatedAt ? (
             <span className="text-fg-3 tabular">
-              updated {formatRelativeTime(Date.parse(state.updatedAt))} ·{' '}
+              {t('sessionDetail.updated')} {formatRelativeTime(Date.parse(state.updatedAt))} ·{' '}
               {formatAbsoluteTime(Date.parse(state.updatedAt))}
             </span>
           ) : null}
@@ -100,7 +101,7 @@ export function SessionDetailPage() {
         </div>
         {state?.lastPrompt ? (
           <div className="mt-1 truncate font-mono text-[11px] text-fg-3" title={state.lastPrompt}>
-            prompt · {state.lastPrompt}
+            {t('sessionDetail.prompt')} · {state.lastPrompt}
           </div>
         ) : null}
       </div>
@@ -108,14 +109,14 @@ export function SessionDetailPage() {
       <TabBar
         defaultTab="wire"
         tabs={[
-          { id: 'wire', label: 'Wire', count: wireRecords },
-          { id: 'timeline', label: 'Timeline', count: null },
-          { id: 'context', label: 'Context', count: null },
-          { id: 'agents', label: 'Agents', count: subagentCount },
-          { id: 'tasks', label: 'Tasks', count: tasksData?.tasks.length ?? null },
-          { id: 'cron', label: 'Cron', count: cronData?.cron.length ?? null },
-          { id: 'logs', label: 'Logs', count: null },
-          { id: 'state', label: 'State', count: null },
+          { id: 'wire', label: t('tabs.wire'), count: wireRecords },
+          { id: 'timeline', label: t('tabs.timeline'), count: null },
+          { id: 'context', label: t('tabs.context'), count: null },
+          { id: 'agents', label: t('tabs.agents'), count: subagentCount },
+          { id: 'tasks', label: t('tabs.tasks'), count: tasksData?.tasks.length ?? null },
+          { id: 'cron', label: t('tabs.cron'), count: cronData?.cron.length ?? null },
+          { id: 'logs', label: t('tabs.logs'), count: null },
+          { id: 'state', label: t('tabs.state'), count: null },
         ]}
       />
 
@@ -161,9 +162,9 @@ function RevealButton({ sessionId }: { sessionId: string }) {
           ? 'text-[var(--color-sev-error)]'
           : 'text-fg-2 hover:border-border-strong hover:text-fg-0'
       }`}
-      title={state === 'err' && errMsg ? errMsg : 'reveal session folder in OS file manager'}
+      title={state === 'err' && errMsg ? errMsg : t('sessionDetail.openFolderTitle')}
     >
-      {state === 'opening' ? 'opening…' : state === 'err' ? '✗ failed' : '↗ open folder'}
+      {state === 'opening' ? t('sessionDetail.opening') : state === 'err' ? t('sessionDetail.openFailed') : t('sessionDetail.openFolder')}
     </button>
   );
 }

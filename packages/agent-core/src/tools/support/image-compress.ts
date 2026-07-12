@@ -49,6 +49,10 @@ import {
   unsupportedImageMimeFromUrl,
 } from './image-format-policy';
 import { decodeWebp, isAnimatedWebp } from './webp-decode';
+import {
+  tryNativeCompressImage,
+  tryNativeCropImage,
+} from '../builtin/native-tools';
 
 /**
  * Built-in longest-edge ceiling (px). Larger images are scaled down to fit.
@@ -339,6 +343,34 @@ export async function compressImageForModel(
   // from an MCP tool) that would be loaded just to be dropped downstream.
   if (bytes.length > maxDecodeBytes) return finish('passthrough_guard', passthrough());
 
+  // Try the Rust native codec first (PNG/JPEG/WebP). It is 10–100× faster
+  // than jimp and handles the whole decode→resize→encode pipeline.
+  // EXIF-rotated JPEGs are deferred to jimp: the Rust image crate does not
+  // auto-apply EXIF orientation, so dimension reporting would be off.
+  if (dims?.transposed !== true) {
+    const nativeResult = await tryNativeCompressImage(bytes, normalizedMime, {
+      maxEdge,
+      byteBudget,
+      fallbackEdges: FALLBACK_EDGES_PX,
+      jpegQualitySteps: JPEG_QUALITY_STEPS,
+    });
+    if (nativeResult !== undefined) {
+      if (!nativeResult.changed) return finish('passthrough_unhelpful', passthrough());
+      return finish('compressed', {
+        data: nativeResult.data,
+        mimeType: nativeResult.mimeType,
+        width: nativeResult.width,
+        height: nativeResult.height,
+        originalWidth: nativeResult.originalWidth,
+        originalHeight: nativeResult.originalHeight,
+        changed: true,
+        originalByteLength: bytes.length,
+        finalByteLength: nativeResult.finalByteLength,
+      });
+    }
+  }
+
+  // Native unavailable or returned null — fall back to jimp pipeline.
   try {
     const image = await decodeToJimp(bytes, normalizedMime);
     // WebP joins PNG on the lossless-first ladder: both carry alpha and
@@ -789,6 +821,47 @@ export async function cropImageForModel(
     return fail('too_large', 'The image is too large to decode for cropping.');
   }
 
+  // Try the Rust native codec first.
+  const nativeOutcome = await tryNativeCropImage(
+    bytes,
+    normalizedMime,
+    region.x,
+    region.y,
+    region.width,
+    region.height,
+    {
+      maxEdge,
+      byteBudget,
+      skipResize: options.skipResize ?? false,
+      fallbackEdges: FALLBACK_EDGES_PX,
+      jpegQualitySteps: JPEG_QUALITY_STEPS,
+    },
+  );
+  if (nativeOutcome !== undefined) {
+    if (!nativeOutcome.ok) {
+      return fail(nativeOutcome.errorKind as CropErrorKind, nativeOutcome.error);
+    }
+    return succeed({
+      ok: true,
+      data: nativeOutcome.data,
+      mimeType: nativeOutcome.mimeType,
+      width: nativeOutcome.width,
+      height: nativeOutcome.height,
+      originalWidth: nativeOutcome.originalWidth,
+      originalHeight: nativeOutcome.originalHeight,
+      region: {
+        x: nativeOutcome.regionX,
+        y: nativeOutcome.regionY,
+        width: nativeOutcome.regionWidth,
+        height: nativeOutcome.regionHeight,
+      },
+      resized: nativeOutcome.resized,
+      originalByteLength: bytes.length,
+      finalByteLength: nativeOutcome.finalByteLength,
+    });
+  }
+
+  // Native unavailable or returned null — fall back to jimp pipeline.
   try {
     const image = await decodeToJimp(bytes, normalizedMime);
     const originalWidth = image.width;

@@ -7,6 +7,7 @@ import type {
 } from '../../types';
 import { ImagePreview } from '../shared/ImagePreview';
 import { Pill } from '../shared/Pill';
+import { t } from '../../i18n';
 
 interface MessageBubbleProps {
   message: ProjectedMessage;
@@ -34,12 +35,12 @@ function UserBubble({ m }: { m: ProjectedMessage }) {
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-user)' }}>
       <header className="mb-1 flex items-center gap-2">
-        <Pill tone="user" variant="solid">user</Pill>
-        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
+        <Pill tone="user" variant="solid">{t('context.user')}</Pill>
+        <span className="font-mono text-[10px] text-fg-3 tabular">{t('context.line', { no: m.lineNo })}</span>
         {showsOriginBadge ? (
           <Pill tone="meta" variant="outline">{originKind}</Pill>
         ) : null}
-        {m.message.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
+        {m.message.isError ? <Pill tone="error" variant="outline">{t('context.error')}</Pill> : null}
       </header>
       <MessageContent parts={m.message.content} />
     </article>
@@ -54,15 +55,15 @@ function AssistantBubble({ m }: { m: ProjectedMessage }) {
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-assistant)' }}>
       <header className="mb-1 flex items-center gap-2">
-        <Pill tone="assistant" variant="solid">assistant</Pill>
-        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
-        {think ? <Pill tone="config" variant="outline">think</Pill> : null}
+        <Pill tone="assistant" variant="solid">{t('context.assistant')}</Pill>
+        <span className="font-mono text-[10px] text-fg-3 tabular">{t('context.line', { no: m.lineNo })}</span>
+        {think ? <Pill tone="config" variant="outline">{t('context.think')}</Pill> : null}
         {toolCalls.length > 0 ? (
           <Pill tone="tools" variant="outline">
-            {toolCalls.length} tool call{toolCalls.length > 1 ? 's' : ''}
+            {t(toolCalls.length > 1 ? 'context.toolCallsPlural' : 'context.toolCalls', { count: toolCalls.length })}
           </Pill>
         ) : null}
-        {m.message.partial ? <Pill tone="warning" variant="outline">partial</Pill> : null}
+        {m.message.partial ? <Pill tone="warning" variant="outline">{t('context.partial')}</Pill> : null}
       </header>
       {think ? <ThinkBlock text={think} /> : null}
       <MessageContent parts={visibleParts} />
@@ -97,14 +98,14 @@ function ToolBubble({ m }: { m: ProjectedMessage }) {
         className="flex w-full items-center gap-2 text-left"
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
-        <Pill tone="tool" variant="solid">tool</Pill>
+        <Pill tone="tool" variant="solid">{t('context.tool')}</Pill>
         {m.message.toolCallId ? (
           <span className="font-mono text-[11px] text-fg-1">
-            call {m.message.toolCallId.slice(0, 12)}
+            {t('context.call')} {m.message.toolCallId.slice(0, 12)}
           </span>
         ) : null}
-        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
-        {m.message.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
+        <span className="font-mono text-[10px] text-fg-3 tabular">{t('context.line', { no: m.lineNo })}</span>
+        {m.message.isError ? <Pill tone="error" variant="outline">{t('context.error')}</Pill> : null}
         {!open ? (
           <span className="ml-1 flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] text-fg-3">
             <span className="truncate">{preview}</span>
@@ -127,8 +128,8 @@ function SystemBubble({ m }: { m: ProjectedMessage }) {
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-cat-config)' }}>
       <header className="mb-1 flex items-center gap-2">
-        <Pill tone="config" variant="solid">system</Pill>
-        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
+        <Pill tone="config" variant="solid">{t('context.system')}</Pill>
+        <span className="font-mono text-[10px] text-fg-3 tabular">{t('context.line', { no: m.lineNo })}</span>
       </header>
       <MessageContent parts={m.message.content} />
     </article>
@@ -146,7 +147,7 @@ function ThinkBlock({ text }: { text: string }) {
         className="flex w-full items-center gap-2 px-2 py-1 text-left font-mono text-[11px] text-fg-2 hover:text-fg-1"
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
-        <span className="uppercase tracking-[0.08em]">thinking</span>
+        <span className="uppercase tracking-[0.08em]">{t('context.thinking')}</span>
         <span className="text-fg-3 tabular">{text.length}ch</span>
       </button>
       {open ? (
@@ -170,7 +171,7 @@ function ToolCallCard({ call }: { call: ToolCall }) {
         className="flex w-full items-center gap-2 px-2 py-1 text-left font-mono text-[11px] hover:bg-surface-2"
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
-        <Pill tone="tools" variant="soft">call</Pill>
+        <Pill tone="tools" variant="soft">{t('context.call')}</Pill>
         <span className="text-fg-0">{call.name}</span>
         <span className="truncate text-fg-3">{truncate(argsStr, 80)}</span>
         <span className="ml-auto text-fg-3 tabular text-[10px]">{call.id.slice(0, 10)}</span>
@@ -207,14 +208,14 @@ function MessageContent({ parts }: { parts: readonly ContentPart[] }): ReactNode
         if (p.type === 'audio_url') {
           return (
             <div key={i} className="font-mono text-[11px] text-fg-2">
-              [audio: {p.audioUrl.url}]
+              {t('context.audio', { url: p.audioUrl.url })}
             </div>
           );
         }
         if (p.type === 'video_url') {
           return (
             <div key={i} className="font-mono text-[11px] text-fg-2">
-              [video: {p.videoUrl.url ?? '—'}]
+              {t('context.video', { url: p.videoUrl.url ?? '—' })}
             </div>
           );
         }
@@ -239,11 +240,11 @@ function firstTextPreview(parts: readonly ContentPart[]): string {
       const firstLine = p.text.split('\n', 1)[0] ?? '';
       return truncate(firstLine, 100);
     }
-    if (p.type === 'image_url') return '[image]';
-    if (p.type === 'audio_url') return '[audio]';
-    if (p.type === 'video_url') return '[video]';
+    if (p.type === 'image_url') return t('context.image');
+    if (p.type === 'audio_url') return t('context.audio', { url: '' });
+    if (p.type === 'video_url') return t('context.video', { url: '' });
   }
-  return '(empty)';
+  return t('context.empty');
 }
 
 function prettyJson(s: string): string {

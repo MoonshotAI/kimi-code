@@ -5,6 +5,7 @@ import { ContextTab } from '../components/context/ContextTab';
 import { WireTab } from '../components/wire/WireTab';
 import { Pill, type PillTone } from '../components/shared/Pill';
 import type { AgentInfo } from '../types';
+import { t } from '../i18n';
 
 type TabId = 'wire' | 'context';
 
@@ -21,7 +22,7 @@ export function SubagentDetailPage() {
 
   if (!sessionId || !agentId) return null;
   if (isLoading) {
-    return <div className="p-6 font-mono text-[12px] text-fg-3">loading agent…</div>;
+    return <div className="p-6 font-mono text-[12px] text-fg-3">{t('subagentDetail.loadingAgent')}</div>;
   }
   if (error) {
     return (
@@ -43,11 +44,11 @@ export function SubagentDetailPage() {
             to={`/sessions/${sessionId}?tab=agents`}
             className="hover:text-fg-0"
           >
-            ‹ back to agents
+            {t('subagentDetail.backToAgents')}
           </Link>
           <span className="text-fg-3">·</span>
           <Link to={`/sessions/${sessionId}`} className="hover:text-fg-0">
-            session
+            {t('subagentDetail.session')}
           </Link>
           <span className="text-fg-3">›</span>
           <span className="text-fg-0">{agentId}</span>
@@ -61,7 +62,7 @@ export function SubagentDetailPage() {
               </Pill>
               {agent.parentAgentId !== null ? (
                 <span className="font-mono text-[11px] text-fg-3">
-                  parent ·{' '}
+                  {t('subagentDetail.parent')} ·{' '}
                   <Link
                     to={`/sessions/${sessionId}/agents/${agent.parentAgentId}`}
                     className="text-fg-1 hover:text-fg-0"
@@ -71,21 +72,20 @@ export function SubagentDetailPage() {
                 </span>
               ) : null}
               <span className="font-mono text-[11px] text-fg-3 tabular">
-                {agent.wireRecordCount} record
-                {agent.wireRecordCount === 1 ? '' : 's'}
+                {t(agent.wireRecordCount === 1 ? 'subagentDetail.record' : 'subagentDetail.records', { count: agent.wireRecordCount })}
                 {agent.wireProtocolVersion !== null
                   ? ` · v${agent.wireProtocolVersion}`
                   : ''}
               </span>
               {!agent.wireExists ? (
                 <Pill tone="warning" variant="outline">
-                  no wire
+                  {t('subagentDetail.noWire')}
                 </Pill>
               ) : null}
             </>
           ) : (
             <Pill tone="error" variant="outline">
-              agent not found
+              {t('subagentDetail.agentNotFound')}
             </Pill>
           )}
         </div>
@@ -94,15 +94,15 @@ export function SubagentDetailPage() {
       <TabBar
         defaultTab="wire"
         tabs={[
-          { id: 'wire', label: 'Wire', count: agent?.wireRecordCount ?? null },
-          { id: 'context', label: 'Context', count: null },
+          { id: 'wire', label: t('tabs.wire'), count: agent?.wireRecordCount ?? null },
+          { id: 'context', label: t('tabs.context'), count: null },
         ]}
       />
 
       <div className="flex min-h-0 flex-1 flex-col">
         {active === 'wire' ? (
           agent === null || !agent.wireExists ? (
-            <Centered>no wire records for this agent</Centered>
+            <Centered>{t('subagentDetail.noWireForAgent')}</Centered>
           ) : (
             <WireTab sessionId={sessionId} initialAgentId={agentId} />
           )
@@ -110,7 +110,7 @@ export function SubagentDetailPage() {
 
         {active === 'context' ? (
           agent === null || !agent.wireExists ? (
-            <Centered>no context for this agent</Centered>
+            <Centered>{t('subagentDetail.noContextForAgent')}</Centered>
           ) : (
             <ContextTab sessionId={sessionId} initialAgentId={agentId} />
           )

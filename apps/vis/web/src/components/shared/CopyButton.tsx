@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { t } from '../../i18n';
 
 interface CopyButtonProps {
   value: string;
@@ -6,7 +7,8 @@ interface CopyButtonProps {
   className?: string;
 }
 
-export function CopyButton({ value, label = 'copy', className = '' }: CopyButtonProps) {
+export function CopyButton({ value, label, className = '' }: CopyButtonProps) {
+  const defaultLabel = t('shared.copy');
   const [state, setState] = useState<'idle' | 'ok' | 'err'>('idle');
 
   return (
@@ -20,9 +22,9 @@ export function CopyButton({ value, label = 'copy', className = '' }: CopyButton
           .finally(() => setTimeout(() =>{  setState('idle'); }, 1200));
       }}
       className={`font-mono text-[10px] text-fg-3 transition-colors hover:text-fg-1 ${className}`}
-      title={`Copy ${value}`}
+      title={t('shared.copyTitle', { value })}
     >
-      {state === 'idle' ? label : state === 'ok' ? '✓ copied' : '✗ err'}
+      {state === 'idle' ? (label ?? defaultLabel) : state === 'ok' ? t('shared.copied') : t('shared.copyErr')}
     </button>
   );
 }

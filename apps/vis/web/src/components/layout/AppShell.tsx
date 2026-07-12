@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { SessionRail } from '../sessions/SessionRail';
 import { ZipDropOverlay } from '../shared/ZipDropOverlay';
 import { useTheme, type ThemeChoice, type ResolvedTheme } from '../../hooks/useTheme';
+import { t, useLocale } from '../../i18n';
 
 interface AppShellProps {
   children: ReactNode;
@@ -12,6 +13,7 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const qc = useQueryClient();
   const { choice, resolved, cycle } = useTheme();
+  const { locale, set } = useLocale();
 
   return (
     <div className="flex h-full flex-col">
@@ -22,20 +24,27 @@ export function AppShell({ children }: AppShellProps) {
             kimi <span className="text-fg-2">vis</span>
           </span>
           <span className="ml-2 font-mono text-[10px] uppercase tracking-[0.12em] text-fg-3">
-            debug · local files
+            {t('app.debugLabel')}
           </span>
         </Link>
         <div className="flex items-center gap-2 text-[11px] text-fg-2">
+          <button
+            onClick={() => { set(locale === 'en' ? 'zh' : 'en'); }}
+            className="flex items-center gap-1.5 border border-border px-2 py-0.5 font-mono text-[11px] text-fg-1 transition-colors hover:border-border-strong hover:text-fg-0"
+            title={locale === 'en' ? '切换到中文' : 'Switch to English'}
+          >
+            {locale === 'en' ? '中' : 'EN'}
+          </button>
           <ThemeToggle choice={choice} resolved={resolved} onCycle={cycle} />
           <button
             onClick={() => {
               void qc.invalidateQueries();
             }}
             className="flex items-center gap-1.5 border border-border px-2 py-0.5 font-mono text-[11px] text-fg-1 transition-colors hover:border-border-strong hover:text-fg-0"
-            title="Refresh — re-read all session data from disk"
+            title={t('shell.refreshTitle')}
           >
             <RefreshIcon />
-            refresh
+            {t('shell.refresh')}
           </button>
         </div>
       </header>
@@ -62,13 +71,13 @@ function ThemeToggle({
   onCycle: () => void;
 }) {
   const label = choice === 'auto' ? `auto · ${resolved}` : choice;
-  const title = `Theme: ${label}. Click to cycle (auto → light → dark → auto).`;
+  const title = t('shell.themeTitle', { label });
   return (
     <button
       onClick={onCycle}
       className="flex items-center gap-1.5 border border-border px-2 py-0.5 font-mono text-[11px] text-fg-1 transition-colors hover:border-border-strong hover:text-fg-0"
       title={title}
-      aria-label={`Theme ${label}`}
+      aria-label={t('shell.themeLabel', { label })}
     >
       {choice === 'auto' ? <AutoIcon /> : resolved === 'light' ? <SunIcon /> : <MoonIcon />}
       <span className="tabular">{label}</span>

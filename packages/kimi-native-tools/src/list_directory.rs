@@ -244,8 +244,11 @@ mod tests {
 
     #[test]
     fn test_list_directory_not_found() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nonexistent = temp_dir.path().join("subdir");
+        drop(temp_dir);
         let config = ListDirectoryConfig {
-            path: Some("/nonexistent/path/12345".to_string()),
+            path: Some(nonexistent.to_string_lossy().to_string()),
             collapse_hidden_dirs: false,
         };
         let result = list_directory(&config);

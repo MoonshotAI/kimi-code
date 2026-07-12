@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 
 import type { SessionSortKey, HealthFilter, SourceFilter } from './SessionRail';
+import { t } from '../../i18n';
 
 interface SessionFilterProps {
   search: string;
@@ -19,24 +20,24 @@ interface SessionFilterProps {
 }
 
 const SORT_OPTIONS: { value: SessionSortKey; label: string }[] = [
-  { value: 'recent', label: 'recent' },
-  { value: 'oldest', label: 'oldest' },
-  { value: 'most_records', label: 'most records' },
-  { value: 'most_subagents', label: 'most subagents' },
+  { value: 'recent', label: t('sort.recent') },
+  { value: 'oldest', label: t('sort.oldest') },
+  { value: 'most_records', label: t('sort.mostRecords') },
+  { value: 'most_subagents', label: t('sort.mostSubagents') },
 ];
 
 const HEALTH_OPTIONS: { value: HealthFilter; label: string }[] = [
-  { value: 'all', label: 'any' },
-  { value: 'ok', label: 'ok' },
-  { value: 'broken_state', label: 'broken state' },
-  { value: 'broken_main_wire', label: 'broken wire' },
-  { value: 'missing_main_wire', label: 'no wire' },
+  { value: 'all', label: t('health.any') },
+  { value: 'ok', label: t('health.ok') },
+  { value: 'broken_state', label: t('health.brokenState') },
+  { value: 'broken_main_wire', label: t('health.brokenWire') },
+  { value: 'missing_main_wire', label: t('health.noWire') },
 ];
 
 const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
-  { value: 'all', label: 'all' },
-  { value: 'local', label: 'local' },
-  { value: 'imported', label: 'imported' },
+  { value: 'all', label: t('source.all') },
+  { value: 'local', label: t('source.local') },
+  { value: 'imported', label: t('source.imported') },
 ];
 
 export function SessionFilter({
@@ -74,12 +75,12 @@ export function SessionFilter({
           disabled={importing}
           onClick={() => fileInput.current?.click()}
           className="flex items-center gap-1.5 border border-border bg-surface-0 px-2 py-1 font-mono text-[11px] text-fg-1 hover:border-border-strong hover:text-fg-0 disabled:opacity-50"
-          title="Import a /export-debug-zip bundle a user sent you"
+          title={t('session.importTitle')}
         >
-          {importing ? 'importing…' : '⬆ import debug zip'}
+          {importing ? t('session.importing') : t('session.importDebugZip')}
         </button>
         {importedCount > 0 ? (
-          <span className="font-mono text-[10px] text-fg-3 tabular">{importedCount} imported</span>
+          <span className="font-mono text-[10px] text-fg-3 tabular">{t('session.imported', { count: importedCount })}</span>
         ) : null}
       </div>
       <div className="relative">
@@ -87,13 +88,13 @@ export function SessionFilter({
           type="text"
           value={search}
           onChange={(e) => { onSearchChange(e.target.value); }}
-          placeholder="search id / title / workspace"
+          placeholder={t('session.searchPlaceholder')}
           className="w-full border border-border bg-surface-0 px-2 py-1 font-mono text-[12px] text-fg-0 placeholder:text-fg-3 focus:border-border-strong focus:outline-none"
         />
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <label className="flex items-center gap-1.5 font-mono text-[10.5px] text-fg-2">
-          <span className="text-fg-3">sort</span>
+          <span className="text-fg-3">{t('session.sort')}</span>
           <select
             value={sortKey}
             onChange={(e) => { onSortChange(e.target.value as SessionSortKey); }}
@@ -107,7 +108,7 @@ export function SessionFilter({
           </select>
         </label>
         <label className="flex items-center gap-1.5 font-mono text-[10.5px] text-fg-2">
-          <span className="text-fg-3">source</span>
+          <span className="text-fg-3">{t('session.source')}</span>
           <select
             value={sourceFilter}
             onChange={(e) => { onSourceChange(e.target.value as SourceFilter); }}
@@ -121,7 +122,7 @@ export function SessionFilter({
           </select>
         </label>
         <label className="flex items-center gap-1.5 font-mono text-[10.5px] text-fg-2">
-          <span className="text-fg-3">health</span>
+          <span className="text-fg-3">{t('session.health')}</span>
           <select
             value={healthFilter}
             onChange={(e) => { onHealthChange(e.target.value as HealthFilter); }}

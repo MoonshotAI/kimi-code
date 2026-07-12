@@ -3,6 +3,7 @@ import { formatAbsoluteTime, formatRelativeTime } from '../../util/time';
 import { useCron } from '../../hooks/useTasks';
 import { CopyButton } from '../shared/CopyButton';
 import { Pill } from '../shared/Pill';
+import { t } from '../../i18n';
 
 interface CronTabProps {
   sessionId: string;
@@ -15,7 +16,7 @@ export function CronTab({ sessionId }: CronTabProps) {
   const { data, isLoading, error } = useCron(sessionId);
 
   if (isLoading) {
-    return <div className="p-6 font-mono text-[12px] text-fg-3">loading cron…</div>;
+    return <div className="p-6 font-mono text-[12px] text-fg-3">{t('cron.loading')}</div>;
   }
   if (error) {
     return (
@@ -28,11 +29,11 @@ export function CronTab({ sessionId }: CronTabProps) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
       <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
-        cron jobs{cron.length > 0 ? ` · ${cron.length}` : ''}
+        {t('cron.cronJobs')}{cron.length > 0 ? ` · ${cron.length}` : ''}
       </div>
       {cron.length === 0 ? (
         <div className="mt-3 border border-border bg-surface-0 px-3 py-6 text-center font-mono text-[12px] text-fg-3">
-          no cron jobs were scheduled in this session
+          {t('cron.noCronJobs')}
         </div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">
@@ -52,7 +53,7 @@ function CronCard({ job }: { job: CronTask }) {
     <div className="border border-border bg-surface-0">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <Pill tone={oneShot ? 'ephemeral' : 'lifecycle'} variant="outline">
-          {oneShot ? 'one-shot' : 'recurring'}
+          {oneShot ? t('cron.oneShot') : t('cron.recurring')}
         </Pill>
         <code className="font-mono text-[12px] text-fg-0">{job.cron}</code>
         <span className="font-mono text-[11px] text-fg-3">{job.id}</span>
@@ -61,26 +62,26 @@ function CronCard({ job }: { job: CronTask }) {
           className="ml-auto font-mono text-[11px] text-fg-3 tabular"
           title={formatAbsoluteTime(job.createdAt)}
         >
-          created {formatRelativeTime(job.createdAt)}
+          {t('cron.created')} {formatRelativeTime(job.createdAt)}
         </span>
       </div>
       <div className="px-3 py-2">
-        <div className="text-[10px] uppercase tracking-[0.1em] text-fg-3">prompt</div>
+        <div className="text-[10px] uppercase tracking-[0.1em] text-fg-3">{t('cron.prompt')}</div>
         <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[12px] text-fg-1">
           {job.prompt}
         </div>
       </div>
       <div className="grid grid-cols-1 gap-x-6 gap-y-1 border-t border-border px-3 py-2 md:grid-cols-2">
-        <Field label="lastFiredAt">
+        <Field label={t('cron.lastFiredAt')}>
           {job.lastFiredAt === undefined ? (
-            <span className="text-fg-3">(never fired)</span>
+            <span className="text-fg-3">{t('cron.neverFired')}</span>
           ) : (
             <span title={formatAbsoluteTime(job.lastFiredAt)}>
               {formatAbsoluteTime(job.lastFiredAt)} ({formatRelativeTime(job.lastFiredAt)})
             </span>
           )}
         </Field>
-        <Field label="createdAt">{formatAbsoluteTime(job.createdAt)}</Field>
+        <Field label={t('cron.createdAt')}>{formatAbsoluteTime(job.createdAt)}</Field>
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ import { ClearRibbon } from './ClearRibbon';
 import { CompactionRibbon } from './CompactionRibbon';
 import { MessageBubble } from './MessageBubble';
 import { UndoRibbon } from './UndoRibbon';
+import { t } from '../../i18n';
 
 interface ContextTabProps {
   sessionId: string;
@@ -43,7 +44,7 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
       {/* Toolbar — agent selector + status pills */}
       <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface-1 px-3 py-2">
         <label className="flex items-center gap-2 font-mono text-[11px] text-fg-2">
-          <span className="text-fg-3">agent</span>
+          <span className="text-fg-3">{t('context.agent')}</span>
           <select
             value={agentId}
             onChange={(e) => {
@@ -62,11 +63,11 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
         </label>
         <span className="font-mono text-[11px] text-fg-2">
           <span className="tabular text-fg-0">{messages.length}</span>
-          <span className="ml-1 text-fg-3">messages</span>
+          <span className="ml-1 text-fg-3">{t('context.messages')}</span>
         </span>
         {config.modelAlias ? (
           <span className="font-mono text-[11px] text-fg-2">
-            <span className="text-fg-3">model</span>{' '}
+            <span className="text-fg-3">{t('context.model')}</span>{' '}
             <span className="text-fg-0">{config.modelAlias}</span>
           </span>
         ) : null}
@@ -91,7 +92,7 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
                   : 'bg-surface-0 text-fg-3 hover:text-fg-1',
               ].join(' ')}
             >
-              model
+              {t('context.modelView')}
             </button>
             <button
               type="button"
@@ -106,17 +107,17 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
                   : 'bg-surface-0 text-fg-3 hover:text-fg-1',
               ].join(' ')}
             >
-              full history
+              {t('context.fullHistory')}
             </button>
           </div>
           {permissionMode ? (
-            <Pill tone="approval" variant="outline">permission: {permissionMode}</Pill>
+            <Pill tone="approval" variant="outline">{t('context.permission', { mode: permissionMode })}</Pill>
           ) : null}
           {planActive ? (
-            <Pill tone="info" variant="solid">plan mode</Pill>
+            <Pill tone="info" variant="solid">{t('context.planMode')}</Pill>
           ) : null}
           {swarmActive ? (
-            <Pill tone="subagent" variant="solid">swarm mode</Pill>
+            <Pill tone="subagent" variant="solid">{t('context.swarmMode')}</Pill>
           ) : null}
         </div>
       </div>
@@ -125,7 +126,7 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
           and the model itself only sees the compacted view. */}
       {history === 'full' ? (
         <div className="shrink-0 border-b border-border bg-surface-1 px-3 py-1 font-mono text-[10.5px] text-fg-3">
-          full reconstructed history — the model actually sees the compacted view
+          {t('context.fullHistoryHint')}
         </div>
       ) : null}
 
@@ -139,27 +140,27 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
           {goal ? (
             <div className="rounded border border-[var(--color-cat-lifecycle)]/40 bg-surface-0 p-2">
               <div className="mb-1 flex items-center gap-2">
-                <Pill tone="lifecycle" variant="soft">goal</Pill>
+                <Pill tone="lifecycle" variant="soft">{t('context.goal')}</Pill>
                 {goal.status ? <Pill tone="info" variant="outline">{goal.status}</Pill> : null}
               </div>
               <div className="font-mono text-[12px] text-fg-1">{goal.objective}</div>
               {goal.completionCriterion ? (
                 <div className="mt-1 font-mono text-[11px] text-fg-3">
-                  done when: {goal.completionCriterion}
+                  {t('context.doneWhen', { criterion: goal.completionCriterion })}
                 </div>
               ) : null}
             </div>
           ) : null}
           {config.systemPrompt ? <SystemPromptBubble text={config.systemPrompt} /> : null}
           {isLoading ? (
-            <div className="px-3 py-2 font-mono text-[12px] text-fg-3">loading context…</div>
+            <div className="px-3 py-2 font-mono text-[12px] text-fg-3">{t('context.loading')}</div>
           ) : error ? (
             <div className="px-3 py-2 font-mono text-[12px] text-[var(--color-sev-error)]">
               {(error as Error).message}
             </div>
           ) : messages.length === 0 ? (
             <div className="px-3 py-2 font-mono text-[12px] text-fg-3">
-              no messages — session has only lifecycle/config records so far.
+              {t('context.noMessages')}
             </div>
           ) : (
             messages.map((m) => {
@@ -208,9 +209,9 @@ function TokenBar({ usage, contextTokens }: { usage: TokenUsage; contextTokens: 
     <div className="shrink-0">
       {contextTokens > 0 ? (
         <div className="flex items-center justify-end gap-1 border-b border-border bg-surface-1 px-3 py-1 font-mono text-[10px] text-fg-2">
-          <span className="text-fg-3">context</span>
+          <span className="text-fg-3">{t('context.context')}</span>
           <span className="tabular text-fg-0">{contextTokens.toLocaleString()}</span>
-          <span className="text-fg-3">tok</span>
+          <span className="text-fg-3">{t('context.tok')}</span>
         </div>
       ) : null}
       {total === 0 ? (
@@ -279,13 +280,13 @@ function SystemPromptBubble({ text }: { text: string }) {
         className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-surface-2"
       >
         <span className="flex items-center gap-2">
-          <Pill tone="config" variant="solid">system</Pill>
+          <Pill tone="config" variant="solid">{t('context.system')}</Pill>
           <span className="font-mono text-[10px] text-fg-3 tabular">
-            {text.length.toLocaleString()} chars
+            {t('context.chars', { count: text.length.toLocaleString() })}
           </span>
         </span>
         <span className="font-mono text-[11px] text-fg-1">
-          {open ? '▾ collapse' : '▸ show full'}
+          {open ? t('context.collapse') : t('context.showFull')}
         </span>
       </button>
       <div className="relative min-w-0 px-3 pb-2">

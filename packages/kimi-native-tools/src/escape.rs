@@ -15,13 +15,13 @@
 /// Escape all XML-significant characters: & < > "
 pub fn escape_xml(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
-    for &b in input.as_bytes() {
-        match b {
-            b'&' => out.push_str("&amp;"),
-            b'<' => out.push_str("&lt;"),
-            b'>' => out.push_str("&gt;"),
-            b'"' => out.push_str("&quot;"),
-            _ => out.push(b as char),
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
         }
     }
     out
@@ -30,11 +30,11 @@ pub fn escape_xml(input: &str) -> String {
 /// Escape XML attribute boundary characters only: & "
 pub fn escape_xml_attr(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
-    for &b in input.as_bytes() {
-        match b {
-            b'&' => out.push_str("&amp;"),
-            b'"' => out.push_str("&quot;"),
-            _ => out.push(b as char),
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
         }
     }
     out
@@ -44,11 +44,11 @@ pub fn escape_xml_attr(input: &str) -> String {
 /// Preserves & and " for Markdown compatibility.
 pub fn escape_xml_tags(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
-    for &b in input.as_bytes() {
-        match b {
-            b'<' => out.push_str("&lt;"),
-            b'>' => out.push_str("&gt;"),
-            _ => out.push(b as char),
+    for c in input.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
         }
     }
     out

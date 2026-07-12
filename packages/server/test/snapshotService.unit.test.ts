@@ -324,6 +324,40 @@ describe('SnapshotService.read', () => {
     expect((second.messages.items[0]!.content[0] as { text: string }).text).toBe('only-one');
   });
 
+  it('skips corrupted wire.jsonl lines and keeps readable ones', async () => {
+    const f = await makeFixture();
+    const sid = 'sess_corrupt_wire';
+    const summary = await f.store.create({ id: sid, workDir: f.workDir });
+
+    const agentDir = join(summary.sessionDir, 'agents', 'main');
+    await mkdir(agentDir, { recursive: true });
+    // First line is good, second line is corrupted (unterminated string).
+    await writeFile(join(agentDir, 'wire.jsonl'), `{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"good"}]}}\n{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"\n`, 'utf-8');
+
+    const snap = await f.service.read(sid);
+    expect(snap.messages.items).toHaveLength(1);
+    expect((snap.messages.items[0]!.content[0] as { text: string }).text).toBe('good');
+    expect(snap.messages.has_more).toBe(false);
+    expect(snap.session.id).toBe(sid);
+  });
+
+  it('skips mid-file corrupted lines and keeps readable ones', async () => {
+    const f = await makeFixture();
+    const sid = 'sess_corrupt_mid';
+    const summary = await f.store.create({ id: sid, workDir: f.workDir });
+
+    const agentDir = join(summary.sessionDir, 'agents', 'main');
+    await mkdir(agentDir, { recursive: true });
+    // First line is corrupted, second line is good.
+    await writeFile(join(agentDir, 'wire.jsonl'), `not-json\n{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"good"}]}}\n`, 'utf-8');
+
+    const snap = await f.service.read(sid);
+    expect(snap.messages.items).toHaveLength(1);
+    expect((snap.messages.items[0]!.content[0] as { text: string }).text).toBe('good');
+    expect(snap.messages.has_more).toBe(false);
+    expect(snap.session.id).toBe(sid);
+  });
+
   it('falls back when state.json is missing or unreadable', async () => {
     const f = await makeFixture();
     const sid = 'sess_no_state';

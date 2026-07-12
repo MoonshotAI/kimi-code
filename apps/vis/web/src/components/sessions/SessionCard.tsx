@@ -2,6 +2,7 @@ import type { MouseEvent } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import type { SessionSummary } from '../../types';
 import { formatRelativeTime } from '../../util/time';
+import { t } from '../../i18n';
 
 interface SessionCardProps {
   session: SessionSummary;
@@ -14,7 +15,7 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
   const selected = sessionId === session.sessionId;
   const workspaceLabel = session.workDir
     ? session.workDir.split('/').slice(-2).join('/')
-    : '(no workspace)';
+    : t('sessionCard.noWorkspace');
   const shortId = session.sessionId.replace(/^session_/, '').slice(0, 10);
   const title = session.title;
   const subagentCount = Math.max(0, session.agentCount - 1);
@@ -49,11 +50,11 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
                 style={{ borderColor: 'var(--color-cat-subagent)', color: 'var(--color-cat-subagent)' }}
                 title={
                   session.importMeta?.originalName
-                    ? `imported from ${session.importMeta.originalName}`
-                    : 'imported debug bundle'
+                    ? t('sessionCard.importedFrom', { name: session.importMeta.originalName })
+                    : t('sessionCard.importedDebugBundle')
                 }
               >
-                imported
+                {t('sessionCard.imported')}
               </span>
             ) : null}
           </div>
@@ -66,15 +67,15 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
             {workspaceLabel}
           </span>
           <span className="tabular text-fg-3">
-            {session.mainWireRecordCount}ev
+            {session.mainWireRecordCount}{t('sessionCard.events')}
           </span>
           {subagentCount > 0 ? (
             <span className="tabular text-[var(--color-cat-subagent)]">
-              {subagentCount}sub
+              {subagentCount}{t('sessionCard.subagents')}
             </span>
           ) : null}
           {session.imported && session.importMeta?.manifest?.kimiCodeVersion ? (
-            <span className="tabular text-fg-3" title="kimi-code version that produced this bundle">
+            <span className="tabular text-fg-3" title={t('sessionCard.versionTitle')}>
               v{session.importMeta.manifest.kimiCodeVersion}
             </span>
           ) : null}
@@ -91,7 +92,7 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
         ) : null}
         {session.lastPrompt ? (
           <div className="mt-1 truncate font-mono text-[10.5px] text-fg-3" title={session.lastPrompt}>
-            prompt · {session.lastPrompt}
+            {t('sessionCard.prompt')} · {session.lastPrompt}
           </div>
         ) : null}
       </Link>
@@ -100,8 +101,8 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
         onClick={handleDeleteClick}
         disabled={deleting}
         className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center border border-transparent text-fg-3 transition-colors hover:border-[var(--color-sev-error)] hover:text-[var(--color-sev-error)] disabled:cursor-not-allowed disabled:opacity-40"
-        title={`Delete session ${session.sessionId}`}
-        aria-label={`Delete session ${session.sessionId}`}
+        title={t('sessionCard.deleteTitle', { id: session.sessionId })}
+        aria-label={t('sessionCard.deleteTitle', { id: session.sessionId })}
       >
         <TrashIcon />
       </button>

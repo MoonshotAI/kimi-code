@@ -5,6 +5,7 @@ import { formatAbsoluteTime, formatRelativeTime } from '../../util/time';
 import { CopyButton } from '../shared/CopyButton';
 import { JsonViewer } from '../shared/JsonViewer';
 import { Pill } from '../shared/Pill';
+import { t } from '../../i18n';
 
 interface StateTabProps {
   state: unknown;
@@ -43,53 +44,53 @@ export function StateTab({ state, importMeta }: StateTabProps) {
 
       <div className="flex items-center justify-between">
         <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
-          state.json
+          {t('state.stateJson')}
         </div>
-        <CopyButton value={JSON.stringify(s, null, 2)} label="copy json" />
+        <CopyButton value={JSON.stringify(s, null, 2)} label={t('state.copyJson')} />
       </div>
 
       {importedFromKimiCli ? (
         <div className="mt-3 border border-[var(--color-sev-warning)] bg-[color-mix(in_oklab,var(--color-sev-warning)_10%,transparent)] px-3 py-2 font-mono text-[11px] text-[var(--color-sev-warning)]">
-          warning · this session is marked
+          {t('state.importedFromCliWarning')}
           <code className="mx-1 px-1 bg-surface-0">imported_from_kimi_cli</code>
-          and would normally be filtered out of the list.
+          {t('state.importedFromCliWarning2')}
         </div>
       ) : null}
 
       {/* Highlight cards */}
       <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-        <Card label="title">
+        <Card label={t('state.title')}>
           {s.title !== undefined && s.title !== '' ? (
             <span className="font-mono text-[12px] text-fg-0">"{s.title}"</span>
           ) : (
-            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+            <span className="font-mono text-[12px] text-fg-3">{t('shared.none')}</span>
           )}
           {s.isCustomTitle === true ? (
             <Pill tone="config" variant="outline">
-              custom
+              {t('state.custom')}
             </Pill>
           ) : null}
         </Card>
 
-        <Card label="forkedFrom">
+        <Card label={t('state.forkedFrom')}>
           {s.forkedFrom !== undefined && s.forkedFrom !== '' ? (
             <span className="font-mono text-[12px] text-fg-0 break-all">
               {s.forkedFrom}
             </span>
           ) : (
-            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+            <span className="font-mono text-[12px] text-fg-3">{t('shared.none')}</span>
           )}
         </Card>
 
-        <Card label="createdAt">
+        <Card label={t('state.createdAt')}>
           <TsValue ms={createdMs} raw={s.createdAt} />
         </Card>
 
-        <Card label="updatedAt">
+        <Card label={t('state.updatedAt')}>
           <TsValue ms={updatedMs} raw={s.updatedAt} />
         </Card>
 
-        <Card label="lastPrompt">
+        <Card label={t('state.lastPrompt')}>
           {s.lastPrompt !== undefined && s.lastPrompt !== '' ? (
             <span
               className="font-mono text-[12px] text-fg-0 line-clamp-3"
@@ -98,13 +99,13 @@ export function StateTab({ state, importMeta }: StateTabProps) {
               {s.lastPrompt}
             </span>
           ) : (
-            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+            <span className="font-mono text-[12px] text-fg-3">{t('shared.none')}</span>
           )}
         </Card>
 
-        <Card label={`agents (${agentIds.length})`}>
+        <Card label={t('state.agents', { count: agentIds.length })}>
           {agentIds.length === 0 ? (
-            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+            <span className="font-mono text-[12px] text-fg-3">{t('shared.none')}</span>
           ) : (
             <span className="flex flex-wrap items-center gap-1">
               {agentIds.map((id) => (
@@ -123,11 +124,11 @@ export function StateTab({ state, importMeta }: StateTabProps) {
       {/* Custom blob */}
       <section className="mt-6">
         <h3 className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
-          custom
+          {t('state.customSection')}
         </h3>
         <div className="mt-2 border border-border bg-surface-0 p-3">
           {s.custom === undefined || Object.keys(s.custom).length === 0 ? (
-            <span className="font-mono text-[11px] text-fg-3">(empty)</span>
+            <span className="font-mono text-[11px] text-fg-3">{t('shared.empty')}</span>
           ) : (
             <JsonViewer value={s.custom} defaultOpenDepth={2} />
           )}
@@ -137,7 +138,7 @@ export function StateTab({ state, importMeta }: StateTabProps) {
       {/* Raw JSON */}
       <section className="mt-6">
         <h3 className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
-          raw state.json
+          {t('state.rawStateJson')}
         </h3>
         <div className="mt-2 border border-border bg-surface-0 p-3">
           <JsonViewer value={s} defaultOpenDepth={2} />
@@ -162,18 +163,18 @@ function Card({ label, children }: { label: string; children: import('react').Re
 function ManifestCard({ meta }: { meta: ImportInfo }) {
   const m = meta.manifest;
   const candidates: [string, string | undefined][] = [
-    ['original session', m?.sessionId],
-    ['kimi-code version', m?.kimiCodeVersion],
-    ['wire protocol', m?.wireProtocolVersion],
-    ['os', m?.os],
-    ['node', m?.nodejsVersion],
-    ['install source', m?.installSource],
-    ['workspace', m?.workspaceDir],
-    ['exported at', m?.exportedAt ? `${formatAbsoluteTime(Date.parse(m.exportedAt))} (${formatRelativeTime(Date.parse(m.exportedAt))})` : undefined],
-    ['first activity', m?.sessionFirstActivity ? formatAbsoluteTime(Date.parse(m.sessionFirstActivity)) : undefined],
-    ['last activity', m?.sessionLastActivity ? formatAbsoluteTime(Date.parse(m.sessionLastActivity)) : undefined],
-    ['imported at', `${formatAbsoluteTime(Date.parse(meta.importedAt))} (${formatRelativeTime(Date.parse(meta.importedAt))})`],
-    ['original file', meta.originalName ?? undefined],
+    [t('state.originalSession'), m?.sessionId],
+    [t('state.kimiCodeVersion'), m?.kimiCodeVersion],
+    [t('state.wireProtocol'), m?.wireProtocolVersion],
+    [t('state.os'), m?.os],
+    [t('state.node'), m?.nodejsVersion],
+    [t('state.installSource'), m?.installSource],
+    [t('state.workspace'), m?.workspaceDir],
+    [t('state.exportedAt'), m?.exportedAt ? `${formatAbsoluteTime(Date.parse(m.exportedAt))} (${formatRelativeTime(Date.parse(m.exportedAt))})` : undefined],
+    [t('state.firstActivity'), m?.sessionFirstActivity ? formatAbsoluteTime(Date.parse(m.sessionFirstActivity)) : undefined],
+    [t('state.lastActivity'), m?.sessionLastActivity ? formatAbsoluteTime(Date.parse(m.sessionLastActivity)) : undefined],
+    [t('state.importedAt'), `${formatAbsoluteTime(Date.parse(meta.importedAt))} (${formatRelativeTime(Date.parse(meta.importedAt))})`],
+    [t('state.originalFile'), meta.originalName ?? undefined],
   ];
   const rows = candidates
     .filter((r): r is [string, string] => typeof r[1] === 'string' && r[1].length > 0)
@@ -182,9 +183,9 @@ function ManifestCard({ meta }: { meta: ImportInfo }) {
   return (
     <section className="mb-5 border border-[var(--color-cat-subagent)] bg-[color-mix(in_oklab,var(--color-cat-subagent)_8%,transparent)] p-3">
       <div className="flex items-center gap-2">
-        <Pill tone="subagent" variant="outline">imported bundle</Pill>
-        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">manifest</span>
-        <span className="ml-auto"><CopyButton value={JSON.stringify(meta, null, 2)} label="copy manifest" /></span>
+        <Pill tone="subagent" variant="outline">{t('state.importedBundle')}</Pill>
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">{t('state.manifest')}</span>
+        <span className="ml-auto"><CopyButton value={JSON.stringify(meta, null, 2)} label={t('state.copyManifest')} /></span>
       </div>
       <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-2">
         {rows.map((r) => (
@@ -196,7 +197,7 @@ function ManifestCard({ meta }: { meta: ImportInfo }) {
       </div>
       {m === null ? (
         <div className="mt-2 font-mono text-[11px] text-[var(--color-sev-warning)]">
-          manifest.json was missing or unreadable in this bundle
+          {t('state.manifestMissing')}
         </div>
       ) : null}
     </section>
@@ -208,7 +209,7 @@ function TsValue({ ms, raw }: { ms: number | null; raw: string | undefined }) {
     return raw !== undefined && raw !== '' ? (
       <span className="font-mono text-[12px] text-fg-3 break-all">{raw}</span>
     ) : (
-      <span className="font-mono text-[12px] text-fg-3">(none)</span>
+      <span className="font-mono text-[12px] text-fg-3">{t('shared.none')}</span>
     );
   }
   return (

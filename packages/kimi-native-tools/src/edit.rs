@@ -283,8 +283,11 @@ mod tests {
 
     #[test]
     fn test_edit_nonexistent_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nonexistent = temp_dir.path().join("nope.txt");
+        drop(temp_dir);
         let result = edit_file(
-            "/nonexistent/file.txt",
+            &nonexistent.to_string_lossy(),
             "old",
             "new",
             false,

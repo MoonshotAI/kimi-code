@@ -326,8 +326,10 @@ function rawToolResultContent(output: ExecutableToolResult['output']): ContentPa
 
 /**
  * Parse a `wire.jsonl` file. A torn FINAL line (crash mid-flush) is dropped,
- * matching `FileSystemAgentRecordPersistence.read`; corruption anywhere else
- * throws so the caller can fall back to the live context view.
+ * matching `FileSystemAgentRecordPersistence.read`; unparseable lines anywhere
+ * in the file are also skipped so the caller always gets back whatever records
+ * are readable — the snapshot reader and transcript builder both need this for
+ * resilience when a crash left the file truncated partway through a line.
  */
 export async function readWireRecords(wirePath: string): Promise<AgentRecord[]> {
   const records: AgentRecord[] = [];
@@ -337,14 +339,18 @@ export async function readWireRecords(wirePath: string): Promise<AgentRecord[]> 
   try {
     for await (const chunk of stream) {
       line += chunk;
-      let newlineIndex = line.indexOf('\n');
-      while (newlineIndex !== -1) {
+      let newlineIndex: number;
+      while ((newlineIndex = line.indexOf('\n')) !== -1) {
         const rawLine = line.slice(0, newlineIndex);
         line = line.slice(newlineIndex + 1);
         lineNumber++;
         const trimmed = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
         if (trimmed.length === 0) continue;
-        records.push(JSON.parse(trimmed) as AgentRecord);
+        try {
+          records.push(JSON.parse(trimmed) as AgentRecord);
+        } catch {
+          continue;
+        }
       }
     }
   } catch (error: unknown) {

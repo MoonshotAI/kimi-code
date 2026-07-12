@@ -34,7 +34,9 @@ function loadBinding() {
 
   // Try from release build directory (cargo build --release).
   const ext = process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so';
-  const releasePath = path.join(__dirname, 'target', 'release', `${BINDING_NAME}.${ext}`);
+  // Rust crate name is kimi_native_tools (underscores), JS package is kimi-native-tools (hyphens).
+  const rustName = BINDING_NAME.replace(/-/g, '_');
+  const releasePath = path.join(__dirname, 'target', 'release', `${rustName}.${ext}`);
   try {
     if (fs.existsSync(releasePath)) {
       return require(releasePath);
@@ -44,7 +46,7 @@ function loadBinding() {
   }
 
   // Try from debug build directory.
-  const debugPath = path.join(__dirname, 'target', 'debug', `${BINDING_NAME}.${ext}`);
+  const debugPath = path.join(__dirname, 'target', 'debug', `${rustName}.${ext}`);
   try {
     if (fs.existsSync(debugPath)) {
       return require(debugPath);

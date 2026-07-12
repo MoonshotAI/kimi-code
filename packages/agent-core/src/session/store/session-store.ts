@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { z } from 'zod';
@@ -9,6 +9,17 @@ import { appendSessionIndexEntry, readSessionIndex } from '#/session/store/sessi
 import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '#/rpc/core-api';
 import { FileSystemAgentRecordPersistence, type AgentRecordOf } from '../../agent/records';
+
+/**
+ * Atomically write `state.json`: write to `<path>.tmp.<pid>` then rename.
+ * This prevents concurrent readers (e.g. SnapshotService) from observing
+ * a truncated file during the non-atomic `writeFile` truncation window.
+ */
+async function atomicWriteJson(path: string, content: string): Promise<void> {
+  const tmp = `${path}.tmp.${process.pid}`;
+  await writeFile(tmp, content, 'utf-8');
+  await rename(tmp, path);
+}
 
 const SessionSummaryStateSchema = z.object({
   archived: z.boolean().optional(),
@@ -145,7 +156,7 @@ export class SessionStore {
       title: normalized,
       isCustomTitle: true,
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await atomicWriteJson(statePath, `${JSON.stringify(next, null, 2)}\n`);
   }
 
   async archive(id: string): Promise<SessionSummary> {
@@ -168,7 +179,7 @@ export class SessionStore {
       archived: true,
       updatedAt: now,
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await atomicWriteJson(statePath, `${JSON.stringify(next, null, 2)}\n`);
     return this.summaryFromDir(id, entry.sessionDir, entry.workDir);
   }
 
@@ -410,7 +421,7 @@ export class SessionStore {
       agents: rewriteAgentHomedirs(parsed['agents'], sourceDir, targetDir),
       custom: forkCustomMetadata(parsed['custom'], input.metadata),
     };
-    await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+    await atomicWriteJson(statePath, `${JSON.stringify(next, null, 2)}\n`);
     return next;
   }
 

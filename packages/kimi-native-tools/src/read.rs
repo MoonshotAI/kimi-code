@@ -663,8 +663,11 @@ mod tests {
 
     #[test]
     fn test_read_nonexistent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nonexistent = temp_dir.path().join("nope.txt");
+        drop(temp_dir);
         let result = read_file(&ReadConfig {
-            path: "/nonexistent/path/file.txt".to_string(),
+            path: nonexistent.to_string_lossy().to_string(),
             line_offset: None,
             n_lines: None,
         });

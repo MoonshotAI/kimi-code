@@ -612,3 +612,95 @@ export async function nativeListDirectory(
     return undefined; // native module unavailable or binary mismatch — fall back to TS
   }
 }
+
+// ============================================================================
+// Image compression / crop — use Rust native codecs for PNG/JPEG/WebP
+// ============================================================================
+
+export interface NativeCompressConfig {
+  readonly maxEdge: number;
+  readonly byteBudget: number;
+  readonly fallbackEdges: readonly number[];
+  readonly jpegQualitySteps: readonly number[];
+}
+
+export interface NativeCompressResult {
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+  readonly width: number;
+  readonly height: number;
+  readonly originalWidth: number;
+  readonly originalHeight: number;
+  readonly changed: boolean;
+  readonly originalByteLength: number;
+  readonly finalByteLength: number;
+}
+
+export interface NativeCropConfig {
+  readonly maxEdge: number;
+  readonly byteBudget: number;
+  readonly skipResize: boolean;
+  readonly fallbackEdges: readonly number[];
+  readonly jpegQualitySteps: readonly number[];
+}
+
+export interface NativeCropOutcome {
+  readonly ok: boolean;
+  readonly error: string;
+  readonly errorKind: string;
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+  readonly width: number;
+  readonly height: number;
+  readonly originalWidth: number;
+  readonly originalHeight: number;
+  readonly regionX: number;
+  readonly regionY: number;
+  readonly regionWidth: number;
+  readonly regionHeight: number;
+  readonly resized: boolean;
+  readonly originalByteLength: number;
+  readonly finalByteLength: number;
+}
+
+/**
+ * Try the Rust native image compression codec. Returns undefined when the native
+ * module is unavailable, the call fails, or the result is null (unsupported
+ * format / passthrough). The caller falls back to the jimp pipeline.
+ */
+export async function tryNativeCompressImage(
+  data: Uint8Array,
+  mimeType: string,
+  config: NativeCompressConfig,
+): Promise<NativeCompressResult | undefined> {
+  const result = await callNative<NativeCompressResult | null>('nativeCompressImage', data, mimeType, {
+    maxEdge: config.maxEdge,
+    byteBudget: config.byteBudget,
+    fallbackEdges: [...config.fallbackEdges],
+    jpegQualitySteps: [...config.jpegQualitySteps],
+  });
+  return result ?? undefined;
+}
+
+/**
+ * Try the Rust native image crop codec. Returns undefined when the native
+ * module is unavailable or the call fails. The caller falls back to the jimp
+ * pipeline.
+ */
+export async function tryNativeCropImage(
+  data: Uint8Array,
+  mimeType: string,
+  regionX: number,
+  regionY: number,
+  regionWidth: number,
+  regionHeight: number,
+  config: NativeCropConfig,
+): Promise<NativeCropOutcome | undefined> {
+  return callNative<NativeCropOutcome>('nativeCropImage', data, mimeType, regionX, regionY, regionWidth, regionHeight, {
+    maxEdge: config.maxEdge,
+    byteBudget: config.byteBudget,
+    skipResize: config.skipResize,
+    fallbackEdges: [...config.fallbackEdges],
+    jpegQualitySteps: [...config.jpegQualitySteps],
+  });
+}

@@ -39,7 +39,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
     this.opts = opts;
     this.list = new SearchableList({
       items: opts.features,
-      toSearchText: (feature) => `${feature.title} ${feature.id} ${feature.description}`,
+      toSearchText: (feature) => `${featureTitle(feature)} ${feature.id} ${featureDescription(feature)}`,
       searchable: true,
     });
   }
@@ -173,7 +173,9 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
   ): string[] {
     const pointer = selected ? SELECT_POINTER : ' ';
     const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
-    const label = selected ? currentTheme.boldFg('primary', feature.title) : currentTheme.fg('text', feature.title);
+    const title = featureTitle(feature);
+    const description = featureDescription(feature);
+    const label = selected ? currentTheme.boldFg('primary', title) : currentTheme.fg('text', title);
     const enabled = this.effectiveEnabled(feature);
     const status = enabled ? t('tui.dialogs.experimentsSelector.statusEnabled') : t('tui.dialogs.experimentsSelector.statusDisabled');
     const statusText = enabled ? currentTheme.fg('success', status) : currentTheme.fg('textDim', status);
@@ -185,7 +187,7 @@ export class ExperimentsSelectorComponent extends Container implements Focusable
       currentTheme.fg('textMuted', `    ${detail}`),
     ];
     const descriptionWidth = Math.max(1, width - 4);
-    for (const line of wrapText(feature.description, descriptionWidth)) {
+    for (const line of wrapText(description, descriptionWidth)) {
       lines.push(currentTheme.fg('textMuted', `    ${line}`));
     }
     return lines;
@@ -216,6 +218,18 @@ function sourceLabel(feature: ExperimentalFeatureState): string {
     case 'default':
       return t('tui.dialogs.experimentsSelector.sourceDefault');
   }
+}
+
+function featureTitle(feature: ExperimentalFeatureState): string {
+  const key = `tui.dialogs.experimentsSelector.features.${feature.id}.title` as const;
+  const translated = t(key);
+  return translated === key ? feature.title : translated;
+}
+
+function featureDescription(feature: ExperimentalFeatureState): string {
+  const key = `tui.dialogs.experimentsSelector.features.${feature.id}.description` as const;
+  const translated = t(key);
+  return translated === key ? feature.description : translated;
 }
 
 function wrapText(text: string, width: number): string[] {

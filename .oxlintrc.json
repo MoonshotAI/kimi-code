@@ -6,7 +6,13 @@
     "pedantic": "warn",
     "perf": "warn"
   },
-  "plugins": ["typescript", "import", "unicorn", "promise", "node"],
+  "plugins": [
+    "typescript",
+    "import",
+    "unicorn",
+    "promise",
+    "node"
+  ],
   "rules": {
     "eslint/no-useless-return": "off",
     "eslint/no-shadow": "off",
@@ -20,7 +26,7 @@
     "import/no-self-import": "error",
     "import/no-unassigned-import": "off",
     "unicorn/prefer-node-protocol": "error",
-    "unicorn/no-useless-undefined": "off",
+    "unicorn/no-useless-undefined": "warn",
     "unicorn/no-lonely-if": "off",
     "unicorn/no-array-callback-reference": "off",
     "typescript/prefer-promise-reject-errors": "off",
@@ -30,12 +36,11 @@
     "typescript/no-unsafe-call": "off",
     "typescript/no-unsafe-member-access": "off",
     "typescript/no-unsafe-return": "off",
-
     "eslint/no-console": "warn",
-    "typescript/no-explicit-any": "off",
-    "typescript/no-non-null-assertion": "off",
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-non-null-assertion": "warn",
     "typescript/use-unknown-in-catch-callback-variable": "off",
-    "typescript/consistent-type-imports": "off",
+    "typescript/consistent-type-imports": "warn",
     "typescript/ban-types": "off",
     "import/first": "warn",
     "import/extensions": [
@@ -55,12 +60,10 @@
     "unicorn/prefer-add-event-listener": "off",
     "node/no-new-require": "warn",
     "node/no-path-concat": "warn",
-
     "promise/no-callback-in-promise": "warn",
     "promise/valid-params": "warn",
     "promise/no-return-in-finally": "warn",
-    "promise/always-return": "off",
-
+    "promise/always-return": "warn",
     "eslint/max-classes-per-file": "off",
     "eslint/max-depth": "off",
     "eslint/max-lines": "off",
@@ -70,8 +73,8 @@
     "eslint/no-inline-comments": "off",
     "eslint/no-negated-condition": "off",
     "eslint/no-await-in-loop": "off",
-    "eslint/require-await": "off",
-    "typescript/require-await": "off",
+    "eslint/require-await": "warn",
+    "typescript/require-await": "warn",
     "eslint/sort-vars": "off",
     "eslint/radix": "off",
     "eslint/symbol-description": "off",
@@ -85,13 +88,18 @@
   },
   "overrides": [
     {
-      "files": ["**/examples/**/*.ts", "**/examples/**/*.tsx"],
+      "files": [
+        "**/examples/**/*.ts",
+        "**/examples/**/*.tsx"
+      ],
       "rules": {
         "eslint/no-console": "off"
       }
     },
     {
-      "files": ["packages/kosong/src/providers/**/*.ts"],
+      "files": [
+        "packages/kosong/src/providers/**/*.ts"
+      ],
       "rules": {
         "typescript/no-unsafe-argument": "off",
         "typescript/no-unsafe-assignment": "off",
@@ -109,7 +117,9 @@
         "**/test/**/*.ts",
         "**/test/**/*.tsx"
       ],
-      "plugins": ["vitest"],
+      "plugins": [
+        "vitest"
+      ],
       "rules": {
         "typescript/no-explicit-any": "off",
         "typescript/no-unsafe-assignment": "off",

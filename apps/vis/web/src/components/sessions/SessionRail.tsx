@@ -5,13 +5,14 @@ import { useDeleteSession, useImportZip, useSessions } from '../../hooks/useSess
 import type { SessionSummary, SessionHealth } from '../../types';
 import { SessionCard } from './SessionCard';
 import { SessionFilter } from './SessionFilter';
+import { t } from '../../i18n';
 
 export type SessionSortKey = 'recent' | 'oldest' | 'most_records' | 'most_subagents';
 export type HealthFilter = 'all' | SessionHealth;
 export type SourceFilter = 'all' | 'local' | 'imported';
 
 function workspaceKey(s: SessionSummary): string {
-  if (!s.workDir) return '(no workspace)';
+  if (!s.workDir) return t('session.noWorkspace');
   return s.workDir.split('/').slice(-2).join('/');
 }
 
@@ -67,7 +68,7 @@ export function SessionRail() {
       const result = await importZip.mutateAsync(file);
       void navigate(`/sessions/${result.sessionId}`);
     } catch (importError) {
-      window.alert(`Import failed: ${importError instanceof Error ? importError.message : String(importError)}`);
+      window.alert(t('session.importFailed', { message: importError instanceof Error ? importError.message : String(importError) }));
     }
   }
 
@@ -102,7 +103,7 @@ export function SessionRail() {
 
   async function handleDeleteSession(session: SessionSummary) {
     const label = session.title ?? session.lastPrompt ?? session.sessionId;
-    if (!window.confirm(`Delete session "${label}"?\n\nThis removes its files from KIMI_CODE_HOME.`)) {
+    if (!window.confirm(t('session.deleteConfirm', { label }))) {
       return;
     }
     try {
@@ -134,13 +135,13 @@ export function SessionRail() {
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="p-3 font-mono text-[11px] text-fg-3">loading…</div>
+          <div className="p-3 font-mono text-[11px] text-fg-3">{t('session.loading')}</div>
         ) : error ? (
           <div className="p-3 font-mono text-[11px] text-[var(--color-sev-error)]">
             {error.message}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-3 font-mono text-[11px] text-fg-3">no sessions match</div>
+          <div className="p-3 font-mono text-[11px] text-fg-3">{t('session.noMatch')}</div>
         ) : grouped !== null ? (
           grouped.map(([group, items]) => (
             <div key={group}>

@@ -31,6 +31,8 @@
     "packages/*/test/**/*.ts",
     "packages/*/test/**/*.tsx",
     "apps/*/src/**/*.ts",
+    "apps/vis/server/src/**/*.ts",
+    "apps/vis/web/src/**/*.ts",
     "apps/*/src/**/*.tsx",
     "apps/*/test/**/*.ts",
     "apps/*/test/**/*.tsx"
