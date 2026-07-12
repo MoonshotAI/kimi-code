@@ -95,7 +95,7 @@ export class WsClient {
   listen<T>(
     scope: ScopeKind,
     event: string,
-    scopeIds?: { sessionId?: string; agentId?: string },
+    scopeIds?: { sessionId?: string; agentId?: string; service?: string },
   ): { iterator: AsyncIterable<T>; cancel: () => void } {
     const id = ulid();
     const queue: T[] = [];

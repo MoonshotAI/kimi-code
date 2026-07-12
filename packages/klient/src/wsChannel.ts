@@ -7,8 +7,8 @@
  * that survives reconnects until disposed.
  */
 
-import type { IChannel } from './channel.js';
-import type { WsScopeIds, WsScopeKind, WsSocket, WsSubscription } from './wsSocket.js';
+import type { Event, IChannel } from './channel.js';
+import type { WsScopeIds, WsScopeKind, WsSocket } from './wsSocket.js';
 
 export interface WsChannelOptions {
   readonly socket: WsSocket;
@@ -19,11 +19,17 @@ export interface WsChannelOptions {
   readonly agentId?: string;
 }
 
+interface SharedEvent {
+  readonly listeners: Set<{ listener: (data: unknown) => unknown; thisArg: unknown }>;
+  remote?: { dispose(): void };
+}
+
 export class WsChannel implements IChannel {
   private readonly socket: WsSocket;
   private readonly scope: WsScopeKind;
   private readonly service: string;
   private readonly ids: WsScopeIds;
+  private readonly events = new Map<string, SharedEvent>();
 
   constructor(opts: WsChannelOptions) {
     this.socket = opts.socket;
@@ -32,12 +38,42 @@ export class WsChannel implements IChannel {
     this.ids = { sessionId: opts.sessionId, agentId: opts.agentId };
   }
 
-  call<T>(command: string, arg?: unknown): Promise<T> {
-    return this.socket.call(this.scope, this.service, command, arg, this.ids);
+  call<T>(command: string, args: unknown[] = []): Promise<T> {
+    return this.socket.call(this.scope, this.service, command, args, this.ids);
   }
 
-  /** Subscribe to an event stream in this channel's scope; dispose to unlisten. */
-  listen(event: string, handler: (data: unknown) => void): WsSubscription {
-    return this.socket.listen(this.scope, event, this.ids, handler);
+  listen<T>(event: string): Event<T> {
+    let shared = this.events.get(event);
+    if (shared === undefined) {
+      shared = { listeners: new Set() };
+      this.events.set(event, shared);
+    }
+    return (listener, thisArg, disposables) => {
+      const entry = { listener: listener as (data: unknown) => unknown, thisArg };
+      shared.listeners.add(entry);
+      shared.remote ??= this.socket.listen(
+        this.scope,
+        event,
+        this.ids,
+        (data) => {
+          for (const current of shared.listeners) current.listener.call(current.thisArg, data);
+        },
+        this.service,
+      );
+      let disposed = false;
+      const subscription = {
+        dispose: (): void => {
+          if (disposed) return;
+          disposed = true;
+          shared.listeners.delete(entry);
+          if (shared.listeners.size === 0) {
+            shared.remote?.dispose();
+            shared.remote = undefined;
+          }
+        },
+      };
+      disposables?.push(subscription);
+      return subscription;
+    };
   }
 }

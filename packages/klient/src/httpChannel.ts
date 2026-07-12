@@ -41,12 +41,12 @@ export class HttpChannel implements IChannel {
     this.fetchImpl = opts.fetch ?? fetch.bind(globalThis);
   }
 
-  async call<T>(command: string, arg?: unknown): Promise<T> {
+  async call<T>(command: string, args: unknown[] = []): Promise<T> {
     const headers: Record<string, string> = {};
     let body: string | undefined;
-    if (arg !== undefined) {
+    if (args.length > 0) {
       headers['content-type'] = 'application/json';
-      body = JSON.stringify(arg);
+      body = JSON.stringify(args);
     }
     if (this.token !== undefined) {
       headers['authorization'] = `Bearer ${this.token}`;
@@ -63,7 +63,7 @@ export class HttpChannel implements IChannel {
     return envelope.data;
   }
 
-  listen<T>(_event: string, _arg?: unknown): T {
+  listen<T>(_event: string, _arg?: unknown): import('./channel.js').Event<T> {
     throw new Error('events are not supported over the HTTP channel; use the WS transport');
   }
 }

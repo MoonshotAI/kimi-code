@@ -112,6 +112,28 @@ describe('server-v2 /api/v2/ws', () => {
     client.close();
   });
 
+  it('streams a Service Event resolved by onUpperCase member name', async () => {
+    const id = await createSession(home as string);
+    const client = new WsClient({ url: wsUrl, token });
+    const { iterator, cancel } = client.listen<{ title?: string }>(
+      'session',
+      'onDidChangeMetadata',
+      { sessionId: id, service: String(ISessionMetadata) },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await client.call('session', String(ISessionMetadata), 'setTitle', ['changed'], {
+      sessionId: id,
+    });
+    const next = await Promise.race([
+      iterator[Symbol.asyncIterator]().next(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('no event')), 2000)),
+    ]);
+    expect(next.value).toMatchObject({ changed: expect.arrayContaining(['title']) });
+    cancel();
+    client.close();
+  });
+
   it('cancels a subscription', async () => {
     const client = new WsClient({ url: wsUrl, token });
     const { iterator, cancel } = client.listen('core', 'events');

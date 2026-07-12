@@ -59,6 +59,10 @@ export class WsKlient {
     return this.socket.onDidChangeState(listener);
   }
 
+  onDidListenError(listener: Parameters<WsSocket['onDidListenError']>[0]): WsSubscription {
+    return this.socket.onDidListenError(listener);
+  }
+
   close(): void {
     this.socket.close();
   }

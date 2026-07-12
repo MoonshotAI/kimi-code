@@ -7,8 +7,16 @@
  * transport; the HTTP channel only implements `call`.
  */
 
-/** The client-facing channel contract (request/response + future events). */
+export interface IDisposable {
+  dispose(): void;
+}
+
+export interface Event<T> {
+  (listener: (event: T) => unknown, thisArg?: unknown, disposables?: IDisposable[]): IDisposable;
+}
+
+/** The client-facing channel contract. Calls always carry the complete argument array. */
 export interface IChannel {
-  call<T>(command: string, arg?: unknown): Promise<T>;
-  listen(event: string, arg?: unknown): unknown;
+  call<T>(command: string, args?: unknown[]): Promise<T>;
+  listen<T>(event: string, arg?: unknown): Event<T>;
 }

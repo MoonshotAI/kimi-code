@@ -61,6 +61,7 @@ class FakeServer {
         return;
       case 'listen':
         this.listens.add(frame['id'] as string);
+        this.send({ type: 'listen_result', id: frame['id'] });
         return;
       case 'unlisten':
         this.listens.delete(frame['id'] as string);
@@ -71,8 +72,16 @@ class FakeServer {
     }
   }
 
-  pushEvent(id: string, data: unknown): void {
-    this.send({ type: 'event', id, data });
+  pushEvent(id: string, data: unknown, eventId?: string): void {
+    this.send({ type: 'event', id, eventId, data });
+  }
+
+  pushError(id: string, msg: string): void {
+    this.send({ type: 'error', id, code: 40001, msg });
+  }
+
+  cancelEvent(id: string, eventId: string): void {
+    this.send({ type: 'event_cancel', id, eventId });
   }
 
   ping(): void {
@@ -202,6 +211,78 @@ describe('WsKlient', () => {
 
     sub.dispose();
     expect(server.listens.size).toBe(0);
+    ws.close();
+  });
+
+  it('proxies Service events with one remote subscription for first/last listeners', async () => {
+    const server = new FakeServer();
+    const ws = await openKlient(server);
+    const service = ws.session('s1').service(ISessionMetadata);
+    const first: unknown[] = [];
+    const second: unknown[] = [];
+    const a = service.onDidChangeMetadata((event) => first.push(event));
+    const b = service.onDidChangeMetadata((event) => second.push(event));
+    await tick(5);
+
+    expect(server.listens.size).toBe(1);
+    const listen = server.frames.find((frame) => frame['type'] === 'listen')!;
+    expect(listen).toMatchObject({
+      scope: 'session',
+      service: 'sessionMetadata',
+      event: 'onDidChangeMetadata',
+      sessionId: 's1',
+    });
+    server.pushEvent(listen['id'] as string, { title: 'updated' });
+    await tick(5);
+    expect(first).toEqual([{ title: 'updated' }]);
+    expect(second).toEqual([{ title: 'updated' }]);
+
+    a.dispose();
+    expect(server.listens.size).toBe(1);
+    b.dispose();
+    expect(server.listens.size).toBe(0);
+    ws.close();
+  });
+
+  it('reports asynchronous subscription errors and terminates the subscription', async () => {
+    const server = new FakeServer();
+    const ws = await openKlient(server);
+    const errors: string[] = [];
+    ws.onDidListenError((event) => errors.push(event.error.message));
+    const service = ws.session('s1').service(ISessionMetadata);
+    service.onDidChangeMetadata(() => undefined);
+    await tick(5);
+    const id = [...server.listens][0]!;
+    server.pushError(id, 'payload is not serializable');
+    await tick(5);
+    expect(errors).toEqual(['payload is not serializable']);
+    ws.close();
+  });
+
+  it('waits for onWill listener work and aborts it on server cancel', async () => {
+    const server = new FakeServer();
+    const ws = await openKlient(server);
+    const service = ws.session('s1').service(ISessionMetadata) as unknown as {
+      onWillSave(listener: (event: { signal: AbortSignal; waitUntil(p: Promise<unknown>): void }) => void): {
+        dispose(): void;
+      };
+    };
+    let aborted = false;
+    service.onWillSave((event) => {
+      event.signal.addEventListener('abort', () => {
+        aborted = true;
+      });
+      event.waitUntil(new Promise(() => undefined));
+    });
+    await tick(5);
+    const id = [...server.listens][0]!;
+    server.pushEvent(id, {}, 'e1');
+    await tick(5);
+    expect(server.frames.some((frame) => frame['type'] === 'event_result')).toBe(false);
+    server.cancelEvent(id, 'e1');
+    await tick(5);
+    expect(aborted).toBe(true);
+    expect(server.frames.some((frame) => frame['type'] === 'event_result')).toBe(false);
     ws.close();
   });
 

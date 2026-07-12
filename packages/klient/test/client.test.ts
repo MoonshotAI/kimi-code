@@ -35,14 +35,14 @@ describe('HttpChannel', () => {
       fetch: fetchMock,
     });
 
-    const data = await channel.call('list', { workspaceId: 'w1' });
+    const data = await channel.call('list', [{ workspaceId: 'w1' }]);
 
     expect(data).toEqual({ items: [] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url as string).toBe('http://127.0.0.1:58627/api/v2/sessionIndex/list');
     expect(init?.method).toBe('POST');
-    expect(init?.body).toBe(JSON.stringify({ workspaceId: 'w1' }));
+    expect(init?.body).toBe(JSON.stringify([{ workspaceId: 'w1' }]));
     expect((init?.headers as Record<string, string>)['content-type']).toBe('application/json');
   });
 

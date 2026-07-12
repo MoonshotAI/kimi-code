@@ -68,9 +68,19 @@ interface PendingCall {
 
 interface ActiveListen {
   readonly scope: WsScopeKind;
+  readonly service?: string;
   readonly event: string;
   readonly ids: WsScopeIds;
   readonly handler: (data: unknown) => void;
+  readonly onError?: (error: Error) => void;
+  acknowledged: boolean;
+}
+
+export interface WsListenError {
+  readonly scope: WsScopeKind;
+  readonly service?: string;
+  readonly event: string;
+  readonly error: Error;
 }
 
 interface ServerFrame {
@@ -79,6 +89,7 @@ interface ServerFrame {
   readonly data?: unknown;
   readonly code?: number;
   readonly msg?: string;
+  readonly eventId?: string;
 }
 
 const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
@@ -101,7 +112,9 @@ export class WsSocket {
 
   private readonly pending = new Map<string, PendingCall>();
   private readonly listens = new Map<string, ActiveListen>();
+  private readonly eventControllers = new Map<string, AbortController>();
   private readonly stateListeners = new Set<(state: WsSocketState) => void>();
+  private readonly listenErrorListeners = new Set<(event: WsListenError) => void>();
 
   private seq = 0;
   private readonly idPrefix = `k${Date.now().toString(36)}`;
@@ -127,6 +140,11 @@ export class WsSocket {
   onDidChangeState(listener: (state: WsSocketState) => void): WsSubscription {
     this.stateListeners.add(listener);
     return { dispose: () => this.stateListeners.delete(listener) };
+  }
+
+  onDidListenError(listener: (event: WsListenError) => void): WsSubscription {
+    this.listenErrorListeners.add(listener);
+    return { dispose: () => this.listenErrorListeners.delete(listener) };
   }
 
   /** RPC call over the socket; rejects on `error` frame, timeout, or close. */
@@ -171,11 +189,13 @@ export class WsSocket {
     event: string,
     ids: WsScopeIds,
     handler: (data: unknown) => void,
+    service?: string,
+    onError?: (error: Error) => void,
   ): WsSubscription {
     const id = this.nextId();
-    this.listens.set(id, { scope, event, ids, handler });
+    this.listens.set(id, { scope, service, event, ids, handler, onError, acknowledged: false });
     if (this.state === 'open') {
-      this.send({ type: 'listen', id, scope, event, ...ids });
+      this.send({ type: 'listen', id, scope, service, event, ...ids });
     }
     return {
       dispose: () => {
@@ -224,9 +244,15 @@ export class WsSocket {
       return;
     }
     this.ws = ws;
-    ws.addEventListener('open', () => this.onOpen());
-    ws.addEventListener('message', (event: { data: unknown }) => this.onMessage(event.data));
-    ws.addEventListener('close', () => this.onClose());
+    ws.addEventListener('open', () => {
+      this.onOpen();
+    });
+    ws.addEventListener('message', (event: { data: unknown }) => {
+      this.onMessage(event.data);
+    });
+    ws.addEventListener('close', () => {
+      this.onClose();
+    });
     ws.addEventListener('error', () => {
       // The 'close' event always follows 'error'; reconnect logic lives there.
     });
@@ -237,7 +263,14 @@ export class WsSocket {
     this.setState('open');
     this.send({ type: 'hello', token: this.token });
     for (const [id, sub] of this.listens) {
-      this.send({ type: 'listen', id, scope: sub.scope, event: sub.event, ...sub.ids });
+      this.send({
+        type: 'listen',
+        id,
+        scope: sub.scope,
+        service: sub.service,
+        event: sub.event,
+        ...sub.ids,
+      });
     }
     const waiters = this.readyWaiters;
     this.readyWaiters = [];
@@ -265,12 +298,62 @@ export class WsSocket {
       }
       case 'error': {
         const p = this.take(frame.id);
-        p?.reject(new RPCError(frame.code ?? 50001, frame.msg ?? 'error'));
+        if (p !== undefined) {
+          p.reject(new RPCError(frame.code ?? 50001, frame.msg ?? 'error'));
+        } else {
+          const sub = this.listens.get(frame.id ?? '');
+          if (sub !== undefined) {
+            this.listens.delete(frame.id ?? '');
+            const error = new RPCError(frame.code ?? 50001, frame.msg ?? 'error');
+            sub.onError?.(error);
+            queueMicrotask(() => {
+              for (const listener of this.listenErrorListeners) {
+                listener({ scope: sub.scope, service: sub.service, event: sub.event, error });
+              }
+            });
+          }
+        }
+        return;
+      }
+      case 'listen_result': {
+        const sub = this.listens.get(frame.id ?? '');
+        if (sub !== undefined) sub.acknowledged = true;
         return;
       }
       case 'event': {
         const sub = this.listens.get(frame.id ?? '');
-        sub?.handler(frame.data);
+        if (sub === undefined) return;
+        if (frame.eventId === undefined) {
+          sub.handler(frame.data);
+          return;
+        }
+        const controller = new AbortController();
+        const eventKey = `${frame.id}:${frame.eventId}`;
+        this.eventControllers.set(eventKey, controller);
+        const waits: Promise<unknown>[] = [];
+        const data = {
+          ...(frame.data as object),
+          signal: controller.signal,
+          waitUntil: (promise: Promise<unknown>) => waits.push(promise),
+        };
+        try {
+          sub.handler(data);
+        } catch {
+          // Listener failures are fail-open for the server-side event.
+        }
+        void Promise.allSettled(waits).finally(() => {
+          if (!this.eventControllers.delete(eventKey)) return;
+          this.send({ type: 'event_result', id: frame.id, eventId: frame.eventId });
+        });
+        return;
+      }
+      case 'event_cancel': {
+        const key = `${frame.id}:${frame.eventId}`;
+        const controller = this.eventControllers.get(key);
+        if (controller !== undefined) {
+          this.eventControllers.delete(key);
+          controller.abort();
+        }
         return;
       }
     }
@@ -278,6 +361,8 @@ export class WsSocket {
 
   private onClose(): void {
     this.ws = undefined;
+    for (const controller of this.eventControllers.values()) controller.abort();
+    this.eventControllers.clear();
     this.failAll(new Error('ws closed'));
     if (this.manualClose || !this.autoReconnect) {
       this.setState('closed');

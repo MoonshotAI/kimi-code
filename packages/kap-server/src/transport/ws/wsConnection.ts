@@ -20,7 +20,7 @@ import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
 import type { ScopeKind } from '../channel';
-import { dispatch, resolveScope } from '../dispatcher';
+import { dispatch, resolveScope, resolveService } from '../dispatcher';
 import { assertSerializable, mapError } from '../errors';
 import type { CredentialValidator } from '../../services/auth/credentials';
 import { resolveEventSource } from './eventMap';
@@ -72,6 +72,7 @@ export class WsConnection {
   private closed = false;
   private gotHello = false;
   private readonly pending = new Map<string, PendingEntry>();
+  private readonly eventWaits = new Map<string, Map<string, () => void>>();
   /** Active session/agent-scoped `listen`s: listen id → session id. */
   private readonly subscriptions = new Map<string, string>();
   private pingTimer?: ReturnType<typeof setInterval>;
@@ -146,6 +147,9 @@ export class WsConnection {
         return;
       case 'unlisten':
         this.cancel(msg.id);
+        return;
+      case 'event_result':
+        this.finishEventWait(msg.id, msg.eventId);
         return;
     }
   }
@@ -224,31 +228,40 @@ export class WsConnection {
       return;
     }
 
-    const source = resolveEventSource(msg.scope as ScopeKind, msg.event);
-    if (source === undefined) {
-      this.send({ type: 'error', id: msg.id, code: 40001, msg: `unknown event: ${msg.event}` });
-      return;
-    }
-
-    let scope;
-    try {
-      scope = await resolveScope(this.core, msg.scope as ScopeKind, scopeParams(msg));
-    } catch {
-      scope = undefined;
-    }
-    if (scope === undefined) {
-      this.send({
-        type: 'error',
-        id: msg.id,
-        code: 40401,
-        msg: `session ${msg.sessionId ?? ''} not found`,
-      });
-      return;
-    }
-
     let disposable: IDisposable;
     try {
-      disposable = source.subscribe(scope, (data) => this.sendEvent(msg.id, data));
+      if (msg.service !== undefined) {
+        const service = await resolveService(
+          this.core,
+          msg.scope as ScopeKind,
+          scopeParams(msg),
+          msg.service,
+        );
+        const event = (service as Record<string, unknown>)[msg.event];
+        if (typeof event !== 'function' || !/^on[A-Z]/.test(msg.event)) {
+          throw new KimiError(
+            ErrorCodes.REQUEST_INVALID,
+            `event not found: ${msg.service}.${msg.event}`,
+          );
+        }
+        disposable = (event as (listener: (data: unknown) => void) => IDisposable).call(
+          service,
+          (data) => this.sendEvent(msg.id, msg.event, data),
+        );
+      } else {
+        const source = resolveEventSource(msg.scope as ScopeKind, msg.event);
+        if (source === undefined) {
+          throw new KimiError(ErrorCodes.REQUEST_INVALID, `unknown event: ${msg.event}`);
+        }
+        const scope = await resolveScope(this.core, msg.scope as ScopeKind, scopeParams(msg));
+        if (scope === undefined) {
+          throw new KimiError(
+            ErrorCodes.SESSION_NOT_FOUND,
+            `session ${msg.sessionId ?? ''} not found`,
+          );
+        }
+        disposable = source.subscribe(scope, (data) => this.sendEvent(msg.id, msg.event, data));
+      }
     } catch (error) {
       const env = mapError(error, msg.id);
       this.send({ type: 'error', id: msg.id, code: env.code, msg: env.msg });
@@ -265,24 +278,70 @@ export class WsConnection {
         this.subscriptions.delete(msg.id);
       },
     });
+    this.send({ type: 'listen_result', id: msg.id });
   }
 
   private cancel(id: string): void {
     const entry = this.pending.get(id);
     if (entry !== undefined) entry.cancel();
+    this.cancelEventWaits(id);
+  }
+
+  private finishEventWait(id: string, eventId: string): void {
+    this.eventWaits.get(id)?.get(eventId)?.();
+  }
+
+  private cancelEventWaits(id: string): void {
+    const waits = this.eventWaits.get(id);
+    if (waits === undefined) return;
+    for (const [eventId, finish] of waits) {
+      this.send({ type: 'event_cancel', id, eventId });
+      finish();
+    }
   }
 
   // -------------------------------------------------------------------------
   // Outbound
   // -------------------------------------------------------------------------
 
-  private sendEvent(id: string, data: unknown): void {
+  private sendEvent(id: string, event: string, data: unknown): void {
     if (this.closed) return;
+    const isWill = /^onWill[A-Z]/.test(event);
     try {
-      const wire = assertSerializable(data);
-      this.send({ type: 'event', id, data: wire });
-    } catch {
-      // Non-serializable event payload — drop, don't tear down the connection.
+      const wire = assertSerializable(
+        isWill && data !== null && typeof data === 'object'
+          ? Object.fromEntries(
+              Object.entries(data as Record<string, unknown>).filter(
+                ([key]) => key !== 'waitUntil' && key !== 'signal',
+              ),
+            )
+          : data,
+      );
+      if (!isWill) {
+        this.send({ type: 'event', id, data: wire });
+        return;
+      }
+      const eventId = ulid();
+      const promise = new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          const waits = this.eventWaits.get(id);
+          waits?.delete(eventId);
+          if (waits?.size === 0) this.eventWaits.delete(id);
+          resolve();
+        };
+        const waits = this.eventWaits.get(id) ?? new Map<string, () => void>();
+        waits.set(eventId, finish);
+        this.eventWaits.set(id, waits);
+      });
+      (data as { waitUntil(promise: Promise<unknown>): void }).waitUntil(promise);
+      this.send({ type: 'event', id, eventId, data: wire });
+    } catch (error) {
+      const env = mapError(error, id);
+      this.send({ type: 'error', id, code: env.code, msg: env.msg });
+      this.cancel(id);
     }
   }
 
@@ -350,6 +409,10 @@ export class WsConnection {
       }
     }
     this.pending.clear();
+    for (const waits of this.eventWaits.values()) {
+      for (const finish of waits.values()) finish();
+    }
+    this.eventWaits.clear();
   }
 }
 

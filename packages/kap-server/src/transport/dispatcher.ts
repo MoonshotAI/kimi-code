@@ -51,6 +51,33 @@ export async function resolveScope(
  * scope not found, service not in scope, method missing); the route maps them
  * to the envelope. Unexpected errors propagate and become `50001`.
  */
+export async function resolveService(
+  core: Scope,
+  scopeKind: ScopeKind,
+  params: Record<string, string>,
+  serviceName: string,
+): Promise<object> {
+  const scope = await resolveScope(core, scopeKind, params);
+  if (scope === undefined) {
+    throw new KimiError(
+      ErrorCodes.SESSION_NOT_FOUND,
+      `session ${params['session_id'] ?? ''} not found`,
+    );
+  }
+  const id = resolveChannel(serviceName);
+  if (id === undefined) {
+    throw new KimiError(ErrorCodes.REQUEST_INVALID, `unknown service: ${serviceName}`);
+  }
+  try {
+    return scope.accessor.get(id) as object;
+  } catch {
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      `service not available in ${scopeKind} scope: ${serviceName}`,
+    );
+  }
+}
+
 export async function dispatch(
   core: Scope,
   scopeKind: ScopeKind,
@@ -59,29 +86,7 @@ export async function dispatch(
   method: string,
   arg: unknown,
 ): Promise<unknown> {
-  const scope = await resolveScope(core, scopeKind, params);
-  if (scope === undefined) {
-    throw new KimiError(
-      ErrorCodes.SESSION_NOT_FOUND,
-      `session ${params['session_id'] ?? ''} not found`,
-    );
-  }
-
-  const id = resolveChannel(serviceName);
-  if (id === undefined) {
-    throw new KimiError(ErrorCodes.REQUEST_INVALID, `unknown service: ${serviceName}`);
-  }
-
-  let service: unknown;
-  try {
-    service = scope.accessor.get(id);
-  } catch {
-    throw new KimiError(
-      ErrorCodes.REQUEST_INVALID,
-      `service not available in ${scopeKind} scope: ${serviceName}`,
-    );
-  }
-
+  const service = await resolveService(core, scopeKind, params, serviceName);
   const member = (service as Record<string, unknown>)[method];
   if (member === undefined) {
     throw new KimiError(ErrorCodes.REQUEST_INVALID, `method not found: ${serviceName}.${method}`);

@@ -39,7 +39,14 @@ const listenMessageSchema = z.object({
   scope: scopeKindSchema,
   sessionId: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
+  service: z.string().min(1).optional(),
   event: z.string().min(1),
+});
+
+const eventResultMessageSchema = z.object({
+  type: z.literal('event_result'),
+  id: z.string().min(1),
+  eventId: z.string().min(1),
 });
 
 const unlistenMessageSchema = z.object({
@@ -56,6 +63,7 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
   callMessageSchema,
   cancelMessageSchema,
   listenMessageSchema,
+  eventResultMessageSchema,
   unlistenMessageSchema,
   pongMessageSchema,
 ]);
@@ -84,10 +92,22 @@ export interface ErrorMessage {
   readonly msg: string;
 }
 
+export interface ListenResultMessage {
+  readonly type: 'listen_result';
+  readonly id: string;
+}
+
 export interface EventMessage {
   readonly type: 'event';
   readonly id: string;
+  readonly eventId?: string;
   readonly data: unknown;
+}
+
+export interface EventCancelMessage {
+  readonly type: 'event_cancel';
+  readonly id: string;
+  readonly eventId: string;
 }
 
 export interface PingMessage {
@@ -98,5 +118,7 @@ export type ServerMessage =
   | ReadyMessage
   | ResultMessage
   | ErrorMessage
+  | ListenResultMessage
   | EventMessage
+  | EventCancelMessage
   | PingMessage;

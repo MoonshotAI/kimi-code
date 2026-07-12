@@ -24,14 +24,14 @@ export class SessionIndexClient implements ISessionIndex {
   constructor(private readonly channel: IChannel) {}
 
   list(query: SessionListQuery): Promise<Page<SessionSummary>> {
-    return this.channel.call<Page<SessionSummary>>('list', query);
+    return this.channel.call<Page<SessionSummary>>('list', [query]);
   }
 
   get(id: string): Promise<SessionSummary | undefined> {
-    return this.channel.call<SessionSummary | undefined>('get', id);
+    return this.channel.call<SessionSummary | undefined>('get', [id]);
   }
 
   countActive(workspaceId: string): Promise<number> {
-    return this.channel.call<number>('countActive', workspaceId);
+    return this.channel.call<number>('countActive', [workspaceId]);
   }
 }
