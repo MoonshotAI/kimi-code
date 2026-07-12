@@ -503,6 +503,7 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --p-sidebar-w: 264px;
   --p-content-max: 760px;
   --p-content-wide: 920px;
+  --p-table-max: 1040px;
   --p-bp-sm: 640px;
   --p-bp-md: 980px;
 }

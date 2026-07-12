@@ -1032,6 +1032,33 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   color: var(--color-accent-hover);
 }
 
+/* ===================== Wide tables (desktop) ===================== */
+/* 760px corresponds to --p-content-max. Container-query conditions cannot
+   reference CSS custom properties directly. */
+@container (min-width: 760px) {
+  /* markstream's content-visibility:auto implies paint containment, which can
+     clip a table that breaks out of the normal Markdown width. Disable it only
+     for renderers that actually contain a table. Keep contain:layout intact. */
+  .a-msg .msg :deep(.markstream-vue.markdown-renderer:has(.table-node-wrapper)) {
+    content-visibility: visible;
+  }
+
+  /* Let a table grow naturally beyond the reading column, centred within the
+     conversation pane. The first-stage overflow-x:auto continues to handle
+     content wider than this wrapper. */
+  .a-msg .msg :deep(.table-node-wrapper) {
+    position: relative;
+    left: 50%;
+    width: max-content;
+    min-width: 100%;
+    max-width: min(
+      var(--p-table-max),
+      calc(100cqi - var(--space-5) - var(--space-5))
+    ) !important;
+    transform: translateX(-50%);
+  }
+}
+
 .u-imgs {
   display: flex;
   flex-wrap: wrap;
