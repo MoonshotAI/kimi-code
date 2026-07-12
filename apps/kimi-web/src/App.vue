@@ -990,7 +990,7 @@ function openPr(url: string): void {
 
     <!-- Global connecting splash on first load (until the daemon round-trips) -->
     <Transition name="gload-fade">
-      <GlobalLoading v-if="!client.initialized.value" />
+      <GlobalLoading v-if="!client.initialized.value" :issue="client.connectIssue.value" />
     </Transition>
 
     <!-- First-run onboarding overlay (language + welcome greeting) -->

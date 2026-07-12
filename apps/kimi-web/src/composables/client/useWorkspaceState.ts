@@ -161,6 +161,9 @@ export interface UseWorkspaceStateDeps {
   goalErrorMessage: (err: unknown) => string | undefined;
   resetFastMoon: () => void;
   initialized: Ref<boolean>;
+  /** Diagnostic for the connecting splash, set by checkAuth on transient
+   *  failures and cleared once a check gets through. */
+  connectIssue: Ref<string | null>;
   selectedDiffPath: Ref<string | null>;
   fileDiffLines: Ref<DiffViewLine[]>;
   fileDiffLoading: Ref<boolean>;
@@ -206,6 +209,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     goalErrorMessage,
     resetFastMoon,
     initialized,
+    connectIssue,
     selectedDiffPath,
     fileDiffLines,
     fileDiffLoading,
@@ -328,14 +332,23 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.authReady = result.ready;
       rawState.defaultModel = result.defaultModel;
       rawState.managedProviderStatus = result.managedProvider?.status ?? null;
+      connectIssue.value = null;
       return 'proceed';
     } catch (err) {
       if (isDaemonApiError(err)) {
         if (err.code === 401 || err.code === SERVER_AUTH_UNAUTHORIZED_CODE) {
+          // The ServerAuthDialog explains this one — nothing to surface.
+          connectIssue.value = null;
           return 'server-auth-required';
         }
-        if (err.code >= 400 && err.code < 500) return 'proceed';
+        if (err.code >= 400 && err.code < 500) {
+          connectIssue.value = null;
+          return 'proceed';
+        }
       }
+      // Surface the reason on the splash so "cannot connect" is diagnosable
+      // instead of an unexplained spinner.
+      connectIssue.value = (err instanceof Error ? err.message : String(err)).slice(0, 140);
       return 'retry';
     }
   }
