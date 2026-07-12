@@ -75,6 +75,9 @@ importers:
       '@moonshot-ai/acp-adapter':
         specifier: workspace:^
         version: link:../../packages/acp-adapter
+      '@moonshot-ai/acp-server':
+        specifier: workspace:^
+        version: link:../../packages/acp-server
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../packages/agent-core-v2
@@ -357,6 +360,18 @@ importers:
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
+
+  packages/acp-server:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.23.0
+        version: 0.23.0(zod@4.3.6)
+      '@moonshot-ai/agent-core-v2':
+        specifier: workspace:^
+        version: link:../agent-core-v2
+      '@moonshot-ai/protocol':
+        specifier: workspace:^
+        version: link:../protocol
 
   packages/agent-core:
     dependencies:
