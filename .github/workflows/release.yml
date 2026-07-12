@@ -11,7 +11,6 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'MoonshotAI'
     outputs:
       packages_published: ${{ steps.changesets.outputs.published }}
       kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
