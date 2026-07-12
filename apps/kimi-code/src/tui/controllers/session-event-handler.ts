@@ -339,7 +339,7 @@ export class SessionEventHandler {
       this.host.showStatus(t('tui.statusMessages.turnStoppedFiltered'), 'error');
     }
     if (event.reason === 'blocked') {
-      this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
+      this.host.showStatus(t('tui.statusMessages.turnStoppedBlocked'), 'error');
     }
     const todos = this.host.state.todoPanel.getTodos();
     if (todos.length > 0 && todos.every((t) => t.status === 'done')) {

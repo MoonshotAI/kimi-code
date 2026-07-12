@@ -171,7 +171,7 @@ export async function runPrompt(
     await harness.ensureConfigFile();
     const config = await harness.getConfig();
     for (const warning of (await harness.getConfigDiagnostics()).warnings) {
-      stderr.write(`Warning: ${warning}\n`);
+      stderr.write(`${t('tui.statusMessages.promptWarning', { warning })}\n`);
     }
     const { session, restorePermission, telemetryModel, goalModel } =
       await resolvePromptSession(
@@ -301,7 +301,7 @@ async function resolvePromptSession(
     const sessions = await harness.listSessions({ sessionId: opts.session, workDir });
     const target = sessions[0];
     if (target === undefined) {
-      throw new Error(`Session "${opts.session}" not found.`);
+      throw new Error(t('tui.statusMessages.sessionNotFound', { sessionId: opts.session! }));
     }
     if (resolve(target.workDir) !== resolve(workDir)) {
       stderr.write(
@@ -363,7 +363,7 @@ async function resolvePromptSession(
         goalModel: configuredModel(opts.model, status.model),
       };
     }
-    stderr.write(`No sessions to continue under "${workDir}"; starting a fresh session.\n`);
+    stderr.write(`${t('tui.statusMessages.noSessionsToContinue', { workDir })}\n`);
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
@@ -408,7 +408,7 @@ export function requireConfiguredModel(...models: readonly (string | undefined)[
   const model = configuredModel(...models);
   if (model === undefined) {
     throw new Error(
-      'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+      t('tui.statusMessages.noModelPrompt'),
     );
   }
   return model;

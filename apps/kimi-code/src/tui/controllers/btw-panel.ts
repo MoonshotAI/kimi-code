@@ -206,7 +206,7 @@ function formatBtwTurnEnd(event: TurnEndedEvent): string {
     return `[${event.error.code}] ${event.error.message}`;
   }
   if (event.reason === 'blocked') {
-    return 'Prompt hook blocked the request.';
+    return t('tui.statusMessages.promptBlocked');
   }
   return `BTW turn ended with reason: ${event.reason}`;
 }

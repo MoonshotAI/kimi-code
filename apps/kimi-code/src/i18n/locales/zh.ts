@@ -782,6 +782,7 @@ export default {
     statusMessages: {
       failedToSyncMcp: '同步 MCP 服务器状态失败：{{message}}',
       turnStoppedFiltered: '本轮已停止：提供商安全策略拦截了响应。',
+      turnStoppedBlocked: '本轮已停止：提示词钩子拦截了请求。',
       retryingStep: '重试中（{{attempt}}/{{maxAttempts}}）{{delayS}}秒后 — {{errorName}}',
       policyBlocked: '提供商安全策略拦截了响应。',
       outputFiltered: '模型输出已被过滤（{{reason}}）。',

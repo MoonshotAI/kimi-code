@@ -15,6 +15,7 @@
 import { z } from 'zod';
 
 import { taskSchema, taskStatusSchema } from '../task';
+import { booleanQueryParam } from './session';
 
 export const listTasksQuerySchema = z.object({
   status: taskStatusSchema.optional(),

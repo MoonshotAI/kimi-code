@@ -782,6 +782,7 @@ export default {
     statusMessages: {
       failedToSyncMcp: 'Failed to sync MCP server status: {{message}}',
       turnStoppedFiltered: 'Turn stopped: provider safety policy blocked the response.',
+      turnStoppedBlocked: 'Turn stopped: prompt hook blocked the request.',
       retryingStep: 'Retrying ({{attempt}}/{{maxAttempts}}) in {{delayS}}s — {{errorName}}',
       policyBlocked: 'Provider safety policy blocked the response.',
       outputFiltered: 'The model output was filtered ({{reason}}).',
