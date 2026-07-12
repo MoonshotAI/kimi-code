@@ -5,8 +5,6 @@
  * `agent-core-v2`'s `IModelCatalogService` (the OAuth-only managed refresh
  * additionally lives on `IOAuthService`):
  *   GET  /models                       — list configured model aliases
- *                                        (synchronously refreshes ALL
- *                                        provider model metadata first)
  *   GET  /providers                    — list configured providers
  *   GET  /providers/{provider_id}      — get a configured provider by id
  *   POST /models/{tail} (:set_default) — set the global default model alias
@@ -24,7 +22,6 @@
 
 import {
   IConfigService,
-  ILogService,
   IModelCatalogService,
   IOAuthService,
   isError2,
@@ -105,20 +102,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
       tags: ['models'],
     },
     async (req, reply) => {
-      const catalog = await loadCatalog(core);
-      // Synchronously refresh every refreshable provider's model metadata
-      // before listing, so the response always reflects the latest catalog.
-      // Refresh runs are serialized inside the service, so concurrent
-      // requests never overlap. A refresh failure must not break listing —
-      // log it and fall back to the persisted catalog.
-      try {
-        await catalog.refreshProviderModels({ scope: 'all' });
-      } catch (err) {
-        core.accessor
-          .get(ILogService)
-          .warn('modelCatalog.refresh_failed', { err: err instanceof Error ? err.message : String(err) });
-      }
-      const items = await catalog.listModels();
+      const items = await (await loadCatalog(core)).listModels();
       reply.send(okEnvelope({ items }, req.id));
     },
   );
